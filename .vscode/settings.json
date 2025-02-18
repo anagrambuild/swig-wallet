@@ -1,0 +1,5 @@
+{
+  "rust-analyzer.check.features": "all",
+  "rust-analyzer.check.allTargets": true,
+  "rust-analyzer.cargo.buildScripts.enable": true
+}

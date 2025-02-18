@@ -1,0 +1,18 @@
+[package]
+name = "swig-compact-instructions"
+version = "0.0.1"
+edition = "2021"
+license = "AGPL-3.0"
+description = "Swig protocol instructions handling"
+
+[features]
+client = ["solana-program"]
+
+[dependencies]
+bytemuck = { version = "1.21.0", default-features = false, features = [
+  "derive"
+] }
+pinocchio = { version = "0.7.1" }
+pinocchio-system = { version = "0.2.1" }
+thiserror = "2.0.3"
+solana-program = { version = "2.0.13", optional = true }

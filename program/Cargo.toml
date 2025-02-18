@@ -1,0 +1,37 @@
+[package]
+name = "swig"
+version = "0.0.1"
+edition = "2021"
+license = "AGPL-3.0"
+description = "Solana program for the Swig protocol"
+publish = false
+
+
+[dependencies]
+pinocchio-pubkey = { version = "0.2.2" }
+pinocchio = { version = "0.7.1", features = ["std"] }
+pinocchio-system = { version = "0.2.1" }
+bytemuck = { version = "1.21.0", features = ["derive"] }
+shank = { version = "0.4.2", path = "../../shank/shank/" }
+heapless = "0.8.0"
+num_enum = "0.7.3"
+thiserror = "2.0.3"
+swig-compact-instructions = { path = "../instructions" }
+swig-state = { path = "../state" }
+borsh = { version = "1.5.3", default-features = false }
+
+[dev-dependencies]
+solana-sdk = "=2.1.0"
+rand = "0.8.5"
+swig-interface = { path = "../interface" }
+litesvm-token = { git = "https://github.com/litesvm/litesvm" }
+litesvm = { git = "https://github.com/litesvm/litesvm" }
+test-log = "0.2.16"
+anyhow = "1.0.71"
+
+[features]
+test-bpf = []
+no-entrypoint = []
+
+[lib]
+crate-type = ["cdylib", "lib"]
