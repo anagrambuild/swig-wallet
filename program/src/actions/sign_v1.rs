@@ -101,7 +101,6 @@ pub fn sign_v1(
         msg!("SignV1 Args Error: {:?}", e);
         ProgramError::InvalidInstructionData
     })?;
-
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let id = Swig::raw_get_id(&swig_account_data);
     let bump = Swig::raw_get_bump(&swig_account_data);
@@ -129,6 +128,7 @@ pub fn sign_v1(
     for ix in ix_iter {
         if let Ok(instruction) = ix {
             instruction.execute(&all_accounts, &ctx.accounts.swig.key(), &[signer.as_slice().into()])?;
+            msg!("Instruction executed");
         } else {
             return Err(SwigError::InstructionError(ix.err().unwrap()).into());
         }

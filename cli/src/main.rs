@@ -11,11 +11,14 @@ use directories::BaseDirs;
 use secp256k1::{PublicKey as Secp256k1PublicKey, Secp256k1, SecretKey as Secp256k1SecretKey};
 use solana_account_decoder_client_types::{ParsedAccount, UiAccountData};
 use solana_cli_config::{Config, CONFIG_FILE};
-use solana_client::{rpc_client::RpcClient, rpc_request::TokenAccountsFilter};
+use solana_client::{
+    rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig, rpc_request::TokenAccountsFilter,
+};
 use solana_pubkey::pubkey as pubkey_macro;
 use solana_sdk::{
     account::ReadableAccount,
     address_lookup_table::{state::AddressLookupTable, AddressLookupTableAccount},
+    commitment_config::CommitmentConfig,
     compute_budget::ComputeBudgetInstruction,
     instruction::{AccountMeta, Instruction},
     keccak::hash,
@@ -539,7 +542,15 @@ fn main_fn() -> Result<()> {
                     )?;
                     let result = ctx
                         .rpc_client
-                        .send_and_confirm_transaction_with_spinner(&txn)?;
+                        .send_and_confirm_transaction_with_spinner_and_config(
+                            &txn,
+                            CommitmentConfig::processed(),
+                            RpcSendTransactionConfig {
+                                skip_preflight: true,
+                                ..Default::default()
+                            },
+                        )?;
+
                     println!("Transaction result: {:?}", result);
                     diplay_swig(&ctx, swig_id).unwrap();
                 }

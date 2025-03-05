@@ -9,7 +9,13 @@ use std::mem::MaybeUninit;
 use actions::process_action;
 use error::SwigError;
 use pinocchio::{
-    account_info::AccountInfo, lazy_entrypoint::{InstructionContext, MaybeAccount}, memory::sol_memcmp, msg, program_error::ProgramError, pubkey::Pubkey, ProgramResult
+    account_info::AccountInfo,
+    lazy_entrypoint::{InstructionContext, MaybeAccount},
+    memory::sol_memcmp,
+    msg,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    ProgramResult,
 };
 
 #[cfg(not(feature = "no-entrypoint"))]
@@ -22,17 +28,19 @@ const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5D
 const SPL_TOKEN_2022_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 const STAKING_ID: Pubkey = pubkey!("Stake11111111111111111111111111111111111111");
 
+pinocchio::default_allocator!();
+pinocchio::default_panic_handler!();
+
 #[cfg(not(feature = "no-entrypoint"))]
 lazy_entrypoint!(process_instruction);
 pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
     const AI: MaybeUninit<AccountInfo> = MaybeUninit::<AccountInfo>::uninit();
+    const AC: MaybeUninit<AccountClassification> = MaybeUninit::<AccountClassification>::uninit();
     let mut accounts = [AI; 128];
-    let mut classifiers = [AccountClassification::None; 128];
+    let mut classifiers = [AC; 128];
     unsafe {
         execute(&mut ctx, &mut accounts, &mut classifiers)?;
     }
-    pinocchio::default_allocator!();
-    pinocchio::default_panic_handler!();
     Ok(())
 }
 
@@ -41,13 +49,13 @@ pub enum StakeAccountState {
     Uninitialized,
     Initialized,
     Stake,
-    RewardsPool
+    RewardsPool,
 }
 
 #[derive(PartialEq, Debug, Copy, Clone)]
 pub enum AccountClassification {
     None,
-    ThisSwig{
+    ThisSwig {
         lamports: u64,
     },
     SwigTokenAccount {
@@ -67,7 +75,7 @@ pub enum AccountClassification {
 unsafe fn execute(
     ctx: &mut InstructionContext,
     accounts: &mut [MaybeUninit<AccountInfo>],
-    account_classification: &mut [AccountClassification],
+    account_classification: &mut [MaybeUninit<AccountClassification>],
 ) -> Result<(), ProgramError> {
     let mut index: usize = 0;
     let mut remaining = ctx.remaining();
@@ -75,7 +83,7 @@ unsafe fn execute(
         match ctx.next_account_unchecked() {
             MaybeAccount::Account(account) => {
                 let classification = classify_account(index, &account, accounts)?;
-                account_classification[index] = classification;
+                account_classification[index] = MaybeUninit::new(classification);
                 accounts[index] = MaybeUninit::new(account);
             }
             MaybeAccount::Duplicated(account_index) => {
@@ -86,7 +94,11 @@ unsafe fn execute(
         index += 1;
     }
     let instruction = unsafe { ctx.instruction_data_unchecked() };
-    process_action(core::slice::from_raw_parts(accounts.as_ptr() as _, index+1), core::slice::from_raw_parts(account_classification.as_ptr() as _, index+1), instruction)?;
+    process_action(
+        core::slice::from_raw_parts(accounts.as_ptr() as _, index + 1),
+        core::slice::from_raw_parts(account_classification.as_ptr() as _, index + 1),
+        instruction,
+    )?;
     Ok(())
 }
 
@@ -103,7 +115,7 @@ unsafe fn classify_account(
         &crate::ID => {
             let data = account.borrow_data_unchecked();
             if data[0] == Discriminator::SwigAccount as u8 {
-                Ok(AccountClassification::ThisSwig{
+                Ok(AccountClassification::ThisSwig {
                     lamports: account.lamports(),
                 })
             } else {
@@ -119,13 +131,17 @@ unsafe fn classify_account(
         &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if account.data_len() == 165 && index > 0 => unsafe {
             let data = account.borrow_data_unchecked();
             if sol_memcmp(accounts[0].assume_init_ref().key(), &data[32..64], 32) == 0 {
-                Ok(AccountClassification::SwigTokenAccount{
-                    balance: u64::from_le_bytes(data[64..72].try_into().map_err(|_| ProgramError::InvalidAccountData)?),
+                Ok(AccountClassification::SwigTokenAccount {
+                    balance: u64::from_le_bytes(
+                        data[64..72]
+                            .try_into()
+                            .map_err(|_| ProgramError::InvalidAccountData)?,
+                    ),
                 })
             } else {
                 Ok(AccountClassification::None)
             }
-        }
+        },
         //TODO add staking account
         _ => Ok(AccountClassification::None),
     }
