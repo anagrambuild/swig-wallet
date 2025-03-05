@@ -17,7 +17,6 @@ use pinocchio::lazy_entrypoint;
 use pinocchio_pubkey::declare_id;
 use pinocchio_pubkey::pubkey;
 use swig_state::Discriminator;
-
 declare_id!("swigNmWhy8RvUYXBKV5TSU8Hh3f4o5EczHouzBzEsLC");
 const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const SPL_TOKEN_2022_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
@@ -38,6 +37,14 @@ pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
 }
 
 #[derive(PartialEq, Debug, Copy, Clone)]
+pub enum StakeAccountState {
+    Uninitialized,
+    Initialized,
+    Stake,
+    RewardsPool
+}
+
+#[derive(PartialEq, Debug, Copy, Clone)]
 pub enum AccountClassification {
     None,
     ThisSwig{
@@ -47,6 +54,7 @@ pub enum AccountClassification {
         balance: u64,
     },
     SwigStakingAccount {
+        state: StakeAccountState,
         balance: u64,
     },
 }
@@ -101,6 +109,12 @@ unsafe fn classify_account(
             } else {
                 Ok(AccountClassification::None)
             }
+        }
+        &STAKING_ID => {
+            let data = account.borrow_data_unchecked();
+
+            //TODO add staking account
+            Ok(AccountClassification::None)
         }
         &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if account.data_len() == 165 && index > 0 => unsafe {
             let data = account.borrow_data_unchecked();

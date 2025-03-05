@@ -298,11 +298,14 @@ pub type RolePermission = (Permission, RoleActionType, u8);
 pub enum TokenAction {
     All,
     Manage(u64),
+    Temporal(u64, u64, u64),
 }
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone, Copy)]
 pub enum SolAction {
     All,
     Manage(u64),
+    //Amount, Window, Last
+    Temporal(u64, u64, u64),
 }
 
 impl SolAction {
@@ -310,6 +313,8 @@ impl SolAction {
         match self {
             SolAction::All => 1,
             SolAction::Manage(_) => 1 + 8,
+            SolAction::Temporal(_, _, _) => 1 + 8 + 8 + 8,
+            
         }
     }
 }
@@ -329,6 +334,7 @@ impl TokenAction {
         match self {
             TokenAction::All => 1,
             TokenAction::Manage(_) => 1 + 8,
+            TokenAction::Temporal(_, _, _) => 1 + 8 + 8 + 8,
         }
     }
 }

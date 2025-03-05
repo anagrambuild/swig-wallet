@@ -462,7 +462,7 @@ fn main_fn() -> Result<()> {
             let rt = Runtime::new().unwrap();
             let (budget, fee, ix, alts) = rt.block_on(async {
                 let jupiter_swap_api_client =
-                    JupiterSwapApiClient::new("https://quote-api.jup.ag/v6".to_string());
+                    JupiterSwapApiClient::new("https://api.jup.ag/swap/v1/".to_string());
 
                 let quote_request = QuoteRequest {
                     amount: amount,
@@ -634,6 +634,14 @@ fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
                 } => {
                     println!("\t\t{}: Sol Manage {:?}", index, amount);
                 }
+                Action::Sol {
+                    action: SolAction::Temporal(amount, interval, last_action),
+                } => {
+                    println!(
+                        "\t\t{}: Sol Temporal {:?} {:?} {:?}",
+                        index, amount, interval, last_action
+                    );
+                }
                 Action::Token {
                     key,
                     action: TokenAction::All,
@@ -655,6 +663,19 @@ fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
                         amount
                     );
                 }
+                Action::Token {
+                    key,
+                    action: TokenAction::Temporal(amount, interval, last_action),
+                } => {
+                    println!(
+                        "\t\t{}: Token {:?} Temporal {:?} {:?} {:?}",
+                        index,
+                        bs58::encode(key.as_ref()).into_string(),
+                        amount,
+                        interval,
+                        last_action
+                    );
+                }
                 Action::Tokens {
                     action: TokenAction::All,
                 } => {
@@ -664,6 +685,14 @@ fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
                     action: TokenAction::Manage(amount),
                 } => {
                     println!("\t\t{}: Tokens Manage {:?}", index, amount);
+                }
+                Action::Tokens {
+                    action: TokenAction::Temporal(amount, interval, last_action),
+                } => {
+                    println!(
+                        "\t\t{}: Tokens Temporal {:?} {:?} {:?}",
+                        index, amount, interval, last_action
+                    );
                 }
             }
         }
