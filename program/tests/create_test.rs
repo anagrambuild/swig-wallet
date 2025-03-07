@@ -4,7 +4,14 @@ use common::*;
 
 use litesvm_token::spl_token::{self, instruction::TokenInstruction};
 use solana_sdk::{
-    compute_budget, instruction::{AccountMeta, Instruction}, message::{v0, VersionedMessage}, program_pack::Pack, pubkey::Pubkey, signature::Keypair, signer::Signer, transaction::VersionedTransaction
+    compute_budget,
+    instruction::{AccountMeta, Instruction},
+    message::{v0, VersionedMessage},
+    program_pack::Pack,
+    pubkey::Pubkey,
+    signature::Keypair,
+    signer::Signer,
+    transaction::VersionedTransaction,
 };
 use swig_state::{swig_account_seeds, Swig};
 
@@ -81,13 +88,13 @@ fn test_create_basic_token_transfer() {
         swig,
         swig_authority.pubkey(),
         swig_authority.pubkey(),
-        vec![ixd],
+        ixd,
         0,
-    ).unwrap();
-    let heap_increase_ix = compute_budget::ComputeBudgetInstruction::request_heap_frame(256 * 1024);
+    )
+    .unwrap();
     let transfer_message = v0::Message::try_compile(
         &swig_authority.pubkey(),
-        &[heap_increase_ix,sign_ix],
+        &[sign_ix],
         &[],
         context.svm.latest_blockhash(),
     )
@@ -105,4 +112,3 @@ fn test_create_basic_token_transfer() {
     let token_account = spl_token::state::Account::unpack(&account.data).unwrap();
     assert_eq!(token_account.amount, 900);
 }
-

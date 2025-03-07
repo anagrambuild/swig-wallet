@@ -31,11 +31,11 @@ pub fn process_action(
         }
         SwigInstruction::SignV1 => {
             let account_ctx = SignV1Accounts::context(accounts)?;
-            sign_v1(account_ctx, accounts, &data, account_classification)
+            sign_v1(account_ctx, accounts, data, account_classification)
         }
         SwigInstruction::AddAuthorityV1 => {
             let account_ctx = AddAuthorityV1Accounts::context(accounts)?;
-            add_authority_v1(account_ctx, &data, accounts)
+            add_authority_v1(account_ctx, data, accounts)
         }
         _ => Err(ProgramError::InvalidInstructionData),
     }

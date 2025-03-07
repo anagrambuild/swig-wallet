@@ -313,7 +313,7 @@ fn main_fn() -> Result<()> {
                         swig_id,
                         ctx.payer.pubkey(),
                         auth_pubkey,
-                        vec![transfer_ix],
+                        transfer_ix,
                         auth_context.role_id,
                     )?;
                     let me = v0::Message::try_compile(
@@ -472,6 +472,7 @@ fn main_fn() -> Result<()> {
                     input_mint: Pubkey::from_str(&input_token).unwrap(),
                     output_mint: Pubkey::from_str(&output_token).unwrap(),
                     slippage_bps: slippage.unwrap_or(0),
+                    max_accounts: Some(62),
                     auto_slippage: slippage.map(|_| Some(false)).unwrap_or(Some(true)),
                     ..Default::default()
                 };
@@ -481,7 +482,7 @@ fn main_fn() -> Result<()> {
                     quote_response,
                     user_public_key: swig_id,
                     config: TransactionConfig {
-                        use_shared_accounts: Some(false),
+                        use_shared_accounts: Some(true),
                         allow_optimized_wrapped_sol_token_account: true,
                         ..Default::default()
                     },
@@ -512,7 +513,7 @@ fn main_fn() -> Result<()> {
                         swig_id,
                         ctx.payer.pubkey(),
                         auth_pubkey,
-                        vec![ix],
+                        ix,
                         auth_context.role_id,
                     )?;
                     println!("outerix: {:?}", outerix.accounts.len());

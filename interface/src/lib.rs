@@ -156,7 +156,7 @@ impl SignInstruction {
         swig_account: Pubkey,
         payer: Pubkey,
         authority: Pubkey,
-        inner_instructions: Vec<Instruction>,
+        inner_instruction: Instruction,
         role_id: u8,
     ) -> anyhow::Result<Instruction> {
         let accounts = vec![
@@ -164,7 +164,7 @@ impl SignInstruction {
             AccountMeta::new(payer, true),
             AccountMeta::new_readonly(authority, true),
         ];
-        let (accounts, ixs) = compact_instructions(swig_account, accounts, inner_instructions);
+        let (accounts, ixs) = compact_instructions(swig_account, accounts, vec![inner_instruction]);
         let args = SignV1Args::new(role_id, 1, ixs.inner_instructions.len() as u16);
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),

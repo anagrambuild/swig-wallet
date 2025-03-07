@@ -79,7 +79,7 @@ fn test_transfer_sol_with_additional_authority() {
         swig,
         second_authority.pubkey(),
         second_authority.pubkey(),
-        vec![ixd],
+        ixd,
         1, //new authority role id
     )
     .unwrap();
@@ -165,7 +165,7 @@ fn test_transfer_sol_all_with_authority() {
         swig,
         second_authority.pubkey(),
         second_authority.pubkey(),
-        vec![ixd],
+        ixd,
         1,
     )
     .unwrap();
@@ -218,7 +218,7 @@ fn test_transfer_sol_and_tokens_with_mixed_permissions() {
 
     let id = rand::random::<[u8; 13]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
-
+    context.svm.warp_to_slot(10);
     // Setup token infrastructure
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
@@ -232,7 +232,7 @@ fn test_transfer_sol_and_tokens_with_mixed_permissions() {
         &mut context.svm,
         &mint_pubkey,
         &recipient.pubkey(),
-        &recipient,
+        &context.default_payer,
     )
     .unwrap();
 
@@ -277,8 +277,9 @@ fn test_transfer_sol_and_tokens_with_mixed_permissions() {
 
     context.svm.airdrop(&swig, 10_000_000_000).unwrap();
     let sol_amount = 50;
-    let token_amount = 500; 
+    let token_amount = 500;
 
+    context.svm.warp_to_slot(100);
     let sol_ix = system_instruction::transfer(&swig, &recipient.pubkey(), sol_amount);
     let token_ix = Instruction {
         program_id: spl_token::id(),
@@ -293,18 +294,35 @@ fn test_transfer_sol_and_tokens_with_mixed_permissions() {
         .pack(),
     };
 
+    let account = context.svm.get_account(&swig_ata).unwrap();
+    let token_account = spl_token::state::Account::unpack(&account.data).unwrap();
+
+    let raccount = context.svm.get_account(&recipient_ata).unwrap();
+    let rtoken_account = spl_token::state::Account::unpack(&raccount.data).unwrap();
+
+    println!("pk: {} account: {:?}", swig_ata, token_account);
+    println!("pk: {} account: {:?}", recipient_ata, rtoken_account);
     let sign_ix = swig_interface::SignInstruction::new_ed25519(
         swig,
         second_authority.pubkey(),
         second_authority.pubkey(),
-        vec![sol_ix, token_ix],
+        token_ix,
+        1,
+    )
+    .unwrap();
+
+    let sign_ix2 = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        second_authority.pubkey(),
+        second_authority.pubkey(),
+        sol_ix,
         1,
     )
     .unwrap();
 
     let transfer_message = v0::Message::try_compile(
         &second_authority.pubkey(),
-        &[sign_ix],
+        &[sign_ix, sign_ix2],
         &[],
         context.svm.latest_blockhash(),
     )
@@ -390,7 +408,7 @@ fn test_fail_transfer_sol_with_additional_authority_not_enough() {
         swig,
         second_authority.pubkey(),
         second_authority.pubkey(),
-        vec![ixd],
+        ixd,
         1, //new authority role id
     )
     .unwrap();
@@ -462,7 +480,7 @@ fn fail_not_correct_authority() {
         swig,
         fake_authority.pubkey(),
         fake_authority.pubkey(),
-        vec![ixd],
+        ixd,
         1, //new authority role id
     )
     .unwrap();
@@ -561,7 +579,7 @@ fn fail_not_wrong_resource() {
         swig,
         second_authority.pubkey(),
         second_authority.pubkey(),
-        vec![ixd],
+        ixd,
         1,
     )
     .unwrap();

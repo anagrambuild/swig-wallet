@@ -1,7 +1,13 @@
 mod compact_instructions;
 pub use compact_instructions::*;
 use pinocchio::{
-    account_info::AccountInfo, instruction::{Account, AccountMeta, Instruction, Signer}, program::invoke_signed_unchecked, program_error::ProgramError, pubkey::Pubkey, ProgramResult
+    account_info::AccountInfo,
+    instruction::{Account, AccountMeta, Instruction, Signer},
+    msg,
+    program::invoke_signed_unchecked,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    ProgramResult,
 };
 use std::marker::PhantomData;
 use thiserror::Error;
@@ -25,12 +31,12 @@ pub struct InstructionHolder<'a> {
 }
 
 impl<'a> InstructionHolder<'a> {
-    pub fn execute(&'a self, 
-    all_accounts: &'a [AccountInfo], 
-    swig_key: &'a Pubkey,
-    swig_signer: &[Signer]
-
-) -> ProgramResult {
+    pub fn execute(
+        &'a self,
+        all_accounts: &'a [AccountInfo],
+        swig_key: &'a Pubkey,
+        swig_signer: &[Signer],
+    ) -> ProgramResult {
         if self.program_id == &pinocchio_system::ID
             && self.data[0..4] == [2, 0, 0, 0]
             && self.accounts[0].pubkey == swig_key
@@ -46,16 +52,11 @@ impl<'a> InstructionHolder<'a> {
             }
         } else {
             unsafe {
-                invoke_signed_unchecked(
-                    &self.borrow(),
-                    self.cpi_accounts.as_slice(),
-                    swig_signer,
-                )
+                invoke_signed_unchecked(&self.borrow(), self.cpi_accounts.as_slice(), swig_signer)
             }
         }
         Ok(())
     }
-    
 }
 pub trait AccountProxy<'a> {
     fn signer(&self) -> bool;
@@ -68,6 +69,7 @@ where
     T: AccountProxy<'a>,
 {
     fn get_account(&self, index: usize) -> Result<T, InstructionError>;
+    fn size(&self) -> usize;
 }
 
 pub trait RestrictedKeys {
@@ -127,6 +129,10 @@ impl<'a> AccountProxy<'a> for &'a AccountInfo {
 impl<'a> AccountLookup<'a, &'a AccountInfo> for &'a [AccountInfo] {
     fn get_account(&self, index: usize) -> Result<&'a AccountInfo, InstructionError> {
         self.get(index).ok_or(InstructionError::MissingAccountInfo)
+    }
+
+    fn size(&self) -> usize {
+        self.len()
     }
 }
 
@@ -202,7 +208,6 @@ where
                     && !self.restricted_keys.is_restricted(pubkey),
                 is_writable: account.writable(),
             });
-
             infos.push(account.into_account());
         }
 
@@ -211,6 +216,7 @@ where
         self.cursor = cursor;
         let (data, cursor) = self.read_slice(data_len as usize)?;
         self.cursor = cursor;
+
         Ok(InstructionHolder {
             program_id,
             cpi_accounts: infos,

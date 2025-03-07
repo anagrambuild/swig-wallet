@@ -6216,6 +6216,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "borsh 1.5.3",
+ "bs58",
  "bytemuck",
  "heapless",
  "litesvm",
@@ -6267,6 +6268,7 @@ dependencies = [
 name = "swig-compact-instructions"
 version = "0.0.1"
 dependencies = [
+ "bs58",
  "bytemuck",
  "pinocchio",
  "pinocchio-system",

@@ -1,6 +1,11 @@
 #[cfg(feature = "client")]
 mod inner {
-    use solana_program::{instruction::{AccountMeta, Instruction}, pubkey::Pubkey};
+    use std::collections::HashMap;
+
+    use solana_program::{
+        instruction::{AccountMeta, Instruction},
+        pubkey::Pubkey,
+    };
 
     use super::{CompactInstruction, CompactInstructions};
     pub fn compact_instructions(
@@ -9,7 +14,11 @@ mod inner {
         inner_instructions: Vec<Instruction>,
     ) -> (Vec<AccountMeta>, CompactInstructions) {
         let mut compact_ix = Vec::with_capacity(inner_instructions.len());
-        let hash_set = accounts.iter().map(|x| x.pubkey).collect::<std::collections::HashSet<Pubkey>>();
+        let mut hashmap = accounts
+            .iter()
+            .enumerate()
+            .map(|(i, x)| (x.pubkey, i))
+            .collect::<HashMap<Pubkey, usize>>();
         for ix in inner_instructions.into_iter() {
             let program_id_index = accounts.len();
             accounts.push(AccountMeta::new_readonly(ix.program_id, false));
@@ -18,11 +27,15 @@ mod inner {
                 if ix_account.pubkey == swig_account {
                     ix_account.is_signer = false;
                 }
-                let account_index = accounts.len() as u8;
-                if !hash_set.contains(&ix_account.pubkey) {
+                let account_index = hashmap.get(&ix_account.pubkey);
+                if let Some(index) = account_index {
+                    accts.push(*index as u8);
+                } else {
+                    let idx = accounts.len();
+                    hashmap.insert(ix_account.pubkey, idx);
                     accounts.push(ix_account);
-                }
-                accts.push(account_index);
+                    accts.push(idx as u8);
+                } 
             }
             compact_ix.push(CompactInstruction {
                 program_id_index: program_id_index as u8,
@@ -31,7 +44,12 @@ mod inner {
             });
         }
 
-        (accounts, CompactInstructions { inner_instructions: compact_ix })
+        (
+            accounts,
+            CompactInstructions {
+                inner_instructions: compact_ix,
+            },
+        )
     }
 }
 #[cfg(feature = "client")]
@@ -51,7 +69,6 @@ pub struct CompactInstructionRef<'a> {
     pub accounts: &'a [u8],
     pub data: &'a [u8],
 }
-
 
 impl CompactInstructions {
     pub fn into_bytes(&self) -> Vec<u8> {

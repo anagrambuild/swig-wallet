@@ -78,25 +78,23 @@ unsafe fn execute(
     account_classification: &mut [MaybeUninit<AccountClassification>],
 ) -> Result<(), ProgramError> {
     let mut index: usize = 0;
-    let mut remaining = ctx.remaining();
-    while remaining > 0 {
-        match ctx.next_account_unchecked() {
+    while let Ok(acc) = ctx.next_account() {
+        match acc {
             MaybeAccount::Account(account) => {
                 let classification = classify_account(index, &account, accounts)?;
-                account_classification[index] = MaybeUninit::new(classification);
-                accounts[index] = MaybeUninit::new(account);
+                account_classification[index].write(classification);
+                accounts[index].write(account);
             }
             MaybeAccount::Duplicated(account_index) => {
                 accounts[index].write(accounts[account_index as usize].assume_init_ref().clone());
             }
         }
-        remaining -= 1;
         index += 1;
     }
     let instruction = unsafe { ctx.instruction_data_unchecked() };
     process_action(
-        core::slice::from_raw_parts(accounts.as_ptr() as _, index + 1),
-        core::slice::from_raw_parts(account_classification.as_ptr() as _, index + 1),
+        core::slice::from_raw_parts(accounts.as_ptr() as _, index),
+        core::slice::from_raw_parts(account_classification.as_ptr() as _, index),
         instruction,
     )?;
     Ok(())

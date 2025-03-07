@@ -19,7 +19,7 @@ thiserror = "2.0.3"
 swig-compact-instructions = { path = "../instructions" }
 swig-state = { path = "../state" }
 borsh = { version = "1.5.3", default-features = false }
-
+bs58 = "*"
 [dev-dependencies]
 solana-sdk = "=2.1.0"
 rand = "0.8.5"

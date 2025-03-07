@@ -92,7 +92,7 @@ pub fn sign_v1(
     data: &[u8],
     account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
-    check_stack_height(1, SwigError::CPI)?;
+    check_stack_height(1, SwigError::CPI)?; //todo think about if this is necessary
     check_self_owned(
         ctx.accounts.swig,
         SwigError::OwnerMismatch(SWIG_ACCOUNT_NAME),
@@ -183,10 +183,9 @@ pub fn sign_v1(
                     //Allow account closure if the token account is empty
                     let data = unsafe { current_account.borrow_mut_data_unchecked() };
                     let mint = &data[0..32];
-                    let delgate = &data[72..76];
-                    let state = &data[76];
-
-                    if delgate != &[0u8; 4] {
+                    let delegate = &data[72..76];
+                    let state = &data[108];
+                    if delegate != &[0u8; 4] {
                         return Err(SwigError::PermissionDenied(
                             "Token account cannot be have delegate",
                         )
