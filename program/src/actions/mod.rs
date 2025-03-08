@@ -1,10 +1,13 @@
-pub mod create_v1;
-pub mod sign_v1;
 pub mod add_authority_v1;
-use self::create_v1::*;
-use self::sign_v1::*;
+pub mod create_v1;
+pub mod remove_authority_v1;
+pub mod sign_v1;
 use self::add_authority_v1::*;
+use self::create_v1::*;
+use self::remove_authority_v1::*;
+use self::sign_v1::*;
 use crate::instruction::accounts::AddAuthorityV1Accounts;
+use crate::instruction::accounts::RemoveAuthorityV1Accounts;
 use crate::instruction::{
     accounts::{CreateV1Accounts, SignV1Accounts},
     SwigInstruction,
@@ -36,6 +39,10 @@ pub fn process_action(
         SwigInstruction::AddAuthorityV1 => {
             let account_ctx = AddAuthorityV1Accounts::context(accounts)?;
             add_authority_v1(account_ctx, data, accounts)
+        }
+        SwigInstruction::RemoveAuthorityV1 => {
+            let account_ctx = RemoveAuthorityV1Accounts::context(accounts)?;
+            remove_authority_v1(account_ctx, data, accounts)
         }
         _ => Err(ProgramError::InvalidInstructionData),
     }
