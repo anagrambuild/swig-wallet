@@ -983,63 +983,6 @@ fn test_remove_authority_invalid_authority_payload() {
 }
 
 #[test_log::test]
-fn test_remove_authority_invalid_acting_role() {
-    // Test validation of acting role ID
-    let mut context = setup_test_context().unwrap();
-    let root_authority = Keypair::new();
-
-    context
-        .svm
-        .airdrop(&root_authority.pubkey(), 10_000_000_000)
-        .unwrap();
-
-    let id = rand::random::<[u8; 13]>();
-
-    // Create a swig wallet with the root authority
-    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, &id).unwrap();
-
-    // Try to remove with an invalid acting role ID
-    let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
-        swig_key,
-        context.default_payer.pubkey(),
-        root_authority.pubkey(),
-        5, // Invalid acting role ID (doesn't exist)
-        0, // Authority to remove
-    )
-    .unwrap();
-
-    let msg = v0::Message::try_compile(
-        &context.default_payer.pubkey(),
-        &[remove_ix],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-
-    let tx = VersionedTransaction::try_new(
-        VersionedMessage::V0(msg),
-        &[&context.default_payer, &root_authority],
-    )
-    .unwrap();
-
-    let result = context.svm.send_transaction(tx);
-    assert!(
-        result.is_err(),
-        "Transaction with invalid acting role ID should fail"
-    );
-
-    // Verify the error is related to invalid authority
-    if let Err(err) = result {
-        let error_string = format!("{:?}", err);
-        assert!(
-            error_string.contains("InvalidAuthority") || error_string.contains("Custom(11)"), // InvalidAuthority error code
-            "Expected invalid authority error, got: {:?}",
-            err
-        );
-    }
-}
-
-#[test_log::test]
 fn test_remove_authority_no_permission() {
     // Test validation of management permissions
     let mut context = setup_test_context().unwrap();

@@ -42,8 +42,6 @@ pub enum SwigError {
     DuplicateAuthority,
     #[error("Invalid Operation {0}")]
     InvalidOperation(&'static str),
-    #[error("Insufficient funds for rent exemption")]
-    InsufficientFunds,
 }
 
 impl From<InstructionError> for SwigError {
@@ -74,7 +72,6 @@ impl Into<u32> for SwigError {
             SwigError::InvalidSystemProgram => 16,
             SwigError::DuplicateAuthority => 17,
             SwigError::InvalidOperation { .. } => 18,
-            SwigError::InsufficientFunds => 19,
         }
     }
 }

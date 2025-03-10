@@ -84,8 +84,6 @@ pub fn remove_authority_v1(
     remove: &[u8],
     all_accounts: &[AccountInfo],
 ) -> ProgramResult {
-    // PHASE 1: Validation - Perform all validations before making any state changes
-
     // Basic account validations
     check_self_owned(
         ctx.accounts.swig,
@@ -104,22 +102,14 @@ pub fn remove_authority_v1(
         ProgramError::InvalidInstructionData
     })?;
 
-    // Get account data and deserialize
+    // Get account data and deserialize once
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
     let id = Swig::raw_get_id(&swig_account_data);
     let bump = Swig::raw_get_bump(&swig_account_data);
 
-    // Deserialize the Swig account to get the roles
-    let swig =
+    // Deserialize the Swig account to check role count
+    let mut swig =
         Swig::try_from_slice(&swig_account_data).map_err(|_| SwigError::SerializationError)?;
-
-    if remove_authority_v1.args.acting_role_id as usize >= swig.roles.len() {
-        msg!(
-            "Invalid acting role ID: {}",
-            remove_authority_v1.args.acting_role_id
-        );
-        return Err(SwigError::InvalidAuthority.into());
-    }
 
     // Check if we're trying to remove the last authority
     if swig.roles.len() <= 1 {
@@ -131,32 +121,18 @@ pub fn remove_authority_v1(
     }
 
     // Check if the acting role exists
-    if remove_authority_v1.args.acting_role_id as usize >= swig.roles.len() {
-        msg!(
-            "Invalid acting role ID: {}",
-            remove_authority_v1.args.acting_role_id
-        );
-        return Err(SwigError::InvalidAuthority.into());
-    }
-
-    // Check if the authority to remove exists
-    if remove_authority_v1.args.authority_to_remove_id as usize >= swig.roles.len() {
-        msg!(
-            "Invalid authority ID to remove: {}",
-            remove_authority_v1.args.authority_to_remove_id
-        );
-        return Err(SwigError::InvalidAuthority.into());
-    }
-
-    // Get the acting role
-    let (_, role) = Swig::raw_get_role(
+    let (_, acting_role) = Swig::raw_get_role(
         &swig_account_data,
         remove_authority_v1.args.acting_role_id as usize,
     )
     .ok_or(SwigError::InvalidAuthority)?;
 
-    // Get the role being removed
-    let role_to_remove = &swig.roles[remove_authority_v1.args.authority_to_remove_id as usize];
+    // Check if the authority to remove exists
+    let (_, role_to_remove) = Swig::raw_get_role(
+        &swig_account_data,
+        remove_authority_v1.args.authority_to_remove_id as usize,
+    )
+    .ok_or(SwigError::InvalidAuthority)?;
 
     // Check for self-removal with no other managers
     if remove_authority_v1.args.acting_role_id == remove_authority_v1.args.authority_to_remove_id {
@@ -179,7 +155,7 @@ pub fn remove_authority_v1(
     }
 
     // Check for privilege escalation
-    let acting_has_all = role
+    let acting_has_all = acting_role
         .actions
         .iter()
         .any(|action| matches!(action, Action::All));
@@ -200,31 +176,20 @@ pub fn remove_authority_v1(
     let clock = pinocchio::sysvars::clock::Clock::get()?;
     let current_slot = clock.slot;
 
-    if (role.start_slot > 0 && current_slot < role.start_slot)
-        || (role.end_slot > 0 && current_slot >= role.end_slot)
+    if (acting_role.start_slot > 0 && current_slot < acting_role.start_slot)
+        || (acting_role.end_slot > 0 && current_slot >= acting_role.end_slot)
     {
         msg!(
             "Role is not valid at current slot {}. Valid range: {} to {}",
             current_slot,
-            role.start_slot,
-            role.end_slot
+            acting_role.start_slot,
+            acting_role.end_slot
         );
         return Err(SwigError::PermissionDenied("Role is not valid at current slot").into());
     }
 
-    // Validate authority payload format
-    if role.authority_type == AuthorityType::Ed25519
-        && remove_authority_v1.authority_payload.len() != 1
-    {
-        return Err(SwigError::InvalidAuthorityPayload.into());
-    } else if role.authority_type == AuthorityType::Secp256k1
-        && remove_authority_v1.authority_payload.len() != 65
-    {
-        return Err(SwigError::InvalidAuthorityPayload.into());
-    }
-
     // Authenticate the caller
-    remove_authority_v1.authenticate(&all_accounts, &role)?;
+    remove_authority_v1.authenticate(&all_accounts, &acting_role)?;
 
     // Verify PDA derivation
     let b = [bump];
@@ -236,7 +201,7 @@ pub fn remove_authority_v1(
     )?;
 
     // Check if the role has permission to manage authorities
-    let authorized = role.actions.iter().any(|action| match action {
+    let authorized = acting_role.actions.iter().any(|action| match action {
         Action::ManageAuthority => true,
         Action::All => true,
         _ => false,
@@ -246,27 +211,11 @@ pub fn remove_authority_v1(
         return Err(SwigError::PermissionDenied("No permission to manage authority").into());
     }
 
-    // Calculate new size and check rent exemption
-    let mut new_swig = swig.clone();
-    new_swig
-        .roles
-        .remove(remove_authority_v1.args.authority_to_remove_id as usize);
-    let new_size = new_swig.size();
+    // Calculate new size without cloning
+    let role_size = role_to_remove.size() as usize;
+    let new_size = swig.size() - role_size;
 
-    // Ensure new size is smaller (sanity check)
-    if new_size >= swig_account_data.len() {
-        return Err(SwigError::InvalidOperation("New size should be smaller after removal").into());
-    }
-
-    // Check rent exemption
-    let rent = pinocchio::sysvars::rent::Rent::get()?;
-    let new_minimum_balance = rent.minimum_balance(new_size);
-
-    if ctx.accounts.swig.lamports() < new_minimum_balance {
-        return Err(SwigError::InsufficientFunds.into());
-    }
-
-    // PHASE 2: Execution - All validations passed, now make state changes
+    // Execution - All validations passed, now make state changes
 
     // Log the operation
     msg!(
@@ -274,13 +223,6 @@ pub fn remove_authority_v1(
         remove_authority_v1.args.authority_to_remove_id,
         remove_authority_v1.args.acting_role_id
     );
-
-    // Create a mutable reference to the account data
-    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-
-    // Deserialize again to get a mutable version
-    let mut swig =
-        Swig::try_from_slice(&swig_account_data).map_err(|_| SwigError::SerializationError)?;
 
     // Remove the role
     swig.roles
