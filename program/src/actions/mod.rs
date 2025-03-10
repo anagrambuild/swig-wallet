@@ -1,16 +1,20 @@
 pub mod add_authority_v1;
 pub mod create_v1;
 pub mod remove_authority_v1;
+pub mod replace_authority_v1;
 pub mod sign_v1;
 
 use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError, ProgramResult};
 
-use self::{add_authority_v1::*, create_v1::*, remove_authority_v1::*, sign_v1::*};
+use self::{
+    add_authority_v1::*, create_v1::*, remove_authority_v1::*, replace_authority_v1::*, sign_v1::*,
+};
 use crate::{
     instruction::{
         accounts::{
-            AddAuthorityV1Accounts, CreateV1Accounts, RemoveAuthorityV1Accounts, SignV1Accounts,
+            AddAuthorityV1Accounts, CreateV1Accounts, RemoveAuthorityV1Accounts,
+            ReplaceAuthorityV1Accounts, SignV1Accounts,
         },
         SwigInstruction,
     },
@@ -44,7 +48,10 @@ pub fn process_action(
             let account_ctx = RemoveAuthorityV1Accounts::context(accounts)?;
             remove_authority_v1(account_ctx, data, accounts)
         },
-
+        SwigInstruction::ReplaceAuthorityV1 => {
+            let account_ctx = ReplaceAuthorityV1Accounts::context(accounts)?;
+            replace_authority_v1(account_ctx, data, accounts)
+        },
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
