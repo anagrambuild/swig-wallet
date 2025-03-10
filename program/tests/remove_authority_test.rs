@@ -1334,3 +1334,250 @@ fn test_remove_authority_pda_validation() {
         "Transaction with incorrect swig account should fail"
     );
 }
+
+#[test_log::test]
+fn test_remove_authority_self_removal_protection() {
+    // Test the self-removal protection when there are no other managers
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+    let second_authority = Keypair::new();
+    let third_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&third_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 13]>();
+
+    // Create a swig wallet with the root authority
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, &id).unwrap();
+
+    // Add a second authority with Sol permissions but no management permissions
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![Action::Sol {
+            action: swig_state::SolAction::All,
+        }], // No authority management
+        0,
+        0,
+    )
+    .unwrap();
+
+    // Root authority tries to remove itself (should fail since second authority can't manage)
+    let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        0, // Acting role ID (root authority)
+        0, // Remove itself
+    )
+    .unwrap();
+
+    let blockhash = context.svm.latest_blockhash();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[remove_ix],
+        &[],
+        blockhash,
+    )
+    .unwrap();
+
+    println!("blockhash 1: {:?}", blockhash);
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    assert!(result.is_err(), "Authority should not be able to remove itself when no other authority has management permissions");
+
+    // Verify the error is related to permissions
+    if let Err(err) = result {
+        let error_string = format!("{:?}", err);
+        assert!(
+            error_string.contains("PermissionDenied") || error_string.contains("Custom(15)"), // PermissionDenied error code
+            "Expected permission denied error, got: {:?}",
+            err
+        );
+    }
+
+    // Now add a third authority with management permissions
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: third_authority.pubkey().as_ref(),
+        },
+        vec![Action::ManageAuthority],
+        0,
+        0,
+    )
+    .unwrap();
+
+    // Verify we have three authorities
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = Swig::try_from_slice(&swig_account.data).unwrap();
+    assert_eq!(
+        swig.roles.len(),
+        3,
+        "Should have three authorities at this point"
+    );
+
+    // Root authority should now be able to remove itself
+    let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        0, // Acting role ID (root authority)
+        0, // Remove itself
+    )
+    .unwrap();
+
+    context.svm.expire_blockhash();
+    let blockhash = context.svm.latest_blockhash();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[remove_ix],
+        &[],
+        blockhash,
+    )
+    .unwrap();
+
+    println!("blockhash 2: {:?}", blockhash);
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )
+    .unwrap();
+
+    context.svm.send_transaction(tx).unwrap();
+
+    // Verify that the root authority was removed
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = Swig::try_from_slice(&swig_account.data).unwrap();
+    assert_eq!(
+        swig.roles.len(),
+        2,
+        "Should have two authorities after removal"
+    );
+    assert!(swig.lookup_role(root_authority.pubkey().as_ref()).is_none());
+    assert!(swig
+        .lookup_role(second_authority.pubkey().as_ref())
+        .is_some());
+    assert!(swig
+        .lookup_role(third_authority.pubkey().as_ref())
+        .is_some());
+}
+
+#[test_log::test]
+fn test_remove_authority_multiple_operations() {
+    // Test multiple remove operations in sequence to ensure index handling works correctly
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 13]>();
+
+    // Create a swig wallet with the root authority
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, &id).unwrap();
+
+    // Add 5 more authorities
+    let mut authorities = Vec::new();
+    for i in 0..5 {
+        let authority = Keypair::new();
+        context
+            .svm
+            .airdrop(&authority.pubkey(), 10_000_000_000)
+            .unwrap();
+
+        add_authority_with_ed25519_root(
+            &mut context,
+            &swig_key,
+            &root_authority,
+            AuthorityConfig {
+                authority_type: AuthorityType::Ed25519,
+                authority: authority.pubkey().as_ref(),
+            },
+            vec![Action::ManageAuthority],
+            0,
+            0,
+        )
+        .unwrap();
+
+        authorities.push(authority);
+    }
+
+    // Verify we have 6 authorities total
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = Swig::try_from_slice(&swig_account.data).unwrap();
+    assert_eq!(swig.roles.len(), 6);
+
+    // Remove authorities one by one, always removing index 1
+    // This tests that the indexes are properly adjusted after each removal
+    for i in 0..5 {
+        let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
+            swig_key,
+            context.default_payer.pubkey(),
+            root_authority.pubkey(),
+            0, // Acting role ID (root authority)
+            1, // Always remove authority at index 1
+        )
+        .unwrap();
+
+        context.svm.expire_blockhash();
+        let blockhash = context.svm.latest_blockhash();
+
+        let msg = v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[remove_ix],
+            &[],
+            blockhash,
+        )
+        .unwrap();
+
+        let tx = VersionedTransaction::try_new(
+            VersionedMessage::V0(msg),
+            &[&context.default_payer, &root_authority],
+        )
+        .unwrap();
+
+        context.svm.send_transaction(tx).unwrap();
+
+        // Verify the number of authorities decreases
+        let swig_account = context.svm.get_account(&swig_key).unwrap();
+        let swig = Swig::try_from_slice(&swig_account.data).unwrap();
+        assert_eq!(swig.roles.len(), 6 - (1 + i));
+    }
+
+    // Verify only the root authority remains
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = Swig::try_from_slice(&swig_account.data).unwrap();
+    assert_eq!(swig.roles.len(), 1);
+    assert!(swig.lookup_role(root_authority.pubkey().as_ref()).is_some());
+}
