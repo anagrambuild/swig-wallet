@@ -1,4 +1,3 @@
-
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError};
 use swig_compact_instructions::InstructionError;
 use thiserror::Error;
@@ -41,11 +40,15 @@ pub enum SwigError {
     InvalidSystemProgram,
     #[error("Invalid Authority")]
     DuplicateAuthority,
+    #[error("Invalid Operation {0}")]
+    InvalidOperation(&'static str),
+    #[error("Insufficient funds for rent exemption")]
+    InsufficientFunds,
 }
 
 impl From<InstructionError> for SwigError {
     fn from(e: InstructionError) -> Self {
-      SwigError::InstructionError(e)
+        SwigError::InstructionError(e)
     }
 }
 
@@ -57,7 +60,7 @@ impl Into<u32> for SwigError {
             SwigError::NotOnCurve { .. } => 2,
             SwigError::ExpectedSigner { .. } => 3,
             SwigError::StateError { .. } => 4,
-            SwigError::AccountBorrowFailed { .. } => 5, 
+            SwigError::AccountBorrowFailed { .. } => 5,
             SwigError::InvalidAuthorityType => 6,
             SwigError::CPI => 7,
             SwigError::InvalidSeed(_) => 8,
@@ -70,10 +73,11 @@ impl Into<u32> for SwigError {
             SwigError::PermissionDenied { .. } => 15,
             SwigError::InvalidSystemProgram => 16,
             SwigError::DuplicateAuthority => 17,
+            SwigError::InvalidOperation { .. } => 18,
+            SwigError::InsufficientFunds => 19,
         }
     }
 }
-
 
 impl From<SwigError> for ProgramError {
     fn from(e: SwigError) -> Self {
@@ -81,4 +85,3 @@ impl From<SwigError> for ProgramError {
         ProgramError::Custom(e.into())
     }
 }
-
