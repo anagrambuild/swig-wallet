@@ -29,7 +29,6 @@ pub struct RemoveAuthorityV1Args {
     pub padding1: u8,
     pub authority_payload_len: u16,
     pub padding2: [u8; 2],
-    pub dummy: u64,
 }
 
 impl Authenticatable for RemoveAuthorityV1<'_> {
@@ -50,7 +49,6 @@ impl RemoveAuthorityV1Args {
             padding1: 0,
             authority_payload_len,
             padding2: [0; 2],
-            dummy: 0,
         }
     }
 }
