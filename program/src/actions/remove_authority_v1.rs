@@ -120,19 +120,26 @@ pub fn remove_authority_v1(
         return Err(SwigError::PermissionDenied("Cannot remove the last authority").into());
     }
 
-    // Check if the acting role exists
-    let (_, acting_role) = Swig::raw_get_role(
-        &swig_account_data,
-        remove_authority_v1.args.acting_role_id as usize,
-    )
-    .ok_or(SwigError::InvalidAuthority)?;
+    // Check if the acting role and authority to remove exist
+    if remove_authority_v1.args.acting_role_id as usize >= swig.roles.len() {
+        msg!(
+            "Invalid acting role ID: {}",
+            remove_authority_v1.args.acting_role_id
+        );
+        return Err(SwigError::InvalidAuthority.into());
+    }
 
-    // Check if the authority to remove exists
-    let (_, role_to_remove) = Swig::raw_get_role(
-        &swig_account_data,
-        remove_authority_v1.args.authority_to_remove_id as usize,
-    )
-    .ok_or(SwigError::InvalidAuthority)?;
+    if remove_authority_v1.args.authority_to_remove_id as usize >= swig.roles.len() {
+        msg!(
+            "Invalid authority ID to remove: {}",
+            remove_authority_v1.args.authority_to_remove_id
+        );
+        return Err(SwigError::InvalidAuthority.into());
+    }
+
+    // Get the acting role and role to remove directly by index
+    let acting_role = &swig.roles[remove_authority_v1.args.acting_role_id as usize];
+    let role_to_remove = &swig.roles[remove_authority_v1.args.authority_to_remove_id as usize];
 
     // Check for self-removal with no other managers
     if remove_authority_v1.args.acting_role_id == remove_authority_v1.args.authority_to_remove_id {
