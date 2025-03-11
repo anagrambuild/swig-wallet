@@ -2,3 +2,7 @@
 resolver = "2"
 members = ["program", "interface", "instructions", "state", "cli"]
 
+[workspace.lints.clippy]
+unused_imports = "allow"
+unused_mut = "allow"
+op_ref = "allow"

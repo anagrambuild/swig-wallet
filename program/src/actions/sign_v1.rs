@@ -144,7 +144,7 @@ pub fn sign_v1(
             match account {
                 AccountClassification::ThisSwig { lamports } => {
                     if lamports > &current_account.lamports() {
-                        let amount_diff = lamports - &current_account.lamports();
+                        let amount_diff = lamports - current_account.lamports();
                         if let Some(action) = role.actions.iter_mut().find(|action| match action {
                             Action::Sol { .. } => true,
                             _ => false,
@@ -186,7 +186,7 @@ pub fn sign_v1(
                     let mint = &data[0..32];
                     let delegate = &data[72..76];
                     let state = &data[108];
-                    if delegate != &[0u8; 4] {
+                    if delegate != [0u8; 4] {
                         return Err(SwigError::PermissionDenied(
                             "Token account cannot be have delegate",
                         )
