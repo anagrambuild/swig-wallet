@@ -8,7 +8,7 @@ on:
 
 env:
   RUST_VERSION: 1.82.0
-  SOLANA_VERSION: 2.0.13
+  SOLANA_VERSION: 2.1.0
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: sccache
   SCCACHE_GHA_ENABLED: true
@@ -61,7 +61,7 @@ jobs:
           cargo nextest run --all --workspace --no-fail-fast --junit output.xml
 
       - name: Upload Test Results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results

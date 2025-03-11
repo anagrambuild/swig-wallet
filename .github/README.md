@@ -30,7 +30,7 @@ This workflow performs code quality checks:
 The workflows use environment variables to make configuration easier:
 
 - `RUST_VERSION`: The Rust toolchain version (currently 1.82.0)
-- `SOLANA_VERSION`: The Solana tools version (currently 1.18.4)
+- `SOLANA_VERSION`: The Solana tools version (currently 2.1.0)
 
 To update these versions, simply modify the environment variables at the top of each workflow file.
 
