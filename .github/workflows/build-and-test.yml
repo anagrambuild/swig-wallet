@@ -71,5 +71,5 @@ jobs:
         uses: mikepenz/action-junit-report@v3
         if: always()
         with:
-          report_paths: "output.xml"
+          report_paths: "target/nextest/ci/output.xml"
           check_name: "Test Results"
