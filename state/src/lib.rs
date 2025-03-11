@@ -1,5 +1,4 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use bytemuck::{Pod, Zeroable};
 use pinocchio::instruction::Seed;
 
 #[derive(BorshSerialize, BorshDeserialize)]
@@ -38,13 +37,13 @@ pub struct Swig {
 }
 
 #[inline(always)]
-pub fn swig_account_seeds<'a>(id: &'a [u8]) -> [&[u8]; 2] {
-    [b"swig".as_ref(), id.as_ref()]
+pub fn swig_account_seeds(id: &[u8]) -> [&[u8]; 2] {
+    [b"swig".as_ref(), id]
 }
 
 #[inline(always)]
 pub fn swig_account_seeds_with_bump<'a>(id: &'a [u8], bump: &'a [u8]) -> [&'a [u8]; 3] {
-    [b"swig".as_ref(), id.as_ref(), bump]
+    [b"swig".as_ref(), id, bump]
 }
 
 pub fn swig_account_signer<'a>(id: &'a [u8], bump: &'a [u8; 1]) -> [Seed<'a>; 3] {
@@ -115,7 +114,8 @@ impl Swig {
         let mut offset = offset + 4;
         for i in 0..size {
             let role_size = usize::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
-            let data_size = u32::from_le_bytes(data[offset + 25..offset + 29].try_into().unwrap()) as usize;
+            let data_size =
+                u32::from_le_bytes(data[offset + 25..offset + 29].try_into().unwrap()) as usize;
             let authority_data = data[offset + 29..offset + 29 + data_size].to_vec();
             if authority_data == authority {
                 return Some(i);
@@ -142,10 +142,10 @@ impl Swig {
         self.roles
             .iter()
             .enumerate()
-            .find(|(_, role)| &role.authority_data == authority)
+            .find(|(_, role)| role.authority_data == authority)
             .map(|(i, role)| IndexedRole {
                 index: i as u8,
-                role: role,
+                role,
             })
     }
 }
@@ -304,7 +304,7 @@ pub enum TokenAction {
 pub enum SolAction {
     All,
     Manage(u64),
-    //Amount, Window, Last
+    // Amount, Window, Last
     Temporal(u64, u64, u64),
 }
 
@@ -314,7 +314,6 @@ impl SolAction {
             SolAction::All => 1,
             SolAction::Manage(_) => 1 + 8,
             SolAction::Temporal(_, _, _) => 1 + 8 + 8 + 8,
-            
         }
     }
 }
@@ -354,9 +353,10 @@ impl Action {
 
 #[cfg(test)]
 mod tests {
+    use borsh::BorshSerialize;
+
     use super::*;
     use crate::Role;
-    use borsh::BorshSerialize;
 
     #[test]
     fn test_raw_swig() {

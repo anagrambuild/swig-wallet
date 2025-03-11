@@ -1,13 +1,10 @@
-use pinocchio::msg;
 use pinocchio::{
     account_info::AccountInfo,
     program_error::ProgramError,
     pubkey::{create_program_address, find_program_address, Pubkey},
-    syscalls::{sol_curve_validate_point, sol_get_stack_height, sol_memcmp_},
     ProgramResult,
 };
 use pinocchio_system::ID as SYSTEM_ID;
-use std::mem::MaybeUninit;
 
 #[cfg(target_os = "solana")]
 #[inline(always)]
@@ -26,7 +23,7 @@ pub fn sol_assert_bytes_eq(left: &[u8], right: &[u8], len: usize) -> bool {
 
 #[cfg(not(target_os = "solana"))]
 pub fn sol_assert_bytes_eq(left: &[u8], right: &[u8], len: usize) -> bool {
-    return left.len() != len || right.len() != len;
+    left.len() != len || right.len() != len
 }
 
 macro_rules! sol_assert {

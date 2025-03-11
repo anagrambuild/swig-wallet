@@ -12,7 +12,7 @@ pinocchio-pubkey = { version = "0.2.2" }
 pinocchio = { version = "0.7.1", features = ["std"] }
 pinocchio-system = { version = "0.2.1" }
 bytemuck = { version = "1.21.0", features = ["derive"] }
-shank = { version = "0.4.2", path = "../../shank/shank/" }
+shank = { version = "0.4.2", git = "https://github.com/anagrambuild/shank.git" }
 heapless = "0.8.0"
 num_enum = "0.7.3"
 thiserror = "2.0.3"

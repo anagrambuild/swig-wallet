@@ -1,9 +1,7 @@
 mod common;
 use borsh::BorshDeserialize;
 use common::*;
-
 use litesvm_token::spl_token::{self, instruction::TokenInstruction};
-use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use solana_sdk::{
     instruction::{AccountMeta, Instruction, InstructionError},
     message::{v0, VersionedMessage},
@@ -80,7 +78,7 @@ fn test_transfer_sol_with_additional_authority() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         ixd,
-        1, //new authority role id
+        1, // new authority role id
     )
     .unwrap();
     let transfer_message = v0::Message::try_compile(
@@ -333,7 +331,7 @@ fn test_transfer_sol_and_tokens_with_mixed_permissions() {
             .unwrap();
 
     let res = context.svm.send_transaction(transfer_tx);
-    if !res.is_ok() {
+    if res.is_err() {
         let e = res.unwrap_err();
         println!("Logs {} - {:?}", e.err, e.meta.logs);
     }
@@ -409,7 +407,7 @@ fn test_fail_transfer_sol_with_additional_authority_not_enough() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         ixd,
-        1, //new authority role id
+        1, // new authority role id
     )
     .unwrap();
     let transfer_message = v0::Message::try_compile(
@@ -481,7 +479,7 @@ fn fail_not_correct_authority() {
         fake_authority.pubkey(),
         fake_authority.pubkey(),
         ixd,
-        1, //new authority role id
+        1, // new authority role id
     )
     .unwrap();
     let transfer_message = v0::Message::try_compile(

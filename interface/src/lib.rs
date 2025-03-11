@@ -1,25 +1,24 @@
-use borsh::BorshDeserialize;
-use borsh::BorshSerialize;
-use solana_sdk::instruction::AccountMeta;
-use solana_sdk::instruction::Instruction;
-use solana_sdk::pubkey::Pubkey;
-use solana_sdk::system_program;
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_sdk::{
+    instruction::{AccountMeta, Instruction},
+    pubkey::Pubkey,
+    system_program,
+};
 pub use swig;
-use swig::actions::add_authority_v1::AddAuthorityV1Args;
-use swig::actions::sign_v1::SignV1Args;
-use swig::util::ZeroCopy;
+use swig::{
+    actions::{add_authority_v1::AddAuthorityV1Args, sign_v1::SignV1Args},
+    util::ZeroCopy,
+};
 pub use swig_compact_instructions::*;
 pub use swig_state;
-use swig_state::swig_account_seeds;
-use swig_state::Action;
-use swig_state::AuthorityType;
+use swig_state::{swig_account_seeds, Action, AuthorityType};
 
 pub fn program_id() -> Pubkey {
     swig::ID.into()
 }
 
 pub fn swig_key(id: String) -> Pubkey {
-    Pubkey::find_program_address(&swig_account_seeds(&id.as_bytes()), &program_id()).0
+    Pubkey::find_program_address(&swig_account_seeds(id.as_bytes()), &program_id()).0
 }
 
 pub struct AuthorityConfig<'a> {

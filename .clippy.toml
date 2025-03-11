@@ -1,0 +1,24 @@
+# Recommended clippy configuration for Solana projects
+
+# Allow certain practices common in Solana development
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+
+# Cognitive complexity limits
+cognitive-complexity-threshold = 30
+
+# Doc comment style
+doc-valid-idents = ["BPF", "CPI", "JSON", "NFT", "RPC", "SOL", "SVM", "UI"]
+
+# Type complexity
+type-complexity-threshold = 500
+
+# Avoid common issues
+disallowed-methods = [
+  # Avoid unreliable time functions
+  { path = "std::time::SystemTime::now", reason = "use Solana's Clock::get() instead for on-chain code" },
+]
+
+# Other useful configurations
+too-many-lines-threshold = 200
+too-many-arguments-threshold = 8

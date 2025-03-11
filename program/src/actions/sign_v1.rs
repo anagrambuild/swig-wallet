@@ -1,8 +1,14 @@
-use std::{collections::HashSet, io::Cursor};
+use borsh::BorshSerialize;
+use bytemuck::{Pod, Zeroable};
+use pinocchio::{
+    account_info::AccountInfo, msg, program_error::ProgramError, pubkey::Pubkey, ProgramResult,
+};
+use pinocchio_pubkey::from_str;
+use swig_compact_instructions::InstructionIterator;
+use swig_state::{swig_account_signer, Action, AuthorityType, SolAction, Swig, TokenAction};
 
 use crate::{
     assertions::{check_self_owned, check_stack_height},
-    authority_models::authenticate,
     error::SwigError,
     instruction::{
         accounts::{Context, SignV1Accounts},
@@ -11,15 +17,6 @@ use crate::{
     util::ZeroCopy,
     AccountClassification,
 };
-use borsh::{BorshDeserialize, BorshSerialize};
-use bytemuck::{Pod, Zeroable};
-use pinocchio::{
-    account_info::AccountInfo, memory::sol_memcmp, msg, program::invoke_signed_unchecked,
-    program_error::ProgramError, pubkey::Pubkey, ProgramResult,
-};
-use pinocchio_pubkey::from_str;
-use swig_compact_instructions::InstructionIterator;
-use swig_state::{swig_account_signer, Action, AuthorityType, Role, SolAction, Swig, TokenAction};
 // use swig_instructions::InstructionIterator;
 
 pub const INSTRUCTION_SYSVAR_ACCOUNT: Pubkey =
@@ -78,7 +75,7 @@ impl<'a> SignV1<'a> {
         let (authority_payload, instruction_payload) =
             rest.split_at(args.authority_payload_len as usize);
         Ok(Self {
-            args: &args,
+            args,
             authority_payload,
             instruction_payload,
         })
@@ -92,7 +89,7 @@ pub fn sign_v1(
     data: &[u8],
     account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
-    check_stack_height(1, SwigError::CPI)?; //todo think about if this is necessary
+    check_stack_height(1, SwigError::Cpi)?; // todo think about if this is necessary
     check_self_owned(
         ctx.accounts.swig,
         SwigError::OwnerMismatch(SWIG_ACCOUNT_NAME),
@@ -102,9 +99,9 @@ pub fn sign_v1(
         ProgramError::InvalidInstructionData
     })?;
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    let id = Swig::raw_get_id(&swig_account_data);
-    let bump = Swig::raw_get_bump(&swig_account_data);
-    let (offset, mut role) = Swig::raw_get_role(&swig_account_data, sign_v1.args.role_id as usize)
+    let id = Swig::raw_get_id(swig_account_data);
+    let bump = Swig::raw_get_bump(swig_account_data);
+    let (offset, mut role) = Swig::raw_get_role(swig_account_data, sign_v1.args.role_id as usize)
         .ok_or(SwigError::InvalidAuthority)?;
     let (restricted_keys, len): ([&Pubkey; 2], usize) =
         if role.authority_type == AuthorityType::Ed25519 {
@@ -121,13 +118,17 @@ pub fn sign_v1(
         ctx.accounts.swig.key(),
         &restricted_keys[0..len],
     )
-    .map_err(|e| SwigError::from(e))?;
+    .map_err(SwigError::from)?;
     let b = [bump];
     let signer = swig_account_signer(&id, &b);
-    sign_v1.authenticate(&all_accounts, &role)?;
+    sign_v1.authenticate(all_accounts, &role)?;
     for ix in ix_iter {
         if let Ok(instruction) = ix {
-            instruction.execute(&all_accounts, &ctx.accounts.swig.key(), &[signer.as_slice().into()])?;
+            instruction.execute(
+                all_accounts,
+                ctx.accounts.swig.key(),
+                &[signer.as_slice().into()],
+            )?;
             msg!("Instruction executed");
         } else {
             return Err(SwigError::InstructionError(ix.err().unwrap()).into());
@@ -166,7 +167,7 @@ pub fn sign_v1(
                                             "Sol move exceeds the amount authorized",
                                         ))
                                     }
-                                }
+                                },
                                 _ => Err(SwigError::PermissionDenied(
                                     "Sol cannot be moved with this role",
                                 )),
@@ -178,9 +179,9 @@ pub fn sign_v1(
                             .into());
                         }
                     }
-                }
+                },
                 AccountClassification::SwigTokenAccount { balance } => {
-                    //Allow account closure if the token account is empty
+                    // Allow account closure if the token account is empty
                     let data = unsafe { current_account.borrow_mut_data_unchecked() };
                     let mint = &data[0..32];
                     let delegate = &data[72..76];
@@ -231,7 +232,7 @@ pub fn sign_v1(
                                             "Token move exceeds the amount authorized",
                                         ))
                                     }
-                                }
+                                },
                                 Action::Tokens {
                                     action: TokenAction::All,
                                 } => Ok(Action::Tokens {
@@ -249,7 +250,7 @@ pub fn sign_v1(
                                             "Token move exceeds the amount authorized",
                                         ))
                                     }
-                                }
+                                },
                                 _ => Err(SwigError::PermissionDenied(
                                     "Token cannot be moved with this role",
                                 )),
@@ -261,11 +262,11 @@ pub fn sign_v1(
                             .into());
                         }
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
-        role.serialize(&mut &mut swig_account_data[offset..offset + role.size() as usize])
+        role.serialize(&mut &mut swig_account_data[offset..offset + role.size()])
             .map_err(|_| SwigError::SerializationError)
             .map_err(|_| SwigError::SerializationError)?;
     }

@@ -2327,6 +2327,7 @@ dependencies = [
 [[package]]
 name = "jupiter-swap-api-client"
 version = "0.1.0"
+source = "git+https://github.com/austbot/jupiter-swap-api-client.git#b12348206cc85033fdf859129ce68b2e39a078ed"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4014,6 +4015,7 @@ dependencies = [
 [[package]]
 name = "shank"
 version = "0.4.2"
+source = "git+https://github.com/anagrambuild/shank.git#d4f046b22b87c896fdb77e55256d74dad6a13a68"
 dependencies = [
  "shank_macro",
 ]
@@ -4021,6 +4023,7 @@ dependencies = [
 [[package]]
 name = "shank_macro"
 version = "0.4.2"
+source = "git+https://github.com/anagrambuild/shank.git#d4f046b22b87c896fdb77e55256d74dad6a13a68"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4032,6 +4035,7 @@ dependencies = [
 [[package]]
 name = "shank_macro_impl"
 version = "0.4.2"
+source = "git+https://github.com/anagrambuild/shank.git#d4f046b22b87c896fdb77e55256d74dad6a13a68"
 dependencies = [
  "anyhow",
  "proc-macro2",
@@ -4043,6 +4047,7 @@ dependencies = [
 [[package]]
 name = "shank_render"
 version = "0.4.2"
+source = "git+https://github.com/anagrambuild/shank.git#d4f046b22b87c896fdb77e55256d74dad6a13a68"
 dependencies = [
  "proc-macro2",
  "quote",

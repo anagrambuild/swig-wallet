@@ -8,20 +8,17 @@ use std::mem::MaybeUninit;
 
 use actions::process_action;
 use error::SwigError;
+#[cfg(not(feature = "no-entrypoint"))]
+use pinocchio::lazy_entrypoint;
 use pinocchio::{
     account_info::AccountInfo,
     lazy_entrypoint::{InstructionContext, MaybeAccount},
     memory::sol_memcmp,
-    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
     ProgramResult,
 };
-
-#[cfg(not(feature = "no-entrypoint"))]
-use pinocchio::lazy_entrypoint;
-use pinocchio_pubkey::declare_id;
-use pinocchio_pubkey::pubkey;
+use pinocchio_pubkey::{declare_id, pubkey};
 use swig_state::Discriminator;
 declare_id!("swigNmWhy8RvUYXBKV5TSU8Hh3f4o5EczHouzBzEsLC");
 const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
@@ -66,11 +63,10 @@ pub enum AccountClassification {
         balance: u64,
     },
 }
-/**
- * classify_accounts
- * This functions classifies all accounts as either the swig account (assumed in all instructions to be the first account)
- * or an asset account owned by the swig.
- */
+/// classify_accounts
+/// This functions classifies all accounts as either the swig account (assumed
+/// in all instructions to be the first account) or an asset account owned by
+/// the swig.
 #[inline(always)]
 unsafe fn execute(
     ctx: &mut InstructionContext,
@@ -84,10 +80,10 @@ unsafe fn execute(
                 let classification = classify_account(index, &account, accounts)?;
                 account_classification[index].write(classification);
                 accounts[index].write(account);
-            }
+            },
             MaybeAccount::Duplicated(account_index) => {
                 accounts[index].write(accounts[account_index as usize].assume_init_ref().clone());
-            }
+            },
         }
         index += 1;
     }
@@ -109,7 +105,7 @@ unsafe fn classify_account(
     match account.owner() {
         &crate::ID if index != 0 => {
             Err(SwigError::InvalidAccounts("Swig Account must be first account").into())
-        }
+        },
         &crate::ID => {
             let data = account.borrow_data_unchecked();
             if data[0] == Discriminator::SwigAccount as u8 {
@@ -119,13 +115,13 @@ unsafe fn classify_account(
             } else {
                 Ok(AccountClassification::None)
             }
-        }
+        },
         &STAKING_ID => {
             let data = account.borrow_data_unchecked();
 
-            //TODO add staking account
+            // TODO add staking account
             Ok(AccountClassification::None)
-        }
+        },
         &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if account.data_len() == 165 && index > 0 => unsafe {
             let data = account.borrow_data_unchecked();
             if sol_memcmp(accounts[0].assume_init_ref().key(), &data[32..64], 32) == 0 {
@@ -140,7 +136,7 @@ unsafe fn classify_account(
                 Ok(AccountClassification::None)
             }
         },
-        //TODO add staking account
+        // TODO add staking account
         _ => Ok(AccountClassification::None),
     }
 }
