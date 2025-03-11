@@ -1,0 +1,8 @@
+--env RUST_VERSION=1.82.0
+--env SOLANA_VERSION=2.0.13
+--env CARGO_TERM_COLOR=always
+--env RUSTC_WRAPPER=sccache
+--env SCCACHE_GHA_ENABLED=true
+--env SCCACHE_CACHE_SIZE=2G
+--platform ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-latest
+--container-architecture linux/amd64

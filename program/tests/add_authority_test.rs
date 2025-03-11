@@ -1,19 +1,9 @@
 mod common;
 use borsh::BorshDeserialize;
 use common::*;
-
-use litesvm_token::spl_token::{self, instruction::TokenInstruction};
-use solana_sdk::{
-    instruction::{AccountMeta, Instruction},
-    message::{v0, VersionedMessage},
-    program_pack::Pack,
-    pubkey::Pubkey,
-    signature::Keypair,
-    signer::Signer,
-    transaction::VersionedTransaction,
-};
+use solana_sdk::{signature::Keypair, signer::Signer};
 use swig_interface::AuthorityConfig;
-use swig_state::{Action, AuthorityType, Role, SolAction, Swig};
+use swig_state::{Action, AuthorityType, Role, Swig};
 
 #[test_log::test]
 fn test_create_add_authority() {

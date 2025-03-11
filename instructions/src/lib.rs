@@ -1,15 +1,15 @@
 mod compact_instructions;
+use std::marker::PhantomData;
+
 pub use compact_instructions::*;
 use pinocchio::{
     account_info::AccountInfo,
     instruction::{Account, AccountMeta, Instruction, Signer},
-    msg,
     program::invoke_signed_unchecked,
     program_error::ProgramError,
     pubkey::Pubkey,
     ProgramResult,
 };
-use std::marker::PhantomData;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -76,7 +76,7 @@ pub trait RestrictedKeys {
     fn is_restricted(&self, pubkey: &Pubkey) -> bool;
 }
 
-impl<'a, 'b> InstructionHolder<'a> {
+impl<'a> InstructionHolder<'a> {
     pub fn borrow(&'a self) -> Instruction<'a, 'a, 'a, 'a> {
         Instruction {
             program_id: self.program_id,

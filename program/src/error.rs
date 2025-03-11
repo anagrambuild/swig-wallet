@@ -1,4 +1,4 @@
-use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError};
+use pinocchio::{msg, program_error::ProgramError};
 use swig_compact_instructions::InstructionError;
 use thiserror::Error;
 
@@ -19,7 +19,7 @@ pub enum SwigError {
     #[error("Invalid Authority Type")]
     InvalidAuthorityType,
     #[error("Call from CPI not allowed")]
-    CPI,
+    Cpi,
     #[error("Account {0} Invalid Seeds")]
     InvalidSeed(&'static str),
     #[error("Missing Instructions")]
@@ -50,9 +50,9 @@ impl From<InstructionError> for SwigError {
     }
 }
 
-impl Into<u32> for SwigError {
-    fn into(self) -> u32 {
-        match self {
+impl From<SwigError> for u32 {
+    fn from(val: SwigError) -> Self {
+        match val {
             SwigError::OwnerMismatch { .. } => 0,
             SwigError::AccountNotEmpty { .. } => 1,
             SwigError::NotOnCurve { .. } => 2,
@@ -60,7 +60,7 @@ impl Into<u32> for SwigError {
             SwigError::StateError { .. } => 4,
             SwigError::AccountBorrowFailed { .. } => 5,
             SwigError::InvalidAuthorityType => 6,
-            SwigError::CPI => 7,
+            SwigError::Cpi => 7,
             SwigError::InvalidSeed(_) => 8,
             SwigError::MissingInstructions => 9,
             SwigError::InvalidAuthorityPayload => 10,

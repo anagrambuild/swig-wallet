@@ -1,5 +1,12 @@
+use borsh::{BorshDeserialize, BorshSerialize};
+use bytemuck::{Pod, Zeroable};
+use pinocchio::{
+    account_info::AccountInfo, msg, program_error::ProgramError, sysvars::Sysvar, ProgramResult,
+};
+use swig_state::{swig_account_seeds_with_bump, Action, Swig};
+
 use crate::{
-    assertions::{check_bytes_match, check_self_owned, check_self_pda, find_self_pda},
+    assertions::{check_bytes_match, check_self_owned, check_self_pda},
     error::SwigError,
     instruction::{
         accounts::{Context, RemoveAuthorityV1Accounts},
@@ -7,12 +14,6 @@ use crate::{
     },
     util::ZeroCopy,
 };
-use borsh::{BorshDeserialize, BorshSerialize};
-use bytemuck::{Pod, Zeroable};
-use pinocchio::{
-    account_info::AccountInfo, msg, program_error::ProgramError, sysvars::Sysvar, ProgramResult,
-};
-use swig_state::{swig_account_seeds_with_bump, Action, AuthorityType, Role, Swig};
 
 pub struct RemoveAuthorityV1<'a> {
     pub args: &'a RemoveAuthorityV1Args,
@@ -70,7 +71,7 @@ impl<'a> RemoveAuthorityV1<'a> {
         let (authority_payload, data_payload) = rest.split_at(args.authority_payload_len as usize);
 
         Ok(Self {
-            args: &args,
+            args,
             authority_payload,
             data_payload,
         })
@@ -102,12 +103,12 @@ pub fn remove_authority_v1(
 
     // Get account data and deserialize once
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
-    let id = Swig::raw_get_id(&swig_account_data);
-    let bump = Swig::raw_get_bump(&swig_account_data);
+    let id = Swig::raw_get_id(swig_account_data);
+    let bump = Swig::raw_get_bump(swig_account_data);
 
     // Deserialize the Swig account to check role count
     let mut swig =
-        Swig::try_from_slice(&swig_account_data).map_err(|_| SwigError::SerializationError)?;
+        Swig::try_from_slice(swig_account_data).map_err(|_| SwigError::SerializationError)?;
 
     // Check if we're trying to remove the last authority
     if swig.roles.len() <= 1 {
@@ -194,7 +195,7 @@ pub fn remove_authority_v1(
     }
 
     // Authenticate the caller
-    remove_authority_v1.authenticate(&all_accounts, &acting_role)?;
+    remove_authority_v1.authenticate(all_accounts, acting_role)?;
 
     // Verify PDA derivation
     let b = [bump];
@@ -217,7 +218,7 @@ pub fn remove_authority_v1(
     }
 
     // Calculate new size without cloning
-    let role_size = role_to_remove.size() as usize;
+    let role_size = role_to_remove.size();
     let new_size = swig.size() - role_size;
 
     // Execution - All validations passed, now make state changes

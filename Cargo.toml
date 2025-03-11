@@ -1,5 +1,4 @@
 [workspace]
 resolver = "2"
-members = [
-    "program", "interface", "instructions", "state", "cli"
-]
+members = ["program", "interface", "instructions", "state", "cli"]
+

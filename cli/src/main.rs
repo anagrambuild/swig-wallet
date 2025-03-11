@@ -1,14 +1,20 @@
+use std::{
+    fs,
+    fs::File,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
+
 use anyhow::{anyhow, Result};
 use borsh::BorshDeserialize;
-use clap::{command, Args, Parser, Subcommand, ValueEnum};
+use clap::{command, Parser, Subcommand, ValueEnum};
+use directories::BaseDirs;
 use jupiter_swap_api_client::{
     quote::QuoteRequest, swap::SwapRequest, transaction_config::TransactionConfig,
     JupiterSwapApiClient,
 };
-use serde::{Deserialize, Serialize};
-
-use directories::BaseDirs;
 use secp256k1::{PublicKey as Secp256k1PublicKey, Secp256k1, SecretKey as Secp256k1SecretKey};
+use serde::{Deserialize, Serialize};
 use solana_account_decoder_client_types::{ParsedAccount, UiAccountData};
 use solana_cli_config::{Config, CONFIG_FILE};
 use solana_client::{
@@ -28,16 +34,12 @@ use solana_sdk::{
     signature::{read_keypair_file, Keypair, Signature},
     signer::{Signer, SignerError},
     system_instruction,
-    sysvar::Sysvar,
     transaction::VersionedTransaction,
 };
 use spl_associated_token_account::instruction::create_associated_token_account_idempotent;
 use spl_token::instruction::TokenInstruction;
-use std::path::PathBuf;
-use std::{fmt::Display, fs, fs::File, path::Path, str::FromStr};
 use swig_interface::{
-    program_id,
-    swig::{self, actions::sign_v1::SignV1},
+    swig::{self},
     swig_key,
     swig_state::{swig_account_seeds, Action, AuthorityType, SolAction, Swig, TokenAction},
     AddAuthorityInstruction, AuthorityConfig, CreateInstruction, SignInstruction,
@@ -87,7 +89,7 @@ impl SwigAuthContext {
                     .map_err(|e| anyhow!("Failed to load keypair: {:?}", e))?;
                 let signature = keypair.sign_message(message);
                 Ok(signature.as_ref().to_vec())
-            }
+            },
             CliAuthorityType::Secp256k1 => {
                 let secret_key = Secp256k1SecretKey::from_slice(&self.authority_payload)
                     .map_err(|e| anyhow!("Failed to load secret key: {:?}", e))?;
@@ -96,7 +98,7 @@ impl SwigAuthContext {
                 let message = secp256k1::Message::from_digest(hash.0);
                 let signature = secp.sign_ecdsa(&message, &secret_key);
                 Ok(signature.serialize_compact().to_vec())
-            }
+            },
         }
     }
 }
@@ -113,9 +115,9 @@ pub enum CliAuthorityType {
     Secp256k1,
 }
 
-impl Into<AuthorityType> for CliAuthorityType {
-    fn into(self) -> AuthorityType {
-        match self {
+impl From<CliAuthorityType> for AuthorityType {
+    fn from(val: CliAuthorityType) -> Self {
+        match val {
             CliAuthorityType::Ed25519 => AuthorityType::Ed25519,
             CliAuthorityType::Secp256k1 => AuthorityType::Secp256k1,
         }
@@ -233,7 +235,7 @@ fn main_fn() -> Result<()> {
                 .ok_or(anyhow!("Failed to find authority"))?;
             let auth_data = match indexed_authority.role.authority_type {
                 AuthorityType::Ed25519 => {
-                    //authority payload is a file path to a keypair
+                    // authority payload is a file path to a keypair
                     let authority_kp = read_keypair_file(Path::new(&authority_data))
                         .map_err(|e| anyhow!("Failed to load authority keypair: {:?}", e))?;
                     let authority = authority_kp.pubkey();
@@ -247,9 +249,9 @@ fn main_fn() -> Result<()> {
                         authority_type: CliAuthorityType::Ed25519,
                         session: None,
                     }
-                }
+                },
                 AuthorityType::Secp256k1 => {
-                    //read eth keypair from file
+                    // read eth keypair from file
                     let (secret_key, public_key) = read_eth_keypair_from_file(authority_data)
                         .map_err(|e| {
                             anyhow!("Failed to read secp256k1 keypair from file: {:?}", e)
@@ -261,18 +263,19 @@ fn main_fn() -> Result<()> {
                         authority_type: CliAuthorityType::Secp256k1,
                         session: None,
                     }
-                } //TODO for session based authorities we will create session keypair and sign the data
+                }, /* TODO for session based authorities we will create session keypair and sign
+                    * the data */
             };
 
             let auth_file_path = Path::new(&ctx.config_dir).join(format!("{:0<13}.auth", id));
-            //write authenticated file to disk
+            // write authenticated file to disk
             let auth_file = File::create(&auth_file_path)?;
             serde_json::to_writer(auth_file, &auth_data)?;
             println!(
                 "Authenticated successfully, wrote session to {:?}",
                 auth_file_path
             );
-        }
+        },
         Command::Transfer {
             id,
             amount,
@@ -303,7 +306,7 @@ fn main_fn() -> Result<()> {
                         ],
                         data: TokenInstruction::Transfer { amount }.pack(),
                     }
-                }
+                },
             };
             let compute = prio_fees(&ctx, &[swig_id])?;
             match auth_context.authority_type {
@@ -336,10 +339,10 @@ fn main_fn() -> Result<()> {
                         .send_and_confirm_transaction_with_spinner(&txn)?;
                     println!("Transaction result: {:?}", result);
                     diplay_swig(&ctx, swig_id).unwrap();
-                }
+                },
                 _ => todo!(),
             };
-        }
+        },
         Command::AddAuthority {
             new_authority_type,
             new_authority,
@@ -367,7 +370,7 @@ fn main_fn() -> Result<()> {
                         end_slot.unwrap_or(0),
                         permissions_to_actions(permissions),
                     )
-                }
+                },
                 CliAuthorityType::Secp256k1 => {
                     AddAuthorityInstruction::new_with_secp256k1_authority(
                         swig_id,
@@ -385,7 +388,7 @@ fn main_fn() -> Result<()> {
                         end_slot.unwrap_or(0),
                         permissions_to_actions(permissions),
                     )
-                }
+                },
             }?;
 
             let compute = prio_fees(&ctx, &[swig_id])?;
@@ -402,7 +405,7 @@ fn main_fn() -> Result<()> {
                 .send_and_confirm_transaction_with_spinner(&txn)?;
             println!("Transaction result: {:?}", result);
             diplay_swig(&ctx, swig_id).unwrap();
-        }
+        },
         Command::MakeAta { mint, id } => {
             let mint_account = ctx
                 .rpc_client
@@ -434,11 +437,11 @@ fn main_fn() -> Result<()> {
                 .send_and_confirm_transaction_with_spinner(&txn)?;
             println!("Transaction result: {:?}", result);
             diplay_swig(&ctx, swig_id).unwrap();
-        }
+        },
         Command::View { id } => {
             let swig_id = swig_key(format!("{:0<13}", id));
             diplay_swig(&ctx, swig_id).unwrap();
-        }
+        },
         Command::Create {
             root,
             authority,
@@ -450,9 +453,9 @@ fn main_fn() -> Result<()> {
             };
             let id: [u8; 13] = id
                 .and_then(|i| format!("{:0<13}", i).as_bytes()[..13].try_into().ok())
-                .unwrap_or_else(|| rand::random());
+                .unwrap_or_else(rand::random);
             create(&ctx, authority_type, authority, id).unwrap();
-        }
+        },
         Command::Swap {
             id,
             input_token,
@@ -468,7 +471,7 @@ fn main_fn() -> Result<()> {
                     JupiterSwapApiClient::new("https://api.jup.ag/swap/v1/".to_string());
 
                 let quote_request = QuoteRequest {
-                    amount: amount,
+                    amount,
                     input_mint: Pubkey::from_str(&input_token).unwrap(),
                     output_mint: Pubkey::from_str(&output_token).unwrap(),
                     slippage_bps: slippage.unwrap_or(0),
@@ -554,10 +557,10 @@ fn main_fn() -> Result<()> {
 
                     println!("Transaction result: {:?}", result);
                     diplay_swig(&ctx, swig_id).unwrap();
-                }
+                },
                 _ => todo!(),
             };
-        }
+        },
     }
     Ok(())
 }
@@ -590,7 +593,7 @@ fn prio_fees(ctx: &SwigCliContext, accounts: &[Pubkey]) -> Result<Instruction> {
         acc + fee.prioritization_fee / fees.len() as u64
     });
     let compute = ComputeBudgetInstruction::set_compute_unit_price(median_fee / 2);
-    return Ok(compute);
+    Ok(compute)
 }
 
 fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
@@ -605,7 +608,7 @@ fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
 
     let swig = Swig::try_from_slice(&swig_account.data)
         .map_err(|e| anyhow!("Failed to load swig account: {:?}", e))?;
-    println!("\tKEY: {}", swig_id.to_string());
+    println!("\tKEY: {}", swig_id);
     println!("\tID: {}", String::from_utf8(swig.id.to_vec()).unwrap());
     println!(
         "\tLamports: {}",
@@ -629,23 +632,23 @@ fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
             match action {
                 Action::ManageAuthority => {
                     println!("\t\t{}: ManageAuthority", index);
-                }
+                },
                 Action::Program { key } => {
                     println!("\t\t{}: Program {:?}", index, key);
-                }
+                },
                 Action::All => {
                     println!("\t\t{}: All", index);
-                }
+                },
                 Action::Sol {
                     action: SolAction::All,
                 } => {
                     println!("\t\t{}: Sol All", index);
-                }
+                },
                 Action::Sol {
                     action: SolAction::Manage(amount),
                 } => {
                     println!("\t\t{}: Sol Manage {:?}", index, amount);
-                }
+                },
                 Action::Sol {
                     action: SolAction::Temporal(amount, interval, last_action),
                 } => {
@@ -653,7 +656,7 @@ fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
                         "\t\t{}: Sol Temporal {:?} {:?} {:?}",
                         index, amount, interval, last_action
                     );
-                }
+                },
                 Action::Token {
                     key,
                     action: TokenAction::All,
@@ -663,7 +666,7 @@ fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
                         index,
                         bs58::encode(key.as_ref()).into_string()
                     );
-                }
+                },
                 Action::Token {
                     key,
                     action: TokenAction::Manage(amount),
@@ -674,7 +677,7 @@ fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
                         bs58::encode(key.as_ref()).into_string(),
                         amount
                     );
-                }
+                },
                 Action::Token {
                     key,
                     action: TokenAction::Temporal(amount, interval, last_action),
@@ -687,17 +690,17 @@ fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
                         interval,
                         last_action
                     );
-                }
+                },
                 Action::Tokens {
                     action: TokenAction::All,
                 } => {
                     println!("\t\t{}: Tokens All", index);
-                }
+                },
                 Action::Tokens {
                     action: TokenAction::Manage(amount),
                 } => {
                     println!("\t\t{}: Tokens Manage {:?}", index, amount);
-                }
+                },
                 Action::Tokens {
                     action: TokenAction::Temporal(amount, interval, last_action),
                 } => {
@@ -705,11 +708,11 @@ fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
                         "\t\t{}: Tokens Temporal {:?} {:?} {:?}",
                         index, amount, interval, last_action
                     );
-                }
+                },
             }
         }
     }
-    if token_accounts.len() > 0 || token_accounts_22.len() > 0 {
+    if !token_accounts.is_empty() || !token_accounts_22.is_empty() {
         println!("\tToken Accounts:");
     }
     for (index, token_account) in token_accounts.iter().enumerate() {
@@ -772,7 +775,7 @@ fn create(
         VersionedTransaction::try_new(VersionedMessage::V0(msg), &[ctx.payer.insecure_clone()])?;
     ctx.rpc_client
         .send_and_confirm_transaction_with_spinner(&txn)?;
-    diplay_swig(&ctx, swig_account.0)?;
+    diplay_swig(ctx, swig_account.0)?;
     Ok(())
 }
 
@@ -792,12 +795,12 @@ pub fn setup(cli: &SwigCli) -> Result<SwigCliContext> {
                 Ok(config) => (config.json_rpc_url, config.keypair_path),
                 Err(e) => {
                     anyhow::bail!("Error loading config: {:?}", e);
-                }
+                },
             }
-        }
+        },
         _ => {
             anyhow::bail!("Please provide a keypair and rpc or a solana config file");
-        }
+        },
     };
 
     let keypair = read_keypair_file(Path::new(&kpp));
@@ -841,10 +844,10 @@ fn permissions_to_actions(permissions: Vec<String>) -> Vec<Action> {
         match permission[0] {
             "all" => {
                 actions.push(Action::All);
-            }
+            },
             "manage_authority" => {
                 actions.push(Action::ManageAuthority);
-            }
+            },
             "token" => {
                 if len == 2 {
                     let token = permission[1].parse::<String>().unwrap();
@@ -864,7 +867,7 @@ fn permissions_to_actions(permissions: Vec<String>) -> Vec<Action> {
                         action: TokenAction::Manage(amount),
                     });
                 }
-            }
+            },
             "tokens" => {
                 if len == 1 {
                     actions.push(Action::Tokens {
@@ -878,7 +881,7 @@ fn permissions_to_actions(permissions: Vec<String>) -> Vec<Action> {
                         action: TokenAction::Manage(amount),
                     });
                 }
-            }
+            },
             "sol" => {
                 if len == 1 {
                     actions.push(Action::Sol {
@@ -892,11 +895,11 @@ fn permissions_to_actions(permissions: Vec<String>) -> Vec<Action> {
                         action: SolAction::Manage(amount),
                     });
                 }
-            }
+            },
             _ => {
                 println!("Invalid permission: {}", permission[0]);
-            }
+            },
         }
     }
-    return actions;
+    actions
 }

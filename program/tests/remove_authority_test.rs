@@ -1,7 +1,6 @@
 mod common;
 use borsh::BorshDeserialize;
 use common::*;
-
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
     message::{v0, VersionedMessage},
@@ -182,7 +181,8 @@ fn test_remove_authority_permissions() {
     )
     .unwrap();
 
-    // Try to remove an authority using the second authority (should fail due to lack of permissions)
+    // Try to remove an authority using the second authority (should fail due to
+    // lack of permissions)
     let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
         context.default_payer.pubkey(),
@@ -369,7 +369,8 @@ fn test_remove_authority_self() {
 
 #[test_log::test]
 fn test_remove_authority_role_validation() {
-    // Instead of testing with slots, let's directly check if the role validation logic works
+    // Instead of testing with slots, let's directly check if the role validation
+    // logic works
     let mut context = setup_test_context().unwrap();
     let root_authority = Keypair::new();
 
@@ -447,7 +448,7 @@ fn test_remove_authority_role_validation() {
         let error_string = format!("{:?}", err);
         println!("Error: {}", error_string);
         assert!(
-            error_string.contains("PermissionDenied") || error_string.contains("Custom(15)"), // PermissionDenied error code
+            error_string.contains("PermissionDenied") || error_string.contains("Custom(15)"), /* PermissionDenied error code */
             "Expected permission error, got: {:?}",
             err
         );
@@ -566,7 +567,8 @@ fn test_remove_authority_with_expired_role() {
 
     context.svm.warp_to_slot(100);
 
-    // Second authority tries to remove the root authority (should fail due to expired role)
+    // Second authority tries to remove the root authority (should fail due to
+    // expired role)
     let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
         context.default_payer.pubkey(),
@@ -632,8 +634,8 @@ fn test_remove_authority_with_future_role() {
     // Create a swig wallet with the root authority (no expiration)
     let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, &id).unwrap();
 
-    // Add a second authority with management permissions but with a future start slot
-    // Set start_slot to a very large number to ensure it's in the future
+    // Add a second authority with management permissions but with a future start
+    // slot Set start_slot to a very large number to ensure it's in the future
     let future_slot = u64::MAX - 1000; // Very far in the future
 
     add_authority_with_ed25519_root(
@@ -650,7 +652,8 @@ fn test_remove_authority_with_future_role() {
     )
     .unwrap();
 
-    // Second authority tries to remove the root authority (should fail due to not yet valid role)
+    // Second authority tries to remove the root authority (should fail due to not
+    // yet valid role)
     let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
         context.default_payer.pubkey(),
@@ -784,7 +787,8 @@ fn test_remove_authority_sequence() {
 
 #[test_log::test]
 fn test_remove_authority_privilege_escalation() {
-    // Test that an authority with limited permissions cannot remove an authority with higher privileges
+    // Test that an authority with limited permissions cannot remove an authority
+    // with higher privileges
     let mut context = setup_test_context().unwrap();
     let root_authority = Keypair::new();
     let limited_authority = Keypair::new();
@@ -823,7 +827,8 @@ fn test_remove_authority_privilege_escalation() {
     )
     .unwrap();
 
-    // Limited authority tries to remove the root authority (should fail due to privilege escalation)
+    // Limited authority tries to remove the root authority (should fail due to
+    // privilege escalation)
     let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
         context.default_payer.pubkey(),
@@ -848,13 +853,17 @@ fn test_remove_authority_privilege_escalation() {
     .unwrap();
 
     let result = context.svm.send_transaction(tx);
-    assert!(result.is_err(), "Authority with limited permissions should not be able to remove an authority with higher privileges");
+    assert!(
+        result.is_err(),
+        "Authority with limited permissions should not be able to remove an authority with higher \
+         privileges"
+    );
 
     // Verify the error is related to permissions
     if let Err(err) = result {
         let error_string = format!("{:?}", err);
         assert!(
-            error_string.contains("PermissionDenied") || error_string.contains("Custom(15)"), // PermissionDenied error code
+            error_string.contains("PermissionDenied") || error_string.contains("Custom(15)"), /* PermissionDenied error code */
             "Expected permission denied error, got: {:?}",
             err
         );
@@ -975,7 +984,7 @@ fn test_remove_authority_invalid_authority_payload() {
     if let Err(err) = result {
         let error_string = format!("{:?}", err);
         assert!(
-            error_string.contains("InvalidAuthorityPayload") || error_string.contains("Custom(10)"), // InvalidAuthorityPayload error code
+            error_string.contains("InvalidAuthorityPayload") || error_string.contains("Custom(10)"), /* InvalidAuthorityPayload error code */
             "Expected invalid authority payload error, got: {:?}",
             err
         );
@@ -1074,13 +1083,14 @@ fn test_remove_authority_no_permission() {
     if let Err(err) = result {
         let error_string = format!("{:?}", err);
         assert!(
-            error_string.contains("PermissionDenied") || error_string.contains("Custom(15)"), // PermissionDenied error code
+            error_string.contains("PermissionDenied") || error_string.contains("Custom(15)"), /* PermissionDenied error code */
             "Expected permission denied error, got: {:?}",
             err
         );
     }
 
-    // Third authority with management permissions should be able to remove the no-permission authority
+    // Third authority with management permissions should be able to remove the
+    // no-permission authority
     let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
         context.default_payer.pubkey(),
@@ -1121,9 +1131,9 @@ fn test_remove_authority_no_permission() {
 
 #[test_log::test]
 fn test_remove_authority_reallocation() {
-    // This test would ideally check that the account remains rent-exempt after reallocation
-    // However, in the test environment, we can't easily manipulate account lamports
-    // So we'll just verify that the reallocation succeeds
+    // This test would ideally check that the account remains rent-exempt after
+    // reallocation However, in the test environment, we can't easily manipulate
+    // account lamports So we'll just verify that the reallocation succeeds
 
     let mut context = setup_test_context().unwrap();
     let root_authority = Keypair::new();
@@ -1321,7 +1331,8 @@ fn test_remove_authority_self_removal_protection() {
     )
     .unwrap();
 
-    // Root authority tries to remove itself (should fail since second authority can't manage)
+    // Root authority tries to remove itself (should fail since second authority
+    // can't manage)
     let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
         context.default_payer.pubkey(),
@@ -1350,13 +1361,17 @@ fn test_remove_authority_self_removal_protection() {
     .unwrap();
 
     let result = context.svm.send_transaction(tx);
-    assert!(result.is_err(), "Authority should not be able to remove itself when no other authority has management permissions");
+    assert!(
+        result.is_err(),
+        "Authority should not be able to remove itself when no other authority has management \
+         permissions"
+    );
 
     // Verify the error is related to permissions
     if let Err(err) = result {
         let error_string = format!("{:?}", err);
         assert!(
-            error_string.contains("PermissionDenied") || error_string.contains("Custom(15)"), // PermissionDenied error code
+            error_string.contains("PermissionDenied") || error_string.contains("Custom(15)"), /* PermissionDenied error code */
             "Expected permission denied error, got: {:?}",
             err
         );
@@ -1436,7 +1451,8 @@ fn test_remove_authority_self_removal_protection() {
 
 #[test_log::test]
 fn test_remove_authority_multiple_operations() {
-    // Test multiple remove operations in sequence to ensure index handling works correctly
+    // Test multiple remove operations in sequence to ensure index handling works
+    // correctly
     let mut context = setup_test_context().unwrap();
     let root_authority = Keypair::new();
 

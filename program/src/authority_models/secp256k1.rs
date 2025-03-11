@@ -1,9 +1,6 @@
 use std::mem::MaybeUninit;
 
-use pinocchio::{
-    account_info::AccountInfo,
-    syscalls::{sol_keccak256, sol_secp256k1_recover},
-};
+use pinocchio::syscalls::{sol_keccak256, sol_secp256k1_recover};
 
 use crate::{assertions::sol_assert_bytes_eq, error::SwigError};
 

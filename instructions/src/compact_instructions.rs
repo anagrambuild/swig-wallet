@@ -35,7 +35,7 @@ mod inner {
                     hashmap.insert(ix_account.pubkey, idx);
                     accounts.push(ix_account);
                     accts.push(idx as u8);
-                } 
+                }
             }
             compact_ix.push(CompactInstruction {
                 program_id_index: program_id_index as u8,

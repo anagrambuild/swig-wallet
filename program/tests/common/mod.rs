@@ -1,13 +1,17 @@
-
 use anyhow::Result;
 use borsh::BorshDeserialize;
-use litesvm::{types::{TransactionMetadata, TransactionResult}, LiteSVM};
+use litesvm::{types::TransactionMetadata, LiteSVM};
 use litesvm_token::{spl_token, CreateAssociatedTokenAccount, CreateMint, MintTo};
 use solana_sdk::{
-    compute_budget::ComputeBudgetInstruction, instruction::{AccountMeta, Instruction}, message::{v0, VersionedMessage}, pubkey::Pubkey, signature::Keypair, signer::Signer, system_program, transaction::{Transaction, VersionedTransaction}
+    compute_budget::ComputeBudgetInstruction,
+    message::{v0, VersionedMessage},
+    pubkey::Pubkey,
+    signature::Keypair,
+    signer::Signer,
+    transaction::VersionedTransaction,
 };
 use swig_interface::{AddAuthorityInstruction, AuthorityConfig, CreateInstruction};
-use swig_state::{swig_account_seeds, Action, AuthorityType, IndexedRole, Role, Swig};
+use swig_state::{swig_account_seeds, Action, Swig};
 
 pub fn program_id() -> Pubkey {
     swig::ID.into()
@@ -20,12 +24,17 @@ pub fn add_authority_with_ed25519_root<'a>(
     new_authority: AuthorityConfig,
     actions: Vec<Action>,
     start_slot: u64,
-    end_slot: u64
+    end_slot: u64,
 ) -> anyhow::Result<(Swig, TransactionMetadata)> {
     let payer_pubkey = context.default_payer.pubkey();
-    let swig_account = context.svm.get_account(swig_pubkey).ok_or(anyhow::anyhow!("Swig account not found"))?;
+    let swig_account = context
+        .svm
+        .get_account(swig_pubkey)
+        .ok_or(anyhow::anyhow!("Swig account not found"))?;
     let swig = Swig::try_from_slice(&swig_account.data)?;
-    let role = swig.lookup_role(existing_ed25519_authority.pubkey().as_ref()).unwrap();
+    let role = swig
+        .lookup_role(existing_ed25519_authority.pubkey().as_ref())
+        .unwrap();
     let add_authority_ix = AddAuthorityInstruction::new_with_ed25519_authority(
         *swig_pubkey,
         context.default_payer.pubkey(),
@@ -35,24 +44,34 @@ pub fn add_authority_with_ed25519_root<'a>(
         start_slot,
         end_slot,
         actions,
-    ).map_err(|e| anyhow::anyhow!("Failed to create add authority instruction {:?}", e))?;
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to create add authority instruction {:?}", e))?;
     let msg = v0::Message::try_compile(
         &payer_pubkey,
-        &[ComputeBudgetInstruction::set_compute_unit_limit(10000000), add_authority_ix],
+        &[
+            ComputeBudgetInstruction::set_compute_unit_limit(10000000),
+            add_authority_ix,
+        ],
         &[],
         context.svm.latest_blockhash(),
     )
     .unwrap();
     let tx = VersionedTransaction::try_new(
         VersionedMessage::V0(msg),
-        &[context.default_payer.insecure_clone(), existing_ed25519_authority.insecure_clone()],
+        &[
+            context.default_payer.insecure_clone(),
+            existing_ed25519_authority.insecure_clone(),
+        ],
     )
     .unwrap();
     let bench = context
         .svm
         .send_transaction(tx)
         .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
-    let swig_account = context.svm.get_account(swig_pubkey).ok_or(anyhow::anyhow!("Swig account not found"))?;
+    let swig_account = context
+        .svm
+        .get_account(swig_pubkey)
+        .ok_or(anyhow::anyhow!("Swig account not found"))?;
     let swig = Swig::try_from_slice(&swig_account.data)?;
     Ok((swig, bench))
 }
@@ -63,10 +82,7 @@ pub fn create_swig_ed25519(
     id: &[u8],
 ) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
     let payer_pubkey = context.default_payer.pubkey();
-    let (swig, bump) = Pubkey::find_program_address(
-        &swig_account_seeds(id),
-        &program_id(),
-    );
+    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(id), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
         bump,
@@ -77,7 +93,7 @@ pub fn create_swig_ed25519(
         },
         id,
         0,
-        0
+        0,
     )?;
 
     let msg = v0::Message::try_compile(
@@ -151,7 +167,7 @@ pub fn setup_ata(
     payer: &Keypair,
 ) -> Result<Pubkey, anyhow::Error> {
     CreateAssociatedTokenAccount::new(svm, payer, mint)
-        .owner(&user)
+        .owner(user)
         .send()
         .map_err(|_| anyhow::anyhow!("Failed to create associated token account"))
 }

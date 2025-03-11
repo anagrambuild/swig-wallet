@@ -1,14 +1,9 @@
-use bytemuck::{Pod, Zeroable};
 use num_enum::{FromPrimitive, IntoPrimitive};
-use pinocchio::account_info::AccountInfo;
-use pinocchio::instruction::Instruction;
-use pinocchio::program_error::ProgramError;
-use shank::{ShankBuilder, ShankContext, ShankInstruction};
+use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
+use shank::{ShankContext, ShankInstruction};
 use swig_state::Role;
 
-use crate::authority_models::authenticate;
-use crate::error::SwigError;
-use crate::util::ZeroCopy;
+use crate::{authority_models::authenticate, error::SwigError};
 
 pub const SWIG_ACCOUNT_NAME: &str = "swig"; // shank replacement wit h 'static str names for accounts
 
@@ -47,8 +42,8 @@ pub trait Authenticatable {
         authenticate(
             role.authority_type,
             &role.authority_data,
-            &self.authority_payload(),
-            &self.data_payload(),
+            self.authority_payload(),
+            self.data_payload(),
             account_infos,
         )
     }

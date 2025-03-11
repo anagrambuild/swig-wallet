@@ -1,3 +1,13 @@
+use borsh::{BorshDeserialize, BorshSerialize};
+use pinocchio::{
+    memory::sol_memmove,
+    program_error::ProgramError,
+    sysvars::{rent::Rent, Sysvar},
+    ProgramResult,
+};
+use pinocchio_system::instructions::CreateAccount;
+use swig_state::{swig_account_seeds_with_bump, swig_account_signer, Action, CreateV1, Role, Swig};
+
 use crate::{
     assertions::*,
     error::SwigError,
@@ -6,12 +16,6 @@ use crate::{
         SWIG_ACCOUNT_NAME,
     },
 };
-use borsh::{BorshDeserialize, BorshSerialize};
-use pinocchio::{
-    memory::sol_memmove, program_error::ProgramError, sysvars::{rent::Rent, Sysvar}, ProgramResult
-};
-use pinocchio_system::instructions::CreateAccount;
-use swig_state::{swig_account_seeds_with_bump, swig_account_signer, Action, CreateV1, Role, Swig};
 
 #[inline(always)]
 pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult {
@@ -38,13 +42,12 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
             borsh_create.authority_data,
             borsh_create.start_slot,
             borsh_create.end_slot,
-            vec![Action::All]
+            vec![Action::All],
         )],
     );
     let mut max_initial_swig = Vec::with_capacity(128);
-    swig.serialize(&mut max_initial_swig).map_err(|e| {
-        SwigError::SerializationError
-    })?;
+    swig.serialize(&mut max_initial_swig)
+        .map_err(|e| SwigError::SerializationError)?;
     let space_needed = max_initial_swig.len();
     let lamports_needed = Rent::get()?.minimum_balance(space_needed);
     CreateAccount {
