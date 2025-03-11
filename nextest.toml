@@ -1,2 +1,2 @@
 [profile.ci.junit] 
-path = "junit.xml"
+path = "output.xml"

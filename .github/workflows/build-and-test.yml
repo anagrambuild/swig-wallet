@@ -58,18 +58,18 @@ jobs:
 
       - name: Run Rust Tests with nextest
         run: |
-          cargo nextest run -p ci --all --workspace --no-fail-fast --config nextest.toml
+          cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast
 
       - name: Upload Test Results
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results
-          path: output.xml
+          path: target/nextest/ci/output.xml
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v3
         if: always()
         with:
-          report_paths: "output.xml"
+          report_paths: "target/nextest/ci/output.xml"
           check_name: "Test Results"
