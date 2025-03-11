@@ -1,20 +1,15 @@
-
-
+#[cfg(target_os = "solana")]
+use pinocchio::syscalls::{sol_curve_validate_point, sol_get_stack_height, sol_memcmp_};
 use pinocchio::{
     account_info::AccountInfo,
     program_error::ProgramError,
     pubkey::{create_program_address, find_program_address, Pubkey},
-    
     ProgramResult,
 };
-#[cfg(target_os = "solana")]
-use pinocchio::syscalls::{sol_curve_validate_point, sol_get_stack_height, sol_memcmp_};
 use pinocchio_system::ID as SYSTEM_ID;
-
 
 #[allow(unused_imports)]
 use std::mem::MaybeUninit;
-
 
 #[inline(always)]
 #[cfg(target_os = "solana")]
@@ -30,7 +25,6 @@ pub fn sol_assert_bytes_eq(left: &[u8], right: &[u8], len: usize) -> bool {
         result.assume_init() == 0
     }
 }
-
 
 #[cfg(not(target_os = "solana"))]
 pub fn sol_assert_bytes_eq(left: &[u8], right: &[u8], len: usize) -> bool {
