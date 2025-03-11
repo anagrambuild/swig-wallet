@@ -40,13 +40,9 @@ jobs:
             ${{ runner.os }}-cargo-lint-
 
       - name: Check formatting
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+        run: |
+          cargo fmt --all -- --check
 
       - name: Run clippy
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --all-features -- -D warnings
+        run: |
+          cargo clippy --all-features -- -D warnings

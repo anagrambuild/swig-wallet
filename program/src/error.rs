@@ -40,6 +40,8 @@ pub enum SwigError {
     InvalidSystemProgram,
     #[error("Invalid Authority")]
     DuplicateAuthority,
+    #[error("Invalid Operation {0}")]
+    InvalidOperation(&'static str),
 }
 
 impl From<InstructionError> for SwigError {
@@ -69,6 +71,7 @@ impl From<SwigError> for u32 {
             SwigError::PermissionDenied { .. } => 15,
             SwigError::InvalidSystemProgram => 16,
             SwigError::DuplicateAuthority => 17,
+            SwigError::InvalidOperation { .. } => 18,
         }
     }
 }

@@ -42,25 +42,23 @@ jobs:
 
       - name: Install Solana
         run: |
-          sh -c "$(curl -sSfL https://release.solana.com/v${{ env.SOLANA_VERSION }}/install)"
+          sh -c "$(curl -sSfL https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
           export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
           solana --version
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
 
       - name: Build Solana Program
         run: |
-          cargo build-sbf --manifest-path program/Cargo.toml
+          cargo build-sbf
 
       - name: Run Rust Tests with nextest
         run: |
           cargo nextest run --all --workspace --no-fail-fast --junit output.xml
-
-      - name: Run Solana Program Tests
-        run: |
-          cargo test-sbf --manifest-path program/Cargo.toml
 
       - name: Upload Test Results
         uses: actions/upload-artifact@v3

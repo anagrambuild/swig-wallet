@@ -192,3 +192,66 @@ impl SignInstruction {
         })
     }
 }
+
+pub struct RemoveAuthorityInstruction;
+impl RemoveAuthorityInstruction {
+    pub fn new_with_ed25519_authority(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority: Pubkey,
+        acting_role_id: u8,
+        authority_to_remove_id: u8,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(authority, true),
+        ];
+
+        let args = swig::actions::remove_authority_v1::RemoveAuthorityV1Args::new(
+            acting_role_id,
+            authority_to_remove_id,
+            1,
+        );
+
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [args.as_bytes(), &[3]].concat(),
+        })
+    }
+
+    pub fn new_with_secp256k1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority_payload_fn: F,
+        acting_role_id: u8,
+        authority_to_remove_id: u8,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: Fn(&[u8]) -> [u8; 65],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ];
+
+        let args = swig::actions::remove_authority_v1::RemoveAuthorityV1Args::new(
+            acting_role_id,
+            authority_to_remove_id,
+            65,
+        );
+
+        let data_payload: [u8; 0] = [];
+
+        let authority_payload = authority_payload_fn(&data_payload);
+
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [args.as_bytes(), &authority_payload].concat(),
+        })
+    }
+}

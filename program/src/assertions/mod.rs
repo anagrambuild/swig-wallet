@@ -1,13 +1,23 @@
+
+
 use pinocchio::{
     account_info::AccountInfo,
     program_error::ProgramError,
     pubkey::{create_program_address, find_program_address, Pubkey},
+    
     ProgramResult,
 };
+#[cfg(target_os = "solana")]
+use pinocchio::syscalls::{sol_curve_validate_point, sol_get_stack_height, sol_memcmp_};
 use pinocchio_system::ID as SYSTEM_ID;
 
-#[cfg(target_os = "solana")]
+
+#[allow(unused_imports)]
+use std::mem::MaybeUninit;
+
+
 #[inline(always)]
+#[cfg(target_os = "solana")]
 pub fn sol_assert_bytes_eq(left: &[u8], right: &[u8], len: usize) -> bool {
     unsafe {
         let mut result = MaybeUninit::<i32>::uninit();
@@ -20,6 +30,7 @@ pub fn sol_assert_bytes_eq(left: &[u8], right: &[u8], len: usize) -> bool {
         result.assume_init() == 0
     }
 }
+
 
 #[cfg(not(target_os = "solana"))]
 pub fn sol_assert_bytes_eq(left: &[u8], right: &[u8], len: usize) -> bool {
@@ -85,6 +96,7 @@ sol_assert_return!(check_any_pda, u8, seeds: &[&[u8]], target_key: &Pubkey, prog
     None
   }
 });
+
 sol_assert_return!(check_self_pda, u8, seeds: &[&[u8]], target_key: &Pubkey | {
 let pda = create_program_address(seeds, &crate::ID)?;
 if sol_assert_bytes_eq(pda.as_ref(), target_key.as_ref(), 32) {
