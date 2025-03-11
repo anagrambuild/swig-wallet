@@ -16,9 +16,9 @@ pub fn authenticate(
     match authority {
         AuthorityType::Ed25519 => {
             ed25519::authenticate(stored_authority_data, authority_payload, account_infos)
-        },
+        }
         AuthorityType::Secp256k1 => {
             secp256k1::authenticate(stored_authority_data, authority_payload, data_payload)
-        },
+        }
     }
 }
