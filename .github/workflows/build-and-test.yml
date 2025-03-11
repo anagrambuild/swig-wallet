@@ -65,7 +65,7 @@ jobs:
         if: always()
         with:
           name: test-results
-          path: output.xml
+          path: target/nextest/ci/output.xml
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v3
