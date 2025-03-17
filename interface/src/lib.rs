@@ -351,3 +351,90 @@ impl ReplaceAuthorityInstruction {
         })
     }
 }
+
+pub struct CreatePluginBytecodeInstruction;
+impl CreatePluginBytecodeInstruction {
+    pub fn new(
+        plugin_bytecode_account: Pubkey,
+        authority: Pubkey,
+        target_program: Pubkey,
+        payer: Pubkey,
+        instructions: Vec<swig_state::VMInstruction>,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(plugin_bytecode_account, false),
+            AccountMeta::new_readonly(target_program, false),
+            AccountMeta::new(authority, true),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ];
+
+        let mut instructions_bytes = Vec::new();
+        for instruction in instructions {
+            instruction.serialize(&mut instructions_bytes)?;
+        }
+
+        let args = swig::actions::create_plugin_bytecode_v1::CreatePluginBytecodeV1Args::new(
+            instructions_bytes.len() as u16,
+        );
+
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [args.as_bytes(), &instructions_bytes].concat(),
+        })
+    }
+}
+
+pub struct ExecutePluginInstruction;
+impl ExecutePluginInstruction {
+    pub fn new(
+        plugin_bytecode_account: Pubkey,
+        target_program: Pubkey,
+        result_account: Pubkey,
+        payer: Pubkey,
+        account_indices: Vec<u8>,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new_readonly(plugin_bytecode_account, false),
+            AccountMeta::new_readonly(target_program, false),
+            AccountMeta::new(result_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ];
+
+        let args =
+            swig::actions::execute_plugin_v1::ExecutePluginV1Args::new(account_indices.len() as u8);
+
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [args.as_bytes(), &account_indices].concat(),
+        })
+    }
+}
+
+pub struct ExecuteInstruction;
+impl ExecuteInstruction {
+    pub fn new(
+        bytecode_account: Pubkey,
+        result_account: Pubkey,
+        payer: Pubkey,
+        account_indices: Vec<u8>,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new_readonly(bytecode_account, false),
+            AccountMeta::new(result_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ];
+
+        let args = swig::actions::execute_v1::ExecuteV1Args::new(account_indices.len() as u8);
+
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [args.as_bytes(), &account_indices].concat(),
+        })
+    }
+}

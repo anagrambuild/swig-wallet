@@ -33,6 +33,27 @@ pub enum SwigInstruction {
   // additional ix data will be appended to the end of the ix the ix_payload and auth_payload have offset and length tuples to locate the data
   // Extra accounts will be sent over CPI to any of the IXs in the ix payload which resembles a txn
   SignV1 = 4,
+  #[account(0, writable, name="bytecode_account", desc="the account storing VM bytecode")]
+  #[account(1, writable, signer, name="authority", desc="the authority that owns the bytecode")]
+  #[account(2, writable, name="system_program", desc="the system program")]
+  InitializeBytecode = 5,
+  #[account(0, writable, name="plugin_bytecode_account", desc="the account storing plugin bytecode")]
+  #[account(1, writable, name="target_program", desc="the program this plugin is for")]
+  #[account(2, writable, name="program_data", desc="the program's data account")]
+  #[account(3, writable, signer, name="authority", desc="the upgrade authority of the target program")]
+  #[account(4, writable, name="system_program", desc="the system program")]
+  CreatePluginBytecode = 6,
+  #[account(0, writable, name="bytecode_account", desc="the account storing VM bytecode")]
+  #[account(1, writable, name="result_account", desc="the account storing execution results")]
+  #[account(2, writable, signer, name="payer", desc="the payer")]
+  #[account(3, writable, name="system_program", desc="the system program")]
+  Execute = 7,
+  #[account(0, writable, name="plugin_bytecode_account", desc="the account storing plugin bytecode")]
+  #[account(1, writable, name="target_program", desc="the program this plugin is for")]
+  #[account(2, writable, name="result_account", desc="the account storing execution results")]
+  #[account(3, writable, signer, name="payer", desc="the payer")]
+  #[account(4, writable, name="system_program", desc="the system program")]
+  ExecutePlugin = 8,
 }
 
 pub trait Authenticatable {

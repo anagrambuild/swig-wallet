@@ -42,6 +42,22 @@ pub enum SwigError {
     DuplicateAuthority,
     #[error("Invalid Operation {0}")]
     InvalidOperation(&'static str),
+    #[error("Invalid account index")]
+    InvalidAccountIndex,
+    #[error("Invalid field offset")]
+    InvalidFieldOffset,
+    #[error("Stack underflow")]
+    StackUnderflow,
+    #[error("Stack overflow")]
+    StackOverflow,
+    #[error("Div by zero")]
+    DivisionByZero,
+    #[error("Invalid jump")]
+    InvalidJump,
+    #[error("No result")]
+    NoResult,
+    #[error("Invalid target program")]
+    InvalidTargetProgram,
 }
 
 impl From<InstructionError> for SwigError {
@@ -72,6 +88,14 @@ impl From<SwigError> for u32 {
             SwigError::InvalidSystemProgram => 16,
             SwigError::DuplicateAuthority => 17,
             SwigError::InvalidOperation { .. } => 18,
+            SwigError::InvalidAccountIndex => 19,
+            SwigError::InvalidFieldOffset => 20,
+            SwigError::StackUnderflow => 21,
+            SwigError::StackOverflow => 22,
+            SwigError::DivisionByZero => 23,
+            SwigError::InvalidJump => 24,
+            SwigError::NoResult => 25,
+            SwigError::InvalidTargetProgram => 26,
         }
     }
 }
