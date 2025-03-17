@@ -31,10 +31,10 @@ pinocchio::default_panic_handler!();
 #[cfg(not(feature = "no-entrypoint"))]
 lazy_entrypoint!(process_instruction);
 pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
-    const AI: MaybeUninit<AccountInfo> = MaybeUninit::<AccountInfo>::uninit();
-    const AC: MaybeUninit<AccountClassification> = MaybeUninit::<AccountClassification>::uninit();
-    let mut accounts = [AI; 128];
-    let mut classifiers = [AC; 128];
+    // Allocate vectors on the heap with initial capacity of 32
+    let mut accounts = Vec::with_capacity(128);
+    let mut classifiers = Vec::with_capacity(128);
+
     unsafe {
         execute(&mut ctx, &mut accounts, &mut classifiers)?;
     }
@@ -70,19 +70,35 @@ pub enum AccountClassification {
 #[inline(always)]
 unsafe fn execute(
     ctx: &mut InstructionContext,
-    accounts: &mut [MaybeUninit<AccountInfo>],
-    account_classification: &mut [MaybeUninit<AccountClassification>],
+    accounts: &mut Vec<MaybeUninit<AccountInfo>>,
+    account_classification: &mut Vec<MaybeUninit<AccountClassification>>,
 ) -> Result<(), ProgramError> {
     let mut index: usize = 0;
     while let Ok(acc) = ctx.next_account() {
         match acc {
             MaybeAccount::Account(account) => {
                 let classification = classify_account(index, &account, accounts)?;
-                account_classification[index].write(classification);
-                accounts[index].write(account);
+                if index >= account_classification.len() {
+                    account_classification.push(MaybeUninit::new(classification));
+                } else {
+                    account_classification[index].write(classification);
+                }
+                if index >= accounts.len() {
+                    accounts.push(MaybeUninit::new(account));
+                } else {
+                    accounts[index].write(account);
+                }
             },
             MaybeAccount::Duplicated(account_index) => {
-                accounts[index].write(accounts[account_index as usize].assume_init_ref().clone());
+                if index >= accounts.len() {
+                    accounts.push(MaybeUninit::new(
+                        accounts[account_index as usize].assume_init_ref().clone(),
+                    ));
+                } else {
+                    let account_to_clone =
+                        accounts[account_index as usize].assume_init_ref().clone();
+                    accounts[index].write(account_to_clone);
+                }
             },
         }
         index += 1;
