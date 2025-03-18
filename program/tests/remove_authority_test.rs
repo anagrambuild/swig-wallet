@@ -10,9 +10,8 @@ use solana_sdk::{
     system_program,
     transaction::VersionedTransaction,
 };
-use swig::util::ZeroCopy;
 use swig_interface::{AuthorityConfig, RemoveAuthorityInstruction};
-use swig_state::{Action, AuthorityType, Role, Swig};
+use swig_state::{util::ZeroCopy, Action, AuthorityType, Role, Swig};
 
 #[test_log::test]
 fn test_create_remove_authority() {

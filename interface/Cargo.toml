@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 bytemuck = {version="1.19.0", features=["derive"]}
-solana-sdk = {version = "2.0"}
+solana-sdk = {version = ">=1.18.0"}
 swig = {path = "../program", default-features = false, features = ["no-entrypoint"]}
 swig-compact-instructions = {path = "../instructions", default-features = false, features = ["client"]}
 swig-state = {path = "../state"}

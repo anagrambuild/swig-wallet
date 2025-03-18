@@ -1,5 +1,5 @@
 mod compact_instructions;
-use std::marker::PhantomData;
+use std::{marker::PhantomData, mem::MaybeUninit};
 
 pub use compact_instructions::*;
 use pinocchio::{
@@ -20,13 +20,17 @@ pub enum InstructionError {
     MissingAccountInfo,
     #[error("Missing Data")]
     MissingData,
+    #[error("Too many accounts")]
+    TooManyAccounts,
 }
+
+pub const MAX_ACCOUNTS: usize = 128;
 
 pub struct InstructionHolder<'a> {
     pub program_id: &'a Pubkey,
-    pub cpi_accounts: Vec<Account<'a>>,
-    pub indexes: Vec<usize>,
-    pub accounts: Vec<AccountMeta<'a>>,
+    pub cpi_accounts: &'a [Account<'a>],
+    pub indexes: &'a [usize],
+    pub accounts: &'a [AccountMeta<'a>],
     pub data: &'a [u8],
 }
 
@@ -51,13 +55,12 @@ impl<'a> InstructionHolder<'a> {
                 *all_accounts[self.indexes[1]].borrow_mut_lamports_unchecked() += amount;
             }
         } else {
-            unsafe {
-                invoke_signed_unchecked(&self.borrow(), self.cpi_accounts.as_slice(), swig_signer)
-            }
+            unsafe { invoke_signed_unchecked(&self.borrow(), self.cpi_accounts, swig_signer) }
         }
         Ok(())
     }
 }
+
 pub trait AccountProxy<'a> {
     fn signer(&self) -> bool;
     fn writable(&self) -> bool;
@@ -80,7 +83,7 @@ impl<'a> InstructionHolder<'a> {
     pub fn borrow(&'a self) -> Instruction<'a, 'a, 'a, 'a> {
         Instruction {
             program_id: self.program_id,
-            accounts: &self.accounts,
+            accounts: self.accounts,
             data: self.data,
         }
     }
@@ -189,26 +192,56 @@ where
             .accounts
             .get_account(program_id_index as usize)?
             .pubkey();
-        // Parse accounts
+
+        // Parse accounts count
         let (num_accounts, cursor) = self.read_u8()?;
         self.cursor = cursor;
         let num_accounts = num_accounts as usize;
-        let mut accounts = Vec::with_capacity(num_accounts);
-        let mut infos = Vec::with_capacity(num_accounts);
-        let mut indexes = Vec::with_capacity(num_accounts);
-        for _ in 0..num_accounts {
+
+        // Check if account count exceeds our fixed capacity
+        if num_accounts > MAX_ACCOUNTS {
+            return Err(InstructionError::TooManyAccounts);
+        }
+
+        // Use MaybeUninit arrays to avoid any allocations
+        let mut account_metas: MaybeUninit<[AccountMeta<'a>; MAX_ACCOUNTS]> = MaybeUninit::uninit();
+        let mut cpi_accounts: MaybeUninit<[Account<'a>; MAX_ACCOUNTS]> = MaybeUninit::uninit();
+        let mut indexes: MaybeUninit<[usize; MAX_ACCOUNTS]> = MaybeUninit::uninit();
+
+        // Safe because we're getting pointers to write to individual elements
+        let account_metas_ptr = account_metas.as_mut_ptr() as *mut AccountMeta<'a>;
+        let cpi_accounts_ptr = cpi_accounts.as_mut_ptr() as *mut Account<'a>;
+        let indexes_ptr = indexes.as_mut_ptr() as *mut usize;
+
+        // Process all accounts in a single pass with zero allocations
+        for i in 0..num_accounts {
             let (pubkey_index, cursor) = self.read_u8()?;
             self.cursor = cursor;
             let account = self.accounts.get_account(pubkey_index as usize)?;
-            indexes.push(pubkey_index as usize);
             let pubkey = account.pubkey();
-            accounts.push(AccountMeta {
-                pubkey,
-                is_signer: (pubkey == self.signer || account.signer())
-                    && !self.restricted_keys.is_restricted(pubkey),
-                is_writable: account.writable(),
-            });
-            infos.push(account.into_account());
+
+            // Write index directly to array
+            unsafe {
+                *indexes_ptr.add(i) = pubkey_index as usize;
+            }
+
+            // Determine permissions
+            let is_signer = (pubkey == self.signer || account.signer())
+                && !self.restricted_keys.is_restricted(pubkey);
+
+            // Write account meta directly to array
+            unsafe {
+                *account_metas_ptr.add(i) = AccountMeta {
+                    pubkey,
+                    is_signer,
+                    is_writable: account.writable(),
+                };
+            }
+
+            // Write CPI account directly to array
+            unsafe {
+                *cpi_accounts_ptr.add(i) = account.into_account();
+            }
         }
 
         // Parse data
@@ -217,11 +250,20 @@ where
         let (data, cursor) = self.read_slice(data_len as usize)?;
         self.cursor = cursor;
 
+        // Create slices from our uninitialized arrays up to the actual number of accounts
+        // Safety: We've initialized exactly num_accounts elements in each array
+        let account_metas_slice =
+            unsafe { std::slice::from_raw_parts(account_metas_ptr, num_accounts) };
+        let cpi_accounts_slice =
+            unsafe { std::slice::from_raw_parts(cpi_accounts_ptr, num_accounts) };
+        let indexes_slice = unsafe { std::slice::from_raw_parts(indexes_ptr, num_accounts) };
+
+        // Create holder with the stack-allocated arrays (zero heap allocations)
         Ok(InstructionHolder {
             program_id,
-            cpi_accounts: infos,
-            accounts,
-            indexes,
+            cpi_accounts: cpi_accounts_slice,
+            accounts: account_metas_slice,
+            indexes: indexes_slice,
             data,
         })
     }

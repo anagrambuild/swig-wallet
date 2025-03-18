@@ -6275,6 +6275,7 @@ version = "0.0.1"
 dependencies = [
  "bs58",
  "bytemuck",
+ "heapless",
  "pinocchio",
  "pinocchio-system",
  "solana-program",

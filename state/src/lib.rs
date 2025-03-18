@@ -1,3 +1,5 @@
+pub mod util;
+mod swig;
 use borsh::{BorshDeserialize, BorshSerialize};
 use pinocchio::instruction::Seed;
 
@@ -155,7 +157,10 @@ impl Swig {
 pub enum AuthorityType {
     Ed25519,
     Secp256k1,
+    Secp256k1Session,
+    Secp256r1Session,
 }
+
 
 unsafe impl bytemuck::Zeroable for AuthorityType {}
 unsafe impl bytemuck::Pod for AuthorityType {}
@@ -166,19 +171,22 @@ impl AuthorityType {
         match self {
             AuthorityType::Ed25519 => 32,
             AuthorityType::Secp256k1 => 33,
+            AuthorityType::Secp256k1Session => 33,
+            AuthorityType::Secp256r1Session => 33,
+        }
+    }
+
+    pub fn from_u8(type_id: u8) -> Option<Self> {
+        match type_id {
+            0 => Some(AuthorityType::Ed25519),
+            1 => Some(AuthorityType::Secp256k1),
+            2 => Some(AuthorityType::Secp256k1Session),
+            3 => Some(AuthorityType::Secp256r1Session),
+            _ => None,
         }
     }
 }
 
-#[derive(BorshDeserialize, PartialEq, Debug, Clone)]
-pub struct NewRole {
-    pub(crate) size: u32,
-    pub authority_type: AuthorityType,
-    pub start_slot: u64,
-    pub end_slot: u64,
-    pub authority_data_len: usize,
-    pub permissions_len: usize,
-}
 
 #[derive(BorshDeserialize, PartialEq, Debug, Clone)]
 pub struct Role {
@@ -477,3 +485,5 @@ mod tests {
         assert_eq!(role.actions.len(), 2);
     }
 }
+
+

@@ -1,9 +1,9 @@
 pub mod actions;
 mod assertions;
-mod authority_models;
 mod error;
+pub mod authority_models;
+
 pub mod instruction;
-pub mod util;
 use std::mem::MaybeUninit;
 
 use actions::process_action;
@@ -19,6 +19,7 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_pubkey::{declare_id, pubkey};
+use swig_compact_instructions::MAX_ACCOUNTS;
 use swig_state::Discriminator;
 declare_id!("swigNmWhy8RvUYXBKV5TSU8Hh3f4o5EczHouzBzEsLC");
 const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
@@ -33,8 +34,8 @@ lazy_entrypoint!(process_instruction);
 pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
     const AI: MaybeUninit<AccountInfo> = MaybeUninit::<AccountInfo>::uninit();
     const AC: MaybeUninit<AccountClassification> = MaybeUninit::<AccountClassification>::uninit();
-    let mut accounts = [AI; 128];
-    let mut classifiers = [AC; 128];
+    let mut accounts = [AI; MAX_ACCOUNTS];
+    let mut classifiers = [AC; MAX_ACCOUNTS];
     unsafe {
         execute(&mut ctx, &mut accounts, &mut classifiers)?;
     }

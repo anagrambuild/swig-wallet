@@ -8,7 +8,7 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_system::instructions::Transfer;
-use swig_state::{swig_account_seeds_with_bump, Action, AuthorityType, Role, Swig};
+use swig_state::{swig_account_seeds_with_bump, util::ZeroCopy, Action, AuthorityType, Role, Swig};
 
 use crate::{
     assertions::{check_bytes_match, check_self_owned, check_self_pda},
@@ -17,7 +17,6 @@ use crate::{
         accounts::{AddAuthorityV1Accounts, Context},
         Authenticatable, SwigInstruction, SWIG_ACCOUNT_NAME,
     },
-    util::ZeroCopy,
 };
 
 pub struct AddAuthorityV1<'a> {

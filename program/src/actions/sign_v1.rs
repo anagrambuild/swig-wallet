@@ -5,7 +5,9 @@ use pinocchio::{
 };
 use pinocchio_pubkey::from_str;
 use swig_compact_instructions::InstructionIterator;
-use swig_state::{swig_account_signer, Action, AuthorityType, SolAction, Swig, TokenAction};
+use swig_state::{
+    swig_account_signer, util::ZeroCopy, Action, AuthorityType, SolAction, Swig, TokenAction,
+};
 
 use crate::{
     assertions::{check_self_owned, check_stack_height},
@@ -14,7 +16,6 @@ use crate::{
         accounts::{Context, SignV1Accounts},
         Authenticatable, SwigInstruction, SWIG_ACCOUNT_NAME,
     },
-    util::ZeroCopy,
     AccountClassification,
 };
 // use swig_instructions::InstructionIterator;
@@ -267,7 +268,6 @@ pub fn sign_v1(
             }
         }
         role.serialize(&mut &mut swig_account_data[offset..offset + role.size()])
-            .map_err(|_| SwigError::SerializationError)
             .map_err(|_| SwigError::SerializationError)?;
     }
     Ok(())

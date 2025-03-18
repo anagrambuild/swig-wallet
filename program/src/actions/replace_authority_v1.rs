@@ -5,7 +5,6 @@ use crate::{
         accounts::{Context, ReplaceAuthorityV1Accounts},
         Authenticatable, SwigInstruction, SWIG_ACCOUNT_NAME,
     },
-    util::ZeroCopy,
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytemuck::{Pod, Zeroable};
@@ -17,7 +16,7 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_system::instructions::Transfer;
-use swig_state::{swig_account_seeds_with_bump, Action, AuthorityType, Role, Swig};
+use swig_state::{swig_account_seeds_with_bump, util::ZeroCopy, Action, AuthorityType, Role, Swig};
 
 pub struct ReplaceAuthorityV1<'a> {
     pub args: &'a ReplaceAuthorityV1Args,

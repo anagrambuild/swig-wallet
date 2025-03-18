@@ -4,6 +4,7 @@ use swig_state::AuthorityType;
 use crate::error::SwigError;
 mod ed25519;
 mod secp256k1;
+pub use secp256k1::Secp256k1AuthorityPayload;
 
 #[inline(always)]
 pub fn authenticate(
@@ -20,5 +21,6 @@ pub fn authenticate(
         AuthorityType::Secp256k1 => {
             secp256k1::authenticate(stored_authority_data, authority_payload, data_payload)
         },
+        _ => Err(SwigError::InvalidAuthority),
     }
 }

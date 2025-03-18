@@ -3,7 +3,7 @@ use bytemuck::{Pod, Zeroable};
 use pinocchio::{
     account_info::AccountInfo, msg, program_error::ProgramError, sysvars::Sysvar, ProgramResult,
 };
-use swig_state::{swig_account_seeds_with_bump, Action, Swig};
+use swig_state::{swig_account_seeds_with_bump, util::ZeroCopy, Action, Swig};
 
 use crate::{
     assertions::{check_bytes_match, check_self_owned, check_self_pda},
@@ -12,7 +12,6 @@ use crate::{
         accounts::{Context, RemoveAuthorityV1Accounts},
         Authenticatable, SwigInstruction, SWIG_ACCOUNT_NAME,
     },
-    util::ZeroCopy,
 };
 
 pub struct RemoveAuthorityV1<'a> {

@@ -1,4 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
+use bytemuck::{Pod, Zeroable};
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
@@ -7,11 +8,11 @@ use solana_sdk::{
 pub use swig;
 use swig::{
     actions::{add_authority_v1::AddAuthorityV1Args, sign_v1::SignV1Args},
-    util::ZeroCopy,
+    authority_models::Secp256k1AuthorityPayload,
 };
 pub use swig_compact_instructions::*;
 pub use swig_state;
-use swig_state::{swig_account_seeds, Action, AuthorityType};
+use swig_state::{swig_account_seeds, util::ZeroCopy, Action, AuthorityType};
 
 pub fn program_id() -> Pubkey {
     swig::ID.into()
@@ -20,6 +21,8 @@ pub fn program_id() -> Pubkey {
 pub fn swig_key(id: String) -> Pubkey {
     Pubkey::find_program_address(&swig_account_seeds(id.as_bytes()), &program_id()).0
 }
+
+pub type Secp256k1AuthorityPayloadFn = fn(&[u8]) -> Secp256k1AuthorityPayload;
 
 pub struct AuthorityConfig<'a> {
     pub authority_type: AuthorityType,
@@ -104,19 +107,16 @@ impl AddAuthorityInstruction {
         })
     }
 
-    pub fn new_with_secp256k1_authority<F>(
+    pub fn new_with_secp256k1_authority(
         swig_account: Pubkey,
         payer: Pubkey,
-        authority_payload_fn: F,
+        authority_payload_fn: Secp256k1AuthorityPayloadFn,
         acting_role_id: u8,
         new_authority_config: AuthorityConfig,
         start: u64,
         end: u64,
         actions: Vec<Action>,
-    ) -> anyhow::Result<Instruction>
-    where
-        F: Fn(&[u8]) -> [u8; 64],
-    {
+    ) -> anyhow::Result<Instruction> {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
@@ -142,7 +142,7 @@ impl AddAuthorityInstruction {
                 args.as_bytes(),
                 new_authority_config.authority,
                 &data_vec,
-                &authority_payload,
+                &authority_payload.as_bytes(),
             ]
             .concat(),
         })
@@ -172,10 +172,10 @@ impl SignInstruction {
         })
     }
 
-    pub fn new_secp256k1(
+    pub fn new_secp256k1<F>(
         swig_account: Pubkey,
         payer: Pubkey,
-        authority: [u8; 64],
+        authority_payload_fn: Secp256k1AuthorityPayloadFn,
         inner_instructions: Vec<Instruction>,
         role_id: u8,
     ) -> anyhow::Result<Instruction> {
@@ -185,10 +185,16 @@ impl SignInstruction {
         ];
         let (accounts, ixs) = compact_instructions(swig_account, accounts, inner_instructions);
         let args = SignV1Args::new(role_id, 64, ixs.inner_instructions.len() as u16);
+        let authority_payload = authority_payload_fn(&ixs.into_bytes());
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [args.as_bytes(), authority.as_ref(), &ixs.into_bytes()].concat(),
+            data: [
+                args.as_bytes(),
+                authority_payload.as_bytes(),
+                &ixs.into_bytes(),
+            ]
+            .concat(),
         })
     }
 }
@@ -225,13 +231,10 @@ impl RemoveAuthorityInstruction {
     pub fn new_with_secp256k1_authority<F>(
         swig_account: Pubkey,
         payer: Pubkey,
-        authority_payload_fn: F,
+        authority_payload_fn: Secp256k1AuthorityPayloadFn,
         acting_role_id: u8,
         authority_to_remove_id: u8,
-    ) -> anyhow::Result<Instruction>
-    where
-        F: Fn(&[u8]) -> [u8; 65],
-    {
+    ) -> anyhow::Result<Instruction> {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
@@ -251,7 +254,7 @@ impl RemoveAuthorityInstruction {
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [args.as_bytes(), &authority_payload].concat(),
+            data: [args.as_bytes(), authority_payload.as_bytes()].concat(),
         })
     }
 }
