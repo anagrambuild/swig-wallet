@@ -6303,6 +6303,7 @@ dependencies = [
  "borsh 1.5.3",
  "bytemuck",
  "pinocchio",
+ "thiserror 2.0.11",
 ]
 
 [[package]]

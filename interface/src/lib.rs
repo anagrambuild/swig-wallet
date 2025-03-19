@@ -22,8 +22,6 @@ pub fn swig_key(id: String) -> Pubkey {
     Pubkey::find_program_address(&swig_account_seeds(id.as_bytes()), &program_id()).0
 }
 
-pub type Secp256k1AuthorityPayloadFn = fn(&[u8]) -> Secp256k1AuthorityPayload;
-
 pub struct AuthorityConfig<'a> {
     pub authority_type: AuthorityType,
     pub authority: &'a [u8],
@@ -110,7 +108,7 @@ impl AddAuthorityInstruction {
     pub fn new_with_secp256k1_authority(
         swig_account: Pubkey,
         payer: Pubkey,
-        authority_payload_fn: Secp256k1AuthorityPayloadFn,
+        authority_payload_fn: impl Fn(&[u8]) -> Secp256k1AuthorityPayload,
         acting_role_id: u8,
         new_authority_config: AuthorityConfig,
         start: u64,
@@ -175,7 +173,7 @@ impl SignInstruction {
     pub fn new_secp256k1<F>(
         swig_account: Pubkey,
         payer: Pubkey,
-        authority_payload_fn: Secp256k1AuthorityPayloadFn,
+        authority_payload_fn: impl Fn(&[u8]) -> Secp256k1AuthorityPayload,
         inner_instructions: Vec<Instruction>,
         role_id: u8,
     ) -> anyhow::Result<Instruction> {
@@ -231,7 +229,7 @@ impl RemoveAuthorityInstruction {
     pub fn new_with_secp256k1_authority<F>(
         swig_account: Pubkey,
         payer: Pubkey,
-        authority_payload_fn: Secp256k1AuthorityPayloadFn,
+        authority_payload_fn: impl Fn(&[u8]) -> Secp256k1AuthorityPayload,
         acting_role_id: u8,
         authority_to_remove_id: u8,
     ) -> anyhow::Result<Instruction> {
@@ -302,20 +300,17 @@ impl ReplaceAuthorityInstruction {
         })
     }
 
-    pub fn new_with_secp256k1_authority<F>(
+    pub fn new_with_secp256k1_authority(
         swig_account: Pubkey,
         payer: Pubkey,
-        authority_payload_fn: F,
+        authority_payload_fn: impl Fn(&[u8]) -> Secp256k1AuthorityPayload,
         acting_role_id: u8,
         authority_to_replace_id: u8,
         new_authority_config: AuthorityConfig,
         actions: Vec<Action>,
         start: u64,
         end: u64,
-    ) -> anyhow::Result<Instruction>
-    where
-        F: Fn(&[u8]) -> [u8; 65],
-    {
+    ) -> anyhow::Result<Instruction> {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
@@ -348,7 +343,7 @@ impl ReplaceAuthorityInstruction {
                 args.as_bytes(),
                 authority_data,
                 &actions_bytes,
-                &authority_payload,
+                &authority_payload.as_bytes(),
             ]
             .concat(),
         })

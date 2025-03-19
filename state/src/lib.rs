@@ -1,5 +1,8 @@
+pub mod action;
+pub mod authority;
+pub mod role;
+pub mod swig;
 pub mod util;
-mod swig;
 use borsh::{BorshDeserialize, BorshSerialize};
 use pinocchio::instruction::Seed;
 
@@ -161,10 +164,8 @@ pub enum AuthorityType {
     Secp256r1Session,
 }
 
-
 unsafe impl bytemuck::Zeroable for AuthorityType {}
 unsafe impl bytemuck::Pod for AuthorityType {}
-
 impl AuthorityType {
     #[inline(always)]
     pub fn data_size(&self) -> usize {
@@ -186,7 +187,6 @@ impl AuthorityType {
         }
     }
 }
-
 
 #[derive(BorshDeserialize, PartialEq, Debug, Clone)]
 pub struct Role {
@@ -485,5 +485,3 @@ mod tests {
         assert_eq!(role.actions.len(), 2);
     }
 }
-
-

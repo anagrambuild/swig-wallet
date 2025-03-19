@@ -8,3 +8,4 @@ edition = "2021"
 borsh = { version = "1.5.3", default-features = false, features = ["derive"] }
 bytemuck = { version = "1.21.0", features = ["derive"] }
 pinocchio = { version = "0.7.1" }
+thiserror = "2.0.3"

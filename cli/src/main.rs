@@ -39,7 +39,7 @@ use solana_sdk::{
 use spl_associated_token_account::instruction::create_associated_token_account_idempotent;
 use spl_token::instruction::TokenInstruction;
 use swig_interface::{
-    swig::{self},
+    swig::{self, authority_models::Secp256k1AuthorityPayload},
     swig_key,
     swig_state::{swig_account_seeds, Action, AuthorityType, SolAction, Swig, TokenAction},
     AddAuthorityInstruction, AuthorityConfig, CreateInstruction, SignInstruction,
@@ -264,7 +264,7 @@ fn main_fn() -> Result<()> {
                         session: None,
                     }
                 }, /* TODO for session based authorities we will create session keypair and sign
-                    * the data */
+                * the data */
                 _ => todo!(),
             };
 
@@ -373,12 +373,16 @@ fn main_fn() -> Result<()> {
                     )
                 },
                 CliAuthorityType::Secp256k1 => {
+                    let slot = ctx.rpc_client.get_slot()?;
                     AddAuthorityInstruction::new_with_secp256k1_authority(
                         swig_id,
                         ctx.payer.pubkey(),
                         |data| {
                             let sig = auth_context.sign(data).unwrap();
-                            sig[0..64].try_into().unwrap()
+                            Secp256k1AuthorityPayload {
+                                signature: sig[0..64].try_into().unwrap(),
+                                slot,
+                            }
                         },
                         auth_context.role_id,
                         AuthorityConfig {
