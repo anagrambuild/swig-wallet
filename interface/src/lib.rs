@@ -351,3 +351,85 @@ impl ReplaceAuthorityInstruction {
         })
     }
 }
+
+pub struct InitializeBytecodeInstruction;
+impl InitializeBytecodeInstruction {
+    pub fn new(
+        bytecode_account: Pubkey,
+        authority: Pubkey,
+        instructions: Vec<swig_state::VMInstruction>,
+    ) -> anyhow::Result<Instruction> {
+        // Create the args first
+        let args = swig::actions::initialize_bytecode_v1::InitializeBytecodeV1Args::new(
+            instructions.len() as u16,
+        );
+
+        // Serialize instructions using borsh
+        let instructions_data = borsh::to_vec(&instructions)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize instructions: {:?}", e))?;
+
+        // Create a buffer with proper alignment for the args
+        let mut data = Vec::with_capacity(8 + instructions_data.len());
+
+        // Add the args bytes (which are already properly aligned due to bytemuck)
+        data.extend_from_slice(bytemuck::bytes_of(&args));
+
+        // Add the instructions data
+        data.extend_from_slice(&instructions_data);
+
+        println!("Args bytes: {:?}", bytemuck::bytes_of(&args));
+        println!("Instructions data: {:?}", instructions_data);
+        println!("Final data: {:?}", data);
+
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts: vec![
+                AccountMeta::new(bytecode_account, true),
+                AccountMeta::new(authority, true),
+                AccountMeta::new_readonly(system_program::ID, false),
+            ],
+            data,
+        })
+    }
+}
+
+pub struct ExecuteBytecodeInstruction;
+impl ExecuteBytecodeInstruction {
+    pub fn new(
+        bytecode_account: Pubkey,
+        result_account: Pubkey,
+        payer: Pubkey,
+        account_indices: Option<Vec<u8>>,
+    ) -> anyhow::Result<Instruction> {
+        // Create the args first
+        let args = swig::actions::execute_v1::ExecuteV1Args::new(
+            account_indices.as_ref().map_or(0, |v| v.len() as u8),
+        );
+
+        // Create a buffer with proper alignment for the args
+        let mut data = Vec::with_capacity(8 + account_indices.as_ref().map_or(0, |v| v.len()));
+
+        // Add the args bytes (which are already properly aligned due to bytemuck)
+        data.extend_from_slice(bytemuck::bytes_of(&args));
+
+        // Add account indices if provided
+        if let Some(ref indices) = account_indices {
+            data.extend_from_slice(indices);
+        }
+
+        println!("Execute args bytes: {:?}", bytemuck::bytes_of(&args));
+        println!("Account indices: {:?}", account_indices);
+        println!("Final execute data: {:?}", data);
+
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts: vec![
+                AccountMeta::new(bytecode_account, false),
+                AccountMeta::new(result_account, true),
+                AccountMeta::new(payer, true),
+                AccountMeta::new_readonly(system_program::ID, false),
+            ],
+            data,
+        })
+    }
+}

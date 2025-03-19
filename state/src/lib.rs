@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use pinocchio::instruction::Seed;
+use pinocchio::{instruction::Seed, pubkey::Pubkey};
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct CreateV1 {
@@ -347,6 +347,72 @@ impl Action {
             Action::Sol { action } => 1 + action.size(),
             Action::Program { .. } => 1 + 32,
             Action::Tokens { action } => 1 + action.size(),
+        }
+    }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+pub struct BytecodeAccount {
+    pub authority: Pubkey,
+    pub instructions: Vec<VMInstruction>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+pub struct PluginBytecodeAccount {
+    pub target_program: Pubkey,
+    pub instructions: Vec<VMInstruction>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+pub struct ExecutionResultAccount {
+    pub result: i64,
+    pub executed_at: i64,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+pub enum VMInstruction {
+    PushValue {
+        value: i64,
+    },
+    LoadField {
+        account_index: u8,
+        field_offset: u16,
+    },
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Equal,
+    GreaterThan,
+    LessThan,
+    And,
+    Or,
+    Not,
+    JumpIf {
+        offset: u8,
+    },
+    Return,
+}
+
+impl VMInstruction {
+    pub fn size(&self) -> usize {
+        match self {
+            VMInstruction::PushValue { .. } => 1 + 8, // 1 byte for variant + 8 bytes for i64
+            VMInstruction::LoadField { .. } => 1 + 1 + 2, // 1 byte for variant + 1 byte for
+            // account_index + 2 bytes for
+            // field_offset
+            VMInstruction::Add
+            | VMInstruction::Subtract
+            | VMInstruction::Multiply
+            | VMInstruction::Divide
+            | VMInstruction::Equal
+            | VMInstruction::GreaterThan
+            | VMInstruction::LessThan
+            | VMInstruction::And
+            | VMInstruction::Or
+            | VMInstruction::Not
+            | VMInstruction::Return => 1, // 1 byte for variant
+            VMInstruction::JumpIf { .. } => 1 + 1, // 1 byte for variant + 1 byte for offset
         }
     }
 }
