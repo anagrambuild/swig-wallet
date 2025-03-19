@@ -1,4 +1,3 @@
-use borsh::{BorshDeserialize, BorshSerialize};
 use bytemuck::{Pod, Zeroable};
 use pinocchio::{
     account_info::AccountInfo,
@@ -78,9 +77,8 @@ pub fn execute_plugin_bytecode_v1(
     // Get plugin bytecode account data
     let plugin_bytecode_account_data =
         unsafe { ctx.accounts.plugin_bytecode_account.borrow_data_unchecked() };
-    let plugin_bytecode_account =
-        PluginBytecodeAccount::try_from_slice(plugin_bytecode_account_data)
-            .map_err(|_| SwigError::SerializationError)?;
+    let plugin_bytecode_account: &PluginBytecodeAccount =
+        bytemuck::from_bytes(plugin_bytecode_account_data);
 
     // Verify target program matches
     if plugin_bytecode_account.target_program != *ctx.accounts.target_program.key() {
@@ -96,7 +94,7 @@ pub fn execute_plugin_bytecode_v1(
     let indices = execute.account_indices;
 
     // Execute instructions until Return or end of bytecode
-    while pc < plugin_bytecode_account.instructions.len() {
+    while pc < plugin_bytecode_account.instructions_len as usize {
         let instruction = &plugin_bytecode_account.instructions[pc];
         msg!(
             "Executing plugin instruction at PC={}: {:?}",
@@ -113,6 +111,7 @@ pub fn execute_plugin_bytecode_v1(
             VMInstruction::LoadField {
                 account_index,
                 field_offset,
+                padding: _,
             } => {
                 msg!(
                     "LoadField: account_index={}, field_offset={}",
@@ -277,7 +276,7 @@ pub fn execute_plugin_bytecode_v1(
                 stack.push(result);
                 pc += 1;
             },
-            VMInstruction::JumpIf { offset } => {
+            VMInstruction::JumpIf { offset, padding: _ } => {
                 if stack.is_empty() {
                     msg!("Stack underflow in JumpIf operation");
                     return Err(SwigError::StackUnderflow.into());
@@ -300,7 +299,7 @@ pub fn execute_plugin_bytecode_v1(
                     );
 
                     // Check for potential out-of-bounds jump
-                    if pc >= plugin_bytecode_account.instructions.len() {
+                    if pc >= plugin_bytecode_account.instructions_len as usize {
                         msg!("Invalid jump destination: {}", pc);
                         return Err(SwigError::InvalidJump.into());
                     }
@@ -351,11 +350,7 @@ pub fn execute_plugin_bytecode_v1(
             executed_at: Clock::get()?.unix_timestamp,
         };
 
-        let mut max_initial_result = Vec::with_capacity(128);
-        result_account
-            .serialize(&mut max_initial_result)
-            .map_err(|e| SwigError::SerializationError)?;
-        let space_needed = max_initial_result.len();
+        let space_needed = core::mem::size_of::<ExecutionResultAccount>();
 
         // Create result account
         pinocchio_system::instructions::CreateAccount {
@@ -370,32 +365,23 @@ pub fn execute_plugin_bytecode_v1(
         // Write account data
         unsafe {
             ctx.accounts.result_account.borrow_mut_data_unchecked()[..space_needed]
-                .copy_from_slice(&max_initial_result);
+                .copy_from_slice(bytemuck::bytes_of(&result_account));
         }
     } else {
         // Update existing result account
-        let mut result_account = ExecutionResultAccount::try_from_slice(unsafe {
-            ctx.accounts.result_account.borrow_data_unchecked()
-        })
-        .map_err(|_| SwigError::SerializationError)?;
+        let mut result_account: ExecutionResultAccount =
+            *bytemuck::from_bytes(unsafe { ctx.accounts.result_account.borrow_data_unchecked() });
         result_account.result = final_result;
         result_account.executed_at = Clock::get()?.unix_timestamp;
 
-        let mut max_initial_result = Vec::with_capacity(128);
-        result_account
-            .serialize(&mut max_initial_result)
-            .map_err(|e| SwigError::SerializationError)?;
-        let space_needed = max_initial_result.len();
+        let space_needed = core::mem::size_of::<ExecutionResultAccount>();
 
         unsafe {
             ctx.accounts.result_account.borrow_mut_data_unchecked()[..space_needed]
-                .copy_from_slice(&max_initial_result);
+                .copy_from_slice(bytemuck::bytes_of(&result_account));
         }
     }
 
-    msg!(
-        "Plugin execution completed. Result stored: {}",
-        final_result
-    );
+    msg!("Execution completed. Result stored: {}", final_result);
     Ok(())
 }

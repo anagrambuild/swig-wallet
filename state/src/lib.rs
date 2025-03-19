@@ -1,4 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
+use bytemuck::{Pod, Zeroable};
 use pinocchio::{instruction::Seed, pubkey::Pubkey};
 
 #[derive(BorshSerialize, BorshDeserialize)]
@@ -351,25 +352,8 @@ impl Action {
     }
 }
 
-#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
-pub struct BytecodeAccount {
-    pub authority: Pubkey,
-    pub instructions: Vec<VMInstruction>,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
-pub struct PluginBytecodeAccount {
-    pub target_program: Pubkey,
-    pub instructions: Vec<VMInstruction>,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
-pub struct ExecutionResultAccount {
-    pub result: i64,
-    pub executed_at: i64,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+#[derive(Copy, Clone, PartialEq, Debug)]
+#[repr(C, align(8))]
 pub enum VMInstruction {
     PushValue {
         value: i64,
@@ -377,6 +361,7 @@ pub enum VMInstruction {
     LoadField {
         account_index: u8,
         field_offset: u16,
+        padding: [u8; 4],
     },
     Add,
     Subtract,
@@ -390,31 +375,38 @@ pub enum VMInstruction {
     Not,
     JumpIf {
         offset: u8,
+        padding: [u8; 7],
     },
     Return,
 }
 
-impl VMInstruction {
-    pub fn size(&self) -> usize {
-        match self {
-            VMInstruction::PushValue { .. } => 1 + 8, // 1 byte for variant + 8 bytes for i64
-            VMInstruction::LoadField { .. } => 1 + 1 + 2, // 1 byte for variant + 1 byte for
-            // account_index + 2 bytes for
-            // field_offset
-            VMInstruction::Add
-            | VMInstruction::Subtract
-            | VMInstruction::Multiply
-            | VMInstruction::Divide
-            | VMInstruction::Equal
-            | VMInstruction::GreaterThan
-            | VMInstruction::LessThan
-            | VMInstruction::And
-            | VMInstruction::Or
-            | VMInstruction::Not
-            | VMInstruction::Return => 1, // 1 byte for variant
-            VMInstruction::JumpIf { .. } => 1 + 1, // 1 byte for variant + 1 byte for offset
-        }
-    }
+// Manual implementation of Pod and Zeroable for VMInstruction
+unsafe impl bytemuck::Zeroable for VMInstruction {}
+unsafe impl bytemuck::Pod for VMInstruction {}
+
+#[derive(Pod, Zeroable, Copy, Clone, PartialEq, Debug)]
+#[repr(C, align(8))]
+pub struct BytecodeAccount {
+    pub authority: Pubkey,
+    pub instructions_len: u32,
+    pub padding: [u8; 4],
+    pub instructions: [VMInstruction; 32],
+}
+
+#[derive(Pod, Zeroable, Copy, Clone, PartialEq, Debug)]
+#[repr(C, align(8))]
+pub struct PluginBytecodeAccount {
+    pub target_program: Pubkey,
+    pub instructions_len: u32,
+    pub padding: [u8; 4],
+    pub instructions: [VMInstruction; 32],
+}
+
+#[derive(Pod, Zeroable, Copy, Clone, PartialEq, Debug)]
+#[repr(C, align(8))]
+pub struct ExecutionResultAccount {
+    pub result: i64,
+    pub executed_at: i64,
 }
 
 #[cfg(test)]

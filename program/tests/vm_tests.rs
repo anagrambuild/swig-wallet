@@ -1,5 +1,5 @@
 mod common;
-use borsh::{BorshDeserialize, BorshSerialize};
+use bytemuck::{Pod, Zeroable};
 use common::*;
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
@@ -49,12 +49,13 @@ fn test_initialize_bytecode() {
     instruction_data.extend_from_slice(&[0; 5]); // padding
     instruction_data.extend_from_slice(&(instructions.len() as u16).to_le_bytes());
 
+    // Create initialize bytecode instruction
     let swig_ix = swig_interface::InitializeBytecodeInstruction::new(
         bytecode_account.pubkey(),
         authority.pubkey(),
-        instructions,
-    )
-    .unwrap();
+        system_program::ID,
+        &instructions,
+    );
 
     // NOTE commented this out because we actually want to use
     // `swig_interface::InitializeBytecodeInstruction::new` so our instruction is
@@ -104,14 +105,19 @@ fn test_initialize_bytecode() {
 
     // Verify the bytecode account
     let account = context.svm.get_account(&bytecode_account.pubkey()).unwrap();
-    let bytecode = BytecodeAccount::try_from_slice(&account.data).unwrap();
+    let bytecode: &BytecodeAccount = bytemuck::from_bytes(&account.data);
     println!("bytecode account: {:?}", bytecode);
-    // assert_eq!(bytecode.authority, authority.pubkey());
-    assert_eq!(bytecode.instructions.len(), 4);
+    assert_eq!(bytecode.authority, authority.pubkey().to_bytes());
+    assert_eq!(bytecode.instructions_len, 4);
 
     // Log the instructions for verification
     println!("Bytecode account instructions:");
-    for (i, instr) in bytecode.instructions.iter().enumerate() {
+    for (i, instr) in bytecode
+        .instructions
+        .iter()
+        .take(bytecode.instructions_len as usize)
+        .enumerate()
+    {
         println!("  Instruction {}: {:?}", i, instr);
     }
 }
@@ -141,9 +147,9 @@ fn test_execute_bytecode() {
     let init_ix = swig_interface::InitializeBytecodeInstruction::new(
         bytecode_account.pubkey(),
         authority.pubkey(),
-        instructions,
-    )
-    .unwrap();
+        system_program::ID,
+        &instructions,
+    );
 
     let init_message = v0::Message::try_compile(
         &authority.pubkey(),
@@ -190,8 +196,6 @@ fn test_execute_bytecode() {
     .unwrap();
 
     let execute_result = context.svm.send_transaction(execute_transaction);
-
-    println!("execute_result: {:?}", execute_result);
     assert!(
         execute_result.is_ok(),
         "Failed to execute bytecode: {:?}",
@@ -199,7 +203,7 @@ fn test_execute_bytecode() {
     );
 
     // Verify the result
-    let result_account_data = context.svm.get_account(&result_account.pubkey()).unwrap();
-    let result = ExecutionResultAccount::try_from_slice(&result_account_data.data).unwrap();
+    let result_account = context.svm.get_account(&result_account.pubkey()).unwrap();
+    let result: &ExecutionResultAccount = bytemuck::from_bytes(&result_account.data);
     assert_eq!(result.result, 8); // 5 + 3 = 8
 }

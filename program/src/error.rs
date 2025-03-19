@@ -58,6 +58,8 @@ pub enum SwigError {
     NoResult,
     #[error("Invalid target program")]
     InvalidTargetProgram,
+    #[error("Too many instructions")]
+    TooManyInstructions,
 }
 
 impl From<InstructionError> for SwigError {
@@ -96,6 +98,7 @@ impl From<SwigError> for u32 {
             SwigError::InvalidJump => 24,
             SwigError::NoResult => 25,
             SwigError::InvalidTargetProgram => 26,
+            SwigError::TooManyInstructions => 27,
         }
     }
 }

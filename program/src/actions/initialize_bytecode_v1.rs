@@ -1,4 +1,3 @@
-use borsh::{BorshDeserialize, BorshSerialize};
 use bytemuck::{Pod, Zeroable};
 use pinocchio::{
     account_info::AccountInfo,
@@ -102,29 +101,31 @@ pub fn initialize_bytecode_v1(
         initialize_bytecode.instructions.len()
     );
 
-    // Deserialize the entire vector of instructions at once
-    let instructions: Vec<VMInstruction> =
-        borsh::BorshDeserialize::try_from_slice(initialize_bytecode.instructions).map_err(|e| {
-            msg!("Failed to deserialize instructions vector: {:?}", e);
-            ProgramError::InvalidInstructionData
-        })?;
+    // Deserialize the instructions using bytemuck
+    let instructions_data =
+        &initialize_bytecode.instructions[..initialize_bytecode.args.instructions_len as usize
+            * core::mem::size_of::<VMInstruction>()];
+    let instructions: &[VMInstruction] = bytemuck::cast_slice(instructions_data);
 
     msg!(
         "Successfully deserialized {} instructions",
         instructions.len()
     );
 
-    // Create bytecode account
-    let bytecode_account = BytecodeAccount {
+    // Create bytecode account with instructions
+    let mut bytecode_account = BytecodeAccount {
         authority: *ctx.accounts.authority.key(),
-        instructions: instructions.clone(),
+        instructions_len: instructions.len() as u32,
+        padding: [0; 4],
+        instructions: [VMInstruction::Return; 32], // Initialize with default value
     };
 
-    let mut max_initial_bytecode = Vec::with_capacity(128);
-    bytecode_account
-        .serialize(&mut max_initial_bytecode)
-        .map_err(|e| SwigError::SerializationError)?;
-    let space_needed = max_initial_bytecode.len();
+    // Copy instructions into the fixed-size array
+    for (i, instruction) in instructions.iter().enumerate().take(32) {
+        bytecode_account.instructions[i] = *instruction;
+    }
+
+    let space_needed = core::mem::size_of::<BytecodeAccount>();
     let lamports_needed = Rent::get()?.minimum_balance(space_needed);
 
     CreateAccount {
@@ -139,7 +140,7 @@ pub fn initialize_bytecode_v1(
     // Write account data
     unsafe {
         ctx.accounts.bytecode_account.borrow_mut_data_unchecked()[..space_needed]
-            .copy_from_slice(&max_initial_bytecode);
+            .copy_from_slice(bytemuck::bytes_of(&bytecode_account));
     }
 
     msg!(

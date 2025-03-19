@@ -1,4 +1,3 @@
-use borsh::{BorshDeserialize, BorshSerialize};
 use bytemuck::{Pod, Zeroable};
 use pinocchio::{
     account_info::AccountInfo,
@@ -24,16 +23,16 @@ use crate::{
 #[repr(C, align(8))]
 pub struct CreatePluginBytecodeV1Args {
     pub instruction: u8,
-    pub padding: [u8; 5],
-    pub instructions_len: u16,
+    pub padding: [u8; 3],
+    pub instructions_len: u32,
 }
 
 impl CreatePluginBytecodeV1Args {
-    pub fn new(instructions_len: u16) -> Self {
+    pub fn new(instructions_len: u32) -> Self {
         Self {
             instruction: SwigInstruction::CreatePluginBytecodeV1 as u8,
-            padding: [0; 5],
             instructions_len,
+            padding: [0; 3],
         }
     }
 }
@@ -84,33 +83,38 @@ pub fn create_plugin_bytecode_v1(
         ProgramError::InvalidInstructionData
     })?;
 
-    // Deserialize instructions
-    let mut instructions = Vec::new();
-    let mut cursor = 0;
-    while cursor < create_plugin.instructions.len() {
-        let instruction = VMInstruction::try_from_slice(&create_plugin.instructions[cursor..])
-            .map_err(|_| ProgramError::InvalidInstructionData)?;
-        cursor += instruction.size();
-        instructions.push(instruction);
-    }
-
-    // Create plugin bytecode account
-    let plugin_bytecode_account = PluginBytecodeAccount {
+    // Create plugin bytecode account with instructions
+    let mut plugin_bytecode_account = PluginBytecodeAccount {
         target_program: *ctx.accounts.target_program.key(),
-        instructions: instructions.clone(),
+        instructions_len: create_plugin.args.instructions_len,
+        padding: [0; 4],
+        instructions: [VMInstruction::Return; 32], // Initialize with default value
     };
 
-    let mut max_initial_plugin = Vec::with_capacity(128);
-    plugin_bytecode_account
-        .serialize(&mut max_initial_plugin)
-        .map_err(|e| SwigError::SerializationError)?;
-    let space_needed = max_initial_plugin.len();
-    let lamports_needed = Rent::get()?.minimum_balance(space_needed);
+    // Deserialize and copy instructions
+    let mut cursor = 0;
+    let mut instruction_count = 0;
+    while cursor < create_plugin.instructions.len() && instruction_count < 32 {
+        let instruction: &VMInstruction = bytemuck::from_bytes(
+            &create_plugin.instructions[cursor..cursor + core::mem::size_of::<VMInstruction>()],
+        );
+        plugin_bytecode_account.instructions[instruction_count] = *instruction;
+        cursor += core::mem::size_of::<VMInstruction>();
+        instruction_count += 1;
+    }
 
-    CreateAccount {
+    if instruction_count >= 32 {
+        return Err(SwigError::TooManyInstructions.into());
+    }
+
+    // Calculate space needed for the account
+    let space_needed = core::mem::size_of::<PluginBytecodeAccount>();
+
+    // Create plugin bytecode account
+    pinocchio_system::instructions::CreateAccount {
         from: ctx.accounts.authority,
         to: ctx.accounts.plugin_bytecode_account,
-        lamports: lamports_needed,
+        lamports: 0,
         space: space_needed as u64,
         owner: &crate::ID,
     }
@@ -121,13 +125,9 @@ pub fn create_plugin_bytecode_v1(
         ctx.accounts
             .plugin_bytecode_account
             .borrow_mut_data_unchecked()[..space_needed]
-            .copy_from_slice(&max_initial_plugin);
+            .copy_from_slice(bytemuck::bytes_of(&plugin_bytecode_account));
     }
 
-    msg!(
-        "Plugin bytecode account initialized for program {:?} with {} instructions",
-        ctx.accounts.target_program.key(),
-        instructions.len()
-    );
+    msg!("Plugin bytecode account created successfully");
     Ok(())
 }

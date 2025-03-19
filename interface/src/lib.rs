@@ -355,41 +355,35 @@ impl ReplaceAuthorityInstruction {
 pub struct InitializeBytecodeInstruction;
 impl InitializeBytecodeInstruction {
     pub fn new(
-        bytecode_account: Pubkey,
         authority: Pubkey,
-        instructions: Vec<swig_state::VMInstruction>,
-    ) -> anyhow::Result<Instruction> {
-        // Create the args first
+        bytecode_account: Pubkey,
+        system_program: Pubkey,
+        instructions: &[swig_state::VMInstruction],
+    ) -> Instruction {
         let args = swig::actions::initialize_bytecode_v1::InitializeBytecodeV1Args::new(
             instructions.len() as u16,
         );
+        let args_bytes = bytemuck::bytes_of(&args);
+        let instructions_bytes =
+            bytemuck::cast_slice::<swig_state::VMInstruction, u8>(instructions);
 
-        // Serialize instructions using borsh
-        let instructions_data = borsh::to_vec(&instructions)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize instructions: {:?}", e))?;
+        // Create a buffer with proper alignment for both args and instructions
+        let mut buffer = vec![0u8; args_bytes.len() + instructions_bytes.len()];
+        buffer[..args_bytes.len()].copy_from_slice(args_bytes);
+        buffer[args_bytes.len()..].copy_from_slice(instructions_bytes);
 
-        // Create a buffer with proper alignment for the args
-        let mut data = Vec::with_capacity(8 + instructions_data.len());
+        println!("Args bytes: {:?}", args_bytes);
+        println!("Instructions bytes: {:?}", instructions_bytes);
 
-        // Add the args bytes (which are already properly aligned due to bytemuck)
-        data.extend_from_slice(bytemuck::bytes_of(&args));
-
-        // Add the instructions data
-        data.extend_from_slice(&instructions_data);
-
-        println!("Args bytes: {:?}", bytemuck::bytes_of(&args));
-        println!("Instructions data: {:?}", instructions_data);
-        println!("Final data: {:?}", data);
-
-        Ok(Instruction {
+        Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts: vec![
-                AccountMeta::new(bytecode_account, true),
                 AccountMeta::new(authority, true),
-                AccountMeta::new_readonly(system_program::ID, false),
+                AccountMeta::new(bytecode_account, false),
+                AccountMeta::new_readonly(system_program, false),
             ],
-            data,
-        })
+            data: buffer,
+        }
     }
 }
 
