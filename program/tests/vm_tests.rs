@@ -127,7 +127,6 @@ fn test_execute_bytecode() {
     let mut context = setup_test_context().unwrap();
     let authority = Keypair::new();
     let bytecode_account = Keypair::new();
-    let result_account = Keypair::new();
 
     // Airdrop SOL to accounts
     context
@@ -175,7 +174,6 @@ fn test_execute_bytecode() {
     // Now execute the bytecode
     let execute_ix = swig_interface::ExecuteBytecodeInstruction::new(
         bytecode_account.pubkey(),
-        result_account.pubkey(),
         authority.pubkey(),
         None, // No account indices needed for this simple test
     )
@@ -189,21 +187,15 @@ fn test_execute_bytecode() {
     )
     .unwrap();
 
-    let execute_transaction = VersionedTransaction::try_new(
-        VersionedMessage::V0(execute_message),
-        &[&authority, &result_account],
-    )
-    .unwrap();
+    let execute_transaction =
+        VersionedTransaction::try_new(VersionedMessage::V0(execute_message), &[&authority])
+            .unwrap();
 
     let execute_result = context.svm.send_transaction(execute_transaction);
+    println!("execute_result: {:?}", execute_result);
     assert!(
         execute_result.is_ok(),
         "Failed to execute bytecode: {:?}",
         execute_result.err()
     );
-
-    // Verify the result
-    let result_account = context.svm.get_account(&result_account.pubkey()).unwrap();
-    let result: &ExecutionResultAccount = bytemuck::from_bytes(&result_account.data);
-    assert_eq!(result.result, 8); // 5 + 3 = 8
 }

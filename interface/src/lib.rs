@@ -391,7 +391,6 @@ pub struct ExecuteBytecodeInstruction;
 impl ExecuteBytecodeInstruction {
     pub fn new(
         bytecode_account: Pubkey,
-        result_account: Pubkey,
         payer: Pubkey,
         account_indices: Option<Vec<u8>>,
     ) -> anyhow::Result<Instruction> {
@@ -419,7 +418,6 @@ impl ExecuteBytecodeInstruction {
             program_id: Pubkey::from(swig::ID),
             accounts: vec![
                 AccountMeta::new(bytecode_account, false),
-                AccountMeta::new(result_account, true),
                 AccountMeta::new(payer, true),
                 AccountMeta::new_readonly(system_program::ID, false),
             ],

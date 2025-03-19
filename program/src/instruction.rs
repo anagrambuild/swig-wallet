@@ -44,9 +44,9 @@ pub enum SwigInstruction {
   #[account(4, writable, name="system_program", desc="the system program")]
   CreatePluginBytecodeV1 = 6,
   #[account(0, writable, name="bytecode_account", desc="the account storing VM bytecode")]
-  #[account(1, writable, name="result_account", desc="the account storing execution results")]
-  #[account(2, writable, signer, name="payer", desc="the payer")]
-  #[account(3, writable, name="system_program", desc="the system program")]
+//   #[account(1, writable, name="result_account", desc="the account storing execution results")]
+  #[account(1, writable, signer, name="payer", desc="the payer")]
+  #[account(2, writable, name="system_program", desc="the system program")]
   ExecuteBytecodeV1 = 7,
   #[account(0, writable, name="plugin_bytecode_account", desc="the account storing plugin bytecode")]
   #[account(1, writable, name="target_program", desc="the program this plugin is for")]
