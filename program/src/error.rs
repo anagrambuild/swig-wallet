@@ -1,5 +1,6 @@
 use pinocchio::{msg, program_error::ProgramError};
 use swig_compact_instructions::InstructionError;
+use swig_state::SwigStateError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -12,8 +13,8 @@ pub enum SwigError {
     NotOnCurve(&'static str),
     #[error("Account {0} must be a signer")]
     ExpectedSigner(&'static str),
-    #[error("State Error: {0}")]
-    StateError(&'static str),
+    #[error("State Error: {0:?}")]
+    StateError(SwigStateError),
     #[error("Account {0} borrow failed")]
     AccountBorrowFailed(&'static str),
     #[error("Invalid Authority Type")]
@@ -42,6 +43,10 @@ pub enum SwigError {
     DuplicateAuthority,
     #[error("Invalid Operation {0}")]
     InvalidOperation(&'static str),
+    #[error("Authority Type does not support sessiond")]
+    AuthorityTypeDoesNotSupportSessions,
+    #[error("Invalid Session Data")]
+    InvalidSessionData,
 }
 
 impl From<InstructionError> for SwigError {
@@ -72,6 +77,8 @@ impl From<SwigError> for u32 {
             SwigError::InvalidSystemProgram => 16,
             SwigError::DuplicateAuthority => 17,
             SwigError::InvalidOperation { .. } => 18,
+            SwigError::AuthorityTypeDoesNotSupportSessions => 19,
+            SwigError::InvalidSessionData => 20,
         }
     }
 }
@@ -80,5 +87,11 @@ impl From<SwigError> for ProgramError {
     fn from(e: SwigError) -> Self {
         msg!("Error: {:?}", e);
         ProgramError::Custom(e.into())
+    }
+}
+
+impl From<SwigStateError> for SwigError {
+    fn from(e: SwigStateError) -> Self {
+        SwigError::StateError(e)
     }
 }

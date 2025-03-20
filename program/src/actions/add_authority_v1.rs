@@ -120,6 +120,13 @@ pub fn add_authority_v1(
         msg!("AddAuthorityV1 Args Error: {:?}", e);
         ProgramError::InvalidInstructionData
     })?;
+    if add_authority_v1.args.start_slot > 0
+        && add_authority_v1.args.end_slot > 0
+        && add_authority_v1.args.start_slot >= add_authority_v1.args.end_slot
+    {
+        msg!("Start slot must be less than end slot");
+        return Err(SwigError::InvalidAuthority.into());
+    }
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let id = Swig::raw_get_id(swig_account_data);
     let bump = Swig::raw_get_bump(swig_account_data);
@@ -128,7 +135,9 @@ pub fn add_authority_v1(
         add_authority_v1.args.acting_role_id as usize,
     )
     .ok_or(SwigError::InvalidAuthority)?;
-    add_authority_v1.authenticate(all_accounts, &role)?;
+    let clock = pinocchio::sysvars::clock::Clock::get()?;
+    let current_slot = clock.slot;
+    add_authority_v1.authenticate(all_accounts, &role, current_slot)?;
     let b = [bump];
     let seeds = swig_account_seeds_with_bump(&id, &b);
     check_self_pda(

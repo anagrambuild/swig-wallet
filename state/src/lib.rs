@@ -1,5 +1,14 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use pinocchio::instruction::Seed;
+use pinocchio::{instruction::Seed, program_error::ProgramError};
+
+pub mod authority;
+
+#[derive(Debug)]
+#[repr(u8)] //starts at 100
+pub enum SwigStateError {
+    InvalidAuthority = 100,
+    InvalidSessionData = 101,
+}
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct CreateV1 {
@@ -155,6 +164,10 @@ impl Swig {
 pub enum AuthorityType {
     Ed25519,
     Secp256k1,
+    Ed25519Session,
+    Secp256k1Session,
+    R1PasskeySession,
+    //---- zkp
 }
 
 unsafe impl bytemuck::Zeroable for AuthorityType {}
@@ -165,7 +178,10 @@ impl AuthorityType {
     pub fn data_size(&self) -> usize {
         match self {
             AuthorityType::Ed25519 => 32,
-            AuthorityType::Secp256k1 => 33,
+            AuthorityType::Secp256k1 => 64,
+            AuthorityType::Ed25519Session => 32 + 32 + 8 + 8,
+            AuthorityType::Secp256k1Session => 64 + 32 + 8 + 8,
+            _ => 0,
         }
     }
 }

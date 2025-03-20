@@ -1,7 +1,8 @@
 use borsh::BorshSerialize;
 use bytemuck::{Pod, Zeroable};
 use pinocchio::{
-    account_info::AccountInfo, msg, program_error::ProgramError, pubkey::Pubkey, ProgramResult,
+    account_info::AccountInfo, msg, program_error::ProgramError, pubkey::Pubkey, sysvars::Sysvar,
+    ProgramResult,
 };
 use pinocchio_pubkey::from_str;
 use swig_compact_instructions::InstructionIterator;
@@ -121,7 +122,18 @@ pub fn sign_v1(
     .map_err(SwigError::from)?;
     let b = [bump];
     let signer = swig_account_signer(&id, &b);
-    sign_v1.authenticate(all_accounts, &role)?;
+    let clock = pinocchio::sysvars::clock::Clock::get()?;
+    let current_slot = clock.slot;
+    match role.authority_type {
+        //todo generify
+        AuthorityType::Ed25519Session | AuthorityType::Secp256k1Session => {
+            sign_v1.authenticate_session(all_accounts, &role, current_slot)?;
+        },
+        _ => {
+            sign_v1.authenticate(all_accounts, &role, current_slot)?;
+        },
+    }
+
     for ix in ix_iter {
         if let Ok(instruction) = ix {
             instruction.execute(
@@ -129,7 +141,6 @@ pub fn sign_v1(
                 ctx.accounts.swig.key(),
                 &[signer.as_slice().into()],
             )?;
-            msg!("Instruction executed");
         } else {
             return Err(SwigError::InstructionError(ix.err().unwrap()).into());
         }
@@ -267,7 +278,6 @@ pub fn sign_v1(
             }
         }
         role.serialize(&mut &mut swig_account_data[offset..offset + role.size()])
-            .map_err(|_| SwigError::SerializationError)
             .map_err(|_| SwigError::SerializationError)?;
     }
     Ok(())
