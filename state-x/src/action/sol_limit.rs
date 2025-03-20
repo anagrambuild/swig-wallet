@@ -15,7 +15,7 @@ impl<'a> Actionable<'a> for SolLimit {
 
     fn from_bytes(bytes: &[u8]) -> &Self {
         // TODO: Fix the unwrap.
-        unsafe { SolLimit::from_bytes_unchecked(bytes).unwrap() }
+        unsafe { SolLimit::load_unchecked(bytes).unwrap() }
     }
 
     /// TODO

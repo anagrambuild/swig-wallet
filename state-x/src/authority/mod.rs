@@ -64,10 +64,10 @@ impl TryFrom<u16> for AuthorityType {
 /// Trait for authority data.
 ///
 /// The `AuthorityData` defines the data of a particular authority.
-pub trait AuthorityData<'a> {
+pub trait AuthorityData<'a>: Transmutable {
     const TYPE: AuthorityType;
 
-    fn from_bytes(bytes: &'a [u8]) -> &'a Self;
-
-    fn length(&self) -> usize;
+    fn length(&self) -> usize {
+        Self::LEN
+    }
 }

@@ -18,7 +18,7 @@ impl<'a> Actionable<'a> for SolRecurringLimit {
 
     fn from_bytes(bytes: &[u8]) -> &Self {
         // TODO: Fix the unwrap.
-        unsafe { SolRecurringLimit::from_bytes_unchecked(bytes).unwrap() }
+        unsafe { SolRecurringLimit::load_unchecked(bytes).unwrap() }
     }
 
     /// TODO
