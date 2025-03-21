@@ -9,12 +9,14 @@ use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError, ProgramResult};
 
 use self::{
-    add_authority_v1::*, create_session_v1::*, create_v1::*, remove_authority_v1::*, replace_authority_v1::*, sign_v1::*,
+    add_authority_v1::*, create_session_v1::*, create_v1::*, remove_authority_v1::*,
+    replace_authority_v1::*, sign_v1::*,
 };
 use crate::{
     instruction::{
         accounts::{
-            AddAuthorityV1Accounts, CreateSessionV1Accounts, CreateV1Accounts, RemoveAuthorityV1Accounts, ReplaceAuthorityV1Accounts, SignV1Accounts
+            AddAuthorityV1Accounts, CreateSessionV1Accounts, CreateV1Accounts,
+            RemoveAuthorityV1Accounts, ReplaceAuthorityV1Accounts, SignV1Accounts,
         },
         SwigInstruction,
     },

@@ -44,16 +44,16 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
         AuthorityType::Ed25519Session => {
             let create = Ed25519SessionAuthorityDataCreate::load(&borsh_create.authority_data)
                 .map_err(|_| SwigError::InvalidAuthority)?;
-           Ed25519SessionAuthorityData::new(create.authority_pubkey, create.role_max_duration).into_bytes().to_vec()
+            Ed25519SessionAuthorityData::new(create.authority_pubkey, create.role_max_duration)
+                .into_bytes()
+                .to_vec()
         },
         AuthorityType::Ed25519 => {
             Ed25519AuthorityData::load(&borsh_create.authority_data)
                 .map_err(|_| SwigError::InvalidAuthority)?;
-              borsh_create.authority_data
+            borsh_create.authority_data
         },
-        _ => {
-          borsh_create.authority_data
-        },
+        _ => borsh_create.authority_data,
     };
     let swig = Swig::new(
         borsh_create.id,
