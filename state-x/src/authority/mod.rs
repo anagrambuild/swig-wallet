@@ -2,37 +2,16 @@ pub mod ed25519;
 
 use pinocchio::program_error::ProgramError;
 
-use crate::Transmutable;
+use crate::{Transmutable, TransmutableMut};
 
-#[repr(C)]
-pub struct Authority {
-    /// Data section.
-    ///   0. type
-    ///   1. ID
-    ///   2. length
-    ///   3. boundary
-    data: [u16; 4],
-}
+/// Trait for authority data.
+///
+/// The `Authority` defines the data of a particular authority.
+pub trait Authority<'a>: Transmutable + TransmutableMut {
+    const TYPE: AuthorityType;
 
-impl Transmutable for Authority {
-    const LEN: usize = core::mem::size_of::<Authority>();
-}
-
-impl Authority {
-    pub fn authority_type(&self) -> Result<AuthorityType, ProgramError> {
-        AuthorityType::try_from(self.data[0])
-    }
-
-    pub fn id(&self) -> u16 {
-        self.data[1]
-    }
-
-    pub fn length(&self) -> u16 {
-        self.data[2]
-    }
-
-    pub fn boundary(&self) -> u16 {
-        self.data[3]
+    fn length(&self) -> usize {
+        Self::LEN
     }
 }
 
@@ -58,16 +37,5 @@ impl TryFrom<u16> for AuthorityType {
             0..=6 => Ok(unsafe { core::mem::transmute::<u16, AuthorityType>(value) }),
             _ => Err(ProgramError::InvalidInstructionData),
         }
-    }
-}
-
-/// Trait for authority data.
-///
-/// The `AuthorityData` defines the data of a particular authority.
-pub trait AuthorityData<'a>: Transmutable {
-    const TYPE: AuthorityType;
-
-    fn length(&self) -> usize {
-        Self::LEN
     }
 }

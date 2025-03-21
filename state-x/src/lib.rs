@@ -44,16 +44,18 @@ pub trait TransmutableMut: Transmutable {
     ///
     /// The caller must ensure that `bytes` contains a valid representation of `T`.
     #[inline(always)]
-    unsafe fn load_mut_unchecked<T: Transmutable>(
-        bytes: &mut [u8],
-    ) -> Result<&mut T, ProgramError> {
-        if bytes.len() != T::LEN {
+    unsafe fn load_mut_unchecked(bytes: &mut [u8]) -> Result<&mut Self, ProgramError> {
+        if bytes.len() != Self::LEN {
             return Err(ProgramError::InvalidAccountData);
         }
-        Ok(&mut *(bytes.as_mut_ptr() as *mut T))
+        Ok(&mut *(bytes.as_mut_ptr() as *mut Self))
     }
 }
 
 pub trait FromBytes<'a>: Sized {
     fn from_bytes(bytes: &'a [u8]) -> Result<Self, ProgramError>;
+}
+
+pub trait FromBytesMut<'a>: Sized {
+    fn from_bytes_mut(bytes: &'a mut [u8]) -> Result<Self, ProgramError>;
 }

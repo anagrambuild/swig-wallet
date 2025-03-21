@@ -1,8 +1,8 @@
 use pinocchio::program_error::ProgramError;
 
 use crate::{
-    authority::{Authority, AuthorityData, AuthorityType},
-    role::Role,
+    authority::{Authority, AuthorityType},
+    role::{Position, Role},
     FromBytes, Transmutable, TransmutableMut,
 };
 
@@ -41,17 +41,17 @@ impl<'a> SwigWithRoles<'a> {
         Ok(SwigWithRoles { state, roles })
     }
 
-    pub fn get<T: AuthorityData<'a> + Transmutable + 'a>(&'a self, id: u16) -> Option<Role<T>> {
+    pub fn get<T: Authority<'a> + 'a>(&'a self, id: u16) -> Option<Role<T>> {
         let mut cursor = 0;
 
-        while (cursor + Authority::LEN) <= self.roles.len() {
-            let offset = cursor + Authority::LEN;
-            let role_authority: &Authority =
-                unsafe { Authority::load_unchecked(&self.roles[cursor..offset]).unwrap() };
+        while (cursor + Position::LEN) <= self.roles.len() {
+            let offset = cursor + Position::LEN;
+            let position =
+                unsafe { Position::load_unchecked(&self.roles[cursor..offset]).unwrap() };
 
-            match role_authority.authority_type() {
-                Ok(t) if t == T::TYPE && role_authority.id() == id => {
-                    let end = offset + role_authority.length() as usize;
+            match position.authority_type() {
+                Ok(t) if t == T::TYPE && position.id() == id => {
+                    let end = offset + position.length() as usize;
 
                     match Role::<T>::from_bytes(&self.roles[cursor..end]) {
                         Ok(role) => return Some(role),
@@ -59,7 +59,7 @@ impl<'a> SwigWithRoles<'a> {
                     }
                 },
                 Ok(AuthorityType::None) => return None,
-                _ => cursor = offset + role_authority.boundary() as usize,
+                _ => cursor = offset + position.boundary() as usize,
             }
         }
 
@@ -106,10 +106,10 @@ mod tests {
 
         let role1 = swig.get::<ED25519>(0);
         assert!(role1.is_some());
-        assert_eq!(role1.unwrap().authority_data.proof, [1; 32]);
+        assert_eq!(role1.unwrap().authority.proof, [1; 32]);
 
         let role2 = swig.get::<ED25519>(1);
         assert!(role2.is_some());
-        assert_eq!(role2.unwrap().authority_data.proof, [2; 32]);
+        assert_eq!(role2.unwrap().authority.proof, [2; 32]);
     }
 }
