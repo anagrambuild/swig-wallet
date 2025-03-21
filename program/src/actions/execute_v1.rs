@@ -231,6 +231,7 @@ pub fn execute_bytecode_v1(ctx: Context<ExecuteBytecodeV1Accounts>, data: &[u8])
 
     // Return the final result
     let final_result = stack.pop().unwrap();
+    // TODO remove this and just return an error or not if it's 0 or 1
     msg!("Execution completed with result: {}", final_result);
     Ok(())
 }
