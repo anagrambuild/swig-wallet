@@ -135,84 +135,88 @@ pub fn sign_v1(
 
     // Skip plugin execution if no remaining accounts or no plugin target indices
     if !ctx.remaining_accounts.is_empty() && sign_v1.args.plugin_target_indices_len > 0 {
-        // Create a map of program PDA to the actual plugin account
-        let mut plugin_accounts =
-            std::collections::HashMap::with_capacity(ctx.remaining_accounts.len());
+        // Inline fast path for simple cases
+        if sign_v1.args.plugin_target_indices_len == 1 {
+            // Get the single target index
+            let idx = sign_v1.plugin_target_indices[0] as usize;
 
-        // Find plugin accounts in remaining accounts and index by PDA
-        for plugin_account in ctx.remaining_accounts.iter() {
-            // Only consider accounts owned by our program
-            if plugin_account.owner() != &crate::ID {
-                continue;
+            // Skip invalid indices
+            if idx < all_accounts.len() {
+                let account = &all_accounts[idx];
+                let owner = account.owner();
+
+                // Skip system program and our own program
+                if owner != &SYSTEM_PROGRAM_ID && owner != &crate::ID {
+                    // Try to find matching plugin
+                    for ra in ctx.remaining_accounts.iter() {
+                        // Quick ownership and size check
+                        if ra.owner() == &crate::ID
+                            && ra.data_len() >= std::mem::size_of::<PluginBytecodeAccount>()
+                        {
+                            // Get plugin data
+                            let data = unsafe { ra.borrow_data_unchecked() };
+                            let plugin = bytemuck::from_bytes::<PluginBytecodeAccount>(&data);
+
+                            // Check program match
+                            if &plugin.target_program == owner {
+                                // Verify PDA - only execute if PDA matches
+                                let (pda, _) = pinocchio::pubkey::find_program_address(
+                                    &[b"swig-pim", owner.as_ref()],
+                                    &crate::ID,
+                                );
+
+                                if ra.key() == &pda {
+                                    // Execute the plugin
+                                    let indices = [idx as u8];
+                                    let _ =
+                                        execute_plugin_bytecode(plugin, account, idx, &indices)?;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
             }
+        } else {
+            // Multi-index case
+            for &idx in sign_v1.plugin_target_indices.iter() {
+                let idx = idx as usize;
+                if idx >= all_accounts.len() {
+                    continue;
+                }
 
-            // Check if this is a plugin bytecode account
-            if plugin_account.data_len() < std::mem::size_of::<PluginBytecodeAccount>() {
-                continue;
-            }
+                let account = &all_accounts[idx];
+                let owner = account.owner();
 
-            // Extract plugin bytecode account data
-            let plugin_bytecode_account_data = unsafe { plugin_account.borrow_data_unchecked() };
-            let plugin_bytecode_account: &PluginBytecodeAccount =
-                bytemuck::from_bytes(plugin_bytecode_account_data);
+                if owner == &SYSTEM_PROGRAM_ID || owner == &crate::ID {
+                    continue;
+                }
 
-            // Generate plugin PDA for target program
-            let (plugin_pda, _) = pinocchio::pubkey::find_program_address(
-                &[b"swig-pim", plugin_bytecode_account.target_program.as_ref()],
-                &crate::ID,
-            );
+                for ra in ctx.remaining_accounts.iter() {
+                    if ra.owner() != &crate::ID
+                        || ra.data_len() < std::mem::size_of::<PluginBytecodeAccount>()
+                    {
+                        continue;
+                    }
 
-            // Add to our map of plugin accounts if the key matches the PDA
-            if plugin_account.key() == &plugin_pda {
-                plugin_accounts.insert(
-                    plugin_bytecode_account.target_program,
-                    (plugin_account, plugin_bytecode_account),
-                );
-            }
-        }
+                    let data = unsafe { ra.borrow_data_unchecked() };
+                    let plugin = bytemuck::from_bytes::<PluginBytecodeAccount>(&data);
 
-        // Process each target account index specified in the instruction
-        for &target_index in sign_v1.plugin_target_indices.iter() {
-            let target_index = target_index as usize;
+                    if &plugin.target_program != owner {
+                        continue;
+                    }
 
-            // Skip if target index is out of bounds
-            if target_index >= all_accounts.len() {
-                msg!("Invalid target account index: {}", target_index);
-                return Err(SwigError::InvalidAccountIndex.into());
-            }
+                    let (pda, _) = pinocchio::pubkey::find_program_address(
+                        &[b"swig-pim", owner.as_ref()],
+                        &crate::ID,
+                    );
 
-            let target_account = &all_accounts[target_index];
-            let target_program = target_account.owner();
-
-            // Skip system accounts and our own program accounts
-            if target_program == &SYSTEM_PROGRAM_ID {
-                continue;
-            }
-
-            // Check if we have a plugin for this program
-            if let Some((plugin_account, plugin_bytecode_account)) =
-                plugin_accounts.get(target_program)
-            {
-                // Create account indices array for the plugin execution
-                let indices = [target_index as u8];
-
-                // Execute plugin bytecode for the target account
-                let result = execute_plugin_bytecode(
-                    plugin_bytecode_account,
-                    target_account,
-                    target_index,
-                    &indices,
-                )?;
-                msg!("result: {:?}", result);
-
-                // If plugin rejects transaction, return error
-                // if result != 1 {
-                //     msg!(
-                //         "Plugin rejected transaction for account at index
-                // {}",         target_index
-                //     );
-                //     return Err(SwigError::PluginRejectedTransaction.into());
-                // }
+                    if ra.key() == &pda {
+                        let indices = [idx as u8];
+                        let _ = execute_plugin_bytecode(plugin, account, idx, &indices)?;
+                        break;
+                    }
+                }
             }
         }
     }
@@ -387,45 +391,49 @@ pub fn sign_v1(
 fn execute_plugin_bytecode(
     plugin_bytecode_account: &PluginBytecodeAccount,
     account: &AccountInfo,
-    index: usize,
-    indices: &[u8],
+    _index: usize,
+    _indices: &[u8],
 ) -> Result<i64, ProgramError> {
-    // Initialize VM state for execution
+    // Initialize stack with fixed capacity
     let mut stack = Vec::with_capacity(8);
-    let mut pc: usize = 0;
+    let mut pc = 0;
+    let instr_len = plugin_bytecode_account.instructions_len as usize;
 
-    // Execute instructions until Return or end of bytecode
-    while pc < plugin_bytecode_account.instructions_len as usize {
-        let instruction = &plugin_bytecode_account.instructions[pc];
-        match instruction {
+    // Fast path VM implementation
+    while pc < instr_len {
+        let instr = plugin_bytecode_account.instructions[pc];
+        match instr {
             VMInstruction::PushValue { value } => {
-                stack.push(*value);
+                stack.push(value);
                 pc += 1;
             },
             VMInstruction::LoadField {
                 account_index,
                 field_offset,
-                padding: _,
+                ..
             } => {
-                // Only support the current account for now
-                if *account_index != 0 {
-                    return Err(SwigError::InvalidAccountIndex.into());
+                // Currently only support index 0
+                if account_index != 0 {
+                    return Err(ProgramError::Custom(400)); // InvalidAccountIndex
                 }
 
-                // Get the account data
                 let data = account.try_borrow_data()?;
-                if (*field_offset as usize + 8) > data.len() {
-                    return Err(SwigError::InvalidFieldOffset.into());
+                let offset = field_offset as usize;
+
+                if offset + 8 > data.len() {
+                    return Err(ProgramError::Custom(401)); // InvalidFieldOffset
                 }
 
-                let mut bytes = [0u8; 8];
-                bytes.copy_from_slice(&data[*field_offset as usize..(*field_offset as usize + 8)]);
-                stack.push(i64::from_le_bytes(bytes));
+                let bytes = &data[offset..offset + 8];
+                let value = i64::from_le_bytes([
+                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                ]);
+                stack.push(value);
                 pc += 1;
             },
             VMInstruction::Add => {
                 if stack.len() < 2 {
-                    return Err(SwigError::StackUnderflow.into());
+                    return Err(ProgramError::Custom(402)); // StackUnderflow
                 }
                 let b = stack.pop().unwrap();
                 let a = stack.pop().unwrap();
@@ -434,7 +442,7 @@ fn execute_plugin_bytecode(
             },
             VMInstruction::Subtract => {
                 if stack.len() < 2 {
-                    return Err(SwigError::StackUnderflow.into());
+                    return Err(ProgramError::Custom(402));
                 }
                 let b = stack.pop().unwrap();
                 let a = stack.pop().unwrap();
@@ -443,7 +451,7 @@ fn execute_plugin_bytecode(
             },
             VMInstruction::Multiply => {
                 if stack.len() < 2 {
-                    return Err(SwigError::StackUnderflow.into());
+                    return Err(ProgramError::Custom(402));
                 }
                 let b = stack.pop().unwrap();
                 let a = stack.pop().unwrap();
@@ -452,19 +460,19 @@ fn execute_plugin_bytecode(
             },
             VMInstruction::Divide => {
                 if stack.len() < 2 {
-                    return Err(SwigError::StackUnderflow.into());
+                    return Err(ProgramError::Custom(402));
                 }
                 let b = stack.pop().unwrap();
-                let a = stack.pop().unwrap();
                 if b == 0 {
-                    return Err(SwigError::DivisionByZero.into());
+                    return Err(ProgramError::Custom(403)); // DivisionByZero
                 }
+                let a = stack.pop().unwrap();
                 stack.push(a / b);
                 pc += 1;
             },
             VMInstruction::Equal => {
                 if stack.len() < 2 {
-                    return Err(SwigError::StackUnderflow.into());
+                    return Err(ProgramError::Custom(402));
                 }
                 let b = stack.pop().unwrap();
                 let a = stack.pop().unwrap();
@@ -473,7 +481,7 @@ fn execute_plugin_bytecode(
             },
             VMInstruction::GreaterThan => {
                 if stack.len() < 2 {
-                    return Err(SwigError::StackUnderflow.into());
+                    return Err(ProgramError::Custom(402));
                 }
                 let b = stack.pop().unwrap();
                 let a = stack.pop().unwrap();
@@ -482,7 +490,7 @@ fn execute_plugin_bytecode(
             },
             VMInstruction::LessThan => {
                 if stack.len() < 2 {
-                    return Err(SwigError::StackUnderflow.into());
+                    return Err(ProgramError::Custom(402));
                 }
                 let b = stack.pop().unwrap();
                 let a = stack.pop().unwrap();
@@ -491,7 +499,7 @@ fn execute_plugin_bytecode(
             },
             VMInstruction::And => {
                 if stack.len() < 2 {
-                    return Err(SwigError::StackUnderflow.into());
+                    return Err(ProgramError::Custom(402));
                 }
                 let b = stack.pop().unwrap();
                 let a = stack.pop().unwrap();
@@ -500,7 +508,7 @@ fn execute_plugin_bytecode(
             },
             VMInstruction::Or => {
                 if stack.len() < 2 {
-                    return Err(SwigError::StackUnderflow.into());
+                    return Err(ProgramError::Custom(402));
                 }
                 let b = stack.pop().unwrap();
                 let a = stack.pop().unwrap();
@@ -509,45 +517,44 @@ fn execute_plugin_bytecode(
             },
             VMInstruction::Not => {
                 if stack.is_empty() {
-                    return Err(SwigError::StackUnderflow.into());
+                    return Err(ProgramError::Custom(402));
                 }
                 let a = stack.pop().unwrap();
                 stack.push(if a == 0 { 1 } else { 0 });
                 pc += 1;
             },
-            VMInstruction::JumpIf { offset, padding: _ } => {
+            VMInstruction::JumpIf { offset, .. } => {
                 if stack.is_empty() {
-                    return Err(SwigError::StackUnderflow.into());
+                    return Err(ProgramError::Custom(402));
                 }
                 let condition = stack.pop().unwrap();
                 if condition != 0 {
-                    let new_pc = pc as isize + *offset as isize;
-                    if new_pc < 0 || new_pc >= plugin_bytecode_account.instructions_len as isize {
-                        return Err(SwigError::InvalidJump.into());
+                    pc = pc.wrapping_add(offset as usize);
+                    if pc >= instr_len {
+                        return Err(ProgramError::Custom(404)); // InvalidJump
                     }
-                    pc = new_pc as usize;
                 } else {
                     pc += 1;
                 }
             },
             VMInstruction::Return => {
                 if stack.is_empty() {
-                    return Err(SwigError::StackUnderflow.into());
+                    return Err(ProgramError::Custom(402));
                 }
+                // Exit the loop
                 break;
             },
         }
 
+        // Check stack overflow (32 is a reasonable limit for a bytecode VM)
         if stack.len() > 32 {
-            return Err(SwigError::StackOverflow.into());
+            return Err(ProgramError::Custom(405)); // StackOverflow
         }
     }
 
-    // Check the plugin execution result (top of stack)
-    if stack.is_empty() {
-        return Err(SwigError::StackUnderflow.into());
+    // Return the result from top of stack
+    match stack.pop() {
+        Some(result) => Ok(result),
+        None => Err(ProgramError::Custom(402)),
     }
-
-    let plugin_result = stack.pop().unwrap();
-    Ok(plugin_result)
 }
