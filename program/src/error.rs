@@ -62,6 +62,8 @@ pub enum SwigError {
     TooManyInstructions,
     #[error("Invalid PDA")]
     InvalidPDA,
+    #[error("Plugin rejected transaction")]
+    PluginRejectedTransaction,
 }
 
 impl From<InstructionError> for SwigError {
@@ -102,6 +104,7 @@ impl From<SwigError> for u32 {
             SwigError::InvalidTargetProgram => 26,
             SwigError::TooManyInstructions => 27,
             SwigError::InvalidPDA => 28,
+            SwigError::PluginRejectedTransaction => 29,
         }
     }
 }

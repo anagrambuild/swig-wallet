@@ -97,7 +97,6 @@ pub fn process_action(
         return Err(ProgramError::InvalidInstructionData);
     }
     let ix = SwigInstruction::from_primitive(data[0]);
-    msg!("ix: {:?}", ix);
     match ix {
         SwigInstruction::CreateV1 => process_create_v1(accounts, data),
         SwigInstruction::SignV1 => process_sign_v1(accounts, account_classification, data),

@@ -164,11 +164,44 @@ impl SignInstruction {
             AccountMeta::new_readonly(authority, true),
         ];
         let (accounts, ixs) = compact_instructions(swig_account, accounts, vec![inner_instruction]);
-        let args = SignV1Args::new(role_id, 1, ixs.inner_instructions.len() as u16);
+        let args = SignV1Args::new(role_id, 1, ixs.inner_instructions.len() as u16, 0);
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
             data: [args.as_bytes(), &[2], &ixs.into_bytes()].concat(),
+        })
+    }
+
+    pub fn new_ed25519_with_plugin_targets(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority: Pubkey,
+        inner_instruction: Instruction,
+        role_id: u8,
+        plugin_target_indices: &[u8],
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(authority, true),
+        ];
+        let (accounts, ixs) = compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        let args = SignV1Args::new(
+            role_id,
+            1,
+            ixs.inner_instructions.len() as u16,
+            plugin_target_indices.len() as u8,
+        );
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [
+                args.as_bytes(),
+                &[2],
+                plugin_target_indices,
+                &ixs.into_bytes(),
+            ]
+            .concat(),
         })
     }
 
@@ -184,11 +217,43 @@ impl SignInstruction {
             AccountMeta::new(payer, true),
         ];
         let (accounts, ixs) = compact_instructions(swig_account, accounts, inner_instructions);
-        let args = SignV1Args::new(role_id, 64, ixs.inner_instructions.len() as u16);
+        let args = SignV1Args::new(role_id, 64, ixs.inner_instructions.len() as u16, 0);
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
             data: [args.as_bytes(), authority.as_ref(), &ixs.into_bytes()].concat(),
+        })
+    }
+
+    pub fn new_secp256k1_with_plugin_targets(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority: [u8; 64],
+        inner_instructions: Vec<Instruction>,
+        role_id: u8,
+        plugin_target_indices: &[u8],
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+        ];
+        let (accounts, ixs) = compact_instructions(swig_account, accounts, inner_instructions);
+        let args = SignV1Args::new(
+            role_id,
+            64,
+            ixs.inner_instructions.len() as u16,
+            plugin_target_indices.len() as u8,
+        );
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [
+                args.as_bytes(),
+                authority.as_ref(),
+                plugin_target_indices,
+                &ixs.into_bytes(),
+            ]
+            .concat(),
         })
     }
 }
