@@ -7,7 +7,7 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_system::instructions::CreateAccount;
-use swig_state::{PluginBytecodeAccount, VMInstruction};
+use swig_state::{swig_pim_account_signer, PluginBytecodeAccount, VMInstruction};
 
 use crate::{
     assertions::{check_system_owner, check_zero_balance},
@@ -23,16 +23,16 @@ use crate::{
 #[repr(C, align(8))]
 pub struct CreatePluginBytecodeV1Args {
     pub instruction: u8,
-    pub padding: [u8; 3],
-    pub instructions_len: u32,
+    pub padding: [u8; 5],
+    pub instructions_len: u16,
 }
 
 impl CreatePluginBytecodeV1Args {
-    pub fn new(instructions_len: u32) -> Self {
+    pub fn new(instructions_len: u16) -> Self {
         Self {
             instruction: SwigInstruction::CreatePluginBytecodeV1 as u8,
             instructions_len,
-            padding: [0; 3],
+            padding: [0; 5],
         }
     }
 }
@@ -57,7 +57,8 @@ impl<'a> CreatePluginBytecodeV1<'a> {
         }
 
         let args = unsafe { &*(data.as_ptr() as *const CreatePluginBytecodeV1Args) };
-        let instructions = &data[Self::SIZE..Self::SIZE + args.instructions_len as usize];
+        // Read all remaining data after the args
+        let instructions = &data[Self::SIZE..];
 
         Ok(Self { args, instructions })
     }
@@ -67,6 +68,9 @@ pub fn create_plugin_bytecode_v1(
     ctx: Context<CreatePluginBytecodeV1Accounts>,
     data: &[u8],
 ) -> ProgramResult {
+    msg!("create plugin bytecode v1");
+    msg!("Instruction data length: {}", data.len());
+
     // Basic account validations
     check_system_owner(
         ctx.accounts.plugin_bytecode_account,
@@ -80,45 +84,79 @@ pub fn create_plugin_bytecode_v1(
     // Parse instruction data
     let create_plugin = CreatePluginBytecodeV1::load(data).map_err(|e| {
         msg!("CreatePluginBytecodeV1 Args Error: {:?}", e);
+        msg!("Data length: {}", data.len());
+        msg!("Expected size: {}", CreatePluginBytecodeV1::SIZE);
+        msg!("Raw data: {:?}", data);
         ProgramError::InvalidInstructionData
     })?;
+
+    msg!("Successfully loaded args");
+    msg!(
+        "Instructions length from args: {}",
+        create_plugin.args.instructions_len
+    );
+    msg!(
+        "Instructions data length: {}",
+        create_plugin.instructions.len()
+    );
+
+    // Deserialize the instructions using bytemuck
+    let instructions_data = &create_plugin.instructions
+        [..create_plugin.args.instructions_len as usize * core::mem::size_of::<VMInstruction>()];
+    let instructions: &[VMInstruction] = bytemuck::cast_slice(instructions_data);
+
+    msg!(
+        "Successfully deserialized {} instructions",
+        instructions.len()
+    );
 
     // Create plugin bytecode account with instructions
     let mut plugin_bytecode_account = PluginBytecodeAccount {
         target_program: *ctx.accounts.target_program.key(),
-        instructions_len: create_plugin.args.instructions_len,
+        instructions_len: instructions.len() as u32,
         padding: [0; 4],
         instructions: [VMInstruction::Return; 32], // Initialize with default value
     };
 
-    // Deserialize and copy instructions
-    let mut cursor = 0;
-    let mut instruction_count = 0;
-    while cursor < create_plugin.instructions.len() && instruction_count < 32 {
-        let instruction: &VMInstruction = bytemuck::from_bytes(
-            &create_plugin.instructions[cursor..cursor + core::mem::size_of::<VMInstruction>()],
-        );
-        plugin_bytecode_account.instructions[instruction_count] = *instruction;
-        cursor += core::mem::size_of::<VMInstruction>();
-        instruction_count += 1;
-    }
+    msg!("plugin bytecode account struct created");
 
-    if instruction_count >= 32 {
-        return Err(SwigError::TooManyInstructions.into());
+    // Copy instructions into the fixed-size array
+    for (i, instruction) in instructions.iter().enumerate().take(32) {
+        plugin_bytecode_account.instructions[i] = *instruction;
     }
 
     // Calculate space needed for the account
     let space_needed = core::mem::size_of::<PluginBytecodeAccount>();
+    let lamports_needed = Rent::get()?.minimum_balance(space_needed);
 
-    // Create plugin bytecode account
+    // Create plugin bytecode account using PDA
+    // Derive seeds for the plugin PDA: "swig-pim" and target program
+    let seeds = &[b"swig-pim", ctx.accounts.target_program.key().as_ref()];
+    let (expected_pda, bump) = pinocchio::pubkey::find_program_address(seeds, &crate::ID);
+
+    // Check that provided account matches expected PDA
+    if *ctx.accounts.plugin_bytecode_account.key() != expected_pda {
+        msg!("Provided plugin bytecode account does not match derived PDA");
+        msg!("Expected: {:?}", expected_pda);
+        msg!("Provided: {:?}", ctx.accounts.plugin_bytecode_account.key());
+        return Err(SwigError::InvalidPDA.into());
+    }
+
     pinocchio_system::instructions::CreateAccount {
         from: ctx.accounts.authority,
         to: ctx.accounts.plugin_bytecode_account,
-        lamports: 0,
+        lamports: lamports_needed,
         space: space_needed as u64,
         owner: &crate::ID,
     }
-    .invoke()?;
+    .invoke_signed(&[swig_pim_account_signer(
+        &ctx.accounts.target_program.key().as_ref(),
+        &[bump],
+    )
+    .as_slice()
+    .into()])?;
+
+    println!("bytecode account created");
 
     // Write account data
     unsafe {
@@ -128,6 +166,9 @@ pub fn create_plugin_bytecode_v1(
             .copy_from_slice(bytemuck::bytes_of(&plugin_bytecode_account));
     }
 
-    msg!("Plugin bytecode account created successfully");
+    msg!(
+        "Plugin bytecode account created successfully with {} instructions",
+        instructions.len()
+    );
     Ok(())
 }

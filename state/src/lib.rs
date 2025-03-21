@@ -55,6 +55,14 @@ pub fn swig_account_signer<'a>(id: &'a [u8], bump: &'a [u8; 1]) -> [Seed<'a>; 3]
     ]
 }
 
+pub fn swig_pim_account_signer<'a>(id: &'a [u8], bump: &'a [u8; 1]) -> [Seed<'a>; 3] {
+    [
+        b"swig-pim".as_ref().into(),
+        id.as_ref().into(),
+        bump.as_ref().into(),
+    ]
+}
+
 impl Swig {
     pub fn raw_get_id(data: &[u8]) -> [u8; 13] {
         let mut id = [0u8; 13];
