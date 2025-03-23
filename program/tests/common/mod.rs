@@ -16,7 +16,7 @@ use solana_sdk::{
     transaction::{Transaction, VersionedTransaction},
 };
 use swig_interface::{AddAuthorityInstruction, AuthorityConfig, CreateInstruction};
-use swig_state::{swig_account_seeds, Action, Swig};
+use swig_state::{authority::Ed25519SessionAuthorityDataCreate, swig_account_seeds, Action, Swig};
 
 pub fn program_id() -> Pubkey {
     swig::ID.into()
@@ -95,6 +95,48 @@ pub fn create_swig_ed25519(
         AuthorityConfig {
             authority_type: swig_state::AuthorityType::Ed25519,
             authority: authority.pubkey().as_ref(),
+        },
+        id,
+        0,
+        0,
+    )?;
+
+    let msg = v0::Message::try_compile(
+        &payer_pubkey,
+        &[create_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[context.default_payer.insecure_clone()],
+    )
+    .unwrap();
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+    Ok((swig, bench))
+}
+
+pub fn create_swig_ed25519_session(
+    context: &mut SwigTestContext,
+    authority: &Keypair,
+    id: &[u8],
+) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
+    let payer_pubkey = context.default_payer.pubkey();
+    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(id), &program_id());
+
+    let authority_pubkey = authority.pubkey().to_bytes();
+    let authority_data = Ed25519SessionAuthorityDataCreate::new(&authority_pubkey, &100);
+    let create_ix = CreateInstruction::new(
+        swig,
+        bump,
+        payer_pubkey,
+        AuthorityConfig {
+            authority_type: swig_state::AuthorityType::Ed25519Session,
+            authority: authority_data.into_bytes().as_ref(),
         },
         id,
         0,
