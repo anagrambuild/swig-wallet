@@ -159,19 +159,10 @@ pub fn sign_v1(
 
                             // Check program match
                             if &plugin.target_program == owner {
-                                // Verify PDA - only execute if PDA matches
-                                let (pda, _) = pinocchio::pubkey::find_program_address(
-                                    &[b"swig-pim", owner.as_ref()],
-                                    &crate::ID,
-                                );
-
-                                if ra.key() == &pda {
-                                    // Execute the plugin
-                                    let indices = [idx as u8];
-                                    let _ =
-                                        execute_plugin_bytecode(plugin, account, idx, &indices)?;
-                                    break;
-                                }
+                                // Execute the plugin
+                                let indices = [idx as u8];
+                                let _ = execute_plugin_bytecode(plugin, account, idx, &indices)?;
+                                break;
                             }
                         }
                     }
