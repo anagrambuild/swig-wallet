@@ -13,6 +13,7 @@ use solana_sdk::{
     system_instruction, system_program,
     transaction::{TransactionError, VersionedTransaction},
 };
+use swig::actions::sign_v1::SYSTEM_PROGRAM_ID;
 use swig_interface::AuthorityConfig;
 use swig_state::{
     swig_account_seeds, Action, AuthorityType, SolAction, Swig, TokenAction, VMInstruction,
@@ -666,7 +667,8 @@ fn test_sol_transfer_with_plugin_validation() {
         5, 135, 132, 191, 20, 139, 164, 40, 47, 176, 18, 87, 72, 136, 169, 241, 83, 160, 125, 173,
         247, 101, 192, 69, 92, 154, 151, 3, 128, 0, 0, 0,
     ];
-    let target_program_id = Pubkey::new_from_array(system_program_bytes);
+
+    let target_program_id = Pubkey::new_from_array(SYSTEM_PROGRAM_ID);
     let seeds = &[b"swig-pim", target_program_id.as_ref()];
     let (plugin_bytecode_account, _) = Pubkey::find_program_address(seeds, &program_id());
     println!("Using target program ID: {}", target_program_id);
@@ -674,22 +676,78 @@ fn test_sol_transfer_with_plugin_validation() {
 
     // Create a plugin that validates the recipient pubkey
     // This plugin will check if the recipient pubkey matches our expected recipient
-    // If it matches, it returns 0 (allow), otherwise returns 1 (deny)
-    let recipient_pubkey = recipient.pubkey();
-    let pubkey_bytes = recipient_pubkey.to_bytes();
+    // If it matches, it returns 1 (success), otherwise returns 0 (failure)
+    println!("Creating plugin to validate recipient account");
 
-    // Create VM instructions for our plugin bytecode
-    // For NativeLoader program accounts, we need a different approach
-    // Instead of trying to validate the account data (which may be minimal),
-    // Let's just validate that we're operating on the right accounts
-    // by checking the account indices and ensuring our execution context
-
+    // Create VM instructions for plugin bytecode
     let mut validation_instructions = Vec::new();
 
-    // Our validation will be simpler: pushing a constant 0 value (success)
-    // This means the plugin will always allow the transaction to proceed
-    // but we'll still measure the execution overhead
-    validation_instructions.push(VMInstruction::PushValue { value: 0 });
+    // Start with value 1 (assume success)
+    validation_instructions.push(VMInstruction::PushValue { value: 1 });
+
+    // Compare each 8-byte chunk of the recipient's pubkey
+    // According to the transaction logs:
+    // Index 1 is the expected recipient
+    // Index 3 is the actual recipient
+    // We need to load from their pubkey bytes using 0xFF00+ offsets
+
+    // First chunk (bytes 0-7)
+    validation_instructions.push(VMInstruction::LoadField {
+        account_index: 1,     // Expected recipient
+        field_offset: 0xFF00, // Public key bytes offset 0
+        padding: [0; 4],
+    });
+    validation_instructions.push(VMInstruction::LoadField {
+        account_index: 2,     // Actual recipient
+        field_offset: 0xFF00, // Public key bytes offset 0
+        padding: [0; 4],
+    });
+    validation_instructions.push(VMInstruction::Equal);
+    validation_instructions.push(VMInstruction::And);
+
+    // Second chunk (bytes 8-15)
+    validation_instructions.push(VMInstruction::LoadField {
+        account_index: 1,     // Expected recipient
+        field_offset: 0xFF08, // Public key bytes offset 8
+        padding: [0; 4],
+    });
+    validation_instructions.push(VMInstruction::LoadField {
+        account_index: 2,     // Actual recipient
+        field_offset: 0xFF08, // Public key bytes offset 8
+        padding: [0; 4],
+    });
+    validation_instructions.push(VMInstruction::Equal);
+    validation_instructions.push(VMInstruction::And);
+
+    // Third chunk (bytes 16-23)
+    validation_instructions.push(VMInstruction::LoadField {
+        account_index: 1,     // Expected recipient
+        field_offset: 0xFF10, // Public key bytes offset 16
+        padding: [0; 4],
+    });
+    validation_instructions.push(VMInstruction::LoadField {
+        account_index: 2,     // Actual recipient
+        field_offset: 0xFF10, // Public key bytes offset 16
+        padding: [0; 4],
+    });
+    validation_instructions.push(VMInstruction::Equal);
+    validation_instructions.push(VMInstruction::And);
+
+    // Fourth chunk (bytes 24-31)
+    validation_instructions.push(VMInstruction::LoadField {
+        account_index: 1,     // Expected recipient
+        field_offset: 0xFF18, // Public key bytes offset 24
+        padding: [0; 4],
+    });
+    validation_instructions.push(VMInstruction::LoadField {
+        account_index: 2,     // Actual recipient
+        field_offset: 0xFF18, // Public key bytes offset 24
+        padding: [0; 4],
+    });
+    validation_instructions.push(VMInstruction::Equal);
+    validation_instructions.push(VMInstruction::And);
+
+    // Return result - 1 means success (all chunks matched), 0 means failure
     validation_instructions.push(VMInstruction::Return);
 
     // Create a plugin bytecode account
@@ -770,16 +828,31 @@ fn test_sol_transfer_with_plugin_validation() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         sol_ix,
-        1,    // authority role id
-        &[3], // Index of recipient account in the transaction
+        1,       // authority role id
+        &[1, 2], // Index of recipient account to validate
     )
     .unwrap();
 
-    // Include the plugin bytecode account as an additional account
+    // Include the plugin bytecode account and recipient account as additional
+    // accounts
     let mut sign_ix_mut = sign_ix_with_plugin.clone();
     sign_ix_mut
         .accounts
+        .push(AccountMeta::new(recipient.pubkey(), false)); // Add recipient account
+    sign_ix_mut
+        .accounts
         .push(AccountMeta::new_readonly(plugin_bytecode_account, false));
+
+    // Print the accounts as they'll appear in the transaction for debugging
+    println!("\nTransaction account ordering:");
+    println!("0: payer/fee payer - {}", second_authority.pubkey());
+    println!("1: recipient (expected) - {}", recipient.pubkey());
+    println!(
+        "2: second_authority (signer) - {}",
+        second_authority.pubkey()
+    );
+    println!("3: recipient (actual) - {}", recipient.pubkey());
+    println!("4: plugin account - {}", plugin_bytecode_account);
 
     let transfer_message_with_plugin = v0::Message::try_compile(
         &second_authority.pubkey(),
@@ -837,6 +910,97 @@ fn test_sol_transfer_with_plugin_validation() {
     // Verify recipient received the SOL
     let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
     assert_eq!(recipient_account.lamports, 10_000_000_000 + amount * 2);
+
+    // Now try with an incorrect recipient to verify plugin rejection
+    let incorrect_recipient = Keypair::new();
+    context
+        .svm
+        .airdrop(&incorrect_recipient.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    println!(
+        "\nTesting with incorrect recipient: {}",
+        incorrect_recipient.pubkey()
+    );
+
+    // Create transfer instruction to incorrect recipient
+    let incorrect_sol_ix =
+        system_instruction::transfer(&swig, &incorrect_recipient.pubkey(), amount);
+
+    let sign_ix_incorrect = swig_interface::SignInstruction::new_ed25519_with_plugin_targets(
+        swig,
+        second_authority.pubkey(),
+        second_authority.pubkey(),
+        incorrect_sol_ix,
+        1,       // authority role id
+        &[1, 3], // Index of recipient account to validate
+    )
+    .unwrap();
+
+    // Include the plugin bytecode account and incorrect recipient account
+    let mut sign_ix_incorrect_mut = sign_ix_incorrect.clone();
+    sign_ix_incorrect_mut
+        .accounts
+        .push(AccountMeta::new(recipient.pubkey(), false)); // Expected recipient
+    sign_ix_incorrect_mut
+        .accounts
+        .push(AccountMeta::new(incorrect_recipient.pubkey(), false)); // Actual recipient
+    sign_ix_incorrect_mut
+        .accounts
+        .push(AccountMeta::new_readonly(plugin_bytecode_account, false));
+
+    println!("\nTransaction account ordering for incorrect recipient test:");
+    println!("0: payer/fee payer - {}", second_authority.pubkey());
+    println!("1: recipient (expected) - {}", recipient.pubkey());
+    println!(
+        "2: second_authority (signer) - {}",
+        second_authority.pubkey()
+    );
+    println!(
+        "3: incorrect_recipient (actual) - {}",
+        incorrect_recipient.pubkey()
+    );
+    println!("4: plugin account - {}", plugin_bytecode_account);
+
+    let transfer_message_incorrect = v0::Message::try_compile(
+        &second_authority.pubkey(),
+        &[sign_ix_incorrect_mut],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx_incorrect = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message_incorrect),
+        &[&second_authority],
+    )
+    .unwrap();
+
+    let res_incorrect = context.svm.send_transaction(transfer_tx_incorrect);
+    println!("res_incorrect: {:?}", res_incorrect);
+
+    // This transaction should be rejected by the plugin
+    assert!(
+        res_incorrect.is_err(),
+        "Transaction with incorrect recipient should have been rejected by
+    plugin"
+    );
+
+    if let Err(err) = res_incorrect {
+        println!(
+            "Correctly rejected transaction with incorrect recipient: {:?}",
+            err
+        );
+
+        // The error should be our custom error code 406 (ValidationFailed)
+        assert_eq!(
+            err.err,
+            TransactionError::InstructionError(0, InstructionError::Custom(406))
+        );
+    } else {
+        // panic!("Expected transaction to fail with ValidationFailed error
+        // (406)");
+    }
 }
 
 #[test_log::test]
@@ -980,11 +1144,48 @@ fn test_stake_account_withdraw_authority_validation() {
         "Stake account not owned by stake program"
     );
 
-    // Print the first few bytes of the stake account data to debug
+    // Print more detailed stake account analysis to determine structure and offsets
     if !stake_account.data.is_empty() {
-        println!("Stake account data (first 64 bytes):");
-        for (i, chunk) in stake_account.data.chunks(16).take(4).enumerate() {
+        println!("DETAILED STAKE ACCOUNT STRUCTURE ANALYSIS:");
+        println!("----------------------------------------");
+        println!("Full stake account data (all bytes):");
+        for (i, chunk) in stake_account.data.chunks(16).enumerate() {
             println!("{:02x}: {:02x?}", i * 16, chunk);
+        }
+
+        println!("\nSearching for withdraw authority pubkey pattern...");
+        let auth_bytes = withdraw_authority.pubkey().to_bytes();
+        println!("Withdraw authority pubkey bytes: {:02x?}", auth_bytes);
+
+        // Search for authority in the stake account data
+        for i in 0..stake_account.data.len() - 31 {
+            let data_slice = &stake_account.data[i..i + 32];
+            if data_slice == auth_bytes {
+                println!("FOUND EXACT MATCH at offset {}", i);
+                break;
+            }
+        }
+
+        // Check if the authority might be stored in reverse byte order
+        let mut reversed_auth = auth_bytes.clone();
+        reversed_auth.reverse();
+        println!("Reversed authority pubkey bytes: {:02x?}", reversed_auth);
+
+        for i in 0..stake_account.data.len() - 31 {
+            let data_slice = &stake_account.data[i..i + 32];
+            if data_slice == reversed_auth {
+                println!("FOUND REVERSED MATCH at offset {}", i);
+                break;
+            }
+        }
+
+        // Try to locate key pattern bytes sequence from different offsets
+        for (offset, _) in [44, 52, 60, 68, 76, 84].iter().enumerate() {
+            let offset_val = 44 + offset * 8;
+            if offset_val + 8 <= stake_account.data.len() {
+                let chunk = &stake_account.data[offset_val..offset_val + 8];
+                println!("Offset {}: {:02x?}", offset_val, chunk);
+            }
         }
     }
 
@@ -995,77 +1196,103 @@ fn test_stake_account_withdraw_authority_validation() {
     println!("Plugin bytecode PDA: {}", plugin_bytecode_account);
 
     // Create a plugin that validates the withdraw authority
-    // The plugin will check if withdraw authority matches the expected pubkey
-    // If it matches, it returns 0 (allow), otherwise returns 1 (deny)
-    let withdraw_authority_pubkey = withdraw_authority.pubkey();
-    let authority_bytes = withdraw_authority_pubkey.to_bytes();
+    // This plugin dynamically compares the withdraw authority in the stake account
+    // with the authority that signed the transaction.
+    // If they match, it returns a non-zero value (success), otherwise returns 0
+    // (fail).
+
+    // Let's print the withdraw authority pubkey to verify
+    let wa_pubkey = withdraw_authority.pubkey();
+    println!(
+        "Withdraw authority pubkey for plugin validation: {}",
+        wa_pubkey
+    );
+    let wa_bytes = wa_pubkey.to_bytes();
+    println!("Withdraw authority bytes for plugin:");
+    for (i, chunk) in wa_bytes.chunks(8).enumerate() {
+        println!("Chunk {}: {:02x?}", i, chunk);
+    }
 
     // Create VM instructions for plugin bytecode
     let mut validation_instructions = Vec::new();
 
-    // Start with true (1)
+    // Start with value 1 (assume success)
     validation_instructions.push(VMInstruction::PushValue { value: 1 });
 
-    // In a stake account, the withdraw authority is at offset 72
-    // We need to compare the pubkey bytes (which is 32 bytes / 4 chunks of i64)
+    // Print the actual indices used in the transaction
+    println!("Withdraw authority is signer index: 6");
+    println!("Stake account is at index: 4");
 
-    // First chunk (bytes 0-8 of the authority)
+    // In a stake account, the withdraw authority is stored at offsets 44-76
+    // We need to check each 8-byte segment against the signer pubkey
+
+    // Step 1: First chunk of withdraw authority from stake account
     validation_instructions.push(VMInstruction::LoadField {
-        account_index: 0, // Stake account at index 0
-        field_offset: 72, // Withdraw authority starts at offset 44
+        account_index: 0, // Primary account (stake account)
+        field_offset: 44, // First 8 bytes of withdraw authority in stake account
         padding: [0; 4],
     });
 
-    // Convert first 8 bytes to i64 and push expected value
-    let mut chunk_bytes = [0u8; 8];
-    chunk_bytes.copy_from_slice(&authority_bytes[0..8]);
-    // TODO tracy need to update this so chunk_value isn't hardcoded in this test
-    // and instead pulls from the instruction's accounts
-    let chunk_value = i64::from_le_bytes(chunk_bytes);
-    validation_instructions.push(VMInstruction::PushValue { value: chunk_value });
-    validation_instructions.push(VMInstruction::Equal);
-    validation_instructions.push(VMInstruction::And); // AND with our initial 1
-
-    // Second chunk (bytes 8-16)
+    // Load from the actual withdraw authority account's pubkey (at index 6)
+    // The special offset 0xFF00+ is used to load from pubkey bytes
     validation_instructions.push(VMInstruction::LoadField {
-        account_index: 0,
-        field_offset: 80, // 44 + 8
+        account_index: 2,     // Third account in indices array (corresponds to index 6)
+        field_offset: 0xFF00, // Public key bytes offset 0
         padding: [0; 4],
     });
-    chunk_bytes.copy_from_slice(&authority_bytes[8..16]);
-    let chunk_value = i64::from_le_bytes(chunk_bytes);
-    validation_instructions.push(VMInstruction::PushValue { value: chunk_value });
+
     validation_instructions.push(VMInstruction::Equal);
     validation_instructions.push(VMInstruction::And);
 
-    // Third chunk (bytes 16-24)
+    // Step 2: Second chunk
     validation_instructions.push(VMInstruction::LoadField {
-        account_index: 0,
-        field_offset: 88, // 44 + 16
+        account_index: 0, // Primary account (stake account)
+        field_offset: 52, // Next 8 bytes
         padding: [0; 4],
     });
-    chunk_bytes.copy_from_slice(&authority_bytes[16..24]);
-    let chunk_value = i64::from_le_bytes(chunk_bytes);
-    validation_instructions.push(VMInstruction::PushValue { value: chunk_value });
+
+    validation_instructions.push(VMInstruction::LoadField {
+        account_index: 2,     // Third account in indices array (corresponds to index 6)
+        field_offset: 0xFF08, // Public key bytes offset 8
+        padding: [0; 4],
+    });
+
     validation_instructions.push(VMInstruction::Equal);
     validation_instructions.push(VMInstruction::And);
 
-    // Fourth chunk (bytes 24-32)
+    // Step 3: Third chunk
     validation_instructions.push(VMInstruction::LoadField {
-        account_index: 0,
-        field_offset: 96, // 44 + 24
+        account_index: 0, // Primary account (stake account)
+        field_offset: 60, // Next 8 bytes
         padding: [0; 4],
     });
-    chunk_bytes.copy_from_slice(&authority_bytes[24..32]);
-    let chunk_value = i64::from_le_bytes(chunk_bytes);
-    validation_instructions.push(VMInstruction::PushValue { value: chunk_value });
+
+    validation_instructions.push(VMInstruction::LoadField {
+        account_index: 2,     // Third account in indices array (corresponds to index 6)
+        field_offset: 0xFF10, // Public key bytes offset 16
+        padding: [0; 4],
+    });
+
     validation_instructions.push(VMInstruction::Equal);
     validation_instructions.push(VMInstruction::And);
 
-    // Return the inverse of the comparison result (0 = success, non-zero = reject)
-    // If withdraw authority matches expected pubkey, result will be 1, so use Not
-    // to make it 0 (success)
-    validation_instructions.push(VMInstruction::Not);
+    // Step 4: Fourth chunk
+    validation_instructions.push(VMInstruction::LoadField {
+        account_index: 0, // Primary account (stake account)
+        field_offset: 68, // Final 8 bytes
+        padding: [0; 4],
+    });
+
+    validation_instructions.push(VMInstruction::LoadField {
+        account_index: 2,     // Third account in indices array (corresponds to index 6)
+        field_offset: 0xFF18, // Public key bytes offset 24
+        padding: [0; 4],
+    });
+
+    validation_instructions.push(VMInstruction::Equal);
+    validation_instructions.push(VMInstruction::And);
+
+    // Return result directly - 1 means success, 0 means failure
     validation_instructions.push(VMInstruction::Return);
 
     // Create the plugin bytecode account
@@ -1202,7 +1429,58 @@ fn test_stake_account_withdraw_authority_validation() {
         None,
     );
 
-    // println!("change_auth_ix2 accounts: {:?}", change_auth_ix2.accounts);
+    println!("Using withdraw_authority: {}", withdraw_authority.pubkey());
+
+    // Print stake account data to debug the withdraw authority location
+    let stake_account2 = context
+        .svm
+        .get_account(&stake_account2_keypair.pubkey())
+        .unwrap();
+    if !stake_account2.data.is_empty() {
+        println!("Stake account 2 data (first 128 bytes):");
+        for (i, chunk) in stake_account2.data.chunks(16).take(8).enumerate() {
+            println!("{:02x}: {:02x?}", i * 16, chunk);
+        }
+
+        // Check for withdraw authority in the expected location
+        if stake_account2.data.len() >= 76 {
+            println!("\nWithdraw authority in stake account (bytes 44-76):");
+            let auth_in_stake = &stake_account2.data[44..76];
+            println!("{:02x?}", auth_in_stake);
+
+            // Get full withdraw authority pubkey bytes
+            let withdraw_auth_bytes = withdraw_authority.pubkey().to_bytes();
+            println!("\nFull withdraw_authority pubkey bytes:");
+            println!("{:02x?}", withdraw_auth_bytes);
+
+            // Compare parts to see what's matching and what's not
+            if auth_in_stake.len() >= 32 {
+                println!("\nComparing pubkey parts:");
+                for i in 0..4 {
+                    let start = i * 8;
+                    let end = start + 8;
+                    println!(
+                        "Part {}: Stake Account[{}:{}] = {:02x?}",
+                        i,
+                        44 + start,
+                        44 + end,
+                        &auth_in_stake[start..end]
+                    );
+                    println!(
+                        "Part {}: Auth Pubkey[{}:{}] = {:02x?}",
+                        i,
+                        start,
+                        end,
+                        &withdraw_auth_bytes[start..end]
+                    );
+                    println!(
+                        "Match: {}",
+                        &auth_in_stake[start..end] == &withdraw_auth_bytes[start..end]
+                    );
+                }
+            }
+        }
+    }
 
     // Create the sign instruction with plugin validation
     let sign_ix_with_plugin = swig_interface::SignInstruction::new_ed25519_with_plugin_targets(
@@ -1211,7 +1489,7 @@ fn test_stake_account_withdraw_authority_validation() {
         second_authority.pubkey(),
         change_auth_ix2,
         1,
-        &[4], // Index of stake_account2 in the transaction accounts
+        &[4, 6], // Explicitly pass indices 4 (stake account) and 6 (withdraw authority)
     )
     .unwrap();
 
@@ -1222,6 +1500,24 @@ fn test_stake_account_withdraw_authority_validation() {
         .push(AccountMeta::new_readonly(plugin_bytecode_account, false));
 
     println!("sign_ix_mut accounts: {:?}", sign_ix_mut.accounts);
+    println!("Plugin account indices passed to VM: [4, 6]"); // Print for clarity
+
+    // Print the accounts as they'll appear in the transaction
+    println!("Transaction account ordering:");
+    println!("0: payer/fee payer - {}", second_authority.pubkey());
+    println!("1: swig - {}", swig);
+    println!(
+        "2: second_authority (signer) - {}",
+        second_authority.pubkey()
+    );
+    println!("3: stake program - {}", stake_program_id);
+    println!("4: stake account - {}", stake_account2_keypair.pubkey());
+    println!("5: sysvar clock - SysvarC1ock11111111111111111111111111111111");
+    println!(
+        "6: withdraw_authority (signer) - {}",
+        withdraw_authority.pubkey()
+    );
+    println!("7: plugin account - {}", plugin_bytecode_account);
 
     let auth_message_with_plugin = v0::Message::try_compile(
         &second_authority.pubkey(),
@@ -1282,7 +1578,7 @@ fn test_stake_account_withdraw_authority_validation() {
         &stake_account3_keypair.pubkey(),
         &solana_sdk::stake::state::Authorized {
             staker: stake_authority.pubkey(),
-            withdrawer: incorrect_withdraw_authority.pubkey(),
+            withdrawer: second_authority.pubkey(),
         },
         &solana_sdk::stake::state::Lockup::default(),
         stake_amount + rent,
@@ -1326,8 +1622,91 @@ fn test_stake_account_withdraw_authority_validation() {
     println!("Stake account 3 owner: {}", stake_account3.owner);
     println!("Stake account 3 data length: {}", stake_account3.data.len());
 
-    // Try to change authority on stake_account3 with plugin validation
-    // This should be rejected since withdraw authority doesn't match expected value
+    // Print stake account data to debug the withdraw authority location
+    let stake_account3 = context
+        .svm
+        .get_account(&stake_account3_keypair.pubkey())
+        .unwrap();
+    if !stake_account3.data.is_empty() {
+        println!("Stake account 3 data (first 128 bytes):");
+        for (i, chunk) in stake_account3.data.chunks(16).take(8).enumerate() {
+            println!("{:02x}: {:02x?}", i * 16, chunk);
+        }
+
+        // If the withdraw authority is at offset 72, let's verify it
+        if stake_account3.data.len() >= 104 {
+            let withdraw_bytes = &stake_account3.data[72..104];
+            println!("Withdraw authority bytes from stake account 3:");
+            println!("{:02x?}", withdraw_bytes);
+            println!("Expected incorrect withdraw authority bytes:");
+            println!("{:02x?}", incorrect_withdraw_authority.pubkey().to_bytes());
+            println!("Previous withdraw authority bytes for comparison:");
+            println!("{:02x?}", withdraw_authority.pubkey().to_bytes());
+        }
+    }
+
+    // More detailed analysis of stake account 3
+    println!("\nDETAILED STAKE ACCOUNT 3 ANALYSIS:");
+    println!("----------------------------------------");
+    println!("Full stake account 3 data (all bytes):");
+    for (i, chunk) in stake_account3.data.chunks(16).enumerate() {
+        println!("{:02x}: {:02x?}", i * 16, chunk);
+    }
+
+    // We need to find where the withdraw authority is really stored
+    println!("\nSearching for incorrect_withdraw_authority pubkey pattern in stake account 3:");
+    let incorrect_auth_bytes = incorrect_withdraw_authority.pubkey().to_bytes();
+    println!(
+        "Incorrect withdraw authority pubkey bytes: {:02x?}",
+        incorrect_auth_bytes
+    );
+
+    // Search for authority in the stake account data
+    for i in 0..stake_account3.data.len() - 31 {
+        let data_slice = &stake_account3.data[i..i + 32];
+        if data_slice == incorrect_auth_bytes {
+            println!("FOUND EXACT MATCH at offset {}", i);
+
+            // Verify all 32 bytes match in detail
+            println!("VERIFYING MATCH:");
+            println!("Stake account data at offset {}: {:02x?}", i, data_slice);
+            println!(
+                "Incorrect authority pubkey:     {:02x?}",
+                incorrect_auth_bytes
+            );
+            break;
+        }
+    }
+
+    // Inspect offsets 44-76 in detail which is where we expect the withdraw
+    // authority to be
+    if stake_account3.data.len() >= 76 {
+        println!("\nInspecting bytes at offsets 44-76 in stake account 3:");
+        let bytes_at_offset = &stake_account3.data[44..76];
+        println!("Bytes[44:76]: {:02x?}", bytes_at_offset);
+        println!(
+            "Incorrect withdraw authority: {:02x?}",
+            incorrect_auth_bytes
+        );
+
+        // Compare bytes one by one for detailed analysis
+        println!("\nDetailed byte comparison at offsets 44-76:");
+        for (i, (a, b)) in bytes_at_offset
+            .iter()
+            .zip(incorrect_auth_bytes.iter())
+            .enumerate()
+        {
+            println!(
+                "Byte[{}]: stake account: {:02x}, authority pubkey: {:02x}, match: {}",
+                i,
+                a,
+                b,
+                a == b
+            );
+        }
+    }
+
+    // Create and try to use the incorrect authority's transaction
     let change_auth_ix3 = solana_sdk::stake::instruction::authorize(
         &stake_account3_keypair.pubkey(),
         &incorrect_withdraw_authority.pubkey(),
@@ -1342,15 +1721,34 @@ fn test_stake_account_withdraw_authority_validation() {
         second_authority.pubkey(),
         change_auth_ix3,
         1,
-        &[4], // Index of stake_account3 in the transaction accounts
+        &[4, 6], // Explicitly pass indices 4 (stake account) and 6 (incorrect authority)
     )
     .unwrap();
 
-    // Include the plugin bytecode account
+    // Include the plugin bytecode account as an additional account
     let mut sign_ix_mut3 = sign_ix_with_plugin3.clone();
     sign_ix_mut3
         .accounts
         .push(AccountMeta::new_readonly(plugin_bytecode_account, false));
+
+    println!("Plugin account indices passed to VM for incorrect authority test: [4, 6]"); // Print for clarity
+
+    // Print transaction account ordering for debugging
+    println!("Transaction account ordering for incorrect authority test:");
+    println!("0: payer/fee payer - {}", second_authority.pubkey());
+    println!("1: swig - {}", swig);
+    println!(
+        "2: second_authority (signer) - {}",
+        second_authority.pubkey()
+    );
+    println!("3: stake program - {}", stake_program_id);
+    println!("4: stake account - {}", stake_account3_keypair.pubkey());
+    println!("5: sysvar clock - SysvarC1ock11111111111111111111111111111111");
+    println!(
+        "6: incorrect_withdraw_authority (signer) - {}",
+        incorrect_withdraw_authority.pubkey()
+    );
+    println!("7: plugin account - {}", plugin_bytecode_account);
 
     let auth_message_with_plugin3 = v0::Message::try_compile(
         &second_authority.pubkey(),
@@ -1367,16 +1765,27 @@ fn test_stake_account_withdraw_authority_validation() {
     .unwrap();
 
     let res_with_plugin3 = context.svm.send_transaction(auth_tx_with_plugin3);
-    // println!(
-    //     "res_with_plugin3 logs: {:?}",
-    //     res_with_plugin3.clone().unwrap().logs
-    // );
-    // assert!(
-    //     res_with_plugin3.is_err(),
-    //     "Transaction with incorrect authority should have been rejected by
-    // plugin" );
-    // println!(
-    //     "Correctly rejected transaction with incorrect authority: {:?}",
-    //     res_with_plugin3.err()
-    // );
+
+    // println!("res_with_plugin3 result: {:?}", res_with_plugin3);
+
+    // This transaction should be rejected by the plugin
+    assert!(
+        res_with_plugin3.is_err(),
+        "Transaction with incorrect authority should have been rejected by plugin"
+    );
+
+    if let Err(err) = res_with_plugin3 {
+        println!(
+            "Correctly rejected transaction with incorrect authority: {:?}",
+            err
+        );
+
+        // The error should be our custom error code 406 (ValidationFailed)
+        assert_eq!(
+            err.err,
+            TransactionError::InstructionError(0, InstructionError::Custom(406))
+        );
+    } else {
+        panic!("Expected transaction to fail with ValidationFailed error (406)");
+    }
 }

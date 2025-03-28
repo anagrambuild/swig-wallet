@@ -133,6 +133,15 @@ pub fn sign_v1(
     // Authenticate the transaction first
     sign_v1.authenticate(all_accounts, &role)?;
 
+    // msg!(
+    //     "ctx.remaining_accounts.is_empty(): {:?}",
+    //     ctx.remaining_accounts.is_empty()
+    // );
+    // msg!(
+    //     "sign_v1.args.plugin_target_indices_len: {:?}",
+    //     sign_v1.args.plugin_target_indices_len
+    // );
+
     // Skip plugin execution if no remaining accounts or no plugin target indices
     if !ctx.remaining_accounts.is_empty() && sign_v1.args.plugin_target_indices_len > 0 {
         // Inline fast path for simple cases
@@ -140,16 +149,33 @@ pub fn sign_v1(
             // Get the single target index
             let idx = sign_v1.plugin_target_indices[0] as usize;
 
+            // msg!("idx: {:?}", idx);
+            // msg!("all_accounts.len(): {:?}", all_accounts.len());
+
             // Skip invalid indices
             if idx < all_accounts.len() {
                 let account = &all_accounts[idx];
                 let owner = account.owner();
 
                 // Skip system program and our own program
-                if owner != &SYSTEM_PROGRAM_ID && owner != &crate::ID {
+                // msg!(
+                //     "owner != &SYSTEM_PROGRAM_ID && owner != &crate::ID: {:?}",
+                //     owner != &SYSTEM_PROGRAM_ID && owner != &crate::ID
+                // );
+                // msg!(
+                //     "owner != &SYSTEM_PROGRAM_ID: {:?}",
+                //     owner != &SYSTEM_PROGRAM_ID
+                // );
+                // msg!("owner != &crate::ID: {:?}", owner != &crate::ID);
+                if owner != &crate::ID {
                     // Try to find matching plugin
                     for ra in ctx.remaining_accounts.iter() {
                         // Quick ownership and size check
+                        // msg!("ra.owner() == &crate::ID: {:?}", ra.owner() == &crate::ID);
+                        // msg!(
+                        //     "ra.data_len() >= std::mem::size_of::<PluginBytecodeAccount>():
+                        // {:?}",     ra.data_len() >=
+                        // std::mem::size_of::<PluginBytecodeAccount>() );
                         if ra.owner() == &crate::ID
                             && ra.data_len() >= std::mem::size_of::<PluginBytecodeAccount>()
                         {
@@ -157,11 +183,20 @@ pub fn sign_v1(
                             let data = unsafe { ra.borrow_data_unchecked() };
                             let plugin = bytemuck::from_bytes::<PluginBytecodeAccount>(&data);
 
+                            // msg!(
+                            //     "&plugin.target_program == owner: {:?}",
+                            //     &plugin.target_program == owner
+                            // );
                             // Check program match
                             if &plugin.target_program == owner {
-                                // Execute the plugin
-                                let indices = [idx as u8];
-                                let _ = execute_plugin_bytecode(plugin, account, idx, &indices)?;
+                                // Execute the plugin - pass all indices
+                                let _ = execute_plugin_bytecode(
+                                    plugin,
+                                    account,
+                                    idx,
+                                    sign_v1.plugin_target_indices,
+                                    all_accounts,
+                                )?;
                                 break;
                             }
                         }
@@ -179,7 +214,7 @@ pub fn sign_v1(
                 let account = &all_accounts[idx];
                 let owner = account.owner();
 
-                if owner == &SYSTEM_PROGRAM_ID || owner == &crate::ID {
+                if owner == &crate::ID {
                     continue;
                 }
 
@@ -203,8 +238,14 @@ pub fn sign_v1(
                     );
 
                     if ra.key() == &pda {
-                        let indices = [idx as u8];
-                        let _ = execute_plugin_bytecode(plugin, account, idx, &indices)?;
+                        // Pass all plugin target indices, not just a single one
+                        let _ = execute_plugin_bytecode(
+                            plugin,
+                            account,
+                            idx,
+                            sign_v1.plugin_target_indices,
+                            all_accounts,
+                        )?;
                         break;
                     }
                 }
@@ -381,14 +422,30 @@ pub fn sign_v1(
 #[inline(always)]
 fn execute_plugin_bytecode(
     plugin_bytecode_account: &PluginBytecodeAccount,
-    account: &AccountInfo,
+    primary_account: &AccountInfo,
     _index: usize,
-    _indices: &[u8],
+    account_indices: &[u8],
+    all_accounts: &[AccountInfo],
 ) -> Result<i64, ProgramError> {
     // Initialize stack with fixed capacity
     let mut stack = Vec::with_capacity(8);
     let mut pc = 0;
     let instr_len = plugin_bytecode_account.instructions_len as usize;
+
+    // msg!(
+    //     "Executing plugin for primary_account: {:?}",
+    //     primary_account.key()
+    // );
+    // msg!("Account indices for plugin: {:?}", account_indices);
+    // for (i, &idx) in account_indices.iter().enumerate() {
+    //     if (idx as usize) < all_accounts.len() {
+    //         msg!(
+    //             "Account at index {}: {:?}",
+    //             idx,
+    //             all_accounts[idx as usize].key()
+    //         );
+    //     }
+    // }
 
     // Fast path VM implementation
     while pc < instr_len {
@@ -403,22 +460,119 @@ fn execute_plugin_bytecode(
                 field_offset,
                 ..
             } => {
-                // Currently only support index 0
-                if account_index != 0 {
+                // Use account_index to determine which account to read from
+                let account_data = if account_index == 0 {
+                    // Use the primary account (typically the stake account)
+                    // msg!("Loading from primary account at offset {}", field_offset);
+                    primary_account.try_borrow_data()?
+                } else if account_index == 0xFF {
+                    // Special case: Load the account's own pubkey as data (used for key
+                    // comparisons)
+                    // msg!("Loading pubkey bytes from primary account");
+                    let pubkey_bytes = primary_account.key(); // Already a &[u8; 32]
+                    let bytes = &pubkey_bytes[field_offset as usize..field_offset as usize + 8];
+                    // msg!("Loaded pubkey bytes: {:?}", bytes);
+
+                    // Print as hex values
+                    let mut hex_str = String::new();
+                    for b in bytes.iter() {
+                        hex_str.push_str(&format!("{:02x} ", b));
+                    }
+                    // msg!("Pubkey bytes as hex: {}", hex_str);
+
+                    let value = i64::from_le_bytes([
+                        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6],
+                        bytes[7],
+                    ]);
+                    // msg!("Pushing value into stack: {}", value);
+                    stack.push(value);
+                    pc += 1;
+                    continue;
+                } else if account_index as usize <= account_indices.len() {
+                    // Get the actual transaction account using the provided index
+                    let idx = account_indices[account_index as usize - 1] as usize;
+
+                    // Debug the account index resolution
+                    // msg!(
+                    //     "Resolving account_index {} to transaction account at index {}",
+                    //     account_index,
+                    //     idx
+                    // );
+                    if idx >= all_accounts.len() {
+                        return Err(ProgramError::Custom(400)); // InvalidAccountIndex
+                    }
+
+                    // Check if we should load the account's pubkey instead of its data
+                    if field_offset >= 0xFF00 {
+                        // Load from account's public key bytes
+                        let pubkey_bytes = all_accounts[idx].key(); // Already a &[u8; 32]
+                        let offset = (field_offset - 0xFF00) as usize;
+                        if offset + 8 > 32 {
+                            // pubkey is 32 bytes
+                            return Err(ProgramError::Custom(401)); // InvalidFieldOffset
+                        }
+
+                        let bytes = &pubkey_bytes[offset..offset + 8];
+                        // msg!(
+                        //     "Loading pubkey bytes from account at index {}, offset {}: {:?}",
+                        //     idx,
+                        //     offset,
+                        //     bytes
+                        // );
+
+                        // Print as hex values
+                        let mut hex_str = String::new();
+                        for b in bytes.iter() {
+                            hex_str.push_str(&format!("{:02x} ", b));
+                        }
+                        // msg!("Pubkey bytes as hex: {}", hex_str);
+
+                        let value = i64::from_le_bytes([
+                            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6],
+                            bytes[7],
+                        ]);
+                        // msg!("Pushing value into stack: {}", value);
+                        stack.push(value);
+                        pc += 1;
+                        continue;
+                    }
+
+                    // Print the actual account key we're accessing
+                    // msg!(
+                    //     "Loading from account {} ({}), key: {:?}",
+                    //     account_index,
+                    //     idx,
+                    //     all_accounts[idx].key()
+                    // );
+                    all_accounts[idx].try_borrow_data()?
+                } else {
+                    // msg!(
+                    //     "invalid account index: {:?} : {:?}",
+                    //     account_index,
+                    //     account_indices.len()
+                    // );
                     return Err(ProgramError::Custom(400)); // InvalidAccountIndex
-                }
+                };
 
-                let data = account.try_borrow_data()?;
                 let offset = field_offset as usize;
-
-                if offset + 8 > data.len() {
+                if offset + 8 > account_data.len() {
                     return Err(ProgramError::Custom(401)); // InvalidFieldOffset
                 }
 
-                let bytes = &data[offset..offset + 8];
+                let bytes = &account_data[offset..offset + 8];
+                // msg!("Loaded bytes: {:?}", bytes);
+
+                // Print as decimal values for easier comparison
+                let mut hex_str = String::new();
+                for b in bytes.iter() {
+                    hex_str.push_str(&format!("{:02x} ", b));
+                }
+                // msg!("Bytes as hex: {}", hex_str);
+
                 let value = i64::from_le_bytes([
                     bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
                 ]);
+                // msg!("Pushing value into stack: {}", value);
                 stack.push(value);
                 pc += 1;
             },
@@ -467,6 +621,9 @@ fn execute_plugin_bytecode(
                 }
                 let b = stack.pop().unwrap();
                 let a = stack.pop().unwrap();
+                // msg!("a: {:?}", a);
+                // msg!("b: {:?}", b);
+                // msg!("a == b: {:?}", a == b);
                 stack.push(if a == b { 1 } else { 0 });
                 pc += 1;
             },
@@ -543,9 +700,17 @@ fn execute_plugin_bytecode(
         }
     }
 
-    // Return the result from top of stack
-    match stack.pop() {
-        Some(result) => Ok(result),
-        None => Err(ProgramError::Custom(402)),
+    // We run until stack has 1 value which is the result
+    // result of 1 means validation passes, 0 means validation fails
+    let result = stack.last().copied().unwrap_or(0);
+    msg!("result: {}", result);
+
+    // If the plugin validation fails (result is 0), return an error
+    if result == 0 {
+        msg!("Plugin validation failed: authorities do not match");
+        return Err(ProgramError::Custom(406)); // ValidationFailed
     }
+
+    // Return the result for success
+    Ok(result)
 }
