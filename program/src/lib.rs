@@ -4,6 +4,7 @@ mod authority_models;
 mod error;
 pub mod instruction;
 pub mod util;
+mod vm;
 use std::mem::MaybeUninit;
 
 use actions::process_action;
@@ -14,13 +15,12 @@ use pinocchio::{
     account_info::AccountInfo,
     lazy_entrypoint::{InstructionContext, MaybeAccount},
     memory::sol_memcmp,
-    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
     ProgramResult,
 };
 use pinocchio_pubkey::{declare_id, pubkey};
-use swig_state::{Discriminator, PluginBytecodeAccount};
+use swig_state::Discriminator;
 declare_id!("swigNmWhy8RvUYXBKV5TSU8Hh3f4o5EczHouzBzEsLC");
 const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const SPL_TOKEN_2022_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
