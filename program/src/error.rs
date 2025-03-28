@@ -1,5 +1,6 @@
 use pinocchio::{msg, program_error::ProgramError};
 use swig_compact_instructions::InstructionError;
+use swig_state::SwigStateError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -12,8 +13,8 @@ pub enum SwigError {
     NotOnCurve(&'static str),
     #[error("Account {0} must be a signer")]
     ExpectedSigner(&'static str),
-    #[error("State Error: {0}")]
-    StateError(&'static str),
+    #[error("State Error: {0:?}")]
+    StateError(SwigStateError),
     #[error("Account {0} borrow failed")]
     AccountBorrowFailed(&'static str),
     #[error("Invalid Authority Type")]
@@ -64,6 +65,10 @@ pub enum SwigError {
     InvalidPDA,
     #[error("Plugin rejected transaction")]
     PluginRejectedTransaction,
+    #[error("Authority Type does not support sessiond")]
+    AuthorityTypeDoesNotSupportSessions,
+    #[error("Invalid Session Data")]
+    InvalidSessionData,
 }
 
 impl From<InstructionError> for SwigError {
@@ -94,17 +99,19 @@ impl From<SwigError> for u32 {
             SwigError::InvalidSystemProgram => 16,
             SwigError::DuplicateAuthority => 17,
             SwigError::InvalidOperation { .. } => 18,
-            SwigError::InvalidAccountIndex => 19,
-            SwigError::InvalidFieldOffset => 20,
-            SwigError::StackUnderflow => 21,
-            SwigError::StackOverflow => 22,
-            SwigError::DivisionByZero => 23,
-            SwigError::InvalidJump => 24,
-            SwigError::NoResult => 25,
-            SwigError::InvalidTargetProgram => 26,
-            SwigError::TooManyInstructions => 27,
-            SwigError::InvalidPDA => 28,
-            SwigError::PluginRejectedTransaction => 29,
+            SwigError::AuthorityTypeDoesNotSupportSessions => 19,
+            SwigError::InvalidSessionData => 20,
+            SwigError::InvalidAccountIndex => 21,
+            SwigError::InvalidFieldOffset => 22,
+            SwigError::StackUnderflow => 23,
+            SwigError::StackOverflow => 24,
+            SwigError::DivisionByZero => 25,
+            SwigError::InvalidJump => 26,
+            SwigError::NoResult => 27,
+            SwigError::InvalidTargetProgram => 28,
+            SwigError::TooManyInstructions => 29,
+            SwigError::InvalidPDA => 30,
+            SwigError::PluginRejectedTransaction => 31,
         }
     }
 }
@@ -113,5 +120,11 @@ impl From<SwigError> for ProgramError {
     fn from(e: SwigError) -> Self {
         msg!("Error: {:?}", e);
         ProgramError::Custom(e.into())
+    }
+}
+
+impl From<SwigStateError> for SwigError {
+    fn from(e: SwigStateError) -> Self {
+        SwigError::StateError(e)
     }
 }

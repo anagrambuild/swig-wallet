@@ -6,7 +6,12 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_system::instructions::CreateAccount;
-use swig_state::{swig_account_seeds_with_bump, swig_account_signer, Action, CreateV1, Role, Swig};
+use swig_state::{
+    authority::{
+        Ed25519AuthorityData, Ed25519SessionAuthorityData, Ed25519SessionAuthorityDataCreate,
+    },
+    swig_account_seeds_with_bump, swig_account_signer, Action, AuthorityType, CreateV1, Role, Swig,
+};
 
 use crate::{
     assertions::*,
@@ -34,12 +39,28 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
         ctx.accounts.swig.key(),
         SwigError::InvalidSeed(SWIG_ACCOUNT_NAME),
     )?;
+    //validate authority data
+    let authority_data = match borsh_create.initial_authority {
+        AuthorityType::Ed25519Session => {
+            let create = Ed25519SessionAuthorityDataCreate::load(&borsh_create.authority_data)
+                .map_err(|_| SwigError::InvalidAuthority)?;
+            Ed25519SessionAuthorityData::new(create.authority_pubkey, create.role_max_duration)
+                .into_bytes()
+                .to_vec()
+        },
+        AuthorityType::Ed25519 => {
+            Ed25519AuthorityData::load(&borsh_create.authority_data)
+                .map_err(|_| SwigError::InvalidAuthority)?;
+            borsh_create.authority_data
+        },
+        _ => borsh_create.authority_data,
+    };
     let swig = Swig::new(
         borsh_create.id,
         bump,
         vec![Role::new(
             borsh_create.initial_authority,
-            borsh_create.authority_data,
+            authority_data,
             borsh_create.start_slot,
             borsh_create.end_slot,
             vec![Action::All],

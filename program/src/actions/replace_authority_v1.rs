@@ -221,18 +221,6 @@ pub fn replace_authority_v1(
     let clock = pinocchio::sysvars::clock::Clock::get()?;
     let current_slot = clock.slot;
 
-    if (acting_role.start_slot > 0 && current_slot < acting_role.start_slot)
-        || (acting_role.end_slot > 0 && current_slot >= acting_role.end_slot)
-    {
-        msg!(
-            "Role is not valid at current slot {}. Valid range: {} to {}",
-            current_slot,
-            acting_role.start_slot,
-            acting_role.end_slot
-        );
-        return Err(SwigError::PermissionDenied("Role is not valid at current slot").into());
-    }
-
     if replace_authority_v1.args.start_slot > 0
         && replace_authority_v1.args.end_slot > 0
         && replace_authority_v1.args.start_slot >= replace_authority_v1.args.end_slot
@@ -240,10 +228,8 @@ pub fn replace_authority_v1(
         msg!("Start slot must be less than end slot");
         return Err(SwigError::InvalidAuthority.into());
     }
-
     // Authenticate the caller
-    replace_authority_v1.authenticate(&all_accounts, &acting_role)?;
-
+    replace_authority_v1.authenticate(&all_accounts, &acting_role, current_slot)?;
     // Verify PDA derivation
     let b = [bump];
     let seeds = swig_account_seeds_with_bump(&id, &b);

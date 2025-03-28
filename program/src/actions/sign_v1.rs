@@ -1,7 +1,8 @@
 use borsh::BorshSerialize;
 use bytemuck::{Pod, Zeroable};
 use pinocchio::{
-    account_info::AccountInfo, msg, program_error::ProgramError, pubkey::Pubkey, ProgramResult,
+    account_info::AccountInfo, msg, program_error::ProgramError, pubkey::Pubkey, sysvars::Sysvar,
+    ProgramResult,
 };
 use pinocchio_pubkey::from_str;
 use swig_compact_instructions::InstructionIterator;
@@ -132,7 +133,17 @@ pub fn sign_v1(
         };
 
     // Authenticate the transaction first
-    sign_v1.authenticate(all_accounts, &role)?;
+    let clock = pinocchio::sysvars::clock::Clock::get()?;
+    let current_slot = clock.slot;
+    match role.authority_type {
+        // todo generify
+        AuthorityType::Ed25519Session | AuthorityType::Secp256k1Session => {
+            sign_v1.authenticate_session(all_accounts, &role, current_slot)?;
+        },
+        _ => {
+            sign_v1.authenticate(all_accounts, &role, current_slot)?;
+        },
+    }
 
     // msg!(
     //     "ctx.remaining_accounts.is_empty(): {:?}",
@@ -265,7 +276,6 @@ pub fn sign_v1(
     let b = [bump];
     let signer = swig_account_signer(&id, &b);
 
-    // Execute the instructions
     for ix in ix_iter {
         if let Ok(instruction) = ix {
             instruction.execute(

@@ -455,3 +455,34 @@ impl CreatePluginBytecodeInstruction {
         }
     }
 }
+
+pub struct CreateSessionInstruction;
+impl CreateSessionInstruction {
+    pub fn new_with_ed25519_authority(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority: Pubkey,
+        role_id: u8,
+        session_key: Pubkey,
+        session_duration: u64,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(authority, true),
+        ];
+
+        let create_session_args = swig::actions::create_session_v1::CreateSessionV1Args::new(
+            role_id,
+            1,
+            session_duration,
+        );
+        let session_key_bytes = session_key.to_bytes();
+
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [create_session_args.as_bytes(), &[2], &session_key_bytes].concat(),
+        })
+    }
+}
