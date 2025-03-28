@@ -417,80 +417,6 @@ impl ReplaceAuthorityInstruction {
     }
 }
 
-pub struct InitializeBytecodeInstruction;
-impl InitializeBytecodeInstruction {
-    pub fn new(
-        authority: Pubkey,
-        bytecode_account: Pubkey,
-        system_program: Pubkey,
-        instructions: &[swig_state::VMInstruction],
-    ) -> Instruction {
-        let args = swig::actions::initialize_bytecode_v1::InitializeBytecodeV1Args::new(
-            instructions.len() as u16,
-        );
-        let args_bytes = bytemuck::bytes_of(&args);
-        let instructions_bytes =
-            bytemuck::cast_slice::<swig_state::VMInstruction, u8>(instructions);
-
-        // Create a buffer with proper alignment for both args and instructions
-        let mut buffer = vec![0u8; args_bytes.len() + instructions_bytes.len()];
-        buffer[..args_bytes.len()].copy_from_slice(args_bytes);
-        buffer[args_bytes.len()..].copy_from_slice(instructions_bytes);
-
-        println!("Args bytes: {:?}", args_bytes);
-        println!("Instructions bytes: {:?}", instructions_bytes);
-
-        Instruction {
-            program_id: Pubkey::from(swig::ID),
-            accounts: vec![
-                AccountMeta::new(authority, true),
-                AccountMeta::new(bytecode_account, false),
-                AccountMeta::new_readonly(system_program, false),
-            ],
-            data: buffer,
-        }
-    }
-}
-
-pub struct ExecuteBytecodeInstruction;
-impl ExecuteBytecodeInstruction {
-    pub fn new(
-        bytecode_account: Pubkey,
-        payer: Pubkey,
-        account_indices: Option<Vec<u8>>,
-    ) -> anyhow::Result<Instruction> {
-        // Create the args first
-        let args = swig::actions::execute_v1::ExecuteV1Args::new(
-            account_indices.as_ref().map_or(0, |v| v.len() as u8),
-        );
-
-        // Create a buffer with proper alignment for the args
-        let mut data = Vec::with_capacity(8 + account_indices.as_ref().map_or(0, |v| v.len()));
-
-        // Add the args bytes (which are already properly aligned due to bytemuck)
-        data.extend_from_slice(bytemuck::bytes_of(&args));
-
-        // Add account indices if provided
-        if let Some(ref indices) = account_indices {
-            data.extend_from_slice(indices);
-        }
-
-        println!("Execute args bytes: {:?}", bytemuck::bytes_of(&args));
-        println!("Account indices: {:?}", account_indices);
-        println!("Final execute data: {:?}", data);
-
-        Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
-            accounts: vec![
-                AccountMeta::new(bytecode_account, false),
-                AccountMeta::new(payer, true),
-                AccountMeta::new_readonly(system_program::ID, false),
-            ],
-            data,
-        })
-    }
-}
-
 pub struct CreatePluginBytecodeInstruction;
 impl CreatePluginBytecodeInstruction {
     pub fn new(
@@ -527,48 +453,5 @@ impl CreatePluginBytecodeInstruction {
             ],
             data: buffer,
         }
-    }
-}
-
-pub struct ExecutePluginBytecodeInstruction;
-impl ExecutePluginBytecodeInstruction {
-    pub fn new(
-        plugin_bytecode_account: Pubkey,
-        target_program: Pubkey,
-        result_account: Pubkey,
-        payer: Pubkey,
-        account_indices: Option<Vec<u8>>,
-    ) -> anyhow::Result<Instruction> {
-        // Create the args first
-        let args = swig::actions::execute_plugin_v1::ExecutePluginV1Args::new(
-            account_indices.as_ref().map_or(0, |v| v.len() as u8),
-        );
-
-        // Create a buffer with proper alignment for the args
-        let mut data = Vec::with_capacity(8 + account_indices.as_ref().map_or(0, |v| v.len()));
-
-        // Add the args bytes (which are already properly aligned due to bytemuck)
-        data.extend_from_slice(bytemuck::bytes_of(&args));
-
-        // Add account indices if provided
-        if let Some(ref indices) = account_indices {
-            data.extend_from_slice(indices);
-        }
-
-        println!("Plugin Execute args bytes: {:?}", bytemuck::bytes_of(&args));
-        println!("Plugin Account indices: {:?}", account_indices);
-        println!("Final plugin execute data: {:?}", data);
-
-        Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
-            accounts: vec![
-                AccountMeta::new(plugin_bytecode_account, false),
-                AccountMeta::new_readonly(target_program, false),
-                AccountMeta::new(result_account, false),
-                AccountMeta::new(payer, true),
-                AccountMeta::new_readonly(system_program::ID, false),
-            ],
-            data,
-        })
     }
 }

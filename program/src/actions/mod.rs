@@ -1,9 +1,6 @@
 pub mod add_authority_v1;
 pub mod create_plugin_bytecode_v1;
 pub mod create_v1;
-pub mod execute_plugin_v1;
-pub mod execute_v1;
-pub mod initialize_bytecode_v1;
 pub mod remove_authority_v1;
 pub mod replace_authority_v1;
 pub mod sign_v1;
@@ -12,17 +9,14 @@ use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
 
 use self::{
-    add_authority_v1::*, create_plugin_bytecode_v1::*, create_v1::*, execute_plugin_v1::*,
-    execute_v1::*, initialize_bytecode_v1::*, remove_authority_v1::*, replace_authority_v1::*,
-    sign_v1::*,
+    add_authority_v1::*, create_plugin_bytecode_v1::*, create_v1::*, remove_authority_v1::*,
+    replace_authority_v1::*, sign_v1::*,
 };
 use crate::{
     instruction::{
         accounts::{
             AddAuthorityV1Accounts, CreatePluginBytecodeV1Accounts, CreateV1Accounts,
-            ExecuteBytecodeV1Accounts, ExecutePluginBytecodeV1Accounts,
-            InitializeBytecodeV1Accounts, RemoveAuthorityV1Accounts, ReplaceAuthorityV1Accounts,
-            SignV1Accounts,
+            RemoveAuthorityV1Accounts, ReplaceAuthorityV1Accounts, SignV1Accounts,
         },
         SwigInstruction,
     },
@@ -70,24 +64,6 @@ fn process_create_plugin_bytecode_v1(accounts: &[AccountInfo], data: &[u8]) -> P
 }
 
 #[inline(always)]
-fn process_execute_plugin_bytecode_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    let account_ctx = ExecutePluginBytecodeV1Accounts::context(accounts)?;
-    execute_plugin_bytecode_v1(account_ctx, data)
-}
-
-#[inline(always)]
-fn process_initialize_bytecode_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    let account_ctx = InitializeBytecodeV1Accounts::context(accounts)?;
-    initialize_bytecode_v1(account_ctx, data)
-}
-
-#[inline(always)]
-fn process_execute_bytecode_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    let account_ctx = ExecuteBytecodeV1Accounts::context(accounts)?;
-    execute_bytecode_v1(account_ctx, data)
-}
-
-#[inline(always)]
 pub fn process_action(
     accounts: &[AccountInfo],
     account_classification: &[AccountClassification],
@@ -106,11 +82,6 @@ pub fn process_action(
         SwigInstruction::CreatePluginBytecodeV1 => {
             process_create_plugin_bytecode_v1(accounts, data)
         },
-        SwigInstruction::ExecutePluginBytecodeV1 => {
-            process_execute_plugin_bytecode_v1(accounts, data)
-        },
-        SwigInstruction::ExecuteBytecodeV1 => process_execute_bytecode_v1(accounts, data),
-        SwigInstruction::InitializeBytecodeV1 => process_initialize_bytecode_v1(accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
