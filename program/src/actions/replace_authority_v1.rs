@@ -1,12 +1,3 @@
-use crate::{
-    assertions::{check_bytes_match, check_self_owned, check_self_pda, find_self_pda},
-    error::SwigError,
-    instruction::{
-        accounts::{Context, ReplaceAuthorityV1Accounts},
-        Authenticatable, SwigInstruction, SWIG_ACCOUNT_NAME,
-    },
-    util::ZeroCopy,
-};
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytemuck::{Pod, Zeroable};
 use pinocchio::{
@@ -18,6 +9,16 @@ use pinocchio::{
 };
 use pinocchio_system::instructions::Transfer;
 use swig_state::{swig_account_seeds_with_bump, Action, AuthorityType, Role, Swig};
+
+use crate::{
+    assertions::{check_bytes_match, check_self_owned, check_self_pda, find_self_pda},
+    error::SwigError,
+    instruction::{
+        accounts::{Context, ReplaceAuthorityV1Accounts},
+        Authenticatable, SwigInstruction, SWIG_ACCOUNT_NAME,
+    },
+    util::ZeroCopy,
+};
 
 pub struct ReplaceAuthorityV1<'a> {
     pub args: &'a ReplaceAuthorityV1Args,
@@ -184,8 +185,10 @@ pub fn replace_authority_v1(
 
             if !new_has_management {
                 return Err(SwigError::PermissionDenied(
-                    "Cannot remove management permissions from self when no other authority has management permissions",
-                ).into());
+                    "Cannot remove management permissions from self when no other authority has \
+                     management permissions",
+                )
+                .into());
             }
         }
     }

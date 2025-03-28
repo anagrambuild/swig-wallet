@@ -4,9 +4,8 @@ use swig_state::{
     AuthorityType, Role,
 };
 
-use crate::{assertions::sol_assert_bytes_eq, error::SwigError};
-
 use super::{ed25519, StartSession, ValidSession};
+use crate::{assertions::sol_assert_bytes_eq, error::SwigError};
 
 impl<'a> ValidSession<'a> for Ed25519SessionAuthorityDataMut<'a> {
     fn validate_session_data(&self, duration: u64, session_key: &'a [u8]) -> Result<(), SwigError> {

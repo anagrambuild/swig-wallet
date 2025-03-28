@@ -39,7 +39,7 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
         ctx.accounts.swig.key(),
         SwigError::InvalidSeed(SWIG_ACCOUNT_NAME),
     )?;
-    //validate authority data
+    // validate authority data
     let authority_data = match borsh_create.initial_authority {
         AuthorityType::Ed25519Session => {
             let create = Ed25519SessionAuthorityDataCreate::load(&borsh_create.authority_data)

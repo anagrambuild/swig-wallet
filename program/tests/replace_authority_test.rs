@@ -1,7 +1,6 @@
 mod common;
 use borsh::BorshDeserialize;
 use common::*;
-
 use solana_sdk::{
     message::{v0, VersionedMessage},
     signature::Keypair,
@@ -90,7 +89,8 @@ fn test_replace_authority_basic() {
 
     context.svm.send_transaction(tx).unwrap();
 
-    // Verify that we still have two authorities, but the second one is now the new authority
+    // Verify that we still have two authorities, but the second one is now the new
+    // authority
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = Swig::try_from_slice(&swig_account.data).unwrap();
     assert_eq!(swig.roles.len(), 2);
@@ -163,7 +163,8 @@ fn test_replace_authority_permissions() {
     )
     .unwrap();
 
-    // Try to replace an authority using the second authority (should fail due to lack of permissions)
+    // Try to replace an authority using the second authority (should fail due to
+    // lack of permissions)
     let replace_ix = ReplaceAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
         context.default_payer.pubkey(),
@@ -235,7 +236,8 @@ fn test_replace_authority_permissions() {
 
     context.svm.send_transaction(tx).unwrap();
 
-    // Verify that we still have three authorities, but the second one is now the new authority
+    // Verify that we still have three authorities, but the second one is now the
+    // new authority
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = Swig::try_from_slice(&swig_account.data).unwrap();
     assert_eq!(swig.roles.len(), 3);
@@ -414,9 +416,9 @@ fn test_replace_authority_privilege_escalation() {
     // Expire the blockhash before the next transaction
     context.svm.expire_blockhash();
 
-    // Try to replace the root authority (which has Action::All) with a new authority
-    // that doesn't have Action::All - this should fail as a limited authority cannot
-    // downgrade a higher privileged authority
+    // Try to replace the root authority (which has Action::All) with a new
+    // authority that doesn't have Action::All - this should fail as a limited
+    // authority cannot downgrade a higher privileged authority
     let replace_ix = ReplaceAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
         context.default_payer.pubkey(),
@@ -456,7 +458,8 @@ fn test_replace_authority_privilege_escalation() {
     // Expire the blockhash before the next transaction
     context.svm.expire_blockhash();
 
-    // Now try with the root authority replacing the limited authority - this should work
+    // Now try with the root authority replacing the limited authority - this should
+    // work
     let replace_ix = ReplaceAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
         context.default_payer.pubkey(),
@@ -630,8 +633,9 @@ fn test_replace_authority_self_management_permissions() {
     // Create a swig wallet with the first authority
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, &id).unwrap();
 
-    // Try to replace self with a new authority that doesn't have management permissions
-    // This should fail because it would leave the wallet without any authority that can manage authorities
+    // Try to replace self with a new authority that doesn't have management
+    // permissions This should fail because it would leave the wallet without
+    // any authority that can manage authorities
     let replace_ix = ReplaceAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
         context.default_payer.pubkey(),
@@ -667,7 +671,8 @@ fn test_replace_authority_self_management_permissions() {
     let result = context.svm.send_transaction(tx);
     assert!(
         result.is_err(),
-        "Should not be able to replace self with an authority that doesn't have management permissions"
+        "Should not be able to replace self with an authority that doesn't have management \
+         permissions"
     );
 
     // Expire the blockhash before the next transaction
@@ -691,7 +696,8 @@ fn test_replace_authority_self_management_permissions() {
     // Expire the blockhash before the next transaction
     context.svm.expire_blockhash();
 
-    // Now try again - this should work because there's another authority with management permissions
+    // Now try again - this should work because there's another authority with
+    // management permissions
     let replace_ix = ReplaceAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
         context.default_payer.pubkey(),
@@ -871,7 +877,8 @@ fn test_replace_authority_size_change() {
     let initial_account = context.svm.get_account(&swig_key).unwrap();
     let initial_size = initial_account.data.len();
 
-    // Replace the second authority with one that has many more actions (increasing size)
+    // Replace the second authority with one that has many more actions (increasing
+    // size)
     let new_authority = Keypair::new();
     context
         .svm

@@ -1,3 +1,6 @@
+#[allow(unused_imports)]
+use std::mem::MaybeUninit;
+
 #[cfg(target_os = "solana")]
 use pinocchio::syscalls::{sol_curve_validate_point, sol_get_stack_height, sol_memcmp_};
 use pinocchio::{
@@ -7,9 +10,6 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_system::ID as SYSTEM_ID;
-
-#[allow(unused_imports)]
-use std::mem::MaybeUninit;
 
 #[inline(always)]
 #[cfg(target_os = "solana")]

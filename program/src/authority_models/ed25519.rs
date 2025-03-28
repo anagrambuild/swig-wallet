@@ -1,5 +1,6 @@
-use crate::{assertions::sol_assert_bytes_eq, error::SwigError};
 use pinocchio::{account_info::AccountInfo, msg};
+
+use crate::{assertions::sol_assert_bytes_eq, error::SwigError};
 
 pub fn authenticate(
     authority_data: &[u8],

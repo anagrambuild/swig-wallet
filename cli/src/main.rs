@@ -265,8 +265,8 @@ fn main_fn() -> Result<()> {
                     }
                 },
                 _ => todo!(),
-                /* TODO for session based authorities we will create session keypair and sign
-                 * the data */
+                // TODO for session based authorities we will create session keypair and sign
+                // the data
             };
 
             let auth_file_path = Path::new(&ctx.config_dir).join(format!("{:0<13}.auth", id));
