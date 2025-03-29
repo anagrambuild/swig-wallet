@@ -179,7 +179,7 @@ pub fn setup_test_context() -> anyhow::Result<SwigTestContext> {
     let mut svm = LiteSVM::new();
 
     load_program(&mut svm)?;
-    let swig_config = Pubkey::find_program_address(&config_seeds(), &program_id()).0;
+    let swig_config = global_config_key();
     svm.airdrop(&payer.pubkey(), 10_000_000_000)
         .map_err(|e| anyhow::anyhow!("Failed to airdrop {:?}", e))?;
     let swig_create_config_ix = swig_interface::InitializeConfigInstruction::new(
@@ -197,8 +197,7 @@ pub fn setup_test_context() -> anyhow::Result<SwigTestContext> {
     let swig_create_config_tx =
         VersionedTransaction::try_new(VersionedMessage::V0(swig_create_config_message), &[&payer])?;
 
-    let swig_create_config_result = svm.send_transaction(swig_create_config_tx);
-    println!("swig_create_config_result: {:?}", swig_create_config_result);
+    let _swig_create_config_result = svm.send_transaction(swig_create_config_tx);
     Ok(SwigTestContext {
         svm,
         default_payer: payer,
