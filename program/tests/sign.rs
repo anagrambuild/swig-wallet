@@ -663,11 +663,6 @@ fn test_sol_transfer_with_plugin_validation() {
 
     // Derive a PDA for the plugin bytecode account using "swig-pim" seed and the
     // correct system program id (since we're validating SOL transfers)
-    let system_program_bytes = [
-        5, 135, 132, 191, 20, 139, 164, 40, 47, 176, 18, 87, 72, 136, 169, 241, 83, 160, 125, 173,
-        247, 101, 192, 69, 92, 154, 151, 3, 128, 0, 0, 0,
-    ];
-
     let target_program_id = Pubkey::new_from_array(SYSTEM_PROGRAM_ID);
     let seeds = &[b"swig-pim", target_program_id.as_ref()];
     let (plugin_bytecode_account, _) = Pubkey::find_program_address(seeds, &program_id());
@@ -994,14 +989,16 @@ fn test_sol_transfer_with_plugin_validation() {
             err
         );
 
-        // The error should be our custom error code 406 (ValidationFailed)
+        // The error should be our error code 35 (VMValidationFailed)
         assert_eq!(
             err.err,
-            TransactionError::InstructionError(0, InstructionError::Custom(406))
+            TransactionError::InstructionError(0, InstructionError::Custom(35))
         );
     } else {
-        // panic!("Expected transaction to fail with ValidationFailed error
-        // (406)");
+        panic!(
+            "Expected transaction to fail with VMValidationFailed error
+        (35)"
+        );
     }
 }
 
@@ -1784,12 +1781,12 @@ fn test_stake_account_withdraw_authority_validation() {
             err
         );
 
-        // The error should be our custom error code 406 (ValidationFailed)
+        // The error should be our custom error code 35 (VMValidationFailed)
         assert_eq!(
             err.err,
-            TransactionError::InstructionError(0, InstructionError::Custom(406))
+            TransactionError::InstructionError(0, InstructionError::Custom(35))
         );
     } else {
-        panic!("Expected transaction to fail with ValidationFailed error (406)");
+        panic!("Expected transaction to fail with VMValidationFailed error (35)");
     }
 }

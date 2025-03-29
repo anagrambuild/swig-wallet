@@ -84,7 +84,7 @@ pub fn create_plugin_bytecode_v1(
     )?;
 
     // Check that the config account is owned by the program
-    // check_self_owned(ctx.accounts.config, SwigError::OwnerMismatch("config"))?;
+    check_self_owned(ctx.accounts.config, SwigError::OwnerMismatch("config"))?;
 
     // Verify admin signature
     check_signer(ctx.accounts.admin, SwigError::AdminSignatureRequired)?;

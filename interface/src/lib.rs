@@ -176,6 +176,34 @@ impl SignInstruction {
         })
     }
 
+    /// Creates a new ed25519 instruction with specified plugin target indices
+    /// for plugin-aware instructions.
+    ///
+    /// This function is specifically designed for cases where the inner
+    /// instruction interacts with plugin accounts, and those plugin
+    /// accounts need to be properly referenced in the signing process. The
+    /// plugin target indices indicate which accounts in the inner
+    /// instruction should be treated as plugin targets during signature
+    /// verification.
+    ///
+    /// # Arguments
+    /// * `swig_account` - The public key of the SWIG account
+    /// * `payer` - The account that will pay for any transaction costs
+    /// * `authority` - The signing authority's public key
+    /// * `inner_instruction` - The instruction to be executed after signature
+    ///   verification
+    /// * `role_id` - The role identifier for permission checking
+    /// * `plugin_target_indices` - Array of indices pointing to plugin-related
+    ///   accounts within the inner instruction's account list
+    ///
+    /// # Example Use Case
+    /// When an instruction needs to interact with plugin accounts (e.g., a
+    /// token swap that requires plugin verification), the relevant plugin
+    /// account indices must be specified to ensure proper signature
+    /// verification and security checks during execution.
+    ///
+    /// # Returns
+    /// * `Result<Instruction>` - The constructed instruction or an error
     pub fn new_ed25519_with_plugin_targets(
         swig_account: Pubkey,
         payer: Pubkey,
@@ -229,6 +257,35 @@ impl SignInstruction {
         })
     }
 
+    /// Creates a new secp256k1 instruction with specified plugin target indices
+    /// for plugin-aware instructions.
+    ///
+    /// This function is specifically designed for cases where the inner
+    /// instructions interact with plugin accounts and those plugin accounts
+    /// need to be properly referenced in the signing process when using
+    /// secp256k1 signatures. The plugin target indices indicate which
+    /// accounts in the inner instructions should be treated
+    /// as plugin targets during signature verification.
+    ///
+    /// # Arguments
+    /// * `swig_account` - The public key of the SWIG account
+    /// * `payer` - The account that will pay for any transaction costs
+    /// * `authority` - The secp256k1 signature bytes (64 bytes)
+    /// * `inner_instructions` - The vector of instructions to be executed after
+    ///   signature verification
+    /// * `role_id` - The role identifier for permission checking
+    /// * `plugin_target_indices` - Array of indices pointing to plugin-related
+    ///   accounts within the inner instructions' account lists
+    ///
+    /// # Example Use Case
+    /// When multiple instructions need to interact with plugin accounts (e.g.,
+    /// a series of token operations requiring plugin verification), and the
+    /// signing is done using secp256k1, the relevant plugin account indices
+    /// must be specified to ensure proper signature verification and
+    /// security checks during execution.
+    ///
+    /// # Returns
+    /// * `Result<Instruction>` - The constructed instruction or an error
     pub fn new_secp256k1_with_plugin_targets(
         swig_account: Pubkey,
         payer: Pubkey,
@@ -462,7 +519,6 @@ impl CreatePluginBytecodeInstruction {
         let instructions_bytes =
             bytemuck::cast_slice::<swig_state::VMInstruction, u8>(instructions);
 
-        // Create a buffer with proper alignment for both args and instructions
         let mut buffer = vec![0u8; args_bytes.len() + instructions_bytes.len()];
         buffer[..args_bytes.len()].copy_from_slice(args_bytes);
         buffer[args_bytes.len()..].copy_from_slice(instructions_bytes);

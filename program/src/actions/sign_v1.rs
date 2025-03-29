@@ -19,7 +19,7 @@ use crate::{
         Authenticatable, SwigInstruction, SWIG_ACCOUNT_NAME,
     },
     util::ZeroCopy,
-    vm::execute_plugin_bytecode,
+    vm::execute_plugin_vm_bytecode,
     AccountClassification,
 };
 // use swig_instructions::InstructionIterator;
@@ -145,15 +145,6 @@ pub fn sign_v1(
         },
     }
 
-    // msg!(
-    //     "ctx.remaining_accounts.is_empty(): {:?}",
-    //     ctx.remaining_accounts.is_empty()
-    // );
-    // msg!(
-    //     "sign_v1.args.plugin_target_indices_len: {:?}",
-    //     sign_v1.args.plugin_target_indices_len
-    // );
-
     // Skip plugin execution if no remaining accounts or no plugin target indices
     if !ctx.remaining_accounts.is_empty() && sign_v1.args.plugin_target_indices_len > 0 {
         // Inline fast path for simple cases
@@ -161,33 +152,15 @@ pub fn sign_v1(
             // Get the single target index
             let idx = sign_v1.plugin_target_indices[0] as usize;
 
-            // msg!("idx: {:?}", idx);
-            // msg!("all_accounts.len(): {:?}", all_accounts.len());
-
             // Skip invalid indices
             if idx < all_accounts.len() {
                 let account = &all_accounts[idx];
                 let owner = account.owner();
 
-                // Skip system program and our own program
-                // msg!(
-                //     "owner != &SYSTEM_PROGRAM_ID && owner != &crate::ID: {:?}",
-                //     owner != &SYSTEM_PROGRAM_ID && owner != &crate::ID
-                // );
-                // msg!(
-                //     "owner != &SYSTEM_PROGRAM_ID: {:?}",
-                //     owner != &SYSTEM_PROGRAM_ID
-                // );
-                // msg!("owner != &crate::ID: {:?}", owner != &crate::ID);
                 if owner != &crate::ID {
                     // Try to find matching plugin
                     for ra in ctx.remaining_accounts.iter() {
                         // Quick ownership and size check
-                        // msg!("ra.owner() == &crate::ID: {:?}", ra.owner() == &crate::ID);
-                        // msg!(
-                        //     "ra.data_len() >= std::mem::size_of::<PluginBytecodeAccount>():
-                        // {:?}",     ra.data_len() >=
-                        // std::mem::size_of::<PluginBytecodeAccount>() );
                         if ra.owner() == &crate::ID
                             && ra.data_len() >= std::mem::size_of::<PluginBytecodeAccount>()
                         {
@@ -195,14 +168,10 @@ pub fn sign_v1(
                             let data = unsafe { ra.borrow_data_unchecked() };
                             let plugin = bytemuck::from_bytes::<PluginBytecodeAccount>(&data);
 
-                            // msg!(
-                            //     "&plugin.target_program == owner: {:?}",
-                            //     &plugin.target_program == owner
-                            // );
-                            // Check program match
+                            // Check target program & owner match
                             if &plugin.target_program == owner {
                                 // Execute the plugin - pass all indices
-                                let _ = execute_plugin_bytecode(
+                                let _ = execute_plugin_vm_bytecode(
                                     plugin,
                                     account,
                                     idx,
@@ -251,7 +220,7 @@ pub fn sign_v1(
 
                     if ra.key() == &pda {
                         // Pass all plugin target indices, not just a single one
-                        let _ = execute_plugin_bytecode(
+                        let _ = execute_plugin_vm_bytecode(
                             plugin,
                             account,
                             idx,
@@ -288,7 +257,6 @@ pub fn sign_v1(
         }
     }
 
-    // Continue with the existing permission checks
     let all = role
         .actions
         .iter()

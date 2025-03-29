@@ -1,3 +1,7 @@
+// NOTE these tests existed to validate the VM functionality when the VM was
+// standalone and was not a plugin. This is preserved as a record of how to use
+// the SWIG VM in the event we want to revisit the standalone VM for any reason.
+
 // mod common;
 // use bytemuck::{Pod, Zeroable};
 // use common::*;

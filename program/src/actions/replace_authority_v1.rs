@@ -185,8 +185,7 @@ pub fn replace_authority_v1(
 
             if !new_has_management {
                 return Err(SwigError::PermissionDenied(
-                    "Cannot remove management permissions from self when no other authority has \
-                     management permissions",
+                    "Cannot leave SWIG account with no authority.",
                 )
                 .into());
             }

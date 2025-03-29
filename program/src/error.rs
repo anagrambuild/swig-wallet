@@ -75,6 +75,8 @@ pub enum SwigError {
     AdminSignatureRequired,
     #[error("Not the configured admin")]
     NotConfiguredAdmin,
+    #[error("VM Validation Failed")]
+    VMValidationFailed,
 }
 
 impl From<InstructionError> for SwigError {
@@ -121,6 +123,7 @@ impl From<SwigError> for u32 {
             SwigError::ConfigAlreadyInitialized => 32,
             SwigError::AdminSignatureRequired => 33,
             SwigError::NotConfiguredAdmin => 34,
+            SwigError::VMValidationFailed => 35,
         }
     }
 }

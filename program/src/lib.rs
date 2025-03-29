@@ -104,14 +104,6 @@ unsafe fn classify_account(
     account: &AccountInfo,
     accounts: &[MaybeUninit<AccountInfo>],
 ) -> Result<AccountClassification, ProgramError> {
-    // Debug print account information
-    // msg!(
-    //     "Classifying account at index {}: {:?}",
-    //     index,
-    //     account.key()
-    // );
-    // msg!("  Owner: {:?}", account.owner());
-
     match account.owner() {
         &crate::ID if index != 0 => {
             // Check if this is a plugin bytecode account or global config account (which is
@@ -123,29 +115,19 @@ unsafe fn classify_account(
 
             if is_plugin_account || is_config_account {
                 // Likely a plugin bytecode account, allow it to be in any position
-                // msg!(
-                //     "  Account at index {} appears to be a plugin bytecode account,
-                // allowing",     index
-                // );
                 return Ok(AccountClassification::None);
             }
 
             // For other Swig-owned accounts, enforce position 0
-            // msg!(
-            //     "ERROR: Account owned by Swig program detected at index {} != 0",
-            //     index
-            // );
             Err(SwigError::InvalidAccounts("Swig Account must be first account").into())
         },
         &crate::ID => {
             let data = account.borrow_data_unchecked();
             if data[0] == Discriminator::SwigAccount as u8 {
-                // msg!("  Account identified as Swig Account");
                 Ok(AccountClassification::ThisSwig {
                     lamports: account.lamports(),
                 })
             } else {
-                // msg!("  Account owned by Swig but not a Swig Account");
                 Ok(AccountClassification::None)
             }
         },
