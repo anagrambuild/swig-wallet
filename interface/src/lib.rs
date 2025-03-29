@@ -21,6 +21,10 @@ pub fn swig_key(id: String) -> Pubkey {
     Pubkey::find_program_address(&swig_account_seeds(id.as_bytes()), &program_id()).0
 }
 
+pub fn global_config_key() -> Pubkey {
+    Pubkey::find_program_address(&swig_state::config_seeds(), &program_id()).0
+}
+
 pub struct AuthorityConfig<'a> {
     pub authority_type: AuthorityType,
     pub authority: &'a [u8],
@@ -424,6 +428,30 @@ impl CreatePluginBytecodeInstruction {
         target_program: Pubkey,
         program_data: Pubkey,
         authority: Pubkey,
+        admin: Pubkey,
+        config: Pubkey,
+        system_program: Pubkey,
+        instructions: &[swig_state::VMInstruction],
+    ) -> Instruction {
+        Self::new_with_config(
+            plugin_bytecode_account,
+            target_program,
+            program_data,
+            authority,
+            config,
+            admin,
+            system_program,
+            instructions,
+        )
+    }
+
+    pub fn new_with_config(
+        plugin_bytecode_account: Pubkey,
+        target_program: Pubkey,
+        program_data: Pubkey,
+        authority: Pubkey,
+        config: Pubkey,
+        admin: Pubkey,
         system_program: Pubkey,
         instructions: &[swig_state::VMInstruction],
     ) -> Instruction {
@@ -449,9 +477,31 @@ impl CreatePluginBytecodeInstruction {
                 AccountMeta::new_readonly(target_program, false),
                 AccountMeta::new_readonly(program_data, false),
                 AccountMeta::new(authority, true),
+                AccountMeta::new_readonly(config, false),
+                AccountMeta::new(admin, true),
                 AccountMeta::new_readonly(system_program, false),
             ],
             data: buffer,
+        }
+    }
+}
+
+pub struct InitializeConfigInstruction;
+impl InitializeConfigInstruction {
+    pub fn new(payer: Pubkey, admin: Pubkey, system_program: Pubkey) -> Instruction {
+        let args = swig::actions::initialize_config_v1::InitializeConfigV1Args::new();
+        let args_bytes = bytemuck::bytes_of(&args);
+        let config = config_key();
+
+        Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts: vec![
+                AccountMeta::new(config, false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new(admin, true),
+                AccountMeta::new_readonly(system_program, false),
+            ],
+            data: args_bytes.to_vec(),
         }
     }
 }

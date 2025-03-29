@@ -2,6 +2,7 @@ pub mod add_authority_v1;
 pub mod create_plugin_bytecode_v1;
 pub mod create_session_v1;
 pub mod create_v1;
+pub mod initialize_config_v1;
 pub mod remove_authority_v1;
 pub mod replace_authority_v1;
 pub mod sign_v1;
@@ -11,14 +12,14 @@ use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, Pro
 
 use self::{
     add_authority_v1::*, create_plugin_bytecode_v1::*, create_session_v1::*, create_v1::*,
-    remove_authority_v1::*, replace_authority_v1::*, sign_v1::*,
+    initialize_config_v1::*, remove_authority_v1::*, replace_authority_v1::*, sign_v1::*,
 };
 use crate::{
     instruction::{
         accounts::{
             AddAuthorityV1Accounts, CreatePluginBytecodeV1Accounts, CreateSessionV1Accounts,
-            CreateV1Accounts, RemoveAuthorityV1Accounts, ReplaceAuthorityV1Accounts,
-            SignV1Accounts,
+            CreateV1Accounts, InitializeConfigV1Accounts, RemoveAuthorityV1Accounts,
+            ReplaceAuthorityV1Accounts, SignV1Accounts,
         },
         SwigInstruction,
     },
@@ -66,6 +67,12 @@ fn process_create_plugin_bytecode_v1(accounts: &[AccountInfo], data: &[u8]) -> P
 }
 
 #[inline(always)]
+fn process_initialize_config_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = InitializeConfigV1Accounts::context(accounts)?;
+    initialize_config_v1(account_ctx, data)
+}
+
+#[inline(always)]
 pub fn process_action(
     accounts: &[AccountInfo],
     account_classification: &[AccountClassification],
@@ -88,6 +95,7 @@ pub fn process_action(
             let account_ctx = CreateSessionV1Accounts::context(accounts)?;
             create_session_v1(account_ctx, data, accounts)
         },
+        SwigInstruction::InitializeConfigV1 => process_initialize_config_v1(accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }

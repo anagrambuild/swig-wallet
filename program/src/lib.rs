@@ -114,12 +114,14 @@ unsafe fn classify_account(
 
     match account.owner() {
         &crate::ID if index != 0 => {
-            // Check if this is a plugin bytecode account (which is allowed to be in any
-            // position)
+            // Check if this is a plugin bytecode account or global config account (which is
+            // allowed to be in any position)
             let is_plugin_account =
                 account.data_len() >= std::mem::size_of::<swig_state::PluginBytecodeAccount>();
+            let is_config_account =
+                account.data_len() >= std::mem::size_of::<swig_state::GlobalConfig>();
 
-            if is_plugin_account {
+            if is_plugin_account || is_config_account {
                 // Likely a plugin bytecode account, allow it to be in any position
                 // msg!(
                 //     "  Account at index {} appears to be a plugin bytecode account,

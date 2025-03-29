@@ -15,8 +15,14 @@ use solana_sdk::{
     system_program,
     transaction::{Transaction, VersionedTransaction},
 };
-use swig_interface::{AddAuthorityInstruction, AuthorityConfig, CreateInstruction};
-use swig_state::{authority::Ed25519SessionAuthorityDataCreate, swig_account_seeds, Action, Swig};
+use swig::actions::initialize_config_v1::InitializeConfigV1;
+use swig_interface::{
+    config_key, AddAuthorityInstruction, AuthorityConfig, CreateInstruction,
+    InitializeConfigInstruction,
+};
+use swig_state::{
+    authority::Ed25519SessionAuthorityDataCreate, config_seeds, swig_account_seeds, Action, Swig,
+};
 
 pub fn program_id() -> Pubkey {
     swig::ID.into()
@@ -165,6 +171,7 @@ pub fn create_swig_ed25519_session(
 pub struct SwigTestContext {
     pub svm: LiteSVM,
     pub default_payer: Keypair,
+    pub swig_config: Pubkey,
 }
 
 pub fn setup_test_context() -> anyhow::Result<SwigTestContext> {
@@ -172,11 +179,30 @@ pub fn setup_test_context() -> anyhow::Result<SwigTestContext> {
     let mut svm = LiteSVM::new();
 
     load_program(&mut svm)?;
+    let swig_config = Pubkey::find_program_address(&config_seeds(), &program_id()).0;
     svm.airdrop(&payer.pubkey(), 10_000_000_000)
         .map_err(|e| anyhow::anyhow!("Failed to airdrop {:?}", e))?;
+    let swig_create_config_ix = swig_interface::InitializeConfigInstruction::new(
+        payer.pubkey(),
+        payer.pubkey(),
+        system_program::ID,
+    );
+    let swig_create_config_message = v0::Message::try_compile(
+        &payer.pubkey(),
+        &[swig_create_config_ix],
+        &[],
+        svm.latest_blockhash(),
+    )?;
+
+    let swig_create_config_tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(swig_create_config_message), &[&payer])?;
+
+    let swig_create_config_result = svm.send_transaction(swig_create_config_tx);
+    println!("swig_create_config_result: {:?}", swig_create_config_result);
     Ok(SwigTestContext {
         svm,
         default_payer: payer,
+        swig_config,
     })
 }
 

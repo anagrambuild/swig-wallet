@@ -69,6 +69,12 @@ pub enum SwigError {
     AuthorityTypeDoesNotSupportSessions,
     #[error("Invalid Session Data")]
     InvalidSessionData,
+    #[error("Config already initialized")]
+    ConfigAlreadyInitialized,
+    #[error("Admin signature required")]
+    AdminSignatureRequired,
+    #[error("Not the configured admin")]
+    NotConfiguredAdmin,
 }
 
 impl From<InstructionError> for SwigError {
@@ -112,6 +118,9 @@ impl From<SwigError> for u32 {
             SwigError::TooManyInstructions => 29,
             SwigError::InvalidPDA => 30,
             SwigError::PluginRejectedTransaction => 31,
+            SwigError::ConfigAlreadyInitialized => 32,
+            SwigError::AdminSignatureRequired => 33,
+            SwigError::NotConfiguredAdmin => 34,
         }
     }
 }

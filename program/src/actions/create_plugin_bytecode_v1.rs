@@ -1,3 +1,5 @@
+use std::borrow::Borrow;
+
 use bytemuck::{Pod, Zeroable};
 use pinocchio::{
     account_info::AccountInfo,
@@ -7,10 +9,10 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_system::instructions::CreateAccount;
-use swig_state::{swig_pim_account_signer, PluginBytecodeAccount, VMInstruction};
+use swig_state::{swig_pim_account_signer, GlobalConfig, PluginBytecodeAccount, VMInstruction};
 
 use crate::{
-    assertions::{check_system_owner, check_zero_balance},
+    assertions::{check_self_owned, check_signer, check_system_owner, check_zero_balance},
     error::SwigError,
     instruction::{
         accounts::{Context, CreatePluginBytecodeV1Accounts},
@@ -80,6 +82,26 @@ pub fn create_plugin_bytecode_v1(
         ctx.accounts.plugin_bytecode_account,
         SwigError::AccountNotEmpty("plugin_bytecode_account"),
     )?;
+
+    // Check that the config account is owned by the program
+    // check_self_owned(ctx.accounts.config, SwigError::OwnerMismatch("config"))?;
+
+    // Verify admin signature
+    check_signer(ctx.accounts.admin, SwigError::AdminSignatureRequired)?;
+
+    // Verify that the admin account matches the one in the config
+    let config_data = ctx.accounts.config.try_borrow_data()?;
+    let config = unsafe { &*(config_data.as_ptr() as *const GlobalConfig) };
+
+    msg!("config.admin: {:?}", config);
+    msg!("admin: {:?}", ctx.accounts.admin.key());
+
+    if config.admin != *ctx.accounts.admin.key() {
+        msg!("Admin account does not match the one in config");
+        msg!("Expected: {:?}", &config.admin);
+        msg!("Provided: {:?}", ctx.accounts.admin.key());
+        return Err(SwigError::NotConfiguredAdmin.into());
+    }
 
     // Parse instruction data
     let create_plugin = CreatePluginBytecodeV1::load(data).map_err(|e| {

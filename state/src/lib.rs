@@ -72,6 +72,15 @@ pub fn swig_pim_account_signer<'a>(id: &'a [u8], bump: &'a [u8; 1]) -> [Seed<'a>
     ]
 }
 
+#[inline(always)]
+pub fn config_seeds() -> [&'static [u8]; 1] {
+    [b"swig-config".as_ref()]
+}
+
+pub fn config_signer<'a>(bump: &'a [u8; 1]) -> [Seed<'a>; 2] {
+    [b"swig-config".as_ref().into(), bump.as_ref().into()]
+}
+
 impl Swig {
     pub fn raw_get_id(data: &[u8]) -> [u8; 13] {
         let mut id = [0u8; 13];
@@ -424,6 +433,13 @@ pub struct PluginBytecodeAccount {
     pub instructions_len: u32,
     pub padding: [u8; 4],
     pub instructions: [VMInstruction; 32],
+}
+
+#[derive(Pod, Zeroable, Copy, Clone, PartialEq, Debug)]
+#[repr(C, align(8))]
+pub struct GlobalConfig {
+    pub admin: Pubkey,
+    pub padding: [u8; 32], // Reserved for future use
 }
 
 #[derive(Pod, Zeroable, Copy, Clone, PartialEq, Debug)]

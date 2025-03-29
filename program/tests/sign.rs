@@ -756,6 +756,8 @@ fn test_sol_transfer_with_plugin_validation() {
         target_program_id,
         target_program_id, // Using target_program_id as program_data for simplicity
         swig_authority.pubkey(),
+        context.default_payer.pubkey(),
+        context.swig_config,
         system_program::ID,
         &validation_instructions,
     );
@@ -770,7 +772,7 @@ fn test_sol_transfer_with_plugin_validation() {
 
     let create_plugin_tx = VersionedTransaction::try_new(
         VersionedMessage::V0(create_plugin_message),
-        &[&swig_authority],
+        &[&swig_authority, &context.default_payer],
     )
     .unwrap();
 
@@ -1301,6 +1303,8 @@ fn test_stake_account_withdraw_authority_validation() {
         stake_program_id,
         stake_program_id, // Using stake_program_id as program_data for simplicity
         swig_authority.pubkey(),
+        context.default_payer.pubkey(),
+        context.swig_config,
         system_program::ID,
         &validation_instructions,
     );
@@ -1315,7 +1319,7 @@ fn test_stake_account_withdraw_authority_validation() {
 
     let create_plugin_tx = VersionedTransaction::try_new(
         VersionedMessage::V0(create_plugin_message),
-        &[&swig_authority],
+        &[&swig_authority, &context.default_payer],
     )
     .unwrap();
 

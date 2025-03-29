@@ -258,6 +258,8 @@ fn test_plugin_in_sign_v1() {
         token_program_id,
         token_program_id, // Using token_program_id as program_data for simplicity
         swig_authority.pubkey(),
+        context.default_payer.pubkey(),
+        context.swig_config,
         system_program::ID,
         &comparison_instructions,
     );
@@ -272,7 +274,7 @@ fn test_plugin_in_sign_v1() {
 
     let create_plugin_tx = VersionedTransaction::try_new(
         VersionedMessage::V0(create_plugin_message),
-        &[&swig_authority],
+        &[&swig_authority, &context.default_payer],
     )
     .unwrap();
 

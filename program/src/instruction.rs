@@ -39,9 +39,16 @@ pub enum SwigInstruction {
   #[account(0, writable, name="plugin_bytecode_account", desc="the account storing plugin bytecode")]
   #[account(1, writable, name="target_program", desc="the program this plugin is for")]
   #[account(2, writable, name="program_data", desc="the program's data account")]
-  #[account(3, writable, signer, name="authority", desc="the upgrade authority of the target program")]
-  #[account(4, writable, name="system_program", desc="the system program")]
+  #[account(3, signer, name="authority", desc="the upgrade authority of the target program")]
+  #[account(4, name="config", desc="swig global config account")]
+  #[account(5, signer, name="admin", desc="the swig program global admin as configured")]
+  #[account(6, writable, name="system_program", desc="the system program")]
   CreatePluginBytecodeV1 = 6,
+  #[account(0, writable, name="config", desc="global config account")]
+  #[account(1, writable, signer, name="payer", desc="the payer")]
+  #[account(2, signer, name="admin", desc="the initial admin")]
+  #[account(3, name="system_program", desc="the system program")]
+  InitializeConfigV1 = 7,
 }
 
 pub trait Authenticatable {
