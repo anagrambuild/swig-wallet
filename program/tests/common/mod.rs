@@ -17,7 +17,7 @@ use solana_sdk::{
 };
 use swig::actions::initialize_config_v1::InitializeConfigV1;
 use swig_interface::{
-    config_key, AddAuthorityInstruction, AuthorityConfig, CreateInstruction,
+    global_config_key, AddAuthorityInstruction, AuthorityConfig, CreateInstruction,
     InitializeConfigInstruction,
 };
 use swig_state::{
