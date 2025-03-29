@@ -491,7 +491,7 @@ impl InitializeConfigInstruction {
     pub fn new(payer: Pubkey, admin: Pubkey, system_program: Pubkey) -> Instruction {
         let args = swig::actions::initialize_config_v1::InitializeConfigV1Args::new();
         let args_bytes = bytemuck::bytes_of(&args);
-        let config = config_key();
+        let config = global_config_key();
 
         Instruction {
             program_id: Pubkey::from(swig::ID),
