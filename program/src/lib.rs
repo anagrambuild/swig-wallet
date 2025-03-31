@@ -50,7 +50,6 @@ pub enum StakeAccountState {
 }
 
 #[derive(PartialEq, Debug, Copy, Clone)]
-
 pub enum AccountClassification {
     None,
     ThisSwig {
@@ -61,9 +60,18 @@ pub enum AccountClassification {
     },
     SwigStakingAccount {
         state: StakeAccountState,
-        balance: u64,
+        stake: u64,
     },
 }
+
+#[derive(PartialEq, Debug, Copy, Clone)]
+pub struct StakeDelegation {
+    pub stake: u64,
+    pub activation_epoch: u64,
+    pub deactivation_epoch: u64,
+    pub warmup_cooldown_rate: u8,
+}
+
 /// classify_accounts
 /// This functions classifies all accounts as either the swig account (assumed
 /// in all instructions to be the first account) or an asset account owned by
@@ -117,12 +125,6 @@ unsafe fn classify_account(
                 Ok(AccountClassification::None)
             }
         },
-        &STAKING_ID => {
-            let data = account.borrow_data_unchecked();
-
-            // TODO add staking account
-            Ok(AccountClassification::None)
-        },
         &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if account.data_len() == 165 && index > 0 => unsafe {
             let data = account.borrow_data_unchecked();
             if sol_memcmp(accounts[0].assume_init_ref().key(), &data[32..64], 32) == 0 {
@@ -137,7 +139,88 @@ unsafe fn classify_account(
                 Ok(AccountClassification::None)
             }
         },
-        // TODO add staking account
+        &STAKING_ID => {
+            // let data = account.borrow_data_unchecked();
+            parse_stake_account_data(account)
+        },
         _ => Ok(AccountClassification::None),
     }
+}
+
+#[inline(always)]
+unsafe fn parse_stake_account_data(
+    account: &AccountInfo,
+) -> Result<AccountClassification, ProgramError> {
+    let data = account.borrow_data_unchecked();
+    // Parse StakeStateV2 from the account data
+    // The first byte indicates the stake state variant
+    let state = match data.get(0) {
+        Some(0) => StakeAccountState::Uninitialized,
+        Some(1) => StakeAccountState::Initialized,
+        Some(2) => StakeAccountState::Stake,
+        Some(3) => StakeAccountState::RewardsPool,
+        _ => return Ok(AccountClassification::None),
+    };
+
+    // Extract delegation information if in Stake state
+    let (voter_pubkey, delegation) = if state == StakeAccountState::Stake {
+        // For the Stake variant, the delegation data starts at a specific offset
+        let voter_pubkey_offset = 112;
+
+        // Only proceed if we have enough data
+        if data.len() >= voter_pubkey_offset + 32 + 8 + 8 + 8 + 1 {
+            // Create voter_pubkey array directly
+            let mut voter_pubkey_array = [0u8; 32];
+            voter_pubkey_array
+                .copy_from_slice(&data[voter_pubkey_offset..voter_pubkey_offset + 32]);
+
+            // Use direct slice access without creating intermediate variables where
+            // possible
+            let stake = u64::from_le_bytes(
+                data[voter_pubkey_offset + 32..voter_pubkey_offset + 40]
+                    .try_into()
+                    .unwrap_or([0; 8]),
+            );
+
+            let activation_epoch = u64::from_le_bytes(
+                data[voter_pubkey_offset + 40..voter_pubkey_offset + 48]
+                    .try_into()
+                    .unwrap_or([0; 8]),
+            );
+
+            let deactivation_epoch = u64::from_le_bytes(
+                data[voter_pubkey_offset + 48..voter_pubkey_offset + 56]
+                    .try_into()
+                    .unwrap_or([0; 8]),
+            );
+
+            let warmup_cooldown_rate = data[voter_pubkey_offset + 56];
+
+            (
+                Some(voter_pubkey_array),
+                Some(StakeDelegation {
+                    stake,
+                    activation_epoch,
+                    deactivation_epoch,
+                    warmup_cooldown_rate,
+                }),
+            )
+        } else {
+            (None, None)
+        }
+    } else {
+        (None, None)
+    };
+
+    let stake = if let Some(del) = delegation {
+        del.stake
+    } else {
+        0
+    };
+    Ok(AccountClassification::SwigStakingAccount {
+        state,
+        stake, /* balance: lamports,
+                * voter_pubkey,
+                * delegation, */
+    })
 }
