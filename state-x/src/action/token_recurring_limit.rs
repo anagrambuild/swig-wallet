@@ -1,34 +1,32 @@
-use pinocchio::program_error::ProgramError;
-
 use super::{Actionable, Permission};
-use crate::{IntoBytes, Transmutable, TransmutableMut};
 
+use crate::{AsBytes, Transmutable, TransmutableMut};
+
+// SANITY CHECK: Make sure the type size is a multiple of 8 bytes.
 static_assertions::const_assert!(core::mem::size_of::<TokenRecurringLimit>() % 8 == 0);
+
 #[repr(C)]
 pub struct TokenRecurringLimit {
-  pub token_mint: [u8; 32],
-  pub window: u64,
-  pub limit: u64,
-  pub current: u64,
-  pub last_reset: u64,
+    pub token_mint: [u8; 32],
+    pub window: u64,
+    pub limit: u64,
+    pub current: u64,
+    pub last_reset: u64,
 }
 
 impl Transmutable for TokenRecurringLimit {
-    const LEN: usize = 64; // Since this is just a marker with no data
+    const LEN: usize = 64;
 }
 
 impl TransmutableMut for TokenRecurringLimit {}
 
-impl<'a> IntoBytes<'a> for TokenRecurringLimit {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
-        Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
-    }
-}
+impl<'a> AsBytes<'a> for TokenRecurringLimit {}
 
 impl<'a> Actionable<'a> for TokenRecurringLimit {
     const TYPE: Permission = Permission::TokenRecurringLimit;
 
+    /// TODO
     fn validate(&mut self) {
-        // No validation needed for a marker type
+        todo!()
     }
 }

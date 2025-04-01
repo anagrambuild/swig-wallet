@@ -15,7 +15,7 @@ use swig_state_x::{
         token_recurring_limit::TokenRecurringLimit, Action, Permission,
     },
     authority::AuthorityType,
-    IntoBytes, Transmutable,
+    AsBytes, Transmutable,
 };
 
 pub enum ClientAction {
@@ -49,18 +49,18 @@ impl ClientAction {
         let offset = data.len() as u32;
         let header = Action::new(permission, length as u16, offset + Action::LEN as u32 + length as u32);
         let header_bytes = header
-            .into_bytes()
+            .as_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize header {:?}", e))?;
         data.extend_from_slice(&header_bytes);
         let bytes_res = match self {
-            ClientAction::TokenLimit(action) => action.into_bytes(),
-            ClientAction::TokenRecurringLimit(action) => action.into_bytes(),
-            ClientAction::SolLimit(action) => action.into_bytes(),
-            ClientAction::SolRecurringLimit(action) => action.into_bytes(),
-            ClientAction::Program(action) => action.into_bytes(),
-            ClientAction::All(action) => action.into_bytes(),
-            ClientAction::ManageAuthority(action) => action.into_bytes(),
-            ClientAction::SubAccount(action) => action.into_bytes(),
+            ClientAction::TokenLimit(action) => action.as_bytes(),
+            ClientAction::TokenRecurringLimit(action) => action.as_bytes(),
+            ClientAction::SolLimit(action) => action.as_bytes(),
+            ClientAction::SolRecurringLimit(action) => action.as_bytes(),
+            ClientAction::Program(action) => action.as_bytes(),
+            ClientAction::All(action) => action.as_bytes(),
+            ClientAction::ManageAuthority(action) => action.as_bytes(),
+            ClientAction::SubAccount(action) => action.as_bytes(),
         };
         data.extend_from_slice(
             bytes_res.map_err(|e| anyhow::anyhow!("Failed to serialize action {:?}", e))?,
@@ -102,7 +102,7 @@ impl CreateInstruction {
         let mut write = Vec::new();
         write.extend_from_slice(
             create
-                .into_bytes()
+                .as_bytes()
                 .map_err(|e| anyhow::anyhow!("Failed to serialize create {:?}", e))?,
         );
         write.extend_from_slice(initial_authority.authority);

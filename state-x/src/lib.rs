@@ -1,9 +1,10 @@
-//#![no_std]
+#![no_std]
 
+use core::slice::from_raw_parts;
+
+use pinocchio::program_error::ProgramError;
 
 extern crate static_assertions;
-
-use pinocchio::{program_error::ProgramError};
 
 pub mod action;
 pub mod authority;
@@ -17,7 +18,6 @@ pub enum SwigStateError {
     InvalidRoleData,
     InvalidSwigData,
 }
-
 
 impl From<SwigStateError> for ProgramError {
     fn from(e: SwigStateError) -> Self {
@@ -78,6 +78,8 @@ pub trait FromBytesMut<'a>: Sized {
     fn from_bytes_mut(bytes: &'a mut [u8]) -> Result<Self, ProgramError>;
 }
 
-pub trait IntoBytes<'a> {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError>;
+pub trait AsBytes<'a>: Transmutable {
+    fn as_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+        Ok(unsafe { from_raw_parts(self as *const Self as *const u8, Self::LEN) })
+    }
 }

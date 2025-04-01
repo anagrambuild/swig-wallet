@@ -1,30 +1,26 @@
-use pinocchio::program_error::ProgramError;
-
 use super::{Actionable, Permission};
-use crate::IntoBytes;
-use crate::Transmutable;
-use crate::TransmutableMut;
+
+use crate::{AsBytes, Transmutable, TransmutableMut};
+
+// SANITY CHECK: Make sure the type size is a multiple of 8 bytes.
+static_assertions::const_assert!(core::mem::size_of::<ManageAuthority>() % 8 == 0);
 
 #[repr(C)]
 pub struct ManageAuthority;
 
 impl Transmutable for ManageAuthority {
-    const LEN: usize = 0; // Since this is just a marker with no data
+    // Marker with no data.
+    const LEN: usize = 0;
 }
 
 impl TransmutableMut for ManageAuthority {}
 
-impl<'a> IntoBytes<'a> for ManageAuthority {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
-        Ok(&[])
-    }
-}
+impl<'a> AsBytes<'a> for ManageAuthority {}
 
 impl<'a> Actionable<'a> for ManageAuthority {
     const TYPE: Permission = Permission::ManageAuthority;
 
-
     fn validate(&mut self) {
-        // No validation needed for a marker type
+        // No validation needed for a marker type.
     }
 }

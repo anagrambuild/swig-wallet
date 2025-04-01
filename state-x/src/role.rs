@@ -5,7 +5,7 @@ use pinocchio::program_error::ProgramError;
 use crate::{
     action::{Action, Actionable},
     authority::{Authority, AuthorityType},
-    FromBytes, FromBytesMut, IntoBytes, Transmutable,
+    AsBytes, FromBytes, FromBytesMut, Transmutable,
 };
 
 pub struct Role<'a, T: Authority<'a>> {
@@ -103,8 +103,8 @@ pub struct Position {
     data: [u16; 8],
 }
 
-impl<'a> IntoBytes<'a> for Position {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+impl<'a> AsBytes<'a> for Position {
+    fn as_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
         let bytes =
             unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
         Ok(bytes)
@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn test_position_to_bytes() {
         let position = Position::new(AuthorityType::Ed25519, 12345, 100, 54321);
-        let bytes = position.into_bytes().unwrap();
+        let bytes = position.as_bytes().unwrap();
 
         assert_eq!(bytes.len(), Position::LEN);
 
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn test_position_from_bytes() {
         let original = Position::new(AuthorityType::Ed25519, 12345, 100, 54321);
-        let bytes = original.into_bytes().unwrap();
+        let bytes = original.as_bytes().unwrap();
 
         let loaded = unsafe { Position::load_unchecked(bytes) }.unwrap();
         assert_eq!(loaded.authority_type().unwrap(), AuthorityType::Ed25519);
@@ -188,7 +188,7 @@ mod tests {
     fn test_position_edge_cases() {
         // Test max values
         let max_position = Position::new(AuthorityType::Ed25519, u32::MAX, u16::MAX, u32::MAX);
-        let bytes = max_position.into_bytes().unwrap();
+        let bytes = max_position.as_bytes().unwrap();
         let loaded = unsafe { Position::load_unchecked(bytes) }.unwrap();
         assert_eq!(loaded.id(), u32::MAX);
         assert_eq!(loaded.length(), u16::MAX);
@@ -196,7 +196,7 @@ mod tests {
 
         // Test zero values
         let zero_position = Position::new(AuthorityType::Ed25519, 0, 0, 0);
-        let bytes = zero_position.into_bytes().unwrap();
+        let bytes = zero_position.as_bytes().unwrap();
         let loaded = unsafe { Position::load_unchecked(bytes) }.unwrap();
         assert_eq!(loaded.id(), 0);
         assert_eq!(loaded.length(), 0);
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn test_invalid_authority_type() {
         let position = Position::new(AuthorityType::Ed25519, 0, 0, 0);
-        let mut bytes = position.into_bytes().unwrap().to_vec();
+        let mut bytes = position.as_bytes().unwrap().to_vec();
 
         // Set authority type to 0 (None) which should be invalid
         let bytes_as_u16: &mut [u16] = unsafe {

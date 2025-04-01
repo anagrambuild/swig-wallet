@@ -1,32 +1,27 @@
-use pinocchio::program_error::ProgramError;
-
 use super::{Actionable, Permission};
-use crate::IntoBytes;
-use crate::Transmutable;
-use crate::TransmutableMut;
+
+use crate::{AsBytes, Transmutable, TransmutableMut};
+
+// SANITY CHECK: Make sure the type size is a multiple of 8 bytes.
+static_assertions::const_assert!(core::mem::size_of::<SubAccount>() % 8 == 0);
+
 pub struct SubAccount {
-  pub sub_account: [u8; 32],
+    pub sub_account: [u8; 32],
 }
 
 impl Transmutable for SubAccount {
-    const LEN: usize = 32; // Since this is just a marker with no data
+    const LEN: usize = 32;
 }
 
 impl TransmutableMut for SubAccount {}
 
-impl<'a> IntoBytes<'a> for SubAccount {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
-        Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
-    }
-}
-
+impl<'a> AsBytes<'a> for SubAccount {}
 
 impl<'a> Actionable<'a> for SubAccount {
     const TYPE: Permission = Permission::SubAccount;
 
-
-
+    /// TODO
     fn validate(&mut self) {
-        // No validation needed for a marker type
+        todo!()
     }
 }

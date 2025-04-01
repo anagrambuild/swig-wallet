@@ -1,14 +1,14 @@
 pub mod ed25519;
 
 use ed25519::ED25519Authority;
-use pinocchio::{msg, program_error::ProgramError};
+use pinocchio::program_error::ProgramError;
 
-use crate::{IntoBytes, Transmutable, TransmutableMut};
+use crate::{AsBytes, Transmutable, TransmutableMut};
 
 /// Trait for authority data.
 ///
 /// The `Authority` defines the data of a particular authority.
-pub trait Authority<'a>: Transmutable + TransmutableMut + IntoBytes<'a> {
+pub trait Authority<'a>: Transmutable + TransmutableMut + AsBytes<'a> {
     const TYPE: AuthorityType;
 
     fn length(&self) -> usize {
@@ -33,7 +33,7 @@ impl TryFrom<u16> for AuthorityType {
 
     #[inline(always)]
     fn try_from(value: u16) -> Result<Self, Self::Error> {
-          match value {
+        match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
             1 => Ok(AuthorityType::Ed25519),
             2 => Ok(AuthorityType::Ed25519Session),
@@ -55,10 +55,10 @@ impl AuthorityLoader {
         AuthorityType::try_from(discriminator)
     }
 
-    pub fn load_authority<'a>(
+    pub fn load_authority(
         authority_type: AuthorityType,
-        authority_data: &'a [u8],
-    ) -> Result<&'a impl Authority<'a>, ProgramError> {
+        authority_data: &[u8],
+    ) -> Result<&impl Authority, ProgramError> {
         match authority_type {
             AuthorityType::Ed25519 => {
                 if authority_data.len() != ED25519Authority::LEN {

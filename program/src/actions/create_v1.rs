@@ -12,7 +12,7 @@ use swig_state_x::{
     authority::{Authority, AuthorityLoader, AuthorityType},
     role::Position,
     swig::{Swig, SwigBuilder},
-    IntoBytes, Transmutable,
+    AsBytes, Transmutable,
 };
 
 use crate::{
@@ -59,8 +59,8 @@ impl Transmutable for CreateV1Args {
     const LEN: usize = core::mem::size_of::<Self>();
 }
 
-impl<'a> IntoBytes<'a> for CreateV1Args {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+impl<'a> AsBytes<'a> for CreateV1Args {
+    fn as_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
         Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
     }
 }

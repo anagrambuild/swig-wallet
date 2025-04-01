@@ -1,10 +1,10 @@
-use pinocchio::program_error::ProgramError;
-
-use crate::{IntoBytes, Transmutable, TransmutableMut};
-
 use super::{Actionable, Permission};
 
+use crate::{AsBytes, Transmutable, TransmutableMut};
+
+// SANITY CHECK: Make sure the type size is a multiple of 8 bytes.
 static_assertions::const_assert!(core::mem::size_of::<SolRecurringLimit>() % 8 == 0);
+
 #[repr(C)]
 pub struct SolRecurringLimit {
     pub recurring_amount: u64,
@@ -17,11 +17,7 @@ impl Transmutable for SolRecurringLimit {
     const LEN: usize = core::mem::size_of::<SolRecurringLimit>();
 }
 
-impl<'a> IntoBytes<'a> for SolRecurringLimit {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
-        Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
-    }
-}
+impl<'a> AsBytes<'a> for SolRecurringLimit {}
 
 impl TransmutableMut for SolRecurringLimit {}
 

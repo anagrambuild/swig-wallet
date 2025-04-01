@@ -8,16 +8,18 @@ pub mod token_limit;
 pub mod token_recurring_limit;
 use all::All;
 use manage_authority::ManageAuthority;
-use pinocchio::{msg, program_error::ProgramError};
+use pinocchio::program_error::ProgramError;
 use program::Program;
 use sol_limit::SolLimit;
 use sol_recurring_limit::SolRecurringLimit;
 use token_limit::TokenLimit;
 use token_recurring_limit::TokenRecurringLimit;
 
-use crate::{IntoBytes, Transmutable, TransmutableMut};
+use crate::{AsBytes, Transmutable, TransmutableMut};
 
+// SANITY CHECK: Make sure the type size is a multiple of 8 bytes.
 static_assertions::const_assert!(core::mem::size_of::<Action>() % 8 == 0);
+
 #[repr(C)]
 #[derive(Debug)]
 pub struct Action {
@@ -28,12 +30,7 @@ pub struct Action {
     data: [u16; 4],
 }
 
-
-impl<'a> IntoBytes<'a> for Action {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
-        Ok(unsafe { core::slice::from_raw_parts(self.data.as_ptr() as *const u8, 8) })
-    }
-}
+impl<'a> AsBytes<'a> for Action {}
 
 impl Transmutable for Action {
     const LEN: usize = core::mem::size_of::<Action>();
@@ -42,12 +39,7 @@ impl Transmutable for Action {
 impl Action {
     pub fn client_new(_type: Permission, length: u16) -> Self {
         Self {
-            data: [
-                _type as u16,
-                length,
-                0,
-                0,
-            ],
+            data: [_type as u16, length, 0, 0],
         }
     }
     pub fn new(_type: Permission, length: u16, boundary: u32) -> Self {
@@ -106,7 +98,9 @@ impl TryFrom<&[u8]> for Permission {
     type Error = ProgramError;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        let type_bytes = value.try_into().map_err(|_| ProgramError::InvalidAccountData)?;
+        let type_bytes = value
+            .try_into()
+            .map_err(|_| ProgramError::InvalidAccountData)?;
         Permission::try_from(u16::from_le_bytes(type_bytes))
     }
 }
@@ -125,7 +119,6 @@ pub trait Actionable<'a>: Transmutable + TransmutableMut {
 pub struct ActionLoader;
 
 impl ActionLoader {
-
     pub fn validate_layout(permission: Permission, data: &[u8]) -> Result<bool, ProgramError> {
         match permission {
             Permission::SolLimit => SolLimit::valid_layout(data),
@@ -143,11 +136,13 @@ impl ActionLoader {
         bytes: &'a [u8],
     ) -> Result<Option<&'a T>, ProgramError> {
         let mut cursor = 0;
-        
+
         while cursor < bytes.len() {
             let action = unsafe { Action::load_unchecked(&bytes[cursor..cursor + Action::LEN])? };
             if action.permission() == Ok(T::TYPE) {
-                return Ok(Some(unsafe { T::load_unchecked(&bytes[cursor..cursor + action.length() as usize])? }));
+                return Ok(Some(unsafe {
+                    T::load_unchecked(&bytes[cursor..cursor + action.length() as usize])?
+                }));
             }
             cursor += action.boundary() as usize;
         }

@@ -1,8 +1,9 @@
-use pinocchio::program_error::ProgramError;
-
-use crate::{IntoBytes, Transmutable, TransmutableMut};
-
 use super::{Authority, AuthorityType};
+
+use crate::{AsBytes, Transmutable, TransmutableMut};
+
+// SANITY CHECK: Make sure the type size is a multiple of 8 bytes.
+static_assertions::const_assert!(core::mem::size_of::<ED25519Authority>() % 8 == 0);
 
 pub struct ED25519Authority {
     pub proof: [u8; 32],
@@ -22,9 +23,4 @@ impl Transmutable for ED25519Authority {
 
 impl TransmutableMut for ED25519Authority {}
 
-impl<'a> IntoBytes<'a> for ED25519Authority {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
-        let bytes = unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
-        Ok(bytes)
-    }
-}
+impl<'a> AsBytes<'a> for ED25519Authority {}
