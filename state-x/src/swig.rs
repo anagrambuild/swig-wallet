@@ -11,7 +11,7 @@ use crate::{
 };
 
 pub struct SwigBuilder<'a> {
-    pub account_buffer: &'a mut [u8],
+    pub role_buffer: &'a mut [u8],
     pub swig: &'a mut Swig,
 }
 
@@ -21,7 +21,7 @@ impl<'a> SwigBuilder<'a> {
         let bytes = swig.into_bytes()?;
         swig_bytes[0..].copy_from_slice(bytes);
         let builder = Self {
-            account_buffer: roles_bytes,
+            role_buffer: roles_bytes,
             swig: unsafe { Swig::load_mut_unchecked(swig_bytes)? },
         };
         Ok(builder)
@@ -31,7 +31,7 @@ impl<'a> SwigBuilder<'a> {
         let (swig_bytes, roles_bytes) = account_buffer.split_at_mut(Swig::LEN);
         let swig = unsafe { Swig::load_mut_unchecked(swig_bytes)? };
         let builder = Self {
-            account_buffer: roles_bytes,
+            role_buffer: roles_bytes,
             swig,
         };
         Ok(builder)
@@ -48,8 +48,7 @@ impl<'a> SwigBuilder<'a> {
         // iterate and transmute each position to get boundary if not the last then jump to next boundary
         for _i in 0..self.swig.roles {
             let position = unsafe {
-                Position::load_unchecked(&self.account_buffer[cursor..cursor + Position::LEN])
-                    .unwrap()
+                Position::load_unchecked(&self.role_buffer[cursor..cursor + Position::LEN]).unwrap()
             };
             cursor += position.boundary() as usize;
         }
@@ -62,10 +61,10 @@ impl<'a> SwigBuilder<'a> {
             size as u16,
             boundary as u32,
         );
-        self.account_buffer[cursor..cursor + Position::LEN]
+        self.role_buffer[cursor..cursor + Position::LEN]
             .copy_from_slice(new_position.into_bytes()?);
         cursor += Position::LEN;
-        self.account_buffer[cursor..cursor + T::LEN].copy_from_slice(authority.into_bytes()?);
+        self.role_buffer[cursor..cursor + T::LEN].copy_from_slice(authority.into_bytes()?);
         cursor += T::LEN;
         let mut action_cursor = 0;
         for _i in 0..num_actions {
@@ -75,14 +74,14 @@ impl<'a> SwigBuilder<'a> {
             let action_slice = &data[0..action_header.length() as usize];
             action_cursor += action_header.length() as usize;
             if ActionLoader::validate_layout(action_header.permission()?, action_slice)? {
-                self.account_buffer[cursor..cursor + Action::LEN].copy_from_slice(header);
+                self.role_buffer[cursor..cursor + Action::LEN].copy_from_slice(header);
                 // change boundary to the new boundary
-                self.account_buffer[cursor + 2..cursor + 6].copy_from_slice(
+                self.role_buffer[cursor + 2..cursor + 6].copy_from_slice(
                     &((cursor + Action::LEN + action_header.length() as usize) as u32)
                         .to_le_bytes(),
                 );
                 cursor += Action::LEN;
-                self.account_buffer[cursor..cursor + action_header.length() as usize]
+                self.role_buffer[cursor..cursor + action_header.length() as usize]
                     .copy_from_slice(action_slice);
                 cursor += action_header.length() as usize;
             } else {
