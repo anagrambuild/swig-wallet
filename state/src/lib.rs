@@ -421,15 +421,6 @@ unsafe impl bytemuck::Pod for VMInstruction {}
 
 #[derive(Pod, Zeroable, Copy, Clone, PartialEq, Debug)]
 #[repr(C, align(8))]
-pub struct BytecodeAccount {
-    pub authority: Pubkey,
-    pub instructions_len: u32,
-    pub padding: [u8; 4],
-    pub instructions: [VMInstruction; 32],
-}
-
-#[derive(Pod, Zeroable, Copy, Clone, PartialEq, Debug)]
-#[repr(C, align(8))]
 pub struct PluginBytecodeAccount {
     pub discriminator: u8,
     pub padding: [u8; 7], // Add padding to align the next field
@@ -482,13 +473,6 @@ impl GlobalConfig {
         }
         Ok(())
     }
-}
-
-#[derive(Pod, Zeroable, Copy, Clone, PartialEq, Debug)]
-#[repr(C, align(8))]
-pub struct ExecutionResultAccount {
-    pub result: i64,
-    pub executed_at: i64,
 }
 
 #[cfg(test)]
