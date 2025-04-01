@@ -1,6 +1,6 @@
 use super::{Actionable, Permission};
 
-use crate::{AsBytes, Transmutable, TransmutableMut};
+use crate::{Transmutable, TransmutableMut};
 
 // SANITY CHECK: Make sure the type size is a multiple of 8 bytes.
 static_assertions::const_assert!(core::mem::size_of::<SolLimit>() % 8 == 0);
@@ -14,8 +14,6 @@ impl Transmutable for SolLimit {
 }
 
 impl TransmutableMut for SolLimit {}
-
-impl<'a> AsBytes<'a> for SolLimit {}
 
 impl<'a> Actionable<'a> for SolLimit {
     const TYPE: Permission = Permission::SolLimit;

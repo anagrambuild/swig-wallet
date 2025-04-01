@@ -1,6 +1,6 @@
 use super::{Actionable, Permission};
 
-use crate::{AsBytes, Transmutable, TransmutableMut};
+use crate::{Transmutable, TransmutableMut};
 
 static_assertions::const_assert!(core::mem::size_of::<Program>() % 8 == 0);
 
@@ -14,8 +14,6 @@ impl Transmutable for Program {
 }
 
 impl TransmutableMut for Program {}
-
-impl<'a> AsBytes<'a> for Program {}
 
 impl<'a> Actionable<'a> for Program {
     const TYPE: Permission = Permission::Program;

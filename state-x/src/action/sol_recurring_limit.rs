@@ -1,6 +1,6 @@
 use super::{Actionable, Permission};
 
-use crate::{AsBytes, Transmutable, TransmutableMut};
+use crate::{Transmutable, TransmutableMut};
 
 // SANITY CHECK: Make sure the type size is a multiple of 8 bytes.
 static_assertions::const_assert!(core::mem::size_of::<SolRecurringLimit>() % 8 == 0);
@@ -16,8 +16,6 @@ pub struct SolRecurringLimit {
 impl Transmutable for SolRecurringLimit {
     const LEN: usize = core::mem::size_of::<SolRecurringLimit>();
 }
-
-impl<'a> AsBytes<'a> for SolRecurringLimit {}
 
 impl TransmutableMut for SolRecurringLimit {}
 

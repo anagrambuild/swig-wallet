@@ -36,6 +36,11 @@ pub trait Transmutable: Sized {
     /// This must be equal to the size of each individual field in the type.
     const LEN: usize;
 
+    /// Return a byte slice from the given `T` reference.
+    fn as_bytes(&self) -> Result<&[u8], ProgramError> {
+        Ok(unsafe { from_raw_parts(self as *const Self as *const u8, Self::LEN) })
+    }
+
     /// Return a `T` reference from the given bytes.
     ///
     /// # Safety
@@ -76,10 +81,4 @@ pub trait FromBytes<'a>: Sized {
 
 pub trait FromBytesMut<'a>: Sized {
     fn from_bytes_mut(bytes: &'a mut [u8]) -> Result<Self, ProgramError>;
-}
-
-pub trait AsBytes<'a>: Transmutable {
-    fn as_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
-        Ok(unsafe { from_raw_parts(self as *const Self as *const u8, Self::LEN) })
-    }
 }

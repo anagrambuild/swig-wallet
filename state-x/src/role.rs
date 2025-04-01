@@ -5,7 +5,7 @@ use pinocchio::program_error::ProgramError;
 use crate::{
     action::{Action, Actionable},
     authority::{Authority, AuthorityType},
-    AsBytes, FromBytes, FromBytesMut, Transmutable,
+    FromBytes, FromBytesMut, Transmutable,
 };
 
 pub struct Role<'a, T: Authority<'a>> {
@@ -101,14 +101,6 @@ pub struct Position {
     ///   4..6. boundary u32
     ///   7..8. padding u16
     data: [u16; 8],
-}
-
-impl<'a> AsBytes<'a> for Position {
-    fn as_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
-        let bytes =
-            unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
-        Ok(bytes)
-    }
 }
 
 impl Transmutable for Position {

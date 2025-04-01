@@ -4,7 +4,7 @@ use crate::{
     action::{Action, ActionLoader},
     authority::{Authority, AuthorityType},
     role::{Position, Role},
-    AsBytes, FromBytes, Transmutable, TransmutableMut,
+    FromBytes, Transmutable, TransmutableMut,
 };
 
 // SANITY CHECK: Make sure the type size is a multiple of 8 bytes.
@@ -38,8 +38,6 @@ impl Transmutable for Swig {
 }
 
 impl TransmutableMut for Swig {}
-
-impl<'a> AsBytes<'a> for Swig {}
 
 pub struct SwigWithRoles<'a> {
     pub state: &'a Swig,

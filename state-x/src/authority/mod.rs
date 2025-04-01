@@ -3,12 +3,12 @@ pub mod ed25519;
 use ed25519::ED25519Authority;
 use pinocchio::program_error::ProgramError;
 
-use crate::{AsBytes, Transmutable, TransmutableMut};
+use crate::{Transmutable, TransmutableMut};
 
 /// Trait for authority data.
 ///
 /// The `Authority` defines the data of a particular authority.
-pub trait Authority<'a>: Transmutable + TransmutableMut + AsBytes<'a> {
+pub trait Authority<'a>: Transmutable + TransmutableMut {
     const TYPE: AuthorityType;
 
     fn length(&self) -> usize {

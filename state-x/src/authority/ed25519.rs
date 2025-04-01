@@ -1,6 +1,6 @@
 use super::{Authority, AuthorityType};
 
-use crate::{AsBytes, Transmutable, TransmutableMut};
+use crate::{Transmutable, TransmutableMut};
 
 // SANITY CHECK: Make sure the type size is a multiple of 8 bytes.
 static_assertions::const_assert!(core::mem::size_of::<ED25519Authority>() % 8 == 0);
@@ -22,5 +22,3 @@ impl Transmutable for ED25519Authority {
 }
 
 impl TransmutableMut for ED25519Authority {}
-
-impl<'a> AsBytes<'a> for ED25519Authority {}

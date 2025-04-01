@@ -1,6 +1,6 @@
 use super::{Actionable, Permission};
 
-use crate::{AsBytes, Transmutable, TransmutableMut};
+use crate::{Transmutable, TransmutableMut};
 
 // SANITY CHECK: Make sure the type size is a multiple of 8 bytes.
 static_assertions::const_assert!(core::mem::size_of::<ManageAuthority>() % 8 == 0);
@@ -14,8 +14,6 @@ impl Transmutable for ManageAuthority {
 }
 
 impl TransmutableMut for ManageAuthority {}
-
-impl<'a> AsBytes<'a> for ManageAuthority {}
 
 impl<'a> Actionable<'a> for ManageAuthority {
     const TYPE: Permission = Permission::ManageAuthority;

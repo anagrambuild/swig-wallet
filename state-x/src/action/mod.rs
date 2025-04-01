@@ -15,7 +15,7 @@ use sol_recurring_limit::SolRecurringLimit;
 use token_limit::TokenLimit;
 use token_recurring_limit::TokenRecurringLimit;
 
-use crate::{AsBytes, Transmutable, TransmutableMut};
+use crate::{Transmutable, TransmutableMut};
 
 // SANITY CHECK: Make sure the type size is a multiple of 8 bytes.
 static_assertions::const_assert!(core::mem::size_of::<Action>() % 8 == 0);
@@ -29,8 +29,6 @@ pub struct Action {
     ///  * [2..3] boundary
     data: [u16; 4],
 }
-
-impl<'a> AsBytes<'a> for Action {}
 
 impl Transmutable for Action {
     const LEN: usize = core::mem::size_of::<Action>();
