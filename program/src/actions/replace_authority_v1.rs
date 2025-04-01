@@ -5,9 +5,7 @@ use crate::{
         accounts::{Context, ReplaceAuthorityV1Accounts},
         Authenticatable, SwigInstruction, SWIG_ACCOUNT_NAME,
     },
-    util::ZeroCopy,
 };
-use borsh::{BorshDeserialize, BorshSerialize};
 use bytemuck::{Pod, Zeroable};
 use pinocchio::{
     account_info::AccountInfo,
@@ -85,11 +83,7 @@ impl ReplaceAuthorityV1Args {
 impl<'a> ReplaceAuthorityV1<'a> {
     pub fn load(data: &'a [u8]) -> Result<Self, ProgramError> {
         let (inst, rest) = data.split_at(ReplaceAuthorityV1Args::SIZE);
-        let args = ReplaceAuthorityV1Args::load(inst).map_err(|e| {
-            msg!("ReplaceAuthorityV1 Args Error: {:?}", e);
-            ProgramError::InvalidInstructionData
-        })?;
-
+        let args = ReplaceAuthorityV1Args::load(inst)?;
         let (authority_data, rest) = rest.split_at(args.authority_data_len as usize);
         let (actions_payload, rest) = rest.split_at(args.actions_payload_len as usize);
 

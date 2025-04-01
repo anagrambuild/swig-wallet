@@ -4,4 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-pinocchio = "0.8"
+pinocchio = { version = "0.8.1", default-features = false }
+static_assertions = "1.1.0"

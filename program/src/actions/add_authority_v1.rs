@@ -1,5 +1,3 @@
-use borsh::BorshDeserialize;
-use bytemuck::{Pod, Zeroable};
 use pinocchio::{
     account_info::AccountInfo,
     msg,
@@ -28,8 +26,8 @@ pub struct AddAuthorityV1<'a> {
     authority_data: &'a [u8],
 }
 
-#[derive(Pod, Zeroable, Copy, Clone)]
-#[repr(C, align(8))]
+static_assertions::const_assert!(core::mem::size_of::<AddAuthorityV1Args>() % 8 == 0);
+#[repr(C)]
 pub struct AddAuthorityV1Args {
     pub instruction: u8,
     pub acting_role_id: u8,
@@ -81,8 +79,8 @@ impl AddAuthorityV1Args {
 impl<'a> AddAuthorityV1<'a> {
     pub fn load(data: &'a [u8]) -> Result<Self, ProgramError> {
         let (inst, rest) = data.split_at(AddAuthorityV1Args::SIZE);
-        let args = AddAuthorityV1Args::load(inst).map_err(|e| {
-            msg!("AddAuthorityV1 Args Error: {:?}", e);
+        let args = AddAuthorityV1Args::load(inst).map_err(|_| {
+            msg!("AddAuthorityV1 Args Error:");
             ProgramError::InvalidInstructionData
         })?;
 

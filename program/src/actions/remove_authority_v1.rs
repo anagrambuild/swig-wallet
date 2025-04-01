@@ -11,8 +11,7 @@ use crate::{
     instruction::{
         accounts::{Context, RemoveAuthorityV1Accounts},
         Authenticatable, SwigInstruction, SWIG_ACCOUNT_NAME,
-    },
-    util::ZeroCopy,
+    }
 };
 
 pub struct RemoveAuthorityV1<'a> {
@@ -21,7 +20,6 @@ pub struct RemoveAuthorityV1<'a> {
     authority_payload: &'a [u8],
 }
 
-#[derive(Pod, Zeroable, Copy, Clone)]
 #[repr(C, align(8))]
 pub struct RemoveAuthorityV1Args {
     pub instruction: u8,

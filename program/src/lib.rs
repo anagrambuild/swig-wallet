@@ -1,10 +1,11 @@
+
+
 pub mod actions;
 mod assertions;
 mod authority_models;
 mod error;
 pub mod instruction;
-pub mod util;
-use std::mem::MaybeUninit;
+use core::mem::MaybeUninit;
 
 use actions::process_action;
 use error::SwigError;
@@ -104,7 +105,7 @@ unsafe fn classify_account(
 ) -> Result<AccountClassification, ProgramError> {
     match account.owner() {
         &crate::ID if index != 0 => {
-            Err(SwigError::InvalidAccounts("Swig Account must be first account").into())
+            Err(SwigError::InvalidAccountsSwigMustBeFirst.into())
         },
         &crate::ID => {
             let data = account.borrow_data_unchecked();

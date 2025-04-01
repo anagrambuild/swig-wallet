@@ -9,7 +9,7 @@ use pinocchio::{
 use pinocchio_system::ID as SYSTEM_ID;
 
 #[allow(unused_imports)]
-use std::mem::MaybeUninit;
+use core::mem::MaybeUninit;
 
 #[inline(always)]
 #[cfg(target_os = "solana")]
@@ -126,15 +126,15 @@ sol_assert!(check_bytes_match, left: &[u8], right: &[u8], len: usize |
 );
 
 sol_assert!(check_owner, account: &AccountInfo, owner: &Pubkey |
-  sol_assert_bytes_eq(account.owner().as_ref(), owner.as_ref(), 32)
+  sol_assert_bytes_eq(unsafe { account.owner().as_ref() }, owner.as_ref(), 32)
 );
 
 sol_assert!(check_system_owner, account: &AccountInfo |
-  sol_assert_bytes_eq(account.owner().as_ref(), SYSTEM_ID.as_ref(), 32)
+  sol_assert_bytes_eq(unsafe { account.owner().as_ref() }, SYSTEM_ID.as_ref(), 32)
 );
 
 sol_assert!(check_self_owned, account: &AccountInfo |
-  sol_assert_bytes_eq(account.owner().as_ref(), crate::ID.as_ref(), 32)
+  sol_assert_bytes_eq(unsafe { account.owner().as_ref() }, crate::ID.as_ref(), 32)
 );
 
 sol_assert!(check_zero_lamports, account: &AccountInfo |

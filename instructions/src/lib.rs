@@ -1,6 +1,5 @@
 mod compact_instructions;
-use std::marker::PhantomData;
-
+use core::marker::PhantomData;
 pub use compact_instructions::*;
 use pinocchio::{
     account_info::AccountInfo,
@@ -10,15 +9,12 @@ use pinocchio::{
     pubkey::Pubkey,
     ProgramResult,
 };
-use thiserror::Error;
 
-#[derive(Error, Debug)]
+
+#[repr(u32)]
 pub enum InstructionError {
-    #[error("Missing instructions")]
-    MissingInstructions,
-    #[error("Missing AccountInfo")]
+    MissingInstructions = 2000,
     MissingAccountInfo,
-    #[error("Missing Data")]
     MissingData,
 }
 

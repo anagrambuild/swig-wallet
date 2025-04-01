@@ -1,15 +1,15 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use pinocchio::instruction::Seed;
 
-#[derive(BorshSerialize, BorshDeserialize)]
-pub struct CreateV1 {
-    pub id: [u8; 13],
-    pub bump: u8,
-    pub initial_authority: AuthorityType,
-    pub start_slot: u64,
-    pub end_slot: u64,
-    pub authority_data: Vec<u8>,
-}
+// #[derive(BorshSerialize, BorshDeserialize)]
+// pub struct CreateV1 {
+//     pub id: [u8; 13],
+//     pub bump: u8,
+//     pub initial_authority: AuthorityType,
+//     pub start_slot: u64,
+//     pub end_slot: u64,
+//     pub authority_data: Vec<u8>,
+// }
 
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct StartSessionV1 {

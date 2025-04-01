@@ -13,18 +13,18 @@ unused_macros = "allow"
 unused_variables = "allow"
 
 [dependencies]
-pinocchio-pubkey = { version = "0.2.2" }
-pinocchio = { version = "0.7.1", features = ["std"] }
-pinocchio-system = { version = "0.2.1" }
-bytemuck = { version = "1.21.0", features = ["derive"] }
+pinocchio-pubkey = { version = "0.2.4" }
+pinocchio = { version = "0.8.1", features = ["std"] }
+pinocchio-system = { version = "0.2.3" }
 shank = { version = "0.4.2", git = "https://github.com/anagrambuild/shank.git" }
-heapless = "0.8.0"
-num_enum = "0.7.3"
-thiserror = "2.0.3"
 swig-compact-instructions = { path = "../instructions" }
 swig-state = { path = "../state" }
-borsh = { version = "1.5.3", default-features = false }
+swig-state-x = { path = "../state-x" }
+static_assertions = "1.1.0"
 bs58 = "*"
+num_enum = "0.7.3"
+bytemuck = { version = "1.13.1", features = ["derive"] }
+
 [dev-dependencies]
 solana-sdk = "=2.1.0"
 rand = "0.8.5"

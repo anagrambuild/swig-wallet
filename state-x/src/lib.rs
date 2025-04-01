@@ -1,11 +1,29 @@
-#![no_std]
+//#![no_std]
 
-use pinocchio::program_error::ProgramError;
+
+extern crate static_assertions;
+
+use pinocchio::{program_error::ProgramError};
 
 pub mod action;
 pub mod authority;
 pub mod role;
 pub mod swig;
+
+pub enum SwigStateError {
+    InvalidAccountData = 1000,
+    InvalidActionData,
+    InvalidAuthorityData,
+    InvalidRoleData,
+    InvalidSwigData,
+}
+
+
+impl From<SwigStateError> for ProgramError {
+    fn from(e: SwigStateError) -> Self {
+        ProgramError::Custom(e as u32)
+    }
+}
 
 /// Marker trait for types that can be cast from a raw pointer.
 ///
@@ -58,4 +76,8 @@ pub trait FromBytes<'a>: Sized {
 
 pub trait FromBytesMut<'a>: Sized {
     fn from_bytes_mut(bytes: &'a mut [u8]) -> Result<Self, ProgramError>;
+}
+
+pub trait IntoBytes<'a> {
+    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError>;
 }

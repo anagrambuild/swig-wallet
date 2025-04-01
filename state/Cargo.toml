@@ -7,4 +7,4 @@ edition = "2021"
 [dependencies]
 borsh = { version = "1.5.3", default-features = false, features = ["derive"] }
 bytemuck = { version = "1.21.0", features = ["derive"] }
-pinocchio = { version = "0.7.1" }
+pinocchio = { version = "0.8.1" }

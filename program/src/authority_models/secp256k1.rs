@@ -1,4 +1,4 @@
-use std::mem::MaybeUninit;
+use core::mem::MaybeUninit;
 
 use pinocchio::syscalls::{sol_keccak256, sol_secp256k1_recover};
 
