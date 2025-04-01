@@ -31,6 +31,8 @@ pub struct StartSessionV1 {
 #[repr(u8)]
 pub enum Discriminator {
     SwigAccount,
+    PluginBytecodeAccount,
+    GlobalConfig,
 }
 
 pub struct IndexedRole<'a> {
@@ -429,17 +431,57 @@ pub struct BytecodeAccount {
 #[derive(Pod, Zeroable, Copy, Clone, PartialEq, Debug)]
 #[repr(C, align(8))]
 pub struct PluginBytecodeAccount {
+    pub discriminator: u8,
+    pub padding: [u8; 7], // Add padding to align the next field
     pub target_program: Pubkey,
     pub instructions_len: u32,
-    pub padding: [u8; 4],
+    pub padding2: [u8; 4],
     pub instructions: [VMInstruction; 32],
+}
+
+impl PluginBytecodeAccount {
+    pub fn new(target_program: Pubkey, instructions: [VMInstruction; 32]) -> Self {
+        Self {
+            discriminator: Discriminator::PluginBytecodeAccount as u8,
+            padding: [0u8; 7],
+            target_program,
+            instructions_len: instructions.len() as u32,
+            padding2: [0u8; 4],
+            instructions,
+        }
+    }
+
+    pub fn check_discriminator(discriminator: u8) -> Result<(), ProgramError> {
+        if discriminator != Discriminator::PluginBytecodeAccount as u8 {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Pod, Zeroable, Copy, Clone, PartialEq, Debug)]
 #[repr(C, align(8))]
 pub struct GlobalConfig {
+    pub(crate) discriminator: u8,
+    pub padding: [u8; 7],
     pub admin: Pubkey,
-    pub padding: [u8; 32], // Reserved for future use
+}
+
+impl GlobalConfig {
+    pub fn new(admin: Pubkey) -> Self {
+        Self {
+            discriminator: Discriminator::GlobalConfig as u8,
+            padding: [0u8; 7],
+            admin,
+        }
+    }
+
+    pub fn check_discriminator(discriminator: u8) -> Result<(), ProgramError> {
+        if discriminator != Discriminator::GlobalConfig as u8 {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Pod, Zeroable, Copy, Clone, PartialEq, Debug)]

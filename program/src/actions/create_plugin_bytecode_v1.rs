@@ -133,12 +133,10 @@ pub fn create_plugin_bytecode_v1(
     );
 
     // Create plugin bytecode account with instructions
-    let mut plugin_bytecode_account = PluginBytecodeAccount {
-        target_program: *ctx.accounts.target_program.key(),
-        instructions_len: instructions.len() as u32,
-        padding: [0; 4],
-        instructions: [VMInstruction::Return; 32], // Initialize with default value
-    };
+    let mut plugin_bytecode_account = PluginBytecodeAccount::new(
+        *ctx.accounts.target_program.key(),
+        [VMInstruction::Return; 32], // Initialize with default value
+    );
 
     msg!("plugin bytecode account struct created");
 

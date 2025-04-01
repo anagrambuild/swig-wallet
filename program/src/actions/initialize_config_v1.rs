@@ -93,10 +93,7 @@ pub fn initialize_config_v1(
     }
 
     // Initialize the config account with the provided admin
-    let config = GlobalConfig {
-        admin: *ctx.accounts.admin.key(),
-        padding: [0; 32],
-    };
+    let config = GlobalConfig::new(*ctx.accounts.admin.key());
 
     msg!("config: {:?}", config);
 
