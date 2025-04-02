@@ -16,8 +16,7 @@ use solana_sdk::{
     transaction::{Transaction, VersionedTransaction},
 };
 use swig_interface::{AuthorityConfig, ClientAction, CreateInstruction};
-use swig_state::{swig_account_seeds};
-use swig_state_x::{action::all::All, authority::AuthorityType, swig::Swig, Transmutable};
+use swig_state_x::{action::all::All, authority::AuthorityType, swig::swig_account_seeds};
 
 pub fn program_id() -> Pubkey {
     swig::ID.into()

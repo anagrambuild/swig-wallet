@@ -27,6 +27,11 @@ impl<'a> IntoBytes<'a> for TokenRecurringLimit {
 
 impl<'a> Actionable<'a> for TokenRecurringLimit {
     const TYPE: Permission = Permission::TokenRecurringLimit;
+    const REPEATABLE: bool = true;
+
+    fn match_data(&self, data: &[u8]) -> bool {
+        data.len() == Self::LEN && data[0..32] == self.token_mint
+    }
 
     fn validate(&mut self) {
         // No validation needed for a marker type

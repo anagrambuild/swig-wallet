@@ -3520,11 +3520,20 @@ dependencies = [
  "shank",
  "solana-sdk",
  "static_assertions",
+ "swig-assertions",
  "swig-compact-instructions",
  "swig-interface",
- "swig-state",
  "swig-state-x",
  "test-log",
+]
+
+[[package]]
+name = "swig-assertions"
+version = "0.1.0"
+dependencies = [
+ "pinocchio",
+ "pinocchio-pubkey",
+ "pinocchio-system",
 ]
 
 [[package]]
@@ -3566,6 +3575,7 @@ version = "0.1.0"
 dependencies = [
  "pinocchio",
  "static_assertions",
+ "swig-assertions",
 ]
 
 [[package]]

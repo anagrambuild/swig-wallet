@@ -1,7 +1,6 @@
 
 
 pub mod actions;
-mod assertions;
 mod authority_models;
 mod error;
 pub mod instruction;
@@ -20,7 +19,8 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_pubkey::{declare_id, pubkey};
-use swig_state::Discriminator;
+use swig_state_x::Discriminator;
+
 declare_id!("swigNmWhy8RvUYXBKV5TSU8Hh3f4o5EczHouzBzEsLC");
 const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const SPL_TOKEN_2022_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");

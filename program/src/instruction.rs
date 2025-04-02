@@ -1,7 +1,6 @@
 use num_enum::{FromPrimitive, IntoPrimitive};
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
 use shank::{ShankContext, ShankInstruction};
-use swig_state::Role;
 
 use crate::{authority_models::authenticate, error::SwigError};
 
@@ -38,13 +37,4 @@ pub enum SwigInstruction {
 pub trait Authenticatable {
     fn data_payload(&self) -> &[u8];
     fn authority_payload(&self) -> &[u8];
-    fn authenticate(&self, account_infos: &[AccountInfo], role: &Role) -> Result<(), SwigError> {
-        authenticate(
-            role.authority_type,
-            &role.authority_data,
-            self.authority_payload(),
-            self.data_payload(),
-            account_infos,
-        )
-    }
 }

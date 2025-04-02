@@ -1,8 +1,8 @@
 use core::mem::MaybeUninit;
 
 use pinocchio::syscalls::{sol_keccak256, sol_secp256k1_recover};
-
-use crate::{assertions::sol_assert_bytes_eq, error::SwigError};
+use swig_assertions::*;
+use crate::error::SwigError;
 
 #[rustfmt::skip]
 #[allow(unused)]
@@ -12,10 +12,10 @@ pub fn authenticate(
   instruction_payload: &[u8]
 ) -> Result<(), SwigError> {
     if authority_data.len() != 64 {
-        return Err(SwigError::InvalidAuthority);
+        return Err(SwigError::InvalidAuthorityPayload);
     }
     if authority_payload.len() != 65 {
-        return Err(SwigError::InvalidAuthority);
+        return Err(SwigError::InvalidAuthorityPayload);
     }
     
     let mut recovered_key = MaybeUninit::<[u8; 64]>::uninit();
@@ -36,7 +36,7 @@ pub fn authenticate(
       sol_assert_bytes_eq(&recovered_key.assume_init(), authority_data, 64)
     };
     if !matches {
-      return Err(SwigError::InvalidAuthority);
+      return Err(SwigError::InvalidAuthorityPayload);
     }
       
     Ok(())

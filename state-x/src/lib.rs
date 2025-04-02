@@ -1,14 +1,18 @@
 //#![no_std]
 
-
 extern crate static_assertions;
 
-use pinocchio::{program_error::ProgramError};
+use pinocchio::program_error::ProgramError;
 
 pub mod action;
 pub mod authority;
 pub mod role;
 pub mod swig;
+
+#[repr(u8)]
+pub enum Discriminator {
+    SwigAccount,
+}
 
 pub enum SwigStateError {
     InvalidAccountData = 1000,
@@ -17,7 +21,6 @@ pub enum SwigStateError {
     InvalidRoleData,
     InvalidSwigData,
 }
-
 
 impl From<SwigStateError> for ProgramError {
     fn from(e: SwigStateError) -> Self {

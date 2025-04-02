@@ -27,6 +27,7 @@ impl TransmutableMut for SolRecurringLimit {}
 
 impl<'a> Actionable<'a> for SolRecurringLimit {
     const TYPE: Permission = Permission::SolRecurringLimit;
+    const REPEATABLE: bool = false;
 
     /// TODO
     fn validate(&mut self) {

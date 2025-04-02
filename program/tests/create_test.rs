@@ -11,9 +11,8 @@ use solana_sdk::{
     signer::Signer,
     transaction::VersionedTransaction,
 };
-use swig_state::swig_account_seeds;
 use swig_state_x::{
-    swig::{Swig, SwigWithRoles},
+    swig::{Swig, SwigWithRoles, swig_account_seeds},
     Transmutable,
 };
 

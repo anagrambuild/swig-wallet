@@ -1,5 +1,5 @@
 use pinocchio::account_info::AccountInfo;
-use swig_state::AuthorityType;
+use swig_state_x::authority::AuthorityType;
 
 use crate::error::SwigError;
 mod ed25519;
@@ -20,5 +20,6 @@ pub fn authenticate(
         AuthorityType::Secp256k1 => {
             secp256k1::authenticate(stored_authority_data, authority_payload, data_payload)
         },
+        _ => Err(SwigError::InvalidAuthorityType),
     }
 }

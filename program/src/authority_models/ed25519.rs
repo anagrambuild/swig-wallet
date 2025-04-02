@@ -1,4 +1,5 @@
-use crate::{assertions::sol_assert_bytes_eq, error::SwigError};
+use swig_assertions::*;
+use crate::error::SwigError;
 use pinocchio::{account_info::AccountInfo, msg};
 
 pub fn authenticate(
@@ -10,7 +11,7 @@ pub fn authenticate(
         return Err(SwigError::InvalidAuthorityPayload);
     }
     if authority_data.len() != 32 {
-        return Err(SwigError::InvalidAuthority);
+        return Err(SwigError::InvalidAuthorityPayload);
     }
     let auth_account = account_infos
         .get(authority_payload[0] as usize)

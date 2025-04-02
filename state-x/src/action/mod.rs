@@ -23,11 +23,10 @@ static_assertions::const_assert!(core::mem::size_of::<Action>() % 8 == 0);
 pub struct Action {
     /// Data section.
     ///  * [0] type
-    ///  * [1] length
-    ///  * [2..3] boundary
+    ///  * [1] length 
+    ///  * [2..3] boundary 
     data: [u16; 4],
 }
-
 
 impl<'a> IntoBytes<'a> for Action {
     fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
@@ -42,12 +41,7 @@ impl Transmutable for Action {
 impl Action {
     pub fn client_new(_type: Permission, length: u16) -> Self {
         Self {
-            data: [
-                _type as u16,
-                length,
-                0,
-                0,
-            ],
+            data: [_type as u16, length, 0, 0],
         }
     }
     pub fn new(_type: Permission, length: u16, boundary: u32) -> Self {
@@ -74,7 +68,7 @@ impl Action {
     }
 }
 
-#[derive(Default, PartialEq)]
+#[derive(Default, PartialEq, Copy, Clone)]
 #[repr(u16)]
 pub enum Permission {
     #[default]
@@ -106,7 +100,9 @@ impl TryFrom<&[u8]> for Permission {
     type Error = ProgramError;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        let type_bytes = value.try_into().map_err(|_| ProgramError::InvalidAccountData)?;
+        let type_bytes = value
+            .try_into()
+            .map_err(|_| ProgramError::InvalidAccountData)?;
         Permission::try_from(u16::from_le_bytes(type_bytes))
     }
 }
@@ -114,8 +110,13 @@ impl TryFrom<&[u8]> for Permission {
 /// Trait for representing action data.
 pub trait Actionable<'a>: Transmutable + TransmutableMut {
     const TYPE: Permission;
+    const REPEATABLE: bool;
 
     fn validate(&mut self);
+
+    fn match_data(&self, _data: &[u8]) -> bool {
+        false
+    }
 
     fn valid_layout(data: &'a [u8]) -> Result<bool, ProgramError> {
         Ok(data.len() == Self::LEN)
@@ -125,7 +126,6 @@ pub trait Actionable<'a>: Transmutable + TransmutableMut {
 pub struct ActionLoader;
 
 impl ActionLoader {
-
     pub fn validate_layout(permission: Permission, data: &[u8]) -> Result<bool, ProgramError> {
         match permission {
             Permission::SolLimit => SolLimit::valid_layout(data),
@@ -143,11 +143,13 @@ impl ActionLoader {
         bytes: &'a [u8],
     ) -> Result<Option<&'a T>, ProgramError> {
         let mut cursor = 0;
-        
+
         while cursor < bytes.len() {
             let action = unsafe { Action::load_unchecked(&bytes[cursor..cursor + Action::LEN])? };
             if action.permission() == Ok(T::TYPE) {
-                return Ok(Some(unsafe { T::load_unchecked(&bytes[cursor..cursor + action.length() as usize])? }));
+                return Ok(Some(unsafe {
+                    T::load_unchecked(&bytes[cursor..cursor + action.length() as usize])?
+                }));
             }
             cursor += action.boundary() as usize;
         }

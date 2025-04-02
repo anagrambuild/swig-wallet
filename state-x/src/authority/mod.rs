@@ -11,9 +11,7 @@ use crate::{IntoBytes, Transmutable, TransmutableMut};
 pub trait Authority<'a>: Transmutable + TransmutableMut + IntoBytes<'a> {
     const TYPE: AuthorityType;
 
-    fn length(&self) -> usize {
-        Self::LEN
-    }
+    fn length(&self) -> usize;
 }
 
 #[derive(Debug, PartialEq)]
@@ -33,7 +31,7 @@ impl TryFrom<u16> for AuthorityType {
 
     #[inline(always)]
     fn try_from(value: u16) -> Result<Self, Self::Error> {
-          match value {
+        match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
             1 => Ok(AuthorityType::Ed25519),
             2 => Ok(AuthorityType::Ed25519Session),

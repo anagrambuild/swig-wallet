@@ -2,17 +2,12 @@
 pub mod create_v1;
 // pub mod remove_authority_v1;
 // pub mod replace_authority_v1;
-// pub mod sign_v1;
+pub mod sign_v1;
 
 use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError, ProgramResult};
 
-// use self::{
-//     add_authority_v1::*, create_v1::*, remove_authority_v1::*, replace_authority_v1::*, sign_v1::*,
-// };
-use self::{
-    create_v1::*,
-};
+use self::{create_v1::*, sign_v1::*};
 use crate::{
     instruction::{
         accounts::{

@@ -23,8 +23,11 @@ impl<'a> IntoBytes<'a> for SubAccount {
 
 impl<'a> Actionable<'a> for SubAccount {
     const TYPE: Permission = Permission::SubAccount;
+    const REPEATABLE: bool = true;
 
-
+    fn match_data(&self, data: &[u8]) -> bool {
+        data.len() == Self::LEN && data[0..32] == self.sub_account
+    }
 
     fn validate(&mut self) {
         // No validation needed for a marker type

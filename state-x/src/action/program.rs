@@ -22,6 +22,11 @@ impl<'a> IntoBytes<'a> for Program {
 impl TransmutableMut for Program {}
 impl<'a> Actionable<'a> for Program {
     const TYPE: Permission = Permission::Program;
+    const REPEATABLE: bool = true;
+
+    fn match_data(&self, data: &[u8]) -> bool {
+        data.len() == Self::LEN && data[0..32] == self.program_id
+    }
 
     fn validate(&mut self) {
         // No validation needed for a marker type

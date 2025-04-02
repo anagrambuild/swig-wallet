@@ -1,14 +1,31 @@
 extern crate alloc;
 
-use alloc::boxed::Box;
-use pinocchio::{msg, program_error::ProgramError};
+use pinocchio::{instruction::Seed, program_error::ProgramError};
 
 use crate::{
-    action::{Action, ActionLoader, Permission},
-    authority::{Authority, AuthorityType},
-    role::{Position, Role},
-    FromBytes, IntoBytes, Transmutable, TransmutableMut,
+    action::{Action, ActionLoader, Actionable},
+    authority::{Authority, AuthorityLoader, AuthorityType},
+    role::{Position, RolePosition},
+    FromBytes, FromBytesMut, IntoBytes, Transmutable, TransmutableMut,
 };
+
+#[inline(always)]
+pub fn swig_account_seeds(id: &[u8]) -> [&[u8]; 2] {
+    [b"swig".as_ref(), id]
+}
+
+#[inline(always)]
+pub fn swig_account_seeds_with_bump<'a>(id: &'a [u8], bump: &'a [u8]) -> [&'a [u8]; 3] {
+    [b"swig".as_ref(), id, bump]
+}
+
+pub fn swig_account_signer<'a>(id: &'a [u8], bump: &'a [u8; 1]) -> [Seed<'a>; 3] {
+    [
+        b"swig".as_ref().into(),
+        id.as_ref().into(),
+        bump.as_ref().into(),
+    ]
+}
 
 pub struct SwigBuilder<'a> {
     pub role_buffer: &'a mut [u8],
@@ -58,9 +75,11 @@ impl<'a> SwigBuilder<'a> {
         let new_position = Position::new(
             T::TYPE,
             self.swig.role_counter,
-            size as u16,
+            T::LEN as u16,
+            num_actions as u16,
             boundary as u32,
         );
+        println!("new_position: {:?}", new_position);
         self.role_buffer[cursor..cursor + Position::LEN]
             .copy_from_slice(new_position.into_bytes()?);
         cursor += Position::LEN;
@@ -76,7 +95,7 @@ impl<'a> SwigBuilder<'a> {
             if ActionLoader::validate_layout(action_header.permission()?, action_slice)? {
                 self.role_buffer[cursor..cursor + Action::LEN].copy_from_slice(header);
                 // change boundary to the new boundary
-                self.role_buffer[cursor + 2..cursor + 6].copy_from_slice(
+                self.role_buffer[cursor + 4..cursor + 8].copy_from_slice(
                     &((cursor + Action::LEN + action_header.length() as usize) as u32)
                         .to_le_bytes(),
                 );
@@ -134,7 +153,6 @@ impl<'a> IntoBytes<'a> for Swig {
 
 pub struct SwigWithRoles<'a> {
     pub state: &'a Swig,
-
     roles: &'a [u8],
 }
 
@@ -150,28 +168,329 @@ impl<'a> SwigWithRoles<'a> {
         Ok(SwigWithRoles { state, roles })
     }
 
-    pub fn get<T: Authority<'a> + 'a>(&'a self, id: u32) -> Option<Role<T>> {
+    pub fn lookup_role(&'a self, id: u32) -> Result<Option<RolePosition<'a>>, ProgramError> {
         let mut cursor = 0;
-
-        while (cursor + Position::LEN) <= self.roles.len() {
+        for _i in 0..self.state.roles {
             let offset = cursor + Position::LEN;
-            let position =
-                unsafe { Position::load_unchecked(&self.roles[cursor..offset]).unwrap() };
+            let position = unsafe { Position::load_unchecked(&self.roles[cursor..offset])? };
+            if position.id() == id {
+                return Ok(Some(RolePosition::new(offset, &position)));
+            }
+            cursor = offset + position.boundary() as usize;
+        }
+        Ok(None)
+    }
 
-            match position.authority_type() {
-                Ok(t) if t == T::TYPE && position.id() == id => {
-                    let end = offset + position.length() as usize;
+    pub fn get_authority(
+        &'a self,
+        role_position: &'a RolePosition,
+    ) -> Result<&'a impl Authority, ProgramError> {
+        AuthorityLoader::load_authority(
+            role_position.position.authority_type()?,
+            &self.roles[role_position.offset
+                ..role_position.offset + role_position.position.authority_length() as usize],
+        )
+    }
 
-                    match Role::<T>::from_bytes(&self.roles[cursor..end]) {
-                        Ok(role) => return Some(role),
-                        Err(_) => return None,
+    pub fn get_action<A: Actionable<'a>>(
+        &'a self,
+        role_position: &'a RolePosition,
+        match_data: &[u8],
+    ) -> Result<Option<&'a A>, ProgramError> {
+        let mut cursor = role_position.offset + role_position.position.authority_length() as usize;
+        let end_pos = role_position.position.boundary() as usize;
+        println!("roles -: {:?}", self.roles.len());
+        println!("cursor: {}", cursor);
+        println!("end_pos: {}", end_pos);
+        println!("action len: {}", cursor + Action::LEN);
+        println!("data: {:?}", self.roles);
+        
+        while cursor < end_pos {
+            let action =
+                unsafe { Action::load_unchecked(&self.roles[cursor..cursor + Action::LEN])? };
+            cursor += Action::LEN;
+            println!("action: {:?}", action);
+            if action.permission()? == A::TYPE {
+                let action_obj =
+                    unsafe { A::load_unchecked(&self.roles[cursor..cursor + A::LEN])? };
+                if !A::REPEATABLE || action_obj.match_data(match_data) {
+                    return Ok(Some(action_obj));
+                }
+            }
+
+            cursor = action.boundary() as usize;
+        }
+        Ok(None)
+    }
+}
+
+pub struct SwigWithRolesMut<'a> {
+    pub state: &'a mut Swig,
+    pub roles: &'a mut [u8],
+}
+
+impl<'a> SwigWithRolesMut<'a> {
+    pub fn from_bytes(bytes: &'a mut [u8]) -> Result<Self, ProgramError> {
+        let (swig_bytes, roles_bytes) = bytes.split_at_mut(Swig::LEN);
+        let state = unsafe { Swig::load_mut_unchecked(swig_bytes)? };
+        let roles = &mut roles_bytes[Swig::LEN..];
+        Ok(SwigWithRolesMut { state, roles })
+    }
+
+    pub fn lookup_role(&'a self, id: u32) -> Result<Option<RolePosition<'a>>, ProgramError> {
+        let mut cursor = 0;
+        for _i in 0..self.state.roles {
+            let offset = cursor + Position::LEN;
+            let position = unsafe { Position::load_unchecked(&self.roles[cursor..offset])? };
+            if position.id() == id {
+                return Ok(Some(RolePosition::new(offset, &position)));
+            }
+            cursor = offset + position.boundary() as usize;
+        }
+        Ok(None)
+    }
+
+    pub fn get_authority(
+        &'a self,
+        role_position: &'a RolePosition,
+    ) -> Result<&'a impl Authority, ProgramError> {
+        AuthorityLoader::load_authority(
+            role_position.position.authority_type()?,
+            &self.roles[role_position.offset
+                ..role_position.offset + role_position.position.authority_length() as usize],
+        )
+    }
+
+    pub fn get_action<A: Actionable<'a>>(
+        &'a mut self,
+        role_position: &'a RolePosition,
+        match_data: &[u8],
+    ) -> Result<Option<&'a mut A>, ProgramError> {
+        let mut cursor = role_position.offset + role_position.position.authority_length() as usize;
+        let end_pos = role_position.position.boundary() as usize;
+        let mut found_offset = None;
+
+        {
+            let roles = &self.roles[..];
+            while cursor < end_pos {
+                let action =
+                    unsafe { Action::load_unchecked(&roles[cursor..cursor + Action::LEN])? };
+                cursor += Action::LEN;
+                if action.permission()? == A::TYPE {
+                    let action_obj = unsafe { A::load_unchecked(&roles[cursor..cursor + A::LEN])? };
+                    if !A::REPEATABLE || action_obj.match_data(match_data) {
+                        found_offset = Some(cursor);
+                        break;
                     }
-                },
-                Ok(AuthorityType::None) => return None,
-                _ => cursor = offset + position.boundary() as usize,
+                }
+
+                cursor = action.boundary() as usize;
             }
         }
 
-        None
+        // Then get mutable reference if found
+        if let Some(offset) = found_offset {
+            let action_obj =
+                unsafe { A::load_mut_unchecked(&mut self.roles[offset..offset + A::LEN])? };
+            Ok(Some(action_obj))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{action::all::All, authority::ed25519::ED25519Authority};
+
+    fn setup_test_buffer() -> ([u8; Swig::LEN + 256], [u8; 32], u8) {
+        let account_buffer = [0u8; Swig::LEN + 256];
+        let id = [1; 32];
+        let bump = 255;
+        (account_buffer, id, bump)
+    }
+
+    #[test]
+    fn test_swig_creation() {
+        let (mut account_buffer, id, bump) = setup_test_buffer();
+        let swig = Swig::new(id, bump);
+
+        assert_eq!(swig.discriminator, 0);
+        assert_eq!(swig.id, id);
+        assert_eq!(swig.bump, bump);
+        assert_eq!(swig.roles, 0);
+        assert_eq!(swig.role_counter, 0);
+
+        // Test builder creation
+        let builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+        assert_eq!(builder.swig.id, id);
+        assert_eq!(builder.swig.bump, bump);
+    }
+
+    #[test]
+    fn test_swig_account_seeds() {
+        let id = [1; 32];
+        let seeds = swig_account_seeds(&id);
+        assert_eq!(seeds[0], b"swig");
+        assert_eq!(seeds[1], &id);
+
+        let bump = [255];
+        let seeds_with_bump = swig_account_seeds_with_bump(&id, &bump);
+        assert_eq!(seeds_with_bump[0], b"swig");
+        assert_eq!(seeds_with_bump[1], &id);
+        assert_eq!(seeds_with_bump[2], &bump);
+    }
+
+    #[test]
+    fn test_add_single_role() {
+        let (mut account_buffer, id, bump) = setup_test_buffer();
+        let swig = Swig::new(id, bump);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+
+        let authority = ED25519Authority {
+            public_key: [2; 32],
+        };
+
+        let action_data = All {}.into_bytes().unwrap();
+        let action = Action::new(
+            All::TYPE,
+            action_data.len() as u16,
+            Action::LEN as u32 + action_data.len() as u32,
+        );
+        let action_bytes = action.into_bytes().unwrap();
+        let actions_data = [action_bytes, action_data].concat();
+
+        builder.add_role(&authority, 1, &actions_data).unwrap();
+
+        assert_eq!(builder.swig.roles, 1);
+        assert_eq!(builder.swig.role_counter, 1);
+    }
+
+    #[test]
+    fn test_role_lookup() {
+        let (mut account_buffer, id, bump) = setup_test_buffer();
+        let swig = Swig::new(id, bump);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+
+        let authority = ED25519Authority {
+            public_key: [2; 32],
+        };
+
+        let action_data = All {}.into_bytes().unwrap();
+        let action = Action::new(
+            All::TYPE,
+            action_data.len() as u16,
+            Action::LEN as u32 + action_data.len() as u32,
+        );
+        let action_bytes = action.into_bytes().unwrap();
+        let actions_data = [action_bytes, action_data].concat();
+
+        builder.add_role(&authority, 1, &actions_data).unwrap();
+
+        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        let role = swig_with_roles.lookup_role(0).unwrap();
+        assert!(role.is_some());
+
+        let role = swig_with_roles.lookup_role(999).unwrap();
+        assert!(role.is_none());
+    }
+
+    #[test]
+    fn test_get_authority_and_action() {
+        let (mut account_buffer, id, bump) = setup_test_buffer();
+        let swig = Swig::new(id, bump);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+
+        let authority = ED25519Authority {
+            public_key: [2; 32],
+        };
+
+        let action_data = All {}.into_bytes().unwrap();
+        let action = Action::new(
+            All::TYPE,
+            action_data.len() as u16,
+            Action::LEN as u32 + action_data.len() as u32,
+        );
+        let action_bytes = action.into_bytes().unwrap();
+        let actions_data = [action_bytes, action_data].concat();
+
+        builder.add_role(&authority, 1, &actions_data).unwrap();
+
+        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        let role = swig_with_roles.lookup_role(0).unwrap().unwrap();
+
+        let retrieved_authority = swig_with_roles.get_authority(&role).unwrap();
+        let auth_bytes = retrieved_authority.into_bytes().unwrap();
+        let orig_bytes = authority.into_bytes().unwrap();
+        assert_eq!(auth_bytes, orig_bytes);
+
+        let action: Option<&All> = swig_with_roles.get_action(&role, &[]).unwrap();
+        assert!(action.is_some());
+    }
+
+    #[test]
+    fn test_mutable_action_retrieval() {
+        let (mut account_buffer, id, bump) = setup_test_buffer();
+        let swig = Swig::new(id, bump);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+
+        let authority = ED25519Authority {
+            public_key: [2; 32],
+        };
+
+        let action_data = All {}.into_bytes().unwrap();
+        let action = Action::new(
+            All::TYPE,
+            action_data.len() as u16,
+            Action::LEN as u32 + action_data.len() as u32,
+        );
+        let action_bytes = action.into_bytes().unwrap();
+        let actions_data = [action_bytes, action_data].concat();
+
+        builder.add_role(&authority, 1, &actions_data).unwrap();
+
+        // Create a copy of the buffer for immutable operations
+        let account_buffer_copy = account_buffer.clone();
+        let swig = SwigWithRoles::from_bytes(&account_buffer_copy).unwrap();
+        let pos = swig.lookup_role(0).unwrap().unwrap();
+
+        let mut swig_with_roles = SwigWithRolesMut::from_bytes(&mut account_buffer).unwrap();
+        let action: Option<&mut All> = swig_with_roles.get_action(&pos, &[]).unwrap();
+        assert!(action.is_some());
+    }
+
+    #[test]
+    fn test_multiple_roles() {
+        let (mut account_buffer, id, bump) = setup_test_buffer();
+        let swig = Swig::new(id, bump);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+
+        let authority1 = ED25519Authority {
+            public_key: [2; 32],
+        };
+
+        let authority2 = ED25519Authority {
+            public_key: [3; 32],
+        };
+
+        let action_data = All {}.into_bytes().unwrap();
+        let action = Action::new(
+            All::TYPE,
+            action_data.len() as u16,
+            Action::LEN as u32 + action_data.len() as u32,
+        );
+        let action_bytes = action.into_bytes().unwrap();
+        let actions_data = [action_bytes, action_data].concat();
+
+        builder.add_role(&authority1, 1, &actions_data).unwrap();
+        builder.add_role(&authority2, 1, &actions_data).unwrap();
+
+        assert_eq!(builder.swig.roles, 2);
+        assert_eq!(builder.swig.role_counter, 2);
+
+        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        assert!(swig_with_roles.lookup_role(0).unwrap().is_some());
+        assert!(swig_with_roles.lookup_role(1).unwrap().is_some());
     }
 }

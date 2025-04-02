@@ -22,7 +22,11 @@ impl<'a> IntoBytes<'a> for ManageAuthority {
 
 impl<'a> Actionable<'a> for ManageAuthority {
     const TYPE: Permission = Permission::ManageAuthority;
+    const REPEATABLE: bool = false;
 
+    fn match_data(&self, _data: &[u8]) -> bool {
+        true
+    }
 
     fn validate(&mut self) {
         // No validation needed for a marker type

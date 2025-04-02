@@ -20,9 +20,13 @@ impl<'a> IntoBytes<'a> for SolLimit {
     }
 }
 
-
 impl<'a> Actionable<'a> for SolLimit {
     const TYPE: Permission = Permission::SolLimit;
+    const REPEATABLE: bool = false;
+
+    fn match_data(&self, data: &[u8]) -> bool {
+        data.len() == Self::LEN && data[0..8] == self.amount.to_le_bytes()
+    }
 
     /// TODO
     fn validate(&mut self) {

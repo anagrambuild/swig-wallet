@@ -7,8 +7,8 @@ pub use swig;
 use swig::actions::create_v1::CreateV1Args;
 pub use swig_compact_instructions::*;
 pub use swig_state;
-use swig_state::swig_account_seeds;
 use swig_state_x::{
+    swig::swig_account_seeds,
     action::{
         all::All, manage_authority::ManageAuthority, program::Program, sol_limit::SolLimit,
         sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount, token_limit::TokenLimit,

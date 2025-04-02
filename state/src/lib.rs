@@ -36,23 +36,7 @@ pub struct Swig {
     pub roles: Vec<Role>,
 }
 
-#[inline(always)]
-pub fn swig_account_seeds(id: &[u8]) -> [&[u8]; 2] {
-    [b"swig".as_ref(), id]
-}
 
-#[inline(always)]
-pub fn swig_account_seeds_with_bump<'a>(id: &'a [u8], bump: &'a [u8]) -> [&'a [u8]; 3] {
-    [b"swig".as_ref(), id, bump]
-}
-
-pub fn swig_account_signer<'a>(id: &'a [u8], bump: &'a [u8; 1]) -> [Seed<'a>; 3] {
-    [
-        b"swig".as_ref().into(),
-        id.as_ref().into(),
-        bump.as_ref().into(),
-    ]
-}
 
 impl Swig {
     pub fn raw_get_id(data: &[u8]) -> [u8; 13] {
