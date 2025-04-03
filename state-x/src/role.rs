@@ -4,7 +4,7 @@ use pinocchio::program_error::ProgramError;
 
 use crate::{
     action::{Action, Actionable, Permission},
-    authority::{Authority, AuthorityType},
+    authority::{Authority, AuthorityType, TypedAuthority},
     FromBytes, FromBytesMut, Transmutable,
 };
 
@@ -72,6 +72,18 @@ pub struct RoleMut<'a, T: Authority<'a>> {
 
     /// Actions associated with this authority.
     actions: &'a mut [u8],
+}
+
+pub struct RoleAuthorityMut<'a> {
+    pub position: &'a Position,
+
+    /// Authority specific data.
+    ///
+    /// TODO: Does it make sense to have a mutable reference to the authority?
+    pub authority: &'a dyn TypedAuthority,
+
+    /// Actions associated with this authority.
+    pub actions: &'a mut [u8],
 }
 
 impl<'a, T: Authority<'a>> RoleMut<'a, T> {

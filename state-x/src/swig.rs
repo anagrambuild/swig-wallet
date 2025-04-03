@@ -2,8 +2,8 @@ use pinocchio::program_error::ProgramError;
 
 use crate::{
     action::{Action, ActionLoader},
-    authority::{Authority, AuthorityType},
-    role::{Position, Role, RoleMut},
+    authority::{ed25519::ED25519Authority, Authority, AuthorityType, TypedAuthority},
+    role::{Position, Role, RoleAuthorityMut, RoleMut},
     FromBytes, FromBytesMut, Transmutable, TransmutableMut,
 };
 
@@ -46,6 +46,34 @@ impl Swig {
                 Ok(t) if t == T::TYPE && position.id() == id => {
                     let end = offset + position.length() as usize;
                     return RoleMut::<T>::from_bytes_mut(&mut swig_data[cursor..end]).ok();
+                },
+                Ok(AuthorityType::None) => return None,
+                _ => cursor = offset + position.boundary() as usize,
+            }
+        }
+
+        None
+    }
+
+    pub fn get_role_by_id(swig_data: &mut [u8], id: u32) -> Option<RoleAuthorityMut> {
+        let mut cursor = Swig::LEN;
+
+        while (cursor + Position::LEN) <= swig_data.len() {
+            let offset = cursor + Position::LEN;
+            let position = unsafe { Position::load_unchecked(&swig_data[cursor..offset]).unwrap() };
+
+            match position.authority_type() {
+                Ok(t) if id == position.id() => {
+                    let end = offset + position.length() as usize;
+
+                    let authority =
+                        unsafe { ED25519Authority::load_unchecked(&swig_data[cursor..end]).ok()? };
+
+                    return Some(RoleAuthorityMut {
+                        position,
+                        authority,
+                        actions: &mut [],
+                    });
                 },
                 Ok(AuthorityType::None) => return None,
                 _ => cursor = offset + position.boundary() as usize,

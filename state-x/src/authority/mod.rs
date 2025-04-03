@@ -1,6 +1,9 @@
 pub mod ed25519;
+pub mod secp256k1;
 
 use ed25519::ED25519Authority;
+use secp256k1::SECP256K1Authority;
+
 use pinocchio::program_error::ProgramError;
 
 use crate::{Transmutable, TransmutableMut};
@@ -14,6 +17,13 @@ pub trait Authority<'a>: Transmutable + TransmutableMut {
     fn length(&self) -> usize {
         Self::LEN
     }
+}
+
+/// Trait for authority data.
+///
+/// The `Authority` defines the data of a particular authority.
+pub trait TypedAuthority {
+    fn authority_type(&self) -> AuthorityType;
 }
 
 #[derive(Debug, PartialEq)]

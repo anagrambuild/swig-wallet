@@ -1,4 +1,4 @@
-use super::{Authority, AuthorityType};
+use super::{Authority, AuthorityType, TypedAuthority};
 
 use crate::{Transmutable, TransmutableMut};
 
@@ -22,3 +22,9 @@ impl Transmutable for ED25519Authority {
 }
 
 impl TransmutableMut for ED25519Authority {}
+
+impl TypedAuthority for ED25519Authority {
+    fn authority_type(&self) -> AuthorityType {
+        Self::TYPE
+    }
+}
