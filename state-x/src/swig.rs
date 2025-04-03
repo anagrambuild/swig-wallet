@@ -3,8 +3,8 @@ use pinocchio::program_error::ProgramError;
 use crate::{
     action::{Action, ActionLoader},
     authority::{Authority, AuthorityType},
-    role::{Position, Role},
-    FromBytes, Transmutable, TransmutableMut,
+    role::{Position, Role, RoleMut},
+    FromBytes, FromBytesMut, Transmutable, TransmutableMut,
 };
 
 // SANITY CHECK: Make sure the type size is a multiple of 8 bytes.
@@ -30,6 +30,29 @@ impl Swig {
             role_counter: 0,
             _padding: [0; 4],
         }
+    }
+
+    pub fn get_role_mut<'a, T: Authority<'a>>(
+        swig_data: &'a mut [u8],
+        id: u32,
+    ) -> Option<RoleMut<T>> {
+        let mut cursor = Swig::LEN;
+
+        while (cursor + Position::LEN) <= swig_data.len() {
+            let offset = cursor + Position::LEN;
+            let position = unsafe { Position::load_unchecked(&swig_data[cursor..offset]).unwrap() };
+
+            match position.authority_type() {
+                Ok(t) if t == T::TYPE && position.id() == id => {
+                    let end = offset + position.length() as usize;
+                    return RoleMut::<T>::from_bytes_mut(&mut swig_data[cursor..end]).ok();
+                },
+                Ok(AuthorityType::None) => return None,
+                _ => cursor = offset + position.boundary() as usize,
+            }
+        }
+
+        None
     }
 }
 
@@ -256,5 +279,66 @@ mod tests {
         let action2 = action2.unwrap();
         assert_eq!(action2.token_mint, [1; 32]);
         assert_eq!(action2.current_amount, 100);
+    }
+
+    #[test]
+    fn test_get_role_mut() {
+        let mut bytes = [
+            1, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // role
+            1, 0, 48, 0, 1, 0, 0, 0, 48, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // action
+            1, 0, 8, 0, 8, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+        ];
+
+        // Assert the original state
+
+        let swig = SwigWithRoles::from_bytes(&bytes).unwrap();
+
+        assert_eq!(swig.state.roles, 1);
+
+        let role = swig.get::<ED25519Authority>(1);
+        assert!(role.is_some());
+
+        let role = role.unwrap();
+        assert_eq!(role.authority.proof, [1; 32]);
+
+        let action = role.get::<SolLimit>();
+        assert!(action.is_some());
+
+        let action = action.unwrap();
+        assert_eq!(action.amount, 1);
+
+        // Mutate the state
+
+        let role_mut = Swig::get_role_mut::<ED25519Authority>(&mut bytes, 1);
+        assert!(role_mut.is_some());
+
+        let mut role_mut = role_mut.unwrap();
+        assert_eq!(role_mut.authority.proof, [1; 32]);
+
+        let action_mut = role_mut.get_mut::<SolLimit>();
+        assert!(action_mut.is_some());
+
+        let action_mut = action_mut.unwrap();
+        action_mut.amount = 42;
+
+        // Assert the mutated state
+
+        let swig = SwigWithRoles::from_bytes(&bytes).unwrap();
+
+        assert_eq!(swig.state.roles, 1);
+
+        let role = swig.get::<ED25519Authority>(1);
+        assert!(role.is_some());
+
+        let role = role.unwrap();
+        assert_eq!(role.authority.proof, [1; 32]);
+
+        let action = role.get::<SolLimit>();
+        assert!(action.is_some());
+
+        let action = action.unwrap();
+        assert_eq!(action.amount, 42);
     }
 }

@@ -67,11 +67,35 @@ pub struct RoleMut<'a, T: Authority<'a>> {
 
     /// Authority specific data.
     ///
-    /// TODO: is the length known at compile time by the authority?
+    /// TODO: Does it make sense to have a mutable reference to the authority?
     pub authority: &'a mut T,
 
     /// Actions associated with this authority.
-    _actions: &'a mut [u8],
+    actions: &'a mut [u8],
+}
+
+impl<'a, T: Authority<'a>> RoleMut<'a, T> {
+    pub fn get_mut<U: Actionable<'a>>(&'a mut self) -> Option<&mut U> {
+        let mut cursor = 0;
+
+        while (cursor + Action::LEN) <= self.actions.len() {
+            let offset = cursor + Action::LEN;
+            let action = unsafe { Action::load_unchecked(&self.actions[cursor..offset]).unwrap() };
+
+            match action.permission() {
+                Ok(t) if t == U::TYPE => {
+                    let end = offset + action.length() as usize;
+                    return unsafe { U::load_mut_unchecked(&mut self.actions[offset..end]).ok() };
+                },
+                Ok(Permission::None) => {
+                    return None;
+                },
+                _ => cursor = offset + action.boundary() as usize,
+            }
+        }
+
+        None
+    }
 }
 
 /*
@@ -94,6 +118,7 @@ impl<'a, T: Authority<'a>> RoleMut<'a, T> {
     }
 }
 */
+
 impl<'a, T: Authority<'a>> FromBytesMut<'a> for RoleMut<'a, T> {
     fn from_bytes_mut(bytes: &'a mut [u8]) -> Result<Self, ProgramError> {
         // The role must be at least `Position::LEN` bytes.
@@ -110,7 +135,7 @@ impl<'a, T: Authority<'a>> FromBytesMut<'a> for RoleMut<'a, T> {
         Ok(RoleMut {
             position,
             authority,
-            _actions: actions,
+            actions,
         })
     }
 }
