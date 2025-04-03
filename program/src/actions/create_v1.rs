@@ -1,3 +1,10 @@
+use crate::{
+    error::SwigError,
+    instruction::{
+        accounts::{Context, CreateV1Accounts},
+        SwigInstruction,
+    },
+};
 use pinocchio::{
     log::sol_log_compute_units,
     msg,
@@ -6,20 +13,13 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_system::instructions::CreateAccount;
+use swig_assertions::*;
 use swig_state_x::{
     action::{all::All, manage_authority::ManageAuthority, Action, ActionLoader, Actionable},
     authority::{Authority, AuthorityLoader, AuthorityType},
     role::Position,
-    swig::{Swig, SwigBuilder,swig_account_seeds_with_bump, swig_account_signer},
+    swig::{swig_account_seeds_with_bump, swig_account_signer, Swig, SwigBuilder},
     IntoBytes, Transmutable,
-};
-use swig_assertions::*;
-use crate::{
-    error::SwigError,
-    instruction::{
-        accounts::{Context, CreateV1Accounts},
-        SwigInstruction,
-    },
 };
 
 static_assertions::const_assert!(core::mem::size_of::<CreateV1Args>() % 8 == 0);
@@ -30,6 +30,7 @@ pub struct CreateV1Args {
     pub id: [u8; 32],
     pub bump: u8,
     pub num_actions: u8,
+    _padding: u8,
     pub authority_type: u16,
     pub authority_data_len: u16,
 }
@@ -46,6 +47,7 @@ impl CreateV1Args {
             discriminator: SwigInstruction::CreateV1,
             id,
             bump,
+            _padding: 0,
             authority_type: authority_type as u16,
             authority_data_len,
             num_actions,

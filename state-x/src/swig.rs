@@ -6,7 +6,7 @@ use pinocchio::{instruction::Seed, program_error::ProgramError};
 use crate::{
     action::{Action, ActionLoader, Actionable},
     authority::{Authority, AuthorityLoader, AuthorityType},
-    role::{Position, RolePosition},
+    role::{Position, Role, RoleMut},
     FromBytes, FromBytesMut, IntoBytes, Transmutable, TransmutableMut,
 };
 
@@ -171,53 +171,27 @@ impl<'a> SwigWithRoles<'a> {
         Ok(SwigWithRoles { state, roles })
     }
 
-    pub fn lookup_role(&'a self, id: u32) -> Result<Option<RolePosition<'a>>, ProgramError> {
+    pub fn lookup_role(&'a self, id: u32) -> Result<Option< Role<'a>>, ProgramError> {
         let mut cursor = 0;
         for _i in 0..self.state.roles {
             let offset = cursor + Position::LEN;
             let position = unsafe { Position::load_unchecked(&self.roles[cursor..offset])? };
             if position.id() == id {
-                return Ok(Some(RolePosition::new(offset, &position)));
+                return Ok(Some(
+                  Role {
+                    position,
+                    authority: unsafe { self.roles.get_unchecked(offset..offset + position.authority_length() as usize) },
+                    actions: unsafe { self.roles.get_unchecked(offset + position.authority_length() as usize..offset + position.boundary() as usize) },
+                  }
+
+                ));
             }
             cursor = position.boundary() as usize;
         }
         Ok(None)
     }
 
-    pub fn get_authority(
-        &'a self,
-        role_position: &'a RolePosition,
-    ) -> Result<&'a impl Authority, ProgramError> {
-        AuthorityLoader::load_authority(
-            role_position.position.authority_type()?,
-            &self.roles[role_position.offset
-                ..role_position.offset + role_position.position.authority_length() as usize],
-        )
-    }
-
-    pub fn get_action<A: Actionable<'a>>(
-        &'a self,
-        role_position: &'a RolePosition,
-        match_data: &[u8],
-    ) -> Result<Option<&'a A>, ProgramError> {
-        let mut cursor = role_position.offset + role_position.position.authority_length() as usize;
-        let end_pos = role_position.position.boundary() as usize;
-        while cursor < end_pos {
-            let action =
-                unsafe { Action::load_unchecked(&self.roles[cursor..cursor + Action::LEN])? };
-            cursor += Action::LEN;
-            if action.permission()? == A::TYPE {
-                let action_obj =
-                    unsafe { A::load_unchecked(&self.roles[cursor..cursor + A::LEN])? };
-                if !A::REPEATABLE || action_obj.match_data(match_data) {
-                    return Ok(Some(action_obj));
-                }
-            }
-
-            cursor = action.boundary() as usize;
-        }
-        Ok(None)
-    }
+    
 }
 
 pub struct SwigWithRolesMut<'a> {
@@ -236,7 +210,7 @@ impl<'a> SwigWithRolesMut<'a> {
         Ok(SwigWithRolesMut { state, roles })
     }
 
-    pub fn lookup_role(&'a self, id: u32) -> Result<Option<RolePosition<'a>>, ProgramError> {
+    pub fn lookup_role(&'a self, id: u32) -> Result<Option<RoleMut<'a>>, ProgramError> {
         let roles = unsafe { &*self.roles.get() };
         let mut cursor = 0;
         for _i in 0..self.state.roles {

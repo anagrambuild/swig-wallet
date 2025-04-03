@@ -4,91 +4,9 @@ use pinocchio::program_error::ProgramError;
 
 use crate::{
     action::{Action, Actionable},
-    authority::{Authority, AuthorityType},
+    authority::{Authority, AuthorityLoader, AuthorityType},
     FromBytes, FromBytesMut, IntoBytes, Transmutable,
 };
-
-// pub struct Role<'a, T: Authority<'a>> {
-//     pub position: &'a Position,
-
-//     /// Authority specific data.
-//     ///
-//     /// TODO: is the length known at compile time by the authority?
-//     pub authority: &'a T,
-
-//     /// Actions associated with this authority.
-//     actions: &'a [u8],
-// }
-
-// impl<'a, T: Authority<'a>> FromBytes<'a> for Role<'a, T> {
-//     fn from_bytes(bytes: &'a [u8]) -> Result<Self, ProgramError> {
-//         // The role must be at least `Position::LEN` bytes.
-//         if bytes.len() < Position::LEN {
-//             return Err(ProgramError::InvalidAccountData);
-//         }
-//         let (position, remaining) = bytes.split_at(Position::LEN);
-//         let (authority, actions) = remaining.split_at(T::LEN);
-//         Ok(Role {
-//             position: unsafe { Position::load_unchecked(position)? },
-//             authority: unsafe { T::load_unchecked(authority)? },
-//             actions,
-//         })
-//     }
-// }
-
-// pub struct RoleMut<'a, T: Authority<'a>> {
-//     pub position: &'a Position,
-
-//     /// Authority specific data.
-//     ///
-//     /// TODO: is the length known at compile time by the authority?
-//     pub authority: &'a mut T,
-
-//     /// Actions associated with this authority.
-//     actions: &'a mut [u8],
-// }
-
-// impl<'a, T: Authority<'a>> FromBytesMut<'a> for RoleMut<'a, T> {
-//     fn from_bytes_mut(bytes: &'a mut [u8]) -> Result<Self, ProgramError> {
-//         // The role must be at least `Position::LEN` bytes.
-//         if bytes.len() < Position::LEN {
-//             return Err(ProgramError::InvalidAccountData);
-//         }
-
-//         let (position, remaining) = bytes.split_at_mut(Position::LEN);
-//         let position = unsafe { Position::load_unchecked(position)? };
-
-//         let (authority, actions) = remaining.split_at_mut(T::LEN);
-//         let authority = unsafe { T::load_mut_unchecked(authority)? };
-
-//         Ok(RoleMut {
-//             position,
-//             authority,
-//             actions,
-//         })
-//     }
-// }
-// impl<'a, T: Authority<'a>> RoleMut<'a, T> {
-//     pub fn get_mut_action<A: Actionable<'a>>(
-//         &mut self,
-//         match_data: &[u8],
-//     ) -> Result<Option<&mut A>, ProgramError> {
-//         let num_actions = self.position.num_actions();
-//         let mut cursor = 0;
-//         for i in 0..num_actions {
-//             let action =
-//                 unsafe { Action::load_unchecked(&self.actions[cursor..cursor + Action::LEN])? };
-//             cursor += Action::LEN;
-//             if action.permission()? == A::TYPE {
-//                 let action_obj =
-//                     unsafe { A::load_mut_unchecked(&mut self.actions[cursor..cursor + A::LEN])? };
-
-//                 return Ok(Some(action_obj));
-//             }
-//         }
-//         Ok(None)
-//     }
-// }
 
 static_assertions::const_assert!(mem::size_of::<Position>() % 8 == 0);
 #[repr(C)]
@@ -104,15 +22,87 @@ pub struct Position {
     data: [u16; 8],
 }
 
-pub struct RolePosition<'a> {
-    pub offset: usize,
+pub struct Role<'a> {
     pub position: &'a Position,
+    pub authority: &'a [u8],
+    pub actions: &'a [u8],
 }
 
-impl<'a> RolePosition<'a> {
-    pub fn new(offset: usize, position: &'a Position) -> Self {
-        Self { offset, position }
+impl<'a> Role<'a> {
+    pub fn get_authority(&'a self) -> Result<&'a impl Authority, ProgramError> {
+        AuthorityLoader::load_authority(self.position.authority_type()?, &self.authority)
     }
+
+    pub fn get_action<A: Actionable<'a>>(
+        &'a self,
+        match_data: &[u8],
+    ) -> Result<Option<&'a A>, ProgramError> {
+        let mut cursor = 0;
+        while cursor < self.actions.len() {
+            let action = unsafe {
+                Action::load_unchecked(self.actions.get_unchecked(cursor..cursor + Action::LEN))?
+            };
+            cursor += Action::LEN;
+            if action.permission()? == A::TYPE {
+                let action_obj = unsafe {
+                    A::load_unchecked(&self.actions.get_unchecked(cursor..cursor + A::LEN))?
+                };
+                if !A::REPEATABLE || action_obj.match_data(match_data) {
+                    return Ok(Some(action_obj));
+                }
+            }
+
+            cursor = action.boundary() as usize;
+        }
+        Ok(None)
+    }
+}
+
+
+pub struct RoleMut<'a> {
+    pub position: &'a mut Position,
+    pub authority: &'a mut [u8],
+    pub actions: &'a mut [u8],
+}
+
+impl<'a> RoleMut<'a> {
+    pub fn get_authority(&'a self) -> Result<&'a impl Authority, ProgramError> {
+        AuthorityLoader::load_authority(self.position.authority_type()?, &self.authority)
+    }
+    
+    pub fn get_action<A: Actionable<'a>>(
+      &'a self,
+      match_data: &[u8],
+  ) -> Result<Option<&'a mut A>, ProgramError> {
+   
+      let mut cursor = 0;
+      let end_pos = self.actions.len();
+      let mut found_offset = None;
+      {
+          while cursor < end_pos {
+              let action =
+                  unsafe { Action::load_unchecked(&self.actions.get_unchecked(cursor..cursor + Action::LEN))? };
+              cursor += Action::LEN;
+              if action.permission()? == A::TYPE {
+                  let action_obj =
+                      unsafe { A::load_unchecked(&self.actions.get_unchecked(cursor..cursor + A::LEN))? };
+                  if !A::REPEATABLE || action_obj.match_data(match_data) {
+                      found_offset = Some(cursor);
+                      break;
+                  }
+              }
+              cursor = action.boundary() as usize;
+          }
+      }
+
+      if let Some(offset) = found_offset {
+          let action_obj = unsafe { A::load_mut_unchecked(&mut self.actions[offset..offset + A::LEN])? };
+          Ok(Some(action_obj))
+      } else {
+          Ok(None)
+      }
+  }
+    
 }
 
 impl<'a> IntoBytes<'a> for Position {
