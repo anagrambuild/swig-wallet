@@ -37,8 +37,8 @@ pub trait Transmutable: Sized {
     const LEN: usize;
 
     /// Return a byte slice from the given `T` reference.
-    fn as_bytes(&self) -> Result<&[u8], ProgramError> {
-        Ok(unsafe { from_raw_parts(self as *const Self as *const u8, Self::LEN) })
+    fn as_bytes(&self) -> &[u8] {
+        unsafe { from_raw_parts(self as *const Self as *const u8, Self::LEN) }
     }
 
     /// Return a `T` reference from the given bytes.
@@ -48,7 +48,7 @@ pub trait Transmutable: Sized {
     /// The caller must ensure that `bytes` contains a valid representation of `T`.
     #[inline(always)]
     unsafe fn load_unchecked(bytes: &[u8]) -> Result<&Self, ProgramError> {
-        if bytes.len() != Self::LEN {
+        if bytes.len() < Self::LEN {
             return Err(ProgramError::InvalidAccountData);
         }
         Ok(&*(bytes.as_ptr() as *const Self))
@@ -68,7 +68,7 @@ pub trait TransmutableMut: Transmutable {
     /// The caller must ensure that `bytes` contains a valid representation of `T`.
     #[inline(always)]
     unsafe fn load_mut_unchecked(bytes: &mut [u8]) -> Result<&mut Self, ProgramError> {
-        if bytes.len() != Self::LEN {
+        if bytes.len() < Self::LEN {
             return Err(ProgramError::InvalidAccountData);
         }
         Ok(&mut *(bytes.as_mut_ptr() as *mut Self))

@@ -68,11 +68,7 @@ impl<'a> SwigWithRoles<'a> {
             match position.authority_type() {
                 Ok(t) if t == T::TYPE && position.id() == id => {
                     let end = offset + position.length() as usize;
-
-                    match Role::<T>::from_bytes(&self.roles[cursor..end]) {
-                        Ok(role) => return Some(role),
-                        Err(_) => return None,
-                    }
+                    return Role::<T>::from_bytes(&self.roles[cursor..end]).ok();
                 },
                 Ok(AuthorityType::None) => return None,
                 _ => cursor = offset + position.boundary() as usize,
@@ -91,7 +87,7 @@ pub struct SwigBuilder<'a> {
 impl<'a> SwigBuilder<'a> {
     pub fn create(account_buffer: &'a mut [u8], swig: Swig) -> Result<Self, ProgramError> {
         let (swig_bytes, roles_bytes) = account_buffer.split_at_mut(Swig::LEN);
-        let bytes = swig.as_bytes()?;
+        let bytes = swig.as_bytes();
         swig_bytes[0..].copy_from_slice(bytes);
         let builder = Self {
             role_buffer: roles_bytes,
@@ -134,9 +130,9 @@ impl<'a> SwigBuilder<'a> {
             size as u16,
             boundary as u32,
         );
-        self.role_buffer[cursor..cursor + Position::LEN].copy_from_slice(new_position.as_bytes()?);
+        self.role_buffer[cursor..cursor + Position::LEN].copy_from_slice(new_position.as_bytes());
         cursor += Position::LEN;
-        self.role_buffer[cursor..cursor + T::LEN].copy_from_slice(authority.as_bytes()?);
+        self.role_buffer[cursor..cursor + T::LEN].copy_from_slice(authority.as_bytes());
         cursor += T::LEN;
         let mut action_cursor = 0;
         for _i in 0..num_actions {
@@ -163,5 +159,102 @@ impl<'a> SwigBuilder<'a> {
         self.swig.roles += 1;
         self.swig.role_counter += 1;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        action::{sol_limit::SolLimit, token_limit::TokenLimit},
+        authority::ed25519::ED25519Authority,
+        swig::SwigWithRoles,
+        Transmutable,
+    };
+
+    use super::Swig;
+
+    #[test]
+    fn test_swig_from_bytes() {
+        let bytes = [
+            1, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let swig = unsafe { Swig::load_unchecked(&bytes).unwrap() };
+
+        assert_eq!(swig.discriminator, 1);
+        assert_eq!(swig.bump, 255);
+        assert_eq!(swig.id, [0; 32]);
+        assert_eq!(swig.roles, 0);
+        assert_eq!(swig.as_bytes(), &bytes);
+    }
+
+    #[test]
+    fn test_swig_with_roles_from_bytes() {
+        let bytes = [
+            1, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 2, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // role 1
+            1, 0, 32, 0, 1, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // role 2
+            1, 0, 32, 0, 2, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+            2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+        ];
+        let swig = SwigWithRoles::from_bytes(&bytes).unwrap();
+
+        assert_eq!(swig.state.discriminator, 1);
+        assert_eq!(swig.state.bump, 255);
+        assert_eq!(swig.state.id, [0; 32]);
+        assert_eq!(swig.state.roles, 2);
+
+        let role1 = swig.get::<ED25519Authority>(1);
+        assert!(role1.is_some());
+        assert_eq!(role1.unwrap().authority.proof, [1; 32]);
+
+        let role2 = swig.get::<ED25519Authority>(2);
+        assert!(role2.is_some());
+        assert_eq!(role2.unwrap().authority.proof, [2; 32]);
+    }
+
+    #[test]
+    fn test_swig_with_role_and_action_from_bytes() {
+        let bytes = [
+            1, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 2, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // role
+            1, 0, 96, 0, 1, 0, 0, 0, 96, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // action 1
+            1, 0, 8, 0, 8, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, // action 2
+            4, 0, 40, 0, 40, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 100, 0, 0, 0, 0, 0, 0, 0,
+        ];
+
+        let swig = SwigWithRoles::from_bytes(&bytes).unwrap();
+
+        assert_eq!(swig.state.discriminator, 1);
+        assert_eq!(swig.state.bump, 255);
+        assert_eq!(swig.state.id, [0; 32]);
+        assert_eq!(swig.state.roles, 2);
+
+        // role
+
+        let role = swig.get::<ED25519Authority>(1);
+        assert!(role.is_some());
+
+        let role = role.unwrap();
+        assert_eq!(role.authority.proof, [1; 32]);
+
+        // action 1
+
+        let action1 = role.get::<SolLimit>();
+        assert!(action1.is_some());
+
+        let action1 = action1.unwrap();
+        assert_eq!(action1.amount, 1);
+
+        // action 2
+        let action2 = role.get::<TokenLimit>();
+        assert!(action2.is_some());
+
+        let action2 = action2.unwrap();
+        assert_eq!(action2.token_mint, [1; 32]);
+        assert_eq!(action2.current_amount, 100);
     }
 }

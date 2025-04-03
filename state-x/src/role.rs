@@ -1,9 +1,9 @@
-use core::mem;
+use core::mem::{self, MaybeUninit};
 
 use pinocchio::program_error::ProgramError;
 
 use crate::{
-    action::{Action, Actionable},
+    action::{Action, Actionable, Permission},
     authority::{Authority, AuthorityType},
     FromBytes, FromBytesMut, Transmutable,
 };
@@ -18,6 +18,30 @@ pub struct Role<'a, T: Authority<'a>> {
 
     /// Actions associated with this authority.
     actions: &'a [u8],
+}
+
+impl<'a, T: Authority<'a>> Role<'a, T> {
+    pub fn get<U: Actionable<'a>>(&'a self) -> Option<&U> {
+        let mut cursor = 0;
+
+        while (cursor + Action::LEN) <= self.actions.len() {
+            let offset = cursor + Action::LEN;
+            let action = unsafe { Action::load_unchecked(&self.actions[cursor..offset]).unwrap() };
+
+            match action.permission() {
+                Ok(t) if t == U::TYPE => {
+                    let end = offset + action.length() as usize;
+                    return unsafe { U::load_unchecked(&self.actions[offset..end]).ok() };
+                },
+                Ok(Permission::None) => {
+                    return None;
+                },
+                _ => cursor = offset + action.boundary() as usize,
+            }
+        }
+
+        None
+    }
 }
 
 impl<'a, T: Authority<'a>> FromBytes<'a> for Role<'a, T> {
@@ -47,7 +71,7 @@ pub struct RoleMut<'a, T: Authority<'a>> {
     pub authority: &'a mut T,
 
     /// Actions associated with this authority.
-    actions: &'a mut [u8],
+    _actions: &'a mut [u8],
 }
 
 /*
@@ -86,20 +110,21 @@ impl<'a, T: Authority<'a>> FromBytesMut<'a> for RoleMut<'a, T> {
         Ok(RoleMut {
             position,
             authority,
-            actions,
+            _actions: actions,
         })
     }
 }
 
 static_assertions::const_assert!(mem::size_of::<Position>() % 8 == 0);
+
 #[repr(C)]
 pub struct Position {
     /// Data section.
-    ///   0. authority type u16
-    ///   1..2. ID u32
-    ///   3. length u16
-    ///   4..6. boundary u32
-    ///   7..8. padding u16
+    ///   - `[0]` authority type (u16)
+    ///   - `[1]` length (u16)
+    ///   - `[2..3]` ID (u32)
+    ///   - `[4..5]` boundary (u32)
+    ///   - `[6..7]` padding (u32)
     data: [u16; 8],
 }
 
@@ -109,17 +134,22 @@ impl Transmutable for Position {
 
 impl Position {
     pub fn new(authority_type: AuthorityType, id: u32, length: u16, boundary: u32) -> Self {
+        let mut data: MaybeUninit<[u16; 8]> = MaybeUninit::uninit();
+        let ptr = data.as_mut_ptr();
+
+        unsafe {
+            *(*ptr).get_unchecked_mut(0) = authority_type as u16;
+            *(*ptr).get_unchecked_mut(1) = length;
+
+            let raw = ptr as *mut u8;
+            (raw.add(4) as *mut [u8; 4]).write(id.to_le_bytes());
+            (raw.add(8) as *mut [u8; 4]).write(boundary.to_le_bytes());
+            // Make sure the padding is zeroed out.
+            (raw.add(12) as *mut [u8; 4]).write([0; 4]);
+        }
+
         Self {
-            data: [
-                authority_type as u16,
-                (id >> 16) as u16,
-                (id & 0xFFFF) as u16,
-                length,
-                (boundary >> 16) as u16,
-                (boundary & 0xFFFF) as u16,
-                0,
-                0,
-            ],
+            data: unsafe { data.assume_init() },
         }
     }
 
@@ -127,16 +157,18 @@ impl Position {
         AuthorityType::try_from(self.data[0])
     }
 
-    pub fn id(&self) -> u32 {
-        (self.data[1] as u32) << 16 | self.data[2] as u32
+    pub fn length(&self) -> u16 {
+        self.data[1]
     }
 
-    pub fn length(&self) -> u16 {
-        self.data[3]
+    pub fn id(&self) -> u32 {
+        // SAFETY: The `data` is guaranteed to be aligned and have the correct size.
+        u32::from_le_bytes(unsafe { *(self.data.as_ptr().add(2) as *const [u8; 4]) })
     }
 
     pub fn boundary(&self) -> u32 {
-        (self.data[4] as u32) << 16 | self.data[5] as u32
+        // SAFETY: The `data` is guaranteed to be aligned and have the correct size.
+        u32::from_le_bytes(unsafe { *(self.data.as_ptr().add(4) as *const [u8; 4]) })
     }
 }
 
@@ -145,42 +177,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_position_to_bytes() {
+    fn test_position() {
         let position = Position::new(AuthorityType::Ed25519, 12345, 100, 54321);
-        let bytes = position.as_bytes().unwrap();
 
+        // Check expected values.
+        assert_eq!(position.authority_type().unwrap(), AuthorityType::Ed25519);
+        assert_eq!(position.length(), 100);
+        assert_eq!(position.id(), 12345);
+        assert_eq!(position.boundary(), 54321);
+
+        let bytes = position.as_bytes();
         assert_eq!(bytes.len(), Position::LEN);
-
-        // Check raw bytes match expected values
-        let bytes_as_u16: &[u16] =
-            unsafe { core::slice::from_raw_parts(bytes.as_ptr() as *const u16, Position::LEN / 2) };
-        assert_eq!(bytes_as_u16[0], AuthorityType::Ed25519 as u16);
-        assert_eq!(bytes_as_u16[1], (12345 >> 16) as u16);
-        assert_eq!(bytes_as_u16[2], (12345 & 0xFFFF) as u16);
-        assert_eq!(bytes_as_u16[3], 100);
-        assert_eq!(bytes_as_u16[4], (54321 >> 16) as u16);
-        assert_eq!(bytes_as_u16[5], (54321 & 0xFFFF) as u16);
-        assert_eq!(bytes_as_u16[6], 0); // padding
-        assert_eq!(bytes_as_u16[7], 0); // padding
-    }
-
-    #[test]
-    fn test_position_from_bytes() {
-        let original = Position::new(AuthorityType::Ed25519, 12345, 100, 54321);
-        let bytes = original.as_bytes().unwrap();
-
-        let loaded = unsafe { Position::load_unchecked(bytes) }.unwrap();
-        assert_eq!(loaded.authority_type().unwrap(), AuthorityType::Ed25519);
-        assert_eq!(loaded.id(), 12345);
-        assert_eq!(loaded.length(), 100);
-        assert_eq!(loaded.boundary(), 54321);
+        assert_eq!(bytes[12..16], [0; 4]);
     }
 
     #[test]
     fn test_position_edge_cases() {
         // Test max values
         let max_position = Position::new(AuthorityType::Ed25519, u32::MAX, u16::MAX, u32::MAX);
-        let bytes = max_position.as_bytes().unwrap();
+        let bytes = max_position.as_bytes();
         let loaded = unsafe { Position::load_unchecked(bytes) }.unwrap();
         assert_eq!(loaded.id(), u32::MAX);
         assert_eq!(loaded.length(), u16::MAX);
@@ -188,7 +203,7 @@ mod tests {
 
         // Test zero values
         let zero_position = Position::new(AuthorityType::Ed25519, 0, 0, 0);
-        let bytes = zero_position.as_bytes().unwrap();
+        let bytes = zero_position.as_bytes();
         let loaded = unsafe { Position::load_unchecked(bytes) }.unwrap();
         assert_eq!(loaded.id(), 0);
         assert_eq!(loaded.length(), 0);
@@ -196,9 +211,9 @@ mod tests {
     }
 
     #[test]
-    fn test_invalid_authority_type() {
+    fn test_position_invalid_authority_type() {
         let position = Position::new(AuthorityType::Ed25519, 0, 0, 0);
-        let mut bytes = position.as_bytes().unwrap().to_vec();
+        let mut bytes = position.as_bytes().to_vec();
 
         // Set authority type to 0 (None) which should be invalid
         let bytes_as_u16: &mut [u16] = unsafe {

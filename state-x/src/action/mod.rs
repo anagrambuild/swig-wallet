@@ -6,6 +6,7 @@ pub mod sol_recurring_limit;
 pub mod sub_account;
 pub mod token_limit;
 pub mod token_recurring_limit;
+
 use all::All;
 use manage_authority::ManageAuthority;
 use pinocchio::program_error::ProgramError;
@@ -60,11 +61,12 @@ impl Action {
     }
 
     pub fn boundary(&self) -> u32 {
-        (self.data[2] as u32) << 16 | self.data[3] as u32
+        // SAFETY: The `data` is guaranteed to be aligned and have the correct size.
+        u32::from_le_bytes(unsafe { *(self.data.as_ptr().add(2) as *const [u8; 4]) })
     }
 }
 
-#[derive(Default, PartialEq)]
+#[derive(Debug, Default, PartialEq)]
 #[repr(u16)]
 pub enum Permission {
     #[default]
