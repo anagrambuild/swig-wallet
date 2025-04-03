@@ -2,100 +2,98 @@ use pinocchio::{
     account_info::AccountInfo,
     msg,
     program_error::ProgramError,
-    sysvars::{rent::Rent, Sysvar},
+    sysvars::{clock::Clock, rent::Rent, Sysvar},
     ProgramResult,
 };
 use pinocchio_system::instructions::Transfer;
-use swig_state::{swig_account_seeds_with_bump, Action, AuthorityType, Role, Swig};
+use swig_assertions::{check_bytes_match, check_self_owned};
+use swig_state_x::{
+    action::{all::All, manage_authority::ManageAuthority, Action}, authority::{Authority, AuthorityLoader, AuthorityType}, role::Position, swig::{swig_account_seeds_with_bump, SwigBuilder, SwigWithRoles, SwigWithRolesMut}, Discriminator, IntoBytes, Transmutable
+};
 
 use crate::{
-    assertions::{check_bytes_match, check_self_owned, check_self_pda},
     error::SwigError,
     instruction::{
         accounts::{AddAuthorityV1Accounts, Context},
-        Authenticatable, SwigInstruction, SWIG_ACCOUNT_NAME,
+        Authenticatable, SwigInstruction,
     },
-    util::ZeroCopy,
 };
 
 pub struct AddAuthorityV1<'a> {
     pub args: &'a AddAuthorityV1Args,
     data_payload: &'a [u8],
     authority_payload: &'a [u8],
-    actions_payload: &'a [u8],
+    actions: &'a [u8],
     authority_data: &'a [u8],
 }
 
 static_assertions::const_assert!(core::mem::size_of::<AddAuthorityV1Args>() % 8 == 0);
 #[repr(C)]
 pub struct AddAuthorityV1Args {
-    pub instruction: u8,
-    pub acting_role_id: u8,
-    pub authority_data_len: u16,
-    pub actions_payload_len: u16,
-    pub authority_type: AuthorityType,
-    pub padding2: [u8; 1],
-    pub start_slot: u64,
-    pub end_slot: u64,
+    pub instruction: SwigInstruction,
+    pub acting_role_id: u32,
+    pub new_authority_data_len: u16,
+    pub actions_data_len: u16,
+    pub new_authority_type: u16,
+    pub num_actions: u8
 }
 
-impl Authenticatable for AddAuthorityV1<'_> {
-    fn data_payload(&self) -> &[u8] {
-        self.data_payload
-    }
-    fn authority_payload(&self) -> &[u8] {
-        self.authority_payload
-    }
+impl Transmutable for AddAuthorityV1Args {
+    const LEN: usize = core::mem::size_of::<Self>();
 }
 
 impl AddAuthorityV1Args {
     pub fn new(
-        acting_role_id: u8,
+        acting_role_id: u32,
         authority_type: AuthorityType,
-        authority_data_len: u16,
-        actions_payload_len: u16,
-        start_slot: u64,
-        end_slot: u64,
+        new_authority_data_len: u16,
+        actions_data_len: u16,
+        num_actions: u8,
     ) -> Self {
         Self {
-            instruction: SwigInstruction::AddAuthorityV1 as u8,
+            instruction: SwigInstruction::AddAuthorityV1,
             acting_role_id,
-            authority_type,
-            actions_payload_len,
-            authority_data_len,
-            padding2: [0; 1],
-            start_slot,
-            end_slot,
+            new_authority_type: authority_type as u16,
+            new_authority_data_len,
+            actions_data_len,
+            num_actions,
+
         }
     }
 }
-
-impl<'a> ZeroCopy<'a, AddAuthorityV1Args> for AddAuthorityV1Args {}
 
 impl AddAuthorityV1Args {
     pub const SIZE: usize = core::mem::size_of::<Self>();
 }
 
-impl<'a> AddAuthorityV1<'a> {
-    pub fn load(data: &'a [u8]) -> Result<Self, ProgramError> {
-        let (inst, rest) = data.split_at(AddAuthorityV1Args::SIZE);
-        let args = AddAuthorityV1Args::load(inst).map_err(|_| {
-            msg!("AddAuthorityV1 Args Error:");
-            ProgramError::InvalidInstructionData
-        })?;
+impl<'a> IntoBytes<'a> for AddAuthorityV1Args {
+  fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+      Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
+  }
+}
 
-        let (authority_data, rest) = rest.split_at(args.authority_data_len as usize);
-        let (actions_payload, rest) = rest.split_at(args.actions_payload_len as usize);
+impl<'a> AddAuthorityV1<'a> {
+    pub fn from_instruction_bytes(data: &'a [u8]) -> Result<Self, ProgramError> {
+        let (inst, rest) = data.split_at(AddAuthorityV1Args::SIZE);
+        let args = unsafe { AddAuthorityV1Args::load_unchecked(inst)? };
+
+        let (authority_data, rest) = rest.split_at(args.new_authority_data_len as usize);
+        let (actions_payload, authority_payload) = rest.split_at(args.actions_data_len as usize);
 
         Ok(Self {
             args,
             authority_data,
-            authority_payload: rest,
-            actions_payload,
+            authority_payload,
+            actions: actions_payload,
             data_payload: &data[AddAuthorityV1Args::SIZE
                 ..AddAuthorityV1Args::SIZE
-                    + (args.authority_data_len + args.actions_payload_len) as usize],
+                    + (args.new_authority_data_len + args.actions_data_len) as usize],
         })
+    }
+
+    pub fn get_authority(&'a self) -> Result<&impl Authority<'a>, ProgramError> {
+        let authority_type = AuthorityType::try_from(self.args.new_authority_type)?;
+        AuthorityLoader::load_authority(authority_type, self.authority_data)
     }
 }
 
@@ -104,78 +102,83 @@ pub fn add_authority_v1(
     add: &[u8],
     all_accounts: &[AccountInfo],
 ) -> ProgramResult {
-    check_self_owned(
-        ctx.accounts.swig,
-        SwigError::OwnerMismatch(SWIG_ACCOUNT_NAME),
-    )?;
+    check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     check_bytes_match(
         ctx.accounts.system_program.key(),
         &pinocchio_system::ID,
         32,
         SwigError::InvalidSystemProgram,
     )?;
-    let add_authority_v1 = AddAuthorityV1::load(add).map_err(|e| {
+    let add_authority_v1 = AddAuthorityV1::from_instruction_bytes(add).map_err(|e| {
         msg!("AddAuthorityV1 Args Error: {:?}", e);
         ProgramError::InvalidInstructionData
     })?;
-    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    let id = Swig::raw_get_id(swig_account_data);
-    let bump = Swig::raw_get_bump(swig_account_data);
-    let (_, role) = Swig::raw_get_role(
-        swig_account_data,
-        add_authority_v1.args.acting_role_id as usize,
-    )
-    .ok_or(SwigError::InvalidAuthority)?;
-    add_authority_v1.authenticate(all_accounts, &role)?;
-    let b = [bump];
-    let seeds = swig_account_seeds_with_bump(&id, &b);
-    check_self_pda(
-        &seeds,
-        ctx.accounts.swig.key(),
-        SwigError::InvalidSeed(SWIG_ACCOUNT_NAME),
-    )?;
-    let authorized = role.actions.iter().find(|action| match action {
-        Action::ManageAuthority => true,
-        Action::All => true,
-        _ => false,
-    });
-    if authorized.is_none() {
-        return Err(SwigError::PermissionDenied("No permission to manage authority").into());
-    };
-    let actions = Vec::<Action>::try_from_slice(add_authority_v1.actions_payload).map_err(|e| {
-        msg!("AddAuthorityV1 Actions Error: {:?}", e);
-        ProgramError::InvalidInstructionData
-    })?;
-    let new_auth_data = add_authority_v1.authority_data;
-    let existing_role = Swig::raw_lookup_role(swig_account_data, new_auth_data);
-    if existing_role.is_some() {
-        return Err(SwigError::InvalidAuthority.into());
-    }
-    let role = Role::new(
-        add_authority_v1.args.authority_type,
-        new_auth_data.to_vec(),
-        add_authority_v1.args.start_slot,
-        add_authority_v1.args.end_slot,
-        actions,
-    );
-    let role_size = swig_account_data.len() + role.size();
-    ctx.accounts.swig.realloc(role_size, false)?;
-    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    let cost = Rent::get()?
-        .minimum_balance(role_size)
-        .checked_sub(ctx.accounts.swig.lamports())
-        .unwrap_or_default();
-    if cost > 0 {
-        Transfer {
-            from: ctx.accounts.payer,
-            to: ctx.accounts.swig,
-            lamports: cost,
+    {
+        let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        if swig_account_data[0] != Discriminator::SwigAccount as u8 {
+            return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
-        .invoke()?;
+        let swig = SwigWithRoles::from_bytes(swig_account_data)?;
+
+        let role = swig.lookup_role(add_authority_v1.args.acting_role_id)?;
+        if role.is_none() {
+            return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+        }
+        let role = role.unwrap();
+        let authority = swig.get_authority(&role)?;
+        let clock = Clock::get()?;
+        let slot = clock.slot;
+        if authority.session_based() {
+            authority.authenticate_session(
+                all_accounts,
+                add_authority_v1.authority_payload,
+                add_authority_v1.data_payload,
+                slot,
+            )?;
+        } else {
+            authority.authenticate(
+                all_accounts,
+                add_authority_v1.authority_payload,
+                add_authority_v1.data_payload,
+                slot,
+            )?;
+        }
+
+        let all = swig.get_action::<All>(&role, &[])?;
+        let manage_authority = swig.get_action::<ManageAuthority>(&role, &[])?;
+
+        if all.is_none() && manage_authority.is_none() {
+            return Err(SwigError::PermissionDeniedToManageAuthority.into());
+        }
+
+        let role_size = Position::LEN
+            + authority.length()
+            + Action::LEN * add_authority_v1.args.num_actions as usize
+            + add_authority_v1.actions.len();
+
+        ctx.accounts.swig.realloc(role_size, false)?;
+        let account_size = swig_account_data.len() + role_size;
+        ctx.accounts.swig.realloc(account_size, false)?;
+        let cost = Rent::get()?
+            .minimum_balance(account_size)
+            .checked_sub(ctx.accounts.swig.lamports())
+            .unwrap_or_default();
+        if cost > 0 {
+            Transfer {
+                from: ctx.accounts.payer,
+                to: ctx.accounts.swig,
+                lamports: cost,
+            }
+            .invoke()?;
+        }
     }
-    Swig::raw_add_role(swig_account_data, &role).map_err(|e| {
-        msg!("AddAuthorityV1 Role Error: {:?}", e);
-        SwigError::SerializationError
-    })?;
+    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+    let authority = add_authority_v1.get_authority()?;
+    let mut swig_builder = SwigBuilder::new_from_bytes(swig_account_data)?;
+    swig_builder.add_role(
+        authority,
+        add_authority_v1.args.num_actions,
+        add_authority_v1.actions,
+    )?;
     Ok(())
 }

@@ -12,6 +12,15 @@ pub struct TokenLimit {
     pub current_amount: u64,
 }
 
+impl TokenLimit {
+    pub fn run(&mut self, amount: u64) -> Result<(), ProgramError> {
+        if amount > self.current_amount {
+            return Err(ProgramError::InsufficientFunds);
+        }
+        self.current_amount -= amount;
+        Ok(())
+    }
+}
 impl Transmutable for TokenLimit {
     const LEN: usize = 40; // Since this is just a marker with no data
 }
@@ -31,10 +40,6 @@ impl<'a> Actionable<'a> for TokenLimit {
     const REPEATABLE: bool = true;
 
     fn match_data(&self, data: &[u8]) -> bool {
-        data.len() == Self::LEN && data[0..32] == self.token_mint
-    }
-
-    fn validate(&mut self) {
-        // No validation needed for a marker type
+        data[0..32] == self.token_mint
     }
 }

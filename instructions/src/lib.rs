@@ -18,6 +18,13 @@ pub enum InstructionError {
     MissingData,
 }
 
+impl From<InstructionError> for ProgramError {
+  fn from(e: InstructionError) -> Self {
+      ProgramError::Custom(e as u32)
+  }
+}
+
+
 pub struct InstructionHolder<'a> {
     pub program_id: &'a Pubkey,
     pub cpi_accounts: Vec<Account<'a>>,

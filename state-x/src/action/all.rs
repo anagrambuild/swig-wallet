@@ -26,8 +26,4 @@ impl<'a> Actionable<'a> for All {
     fn match_data(&self, _data: &[u8]) -> bool {
         true
     }
-
-    fn validate(&mut self) {
-        // No validation needed for a marker type
-    }
 }

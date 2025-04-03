@@ -13,6 +13,19 @@ pub struct TokenRecurringLimit {
   pub last_reset: u64,
 }
 
+impl TokenRecurringLimit {
+    pub fn run(&mut self, amount: u64, current_slot: u64) -> Result<(), ProgramError> {
+        if current_slot - self.last_reset > self.window && amount <= self.limit {
+            self.current = self.limit;
+            self.last_reset = current_slot;
+        }
+        if amount > self.current {
+            return Err(ProgramError::InsufficientFunds);
+        }
+        self.current -= amount;
+        Ok(())
+    }
+}
 impl Transmutable for TokenRecurringLimit {
     const LEN: usize = 64; // Since this is just a marker with no data
 }
@@ -30,10 +43,6 @@ impl<'a> Actionable<'a> for TokenRecurringLimit {
     const REPEATABLE: bool = true;
 
     fn match_data(&self, data: &[u8]) -> bool {
-        data.len() == Self::LEN && data[0..32] == self.token_mint
-    }
-
-    fn validate(&mut self) {
-        // No validation needed for a marker type
+        data[0..32] == self.token_mint
     }
 }

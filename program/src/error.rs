@@ -4,6 +4,8 @@ use swig_compact_instructions::InstructionError;
 #[derive(Debug)]
 #[repr(u32)]
 pub enum SwigError {
+    //InvalidSwigAccount,
+    InvalidSwigAccountDiscriminator,
     //OwnerMismatch,
     OwnerMismatchSwigAccount,
     //AccountNotEmpty,
@@ -22,11 +24,17 @@ pub enum SwigError {
     InvalidAuthorityPayload,
     //InvalidAuthority,
     InvalidAuthorityNotFoundByRoleId,
-    InstructionError,
+    //InstructionError,
+    InstructionExecutionError,
     SerializationError,
     //InvalidAccounts,
     InvalidAccountsSwigMustBeFirst,
-    PermissionDenied,
+    // PermissionDenied,
+    PermissionDeniedMissingPermission,
+    PermissionDeniedTokenAccountPermissionFailure,
+    PermissionDeniedTokenAccountDelegatePresent,
+    PermissionDeniedTokenAccountNotInitialized,
+    PermissionDeniedToManageAuthority,
     InvalidSystemProgram,
     DuplicateAuthority,
     InvalidOperation,

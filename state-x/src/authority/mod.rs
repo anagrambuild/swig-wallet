@@ -1,17 +1,40 @@
 pub mod ed25519;
 
 use ed25519::ED25519Authority;
-use pinocchio::{msg, program_error::ProgramError};
+use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError};
 
-use crate::{IntoBytes, Transmutable, TransmutableMut};
+use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
 
 /// Trait for authority data.
 ///
 /// The `Authority` defines the data of a particular authority.
 pub trait Authority<'a>: Transmutable + TransmutableMut + IntoBytes<'a> {
     const TYPE: AuthorityType;
+    const SESSION_BASED: bool;
+
+    fn session_based(&self) -> bool {
+      Self::SESSION_BASED
+    }
 
     fn length(&self) -> usize;
+
+    fn authenticate_session(
+        &self,
+        _account_infos: &[AccountInfo],
+        _authority_payload: &[u8],
+        _data_payload: &[u8],
+        _slot: u64,
+    ) -> Result<(), ProgramError> {
+        return Err(SwigAuthenticateError::AuthorityDoesNotSupportSessionBasedAuth.into());
+    }
+
+    fn authenticate(
+        &self,
+        account_infos: &[AccountInfo],
+        authority_payload: &[u8],
+        data_payload: &[u8],
+        slot: u64,
+    ) -> Result<(), ProgramError>;
 }
 
 #[derive(Debug, PartialEq)]

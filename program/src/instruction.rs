@@ -2,9 +2,6 @@ use num_enum::{FromPrimitive, IntoPrimitive};
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
 use shank::{ShankContext, ShankInstruction};
 
-use crate::{authority_models::authenticate, error::SwigError};
-
-pub const SWIG_ACCOUNT_NAME: &str = "swig"; // shank replacement wit h 'static str names for accounts
 
 #[derive(Clone, Copy, Debug, ShankContext, ShankInstruction, FromPrimitive, IntoPrimitive)]
 #[rustfmt::skip]

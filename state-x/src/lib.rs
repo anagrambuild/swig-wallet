@@ -14,6 +14,29 @@ pub enum Discriminator {
     SwigAccount,
 }
 
+#[derive(PartialEq, Debug, Copy, Clone)]
+pub enum StakeAccountState {
+    Uninitialized,
+    Initialized,
+    Stake,
+    RewardsPool,
+}
+
+#[derive(PartialEq, Debug, Copy, Clone)]
+pub enum AccountClassification {
+    None,
+    ThisSwig {
+        lamports: u64,
+    },
+    SwigTokenAccount {
+        balance: u64,
+    },
+    SwigStakingAccount {
+        state: StakeAccountState,
+        balance: u64,
+    },
+}
+
 pub enum SwigStateError {
     InvalidAccountData = 1000,
     InvalidActionData,
@@ -22,8 +45,20 @@ pub enum SwigStateError {
     InvalidSwigData,
 }
 
+pub enum SwigAuthenticateError {
+    InvalidAuthorityPayload = 3000,
+    InvalidAuthority,
+    AuthorityDoesNotSupportSessionBasedAuth,
+}
+
 impl From<SwigStateError> for ProgramError {
     fn from(e: SwigStateError) -> Self {
+        ProgramError::Custom(e as u32)
+    }
+}
+
+impl From<SwigAuthenticateError> for ProgramError {
+    fn from(e: SwigAuthenticateError) -> Self {
         ProgramError::Custom(e as u32)
     }
 }

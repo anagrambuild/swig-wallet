@@ -1,7 +1,4 @@
-
-
 pub mod actions;
-mod authority_models;
 mod error;
 pub mod instruction;
 use core::mem::MaybeUninit;
@@ -19,7 +16,7 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_pubkey::{declare_id, pubkey};
-use swig_state_x::Discriminator;
+use swig_state_x::{AccountClassification, Discriminator};
 
 declare_id!("swigNmWhy8RvUYXBKV5TSU8Hh3f4o5EczHouzBzEsLC");
 const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
@@ -42,28 +39,6 @@ pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
     Ok(())
 }
 
-#[derive(PartialEq, Debug, Copy, Clone)]
-pub enum StakeAccountState {
-    Uninitialized,
-    Initialized,
-    Stake,
-    RewardsPool,
-}
-
-#[derive(PartialEq, Debug, Copy, Clone)]
-pub enum AccountClassification {
-    None,
-    ThisSwig {
-        lamports: u64,
-    },
-    SwigTokenAccount {
-        balance: u64,
-    },
-    SwigStakingAccount {
-        state: StakeAccountState,
-        balance: u64,
-    },
-}
 /// classify_accounts
 /// This functions classifies all accounts as either the swig account (assumed
 /// in all instructions to be the first account) or an asset account owned by
@@ -104,9 +79,7 @@ unsafe fn classify_account(
     accounts: &[MaybeUninit<AccountInfo>],
 ) -> Result<AccountClassification, ProgramError> {
     match account.owner() {
-        &crate::ID if index != 0 => {
-            Err(SwigError::InvalidAccountsSwigMustBeFirst.into())
-        },
+        &crate::ID if index != 0 => Err(SwigError::InvalidAccountsSwigMustBeFirst.into()),
         &crate::ID => {
             let data = account.borrow_data_unchecked();
             if data[0] == Discriminator::SwigAccount as u8 {
