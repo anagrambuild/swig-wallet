@@ -117,6 +117,10 @@ pub fn add_authority_v1(
         ProgramError::InvalidInstructionData
     })?;
     // closure here to avoid borrowing swig_account_data for the whole function so that we can mutate after realloc
+
+    if add_authority_v1.args.num_actions == 0 {
+        return Err(SwigError::InvalidAuthorityMustHaveAtLeastOneAction.into());
+    }
     let new_reserved_lamports = {
         let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
         if swig_account_data[0] != Discriminator::SwigAccount as u8 {
@@ -159,7 +163,13 @@ pub fn add_authority_v1(
             + Action::LEN * add_authority_v1.args.num_actions as usize
             + add_authority_v1.actions.len();
 
-        let account_size = swig_account_data.len() + role_size;
+        let account_size = core::alloc::Layout::from_size_align(
+            swig_account_data.len() + role_size,
+            core::mem::size_of::<u64>(),
+        )
+        .map_err(|_| SwigError::InvalidAlignment)?
+        .pad_to_align()
+        .size();
         ctx.accounts.swig.realloc(account_size, false)?;
         let cost = Rent::get()?
             .minimum_balance(account_size)
@@ -177,7 +187,6 @@ pub fn add_authority_v1(
     };
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let authority = add_authority_v1.get_authority()?;
-
     let mut swig_builder = SwigBuilder::new_from_bytes(swig_account_data)?;
     swig_builder.swig.reserved_lamports = new_reserved_lamports;
     swig_builder.add_role(

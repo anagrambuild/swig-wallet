@@ -23,9 +23,6 @@ pub enum SwigInstruction {
   #[account(0, writable, signer, name="swig", desc="the swig smart wallet")]
   #[account(1, writable, signer, name="payer", desc="the payer")]
   #[account(2, name="system_program", desc="the system program")]
-  ReplaceAuthorityV1 = 3,
-  #[account(0, writable, name="swig", desc="the swig smart wallet")]
-  #[account(1, writable, signer, name="payer", desc="the payer")]
   // additional ix data will be appended to the end of the ix the ix_payload and auth_payload have offset and length tuples to locate the data
   // Extra accounts will be sent over CPI to any of the IXs in the ix payload which resembles a txn
   SignV1 = 4,

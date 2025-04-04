@@ -4,7 +4,7 @@ use pinocchio::{
     msg,
     program_error::ProgramError,
     pubkey::Pubkey,
-    sysvars::{clock::Clock, rent::Rent, Sysvar},
+    sysvars::{clock::Clock, Sysvar},
     ProgramResult,
 };
 use pinocchio_pubkey::from_str;
@@ -14,7 +14,7 @@ use crate::{
     error::SwigError,
     instruction::{
         accounts::{Context, SignV1Accounts},
-        Authenticatable, SwigInstruction,
+        SwigInstruction,
     },
     AccountClassification,
 };
@@ -24,7 +24,7 @@ use swig_state_x::{
         all::All, sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
         token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit,
     },
-    authority::{Authority, AuthorityType},
+    authority:: AuthorityType,
     role::RoleMut,
     swig::{swig_account_signer, Swig},
     Discriminator, IntoBytes, Transmutable, TransmutableMut,
@@ -155,7 +155,6 @@ pub fn sign_v1(
         }
     }
     let actions = role.actions;
-
     if RoleMut::get_action_mut::<All>(actions, &[])?.is_some() {
         return Ok(());
     } else {

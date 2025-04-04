@@ -4,7 +4,10 @@ use solana_sdk::{
     system_program,
 };
 pub use swig;
-use swig::actions::{add_authority_v1::AddAuthorityV1Args, create_v1::CreateV1Args};
+use swig::actions::{
+    add_authority_v1::AddAuthorityV1Args, create_v1::CreateV1Args,
+    remove_authority_v1::RemoveAuthorityV1Args,
+};
 pub use swig_compact_instructions::*;
 use swig_state_x::{
     action::{
@@ -279,161 +282,62 @@ impl SignInstruction {
     }
 }
 
-// pub struct RemoveAuthorityInstruction;
-// impl RemoveAuthorityInstruction {
-//     pub fn new_with_ed25519_authority(
-//         swig_account: Pubkey,
-//         payer: Pubkey,
-//         authority: Pubkey,
-//         acting_role_id: u8,
-//         authority_to_remove_id: u8,
-//     ) -> anyhow::Result<Instruction> {
-//         let accounts = vec![
-//             AccountMeta::new(swig_account, false),
-//             AccountMeta::new(payer, true),
-//             AccountMeta::new_readonly(system_program::ID, false),
-//             AccountMeta::new_readonly(authority, true),
-//         ];
+pub struct RemoveAuthorityInstruction;
+impl RemoveAuthorityInstruction {
+    pub fn new_with_ed25519_authority(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority: Pubkey,
+        acting_role_id: u32,
+        authority_to_remove_id: u32,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(authority, true),
+        ];
 
-//         let args = swig::actions::remove_authority_v1::RemoveAuthorityV1Args::new(
-//             acting_role_id,
-//             authority_to_remove_id,
-//             1,
-//         );
+        let args = RemoveAuthorityV1Args::new(acting_role_id, authority_to_remove_id, 1);
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [arg_bytes, &[3]].concat(),
+        })
+    }
 
-//         Ok(Instruction {
-//             program_id: Pubkey::from(swig::ID),
-//             accounts,
-//             data: [args.as_bytes(), &[3]].concat(),
-//         })
-//     }
+    pub fn new_with_secp256k1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority_payload_fn: F,
+        acting_role_id: u32,
+        authority_to_remove_id: u32,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: Fn(&[u8]) -> [u8; 65],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ];
+        let args = RemoveAuthorityV1Args::new(
+            acting_role_id,
+            authority_to_remove_id,
+            65,
+        );
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
-//     pub fn new_with_secp256k1_authority<F>(
-//         swig_account: Pubkey,
-//         payer: Pubkey,
-//         authority_payload_fn: F,
-//         acting_role_id: u8,
-//         authority_to_remove_id: u8,
-//     ) -> anyhow::Result<Instruction>
-//     where
-//         F: Fn(&[u8]) -> [u8; 65],
-//     {
-//         let accounts = vec![
-//             AccountMeta::new(swig_account, false),
-//             AccountMeta::new(payer, true),
-//             AccountMeta::new_readonly(system_program::ID, false),
-//         ];
-
-//         let args = swig::actions::remove_authority_v1::RemoveAuthorityV1Args::new(
-//             acting_role_id,
-//             authority_to_remove_id,
-//             65,
-//         );
-
-//         let data_payload: [u8; 0] = [];
-
-//         let authority_payload = authority_payload_fn(&data_payload);
-
-//         Ok(Instruction {
-//             program_id: Pubkey::from(swig::ID),
-//             accounts,
-//             data: [args.as_bytes(), &authority_payload].concat(),
-//         })
-//     }
-// }
-
-// pub struct ReplaceAuthorityInstruction;
-// impl ReplaceAuthorityInstruction {
-//     pub fn new_with_ed25519_authority(
-//         swig_account: Pubkey,
-//         payer: Pubkey,
-//         authority: Pubkey,
-//         acting_role_id: u8,
-//         authority_to_replace_id: u8,
-//         new_authority_config: AuthorityConfig,
-//         actions: Vec<Action>,
-//         start: u64,
-//         end: u64,
-//     ) -> anyhow::Result<Instruction> {
-//         let accounts = vec![
-//             AccountMeta::new(swig_account, false),
-//             AccountMeta::new(payer, true),
-//             AccountMeta::new_readonly(system_program::ID, false),
-//             AccountMeta::new_readonly(authority, true),
-//         ];
-
-//         let authority_data = new_authority_config.authority;
-//         let authority_data_len = authority_data.len() as u16;
-
-//         let actions_bytes = borsh::to_vec(&actions)?;
-//         let actions_payload_len = actions_bytes.len() as u16;
-
-//         let args = swig::actions::replace_authority_v1::ReplaceAuthorityV1Args::new(
-//             acting_role_id,
-//             authority_to_replace_id,
-//             new_authority_config.authority_type,
-//             authority_data_len,
-//             actions_payload_len,
-//             start,
-//             end,
-//         );
-
-//         Ok(Instruction {
-//             program_id: Pubkey::from(swig::ID),
-//             accounts,
-//             data: [args.as_bytes(), authority_data, &actions_bytes, &[3]].concat(),
-//         })
-//     }
-
-//     pub fn new_with_secp256k1_authority<F>(
-//         swig_account: Pubkey,
-//         payer: Pubkey,
-//         authority_payload_fn: F,
-//         acting_role_id: u8,
-//         authority_to_replace_id: u8,
-//         new_authority_config: AuthorityConfig,
-//         actions: Vec<Action>,
-//         start: u64,
-//         end: u64,
-//     ) -> anyhow::Result<Instruction>
-//     where
-//         F: Fn(&[u8]) -> [u8; 65],
-//     {
-//         let accounts = vec![
-//             AccountMeta::new(swig_account, false),
-//             AccountMeta::new(payer, true),
-//             AccountMeta::new_readonly(system_program::ID, false),
-//         ];
-
-//         let authority_data = new_authority_config.authority;
-//         let authority_data_len = authority_data.len() as u16;
-
-//         let actions_bytes = borsh::to_vec(&actions)?;
-//         let actions_payload_len = actions_bytes.len() as u16;
-
-//         let args = swig::actions::replace_authority_v1::ReplaceAuthorityV1Args::new(
-//             acting_role_id,
-//             authority_to_replace_id,
-//             new_authority_config.authority_type,
-//             authority_data_len,
-//             actions_payload_len,
-//             start,
-//             end,
-//         );
-
-//         let data_payload = [authority_data, &actions_bytes].concat();
-//         let authority_payload = authority_payload_fn(&data_payload);
-
-//         Ok(Instruction {
-//             program_id: Pubkey::from(swig::ID),
-//             accounts,
-//             data: [
-//                 args.as_bytes(),
-//                 authority_data,
-//                 &actions_bytes,
-//                 &authority_payload,
-//             ]
-//             .concat(),
-//         })
-//     }
-// }
+        let authority_payload = authority_payload_fn(arg_bytes);
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [arg_bytes, &authority_payload].concat(),
+        })
+    }
+}

@@ -43,6 +43,7 @@ pub enum SwigStateError {
     InvalidAuthorityData,
     InvalidRoleData,
     InvalidSwigData,
+    RoleNotFound,
 }
 
 pub enum SwigAuthenticateError {
