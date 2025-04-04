@@ -15,71 +15,68 @@ use solana_sdk::{
     system_program,
     transaction::{Transaction, VersionedTransaction},
 };
-use swig_interface::{AuthorityConfig, ClientAction, CreateInstruction};
-use swig_state_x::{action::all::All, authority::AuthorityType, swig::swig_account_seeds};
+use swig_interface::{AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction};
+use swig_state_x::{
+    action::all::All,
+    authority::AuthorityType,
+    swig::{swig_account_seeds, Swig, SwigWithRoles},
+};
 
 pub fn program_id() -> Pubkey {
     swig::ID.into()
 }
 
-// pub fn add_authority_with_ed25519_root<'a>(
-//     context: &mut SwigTestContext,
-//     swig_pubkey: &Pubkey,
-//     existing_ed25519_authority: &Keypair,
-//     new_authority: AuthorityConfig,
-//     actions: Vec<Action>,
-//     start_slot: u64,
-//     end_slot: u64,
-// ) -> anyhow::Result<(Swig, TransactionMetadata)> {
-//     let payer_pubkey = context.default_payer.pubkey();
-//     let swig_account = context
-//         .svm
-//         .get_account(swig_pubkey)
-//         .ok_or(anyhow::anyhow!("Swig account not found"))?;
-//     let swig = unsafe { Swig::load_unchecked(&swig_account.data)? };
-//     let role = swig
-//         .lookup_role(existing_ed25519_authority.pubkey().as_ref())
-//         .unwrap();
-//     let add_authority_ix = AddAuthorityInstruction::new_with_ed25519_authority(
-//         *swig_pubkey,
-//         context.default_payer.pubkey(),
-//         existing_ed25519_authority.pubkey(),
-//         role.index as u8,
-//         new_authority,
-//         start_slot,
-//         end_slot,
-//         actions,
-//     )
-//     .map_err(|e| anyhow::anyhow!("Failed to create add authority instruction {:?}", e))?;
-//     let msg = v0::Message::try_compile(
-//         &payer_pubkey,
-//         &[
-//             ComputeBudgetInstruction::set_compute_unit_limit(10000000),
-//             add_authority_ix,
-//         ],
-//         &[],
-//         context.svm.latest_blockhash(),
-//     )
-//     .unwrap();
-//     let tx = VersionedTransaction::try_new(
-//         VersionedMessage::V0(msg),
-//         &[
-//             context.default_payer.insecure_clone(),
-//             existing_ed25519_authority.insecure_clone(),
-//         ],
-//     )
-//     .unwrap();
-//     let bench = context
-//         .svm
-//         .send_transaction(tx)
-//         .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
-//     let swig_account = context
-//         .svm
-//         .get_account(swig_pubkey)
-//         .ok_or(anyhow::anyhow!("Swig account not found"))?;
-//     let swig = Swig::try_from_slice(&swig_account.data)?;
-//     Ok((swig, bench))
-// }
+pub fn add_authority_with_ed25519_root<'a>(
+    context: &mut SwigTestContext,
+    swig_pubkey: &Pubkey,
+    existing_ed25519_authority: &Keypair,
+    new_authority: AuthorityConfig,
+    actions: Vec<ClientAction>,
+) -> anyhow::Result<TransactionMetadata> {
+    let payer_pubkey = context.default_payer.pubkey();
+    let swig_account = context
+        .svm
+        .get_account(swig_pubkey)
+        .ok_or(anyhow::anyhow!("Swig account not found"))?;
+    let swig = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
+    let role_id = swig
+        .lookup_role_id(existing_ed25519_authority.pubkey().as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to lookup role id {:?}", e))?
+        .unwrap();
+    let add_authority_ix = AddAuthorityInstruction::new_with_ed25519_authority(
+        *swig_pubkey,
+        context.default_payer.pubkey(),
+        existing_ed25519_authority.pubkey(),
+        role_id,
+        new_authority,
+        actions,
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to create add authority instruction {:?}", e))?;
+    let msg = v0::Message::try_compile(
+        &payer_pubkey,
+        &[
+            ComputeBudgetInstruction::set_compute_unit_limit(10000000),
+            add_authority_ix,
+        ],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[
+            context.default_payer.insecure_clone(),
+            existing_ed25519_authority.insecure_clone(),
+        ],
+    )
+    .unwrap();
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+    Ok(bench)
+}
 
 pub fn create_swig_ed25519(
     context: &mut SwigTestContext,
@@ -96,10 +93,8 @@ pub fn create_swig_ed25519(
             authority_type: AuthorityType::Ed25519,
             authority: authority.pubkey().as_ref(),
         },
-        vec![
-          ClientAction::All(All{}),
-        ],
-        id
+        vec![ClientAction::All(All {})],
+        id,
     )?;
 
     let msg = v0::Message::try_compile(

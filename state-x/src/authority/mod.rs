@@ -12,11 +12,15 @@ pub trait Authority<'a>: Transmutable + TransmutableMut + IntoBytes<'a> {
     const TYPE: AuthorityType;
     const SESSION_BASED: bool;
 
-    fn session_based(&self) -> bool {
-      Self::SESSION_BASED
-    }
-
     fn length(&self) -> usize;
+}
+
+pub trait AuthorityInfo {
+    fn authority_type(&self) -> AuthorityType;
+
+    fn session_based(&self) -> bool;
+
+    fn match_data(&self, data: &[u8]) -> bool;
 
     fn authenticate_session(
         &self,

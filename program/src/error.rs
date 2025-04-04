@@ -5,7 +5,7 @@ use swig_compact_instructions::InstructionError;
 #[repr(u32)]
 pub enum SwigError {
     //InvalidSwigAccount,
-    InvalidSwigAccountDiscriminator,
+    InvalidSwigAccountDiscriminator = 0,
     //OwnerMismatch,
     OwnerMismatchSwigAccount,
     //AccountNotEmpty,
@@ -35,6 +35,7 @@ pub enum SwigError {
     PermissionDeniedTokenAccountDelegatePresent,
     PermissionDeniedTokenAccountNotInitialized,
     PermissionDeniedToManageAuthority,
+    PermissionDeniedInsufficientBalance,
     InvalidSystemProgram,
     DuplicateAuthority,
     InvalidOperation,

@@ -3,8 +3,9 @@ use swig_assertions::sol_assert_bytes_eq;
 
 use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
 
-use super::{Authority, AuthorityType};
+use super::{Authority, AuthorityInfo, AuthorityType};
 
+static_assertions::const_assert!(core::mem::size_of::<ED25519Authority>() % 8 == 0);
 pub struct ED25519Authority {
     pub public_key: [u8; 32],
 }
@@ -14,6 +15,20 @@ impl<'a> Authority<'a> for ED25519Authority {
     const SESSION_BASED: bool = false;
     fn length(&self) -> usize {
         Self::LEN
+    }
+}
+
+impl AuthorityInfo for ED25519Authority {
+    fn authority_type(&self) -> AuthorityType {
+        AuthorityType::Ed25519
+    }
+
+    fn session_based(&self) -> bool {
+        Self::SESSION_BASED
+    }
+
+    fn match_data(&self, data: &[u8]) -> bool {
+        sol_assert_bytes_eq(&self.public_key, data, 32)
     }
 
     fn authenticate(

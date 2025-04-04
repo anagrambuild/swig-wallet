@@ -128,8 +128,8 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
     .map_err(|_| SwigError::InvalidAlignment)?
     .pad_to_align()
     .size();
-    let swig = Swig::new(create_v1.args.id, bump);
     let lamports_needed = Rent::get()?.minimum_balance(account_size);
+    let swig = Swig::new(create_v1.args.id, bump, lamports_needed);
 
     CreateAccount {
         from: ctx.accounts.payer,

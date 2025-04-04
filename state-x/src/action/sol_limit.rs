@@ -1,6 +1,6 @@
 use pinocchio::program_error::ProgramError;
 
-use crate::{IntoBytes, Transmutable, TransmutableMut};
+use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
 
 use super::{Actionable, Permission};
 
@@ -11,7 +11,9 @@ pub struct SolLimit {
 impl SolLimit {
     pub fn run(&mut self, lamport_diff: u64) -> Result<(), ProgramError> {
         if lamport_diff > self.amount {
-            return Err(ProgramError::InsufficientFunds);
+            return Err(
+                SwigAuthenticateError::PermissionDeniedInsufficientBalance.into(),
+            );
         }
         self.amount -= lamport_diff;
         Ok(())

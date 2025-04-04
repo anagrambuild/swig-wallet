@@ -1,16 +1,12 @@
 extern crate alloc;
 
-use core::cell::RefCell;
-use pinocchio::{instruction::Seed, program_error::ProgramError};
-
 use crate::{
-    action::{Action, ActionLoader, Actionable},
-    authority::{Authority, AuthorityLoader, AuthorityType},
+    action::{Action, ActionLoader},
+    authority::{ed25519::ED25519Authority, Authority, AuthorityInfo, AuthorityType},
     role::{Position, Role, RoleMut},
-    FromBytes, FromBytesMut, IntoBytes, Transmutable, TransmutableMut,
+    Discriminator, IntoBytes, Transmutable, TransmutableMut,
 };
-
-use core::cell::UnsafeCell;
+use pinocchio::{instruction::Seed, msg, program_error::ProgramError};
 
 #[inline(always)]
 pub fn swig_account_seeds(id: &[u8]) -> [&[u8]; 2] {
@@ -57,6 +53,78 @@ impl<'a> SwigBuilder<'a> {
         Ok(builder)
     }
 
+    pub fn remove_role(&mut self, id: u32) -> Result<(), ProgramError> {
+        // Find the role to remove
+        let mut cursor = 0;
+        let mut found_offset = None;
+        // First pass: scan all roles and collect their positions and boundaries
+        for _i in 0..self.swig.roles {
+            let position = unsafe {
+                Position::load_unchecked(&self.role_buffer[cursor..cursor + Position::LEN])?
+            };
+
+            // Record position info for all roles
+            let role_id = position.id();
+            let boundary = position.boundary() as usize;
+
+            // Check if this is the role we want to remove
+            if role_id == id {
+                found_offset = Some((cursor, boundary));
+            }
+
+            cursor = boundary;
+        }
+
+        // If role found, remove it and adjust other roles
+        if let Some((offset, boundary)) = found_offset {
+            // Calculate the size of data to be removed
+            println!("offset: {}", offset);
+            println!("boundary: {}", boundary);
+            let removal_size = boundary - offset;
+
+            // Shift all data after the removed role to fill the gap
+            let remaining_len = self.role_buffer.len() - boundary;
+            if remaining_len > 0 {
+                self.role_buffer
+                    .copy_within(boundary..boundary + remaining_len, offset);
+            }
+
+            // Second pass: update the boundaries of all roles after the removed one
+            cursor = offset;
+            while cursor < self.role_buffer.len() - removal_size {
+                let position = unsafe {
+                    Position::load_mut_unchecked(
+                        &mut self.role_buffer[cursor..cursor + Position::LEN],
+                    )?
+                };
+                let original_boundary = position.boundary;
+                println!("role id: {}", position.id());
+                println!("original_boundary: {}", original_boundary);
+                println!("removal_size: {}", removal_size);
+                // Calculate and write the new boundary
+                position.boundary = original_boundary - removal_size as u32;
+                println!("new boundary: {}", position.boundary);
+                cursor = position.boundary as usize;
+                println!("cursor: {}", cursor);
+                println!(
+                    "role buffer len - removal size: {}",
+                    self.role_buffer.len() - removal_size
+                );
+            }
+
+            // Zero out the now-unused data at the end
+            let new_data_end = self.role_buffer.len() - removal_size;
+            if new_data_end < self.role_buffer.len() {
+                self.role_buffer[new_data_end..].fill(0);
+            }
+
+            // Update the role count in the Swig struct
+            self.swig.roles -= 1;
+        }
+
+        Ok(())
+    }
+
     pub fn add_role<T: Authority<'a>>(
         &mut self,
         authority: &'a T,
@@ -90,11 +158,13 @@ impl<'a> SwigBuilder<'a> {
         //todo check actions for duplicates
         let mut action_cursor = 0;
         for _i in 0..num_actions {
-            let (header, data) = actions_data.split_at(action_cursor + Action::LEN);
+            let header = &actions_data[action_cursor..action_cursor + Action::LEN];
             let action_header = unsafe { Action::load_unchecked(header)? };
             action_cursor += Action::LEN;
-            let action_slice = &data[0..action_header.length() as usize];
+            let action_slice =
+                &actions_data[action_cursor..action_cursor + action_header.length() as usize];
             action_cursor += action_header.length() as usize;
+
             if ActionLoader::validate_layout(action_header.permission()?, action_slice)? {
                 self.role_buffer[cursor..cursor + Action::LEN].copy_from_slice(header);
                 // change boundary to the new boundary
@@ -124,18 +194,18 @@ pub struct Swig {
     pub id: [u8; 32],
     pub roles: u16,
     pub role_counter: u32, // ensure unique ids up to 2^32
-    _padding: [u16; 4],
+    pub reserved_lamports: u64,
 }
 
 impl Swig {
-    pub fn new(id: [u8; 32], bump: u8) -> Self {
+    pub fn new(id: [u8; 32], bump: u8, reserved_lamports: u64) -> Self {
         Self {
-            discriminator: 0,
+            discriminator: Discriminator::SwigAccount as u8,
             id,
             bump,
             roles: 0,
             role_counter: 0,
-            _padding: [0; 4],
+            reserved_lamports,
         }
     }
 }
@@ -151,6 +221,51 @@ impl<'a> IntoBytes<'a> for Swig {
         let bytes =
             unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
         Ok(bytes)
+    }
+}
+
+impl Swig {
+    pub fn get_mut_role<'a>(
+        id: u32,
+        roles: &'a mut [u8],
+    ) -> Result<Option<RoleMut<'a>>, ProgramError> {
+        let mut cursor = 0;
+        let mut found_offset = None;
+        let roles_len = roles.len();
+        if roles_len < Swig::LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        for _i in 0..roles_len {
+            let offset = cursor + Position::LEN;
+            let position =
+                unsafe { Position::load_unchecked(&roles.get_unchecked(cursor..offset))? };
+            if position.id() == id {
+                found_offset = Some(cursor);
+                break;
+            }
+            cursor = position.boundary() as usize;
+        }
+        if let Some(offset) = found_offset {
+            let (position, remaning) =
+                unsafe { roles[offset..].split_at_mut_unchecked(Position::LEN) };
+            let position = unsafe { Position::load_unchecked(position)? };
+            let (authority, actions) =
+                unsafe { remaning.split_at_mut_unchecked(position.authority_length() as usize) };
+
+            let auth: &dyn AuthorityInfo = match position.authority_type()? {
+                AuthorityType::Ed25519 => unsafe { ED25519Authority::load_unchecked(authority)? },
+                _ => return Err(ProgramError::InvalidAccountData),
+            };
+            let role = RoleMut {
+                position,
+                authority: auth,
+                num_actions: position.num_actions() as u8,
+                actions,
+            };
+            return Ok(Some(role));
+        }
+
+        Ok(None)
     }
 }
 
@@ -171,105 +286,70 @@ impl<'a> SwigWithRoles<'a> {
         Ok(SwigWithRoles { state, roles })
     }
 
-    pub fn lookup_role(&'a self, id: u32) -> Result<Option< Role<'a>>, ProgramError> {
+    pub fn lookup_role_id(&'a self, authority_data: &'a [u8]) -> Result<Option<u32>, ProgramError> {
+        let mut cursor = 0;
+
+        for _i in 0..self.state.roles {
+            let offset = cursor + Position::LEN;
+            let position =
+                unsafe { Position::load_unchecked(&self.roles.get_unchecked(cursor..offset))? };
+            let auth_type = position.authority_type()?;
+            let auth_len = position.authority_length() as usize;
+
+            // Load the authority based on its type
+            let authority: &dyn AuthorityInfo = match auth_type {
+                AuthorityType::Ed25519 => unsafe {
+                    ED25519Authority::load_unchecked(
+                        &self.roles.get_unchecked(offset..offset + auth_len),
+                    )?
+                },
+                _ => return Err(ProgramError::InvalidAccountData),
+            };
+
+            // Check if this authority matches the provided data
+            // The match_data method requires data of the correct length
+            if authority_data.len() >= 32 && authority.match_data(authority_data) {
+                return Ok(Some(position.id()));
+            }
+
+            // Move cursor to the next role boundary
+            cursor = position.boundary() as usize;
+        }
+
+        // No matching role found
+        Ok(None)
+    }
+
+    pub fn get_role(&'a self, id: u32) -> Result<Option<Role<'a>>, ProgramError> {
         let mut cursor = 0;
         for _i in 0..self.state.roles {
             let offset = cursor + Position::LEN;
-            let position = unsafe { Position::load_unchecked(&self.roles[cursor..offset])? };
+            let position =
+                unsafe { Position::load_unchecked(&self.roles.get_unchecked(cursor..offset))? };
             if position.id() == id {
-                return Ok(Some(
-                  Role {
+                let authority =
+                    match position.authority_type()? {
+                        AuthorityType::Ed25519 => unsafe {
+                            ED25519Authority::load_unchecked(self.roles.get_unchecked(
+                                offset..offset + position.authority_length() as usize,
+                            ))?
+                        },
+                        _ => return Err(ProgramError::InvalidAccountData),
+                    };
+                return Ok(Some(Role {
                     position,
-                    authority: unsafe { self.roles.get_unchecked(offset..offset + position.authority_length() as usize) },
-                    actions: unsafe { self.roles.get_unchecked(offset + position.authority_length() as usize..offset + position.boundary() as usize) },
-                  }
-
-                ));
+                    authority,
+                    actions: unsafe {
+                        self.roles.get_unchecked(
+                            offset + position.authority_length() as usize
+                                ..position.boundary() as usize,
+                        )
+                    },
+                }));
             }
             cursor = position.boundary() as usize;
         }
         Ok(None)
-    }
-
-    
-}
-
-pub struct SwigWithRolesMut<'a> {
-    pub state: &'a mut Swig,
-    roles: UnsafeCell<&'a mut [u8]>,
-}
-
-// SAFETY: We ensure thread-safety through Solana's single-threaded execution model
-unsafe impl<'a> Sync for SwigWithRolesMut<'a> {}
-
-impl<'a> SwigWithRolesMut<'a> {
-    pub fn from_bytes(bytes: &'a mut [u8]) -> Result<Self, ProgramError> {
-        let (swig_bytes, roles_bytes) = bytes.split_at_mut(Swig::LEN);
-        let state = unsafe { Swig::load_mut_unchecked(swig_bytes)? };
-        let roles = UnsafeCell::new(roles_bytes);
-        Ok(SwigWithRolesMut { state, roles })
-    }
-
-    pub fn lookup_role(&'a self, id: u32) -> Result<Option<RoleMut<'a>>, ProgramError> {
-        let roles = unsafe { &*self.roles.get() };
-        let mut cursor = 0;
-        for _i in 0..self.state.roles {
-            let offset = cursor + Position::LEN;
-            let position = unsafe { Position::load_unchecked(&roles[cursor..offset])? };
-            if position.id() == id {
-                return Ok(Some(RolePosition::new(offset, &position)));
-            }
-            cursor = offset + position.boundary() as usize;
-        }
-        Ok(None)
-    }
-
-    pub fn get_authority(
-        &'a self,
-        role_position: &'a RolePosition,
-    ) -> Result<&'a impl Authority, ProgramError> {
-        let roles = unsafe { &*self.roles.get() };
-        AuthorityLoader::load_authority(
-            role_position.position.authority_type()?,
-            &roles[role_position.offset
-                ..role_position.offset + role_position.position.authority_length() as usize],
-        )
-    }
-
-    pub fn get_action<A: Actionable<'a>>(
-        &'a self,
-        role_position: &'a RolePosition,
-        match_data: &[u8],
-    ) -> Result<Option<&'a mut A>, ProgramError> {
-        let roles = unsafe { &mut *self.roles.get() };
-        let mut cursor = role_position.offset + role_position.position.authority_length() as usize;
-        let end_pos = role_position.position.boundary() as usize;
-        let mut found_offset = None;
-
-        {
-            let roles_ref = &*roles;
-            while cursor < end_pos {
-                let action =
-                    unsafe { Action::load_unchecked(&roles_ref[cursor..cursor + Action::LEN])? };
-                cursor += Action::LEN;
-                if action.permission()? == A::TYPE {
-                    let action_obj =
-                        unsafe { A::load_unchecked(&roles_ref[cursor..cursor + A::LEN])? };
-                    if !A::REPEATABLE || action_obj.match_data(match_data) {
-                        found_offset = Some(cursor);
-                        break;
-                    }
-                }
-                cursor = action.boundary() as usize;
-            }
-        }
-
-        if let Some(offset) = found_offset {
-            let action_obj = unsafe { A::load_mut_unchecked(&mut roles[offset..offset + A::LEN])? };
-            Ok(Some(action_obj))
-        } else {
-            Ok(None)
-        }
     }
 }
 
@@ -277,6 +357,7 @@ impl<'a> SwigWithRolesMut<'a> {
 mod tests {
     use super::*;
     use crate::action::sol_limit::SolLimit;
+    use crate::action::Actionable;
     use crate::{action::all::All, authority::ed25519::ED25519Authority};
 
     fn setup_test_buffer() -> ([u8; Swig::LEN + 256], [u8; 32], u8) {
@@ -286,10 +367,18 @@ mod tests {
         (account_buffer, id, bump)
     }
 
+    // Larger test buffer for tests with multiple actions
+    fn setup_large_test_buffer() -> ([u8; Swig::LEN + 512], [u8; 32], u8) {
+        let account_buffer = [0u8; Swig::LEN + 512];
+        let id = [1; 32];
+        let bump = 255;
+        (account_buffer, id, bump)
+    }
+
     #[test]
     fn test_swig_creation() {
         let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump);
+        let swig = Swig::new(id, bump, 0);
 
         // Test all fields of the Swig struct
         assert_eq!(swig.discriminator, 0);
@@ -297,7 +386,7 @@ mod tests {
         assert_eq!(swig.bump, bump);
         assert_eq!(swig.roles, 0);
         assert_eq!(swig.role_counter, 0);
-        assert_eq!(swig._padding, [0; 4]);
+        assert_eq!(swig.reserved_lamports, 0);
 
         // Test builder creation and verify buffer state
         let builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
@@ -337,7 +426,7 @@ mod tests {
     #[test]
     fn test_add_single_role() {
         let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump);
+        let swig = Swig::new(id, bump, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
         let authority = ED25519Authority {
@@ -362,25 +451,25 @@ mod tests {
 
         // Verify role can be found and has correct data
         let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
-        let role = swig_with_roles.lookup_role(0).unwrap().unwrap();
+        let role = swig_with_roles.get_role(0).unwrap().unwrap();
 
-        // Verify role position
+        // Verify authority type
         assert_eq!(
             role.position.authority_type().unwrap(),
             AuthorityType::Ed25519
         );
+
+        // Verify role ID
         assert_eq!(role.position.id(), 0);
 
-        // Verify authority data
-        let retrieved_authority = swig_with_roles.get_authority(&role).unwrap();
-        let auth_bytes = retrieved_authority.into_bytes().unwrap();
-        assert_eq!(auth_bytes, authority.into_bytes().unwrap());
+        // Verify we have actions data
+        assert!(role.actions.len() > 0);
     }
 
     #[test]
     fn test_role_lookup() {
         let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump);
+        let swig = Swig::new(id, bump, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
         let authority = ED25519Authority {
@@ -401,7 +490,7 @@ mod tests {
         let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
 
         // Test successful role lookup
-        let role = swig_with_roles.lookup_role(0).unwrap();
+        let role = swig_with_roles.get_role(0).unwrap();
         assert!(role.is_some());
         let role = role.unwrap();
         assert_eq!(role.position.id(), 0);
@@ -412,100 +501,18 @@ mod tests {
         assert_eq!(role.position.num_actions(), 1);
 
         // Test non-existent role lookup
-        let role = swig_with_roles.lookup_role(999).unwrap();
+        let role = swig_with_roles.get_role(999).unwrap();
         assert!(role.is_none());
 
         // Test boundary role lookup
-        let role = swig_with_roles.lookup_role(u32::MAX).unwrap();
+        let role = swig_with_roles.get_role(u32::MAX).unwrap();
         assert!(role.is_none());
-    }
-
-    #[test]
-    fn test_get_authority_and_action() {
-        let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump);
-        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
-
-        let authority = ED25519Authority {
-            public_key: [2; 32],
-        };
-
-        let action_data = All {}.into_bytes().unwrap();
-        let action = Action::new(
-            All::TYPE,
-            action_data.len() as u16,
-            Action::LEN as u32 + action_data.len() as u32,
-        );
-        let action_bytes = action.into_bytes().unwrap();
-        let actions_data = [action_bytes, action_data].concat();
-
-        builder.add_role(&authority, 1, &actions_data).unwrap();
-
-        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
-        let role = swig_with_roles.lookup_role(0).unwrap().unwrap();
-
-        // Test authority retrieval and verification
-        let retrieved_authority = swig_with_roles.get_authority(&role).unwrap();
-        let auth_bytes = retrieved_authority.into_bytes().unwrap();
-        let orig_bytes = authority.into_bytes().unwrap();
-        assert_eq!(auth_bytes, orig_bytes);
-
-        // Test action retrieval and verification
-        let action: Option<&All> = swig_with_roles.get_action(&role, &[]).unwrap();
-        assert!(action.is_some());
-        let action = action.unwrap();
-        assert_eq!(action.into_bytes().unwrap(), All {}.into_bytes().unwrap());
-    }
-
-    #[test]
-    fn test_mutable_action_retrieval() {
-        let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump);
-        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
-
-        let authority = ED25519Authority {
-            public_key: [2; 32],
-        };
-
-        let action_data = All {}.into_bytes().unwrap();
-        let action = Action::new(
-            All::TYPE,
-            action_data.len() as u16,
-            Action::LEN as u32 + action_data.len() as u32,
-        );
-        let action_bytes = action.into_bytes().unwrap();
-        let actions_data = [action_bytes, action_data].concat();
-
-        builder.add_role(&authority, 1, &actions_data).unwrap();
-
-        // Test immutable operations
-        let account_buffer_copy = account_buffer.clone();
-        let swig = SwigWithRoles::from_bytes(&account_buffer_copy).unwrap();
-        let pos = swig.lookup_role(0).unwrap().unwrap();
-        assert_eq!(pos.position.id(), 0);
-        assert_eq!(
-            pos.position.authority_type().unwrap(),
-            AuthorityType::Ed25519
-        );
-
-        // Test mutable operations
-        let mut swig_with_roles = SwigWithRolesMut::from_bytes(&mut account_buffer).unwrap();
-        let action: Option<&mut All> = swig_with_roles.get_action(&pos, &[]).unwrap();
-        assert!(action.is_some());
-
-        // Verify action data persists across mutable and immutable views
-        let action_immut: Option<&All> = swig.get_action(&pos, &[]).unwrap();
-        assert!(action_immut.is_some());
-        assert_eq!(
-            action.unwrap().into_bytes().unwrap(),
-            action_immut.unwrap().into_bytes().unwrap()
-        );
     }
 
     #[test]
     fn test_multiple_roles() {
         let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump);
+        let swig = Swig::new(id, bump, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
         let authority1 = ED25519Authority {
@@ -537,218 +544,33 @@ mod tests {
 
         let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
 
-        // Verify first role
-        let role1 = swig_with_roles.lookup_role(0).unwrap().unwrap();
-        let auth1 = swig_with_roles.get_authority(&role1).unwrap();
+        // Verify roles have correct IDs and types
+        let role1 = swig_with_roles.get_role(0).unwrap().unwrap();
+        assert_eq!(role1.position.id(), 0);
         assert_eq!(
-            auth1.into_bytes().unwrap(),
-            authority1.into_bytes().unwrap()
+            role1.position.authority_type().unwrap(),
+            AuthorityType::Ed25519
         );
 
-        // Verify second role
-        let role2 = swig_with_roles.lookup_role(1).unwrap().unwrap();
-        let auth2 = swig_with_roles.get_authority(&role2).unwrap();
+        let role2 = swig_with_roles.get_role(1).unwrap().unwrap();
+        assert_eq!(role2.position.id(), 1);
         assert_eq!(
-            auth2.into_bytes().unwrap(),
-            authority2.into_bytes().unwrap()
+            role2.position.authority_type().unwrap(),
+            AuthorityType::Ed25519
         );
-
-        // Verify actions for both roles
-        let action1: Option<&All> = swig_with_roles.get_action(&role1, &[]).unwrap();
-        assert!(action1.is_some());
-        let action2: Option<&All> = swig_with_roles.get_action(&role2, &[]).unwrap();
-        assert!(action2.is_some());
     }
 
     #[test]
-    fn test_swig_with_roles_mut() {
+    fn test_get_mut_role() -> Result<(), ProgramError> {
         let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump);
+        let swig = Swig::new(id, bump, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
-        // Create an authority and action
         let authority = ED25519Authority {
             public_key: [2; 32],
         };
 
-        let action_data = All {}.into_bytes().unwrap();
-        let action = Action::new(
-            All::TYPE,
-            action_data.len() as u16,
-            Action::LEN as u32 + action_data.len() as u32,
-        );
-        let action_bytes = action.into_bytes().unwrap();
-        let actions_data = [action_bytes, action_data].concat();
-
-        // Add a role
-        builder.add_role(&authority, 1, &actions_data).unwrap();
-
-        // Make a copy of the account buffer to verify changes later
-        let buffer_before = account_buffer.clone();
-
-        // Test role lookup and authority retrieval
-        {
-            let swig_mut = SwigWithRolesMut::from_bytes(&mut account_buffer).unwrap();
-
-            // Test looking up a role
-            let role = swig_mut.lookup_role(0).unwrap().unwrap();
-            assert_eq!(role.position.id(), 0);
-            assert_eq!(
-                role.position.authority_type().unwrap(),
-                AuthorityType::Ed25519
-            );
-
-            // Test getting an authority
-            let retrieved_authority = swig_mut.get_authority(&role).unwrap();
-            let auth_bytes = retrieved_authority.into_bytes().unwrap();
-            assert_eq!(auth_bytes, authority.into_bytes().unwrap());
-
-            // Test action retrieval
-            let action_result: Option<&mut All> = swig_mut.get_action(&role, &[]).unwrap();
-            assert!(action_result.is_some());
-        }
-
-        // Test modifying the state - in a separate borrow
-        {
-            let swig_mut = SwigWithRolesMut::from_bytes(&mut account_buffer).unwrap();
-            swig_mut.state.role_counter += 1;
-        }
-
-        // Verify changes persist in the original buffer
-        let swig_immut = SwigWithRoles::from_bytes(&account_buffer).unwrap();
-        assert_eq!(swig_immut.state.role_counter, 2);
-
-        // Test that buffer has actually changed
-        assert_ne!(buffer_before, account_buffer);
-    }
-
-    #[test]
-    fn test_swig_with_roles_mut_action_modification() {
-        // This test creates a mutable action, creates a mutable SwigWithRoles,
-        // then modifies the action and ensures the changes persist
-
-        // This would be a better test if we had an action that had mutable state,
-        // but for now we'll just demonstrate the ability to retrieve mutable actions
-
-        let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump);
-        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
-
-        // Create an authority and action
-        let authority = ED25519Authority {
-            public_key: [2; 32],
-        };
-
-        // Creating an action with some data
-        let action_data = All {}.into_bytes().unwrap();
-        let action = Action::new(
-            All::TYPE,
-            action_data.len() as u16,
-            Action::LEN as u32 + action_data.len() as u32,
-        );
-        let action_bytes = action.into_bytes().unwrap();
-        let actions_data = [action_bytes, action_data].concat();
-
-        // Add a role
-        builder.add_role(&authority, 1, &actions_data).unwrap();
-
-        // Verify we can get a mutable action (though All doesn't have any mutable state to modify)
-        {
-            let swig_mut = SwigWithRolesMut::from_bytes(&mut account_buffer).unwrap();
-            let role = swig_mut.lookup_role(0).unwrap().unwrap();
-
-            let action: Option<&mut All> = swig_mut.get_action(&role, &[]).unwrap();
-            assert!(action.is_some());
-
-            // If All had mutable state, we could modify it here
-            // action.unwrap().some_field = new_value;
-        }
-
-        // Verify we can access multiple actions in sequence
-        {
-            let swig_mut = SwigWithRolesMut::from_bytes(&mut account_buffer).unwrap();
-            let role = swig_mut.lookup_role(0).unwrap().unwrap();
-
-            // First action lookup
-            let action1: Option<&mut All> = swig_mut.get_action(&role, &[]).unwrap();
-            assert!(action1.is_some());
-
-            // We should be able to look up the same action again after dropping the first reference
-            drop(action1);
-
-            // Second action lookup
-            let action2: Option<&mut All> = swig_mut.get_action(&role, &[]).unwrap();
-            assert!(action2.is_some());
-        }
-    }
-
-    #[test]
-    fn test_swig_with_roles_mut_unsafe_cell() {
-        // This test verifies that the UnsafeCell in SwigWithRolesMut
-        // prevents multiple mutable aliases to the same data
-
-        let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump);
-        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
-
-        // Create an authority and action
-        let authority = ED25519Authority {
-            public_key: [2; 32],
-        };
-
-        let action_data = All {}.into_bytes().unwrap();
-        let action = Action::new(
-            All::TYPE,
-            action_data.len() as u16,
-            Action::LEN as u32 + action_data.len() as u32,
-        );
-        let action_bytes = action.into_bytes().unwrap();
-        let actions_data = [action_bytes, action_data].concat();
-
-        // Add a role
-        builder.add_role(&authority, 1, &actions_data).unwrap();
-
-        // Access the mutable Swig
-        let swig_mut = SwigWithRolesMut::from_bytes(&mut account_buffer).unwrap();
-        let role = swig_mut.lookup_role(0).unwrap().unwrap();
-
-        // Get a mutable action
-        let action1: Option<&mut All> = swig_mut.get_action(&role, &[]).unwrap();
-        assert!(action1.is_some());
-
-        // We hold the mutable reference to action1, so trying to get another one
-        // without dropping the first would cause borrowing issues at compile time.
-        // This is good - the UnsafeCell implementation properly enforces Rust's
-        // borrowing rules.
-
-        // This commented code would not compile:
-        // let action2: Option<&mut All> = swig_mut.get_action(&role, &[]).unwrap();
-
-        // Instead, we must drop the first reference before getting another one
-        drop(action1);
-
-        // Now we can get another mutable reference
-        let action2: Option<&mut All> = swig_mut.get_action(&role, &[]).unwrap();
-        assert!(action2.is_some());
-    }
-
-    #[test]
-    fn test_sol_limit_mutation() {
-        let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump);
-        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
-
-        // Create an authority
-        let authority = ED25519Authority {
-            public_key: [2; 32],
-        };
-
-        // Create a SolLimit action with initial amount
-        let initial_amount = 1000u64;
-        let sol_limit = SolLimit {
-            amount: initial_amount,
-        };
-
+        let sol_limit = SolLimit { amount: 1000 };
         let action_data = sol_limit.into_bytes().unwrap();
         let action = Action::new(
             SolLimit::TYPE,
@@ -758,40 +580,618 @@ mod tests {
         let action_bytes = action.into_bytes().unwrap();
         let actions_data = [action_bytes, action_data].concat();
 
-        // Add the role with the SolLimit action
+        // Add a role
         builder.add_role(&authority, 1, &actions_data).unwrap();
 
-        // Create a copy of the account buffer to compare later
-        let buffer_before = account_buffer.clone();
+        // Get a reference to the roles buffer for later modification
+        let roles_buffer = &mut account_buffer[Swig::LEN..];
 
-        // Retrieve and modify the SolLimit action
-        {
-            let swig_mut = SwigWithRolesMut::from_bytes(&mut account_buffer).unwrap();
-            let role = swig_mut.lookup_role(0).unwrap().unwrap();
+        // Get mutable role and modify SolLimit
+        let role_id = 0;
+        if let Some(role) = Swig::get_mut_role(role_id, roles_buffer)? {
+            // Navigate to the SolLimit action
+            let mut cursor = 0;
+            let action_data = role.actions;
 
-            // Get the mutable SolLimit action
-            let sol_limit_action: Option<&mut SolLimit> = swig_mut.get_action(&role, &[]).unwrap();
-            assert!(sol_limit_action.is_some());
+            for _ in 0..role.num_actions {
+                let action_header =
+                    unsafe { Action::load_unchecked(&action_data[cursor..cursor + Action::LEN])? };
+                cursor += Action::LEN;
 
-            // Make a modification by simulating a withdrawal
-            let spend_amount = 300u64;
-            let sol_limit_mut = sol_limit_action.unwrap();
-            sol_limit_mut.run(spend_amount).unwrap();
+                if action_header.permission()? == SolLimit::TYPE {
+                    // Use a new mutable slice to modify the action data
+                    let end_cursor = cursor + action_header.length() as usize;
+                    let sol_limit = unsafe {
+                        SolLimit::load_mut_unchecked(&mut action_data[cursor..end_cursor])?
+                    };
 
-            // Verify the change happened in our reference
-            assert_eq!(sol_limit_mut.amount, initial_amount - spend_amount);
+                    // Modify the SolLimit amount
+                    sol_limit.amount -= 300;
+                    break;
+                }
+
+                cursor += action_header.length() as usize;
+            }
         }
 
-        // Now verify the change persisted in the original buffer
-        let swig_immut = SwigWithRoles::from_bytes(&account_buffer).unwrap();
-        let role = swig_immut.lookup_role(0).unwrap().unwrap();
-        let sol_limit_action: Option<&SolLimit> = swig_immut.get_action(&role, &[]).unwrap();
-        assert!(sol_limit_action.is_some());
+        // Verify the change persisted
+        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        let role = swig_with_roles.get_role(0)?.unwrap();
 
-        // Verify the amount was reduced
-        assert_eq!(sol_limit_action.unwrap().amount, initial_amount - 300);
+        // Navigate the actions data to find the SolLimit action
+        let mut cursor = 0;
+        let mut found_action = false;
 
-        // Test that buffer has actually changed
-        assert_ne!(buffer_before, account_buffer);
+        for _ in 0..role.position.num_actions() {
+            let action_header =
+                unsafe { Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN])? };
+            cursor += Action::LEN;
+
+            if action_header.permission()? == SolLimit::TYPE {
+                // Found the SolLimit action
+                let action_data = &role.actions[cursor..cursor + action_header.length() as usize];
+                let sol_limit = unsafe { SolLimit::load_unchecked(action_data)? };
+
+                // Verify the amount was reduced
+                assert_eq!(sol_limit.amount, 700);
+                found_action = true;
+                break;
+            }
+
+            cursor += action_header.length() as usize;
+        }
+
+        assert!(found_action, "SolLimit action not found");
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_actions_with_token_limit() -> Result<(), ProgramError> {
+        let (mut account_buffer, id, bump) = setup_test_buffer();
+        let swig = Swig::new(id, bump, 0);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+
+        let authority = ED25519Authority {
+            public_key: [2; 32],
+        };
+
+        // Create token_limit action
+        let token_mint = [3; 32];
+        let token_limit = crate::action::token_limit::TokenLimit {
+            token_mint,
+            current_amount: 5000,
+        };
+        let token_limit_data = token_limit.into_bytes().unwrap();
+        let token_limit_action = Action::new(
+            crate::action::token_limit::TokenLimit::TYPE,
+            token_limit_data.len() as u16,
+            Action::LEN as u32 + token_limit_data.len() as u32,
+        );
+        let token_limit_action_bytes = token_limit_action.into_bytes().unwrap();
+
+        // Create sol_limit action
+        let sol_limit = SolLimit { amount: 1000 };
+        let sol_limit_data = sol_limit.into_bytes().unwrap();
+        let sol_limit_action = Action::new(
+            SolLimit::TYPE,
+            sol_limit_data.len() as u16,
+            Action::LEN as u32 + sol_limit_data.len() as u32,
+        );
+        let sol_limit_action_bytes = sol_limit_action.into_bytes().unwrap();
+
+        // Combine actions
+        let actions_data = [
+            token_limit_action_bytes,
+            token_limit_data,
+            sol_limit_action_bytes,
+            sol_limit_data,
+        ]
+        .concat();
+
+        // Add role with both actions
+        builder.add_role(&authority, 2, &actions_data).unwrap();
+
+        // Get a reference to the roles buffer for later modification
+        let roles_buffer = &mut account_buffer[Swig::LEN..];
+
+        // Get mutable role and modify TokenLimit
+        let role_id = 0;
+        if let Some(role) = Swig::get_mut_role(role_id, roles_buffer)? {
+            let action_data = role.actions;
+            let mut cursor = 0;
+
+            // First pass: Just scan and record positions of each action
+            let mut token_limit_pos = None;
+            let mut sol_limit_pos = None;
+
+            for _i in 0..role.num_actions {
+                let action_header =
+                    unsafe { Action::load_unchecked(&action_data[cursor..cursor + Action::LEN])? };
+                cursor += Action::LEN;
+
+                let action_type = action_header.permission()?;
+                let action_len = action_header.length() as usize;
+
+                if action_type == crate::action::token_limit::TokenLimit::TYPE {
+                    token_limit_pos = Some((cursor, action_len));
+                } else if action_type == SolLimit::TYPE {
+                    sol_limit_pos = Some((cursor, action_len));
+                }
+
+                cursor += action_len;
+            }
+
+            // Now apply changes using the recorded positions
+            if let Some((pos, len)) = token_limit_pos {
+                let token_limit = unsafe {
+                    crate::action::token_limit::TokenLimit::load_mut_unchecked(
+                        &mut action_data[pos..pos + len],
+                    )?
+                };
+                token_limit.current_amount -= 1500;
+            }
+
+            if let Some((pos, len)) = sol_limit_pos {
+                let sol_limit =
+                    unsafe { SolLimit::load_mut_unchecked(&mut action_data[pos..pos + len])? };
+                sol_limit.amount -= 300;
+            }
+        }
+
+        // Verify the changes persisted by checking each action
+        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        let role = swig_with_roles.get_role(0)?.unwrap();
+
+        // Navigate actions data to find both actions and verify changes
+        let mut cursor = 0;
+        let mut found_token_limit = false;
+        let mut found_sol_limit = false;
+
+        for _ in 0..role.position.num_actions() {
+            let action_header =
+                unsafe { Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN])? };
+            cursor += Action::LEN;
+
+            if action_header.permission()? == crate::action::token_limit::TokenLimit::TYPE {
+                // Found the TokenLimit action
+                let action_data = &role.actions[cursor..cursor + action_header.length() as usize];
+                let token_limit =
+                    unsafe { crate::action::token_limit::TokenLimit::load_unchecked(action_data)? };
+
+                // Verify token mint is preserved
+                assert_eq!(token_limit.token_mint, [3; 32]);
+                // Verify the amount was reduced
+                assert_eq!(token_limit.current_amount, 3500);
+                found_token_limit = true;
+            } else if action_header.permission()? == SolLimit::TYPE {
+                // Found the SolLimit action
+                let action_data = &role.actions[cursor..cursor + action_header.length() as usize];
+                let sol_limit = unsafe { SolLimit::load_unchecked(action_data)? };
+
+                // Verify the amount was reduced
+                assert_eq!(sol_limit.amount, 700);
+                found_sol_limit = true;
+            }
+
+            cursor += action_header.length() as usize;
+        }
+
+        // Verify that we found and verified both actions
+        assert!(found_token_limit, "TokenLimit action not found");
+        assert!(found_sol_limit, "SolLimit action not found");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_lookup_role_id_comprehensive() -> Result<(), ProgramError> {
+        let (mut account_buffer, id, bump) = setup_large_test_buffer();
+        let swig = Swig::new(id, bump, 0);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+
+        // Create authorities with different public keys
+        let authority1 = ED25519Authority {
+            public_key: [42; 32],
+        };
+
+        let authority2 = ED25519Authority {
+            public_key: [43; 32],
+        };
+
+        // Create simpler action data for the tests
+
+        // All permission action
+        let all_action_data = All {}.into_bytes().unwrap();
+        let all_action = Action::new(
+            All::TYPE,
+            all_action_data.len() as u16,
+            Action::LEN as u32 + all_action_data.len() as u32,
+        );
+        let all_action_bytes = all_action.into_bytes().unwrap();
+        let all_actions_data = [all_action_bytes, all_action_data].concat();
+
+        // SolLimit action
+        let sol_limit = SolLimit { amount: 5000 };
+        let sol_limit_data = sol_limit.into_bytes().unwrap();
+        let sol_limit_action = Action::new(
+            SolLimit::TYPE,
+            sol_limit_data.len() as u16,
+            Action::LEN as u32 + sol_limit_data.len() as u32,
+        );
+        let sol_limit_action_bytes = sol_limit_action.into_bytes().unwrap();
+        let sol_limit_actions_data = [sol_limit_action_bytes, sol_limit_data].concat();
+
+        // Add roles with different authorities and actions
+        println!("Adding role 1 with All action");
+        builder.add_role(&authority1, 1, &all_actions_data).unwrap();
+
+        println!("Adding role 2 with SolLimit action");
+        builder
+            .add_role(&authority2, 1, &sol_limit_actions_data)
+            .unwrap();
+
+        // Create SwigWithRoles for testing
+        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+
+        // Test basic lookup of each authority by public key
+        println!("Looking up authority1");
+        let role_id1 = swig_with_roles.lookup_role_id(&authority1.public_key)?;
+        assert_eq!(role_id1, Some(0), "Should find authority1 at role 0");
+
+        println!("Looking up authority2");
+        let role_id2 = swig_with_roles.lookup_role_id(&authority2.public_key)?;
+        assert_eq!(role_id2, Some(1), "Should find authority2 at role 1");
+
+        // Test lookup with empty data
+        println!("Testing empty data");
+        let empty_data: [u8; 0] = [];
+        let role_empty = swig_with_roles.lookup_role_id(&empty_data)?;
+        assert_eq!(role_empty, None, "Empty data should not match any role");
+
+        // Test with non-existent authority
+        println!("Testing non-existent authority");
+        let nonexistent_key = [99; 32];
+        let role_nonexistent = swig_with_roles.lookup_role_id(&nonexistent_key)?;
+        assert_eq!(
+            role_nonexistent, None,
+            "Non-existent key should not match any role"
+        );
+
+        // Test finding a role and then getting it
+        println!("Testing get_role with lookup_role_id result");
+        if let Some(role_id) = swig_with_roles.lookup_role_id(&authority1.public_key)? {
+            let role = swig_with_roles.get_role(role_id)?.unwrap();
+            assert_eq!(role.position.num_actions(), 1, "Role should have 1 action");
+        } else {
+            panic!("Failed to find authority1");
+        }
+
+        // Test duplicate authority test
+        println!("Testing duplicate authority");
+        let (mut new_buffer, _, _) = setup_large_test_buffer();
+        let new_swig = Swig::new(id, bump, 0);
+        let mut new_builder = SwigBuilder::create(&mut new_buffer, new_swig).unwrap();
+
+        // Add two roles with the same authority but different actions
+        new_builder
+            .add_role(&authority1, 1, &all_actions_data)
+            .unwrap();
+        new_builder
+            .add_role(&authority1, 1, &sol_limit_actions_data)
+            .unwrap();
+
+        let new_swig_with_roles = SwigWithRoles::from_bytes(&new_buffer).unwrap();
+        let duplicate_role_id = new_swig_with_roles.lookup_role_id(&authority1.public_key)?;
+        assert_eq!(
+            duplicate_role_id,
+            Some(0),
+            "Should return first role with matching authority"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_remove_role() -> Result<(), ProgramError> {
+        let (mut account_buffer, id, bump) = setup_large_test_buffer();
+        let swig = Swig::new(id, bump, 0);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+
+        // Create two different authorities
+        let authority1 = ED25519Authority {
+            public_key: [2; 32],
+        };
+
+        let authority2 = ED25519Authority {
+            public_key: [3; 32],
+        };
+
+        // Create action for first role
+        let action_data1 = All {}.into_bytes().unwrap();
+        let action1 = Action::new(
+            All::TYPE,
+            action_data1.len() as u16,
+            Action::LEN as u32 + action_data1.len() as u32,
+        );
+        let action_bytes1 = action1.into_bytes().unwrap();
+        let actions_data1 = [action_bytes1, action_data1].concat();
+
+        // Create action for second role
+        let sol_limit = SolLimit { amount: 1000 };
+        let action_data2 = sol_limit.into_bytes().unwrap();
+        let action2 = Action::new(
+            SolLimit::TYPE,
+            action_data2.len() as u16,
+            Action::LEN as u32 + action_data2.len() as u32,
+        );
+        let action_bytes2 = action2.into_bytes().unwrap();
+        let actions_data2 = [action_bytes2, action_data2].concat();
+
+        // Add two roles
+        builder.add_role(&authority1, 1, &actions_data1).unwrap();
+        builder.add_role(&authority2, 1, &actions_data2).unwrap();
+
+        // Need to drop builder before creating SwigWithRoles to avoid borrowing conflict
+        drop(builder);
+
+        // Verify both roles exist
+        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        assert_eq!(swig_with_roles.state.roles, 2);
+        let role1 = swig_with_roles.get_role(0)?.unwrap();
+        let role2 = swig_with_roles.get_role(1)?.unwrap();
+        assert_eq!(role1.position.id(), 0);
+        assert_eq!(role2.position.id(), 1);
+
+        // Create a new builder to remove role
+        let mut builder = SwigBuilder::new_from_bytes(&mut account_buffer).unwrap();
+
+        // Remove the first role
+        builder.remove_role(0).unwrap();
+
+        // Drop builder again
+        drop(builder);
+
+        // Verify the role was removed
+        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        assert_eq!(swig_with_roles.state.roles, 1);
+
+        // Role 0 should no longer exist
+        let role0 = swig_with_roles.get_role(0)?;
+        assert!(role0.is_none());
+
+        // Role 1 should still exist
+        let role1 = swig_with_roles.get_role(1)?.unwrap();
+        assert_eq!(role1.position.id(), 1);
+
+        // Check that role 1's authority is still correct
+        let auth_offset = Swig::LEN + Position::LEN;
+        let auth = unsafe {
+            ED25519Authority::load_unchecked(
+                &account_buffer[auth_offset..auth_offset + ED25519Authority::LEN],
+            )?
+        };
+        assert_eq!(auth.public_key, [3; 32]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_remove_non_existent_role() -> Result<(), ProgramError> {
+        let (mut account_buffer, id, bump) = setup_test_buffer();
+        let swig = Swig::new(id, bump, 0);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+
+        // Add a role
+        let authority = ED25519Authority {
+            public_key: [2; 32],
+        };
+
+        let action_data = All {}.into_bytes().unwrap();
+        let action = Action::new(
+            All::TYPE,
+            action_data.len() as u16,
+            Action::LEN as u32 + action_data.len() as u32,
+        );
+        let action_bytes = action.into_bytes().unwrap();
+        let actions_data = [action_bytes, action_data].concat();
+
+        builder.add_role(&authority, 1, &actions_data).unwrap();
+
+        // Try to remove a non-existent role ID
+        builder.remove_role(999).unwrap();
+
+        // Verify that the role count hasn't changed
+        assert_eq!(builder.swig.roles, 1);
+
+        // Drop builder to avoid borrowing conflict
+        drop(builder);
+
+        // Verify the role still exists
+        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        let role = swig_with_roles.get_role(0)?;
+        assert!(role.is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_remove_from_empty_swig() -> Result<(), ProgramError> {
+        let (mut account_buffer, id, bump) = setup_test_buffer();
+        let swig = Swig::new(id, bump, 0);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+
+        // Verify initial state
+        assert_eq!(builder.swig.roles, 0);
+
+        // Try to remove from empty Swig
+        builder.remove_role(0).unwrap();
+
+        // Verify no change
+        assert_eq!(builder.swig.roles, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_remove_only_role() -> Result<(), ProgramError> {
+        let (mut account_buffer, id, bump) = setup_test_buffer();
+        let swig = Swig::new(id, bump, 0);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+
+        // Add a single role
+        let authority = ED25519Authority {
+            public_key: [2; 32],
+        };
+
+        let action_data = All {}.into_bytes().unwrap();
+        let action = Action::new(
+            All::TYPE,
+            action_data.len() as u16,
+            Action::LEN as u32 + action_data.len() as u32,
+        );
+        let action_bytes = action.into_bytes().unwrap();
+        let actions_data = [action_bytes, action_data].concat();
+
+        builder.add_role(&authority, 1, &actions_data).unwrap();
+        assert_eq!(builder.swig.roles, 1);
+
+        // Remove the only role
+        builder.remove_role(0).unwrap();
+
+        // Verify role was removed
+        assert_eq!(builder.swig.roles, 0);
+
+        // Drop builder to avoid borrowing conflict
+        drop(builder);
+
+        // Verify no roles exist
+        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        assert_eq!(swig_with_roles.state.roles, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_remove_middle_role() -> Result<(), ProgramError> {
+        let (mut account_buffer, id, bump) = setup_large_test_buffer();
+        let swig = Swig::new(id, bump, 0);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+
+        // Create three different authorities
+        let authority1 = ED25519Authority {
+            public_key: [2; 32],
+        };
+        let authority2 = ED25519Authority {
+            public_key: [3; 32],
+        };
+        let authority3 = ED25519Authority {
+            public_key: [4; 32],
+        };
+
+        // Create action data
+        let all_action = All {}.into_bytes().unwrap();
+        let all_header = Action::new(
+            All::TYPE,
+            all_action.len() as u16,
+            Action::LEN as u32 + all_action.len() as u32,
+        );
+        let all_bytes = all_header.into_bytes().unwrap();
+        let all_actions = [all_bytes, all_action].concat();
+
+        // Add three roles
+        builder.add_role(&authority1, 1, &all_actions).unwrap();
+        builder.add_role(&authority2, 1, &all_actions).unwrap();
+        builder.add_role(&authority3, 1, &all_actions).unwrap();
+
+        // Verify all three roles exist
+        drop(builder);
+        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        assert_eq!(swig_with_roles.state.roles, 3);
+
+        // Remove the middle role (ID 1)
+        let mut builder = SwigBuilder::new_from_bytes(&mut account_buffer).unwrap();
+        builder.remove_role(1).unwrap();
+        drop(builder);
+
+        // Verify one role was removed and the others are intact
+        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        assert_eq!(swig_with_roles.state.roles, 2);
+
+        // Role 0 should still exist
+        let role0 = swig_with_roles.get_role(0)?;
+        assert!(role0.is_some());
+        assert_eq!(role0.unwrap().position.id(), 0);
+
+        // Role 1 should not exist
+        let role1 = swig_with_roles.get_role(1)?;
+        assert!(role1.is_none());
+
+        // Role 2 should still exist
+        let role2 = swig_with_roles.get_role(2)?;
+        assert!(role2.is_some());
+        assert_eq!(role2.unwrap().position.id(), 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_remove_multiple_roles() -> Result<(), ProgramError> {
+        let (mut account_buffer, id, bump) = setup_large_test_buffer();
+        let swig = Swig::new(id, bump, 0);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+
+        // Create three different authorities
+        let authority1 = ED25519Authority {
+            public_key: [2; 32],
+        };
+        let authority2 = ED25519Authority {
+            public_key: [3; 32],
+        };
+        let authority3 = ED25519Authority {
+            public_key: [4; 32],
+        };
+
+        // Create action data
+        let all_action = All {}.into_bytes().unwrap();
+        let all_header = Action::new(
+            All::TYPE,
+            all_action.len() as u16,
+            Action::LEN as u32 + all_action.len() as u32,
+        );
+        let all_bytes = all_header.into_bytes().unwrap();
+        let all_actions = [all_bytes, all_action].concat();
+
+        // Add three roles
+        builder.add_role(&authority1, 1, &all_actions).unwrap();
+        builder.add_role(&authority2, 1, &all_actions).unwrap();
+        builder.add_role(&authority3, 1, &all_actions).unwrap();
+
+        // Remove roles in sequence
+        builder.remove_role(0).unwrap();
+        assert_eq!(builder.swig.roles, 2);
+
+        builder.remove_role(2).unwrap();
+        assert_eq!(builder.swig.roles, 1);
+
+        drop(builder);
+
+        // Verify only the middle role remains
+        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        assert_eq!(swig_with_roles.state.roles, 1);
+
+        // Role 0 should not exist
+        let role0 = swig_with_roles.get_role(0)?;
+        assert!(role0.is_none());
+
+        // Role 1 should still exist
+        let role1 = swig_with_roles.get_role(1)?;
+        assert!(role1.is_some());
+        assert_eq!(role1.unwrap().position.id(), 1);
+
+        // Role 2 should not exist
+        let role2 = swig_with_roles.get_role(2)?;
+        assert!(role2.is_none());
+
+        Ok(())
     }
 }

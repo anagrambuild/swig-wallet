@@ -8,14 +8,18 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state_x::{
-    action::{all::All, manage_authority::ManageAuthority, Action}, authority::{Authority, AuthorityLoader, AuthorityType}, role::Position, swig::{swig_account_seeds_with_bump, SwigBuilder, SwigWithRoles, SwigWithRolesMut}, Discriminator, IntoBytes, Transmutable
+    action::{all::All, manage_authority::ManageAuthority, Action},
+    authority::{Authority, AuthorityLoader, AuthorityType},
+    role::Position,
+    swig::{SwigBuilder, SwigWithRoles},
+    Discriminator, IntoBytes, Transmutable,
 };
 
 use crate::{
     error::SwigError,
     instruction::{
         accounts::{AddAuthorityV1Accounts, Context},
-        Authenticatable, SwigInstruction,
+        SwigInstruction,
     },
 };
 
@@ -35,7 +39,7 @@ pub struct AddAuthorityV1Args {
     pub new_authority_data_len: u16,
     pub actions_data_len: u16,
     pub new_authority_type: u16,
-    pub num_actions: u8
+    pub num_actions: u8,
 }
 
 impl Transmutable for AddAuthorityV1Args {
@@ -57,7 +61,6 @@ impl AddAuthorityV1Args {
             new_authority_data_len,
             actions_data_len,
             num_actions,
-
         }
     }
 }
@@ -67,9 +70,9 @@ impl AddAuthorityV1Args {
 }
 
 impl<'a> IntoBytes<'a> for AddAuthorityV1Args {
-  fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
-      Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
-  }
+    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+        Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
+    }
 }
 
 impl<'a> AddAuthorityV1<'a> {
@@ -113,30 +116,30 @@ pub fn add_authority_v1(
         msg!("AddAuthorityV1 Args Error: {:?}", e);
         ProgramError::InvalidInstructionData
     })?;
-    {
+    // closure here to avoid borrowing swig_account_data for the whole function so that we can mutate after realloc
+    let new_reserved_lamports = {
         let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
         if swig_account_data[0] != Discriminator::SwigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
         let swig = SwigWithRoles::from_bytes(swig_account_data)?;
+        let role = swig.get_role(add_authority_v1.args.acting_role_id)?;
 
-        let role = swig.lookup_role(add_authority_v1.args.acting_role_id)?;
         if role.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
         let role = role.unwrap();
-        let authority = swig.get_authority(&role)?;
         let clock = Clock::get()?;
         let slot = clock.slot;
-        if authority.session_based() {
-            authority.authenticate_session(
+        if role.authority.session_based() {
+            role.authority.authenticate_session(
                 all_accounts,
                 add_authority_v1.authority_payload,
                 add_authority_v1.data_payload,
                 slot,
             )?;
         } else {
-            authority.authenticate(
+            role.authority.authenticate(
                 all_accounts,
                 add_authority_v1.authority_payload,
                 add_authority_v1.data_payload,
@@ -144,24 +147,23 @@ pub fn add_authority_v1(
             )?;
         }
 
-        let all = swig.get_action::<All>(&role, &[])?;
-        let manage_authority = swig.get_action::<ManageAuthority>(&role, &[])?;
+        let all = role.get_action::<All>(&[])?;
+        let manage_authority = role.get_action::<ManageAuthority>(&[])?;
 
         if all.is_none() && manage_authority.is_none() {
             return Err(SwigError::PermissionDeniedToManageAuthority.into());
         }
-
+        let new_authority = add_authority_v1.get_authority()?;
         let role_size = Position::LEN
-            + authority.length()
+            + new_authority.length()
             + Action::LEN * add_authority_v1.args.num_actions as usize
             + add_authority_v1.actions.len();
 
-        ctx.accounts.swig.realloc(role_size, false)?;
         let account_size = swig_account_data.len() + role_size;
         ctx.accounts.swig.realloc(account_size, false)?;
         let cost = Rent::get()?
             .minimum_balance(account_size)
-            .checked_sub(ctx.accounts.swig.lamports())
+            .checked_sub(swig.state.reserved_lamports)
             .unwrap_or_default();
         if cost > 0 {
             Transfer {
@@ -171,10 +173,13 @@ pub fn add_authority_v1(
             }
             .invoke()?;
         }
-    }
+        swig.state.reserved_lamports + cost
+    };
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let authority = add_authority_v1.get_authority()?;
+
     let mut swig_builder = SwigBuilder::new_from_bytes(swig_account_data)?;
+    swig_builder.swig.reserved_lamports = new_reserved_lamports;
     swig_builder.add_role(
         authority,
         add_authority_v1.args.num_actions,

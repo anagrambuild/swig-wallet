@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["program", "interface", "instructions", "state", "state-x", "assertions"]#, "cli"]
+members = [
+  "program",
+  "interface",
+  "instructions",
+  "state-x",
+  "assertions",
+] #, "cli"]
 
 [workspace.lints.clippy]
 unused_imports = "allow"

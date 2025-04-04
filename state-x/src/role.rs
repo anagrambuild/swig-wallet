@@ -4,40 +4,37 @@ use pinocchio::program_error::ProgramError;
 
 use crate::{
     action::{Action, Actionable},
-    authority::{Authority, AuthorityLoader, AuthorityType},
-    FromBytes, FromBytesMut, IntoBytes, Transmutable,
+    authority::{Authority, AuthorityInfo, AuthorityLoader, AuthorityType},
+    FromBytes, FromBytesMut, IntoBytes, Transmutable, TransmutableMut,
 };
 
 static_assertions::const_assert!(mem::size_of::<Position>() % 8 == 0);
 #[repr(C)]
 #[derive(Debug)]
 pub struct Position {
-    /// Data section.
-    ///   0. authority type u16
-    ///   1..2. ID u32
-    ///   3. authority length u16
-    ///   4. num_actions u16
-    ///   5..6. boundary u32
-    ///   7. padding u16
-    data: [u16; 8],
+    pub authority_type: u16,
+    pub authority_length: u16,
+    pub num_actions: u16,
+    padding: u16,
+    pub id: u32,
+    pub boundary: u32,
 }
 
 pub struct Role<'a> {
     pub position: &'a Position,
-    pub authority: &'a [u8],
+    pub authority: &'a dyn AuthorityInfo,
     pub actions: &'a [u8],
 }
 
 impl<'a> Role<'a> {
-    pub fn get_authority(&'a self) -> Result<&'a impl Authority, ProgramError> {
-        AuthorityLoader::load_authority(self.position.authority_type()?, &self.authority)
-    }
-
     pub fn get_action<A: Actionable<'a>>(
         &'a self,
         match_data: &[u8],
     ) -> Result<Option<&'a A>, ProgramError> {
         let mut cursor = 0;
+        if self.actions.len() < Action::LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
         while cursor < self.actions.len() {
             let action = unsafe {
                 Action::load_unchecked(self.actions.get_unchecked(cursor..cursor + Action::LEN))?
@@ -58,51 +55,50 @@ impl<'a> Role<'a> {
     }
 }
 
-
 pub struct RoleMut<'a> {
-    pub position: &'a mut Position,
-    pub authority: &'a mut [u8],
+    pub position: &'a Position,
+    pub authority: &'a dyn AuthorityInfo,
+    pub num_actions: u8,
     pub actions: &'a mut [u8],
 }
 
 impl<'a> RoleMut<'a> {
-    pub fn get_authority(&'a self) -> Result<&'a impl Authority, ProgramError> {
-        AuthorityLoader::load_authority(self.position.authority_type()?, &self.authority)
-    }
-    
-    pub fn get_action<A: Actionable<'a>>(
-      &'a self,
-      match_data: &[u8],
-  ) -> Result<Option<&'a mut A>, ProgramError> {
-   
-      let mut cursor = 0;
-      let end_pos = self.actions.len();
-      let mut found_offset = None;
-      {
-          while cursor < end_pos {
-              let action =
-                  unsafe { Action::load_unchecked(&self.actions.get_unchecked(cursor..cursor + Action::LEN))? };
-              cursor += Action::LEN;
-              if action.permission()? == A::TYPE {
-                  let action_obj =
-                      unsafe { A::load_unchecked(&self.actions.get_unchecked(cursor..cursor + A::LEN))? };
-                  if !A::REPEATABLE || action_obj.match_data(match_data) {
-                      found_offset = Some(cursor);
-                      break;
-                  }
-              }
-              cursor = action.boundary() as usize;
-          }
-      }
+    pub fn get_action_mut<A: Actionable<'a>>(
+        actions_data: &'a mut [u8],
+        match_data: &[u8],
+    ) -> Result<Option<&'a mut A>, ProgramError> {
+        let mut cursor = 0;
+        let end_pos = actions_data.len();
+        let mut found_offset = None;
+        {
+            while cursor < end_pos {
+                let action = unsafe {
+                    Action::load_unchecked(
+                        actions_data.get_unchecked(cursor..cursor + Action::LEN),
+                    )?
+                };
+                cursor += Action::LEN;
+                if action.permission()? == A::TYPE {
+                    let action_obj = unsafe {
+                        A::load_unchecked(&actions_data.get_unchecked(cursor..cursor + A::LEN))?
+                    };
+                    if !A::REPEATABLE || action_obj.match_data(match_data) {
+                        found_offset = Some(cursor);
+                        break;
+                    }
+                }
+                cursor = action.boundary() as usize;
+            }
+        }
 
-      if let Some(offset) = found_offset {
-          let action_obj = unsafe { A::load_mut_unchecked(&mut self.actions[offset..offset + A::LEN])? };
-          Ok(Some(action_obj))
-      } else {
-          Ok(None)
-      }
-  }
-    
+        if let Some(offset) = found_offset {
+            let action_obj =
+                unsafe { A::load_mut_unchecked(&mut actions_data[offset..offset + A::LEN])? };
+            Ok(Some(action_obj))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 impl<'a> IntoBytes<'a> for Position {
@@ -117,6 +113,8 @@ impl Transmutable for Position {
     const LEN: usize = core::mem::size_of::<Position>();
 }
 
+impl TransmutableMut for Position {}
+
 impl Position {
     pub fn new(
         authority_type: AuthorityType,
@@ -126,37 +124,33 @@ impl Position {
         boundary: u32,
     ) -> Self {
         Self {
-            data: [
-                authority_type as u16,
-                (id >> 16) as u16,
-                (id & 0xFFFF) as u16,
-                length,
-                num_actions,
-                (boundary >> 16) as u16,
-                (boundary & 0xFFFF) as u16,
-                0,
-            ],
+            authority_type: authority_type as u16,
+            authority_length: length,
+            num_actions,
+            padding: 0,
+            id,
+            boundary,
         }
     }
 
     pub fn authority_type(&self) -> Result<AuthorityType, ProgramError> {
-        AuthorityType::try_from(self.data[0])
+        AuthorityType::try_from(self.authority_type)
     }
 
     pub fn id(&self) -> u32 {
-        (self.data[1] as u32) << 16 | self.data[2] as u32
+        self.id
     }
 
     pub fn authority_length(&self) -> u16 {
-        self.data[3]
+        self.authority_length
     }
 
     pub fn num_actions(&self) -> u16 {
-        self.data[4]
+        self.num_actions
     }
 
     pub fn boundary(&self) -> u32 {
-        (self.data[5] as u32) << 16 | self.data[6] as u32
+        self.boundary
     }
 }
 
@@ -175,13 +169,15 @@ mod tests {
         let bytes_as_u16: &[u16] =
             unsafe { core::slice::from_raw_parts(bytes.as_ptr() as *const u16, Position::LEN / 2) };
         assert_eq!(bytes_as_u16[0], AuthorityType::Ed25519 as u16);
-        assert_eq!(bytes_as_u16[1], (12345 >> 16) as u16);
-        assert_eq!(bytes_as_u16[2], (12345 & 0xFFFF) as u16);
-        assert_eq!(bytes_as_u16[3], 100);
-        assert_eq!(bytes_as_u16[4], 5);
-        assert_eq!(bytes_as_u16[5], (54321 >> 16) as u16);
-        assert_eq!(bytes_as_u16[6], (54321 & 0xFFFF) as u16);
-        assert_eq!(bytes_as_u16[7], 0); // padding
+        assert_eq!(bytes_as_u16[1], 100); // authority_length
+        assert_eq!(bytes_as_u16[2], 5); // num_actions
+        assert_eq!(bytes_as_u16[3], 0); // padding
+
+        // Read u32 values directly
+        let bytes_as_u32: &[u32] =
+            unsafe { core::slice::from_raw_parts(bytes.as_ptr() as *const u32, Position::LEN / 4) };
+        assert_eq!(bytes_as_u32[2], 12345); // id
+        assert_eq!(bytes_as_u32[3], 54321); // boundary
     }
 
     #[test]

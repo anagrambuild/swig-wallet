@@ -18,19 +18,19 @@ use token_recurring_limit::TokenRecurringLimit;
 use crate::{AccountClassification, IntoBytes, Transmutable, TransmutableMut};
 
 static_assertions::const_assert!(core::mem::size_of::<Action>() % 8 == 0);
-#[repr(C)]
+#[repr(C, align(8))]
 #[derive(Debug)]
 pub struct Action {
-    /// Data section.
-    ///  * [0] type
-    ///  * [1] length 
-    ///  * [2..3] boundary 
-    data: [u16; 4],
+    action_type: u16,
+    length: u16,
+    boundary: u32,
 }
 
 impl<'a> IntoBytes<'a> for Action {
     fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
-        Ok(unsafe { core::slice::from_raw_parts(self.data.as_ptr() as *const u8, 8) })
+        let bytes =
+            unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
+        Ok(bytes)
     }
 }
 
@@ -41,34 +41,33 @@ impl Transmutable for Action {
 impl Action {
     pub fn client_new(_type: Permission, length: u16) -> Self {
         Self {
-            data: [_type as u16, length, 0, 0],
+            action_type: _type as u16,
+            length,
+            boundary: 0,
         }
     }
     pub fn new(_type: Permission, length: u16, boundary: u32) -> Self {
         Self {
-            data: [
-                _type as u16,
-                length,
-                (boundary >> 16) as u16,
-                (boundary & 0xFFFF) as u16,
-            ],
+            action_type: _type as u16,
+            length,
+            boundary,
         }
     }
 
     pub fn permission(&self) -> Result<Permission, ProgramError> {
-        Permission::try_from(self.data[0])
+        Permission::try_from(self.action_type)
     }
 
     pub fn length(&self) -> u16 {
-        self.data[1]
+        self.length
     }
 
     pub fn boundary(&self) -> u32 {
-        (self.data[2] as u32) << 16 | self.data[3] as u32
+        self.boundary
     }
 }
 
-#[derive(Default, PartialEq, Copy, Clone)]
+#[derive(Default, Debug, PartialEq, Copy, Clone)]
 #[repr(u16)]
 pub enum Permission {
     #[default]
@@ -111,7 +110,6 @@ impl TryFrom<&[u8]> for Permission {
 pub trait Actionable<'a>: Transmutable + TransmutableMut {
     const TYPE: Permission;
     const REPEATABLE: bool;
-
 
     fn match_data(&self, _data: &[u8]) -> bool {
         false

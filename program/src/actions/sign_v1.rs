@@ -1,8 +1,10 @@
 use pinocchio::{
     account_info::AccountInfo,
+    log::sol_log_compute_units,
+    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
-    sysvars::{clock::Clock, Sysvar},
+    sysvars::{clock::Clock, rent::Rent, Sysvar},
     ProgramResult,
 };
 use pinocchio_pubkey::from_str;
@@ -23,7 +25,8 @@ use swig_state_x::{
         token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit,
     },
     authority::{Authority, AuthorityType},
-    swig::{swig_account_signer, Swig, SwigWithRolesMut},
+    role::RoleMut,
+    swig::{swig_account_signer, Swig},
     Discriminator, IntoBytes, Transmutable, TransmutableMut,
 };
 // use swig_instructions::InstructionIterator;
@@ -90,40 +93,40 @@ pub fn sign_v1(
     data: &[u8],
     account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
-    check_stack_height(1, SwigError::Cpi)?; // todo think about if this is necessary
+    check_stack_height(1, SwigError::Cpi)?;
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     let sign_v1 = SignV1::from_instruction_bytes(data)?;
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     if swig_account_data[0] != Discriminator::SwigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
-    let swig = SwigWithRolesMut::from_bytes(swig_account_data)?;
-    let role_position = swig.lookup_role(sign_v1.args.role_id)?;
-    if role_position.is_none() {
+    let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+    let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+
+    let role = Swig::get_mut_role(sign_v1.args.role_id, swig_roles)?;
+    if role.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
-    let role_position = role_position.unwrap();
-    let authority = swig.get_authority(&role_position)?;
+    let role = role.unwrap();
     let clock = Clock::get()?;
     let slot = clock.slot;
-    if authority.session_based() {
-        authority.authenticate_session(
+    if role.authority.session_based() {
+        role.authority.authenticate_session(
             all_accounts,
             sign_v1.authority_payload,
             sign_v1.instruction_payload,
             slot,
         )?;
     } else {
-        authority.authenticate(
+        role.authority.authenticate(
             all_accounts,
             sign_v1.authority_payload,
             sign_v1.instruction_payload,
             slot,
         )?;
     }
-
     let (restricted_keys, len): ([&Pubkey; 2], usize) =
-        if role_position.position.authority_type()? == AuthorityType::Ed25519 {
+        if role.position.authority_type()? == AuthorityType::Ed25519 {
             (
                 [ctx.accounts.payer.key(), ctx.remaining_accounts[0].key()],
                 2,
@@ -137,8 +140,9 @@ pub fn sign_v1(
         ctx.accounts.swig.key(),
         &restricted_keys[0..len],
     )?;
-    let b = [swig.state.bump];
-    let signer = swig_account_signer(&swig.state.id, &b);
+    let b = [swig.bump];
+    let signer = swig_account_signer(&swig.id, &b);
+
     for ix in ix_iter {
         if let Ok(instruction) = ix {
             instruction.execute(
@@ -150,229 +154,84 @@ pub fn sign_v1(
             return Err(SwigError::InstructionExecutionError.into());
         }
     }
-    if swig.get_action::<All>(&role_position, &[])?.is_some() {
-        return Ok(());
-    }
-    for (index, account) in account_classifiers.iter().enumerate() {
-        match account {
-            AccountClassification::ThisSwig { lamports } => {
-                if lamports > &all_accounts[index].lamports() {
-                    let amount_diff = lamports - all_accounts[index].lamports();
-                    let sol_actions = (
-                        swig.get_action::<SolRecurringLimit>(&role_position, &[])?,
-                        swig.get_action::<SolLimit>(&role_position, &[])?,
-                    );
-                    match sol_actions {
-                        (Some(recurring_action), Some(limit_action)) => {
-                            recurring_action.run(amount_diff, slot)?;
-                            limit_action.run(amount_diff)?;
-                        },
-                        (Some(recurring_action), None) => {
-                            recurring_action.run(amount_diff, slot)?;
-                        },
-                        (None, Some(limit_action)) => {
-                            limit_action.run(amount_diff)?;
-                        },
-                        _ => {
-                            return Err(SwigError::PermissionDeniedMissingPermission.into());
-                        },
-                    }
-                }
-            },
-            AccountClassification::SwigTokenAccount { balance } => {
-                let data = unsafe { &all_accounts[index].borrow_data_unchecked() };
-                let mint = &data[0..32];
-                let delegate = &data[72..76];
-                let state = &data[108];
-                let current_token_balance = u64::from_le_bytes(
-                    data[64..72]
-                        .try_into()
-                        .map_err(|_| ProgramError::InvalidAccountData)?,
-                );
+    let actions = role.actions;
 
-                if delegate != [0u8; 4] {
-                    return Err(SwigError::PermissionDeniedTokenAccountDelegatePresent.into());
-                }
-                if *state != 1 {
-                    return Err(SwigError::PermissionDeniedTokenAccountNotInitialized.into());
-                }
-                if balance > &current_token_balance {
-                    let token_actions = (
-                        swig.get_action::<TokenRecurringLimit>(&role_position, mint)?,
-                        swig.get_action::<TokenLimit>(&role_position, mint)?,
-                    );
-                    let diff = balance - current_token_balance;
-                    match token_actions {
-                        (Some(recurring_action), Some(limit_action)) => {
-                            recurring_action.run(diff, slot)?;
-                            limit_action.run(diff)?;
-                        },
-                        (Some(recurring_action), None) => {
-                            recurring_action.run(diff, slot)?;
-                        },
-                        (None, Some(limit_action)) => {
-                            limit_action.run(diff)?;
-                        },
-                        (None, None) => {
-                            return Err(SwigError::PermissionDeniedMissingPermission.into());
-                        },
+    if RoleMut::get_action_mut::<All>(actions, &[])?.is_some() {
+        return Ok(());
+    } else {
+        for (index, account) in account_classifiers.iter().enumerate() {
+            match account {
+                AccountClassification::ThisSwig { lamports } => {
+                    let current_lamports = all_accounts[index].lamports();
+                    if current_lamports < swig.reserved_lamports {
+                        return Err(SwigError::PermissionDeniedInsufficientBalance.into());
                     }
-                }
-            },
-            _ => {},
+                    if lamports > &current_lamports {
+                        let amount_diff = lamports - current_lamports;
+
+                        {
+                            if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])?
+                            {
+                                action.run(amount_diff)?;
+                                continue;
+                            };
+                        }
+                        {
+                            if let Some(action) =
+                                RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])?
+                            {
+                                action.run(amount_diff, slot)?;
+                            };
+                        }
+                        return Err(SwigError::PermissionDeniedMissingPermission.into());
+                    }
+                },
+                AccountClassification::SwigTokenAccount { balance } => {
+                    let data = unsafe { &all_accounts[index].borrow_data_unchecked() };
+                    let mint = &data[0..32];
+                    let delegate = &data[72..76];
+                    let state = &data[108];
+                    let current_token_balance = u64::from_le_bytes(
+                        data[64..72]
+                            .try_into()
+                            .map_err(|_| ProgramError::InvalidAccountData)?,
+                    );
+
+                    if delegate != [0u8; 4] {
+                        return Err(SwigError::PermissionDeniedTokenAccountDelegatePresent.into());
+                    }
+                    if *state != 1 {
+                        return Err(SwigError::PermissionDeniedTokenAccountNotInitialized.into());
+                    }
+                    if balance > &current_token_balance {
+                        let mut matched = false;
+                        let diff = balance - current_token_balance;
+                        {
+                            if let Some(action) =
+                                RoleMut::get_action_mut::<TokenRecurringLimit>(actions, &mint)?
+                            {
+                                action.run(diff, slot)?;
+                                matched = true;
+                            };
+                        }
+                        {
+                            if let Some(action) =
+                                RoleMut::get_action_mut::<TokenLimit>(actions, &mint)?
+                            {
+                                action.run(diff)?;
+                                matched = true;
+                            };
+                        }
+
+                        if !matched {
+                            return Err(SwigError::PermissionDeniedMissingPermission.into());
+                        }
+                    }
+                },
+                _ => {},
+            }
         }
     }
 
     Ok(())
 }
-
-// sign_v1.authenticate(all_accounts, &role)?;
-// for ix in ix_iter {
-//     if let Ok(instruction) = ix {
-//         instruction.execute(
-//             all_accounts,
-//             ctx.accounts.swig.key(),
-//             &[signer.as_slice().into()],
-//         )?;
-//         msg!("Instruction executed");
-//     } else {
-//         return Err(SwigError::InstructionError(ix.err().unwrap()).into());
-//     }
-// }
-// let all = role.actions.iter().any(|action| match action {
-//     Action::All => true,
-//     _ => false,
-// });
-// if !all {
-//     for (index, account) in account_classifiers.iter().enumerate() {
-//         let current_account = &all_accounts[index];
-//         match account {
-//             AccountClassification::ThisSwig { lamports } => {
-//                 if lamports > &current_account.lamports() {
-//                     let amount_diff = lamports - current_account.lamports();
-//                     if let Some(action) = role.actions.iter_mut().find(|action| match action {
-//                         Action::Sol { .. } => true,
-//                         _ => false,
-//                     }) {
-//                         *action = match action {
-//                             Action::Sol {
-//                                 action: SolAction::All,
-//                             } => Ok(Action::Sol {
-//                                 action: SolAction::All,
-//                             }),
-//                             Action::Sol {
-//                                 action: SolAction::Manage(amount),
-//                             } => {
-//                                 if *amount >= amount_diff {
-//                                     Ok(Action::Sol {
-//                                         action: SolAction::Manage(*amount - amount_diff),
-//                                     })
-//                                 } else {
-//                                     Err(SwigError::PermissionDenied(
-//                                         "Sol move exceeds the amount authorized",
-//                                     ))
-//                                 }
-//                             },
-//                             _ => Err(SwigError::PermissionDenied(
-//                                 "Sol cannot be moved with this role",
-//                             )),
-//                         }?;
-//                     } else {
-//                         return Err(SwigError::PermissionDenied(
-//                             "Sol cannot be moved with this role",
-//                         )
-//                         .into());
-//                     }
-//                 }
-//             },
-//             AccountClassification::SwigTokenAccount { balance } => {
-//                 // Allow account closure if the token account is empty
-//                 let data = unsafe { current_account.borrow_mut_data_unchecked() };
-//                 let mint = &data[0..32];
-//                 let delegate = &data[72..76];
-//                 let state = &data[108];
-//                 if delegate != [0u8; 4] {
-//                     return Err(SwigError::PermissionDenied(
-//                         "Token account cannot be have delegate",
-//                     )
-//                     .into());
-//                 }
-//                 if *state != 1 {
-//                     return Err(SwigError::PermissionDenied(
-//                         "Token account must be initialized",
-//                     )
-//                     .into());
-//                 }
-//                 let current_token_balance = u64::from_le_bytes(
-//                     data[64..72]
-//                         .try_into()
-//                         .map_err(|_| ProgramError::InvalidAccountData)?,
-//                 );
-//                 if balance != &current_token_balance {
-//                     let amount_diff = balance - current_token_balance;
-//                     if let Some(action) = role.actions.iter_mut().find(|action| match action {
-//                         Action::Token { key, .. } if key == &mint => true,
-//                         Action::Tokens { .. } => true,
-//                         _ => false,
-//                     }) {
-//                         *action = match action {
-//                             Action::Token {
-//                                 key,
-//                                 action: TokenAction::All,
-//                             } => Ok(Action::Token {
-//                                 key: *key,
-//                                 action: TokenAction::All,
-//                             }),
-//                             Action::Token {
-//                                 key,
-//                                 action: TokenAction::Manage(amount),
-//                             } => {
-//                                 if *amount <= amount_diff {
-//                                     Ok(Action::Token {
-//                                         key: *key,
-//                                         action: TokenAction::Manage(*amount - amount_diff),
-//                                     })
-//                                 } else {
-//                                     Err(SwigError::PermissionDenied(
-//                                         "Token move exceeds the amount authorized",
-//                                     ))
-//                                 }
-//                             },
-//                             Action::Tokens {
-//                                 action: TokenAction::All,
-//                             } => Ok(Action::Tokens {
-//                                 action: TokenAction::All,
-//                             }),
-//                             Action::Tokens {
-//                                 action: TokenAction::Manage(amount),
-//                             } => {
-//                                 if *amount <= amount_diff {
-//                                     Ok(Action::Tokens {
-//                                         action: TokenAction::Manage(*amount - amount_diff),
-//                                     })
-//                                 } else {
-//                                     Err(SwigError::PermissionDenied(
-//                                         "Token move exceeds the amount authorized",
-//                                     ))
-//                                 }
-//                             },
-//                             _ => Err(SwigError::PermissionDenied(
-//                                 "Token cannot be moved with this role",
-//                             )),
-//                         }?;
-//                     } else {
-//                         return Err(SwigError::PermissionDenied(
-//                             "Token cannot be moved with this role",
-//                         )
-//                         .into());
-//                     }
-//                 }
-//             },
-//             _ => {},
-//         }
-//     }
-//     role.serialize(&mut &mut swig_account_data[offset..offset + role.size()])
-//         .map_err(|_| SwigError::SerializationError)
-//         .map_err(|_| SwigError::SerializationError)?;
-// }
-// Ok(())

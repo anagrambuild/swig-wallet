@@ -49,6 +49,7 @@ pub enum SwigAuthenticateError {
     InvalidAuthorityPayload = 3000,
     InvalidAuthority,
     AuthorityDoesNotSupportSessionBasedAuth,
+    PermissionDeniedInsufficientBalance,
 }
 
 impl From<SwigStateError> for ProgramError {

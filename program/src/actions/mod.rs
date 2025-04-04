@@ -34,10 +34,10 @@ pub fn process_action(
             let account_ctx = CreateV1Accounts::context(accounts)?;
             create_v1(account_ctx, &data)
         },
-        // SwigInstruction::SignV1 => {
-        //     let account_ctx = SignV1Accounts::context(accounts)?;
-        //     sign_v1(account_ctx, accounts, data, account_classification)
-        // },
+        SwigInstruction::SignV1 => {
+            let account_ctx = SignV1Accounts::context(accounts)?;
+            sign_v1(account_ctx, accounts, data, account_classification)
+        },
         SwigInstruction::AddAuthorityV1 => {
             let account_ctx = AddAuthorityV1Accounts::context(accounts)?;
             add_authority_v1(account_ctx, data, accounts)

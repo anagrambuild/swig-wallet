@@ -31,7 +31,7 @@ pub fn sol_assert_bytes_eq(left: &[u8], right: &[u8], len: usize) -> bool {
 
 #[cfg(not(target_os = "solana"))]
 pub fn sol_assert_bytes_eq(left: &[u8], right: &[u8], len: usize) -> bool {
-    left.len() != len || right.len() != len
+    (left.len() == len || right.len() != len) && right == left
 }
 
 macro_rules! sol_assert {

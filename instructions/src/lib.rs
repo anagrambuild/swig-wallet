@@ -1,15 +1,15 @@
 mod compact_instructions;
-use core::marker::PhantomData;
 pub use compact_instructions::*;
+use core::marker::PhantomData;
 use pinocchio::{
     account_info::AccountInfo,
     instruction::{Account, AccountMeta, Instruction, Signer},
+    msg,
     program::invoke_signed_unchecked,
     program_error::ProgramError,
     pubkey::Pubkey,
     ProgramResult,
 };
-
 
 #[repr(u32)]
 pub enum InstructionError {
@@ -19,11 +19,10 @@ pub enum InstructionError {
 }
 
 impl From<InstructionError> for ProgramError {
-  fn from(e: InstructionError) -> Self {
-      ProgramError::Custom(e as u32)
-  }
+    fn from(e: InstructionError) -> Self {
+        ProgramError::Custom(e as u32)
+    }
 }
-
 
 pub struct InstructionHolder<'a> {
     pub program_id: &'a Pubkey,
