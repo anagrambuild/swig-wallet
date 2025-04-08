@@ -5,7 +5,8 @@ members = [
   "interface",
   "instructions",
   "state-x",
-  "assertions",
+  "assertions", 
+  "no-padding",
 ] #, "cli"]
 
 [workspace.lints.clippy]

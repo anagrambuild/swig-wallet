@@ -5,8 +5,8 @@ use crate::{
         SwigInstruction,
     },
 };
+use no_padding::NoPadding;
 use pinocchio::{
-    log::sol_log_compute_units,
     msg,
     program_error::ProgramError,
     sysvars::{rent::Rent, Sysvar},
@@ -22,17 +22,15 @@ use swig_state_x::{
     IntoBytes, Transmutable,
 };
 
-static_assertions::const_assert!(core::mem::size_of::<CreateV1Args>() % 8 == 0);
-#[repr(C)]
-#[derive(Debug)]
+#[repr(C, align(8))]
+#[derive(Debug, NoPadding)]
 pub struct CreateV1Args {
     discriminator: SwigInstruction,
-    pub id: [u8; 32],
-    pub bump: u8,
-    pub num_actions: u8,
-    _padding: u8,
     pub authority_type: u16,
     pub authority_data_len: u16,
+    pub bump: u8,
+    pub num_actions: u8,
+    pub id: [u8; 32],
 }
 
 impl CreateV1Args {
@@ -47,7 +45,6 @@ impl CreateV1Args {
             discriminator: SwigInstruction::CreateV1,
             id,
             bump,
-            _padding: 0,
             authority_type: authority_type as u16,
             authority_data_len,
             num_actions,

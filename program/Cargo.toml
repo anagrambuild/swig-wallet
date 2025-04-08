@@ -24,6 +24,7 @@ static_assertions = "1.1.0"
 bs58 = "*"
 num_enum = "0.7.3"
 bytemuck = { version = "1.13.1", features = ["derive"] }
+no-padding = { path = "../no-padding" }
 
 [dev-dependencies]
 solana-sdk = "=2.1.0"

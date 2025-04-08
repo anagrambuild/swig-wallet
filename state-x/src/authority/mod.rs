@@ -1,7 +1,7 @@
 pub mod ed25519;
 
 use ed25519::ED25519Authority;
-use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError};
+use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
 
 use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
 

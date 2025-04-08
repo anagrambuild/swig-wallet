@@ -1,5 +1,4 @@
-use pinocchio::{msg, program_error::ProgramError};
-use swig_compact_instructions::InstructionError;
+use pinocchio::program_error::ProgramError;
 
 #[derive(Debug)]
 #[repr(u32)]
@@ -28,6 +27,7 @@ pub enum SwigError {
     //InstructionError,
     InstructionExecutionError,
     SerializationError,
+    InvalidSwigSignInstructionDataTooShort,
     //InvalidAccounts,
     InvalidAccountsSwigMustBeFirst,
     //PermissionDenied,

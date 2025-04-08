@@ -8,14 +8,14 @@ pub mod token_limit;
 pub mod token_recurring_limit;
 use all::All;
 use manage_authority::ManageAuthority;
-use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError};
+use pinocchio::program_error::ProgramError;
 use program::Program;
 use sol_limit::SolLimit;
 use sol_recurring_limit::SolRecurringLimit;
 use token_limit::TokenLimit;
 use token_recurring_limit::TokenRecurringLimit;
 
-use crate::{AccountClassification, IntoBytes, Transmutable, TransmutableMut};
+use crate::{IntoBytes, Transmutable, TransmutableMut};
 
 static_assertions::const_assert!(core::mem::size_of::<Action>() % 8 == 0);
 #[repr(C, align(8))]

@@ -1,25 +1,23 @@
 use anyhow::Result;
 
 use litesvm::{
-    types::{TransactionMetadata, TransactionResult},
+    types::TransactionMetadata,
     LiteSVM,
 };
 use litesvm_token::{spl_token, CreateAssociatedTokenAccount, CreateMint, MintTo};
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
-    instruction::{AccountMeta, Instruction},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_program,
-    transaction::{Transaction, VersionedTransaction},
+    transaction::VersionedTransaction,
 };
 use swig_interface::{AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction};
 use swig_state_x::{
     action::all::All,
     authority::AuthorityType,
-    swig::{swig_account_seeds, Swig, SwigWithRoles},
+    swig::{swig_account_seeds, SwigWithRoles},
 };
 
 pub fn program_id() -> Pubkey {

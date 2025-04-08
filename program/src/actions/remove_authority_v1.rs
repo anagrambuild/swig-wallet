@@ -1,3 +1,4 @@
+use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
     msg,
@@ -7,7 +8,7 @@ use pinocchio::{
 };
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state_x::{
-    action::{all::All, manage_authority::ManageAuthority, Action},
+    action::{all::All, manage_authority::ManageAuthority},
     swig::{SwigBuilder, SwigWithRoles},
     Discriminator, IntoBytes, Transmutable,
 };
@@ -26,13 +27,15 @@ pub struct RemoveAuthorityV1<'a> {
     authority_payload: &'a [u8],
 }
 
-static_assertions::const_assert!(core::mem::size_of::<RemoveAuthorityV1Args>() % 8 == 0);
-#[repr(C)]
+
+#[repr(C, align(8))]
+#[derive(Debug, NoPadding)]
 pub struct RemoveAuthorityV1Args {
     pub instruction: SwigInstruction,
+    pub authority_payload_len: u16,
+    _padding: [u16; 2],
     pub acting_role_id: u32,
     pub authority_to_remove_id: u32,
-    pub authority_payload_len: u16,
 }
 
 impl Transmutable for RemoveAuthorityV1Args {
@@ -50,6 +53,7 @@ impl RemoveAuthorityV1Args {
             acting_role_id,
             authority_to_remove_id,
             authority_payload_len,
+            _padding: [0; 2],
         }
     }
 }

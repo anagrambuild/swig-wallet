@@ -22,7 +22,7 @@ pub enum StakeAccountState {
     RewardsPool,
 }
 
-#[derive(PartialEq, Debug, Copy, Clone)]
+#[derive(PartialEq, Debug, Copy, Clone)]  
 pub enum AccountClassification {
     None,
     ThisSwig {

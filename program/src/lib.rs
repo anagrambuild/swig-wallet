@@ -16,7 +16,7 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_pubkey::{declare_id, pubkey};
-use swig_state_x::{AccountClassification, Discriminator};
+use swig_state_x::{swig::Swig, AccountClassification, Discriminator, Transmutable};
 
 declare_id!("swigNmWhy8RvUYXBKV5TSU8Hh3f4o5EczHouzBzEsLC");
 const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
@@ -39,7 +39,7 @@ pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
     Ok(())
 }
 
-/// classify_accounts
+/// classify_accountstest_token_transfer_performance_comparison
 /// This functions classifies all accounts as either the swig account (assumed
 /// in all instructions to be the first account) or an asset account owned by
 /// the swig.
@@ -82,7 +82,10 @@ unsafe fn classify_account(
         &crate::ID if index != 0 => Err(SwigError::InvalidAccountsSwigMustBeFirst.into()),
         &crate::ID => {
             let data = account.borrow_data_unchecked();
-            if data[0] == Discriminator::SwigAccount as u8 {
+            if data.len() < Swig::LEN {
+                return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+            }
+            if unsafe { *data.get_unchecked(0) == Discriminator::SwigAccount as u8 } {
                 Ok(AccountClassification::ThisSwig {
                     lamports: account.lamports(),
                 })
@@ -98,10 +101,10 @@ unsafe fn classify_account(
         },
         &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if account.data_len() == 165 && index > 0 => unsafe {
             let data = account.borrow_data_unchecked();
-            if sol_memcmp(accounts[0].assume_init_ref().key(), &data[32..64], 32) == 0 {
+            if sol_memcmp(accounts.get_unchecked(0).assume_init_ref().key(), data.get_unchecked(32..64), 32) == 0 {
                 Ok(AccountClassification::SwigTokenAccount {
                     balance: u64::from_le_bytes(
-                        data[64..72]
+                        data.get_unchecked(64..72)
                             .try_into()
                             .map_err(|_| ProgramError::InvalidAccountData)?,
                     ),

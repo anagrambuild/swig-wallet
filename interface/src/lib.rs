@@ -45,8 +45,7 @@ impl ClientAction {
             ClientAction::Program(_) => (Permission::Program, Program::LEN),
             ClientAction::All(_) => (Permission::All, All::LEN),
             ClientAction::ManageAuthority(_) => (Permission::ManageAuthority, ManageAuthority::LEN),
-            ClientAction::SubAccount(_) => (Permission::SubAccount, SubAccount::LEN),
-            _ => panic!("Invalid action"),
+            ClientAction::SubAccount(_) => (Permission::SubAccount, SubAccount::LEN)
         };
         let offset = data.len() as u32;
         let header = Action::new(
@@ -238,7 +237,6 @@ impl SignInstruction {
         let args = swig::actions::sign_v1::SignV1Args::new(
             role_id as u32,
             1,
-            ixs.inner_instructions.len() as u16,
         );
         let arg_bytes = args
             .into_bytes()
@@ -250,36 +248,7 @@ impl SignInstruction {
         })
     }
 
-    pub fn new_secp256k1(
-        swig_account: Pubkey,
-        payer: Pubkey,
-        authority: [u8; 64],
-        inner_instructions: Vec<Instruction>,
-        role_id: u8,
-    ) -> anyhow::Result<Instruction> {
-        let accounts = vec![
-            AccountMeta::new(swig_account, false),
-            AccountMeta::new(payer, true),
-        ];
-        let (accounts, ixs) = compact_instructions(swig_account, accounts, inner_instructions);
-        let args = swig::actions::sign_v1::SignV1Args::new(
-            role_id as u32,
-            64,
-            ixs.inner_instructions.len() as u16,
-        );
-        Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
-            accounts,
-            data: [
-                swig::actions::sign_v1::SignV1Args::LEN
-                    .to_le_bytes()
-                    .as_ref(),
-                authority.as_ref(),
-                &ixs.into_bytes(),
-            ]
-            .concat(),
-        })
-    }
+    
 }
 
 pub struct RemoveAuthorityInstruction;
@@ -324,11 +293,7 @@ impl RemoveAuthorityInstruction {
             AccountMeta::new(payer, true),
             AccountMeta::new_readonly(system_program::ID, false),
         ];
-        let args = RemoveAuthorityV1Args::new(
-            acting_role_id,
-            authority_to_remove_id,
-            65,
-        );
+        let args = RemoveAuthorityV1Args::new(acting_role_id, authority_to_remove_id, 65);
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;

@@ -5,7 +5,7 @@ use solana_sdk::{signature::Keypair, signer::Signer};
 use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state_x::{
     action::manage_authority::ManageAuthority,
-    authority::{ed25519::ED25519Authority, AuthorityType},
+    authority::AuthorityType,
     swig::SwigWithRoles,
 };
 

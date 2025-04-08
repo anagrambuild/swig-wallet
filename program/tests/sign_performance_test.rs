@@ -1,21 +1,14 @@
 mod common;
 use common::*;
-use litesvm_token::spl_token::{self, instruction::TokenInstruction};
+use litesvm_token::spl_token::{self};
 use solana_sdk::{
-    compute_budget::ComputeBudgetInstruction,
-    instruction::{AccountMeta, Instruction},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    transaction::{TransactionError, VersionedTransaction},
+    transaction::VersionedTransaction,
 };
-use swig_interface::AuthorityConfig;
-use swig_state_x::{
-    action::sol_limit::SolLimit,
-    authority::AuthorityType,
-    swig::{swig_account_seeds, SwigWithRoles},
-};
+use swig_state_x::swig::swig_account_seeds;
 
 /// This test compares the baseline performance of:
 /// 1. A regular token transfer (outside of swig)

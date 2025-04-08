@@ -4,8 +4,7 @@ use pinocchio::program_error::ProgramError;
 
 use crate::{
     action::{Action, Actionable},
-    authority::{Authority, AuthorityInfo, AuthorityLoader, AuthorityType},
-    FromBytes, FromBytesMut, IntoBytes, Transmutable, TransmutableMut,
+    authority::{ AuthorityInfo, AuthorityType}, IntoBytes, Transmutable, TransmutableMut,
 };
 
 static_assertions::const_assert!(mem::size_of::<Position>() % 8 == 0);

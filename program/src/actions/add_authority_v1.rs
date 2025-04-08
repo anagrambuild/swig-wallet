@@ -1,3 +1,4 @@
+use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
     msg,
@@ -31,15 +32,17 @@ pub struct AddAuthorityV1<'a> {
     authority_data: &'a [u8],
 }
 
-static_assertions::const_assert!(core::mem::size_of::<AddAuthorityV1Args>() % 8 == 0);
-#[repr(C)]
+ 
+#[repr(C, align(8))]
+#[derive(Debug, NoPadding)]
 pub struct AddAuthorityV1Args {
     pub instruction: SwigInstruction,
-    pub acting_role_id: u32,
     pub new_authority_data_len: u16,
     pub actions_data_len: u16,
     pub new_authority_type: u16,
     pub num_actions: u8,
+    _padding: [u8; 3],
+    pub acting_role_id: u32,
 }
 
 impl Transmutable for AddAuthorityV1Args {
@@ -61,6 +64,7 @@ impl AddAuthorityV1Args {
             new_authority_data_len,
             actions_data_len,
             num_actions,
+            _padding: [0; 3],
         }
     }
 }

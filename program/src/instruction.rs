@@ -2,10 +2,9 @@ use num_enum::{FromPrimitive, IntoPrimitive};
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
 use shank::{ShankContext, ShankInstruction};
 
-
 #[derive(Clone, Copy, Debug, ShankContext, ShankInstruction, FromPrimitive, IntoPrimitive)]
 #[rustfmt::skip]
-#[repr(u8)]
+#[repr(u16)]
 pub enum SwigInstruction {
   #[account(0, writable, name="swig", desc="the swig smart wallet")]
   #[account(1, writable, signer, name="payer", desc="the payer")]
@@ -26,9 +25,4 @@ pub enum SwigInstruction {
   // additional ix data will be appended to the end of the ix the ix_payload and auth_payload have offset and length tuples to locate the data
   // Extra accounts will be sent over CPI to any of the IXs in the ix payload which resembles a txn
   SignV1 = 4,
-}
-
-pub trait Authenticatable {
-    fn data_payload(&self) -> &[u8];
-    fn authority_payload(&self) -> &[u8];
 }

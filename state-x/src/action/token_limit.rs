@@ -1,4 +1,3 @@
-use core::ptr::slice_from_raw_parts;
 
 use pinocchio::program_error::ProgramError;
 

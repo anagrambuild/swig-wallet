@@ -2,12 +2,9 @@ mod common;
 
 use common::*;
 use solana_sdk::{
-    instruction::{AccountMeta, Instruction},
     message::{v0, VersionedMessage},
-    pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_program,
     transaction::VersionedTransaction,
 };
 use swig_interface::{AuthorityConfig, ClientAction, RemoveAuthorityInstruction};

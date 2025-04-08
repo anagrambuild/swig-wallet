@@ -1,7 +1,8 @@
+use core::mem::MaybeUninit;
+
+use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
-    log::sol_log_compute_units,
-    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
     sysvars::{clock::Clock, Sysvar},
@@ -24,7 +25,7 @@ use swig_state_x::{
         all::All, sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
         token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit,
     },
-    authority:: AuthorityType,
+    authority::AuthorityType,
     role::RoleMut,
     swig::{swig_account_signer, Swig},
     Discriminator, IntoBytes, Transmutable, TransmutableMut,
@@ -34,25 +35,20 @@ use swig_state_x::{
 pub const INSTRUCTION_SYSVAR_ACCOUNT: Pubkey =
     from_str("Sysvar1nstructions1111111111111111111111111");
 
-static_assertions::const_assert!(core::mem::size_of::<SignV1Args>() % 8 == 0);
-#[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, NoPadding)]
+#[repr(C, align(8))]
 pub struct SignV1Args {
     instruction: SwigInstruction,
-    pub role_id: u32,
     pub authority_payload_len: u16,
-    pub instruction_payload_len: u16,
-    _padding: u8,
+    pub role_id: u32,
 }
 
 impl SignV1Args {
-    pub fn new(role_id: u32, authority_payload_len: u16, instruction_payload_len: u16) -> Self {
+    pub fn new(role_id: u32, authority_payload_len: u16) -> Self {
         Self {
             instruction: SwigInstruction::SignV1,
             role_id,
             authority_payload_len,
-            instruction_payload_len,
-            _padding: 0,
         }
     }
 }
@@ -74,10 +70,14 @@ pub struct SignV1<'a> {
 
 impl<'a> SignV1<'a> {
     pub fn from_instruction_bytes(data: &'a [u8]) -> Result<Self, ProgramError> {
-        let (inst, rest) = data.split_at(SignV1Args::LEN);
+        if data.len() < SignV1Args::LEN {
+            return Err(SwigError::InvalidSwigSignInstructionDataTooShort.into());
+        }
+
+        let (inst, rest) = unsafe { data.split_at_unchecked(SignV1Args::LEN) };
         let args = unsafe { SignV1Args::load_unchecked(inst)? };
         let (authority_payload, instruction_payload) =
-            rest.split_at(args.authority_payload_len as usize);
+            unsafe { rest.split_at_unchecked(args.authority_payload_len as usize) };
         Ok(Self {
             args,
             authority_payload,
@@ -125,31 +125,34 @@ pub fn sign_v1(
             slot,
         )?;
     }
-    let (restricted_keys, len): ([&Pubkey; 2], usize) =
+    const UNINIT_KEY: MaybeUninit<&Pubkey> = MaybeUninit::uninit();
+    let mut restricted_keys: [MaybeUninit<&Pubkey>; 2] = [UNINIT_KEY; 2];
+
+    let rkeys: &[&Pubkey] = unsafe {
         if role.position.authority_type()? == AuthorityType::Ed25519 {
-            (
-                [ctx.accounts.payer.key(), ctx.remaining_accounts[0].key()],
-                2,
-            )
+            restricted_keys[0].write(&ctx.accounts.payer.key());
+            restricted_keys[1].write(&ctx.remaining_accounts[0].key());
+
+            core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 2)
         } else {
-            ([ctx.accounts.payer.key(), ctx.accounts.payer.key()], 1)
-        };
+            restricted_keys[0].write(&ctx.accounts.payer.key());
+
+            core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 1)
+        }
+    };
     let ix_iter = InstructionIterator::new(
         all_accounts,
         sign_v1.instruction_payload,
         ctx.accounts.swig.key(),
-        &restricted_keys[0..len],
+        &rkeys,
     )?;
     let b = [swig.bump];
-    let signer = swig_account_signer(&swig.id, &b);
+    let seeds = swig_account_signer(&swig.id, &b);
+    let signer = seeds.as_slice();
 
     for ix in ix_iter {
         if let Ok(instruction) = ix {
-            instruction.execute(
-                all_accounts,
-                ctx.accounts.swig.key(),
-                &[signer.as_slice().into()],
-            )?;
+            instruction.execute(all_accounts, ctx.accounts.swig.key(), &[signer.into()])?;
         } else {
             return Err(SwigError::InstructionExecutionError.into());
         }
@@ -186,20 +189,21 @@ pub fn sign_v1(
                     }
                 },
                 AccountClassification::SwigTokenAccount { balance } => {
-                    let data = unsafe { &all_accounts[index].borrow_data_unchecked() };
-                    let mint = &data[0..32];
-                    let delegate = &data[72..76];
-                    let state = &data[108];
-                    let current_token_balance = u64::from_le_bytes(
-                        data[64..72]
+                    let data =
+                        unsafe { &all_accounts.get_unchecked(index).borrow_data_unchecked() };
+                    let mint = unsafe { data.get_unchecked(0..32) };
+                    let delegate = unsafe { data.get_unchecked(72..76) };
+                    let state = unsafe { *data.get_unchecked(108) };
+                    let current_token_balance = u64::from_le_bytes(unsafe {
+                        data.get_unchecked(64..72)
                             .try_into()
-                            .map_err(|_| ProgramError::InvalidAccountData)?,
-                    );
+                            .map_err(|_| ProgramError::InvalidAccountData)?
+                    });
 
                     if delegate != [0u8; 4] {
                         return Err(SwigError::PermissionDeniedTokenAccountDelegatePresent.into());
                     }
-                    if *state != 1 {
+                    if state != 1 {
                         return Err(SwigError::PermissionDeniedTokenAccountNotInitialized.into());
                     }
                     if balance > &current_token_balance {

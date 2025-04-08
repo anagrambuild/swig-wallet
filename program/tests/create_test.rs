@@ -11,10 +11,7 @@ use solana_sdk::{
     signer::Signer,
     transaction::VersionedTransaction,
 };
-use swig_state_x::{
-    swig::{swig_account_seeds, Swig, SwigWithRoles},
-    Transmutable,
-};
+use swig_state_x::swig::{swig_account_seeds, SwigWithRoles};
 
 #[test_log::test]
 fn test_create() {
