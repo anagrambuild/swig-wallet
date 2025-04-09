@@ -159,7 +159,6 @@ pub fn add_authority_v1(
         let new_authority = add_authority_v1.get_authority()?;
         let role_size = Position::LEN
             + new_authority.length()
-            + Action::LEN * add_authority_v1.args.num_actions as usize
             + add_authority_v1.actions.len();
 
         let account_size = core::alloc::Layout::from_size_align(

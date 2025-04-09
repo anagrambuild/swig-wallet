@@ -118,7 +118,6 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
         Swig::LEN
             + Position::LEN
             + authority.length()
-            + Action::LEN * create_v1.args.num_actions as usize
             + create_v1.actions.len(),
         core::mem::size_of::<u64>(),
     )
