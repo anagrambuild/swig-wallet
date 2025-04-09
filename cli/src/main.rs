@@ -263,8 +263,10 @@ fn main_fn() -> Result<()> {
                         authority_type: CliAuthorityType::Secp256k1,
                         session: None,
                     }
-                }, /* TODO for session based authorities we will create session keypair and sign
-                    * the data */
+                },
+                _ => todo!(),
+                /* TODO for session based authorities we will create session keypair and sign
+                 * the data */
             };
 
             let auth_file_path = Path::new(&ctx.config_dir).join(format!("{:0<13}.auth", id));
@@ -623,6 +625,7 @@ fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
                 AuthorityType::Ed25519 =>
                     bs58::encode(role.authority_data.as_slice()).into_string(),
                 AuthorityType::Secp256k1 => hex::encode(role.authority_data.as_slice()),
+                _ => todo!(),
             }
         );
         println!("\t\tStart Slot: {}", role.start_slot);
@@ -750,6 +753,7 @@ fn create(
     let auth_bytes = match authority_type {
         AuthorityType::Ed25519 => bs58::decode(authority).into_vec()?,
         AuthorityType::Secp256k1 => hex::decode(authority).unwrap(),
+        _ => todo!(),
     };
 
     let instruction = CreateInstruction::new(

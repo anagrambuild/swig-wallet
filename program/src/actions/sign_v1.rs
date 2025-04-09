@@ -3,7 +3,6 @@ use core::mem::MaybeUninit;
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
-    log::sol_log_compute_units,
     program_error::ProgramError,
     pubkey::Pubkey,
     sysvars::{clock::Clock, Sysvar},

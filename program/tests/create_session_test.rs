@@ -5,13 +5,11 @@ use solana_sdk::{
     clock::Clock, message::v0, signature::Keypair, signer::Signer, system_instruction,
 };
 use solana_sdk::{
-    instruction::{AccountMeta, Instruction},
     message::VersionedMessage,
     transaction::VersionedTransaction,
 };
-use swig_interface::{AuthorityConfig, ClientAction, CreateSessionInstruction, SignInstruction};
+use swig_interface::{CreateSessionInstruction, SignInstruction};
 use swig_state_x::{
-    action::manage_authority::ManageAuthority,
     authority::{ed25519::Ed25519SessionAuthority, AuthorityType},
     swig::SwigWithRoles,
 };

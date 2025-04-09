@@ -7,7 +7,7 @@ use crate::{
     Discriminator, IntoBytes, SwigStateError, Transmutable, TransmutableMut,
 };
 use no_padding::NoPadding;
-use pinocchio::{instruction::Seed, msg, program_error::ProgramError};
+use pinocchio::{instruction::Seed, program_error::ProgramError};
 
 #[inline(always)]
 pub fn swig_account_seeds(id: &[u8]) -> [&[u8]; 2] {

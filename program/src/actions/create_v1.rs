@@ -15,8 +15,8 @@ use pinocchio::{
 use pinocchio_system::instructions::CreateAccount;
 use swig_assertions::*;
 use swig_state_x::{
-    action::{all::All, manage_authority::ManageAuthority, Action, ActionLoader, Actionable},
-    authority::{Authority, AuthorityInfo, AuthorityLoader, AuthorityType},
+    action::{all::All, manage_authority::ManageAuthority, ActionLoader, Actionable},
+    authority::{AuthorityInfo, AuthorityLoader, AuthorityType},
     role::Position,
     swig::{swig_account_seeds_with_bump, swig_account_signer, Swig, SwigBuilder},
     IntoBytes, Transmutable,

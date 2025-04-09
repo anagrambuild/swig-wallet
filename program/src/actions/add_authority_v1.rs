@@ -9,7 +9,7 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state_x::{
-    action::{all::All, manage_authority::ManageAuthority, Action}, authority::{Authority, AuthorityInfo, AuthorityLoader, AuthorityType}, role::Position, swig::{SwigBuilder, SwigWithRoles}, Discriminator, IntoBytes, SwigAuthenticateError, Transmutable
+    action::{all::All, manage_authority::ManageAuthority}, authority::{AuthorityInfo, AuthorityLoader, AuthorityType}, role::Position, swig::{SwigBuilder, SwigWithRoles}, Discriminator, IntoBytes, SwigAuthenticateError, Transmutable
 };
 
 use crate::{

@@ -1,7 +1,7 @@
 use core::any::Any;
 
 use no_padding::NoPadding;
-use pinocchio::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey};
+use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
 use swig_assertions::sol_assert_bytes_eq;
 
 use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};

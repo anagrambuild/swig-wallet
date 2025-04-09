@@ -1,8 +1,8 @@
 pub mod add_authority_v1;
+pub mod create_session_v1;
 pub mod create_v1;
 pub mod remove_authority_v1;
 pub mod sign_v1;
-pub mod create_session_v1;
 
 use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError, ProgramResult};
