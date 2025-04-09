@@ -5,8 +5,7 @@ use solana_sdk::{
 };
 pub use swig;
 use swig::actions::{
-    add_authority_v1::AddAuthorityV1Args, create_v1::CreateV1Args,
-    remove_authority_v1::RemoveAuthorityV1Args,
+    add_authority_v1::AddAuthorityV1Args, create_session_v1::CreateSessionV1Args, create_v1::CreateV1Args, remove_authority_v1::RemoveAuthorityV1Args
 };
 pub use swig_compact_instructions::*;
 use swig_state_x::{
@@ -226,7 +225,7 @@ impl SignInstruction {
         payer: Pubkey,
         authority: Pubkey,
         inner_instruction: Instruction,
-        role_id: u8,
+        role_id: u32,
     ) -> anyhow::Result<Instruction> {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
@@ -235,7 +234,7 @@ impl SignInstruction {
         ];
         let (accounts, ixs) = compact_instructions(swig_account, accounts, vec![inner_instruction]);
         let args = swig::actions::sign_v1::SignV1Args::new(
-            role_id as u32,
+            role_id,
             1,
         );
         let arg_bytes = args
@@ -303,6 +302,38 @@ impl RemoveAuthorityInstruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
             data: [arg_bytes, &authority_payload].concat(),
+        })
+    }
+}
+
+
+pub struct CreateSessionInstruction;
+impl CreateSessionInstruction {
+    pub fn new_with_ed25519_authority(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority: Pubkey,
+        role_id: u32,
+        session_key: Pubkey,
+        session_duration: u64,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(authority, true),
+        ];
+
+        let create_session_args = CreateSessionV1Args::new(
+            role_id,
+            1,
+            session_duration,
+            session_key.to_bytes(),
+        );
+        let args_bytes = create_session_args.into_bytes().map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [args_bytes, &[2]].concat(),
         })
     }
 }

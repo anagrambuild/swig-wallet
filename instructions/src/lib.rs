@@ -52,8 +52,8 @@ impl<'a> InstructionHolder<'a> {
             unsafe {
                 let index =  self.indexes.get_unchecked(0) ;
                 let index2 =self.indexes.get_unchecked(1) ;
-                let account1 = unsafe { all_accounts.get_unchecked(*index) };
-                let account2 = unsafe { all_accounts.get_unchecked(*index2) };
+                let account1 =  all_accounts.get_unchecked(*index);
+                let account2 = all_accounts.get_unchecked(*index2);
 
                 *account1.borrow_mut_lamports_unchecked() -= amount;
                 *account2.borrow_mut_lamports_unchecked() += amount;

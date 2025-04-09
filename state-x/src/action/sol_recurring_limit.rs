@@ -1,11 +1,12 @@
+use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 
 use crate::{IntoBytes, Transmutable, TransmutableMut};
 
 use super::{Actionable, Permission};
 
-static_assertions::const_assert!(core::mem::size_of::<SolRecurringLimit>() % 8 == 0);
-#[repr(C)]
+#[repr(C, align(8))]
+#[derive(Debug, NoPadding)]
 pub struct SolRecurringLimit {
     pub recurring_amount: u64,
     pub window: u64,
@@ -15,23 +16,23 @@ pub struct SolRecurringLimit {
 
 impl SolRecurringLimit {
     pub fn run(&mut self, lamport_diff: u64, current_slot: u64) -> Result<(), ProgramError> {
-      if current_slot - self.last_reset > self.window && lamport_diff <= self.recurring_amount {
-        self.current_amount = self.recurring_amount;
-        self.last_reset = current_slot;
-      }
-      if lamport_diff > self.current_amount {
-        return Err(ProgramError::InsufficientFunds);
-      }
-      self.current_amount -= lamport_diff;
-      Ok(())
+        if current_slot - self.last_reset > self.window && lamport_diff <= self.recurring_amount {
+            self.current_amount = self.recurring_amount;
+            self.last_reset = current_slot;
+        }
+        if lamport_diff > self.current_amount {
+            return Err(ProgramError::InsufficientFunds);
+        }
+        self.current_amount -= lamport_diff;
+        Ok(())
     }
 }
 impl Transmutable for SolRecurringLimit {
     const LEN: usize = core::mem::size_of::<SolRecurringLimit>();
 }
 
-impl<'a> IntoBytes<'a> for SolRecurringLimit {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+impl IntoBytes for SolRecurringLimit {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
     }
 }

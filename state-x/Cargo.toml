@@ -7,3 +7,4 @@ edition = "2021"
 pinocchio = { version = "0.8.1", features = ["std"] }
 static_assertions = "1.1.0"
 swig-assertions = { path = "../assertions" }
+no-padding = { path = "../no-padding" }

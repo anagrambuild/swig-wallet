@@ -9,11 +9,7 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state_x::{
-    action::{all::All, manage_authority::ManageAuthority, Action},
-    authority::{Authority, AuthorityLoader, AuthorityType},
-    role::Position,
-    swig::{SwigBuilder, SwigWithRoles},
-    Discriminator, IntoBytes, Transmutable,
+    action::{all::All, manage_authority::ManageAuthority, Action}, authority::{Authority, AuthorityInfo, AuthorityLoader, AuthorityType}, role::Position, swig::{SwigBuilder, SwigWithRoles}, Discriminator, IntoBytes, SwigAuthenticateError, Transmutable
 };
 
 use crate::{
@@ -32,7 +28,6 @@ pub struct AddAuthorityV1<'a> {
     authority_data: &'a [u8],
 }
 
- 
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct AddAuthorityV1Args {
@@ -73,8 +68,8 @@ impl AddAuthorityV1Args {
     pub const SIZE: usize = core::mem::size_of::<Self>();
 }
 
-impl<'a> IntoBytes<'a> for AddAuthorityV1Args {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+impl IntoBytes for AddAuthorityV1Args {
+    fn into_bytes(& self) -> Result<&[u8], ProgramError> {
         Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
     }
 }
@@ -98,7 +93,7 @@ impl<'a> AddAuthorityV1<'a> {
         })
     }
 
-    pub fn get_authority(&'a self) -> Result<&impl Authority<'a>, ProgramError> {
+    pub fn get_authority(&'a self) -> Result<&'a dyn AuthorityInfo, ProgramError> {
         let authority_type = AuthorityType::try_from(self.args.new_authority_type)?;
         AuthorityLoader::load_authority(authority_type, self.authority_data)
     }
@@ -159,7 +154,7 @@ pub fn add_authority_v1(
         let manage_authority = role.get_action::<ManageAuthority>(&[])?;
 
         if all.is_none() && manage_authority.is_none() {
-            return Err(SwigError::PermissionDeniedToManageAuthority.into());
+            return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
         }
         let new_authority = add_authority_v1.get_authority()?;
         let role_size = Position::LEN

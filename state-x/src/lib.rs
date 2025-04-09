@@ -22,7 +22,7 @@ pub enum StakeAccountState {
     RewardsPool,
 }
 
-#[derive(PartialEq, Debug, Copy, Clone)]  
+#[derive(PartialEq, Debug, Copy, Clone)]
 pub enum AccountClassification {
     None,
     ThisSwig {
@@ -44,13 +44,26 @@ pub enum SwigStateError {
     InvalidRoleData,
     InvalidSwigData,
     RoleNotFound,
+    PermissionLoadError,
 }
 
 pub enum SwigAuthenticateError {
-    InvalidAuthorityPayload = 3000,
-    InvalidAuthority,
+    InvalidAuthority = 3000,
+    InvalidAuthorityPayload,
+    InvalidAuthorityEd25519MissingAuthorityAccount,
     AuthorityDoesNotSupportSessionBasedAuth,
+    PermissionDenied,
+    //PermissionDenied,
+    PermissionDeniedMissingPermission,
+    PermissionDeniedTokenAccountPermissionFailure,
+    PermissionDeniedTokenAccountDelegatePresent,
+    PermissionDeniedTokenAccountNotInitialized,
+    PermissionDeniedToManageAuthority,
     PermissionDeniedInsufficientBalance,
+    PermissionDeniedCannotRemoveRootAuthority,
+    PermissionDeniedSessionExpired,
+    InvalidSessionKeyCannotReuseSessionKey,
+    InvalidSessionDuration,
 }
 
 impl From<SwigStateError> for ProgramError {
@@ -110,14 +123,6 @@ pub trait TransmutableMut: Transmutable {
     }
 }
 
-pub trait FromBytes<'a>: Sized {
-    fn from_bytes(bytes: &'a [u8]) -> Result<Self, ProgramError>;
-}
-
-pub trait FromBytesMut<'a>: Sized {
-    fn from_bytes_mut(bytes: &'a mut [u8]) -> Result<Self, ProgramError>;
-}
-
-pub trait IntoBytes<'a> {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError>;
+pub trait IntoBytes {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError>;
 }

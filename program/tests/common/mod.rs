@@ -1,9 +1,6 @@
 use anyhow::Result;
 
-use litesvm::{
-    types::TransactionMetadata,
-    LiteSVM,
-};
+use litesvm::{types::TransactionMetadata, LiteSVM};
 use litesvm_token::{spl_token, CreateAssociatedTokenAccount, CreateMint, MintTo};
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
@@ -16,8 +13,8 @@ use solana_sdk::{
 use swig_interface::{AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction};
 use swig_state_x::{
     action::all::All,
-    authority::AuthorityType,
-    swig::{swig_account_seeds, SwigWithRoles},
+    authority::{ed25519::Ed25519SessionAuthority, AuthorityType},
+    swig::{swig_account_seeds, SwigWithRoles}, IntoBytes,
 };
 
 pub fn program_id() -> Pubkey {
@@ -91,6 +88,52 @@ pub fn create_swig_ed25519(
             authority_type: AuthorityType::Ed25519,
             authority: authority.pubkey().as_ref(),
         },
+        vec![ClientAction::All(All {})],
+        id,
+    )?;
+
+    let msg = v0::Message::try_compile(
+        &payer_pubkey,
+        &[create_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[context.default_payer.insecure_clone()],
+    )
+    .unwrap();
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+    Ok((swig, bench))
+}
+
+pub fn create_swig_ed25519_session(
+    context: &mut SwigTestContext,
+    authority: &Keypair,
+    id: [u8; 32],
+    session_max_length: u64,
+    initial_session_key: [u8; 32],
+) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
+    let payer_pubkey = context.default_payer.pubkey();
+    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+
+    let authority_pubkey = authority.pubkey().to_bytes();
+    let authority_data = Ed25519SessionAuthority::new(authority_pubkey, initial_session_key, session_max_length);
+    let authority_data_bytes = authority_data.into_bytes().map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?;
+    let initial_authority = AuthorityConfig {
+        authority_type: AuthorityType::Ed25519Session,
+        authority: authority_data_bytes.as_ref(),
+    };
+
+    let create_ix = CreateInstruction::new(
+        swig,
+        bump,
+        payer_pubkey,
+        initial_authority,
         vec![ClientAction::All(All {})],
         id,
     )?;

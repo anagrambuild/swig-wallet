@@ -1,11 +1,11 @@
-
 use pinocchio::program_error::ProgramError;
 
 use super::{Actionable, Permission};
-use crate::{IntoBytes, Transmutable, TransmutableMut};
+use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
+use no_padding::NoPadding;
 
-static_assertions::const_assert!(core::mem::size_of::<TokenLimit>() % 8 == 0);
-#[repr(C)]
+#[repr(C, align(8))]
+#[derive(Debug, NoPadding)]
 pub struct TokenLimit {
     pub token_mint: [u8; 32],
     pub current_amount: u64,
@@ -14,7 +14,7 @@ pub struct TokenLimit {
 impl TokenLimit {
     pub fn run(&mut self, amount: u64) -> Result<(), ProgramError> {
         if amount > self.current_amount {
-            return Err(ProgramError::InsufficientFunds);
+            return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
         }
         self.current_amount -= amount;
         Ok(())
@@ -26,8 +26,8 @@ impl Transmutable for TokenLimit {
 
 impl TransmutableMut for TokenLimit {}
 
-impl<'a> IntoBytes<'a> for TokenLimit {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+impl IntoBytes for TokenLimit {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         let bytes =
             unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
         Ok(bytes)

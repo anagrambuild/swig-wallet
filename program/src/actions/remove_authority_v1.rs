@@ -10,7 +10,7 @@ use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state_x::{
     action::{all::All, manage_authority::ManageAuthority},
     swig::{SwigBuilder, SwigWithRoles},
-    Discriminator, IntoBytes, Transmutable,
+    Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
 use crate::{
@@ -26,7 +26,6 @@ pub struct RemoveAuthorityV1<'a> {
     data_payload: &'a [u8],
     authority_payload: &'a [u8],
 }
-
 
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
@@ -62,8 +61,8 @@ impl RemoveAuthorityV1Args {
     pub const SIZE: usize = core::mem::size_of::<Self>();
 }
 
-impl<'a> IntoBytes<'a> for RemoveAuthorityV1Args {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+impl IntoBytes for RemoveAuthorityV1Args {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
     }
 }
@@ -104,7 +103,7 @@ pub fn remove_authority_v1(
     })?;
 
     if remove_authority_v1.args.authority_to_remove_id == 0 {
-        return Err(SwigError::PermissionDeniedCannotRemoveRootAuthority.into());
+        return Err(SwigAuthenticateError::PermissionDeniedCannotRemoveRootAuthority.into());
     }
 
     // All validation and processing as a closure to avoid borrowing swig_account_data for too long
@@ -157,7 +156,7 @@ pub fn remove_authority_v1(
         let no_permission = all.is_none() && manage_authority.is_none();
 
         if no_permission && not_self {
-            return Err(SwigError::PermissionDeniedToManageAuthority.into());
+            return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
         }
     }
 

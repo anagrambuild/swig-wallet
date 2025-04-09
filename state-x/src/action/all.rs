@@ -13,8 +13,8 @@ impl Transmutable for All {
 
 impl TransmutableMut for All {}
 
-impl<'a> IntoBytes<'a> for All {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+impl IntoBytes for All {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         Ok(&[])
     }
 }

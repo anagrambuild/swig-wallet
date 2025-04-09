@@ -29,17 +29,9 @@ pub enum SwigError {
     SerializationError,
     InvalidSwigSignInstructionDataTooShort,
     //InvalidAccounts,
+    InvalidAccountsLength,
     InvalidAccountsSwigMustBeFirst,
-    //PermissionDenied,
-    PermissionDeniedMissingPermission,
-    PermissionDeniedTokenAccountPermissionFailure,
-    PermissionDeniedTokenAccountDelegatePresent,
-    PermissionDeniedTokenAccountNotInitialized,
-    PermissionDeniedToManageAuthority,
-    PermissionDeniedInsufficientBalance,
-
-    PermissionDeniedCannotRemoveRootAuthority,
-
+  
     InvalidSystemProgram,
     DuplicateAuthority,
     InvalidOperation,

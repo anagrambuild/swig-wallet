@@ -3,6 +3,7 @@ use core::mem::MaybeUninit;
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
+    log::sol_log_compute_units,
     program_error::ProgramError,
     pubkey::Pubkey,
     sysvars::{clock::Clock, Sysvar},
@@ -28,7 +29,7 @@ use swig_state_x::{
     authority::AuthorityType,
     role::RoleMut,
     swig::{swig_account_signer, Swig},
-    Discriminator, IntoBytes, Transmutable, TransmutableMut,
+    Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 // use swig_instructions::InstructionIterator;
 
@@ -57,8 +58,8 @@ impl Transmutable for SignV1Args {
     const LEN: usize = core::mem::size_of::<Self>();
 }
 
-impl<'a> IntoBytes<'a> for SignV1Args {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+impl IntoBytes for SignV1Args {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
     }
 }
@@ -97,12 +98,11 @@ pub fn sign_v1(
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     let sign_v1 = SignV1::from_instruction_bytes(data)?;
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    if swig_account_data[0] != Discriminator::SwigAccount as u8 {
+    if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
-
     let role = Swig::get_mut_role(sign_v1.args.role_id, swig_roles)?;
     if role.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
@@ -127,12 +127,11 @@ pub fn sign_v1(
     }
     const UNINIT_KEY: MaybeUninit<&Pubkey> = MaybeUninit::uninit();
     let mut restricted_keys: [MaybeUninit<&Pubkey>; 2] = [UNINIT_KEY; 2];
-
     let rkeys: &[&Pubkey] = unsafe {
         if role.position.authority_type()? == AuthorityType::Ed25519 {
+            let authority_index = *sign_v1.authority_payload.get_unchecked(0) as usize;
             restricted_keys[0].write(&ctx.accounts.payer.key());
-            restricted_keys[1].write(&ctx.remaining_accounts[0].key());
-
+            restricted_keys[1].write(&all_accounts[authority_index].key());
             core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 2)
         } else {
             restricted_keys[0].write(&ctx.accounts.payer.key());
@@ -166,7 +165,9 @@ pub fn sign_v1(
                 AccountClassification::ThisSwig { lamports } => {
                     let current_lamports = all_accounts[index].lamports();
                     if current_lamports < swig.reserved_lamports {
-                        return Err(SwigError::PermissionDeniedInsufficientBalance.into());
+                        return Err(
+                            SwigAuthenticateError::PermissionDeniedInsufficientBalance.into()
+                        );
                     }
                     if lamports > &current_lamports {
                         let amount_diff = lamports - current_lamports;
@@ -185,7 +186,7 @@ pub fn sign_v1(
                                 action.run(amount_diff, slot)?;
                             };
                         }
-                        return Err(SwigError::PermissionDeniedMissingPermission.into());
+                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                     }
                 },
                 AccountClassification::SwigTokenAccount { balance } => {
@@ -201,10 +202,16 @@ pub fn sign_v1(
                     });
 
                     if delegate != [0u8; 4] {
-                        return Err(SwigError::PermissionDeniedTokenAccountDelegatePresent.into());
+                        return Err(
+                            SwigAuthenticateError::PermissionDeniedTokenAccountDelegatePresent
+                                .into(),
+                        );
                     }
                     if state != 1 {
-                        return Err(SwigError::PermissionDeniedTokenAccountNotInitialized.into());
+                        return Err(
+                            SwigAuthenticateError::PermissionDeniedTokenAccountNotInitialized
+                                .into(),
+                        );
                     }
                     if balance > &current_token_balance {
                         let mut matched = false;
@@ -214,7 +221,7 @@ pub fn sign_v1(
                                 RoleMut::get_action_mut::<TokenRecurringLimit>(actions, &mint)?
                             {
                                 action.run(diff, slot)?;
-                                matched = true;
+                                continue;
                             };
                         }
                         {
@@ -227,7 +234,9 @@ pub fn sign_v1(
                         }
 
                         if !matched {
-                            return Err(SwigError::PermissionDeniedMissingPermission.into());
+                            return Err(
+                                SwigAuthenticateError::PermissionDeniedMissingPermission.into()
+                            );
                         }
                     }
                 },

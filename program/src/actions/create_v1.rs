@@ -16,7 +16,7 @@ use pinocchio_system::instructions::CreateAccount;
 use swig_assertions::*;
 use swig_state_x::{
     action::{all::All, manage_authority::ManageAuthority, Action, ActionLoader, Actionable},
-    authority::{Authority, AuthorityLoader, AuthorityType},
+    authority::{Authority, AuthorityInfo, AuthorityLoader, AuthorityType},
     role::Position,
     swig::{swig_account_seeds_with_bump, swig_account_signer, Swig, SwigBuilder},
     IntoBytes, Transmutable,
@@ -56,8 +56,8 @@ impl Transmutable for CreateV1Args {
     const LEN: usize = core::mem::size_of::<Self>();
 }
 
-impl<'a> IntoBytes<'a> for CreateV1Args {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+impl IntoBytes for CreateV1Args {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
     }
 }
@@ -73,10 +73,10 @@ impl<'a> CreateV1<'a> {
         if bytes.len() < CreateV1Args::LEN {
             return Err(ProgramError::InvalidAccountData);
         }
-        let args = unsafe { CreateV1Args::load_unchecked(&bytes[..CreateV1Args::LEN])? };
-        let authority_data =
-            &bytes[CreateV1Args::LEN..CreateV1Args::LEN + args.authority_data_len as usize];
-        let actions = &bytes[CreateV1Args::LEN + args.authority_data_len as usize..];
+        let (args, rest) = unsafe { bytes.split_at_unchecked(CreateV1Args::LEN) };
+        let args = unsafe { CreateV1Args::load_unchecked(args)? };
+        let (authority_data, actions) =
+            unsafe { rest.split_at_unchecked(args.authority_data_len as usize) };
         Ok(Self {
             args,
             authority_data,
@@ -84,8 +84,9 @@ impl<'a> CreateV1<'a> {
         })
     }
 
-    pub fn get_authority(&'a self) -> Result<&impl Authority<'a>, ProgramError> {
+    pub fn get_authority(&'a self) -> Result<&dyn AuthorityInfo, ProgramError> {
         let authority_type = AuthorityType::try_from(self.args.authority_type)?;
+
         AuthorityLoader::load_authority(authority_type, self.authority_data)
     }
 
@@ -100,7 +101,6 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
     check_zero_balance(ctx.accounts.swig, SwigError::AccountNotEmptySwigAccount)?;
 
     let create_v1 = CreateV1::from_instruction_bytes(create)?;
-    let authority = create_v1.get_authority()?;
     let bump = check_self_pda(
         &swig_account_seeds_with_bump(&create_v1.args.id, &[create_v1.args.bump]),
         ctx.accounts.swig.key(),
@@ -113,7 +113,7 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
         msg!("Root authority type must had one of the following actions: ManageAuthority or All");
         return Err(SwigError::InvalidAuthorityType.into());
     }
-
+    let authority = create_v1.get_authority()?;
     let account_size = core::alloc::Layout::from_size_align(
         Swig::LEN
             + Position::LEN

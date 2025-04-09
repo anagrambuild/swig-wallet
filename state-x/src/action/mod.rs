@@ -8,6 +8,7 @@ pub mod token_limit;
 pub mod token_recurring_limit;
 use all::All;
 use manage_authority::ManageAuthority;
+use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 use program::Program;
 use sol_limit::SolLimit;
@@ -15,19 +16,18 @@ use sol_recurring_limit::SolRecurringLimit;
 use token_limit::TokenLimit;
 use token_recurring_limit::TokenRecurringLimit;
 
-use crate::{IntoBytes, Transmutable, TransmutableMut};
+use crate::{IntoBytes, SwigStateError, Transmutable, TransmutableMut};
 
-static_assertions::const_assert!(core::mem::size_of::<Action>() % 8 == 0);
 #[repr(C, align(8))]
-#[derive(Debug)]
+#[derive(Debug, NoPadding)]
 pub struct Action {
     action_type: u16,
     length: u16,
     boundary: u32,
 }
 
-impl<'a> IntoBytes<'a> for Action {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+impl IntoBytes for Action {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         let bytes =
             unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
         Ok(bytes)
@@ -90,7 +90,7 @@ impl TryFrom<u16> for Permission {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
             0..=10 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
-            _ => Err(ProgramError::InvalidInstructionData),
+            _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
 }
@@ -101,7 +101,7 @@ impl TryFrom<&[u8]> for Permission {
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         let type_bytes = value
             .try_into()
-            .map_err(|_| ProgramError::InvalidAccountData)?;
+            .map_err(|_| SwigStateError::PermissionLoadError)?;
         Permission::try_from(u16::from_le_bytes(type_bytes))
     }
 }

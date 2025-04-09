@@ -1,26 +1,30 @@
 pub mod ed25519;
 
-use ed25519::ED25519Authority;
+use std::any::Any;
+
+use ed25519::{ED25519Authority, Ed25519SessionAuthority};
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
 
-use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
+use crate::{IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut};
 
 /// Trait for authority data.
 ///
 /// The `Authority` defines the data of a particular authority.
-pub trait Authority<'a>: Transmutable + TransmutableMut + IntoBytes<'a> {
+pub trait Authority: Transmutable + TransmutableMut + IntoBytes {
     const TYPE: AuthorityType;
     const SESSION_BASED: bool;
-
-    fn length(&self) -> usize;
 }
 
-pub trait AuthorityInfo {
+pub trait AuthorityInfo: IntoBytes {
     fn authority_type(&self) -> AuthorityType;
+
+    fn length(&self) -> usize;
 
     fn session_based(&self) -> bool;
 
     fn match_data(&self, data: &[u8]) -> bool;
+
+    fn as_any(&self) -> &dyn Any;
 
     fn authenticate_session(
         &self,
@@ -28,6 +32,15 @@ pub trait AuthorityInfo {
         _authority_payload: &[u8],
         _data_payload: &[u8],
         _slot: u64,
+    ) -> Result<(), ProgramError> {
+        return Err(SwigAuthenticateError::AuthorityDoesNotSupportSessionBasedAuth.into());
+    }
+
+    fn start_session(
+        &mut self,
+        _session_key: [u8; 32],
+        _current_slot: u64,
+        _duration: u64,
     ) -> Result<(), ProgramError> {
         return Err(SwigAuthenticateError::AuthorityDoesNotSupportSessionBasedAuth.into());
     }
@@ -83,16 +96,23 @@ impl AuthorityLoader {
     pub fn load_authority<'a>(
         authority_type: AuthorityType,
         authority_data: &'a [u8],
-    ) -> Result<&'a impl Authority<'a>, ProgramError> {
+    ) -> Result<&'a dyn AuthorityInfo, ProgramError> {
         match authority_type {
             AuthorityType::Ed25519 => {
-                if authority_data.len() != ED25519Authority::LEN {
-                    return Err(ProgramError::InvalidInstructionData);
-                }
-                let authority = unsafe { ED25519Authority::load_unchecked(authority_data)? };
-                Ok(authority)
+                let authority = unsafe {
+                    ED25519Authority::load_unchecked(authority_data)
+                        .map_err(|_| SwigStateError::InvalidAuthorityData)?
+                };
+                Ok(authority as &dyn AuthorityInfo)
             },
-            _ => Err(ProgramError::InvalidInstructionData),
+            AuthorityType::Ed25519Session => {
+                let authority = unsafe {
+                    Ed25519SessionAuthority::load_unchecked(authority_data)
+                        .map_err(|_| SwigStateError::InvalidAuthorityData)?
+                };
+                Ok(authority as &dyn AuthorityInfo)
+            },
+            _ => Err(SwigStateError::InvalidAuthorityData.into()),
         }
     }
 }

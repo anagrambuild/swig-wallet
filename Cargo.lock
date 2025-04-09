@@ -3573,6 +3573,7 @@ dependencies = [
 name = "swig-state-x"
 version = "0.1.0"
 dependencies = [
+ "no-padding",
  "pinocchio",
  "static_assertions",
  "swig-assertions",

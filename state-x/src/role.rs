@@ -4,7 +4,8 @@ use pinocchio::program_error::ProgramError;
 
 use crate::{
     action::{Action, Actionable},
-    authority::{ AuthorityInfo, AuthorityType}, IntoBytes, Transmutable, TransmutableMut,
+    authority::{AuthorityInfo, AuthorityType},
+    IntoBytes, Transmutable, TransmutableMut,
 };
 
 static_assertions::const_assert!(mem::size_of::<Position>() % 8 == 0);
@@ -56,7 +57,7 @@ impl<'a> Role<'a> {
 
 pub struct RoleMut<'a> {
     pub position: &'a Position,
-    pub authority: &'a dyn AuthorityInfo,
+    pub authority: &'a mut dyn AuthorityInfo,
     pub num_actions: u8,
     pub actions: &'a mut [u8],
 }
@@ -100,8 +101,8 @@ impl<'a> RoleMut<'a> {
     }
 }
 
-impl<'a> IntoBytes<'a> for Position {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+impl IntoBytes for Position {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         let bytes =
             unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
         Ok(bytes)

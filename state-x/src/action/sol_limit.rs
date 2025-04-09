@@ -3,7 +3,10 @@ use pinocchio::program_error::ProgramError;
 use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
 
 use super::{Actionable, Permission};
+use no_padding::NoPadding;
 
+#[repr(C, align(8))]
+#[derive(Debug, NoPadding)]
 pub struct SolLimit {
     pub amount: u64,
 }
@@ -11,9 +14,7 @@ pub struct SolLimit {
 impl SolLimit {
     pub fn run(&mut self, lamport_diff: u64) -> Result<(), ProgramError> {
         if lamport_diff > self.amount {
-            return Err(
-                SwigAuthenticateError::PermissionDeniedInsufficientBalance.into(),
-            );
+            return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
         }
         self.amount -= lamport_diff;
         Ok(())
@@ -26,8 +27,8 @@ impl Transmutable for SolLimit {
 
 impl TransmutableMut for SolLimit {}
 
-impl<'a> IntoBytes<'a> for SolLimit {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+impl IntoBytes for SolLimit {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
     }
 }

@@ -2,15 +2,16 @@ use pinocchio::program_error::ProgramError;
 
 use super::{Actionable, Permission};
 use crate::{IntoBytes, Transmutable, TransmutableMut};
+use no_padding::NoPadding;
 
-static_assertions::const_assert!(core::mem::size_of::<TokenRecurringLimit>() % 8 == 0);
-#[repr(C)]
+#[repr(C, align(8))]
+#[derive(Debug, NoPadding)]
 pub struct TokenRecurringLimit {
-  pub token_mint: [u8; 32],
-  pub window: u64,
-  pub limit: u64,
-  pub current: u64,
-  pub last_reset: u64,
+    pub token_mint: [u8; 32],
+    pub window: u64,
+    pub limit: u64,
+    pub current: u64,
+    pub last_reset: u64,
 }
 
 impl TokenRecurringLimit {
@@ -32,8 +33,8 @@ impl Transmutable for TokenRecurringLimit {
 
 impl TransmutableMut for TokenRecurringLimit {}
 
-impl<'a> IntoBytes<'a> for TokenRecurringLimit {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+impl IntoBytes for TokenRecurringLimit {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
     }
 }

@@ -14,8 +14,8 @@ impl Transmutable for ManageAuthority {
 
 impl TransmutableMut for ManageAuthority {}
 
-impl<'a> IntoBytes<'a> for ManageAuthority {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+impl IntoBytes for ManageAuthority {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         Ok(&[])
     }
 }

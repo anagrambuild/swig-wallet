@@ -12,6 +12,7 @@ dead_code = "allow"
 unused_macros = "allow"
 unused_variables = "allow"
 
+
 [dependencies]
 pinocchio-pubkey = { version = "0.2.4" }
 pinocchio = { version = "0.8.1", features = ["std"] }

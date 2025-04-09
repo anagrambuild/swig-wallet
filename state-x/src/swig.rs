@@ -2,10 +2,11 @@ extern crate alloc;
 
 use crate::{
     action::{Action, ActionLoader},
-    authority::{ed25519::ED25519Authority, Authority, AuthorityInfo, AuthorityType},
+    authority::{ed25519::{ED25519Authority, Ed25519SessionAuthority}, Authority, AuthorityInfo, AuthorityType},
     role::{Position, Role, RoleMut},
     Discriminator, IntoBytes, SwigStateError, Transmutable, TransmutableMut,
 };
+use no_padding::NoPadding;
 use pinocchio::{instruction::Seed, msg, program_error::ProgramError};
 
 #[inline(always)]
@@ -140,14 +141,16 @@ impl<'a> SwigBuilder<'a> {
         Err(SwigStateError::RoleNotFound.into())
     }
 
-    pub fn add_role<T: Authority<'a>>(
+    pub fn add_role(
         &mut self,
-        authority: &'a T,
+        authority: &dyn AuthorityInfo,
         num_actions: u8,
         actions_data: &'a [u8],
     ) -> Result<(), ProgramError> {
         // check number of roles and iterate to last boundary
         let mut cursor = 0;
+        let authority_type = authority.authority_type();
+        let authority_length = authority.length();
         // iterate and transmute each position to get boundary if not the last then jump to next boundary
         for _i in 0..self.swig.roles {
             let position = unsafe {
@@ -155,22 +158,21 @@ impl<'a> SwigBuilder<'a> {
             };
             cursor = position.boundary() as usize;
         }
-        msg!("cursor: {:?}", cursor);
-        let size = T::LEN + num_actions as usize * Action::LEN + actions_data.len();
+        let size = authority.length() + num_actions as usize * Action::LEN + actions_data.len();
         let boundary = cursor + Position::LEN + size;
         // add role to the end of the buffer
         let new_position = Position::new(
-            T::TYPE,
+            authority_type,
             self.swig.role_counter,
-            T::LEN as u16,
+            authority_length as u16,
             num_actions as u16,
             boundary as u32,
         );
         self.role_buffer[cursor..cursor + Position::LEN]
             .copy_from_slice(new_position.into_bytes()?);
         cursor += Position::LEN;
-        self.role_buffer[cursor..cursor + T::LEN].copy_from_slice(authority.into_bytes()?);
-        cursor += T::LEN;
+        self.role_buffer[cursor..cursor + authority_length].copy_from_slice(authority.into_bytes()?);
+        cursor += authority_length;
         //todo check actions for duplicates
         let mut action_cursor = 0;
         for _i in 0..num_actions {
@@ -202,8 +204,8 @@ impl<'a> SwigBuilder<'a> {
     }
 }
 
-static_assertions::const_assert!(core::mem::size_of::<Swig>() % 8 == 0);
-#[repr(C)]
+#[repr(C, align(8))]
+#[derive(Debug, PartialEq, NoPadding)]
 pub struct Swig {
     pub discriminator: u8,
     pub bump: u8,
@@ -232,8 +234,8 @@ impl Transmutable for Swig {
 
 impl TransmutableMut for Swig {}
 
-impl<'a> IntoBytes<'a> for Swig {
-    fn into_bytes(&'a self) -> Result<&'a [u8], ProgramError> {
+impl IntoBytes for Swig {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         let bytes =
             unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
         Ok(bytes)
@@ -268,8 +270,13 @@ impl Swig {
             let (authority, actions) =
                 unsafe { remaning.split_at_mut_unchecked(position.authority_length() as usize) };
 
-            let auth: &dyn AuthorityInfo = match position.authority_type()? {
-                AuthorityType::Ed25519 => unsafe { ED25519Authority::load_unchecked(authority)? },
+            let auth: &mut dyn AuthorityInfo = match position.authority_type()? {
+                AuthorityType::Ed25519 => unsafe {
+                    ED25519Authority::load_mut_unchecked(authority)?
+                },
+                AuthorityType::Ed25519Session => unsafe {
+                    Ed25519SessionAuthority::load_mut_unchecked(authority)?
+                },
                 _ => return Err(ProgramError::InvalidAccountData),
             };
             let role = RoleMut {
@@ -343,10 +350,15 @@ impl<'a> SwigWithRoles<'a> {
             let position =
                 unsafe { Position::load_unchecked(&self.roles.get_unchecked(cursor..offset))? };
             if position.id() == id {
-                let authority =
+                let authority: &dyn AuthorityInfo =
                     match position.authority_type()? {
                         AuthorityType::Ed25519 => unsafe {
                             ED25519Authority::load_unchecked(self.roles.get_unchecked(
+                                offset..offset + position.authority_length() as usize,
+                            ))?
+                        },
+                        AuthorityType::Ed25519Session => unsafe {
+                            Ed25519SessionAuthority::load_unchecked(self.roles.get_unchecked(
                                 offset..offset + position.authority_length() as usize,
                             ))?
                         },
