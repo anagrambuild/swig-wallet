@@ -158,7 +158,7 @@ impl<'a> SwigBuilder<'a> {
             };
             cursor = position.boundary() as usize;
         }
-        let size = authority.length() + num_actions as usize * Action::LEN + actions_data.len();
+        let size = authority.length() + actions_data.len();
         let boundary = cursor + Position::LEN + size;
         // add role to the end of the buffer
         let new_position = Position::new(
