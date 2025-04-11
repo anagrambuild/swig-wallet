@@ -1,0 +1,43 @@
+use thiserror::Error;
+
+/// Errors that can occur when using the Swig wallet SDK
+#[derive(Error, Debug)]
+pub enum SwigError {
+    /// Indicates that an invalid authority type was provided
+    #[error("Invalid authority type provided")]
+    InvalidAuthorityType,
+
+    /// Error occurred during base58 decoding
+    #[error("Base58 decode error: {0}")]
+    Base58DecodeError(#[from] bs58::decode::Error),
+
+    /// Solana program error
+    #[error("Program error: {0}")]
+    ProgramError(#[from] solana_program::program_error::ProgramError),
+
+    /// General interface error with description
+    #[error("Interface error: {0}")]
+    InterfaceError(String),
+
+    /// RPC client error
+    #[error("RPC client error: {0}")]
+    ClientError(#[from] solana_client::client_error::ClientError),
+
+    /// Invalid swig data
+    #[error("Invalid swig data")]
+    InvalidSwigData,
+
+    /// Authority not found
+    #[error("Authority not found")]
+    AuthorityNotFound,
+
+    /// Invalid swig account discriminator
+    #[error("Invalid swig account discriminator")]
+    InvalidSwigAccountDiscriminator,
+}
+
+impl From<anyhow::Error> for SwigError {
+    fn from(error: anyhow::Error) -> Self {
+        SwigError::InterfaceError(error.to_string())
+    }
+}

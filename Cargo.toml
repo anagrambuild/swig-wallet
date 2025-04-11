@@ -5,8 +5,9 @@ members = [
   "interface",
   "instructions",
   "state-x",
-  "assertions", 
+  "assertions",
   "no-padding",
+  "rust-sdk",
 ] #, "cli"]
 
 [workspace.lints.clippy]
