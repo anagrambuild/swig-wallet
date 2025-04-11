@@ -35,6 +35,9 @@ pub enum AccountClassification {
         state: StakeAccountState,
         balance: u64,
     },
+    ProgramScope {
+        role_index: u8,
+    },
 }
 
 pub enum SwigStateError {

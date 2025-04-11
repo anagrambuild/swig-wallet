@@ -7,9 +7,7 @@ use pinocchio::{
     ProgramResult,
 };
 use swig_assertions::check_self_owned;
-use swig_state_x::{
-    swig::Swig, Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
-};
+use swig_state_x::{swig::Swig, Discriminator, IntoBytes, SwigAuthenticateError, Transmutable};
 
 use crate::{
     error::SwigError,

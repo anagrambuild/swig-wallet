@@ -11,12 +11,17 @@ use pinocchio::{
     account_info::AccountInfo,
     lazy_entrypoint::{InstructionContext, MaybeAccount},
     memory::sol_memcmp,
+    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
     ProgramResult,
 };
 use pinocchio_pubkey::{declare_id, pubkey};
-use swig_state_x::{swig::Swig, AccountClassification, Discriminator, Transmutable};
+use swig_state_x::{
+    action::program::ProgramScope,
+    swig::{Swig, SwigWithRoles},
+    AccountClassification, Discriminator, Transmutable,
+};
 
 declare_id!("swigNmWhy8RvUYXBKV5TSU8Hh3f4o5EczHouzBzEsLC");
 const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
@@ -99,21 +104,76 @@ unsafe fn classify_account(
             // TODO add staking account
             Ok(AccountClassification::None)
         },
-        &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if account.data_len() == 165 && index > 0 => unsafe {
-            let data = account.borrow_data_unchecked();
-            if sol_memcmp(accounts.get_unchecked(0).assume_init_ref().key(), data.get_unchecked(32..64), 32) == 0 {
-                Ok(AccountClassification::SwigTokenAccount {
-                    balance: u64::from_le_bytes(
-                        data.get_unchecked(64..72)
-                            .try_into()
-                            .map_err(|_| ProgramError::InvalidAccountData)?,
-                    ),
-                })
-            } else {
-                Ok(AccountClassification::None)
-            }
-        },
+        // &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if account.data_len() == 165 && index > 0 => unsafe {
+        //     let data = account.borrow_data_unchecked();
+        //     if sol_memcmp(
+        //         accounts.get_unchecked(0).assume_init_ref().key(),
+        //         data.get_unchecked(32..64),
+        //         32,
+        //     ) == 0
+        //     {
+        //         Ok(AccountClassification::SwigTokenAccount {
+        //             balance: u64::from_le_bytes(
+        //                 data.get_unchecked(64..72)
+        //                     .try_into()
+        //                     .map_err(|_| ProgramError::InvalidAccountData)?,
+        //             ),
+        //         })
+        //     } else {
+        //         Ok(AccountClassification::None)
+        //     }
+        // },
         // TODO add staking account
-        _ => Ok(AccountClassification::None),
+        _ => {
+            if index > 0 {
+                let first_account = accounts.get_unchecked(0).assume_init_ref();
+                if first_account.owner() == &crate::ID {
+                    let data = first_account.borrow_data_unchecked();
+                    if data.len() >= Swig::LEN
+                        && *data.get_unchecked(0) == Discriminator::SwigAccount as u8
+                    {
+                        if let Ok(swig_with_roles) = SwigWithRoles::from_bytes(data) {
+                            // Check each role for ProgramScope actions that match this account's owner
+                            let owner = account.owner();
+                            // msg!("Checking account with owner: {:?}", owner);
+
+                            for role_id in 0..swig_with_roles.state.role_counter {
+                                if let Ok(Some(role)) = swig_with_roles.get_role(role_id) {
+                                    // Check if this role has a ProgramScope action for this program
+                                    // msg!("Checking role {} for ProgramScope action", role_id);
+
+                                    // Add debug for data length
+                                    let owner_bytes = owner.as_ref();
+                                    // msg!("Owner bytes length: {}", owner_bytes.len());
+
+                                    if let Ok(Some(program_scope)) =
+                                        role.get_action::<ProgramScope>(owner_bytes)
+                                    {
+                                        // msg!(
+                                        //     "Found ProgramScope action! Program ID in action: {:?}",
+                                        //     &program_scope.program_id[0..4]
+                                        // );
+                                        // msg!(
+                                        //     "Comparing with owner bytes: {:?}",
+                                        //     &owner_bytes[0..4]
+                                        // );
+
+                                        return Ok(AccountClassification::ProgramScope {
+                                            role_index: role_id as u8,
+                                        });
+                                    } else {
+                                        // msg!(
+                                        //     "No matching ProgramScope action found in role {}",
+                                        //     role_id
+                                        // );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(AccountClassification::None)
+        },
     }
 }

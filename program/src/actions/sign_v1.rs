@@ -3,6 +3,7 @@ use core::mem::MaybeUninit;
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
+    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
     sysvars::{clock::Clock, Sysvar},
@@ -22,8 +23,9 @@ use crate::{
 use swig_assertions::*;
 use swig_state_x::{
     action::{
-        all::All, sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
-        token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit,
+        all::All, program::ProgramScope, sol_limit::SolLimit,
+        sol_recurring_limit::SolRecurringLimit, token_limit::TokenLimit,
+        token_recurring_limit::TokenRecurringLimit,
     },
     authority::AuthorityType,
     role::RoleMut,
@@ -238,6 +240,105 @@ pub fn sign_v1(
                             );
                         }
                     }
+                },
+                AccountClassification::ProgramScope { role_index } => {
+                    // msg!("account classified as programscope");
+
+                    // Get the data from the account
+                    let data =
+                        unsafe { &all_accounts.get_unchecked(index).borrow_data_unchecked() };
+
+                    // Get the role with the ProgramScope action
+                    // Find the ProgramScope action for this account's owner
+                    let owner = unsafe { all_accounts.get_unchecked(index).owner() };
+                    let program_scope =
+                        RoleMut::get_action_mut::<ProgramScope>(actions, owner.as_ref())?;
+                    match program_scope {
+                        Some(program_scope) => {
+                            // msg!("Found ProgramScope action for validation");
+
+                            // Extract comparison type and field indices from actions
+                            let comparison_type = program_scope.actions[0];
+                            let start_index = program_scope.actions[1] as usize;
+                            let end_index = program_scope.actions[2] as usize;
+
+                            // msg!(
+                            //     "Action type: {}, Range: {}..{}",
+                            //     comparison_type,
+                            //     start_index,
+                            //     end_index
+                            // );
+
+                            // Check if the indices are valid
+                            if data.len() < end_index {
+                                // msg!(
+                                //     "Invalid field indices: data length {} < end_index {}",
+                                //     data.len(),
+                                //     end_index
+                                // );
+                                return Err(
+                                    SwigAuthenticateError::PermissionDeniedMissingPermission.into(),
+                                );
+                            }
+
+                            // Currently we only support u64 fields
+                            if end_index - start_index != 8 {
+                                // msg!(
+                                //     "Invalid field size: {} (only 8-byte/u64 fields supported)",
+                                //     end_index - start_index
+                                // );
+                                return Err(
+                                    SwigAuthenticateError::PermissionDeniedMissingPermission.into(),
+                                );
+                            }
+
+                            // Extract the field value
+                            let field_value = u64::from_le_bytes(unsafe {
+                                data.get_unchecked(start_index..end_index)
+                                    .try_into()
+                                    .map_err(|_| ProgramError::InvalidAccountData)?
+                            });
+
+                            // msg!("Field value: {}", field_value);
+
+                            // Perform the comparison against 0
+                            let passed = match comparison_type {
+                                0 => field_value == 0, // equals
+                                1 => field_value > 0,  // greater than
+                                2 => field_value < 0,  // less than
+                                3 => field_value >= 0, // greater than or equals
+                                4 => field_value <= 0, // less than or equals
+                                _ => {
+                                    // msg!("Invalid comparison type: {}", comparison_type);
+                                    return Err(
+                                        SwigAuthenticateError::PermissionDeniedMissingPermission
+                                            .into(),
+                                    );
+                                },
+                            };
+
+                            if !passed {
+                                // msg!(
+                                //     "ProgramScope check failed: comparison type {}, value {}",
+                                //     comparison_type,
+                                //     field_value
+                                // );
+                                return Err(
+                                    SwigAuthenticateError::PermissionDeniedMissingPermission.into(),
+                                );
+                            }
+
+                            // msg!("ProgramScope check passed");
+                        },
+                        None => {
+                            // msg!("Could not find ProgramScope action for this account's owner");
+                            return Err(
+                                SwigAuthenticateError::PermissionDeniedMissingPermission.into()
+                            );
+                        },
+                    }
+
+                    continue;
                 },
                 _ => {},
             }

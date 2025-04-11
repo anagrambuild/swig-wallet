@@ -2,7 +2,10 @@ extern crate alloc;
 
 use crate::{
     action::{Action, ActionLoader},
-    authority::{ed25519::{ED25519Authority, Ed25519SessionAuthority}, Authority, AuthorityInfo, AuthorityType},
+    authority::{
+        ed25519::{ED25519Authority, Ed25519SessionAuthority},
+        Authority, AuthorityInfo, AuthorityType,
+    },
     role::{Position, Role, RoleMut},
     Discriminator, IntoBytes, SwigStateError, Transmutable, TransmutableMut,
 };
@@ -171,7 +174,8 @@ impl<'a> SwigBuilder<'a> {
         self.role_buffer[cursor..cursor + Position::LEN]
             .copy_from_slice(new_position.into_bytes()?);
         cursor += Position::LEN;
-        self.role_buffer[cursor..cursor + authority_length].copy_from_slice(authority.into_bytes()?);
+        self.role_buffer[cursor..cursor + authority_length]
+            .copy_from_slice(authority.into_bytes()?);
         cursor += authority_length;
         //todo check actions for duplicates
         let mut action_cursor = 0;

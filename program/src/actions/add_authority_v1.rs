@@ -9,7 +9,11 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state_x::{
-    action::{all::All, manage_authority::ManageAuthority}, authority::{AuthorityInfo, AuthorityLoader, AuthorityType}, role::Position, swig::{SwigBuilder, SwigWithRoles}, Discriminator, IntoBytes, SwigAuthenticateError, Transmutable
+    action::{all::All, manage_authority::ManageAuthority},
+    authority::{AuthorityInfo, AuthorityLoader, AuthorityType},
+    role::Position,
+    swig::{SwigBuilder, SwigWithRoles},
+    Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
 use crate::{
@@ -69,7 +73,7 @@ impl AddAuthorityV1Args {
 }
 
 impl IntoBytes for AddAuthorityV1Args {
-    fn into_bytes(& self) -> Result<&[u8], ProgramError> {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
     }
 }
@@ -157,9 +161,7 @@ pub fn add_authority_v1(
             return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
         }
         let new_authority = add_authority_v1.get_authority()?;
-        let role_size = Position::LEN
-            + new_authority.length()
-            + add_authority_v1.actions.len();
+        let role_size = Position::LEN + new_authority.length() + add_authority_v1.actions.len();
 
         let account_size = core::alloc::Layout::from_size_align(
             swig_account_data.len() + role_size,

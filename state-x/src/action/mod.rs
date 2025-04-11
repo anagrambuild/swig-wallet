@@ -10,7 +10,7 @@ use all::All;
 use manage_authority::ManageAuthority;
 use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
-use program::Program;
+use program::{Program, ProgramScope};
 use sol_limit::SolLimit;
 use sol_recurring_limit::SolRecurringLimit;
 use token_limit::TokenLimit;
@@ -75,6 +75,7 @@ pub enum Permission {
     SolLimit,
     SolRecurringLimit,
     Program,
+    ProgramScope,
     TokenLimit,
     TokenRecurringLimit,
     All,
@@ -89,7 +90,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=10 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=11 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -128,6 +129,7 @@ impl ActionLoader {
             Permission::SolLimit => SolLimit::valid_layout(data),
             Permission::SolRecurringLimit => SolRecurringLimit::valid_layout(data),
             Permission::Program => Program::valid_layout(data),
+            Permission::ProgramScope => ProgramScope::valid_layout(data),
             Permission::TokenLimit => TokenLimit::valid_layout(data),
             Permission::TokenRecurringLimit => TokenRecurringLimit::valid_layout(data),
             Permission::All => All::valid_layout(data),

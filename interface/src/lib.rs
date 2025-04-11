@@ -5,14 +5,21 @@ use solana_sdk::{
 };
 pub use swig;
 use swig::actions::{
-    add_authority_v1::AddAuthorityV1Args, create_session_v1::CreateSessionV1Args, create_v1::CreateV1Args, remove_authority_v1::RemoveAuthorityV1Args
+    add_authority_v1::AddAuthorityV1Args, create_session_v1::CreateSessionV1Args,
+    create_v1::CreateV1Args, remove_authority_v1::RemoveAuthorityV1Args,
 };
 pub use swig_compact_instructions::*;
 use swig_state_x::{
     action::{
-        all::All, manage_authority::ManageAuthority, program::Program, sol_limit::SolLimit,
-        sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount, token_limit::TokenLimit,
-        token_recurring_limit::TokenRecurringLimit, Action, Permission,
+        all::All,
+        manage_authority::ManageAuthority,
+        program::{Program, ProgramScope},
+        sol_limit::SolLimit,
+        sol_recurring_limit::SolRecurringLimit,
+        sub_account::SubAccount,
+        token_limit::TokenLimit,
+        token_recurring_limit::TokenRecurringLimit,
+        Action, Permission,
     },
     authority::AuthorityType,
     swig::swig_account_seeds,
@@ -25,6 +32,7 @@ pub enum ClientAction {
     SolLimit(SolLimit),
     SolRecurringLimit(SolRecurringLimit),
     Program(Program),
+    ProgramScope(ProgramScope),
     All(All),
     ManageAuthority(ManageAuthority),
     SubAccount(SubAccount),
@@ -42,16 +50,19 @@ impl ClientAction {
                 (Permission::SolRecurringLimit, SolRecurringLimit::LEN)
             },
             ClientAction::Program(_) => (Permission::Program, Program::LEN),
+            ClientAction::ProgramScope(_) => (Permission::ProgramScope, ProgramScope::LEN),
             ClientAction::All(_) => (Permission::All, All::LEN),
             ClientAction::ManageAuthority(_) => (Permission::ManageAuthority, ManageAuthority::LEN),
-            ClientAction::SubAccount(_) => (Permission::SubAccount, SubAccount::LEN)
+            ClientAction::SubAccount(_) => (Permission::SubAccount, SubAccount::LEN),
         };
         let offset = data.len() as u32;
+        println!("permission: {:?}", permission);
         let header = Action::new(
             permission,
             length as u16,
             offset + Action::LEN as u32 + length as u32,
         );
+        println!("header: {:?}", header);
         let header_bytes = header
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize header {:?}", e))?;
@@ -62,6 +73,7 @@ impl ClientAction {
             ClientAction::SolLimit(action) => action.into_bytes(),
             ClientAction::SolRecurringLimit(action) => action.into_bytes(),
             ClientAction::Program(action) => action.into_bytes(),
+            ClientAction::ProgramScope(action) => action.into_bytes(),
             ClientAction::All(action) => action.into_bytes(),
             ClientAction::ManageAuthority(action) => action.into_bytes(),
             ClientAction::SubAccount(action) => action.into_bytes(),
@@ -233,10 +245,7 @@ impl SignInstruction {
             AccountMeta::new_readonly(authority, true),
         ];
         let (accounts, ixs) = compact_instructions(swig_account, accounts, vec![inner_instruction]);
-        let args = swig::actions::sign_v1::SignV1Args::new(
-            role_id,
-            1,
-        );
+        let args = swig::actions::sign_v1::SignV1Args::new(role_id, 1);
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -246,8 +255,6 @@ impl SignInstruction {
             data: [arg_bytes, &[2], &ixs.into_bytes()].concat(),
         })
     }
-
-    
 }
 
 pub struct RemoveAuthorityInstruction;
@@ -306,7 +313,6 @@ impl RemoveAuthorityInstruction {
     }
 }
 
-
 pub struct CreateSessionInstruction;
 impl CreateSessionInstruction {
     pub fn new_with_ed25519_authority(
@@ -323,13 +329,11 @@ impl CreateSessionInstruction {
             AccountMeta::new_readonly(authority, true),
         ];
 
-        let create_session_args = CreateSessionV1Args::new(
-            role_id,
-            1,
-            session_duration,
-            session_key.to_bytes(),
-        );
-        let args_bytes = create_session_args.into_bytes().map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        let create_session_args =
+            CreateSessionV1Args::new(role_id, 1, session_duration, session_key.to_bytes());
+        let args_bytes = create_session_args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,

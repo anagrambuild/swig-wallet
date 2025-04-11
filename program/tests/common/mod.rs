@@ -12,9 +12,10 @@ use solana_sdk::{
 };
 use swig_interface::{AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction};
 use swig_state_x::{
-    action::all::All,
+    action::{all::All, manage_authority::ManageAuthority},
     authority::{ed25519::Ed25519SessionAuthority, AuthorityType},
-    swig::{swig_account_seeds, SwigWithRoles}, IntoBytes,
+    swig::{swig_account_seeds, SwigWithRoles},
+    IntoBytes,
 };
 
 pub fn program_id() -> Pubkey {
@@ -88,7 +89,7 @@ pub fn create_swig_ed25519(
             authority_type: AuthorityType::Ed25519,
             authority: authority.pubkey().as_ref(),
         },
-        vec![ClientAction::All(All {})],
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
         id,
     )?;
 
@@ -122,8 +123,11 @@ pub fn create_swig_ed25519_session(
     let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
 
     let authority_pubkey = authority.pubkey().to_bytes();
-    let authority_data = Ed25519SessionAuthority::new(authority_pubkey, initial_session_key, session_max_length);
-    let authority_data_bytes = authority_data.into_bytes().map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?;
+    let authority_data =
+        Ed25519SessionAuthority::new(authority_pubkey, initial_session_key, session_max_length);
+    let authority_data_bytes = authority_data
+        .into_bytes()
+        .map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?;
     let initial_authority = AuthorityConfig {
         authority_type: AuthorityType::Ed25519Session,
         authority: authority_data_bytes.as_ref(),
