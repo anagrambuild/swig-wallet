@@ -95,7 +95,7 @@ impl Permission {
                             token_mint: mint.to_bytes(),
                             window: config.window,
                             limit: amount,
-                            current: amount,
+                            current: 0,
                             last_reset: 0,
                         }));
                     },
@@ -112,7 +112,7 @@ impl Permission {
                             recurring_amount: amount,
                             window: config.window,
                             last_reset: 0,
-                            current_amount: amount,
+                            current_amount: 0,
                         }));
                     },
                     None => {

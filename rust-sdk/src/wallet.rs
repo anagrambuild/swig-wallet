@@ -41,7 +41,7 @@ impl SwigWallet {
     /// * `authority` - The wallet's authority credentials
     /// * `fee_payer` - The keypair that will pay for transactions
     /// * `role_id` - The role id for this wallet
-    pub fn new(
+    pub fn create(
         rpc_url: &str,
         swig_id: String,
         authority: WalletAuthority,
@@ -70,11 +70,7 @@ impl SwigWallet {
     /// * `id` - The unique identifier of the Swig wallet
     /// * `authority` - The authority credentials to use with this wallet
     /// * `fee_payer` - The keypair that will pay for transactions
-    pub fn load_from_chain(
-        &self,
-        swig_id: String,
-        authority: WalletAuthority,
-    ) -> Result<(), SwigError> {
+    pub fn load(&self, swig_id: String, authority: WalletAuthority) -> Result<(), SwigError> {
         let swig_key = swig_key(swig_id);
         let swig_data = self.rpc_client.get_account_data(&swig_key)?;
 
@@ -345,6 +341,8 @@ impl SwigWallet {
 
 #[cfg(test)]
 mod tests {
+    use crate::types::RecurringConfig;
+
     use super::*;
     use solana_program::pubkey::Pubkey;
     use solana_sdk::signature::Keypair;
@@ -360,7 +358,7 @@ mod tests {
         let authority_keypair = Keypair::new();
         let authority = WalletAuthority::Ed25519(authority_keypair.pubkey());
 
-        SwigWallet::new(
+        SwigWallet::create(
             &rpc_url, swig_id, authority, fee_payer, 1, // role_id
         )
     }
@@ -402,7 +400,11 @@ mod tests {
 
         let new_authority_type = AuthorityType::Ed25519;
         let new_authority = &[1u8; 32]; // Example authority bytes
-        let permissions = vec![Permission::All];
+        let reccuring_config = RecurringConfig { window: 1000000 };
+        let permissions = vec![Permission::Sol {
+            amount: 1_000_000,
+            recurring: Some(reccuring_config),
+        }];
 
         match wallet.add_authority(new_authority_type, new_authority, permissions) {
             Ok(signature) => {
