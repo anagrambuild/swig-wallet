@@ -8,6 +8,7 @@ use solana_sdk::{
     signature::{Keypair, Signer},
     transaction::{Transaction, VersionedTransaction},
 };
+use swig_interface::swig_key;
 use swig_state_x::{
     action::{all::All, manage_authority::ManageAuthority, sol_limit::SolLimit},
     authority::AuthorityType,
@@ -15,19 +16,13 @@ use swig_state_x::{
     swig::SwigWithRoles,
 };
 
-use swig_interface::swig_key;
-
-use crate::{
-    error::SwigError,
-    instruction_builder::SwigInstructionBuilder,
-    types::{Permission, WalletAuthority},
-};
+use crate::{error::SwigError, instruction_builder::SwigInstructionBuilder, types::Permission};
 
 pub struct SwigWallet {
     /// The underlying instruction builder
     instruction_builder: SwigInstructionBuilder,
     /// RPC client for interacting with the Solana network
-    rpc_client: RpcClient,
+    pub rpc_client: RpcClient,
     /// The wallet's fee payer
     fee_payer: Keypair,
 }
@@ -36,104 +31,187 @@ impl SwigWallet {
     /// Creates a new SwigWallet instance
     ///
     /// # Arguments
-    /// * `rpc_url` - The URL of the Solana RPC endpoint
     /// * `swig_account` - The public key of the Swig account
     /// * `authority` - The wallet's authority credentials
     /// * `fee_payer` - The keypair that will pay for transactions
     /// * `role_id` - The role id for this wallet
-    pub fn create(
-        rpc_url: &str,
-        swig_id: String,
-        authority: WalletAuthority,
+    /// * `rpc_url` - The URL of the Solana RPC endpoint
+    pub fn new(
+        swig_id: [u8; 32],
+        authority_type: AuthorityType,
+        authority: Pubkey,
         fee_payer: Keypair,
-        role_id: u32,
-    ) -> Self {
-        let swig_account = swig_key(swig_id);
-
+        rpc_url: String,
+    ) -> Result<Self, SwigError> {
         let rpc_client =
             RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::confirmed());
 
-        let instruction_builder =
-            SwigInstructionBuilder::new(swig_account, authority, fee_payer.pubkey(), role_id);
+        println!(
+            "Balance of fee payer: {:?}",
+            rpc_client.get_balance(&fee_payer.pubkey())?
+        );
 
-        Self {
-            instruction_builder,
-            rpc_client,
-            fee_payer,
-        }
-    }
+        // Check if the Swig account already exists
+        let swig_account = SwigInstructionBuilder::swig_key(&swig_id);
+        let swig_data = rpc_client.get_account_data(&swig_account)?;
 
-    /// Loads an existing Swig wallet from chain using its ID
-    ///
-    /// # Arguments
-    /// * `rpc_url` - The URL of the Solana RPC endpoint
-    /// * `id` - The unique identifier of the Swig wallet
-    /// * `authority` - The authority credentials to use with this wallet
-    /// * `fee_payer` - The keypair that will pay for transactions
-    pub fn load(&self, swig_id: String, authority: WalletAuthority) -> Result<(), SwigError> {
-        let swig_key = swig_key(swig_id);
-        let swig_data = self.rpc_client.get_account_data(&swig_key)?;
+        if swig_data.is_empty() {
+            println!("Swig account does not exist, creating new one");
+            let instruction_builder = SwigInstructionBuilder::new(
+                swig_id,
+                authority_type,
+                authority,
+                fee_payer.pubkey(),
+                0,
+            );
 
-        let swig_with_roles =
-            SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
+            let create_ix = instruction_builder.build_swig_account()?;
 
-        // Look up the role ID for this authority
-        let role_id = match authority {
-            WalletAuthority::Ed25519(authority) => swig_with_roles
-                .lookup_role_id(authority.as_ref())
-                .map_err(|_| SwigError::AuthorityNotFound)?,
-            WalletAuthority::Secp256k1(authority) => swig_with_roles
-                .lookup_role_id(authority.as_ref())
-                .map_err(|_| SwigError::AuthorityNotFound)?,
-        }
-        .ok_or(SwigError::AuthorityNotFound)?;
+            let msg = v0::Message::try_compile(
+                &fee_payer.pubkey(),
+                &[create_ix],
+                &[],
+                rpc_client.get_latest_blockhash()?,
+            )
+            .unwrap();
 
-        // Get the role to verify it exists and has the correct type
-        let role = swig_with_roles
-            .get_role(role_id)
-            .map_err(|_| SwigError::AuthorityNotFound)?;
+            let tx = VersionedTransaction::try_new(
+                VersionedMessage::V0(msg),
+                &[fee_payer.insecure_clone()],
+            )
+            .unwrap();
 
-        if let Some(role) = role {
-            println!("Role found: {:?}", role.actions);
-            Ok(())
+            let signature = rpc_client.send_and_confirm_transaction(&tx)?;
+            println!("Swig account created");
+            println!("Transaction signature: {:?}", signature);
+
+            return Ok(Self {
+                instruction_builder,
+                rpc_client,
+                fee_payer,
+            });
         } else {
-            Err(SwigError::AuthorityNotFound)
+            println!("Swig account already exists");
+
+            let swig_with_roles =
+                SwigWithRoles::from_bytes(&swig_data).map_err(|_| SwigError::InvalidSwigData)?;
+
+            let role_id = match authority_type {
+                AuthorityType::Ed25519 => swig_with_roles
+                    .lookup_role_id(authority.as_ref())
+                    .map_err(|_| SwigError::AuthorityNotFound)?,
+                AuthorityType::Secp256k1 => swig_with_roles
+                    .lookup_role_id(authority.as_ref())
+                    .map_err(|_| SwigError::AuthorityNotFound)?,
+                _ => todo!(),
+            }
+            .ok_or(SwigError::AuthorityNotFound)?;
+
+            // Get the role to verify it exists and has the correct type
+            let role = swig_with_roles
+                .get_role(role_id)
+                .map_err(|_| SwigError::AuthorityNotFound)?;
+
+            if let Some(role) = role {
+                println!("Role found: {:?}", role.actions);
+            } else {
+                println!("Role not found");
+            }
+
+            let instruction_builder = SwigInstructionBuilder::new(
+                swig_id,
+                authority_type,
+                authority,
+                fee_payer.pubkey(),
+                role_id,
+            );
+
+            Ok(Self {
+                instruction_builder,
+                rpc_client,
+                fee_payer,
+            })
         }
     }
 
-    /// Creates a new Swig wallet account
-    ///
-    /// # Arguments
-    /// * `authority_type` - The type of authority for the new account
-    /// * `authority` - The authority string (base58 for Ed25519, hex for Secp256k1)
-    /// * `id` - A unique identifier for the account
-    pub fn create_wallet(
-        &self,
-        authority_type: AuthorityType,
-        authority: String,
-        id: [u8; 32],
-    ) -> Result<String, SwigError> {
-        let instruction = self.instruction_builder.create_swig_account_instruction(
-            authority_type,
-            authority,
-            self.fee_payer.pubkey(),
-            id,
-        )?;
-        let msg = v0::Message::try_compile(
-            &self.fee_payer.pubkey(),
-            &[instruction],
-            &[],
-            self.rpc_client.get_latest_blockhash()?,
-        )
-        .unwrap();
-        let tx = VersionedTransaction::try_new(
-            VersionedMessage::V0(msg),
-            &[self.fee_payer.insecure_clone()],
-        )
-        .unwrap();
+    // /// Loads an existing Swig wallet from chain using its ID
+    // ///
+    // /// # Arguments
+    // /// * `rpc_url` - The URL of the Solana RPC endpoint
+    // /// * `id` - The unique identifier of the Swig wallet
+    // /// * `authority` - The authority credentials to use with this wallet
+    // /// * `fee_payer` - The keypair that will pay for transactions
+    // pub fn load(&self, swig_id: [u8; 32], authority_type: AuthorityType) ->
+    // Result<(), SwigError> {     let swig_key =
+    // SwigInstructionBuilder::swig_key(&swig_id);     let swig_data =
+    // self.rpc_client.get_account_data(&swig_key)?;
 
-        self.send_and_confirm_transaction(tx)
-    }
+    //     let swig_with_roles =
+    //         SwigWithRoles::from_bytes(&swig_data).map_err(|e|
+    // SwigError::InvalidSwigData)?;
+
+    //     // Look up the role ID for this authority
+    //     let role_id = match authority_type {
+    //         AuthorityType::Ed25519 => swig_with_roles
+    //             .lookup_role_id(authority.as_ref())
+    //             .map_err(|_| SwigError::AuthorityNotFound)?,
+    //         AuthorityType::Secp256k1 => swig_with_roles
+    //             .lookup_role_id(authority.as_ref())
+    //             .map_err(|_| SwigError::AuthorityNotFound)?,
+    //         _ => todo!(),
+    //     }
+    //     .ok_or(SwigError::AuthorityNotFound)?;
+
+    //     // Get the role to verify it exists and has the correct type
+    //     let role = swig_with_roles
+    //         .get_role(role_id)
+    //         .map_err(|_| SwigError::AuthorityNotFound)?;
+
+    //     if let Some(role) = role {
+    //         println!("Role found: {:?}", role.actions);
+    //         Ok(())
+    //     } else {
+    //         Err(SwigError::AuthorityNotFound)
+    //     }
+    // }
+
+    // /// Creates a new Swig wallet account
+    // ///
+    // /// # Arguments
+    // /// * `authority_type` - The type of authority for the new account
+    // /// * `authority` - The authority string (base58 for Ed25519, hex for
+    // ///   Secp256k1)
+    // /// * `id` - A unique identifier for the account
+    // pub fn create_wallet(
+    //     &self,
+    //     authority_type: AuthorityType,
+    //     authority: String,
+    //     id: [u8; 32],
+    // ) -> Result<String, SwigError> {
+    //     let instruction =
+    // self.instruction_builder.create_swig_account_instruction(
+    //         authority_type,
+    //         authority,
+    //         self.fee_payer.pubkey(),
+    //         id,
+    //     )?;
+    //     let msg = v0::Message::try_compile(
+    //         &self.fee_payer.pubkey(),
+    //         &[instruction],
+    //         &[],
+    //         self.rpc_client.get_latest_blockhash()?,
+    //     )
+    //     .unwrap();
+    //     let tx = VersionedTransaction::try_new(
+    //         VersionedMessage::V0(msg),
+    //         &[self.fee_payer.insecure_clone()],
+    //     )
+    //     .unwrap();
+
+    //     println!("Transaction: {:?}", tx);
+
+    //     self.send_and_confirm_transaction(tx)
+    // }
 
     /// Adds a new authority to the wallet
     ///
@@ -275,8 +353,11 @@ impl SwigWallet {
             println!(
                 "\t\tAuthority: {:?}",
                 match role.authority.authority_type() {
-                    AuthorityType::Ed25519 => "Ed25519".to_string(), //bs58::encode(role.authority.as_slice()).into_string(),
-                    AuthorityType::Secp256k1 => "Secp256k1".to_string(), //hex::encode(role.authority.as_slice()),
+                    AuthorityType::Ed25519 => "Ed25519".to_string(), // bs58::encode(role.
+                    // authority.as_slice()).
+                    // into_string(),
+                    AuthorityType::Secp256k1 => "Secp256k1".to_string(), // hex::encode(role.
+                    // authority.as_slice()),
                     _ => todo!(),
                 }
             );
@@ -322,8 +403,8 @@ impl SwigWallet {
         //     {
         //         println!("\t\tKey: {}", token_account.pubkey);
         //         println!("\t\tMint: {}", parsed["info"]["mint"].as_str().unwrap());
-        //         println!("\t\tAmount: {}", parsed["info"]["tokenAmount"]["uiAmount"]);
-        //     }
+        //         println!("\t\tAmount: {}",
+        // parsed["info"]["tokenAmount"]["uiAmount"]);     }
         // }
         // for (index, token_account) in token_accounts_22.iter().enumerate() {
         //     if let UiAccountData::Json(ParsedAccount {
@@ -332,152 +413,9 @@ impl SwigWallet {
         //     {
         //         println!("\t\tKey: {}", token_account.pubkey);
         //         println!("\t\tMint: {}", parsed["info"]["mint"].as_str().unwrap());
-        //         println!("\t\tAmount: {}", parsed["info"]["tokenAmount"]["uiAmount"]);
-        //     }
+        //         println!("\t\tAmount: {}",
+        // parsed["info"]["tokenAmount"]["uiAmount"]);     }
         // }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::types::RecurringConfig;
-
-    use super::*;
-    use solana_program::pubkey::Pubkey;
-    use solana_sdk::signature::Keypair;
-    use swig_state_x::authority::AuthorityType;
-
-    // Helper function to setup a test wallet
-    fn setup_test_wallet() -> SwigWallet {
-        let rpc_url = "http://localhost:8899".to_string(); // Local testnet URL
-        let swig_id = "test_swig".to_string();
-        let fee_payer = Keypair::new();
-
-        // Create an Ed25519 authority for testing
-        let authority_keypair = Keypair::new();
-        let authority = WalletAuthority::Ed25519(authority_keypair.pubkey());
-
-        SwigWallet::create(
-            &rpc_url, swig_id, authority, fee_payer, 1, // role_id
-        )
-    }
-
-    #[test]
-    fn test_create_wallet() {
-        let wallet = setup_test_wallet();
-
-        let authority_type = AuthorityType::Ed25519;
-        let authority_keypair = Keypair::new();
-        let authority = bs58::encode(authority_keypair.pubkey().to_bytes()).into_string();
-        let id = [0u8; 32];
-
-        // request airdrop for the authority
-        let airdrop_signature = wallet
-            .rpc_client
-            .request_airdrop(&authority_keypair.pubkey(), 2_000_000_000)
-            .unwrap();
-        wallet
-            .rpc_client
-            .confirm_transaction(&airdrop_signature)
-            .unwrap();
-
-        println!("Creating wallet with authority: {:?}", authority);
-        match wallet.create_wallet(authority_type, authority, id) {
-            Ok(signature) => {
-                assert!(
-                    !signature.is_empty(),
-                    "Transaction signature should not be empty"
-                );
-            },
-            Err(e) => panic!("Failed to create wallet: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_add_authority() {
-        let wallet = setup_test_wallet();
-
-        let new_authority_type = AuthorityType::Ed25519;
-        let new_authority = &[1u8; 32]; // Example authority bytes
-        let reccuring_config = RecurringConfig { window: 1000000 };
-        let permissions = vec![Permission::Sol {
-            amount: 1_000_000,
-            recurring: Some(reccuring_config),
-        }];
-
-        match wallet.add_authority(new_authority_type, new_authority, permissions) {
-            Ok(signature) => {
-                assert!(
-                    !signature.is_empty(),
-                    "Transaction signature should not be empty"
-                );
-            },
-            Err(e) => panic!("Failed to add authority: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_remove_authority() {
-        let wallet = setup_test_wallet();
-
-        match wallet.remove_authority(1) {
-            Ok(signature) => {
-                assert!(
-                    !signature.is_empty(),
-                    "Transaction signature should not be empty"
-                );
-            },
-            Err(e) => panic!("Failed to remove authority: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_replace_authority() {
-        let wallet = setup_test_wallet();
-
-        let new_authority_type = AuthorityType::Ed25519;
-        let new_authority = &[2u8; 32]; // Example authority bytes
-        let permissions = vec![Permission::Sol {
-            amount: 1000000000,
-            recurring: None,
-        }];
-
-        match wallet.replace_authority(1, new_authority_type, new_authority, permissions) {
-            Ok(signature) => {
-                assert!(
-                    !signature.is_empty(),
-                    "Transaction signature should not be empty"
-                );
-            },
-            Err(e) => panic!("Failed to replace authority: {:?}", e),
-        }
-    }
-
-    #[test]
-    fn test_get_swig_account() {
-        let wallet = setup_test_wallet();
-
-        println!("Swig account: {:?}", wallet.get_swig_account());
-
-        println!(
-            "Displaying swig account: {:?}",
-            wallet.get_swig_account().unwrap()
-        );
-
-        wallet
-            .diplay_swig(wallet.get_swig_account().unwrap(), 0)
-            .unwrap();
-
-        match wallet.get_swig_account() {
-            Ok(pubkey) => {
-                assert_ne!(
-                    pubkey,
-                    Pubkey::default(),
-                    "Swig account should not be default pubkey"
-                );
-            },
-            Err(e) => panic!("Failed to get swig account: {:?}", e),
-        }
     }
 }

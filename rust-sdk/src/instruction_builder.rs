@@ -5,20 +5,19 @@ use swig_interface::{
 };
 use swig_state_x::{authority::AuthorityType, swig::swig_account_seeds};
 
-use crate::{
-    error::SwigError,
-    types::{Permission as ClientPermission, WalletAuthority},
-};
+use crate::{error::SwigError, types::Permission as ClientPermission};
 
 /// Represents a Swig wallet instance
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SwigInstructionBuilder {
+    /// The id of the Swig account
+    swig_id: [u8; 32],
     /// The public key of the Swig account
     swig_account: Pubkey,
     /// The type of authority for this wallet
-    //_authority_type: AuthorityType, // TODO: Will replace the wallet authority type with this
+    authority_type: AuthorityType,
     /// The wallet's authority credentials
-    authority: WalletAuthority,
+    authority: Pubkey,
     /// The public key of the fee payer
     payer: Pubkey,
     /// The role id of the wallet
@@ -35,15 +34,18 @@ impl SwigInstructionBuilder {
     /// * `payer` - The public key of the fee payer
     /// * `role_id` - The role id for this wallet
     pub fn new(
-        swig_account: Pubkey,
-        //authority_type: AuthorityType,
-        authority: WalletAuthority,
+        swig_id: [u8; 32],
+        authority_type: AuthorityType,
+        authority: Pubkey,
         payer: Pubkey,
         role_id: u32,
     ) -> Self {
+        let swig_account = Self::swig_key(&swig_id);
+
         Self {
+            swig_id,
             swig_account,
-            // _authority_type: authority_type,
+            authority_type,
             authority,
             payer,
             role_id,
@@ -54,23 +56,18 @@ impl SwigInstructionBuilder {
     ///
     /// # Arguments
     /// * `authority_type` - The type of authority for the new account
-    /// * `authority` - The authority string (base58 for Ed25519, hex for Secp256k1)
+    /// * `authority` - The authority string (base58 for Ed25519, hex for
+    ///   Secp256k1)
     /// * `payer` - The public key of the fee payer
     /// * `id` - A unique 13-byte identifier for the account
-    pub fn create_swig_account_instruction(
-        &self,
-        authority_type: AuthorityType,
-        authority: String,
-        payer: Pubkey,
-        id: [u8; 32],
-    ) -> Result<Instruction, SwigError> {
+    pub fn build_swig_account(&self) -> Result<Instruction, SwigError> {
         let program_id = program_id();
         let (swig_account, swig_bump_seed) =
-            Pubkey::find_program_address(&swig_account_seeds(&id), &program_id);
+            Pubkey::find_program_address(&swig_account_seeds(&self.swig_id), &program_id);
 
-        let auth_bytes = match authority_type {
-            AuthorityType::Ed25519 => bs58::decode(authority).into_vec()?,
-            AuthorityType::Secp256k1 => hex::decode(authority).unwrap(),
+        let auth_bytes = match self.authority_type {
+            AuthorityType::Ed25519 => bs58::decode(self.authority).into_vec()?,
+            // AuthorityType::Secp256k1 => hex::decode(self.authority).unwrap(),
             _ => todo!(),
         };
 
@@ -79,13 +76,13 @@ impl SwigInstructionBuilder {
         let instruction = CreateInstruction::new(
             swig_account,
             swig_bump_seed,
-            payer,
+            self.payer,
             AuthorityConfig {
-                authority_type,
+                authority_type: self.authority_type,
                 authority: &auth_bytes,
             },
             actions,
-            id,
+            self.swig_id,
         )?;
         Ok(instruction)
     }
@@ -98,21 +95,22 @@ impl SwigInstructionBuilder {
         &self,
         instructions: Vec<Instruction>,
     ) -> Result<Instruction, SwigError> {
-        match self.authority {
-            WalletAuthority::Ed25519(authority) => {
+        match self.authority_type {
+            AuthorityType::Ed25519 => {
                 let swig_signed_instruction = SignInstruction::new_ed25519(
                     self.swig_account,
                     self.payer,
-                    authority,
+                    self.authority,
                     instructions[0].clone(),
                     self.role_id,
                 )?;
                 Ok(swig_signed_instruction)
             },
-            WalletAuthority::Secp256k1(_) => {
+            AuthorityType::Secp256k1 => {
                 // Secp256k1 signing is not yet implemented
                 todo!("Secp256k1 signing not yet implemented")
             },
+            _ => todo!(),
         }
     }
 
@@ -130,20 +128,18 @@ impl SwigInstructionBuilder {
     ) -> Result<Instruction, SwigError> {
         let actions = ClientPermission::to_client_actions(permissions);
 
-        match self.authority {
-            WalletAuthority::Ed25519(authority) => {
-                Ok(AddAuthorityInstruction::new_with_ed25519_authority(
-                    self.swig_account,
-                    self.payer,
-                    authority,
-                    self.role_id,
-                    AuthorityConfig {
-                        authority_type: new_authority_type,
-                        authority: new_authority,
-                    },
-                    actions,
-                )?)
-            },
+        match self.authority_type {
+            AuthorityType::Ed25519 => Ok(AddAuthorityInstruction::new_with_ed25519_authority(
+                self.swig_account,
+                self.payer,
+                self.authority,
+                self.role_id,
+                AuthorityConfig {
+                    authority_type: new_authority_type,
+                    authority: new_authority,
+                },
+                actions,
+            )?),
             _ => todo!(),
         }
     }
@@ -153,16 +149,14 @@ impl SwigInstructionBuilder {
     /// # Arguments
     /// * `authority_to_remove_id` - The ID of the authority to remove
     pub fn remove_authority(&self, authority_to_remove_id: u32) -> Result<Instruction, SwigError> {
-        match self.authority {
-            WalletAuthority::Ed25519(authority) => {
-                Ok(RemoveAuthorityInstruction::new_with_ed25519_authority(
-                    self.swig_account,
-                    self.payer,
-                    authority,
-                    self.role_id,
-                    authority_to_remove_id,
-                )?)
-            },
+        match self.authority_type {
+            AuthorityType::Ed25519 => Ok(RemoveAuthorityInstruction::new_with_ed25519_authority(
+                self.swig_account,
+                self.payer,
+                self.authority,
+                self.role_id,
+                authority_to_remove_id,
+            )?),
             _ => todo!(),
         }
     }
@@ -183,13 +177,13 @@ impl SwigInstructionBuilder {
     ) -> Result<Vec<Instruction>, SwigError> {
         let actions = ClientPermission::to_client_actions(permissions);
 
-        match self.authority {
-            WalletAuthority::Ed25519(authority) => {
+        match self.authority_type {
+            AuthorityType::Ed25519 => {
                 let remove_authority_instruction =
                     RemoveAuthorityInstruction::new_with_ed25519_authority(
                         self.swig_account,
                         self.payer,
-                        authority,
+                        self.authority,
                         self.role_id,
                         authority_to_replace_id,
                     )?;
@@ -197,7 +191,7 @@ impl SwigInstructionBuilder {
                     AddAuthorityInstruction::new_with_ed25519_authority(
                         self.swig_account,
                         self.payer,
-                        authority,
+                        self.authority,
                         self.role_id,
                         AuthorityConfig {
                             authority_type: new_authority_type,
@@ -217,5 +211,15 @@ impl SwigInstructionBuilder {
     /// Returns the public key of the Swig account
     pub fn get_swig_account(&self) -> Result<Pubkey, SwigError> {
         Ok(self.swig_account)
+    }
+
+    /// Returns the public key of the Swig account
+    pub fn swig_key(id: &[u8; 32]) -> Pubkey {
+        Pubkey::find_program_address(&swig_account_seeds(id), &program_id()).0
+    }
+
+    /// Returns the role id of the Swig account
+    pub fn get_role_id(&self) -> u32 {
+        self.role_id
     }
 }

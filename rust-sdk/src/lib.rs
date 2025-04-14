@@ -7,5 +7,5 @@ mod wallet;
 // Re-exports for convenient public API
 pub use error::SwigError;
 pub use instruction_builder::SwigInstructionBuilder;
-pub use types::{Permission, WalletAuthority};
+pub use types::{Permission, RecurringConfig};
 pub use wallet::SwigWallet;

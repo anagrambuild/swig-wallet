@@ -6,15 +6,6 @@ use swig_state_x::action::{
     token_recurring_limit::TokenRecurringLimit,
 };
 
-/// Represents the authority type for a Swig wallet
-#[derive(Debug, Clone)]
-pub enum WalletAuthority {
-    /// Ed25519 authority represented by a Solana public key
-    Ed25519(Pubkey),
-    /// Secp256k1 authority represented by a 64-byte array
-    Secp256k1([u8; 64]),
-}
-
 /// Configuration for recurring limits that reset after a specified time window
 #[derive(Debug, Clone)]
 pub struct RecurringConfig {
@@ -23,27 +14,29 @@ pub struct RecurringConfig {
 }
 
 /// Represents the permissions that can be granted to a wallet authority.
-/// Each permission type maps to specific actions that can be performed on the wallet.
+/// Each permission type maps to specific actions that can be performed on the
+/// wallet.
 #[derive(Debug, Clone)]
 pub enum Permission {
-    /// Full permissions for all actions. This is the highest level of permission
-    /// that grants unrestricted access to all wallet operations.
+    /// Full permissions for all actions. This is the highest level of
+    /// permission that grants unrestricted access to all wallet operations.
     All,
 
-    /// Permission to manage authorities. This allows adding or removing authorities
-    /// from the wallet and modifying their permissions.
+    /// Permission to manage authorities. This allows adding or removing
+    /// authorities from the wallet and modifying their permissions.
     ManageAuthority,
 
-    /// Permission to interact with specific tokens. Can be configured with either
-    /// a fixed limit or a recurring limit that resets after a specified period.
+    /// Permission to interact with specific tokens. Can be configured with
+    /// either a fixed limit or a recurring limit that resets after a
+    /// specified period.
     Token {
         /// The mint address of the token
         mint: Pubkey,
         /// The maximum amount that can be transferred
         amount: u64,
-        /// Optional recurring configuration. If provided, the amount becomes a recurring
-        /// limit that resets after the specified window period. If None, amount is
-        /// treated as a fixed limit.
+        /// Optional recurring configuration. If provided, the amount becomes a
+        /// recurring limit that resets after the specified window
+        /// period. If None, amount is treated as a fixed limit.
         recurring: Option<RecurringConfig>,
     },
 
@@ -52,9 +45,9 @@ pub enum Permission {
     Sol {
         /// The maximum amount of SOL (in lamports) that can be transferred
         amount: u64,
-        /// Optional recurring configuration. If provided, the amount becomes a recurring
-        /// limit that resets after the specified window period. If None, amount is
-        /// treated as a fixed limit.
+        /// Optional recurring configuration. If provided, the amount becomes a
+        /// recurring limit that resets after the specified window
+        /// period. If None, amount is treated as a fixed limit.
         recurring: Option<RecurringConfig>,
     },
 
@@ -74,7 +67,8 @@ pub enum Permission {
 }
 
 impl Permission {
-    /// Converts a vector of high-level Permission enums into the internal ClientAction representation
+    /// Converts a vector of high-level Permission enums into the internal
+    /// ClientAction representation
     pub fn to_client_actions(permissions: Vec<Permission>) -> Vec<ClientAction> {
         let mut actions = Vec::new();
         for permission in permissions {
