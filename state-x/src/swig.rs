@@ -1,7 +1,7 @@
 extern crate alloc;
 
 use no_padding::NoPadding;
-use pinocchio::{instruction::Seed, msg, program_error::ProgramError};
+use pinocchio::{instruction::Seed, program_error::ProgramError};
 
 use crate::{
     action::{Action, ActionLoader},

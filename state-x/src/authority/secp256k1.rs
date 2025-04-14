@@ -4,7 +4,7 @@ use core::mem::MaybeUninit;
 
 #[allow(unused_imports)]
 use pinocchio::syscalls::{sol_keccak256, sol_secp256k1_recover};
-use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError};
+use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
 use swig_assertions::sol_assert_bytes_eq;
 
 use super::{ed25519::ed25519_authenticate, Authority, AuthorityInfo, AuthorityType};
