@@ -1,5 +1,5 @@
+use alloy_signer_local::{LocalSigner, PrivateKeySigner};
 use anyhow::Result;
-
 use litesvm::{types::TransactionMetadata, LiteSVM};
 use litesvm_token::{spl_token, CreateAssociatedTokenAccount, CreateMint, MintTo};
 use solana_sdk::{
@@ -13,8 +13,12 @@ use solana_sdk::{
 use swig_interface::{AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction};
 use swig_state_x::{
     action::all::All,
-    authority::{ed25519::Ed25519SessionAuthority, AuthorityType},
-    swig::{swig_account_seeds, SwigWithRoles}, IntoBytes,
+    authority::{
+        ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
+        AuthorityType,
+    },
+    swig::{swig_account_seeds, SwigWithRoles},
+    IntoBytes, Transmutable,
 };
 
 pub fn program_id() -> Pubkey {
@@ -73,6 +77,51 @@ pub fn add_authority_with_ed25519_root<'a>(
     Ok(bench)
 }
 
+pub fn create_swig_secp256k1(
+    context: &mut SwigTestContext,
+    wallet: &PrivateKeySigner,
+    id: [u8; 32],
+) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
+    let payer_pubkey = context.default_payer.pubkey();
+    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+
+    // Get the Ethereum public key
+    let eth_pubkey = wallet
+        .credential()
+        .verifying_key()
+        .to_encoded_point(false)
+        .to_bytes();
+
+    let create_ix = CreateInstruction::new(
+        swig,
+        bump,
+        payer_pubkey,
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256k1,
+            authority: &eth_pubkey[1..],
+        },
+        vec![ClientAction::All(All {})],
+        id,
+    )?;
+    let msg = v0::Message::try_compile(
+        &payer_pubkey,
+        &[create_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[context.default_payer.insecure_clone()],
+    )
+    .unwrap();
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+    Ok((swig, bench))
+}
+
 pub fn create_swig_ed25519(
     context: &mut SwigTestContext,
     authority: &Keypair,
@@ -122,11 +171,17 @@ pub fn create_swig_ed25519_session(
     let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
 
     let authority_pubkey = authority.pubkey().to_bytes();
-    let authority_data = Ed25519SessionAuthority::new(authority_pubkey, initial_session_key, session_max_length);
-    let authority_data_bytes = authority_data.into_bytes().map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?;
+    let authority_data = CreateEd25519SessionAuthority::new(
+        authority_pubkey,
+        initial_session_key,
+        session_max_length,
+    );
+    let authority_data_bytes = authority_data
+        .into_bytes()
+        .map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?;
     let initial_authority = AuthorityConfig {
         authority_type: AuthorityType::Ed25519Session,
-        authority: authority_data_bytes.as_ref(),
+        authority: authority_data_bytes,
     };
 
     let create_ix = CreateInstruction::new(
@@ -154,6 +209,68 @@ pub fn create_swig_ed25519_session(
         .svm
         .send_transaction(tx)
         .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+    Ok((swig, bench))
+}
+
+pub fn create_swig_secp256k1_session(
+    context: &mut SwigTestContext,
+    wallet: &PrivateKeySigner,
+    id: [u8; 32],
+    session_max_length: u64,
+    initial_session_key: [u8; 32],
+) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
+    let payer_pubkey = context.default_payer.pubkey();
+    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+
+    // Get the Ethereum public key
+    let eth_pubkey = wallet
+        .credential()
+        .verifying_key()
+        .to_encoded_point(false)
+        .to_bytes();
+
+    // Create the session authority data
+    let mut authority_data = CreateSecp256k1SessionAuthority {
+        public_key: eth_pubkey[1..].try_into().unwrap(),
+        session_key: initial_session_key,
+        max_session_length: session_max_length,
+    };
+
+    let initial_authority = AuthorityConfig {
+        authority_type: AuthorityType::Secp256k1Session,
+        authority: authority_data
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?,
+    };
+
+    let create_ix = CreateInstruction::new(
+        swig,
+        bump,
+        payer_pubkey,
+        initial_authority,
+        vec![ClientAction::All(All {})],
+        id,
+    )?;
+
+    let msg = v0::Message::try_compile(
+        &payer_pubkey,
+        &[create_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[context.default_payer.insecure_clone()],
+    )
+    .unwrap();
+
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+
     Ok((swig, bench))
 }
 

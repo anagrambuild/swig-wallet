@@ -1,7 +1,7 @@
 mod compact_instructions;
+use core::{marker::PhantomData, mem::MaybeUninit};
+
 pub use compact_instructions::*;
-use core::marker::PhantomData;
-use core::mem::MaybeUninit;
 use pinocchio::{
     account_info::AccountInfo,
     instruction::{Account, AccountMeta, Instruction, Signer},
@@ -50,9 +50,9 @@ impl<'a> InstructionHolder<'a> {
                     .map_err(|_| ProgramError::InvalidInstructionData)?,
             );
             unsafe {
-                let index =  self.indexes.get_unchecked(0) ;
-                let index2 =self.indexes.get_unchecked(1) ;
-                let account1 =  all_accounts.get_unchecked(*index);
+                let index = self.indexes.get_unchecked(0);
+                let index2 = self.indexes.get_unchecked(1);
+                let account1 = all_accounts.get_unchecked(*index);
                 let account2 = all_accounts.get_unchecked(*index2);
 
                 *account1.borrow_mut_lamports_unchecked() -= amount;
@@ -88,7 +88,7 @@ impl<'a> InstructionHolder<'a> {
     pub fn borrow(&'a self) -> Instruction<'a, 'a, 'a, 'a> {
         Instruction {
             program_id: self.program_id,
-            accounts: &self.accounts,
+            accounts: self.accounts,
             data: self.data,
         }
     }

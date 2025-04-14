@@ -1,9 +1,8 @@
+use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 
-use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
-
 use super::{Actionable, Permission};
-use no_padding::NoPadding;
+use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
 
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]

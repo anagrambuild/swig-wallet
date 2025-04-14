@@ -9,17 +9,8 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_pubkey::from_str;
-use swig_compact_instructions::InstructionIterator;
-
-use crate::{
-    error::SwigError,
-    instruction::{
-        accounts::{Context, SignV1Accounts},
-        SwigInstruction,
-    },
-    AccountClassification,
-};
 use swig_assertions::*;
+use swig_compact_instructions::InstructionIterator;
 use swig_state_x::{
     action::{
         all::All, sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
@@ -30,6 +21,15 @@ use swig_state_x::{
     swig::{swig_account_signer, Swig},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
+
+use crate::{
+    error::SwigError,
+    instruction::{
+        accounts::{Context, SignV1Accounts},
+        SwigInstruction,
+    },
+    AccountClassification,
+};
 // use swig_instructions::InstructionIterator;
 
 pub const INSTRUCTION_SYSVAR_ACCOUNT: Pubkey =
@@ -39,16 +39,16 @@ pub const INSTRUCTION_SYSVAR_ACCOUNT: Pubkey =
 #[repr(C, align(8))]
 pub struct SignV1Args {
     instruction: SwigInstruction,
-    pub authority_payload_len: u16,
+    pub instruction_payload_len: u16,
     pub role_id: u32,
 }
 
 impl SignV1Args {
-    pub fn new(role_id: u32, authority_payload_len: u16) -> Self {
+    pub fn new(role_id: u32, instruction_payload_len: u16) -> Self {
         Self {
             instruction: SwigInstruction::SignV1,
             role_id,
-            authority_payload_len,
+            instruction_payload_len,
         }
     }
 }
@@ -73,11 +73,10 @@ impl<'a> SignV1<'a> {
         if data.len() < SignV1Args::LEN {
             return Err(SwigError::InvalidSwigSignInstructionDataTooShort.into());
         }
-
         let (inst, rest) = unsafe { data.split_at_unchecked(SignV1Args::LEN) };
         let args = unsafe { SignV1Args::load_unchecked(inst)? };
-        let (authority_payload, instruction_payload) =
-            unsafe { rest.split_at_unchecked(args.authority_payload_len as usize) };
+        let (instruction_payload, authority_payload) =
+            unsafe { rest.split_at_unchecked(args.instruction_payload_len as usize) };
         Ok(Self {
             args,
             authority_payload,
@@ -129,11 +128,11 @@ pub fn sign_v1(
     let rkeys: &[&Pubkey] = unsafe {
         if role.position.authority_type()? == AuthorityType::Ed25519 {
             let authority_index = *sign_v1.authority_payload.get_unchecked(0) as usize;
-            restricted_keys[0].write(&ctx.accounts.payer.key());
-            restricted_keys[1].write(&all_accounts[authority_index].key());
+            restricted_keys[0].write(ctx.accounts.payer.key());
+            restricted_keys[1].write(all_accounts[authority_index].key());
             core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 2)
         } else {
-            restricted_keys[0].write(&ctx.accounts.payer.key());
+            restricted_keys[0].write(ctx.accounts.payer.key());
 
             core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 1)
         }
@@ -142,7 +141,7 @@ pub fn sign_v1(
         all_accounts,
         sign_v1.instruction_payload,
         ctx.accounts.swig.key(),
-        &rkeys,
+        rkeys,
     )?;
     let b = [swig.bump];
     let seeds = swig_account_signer(&swig.id, &b);
@@ -217,7 +216,7 @@ pub fn sign_v1(
                         let diff = balance - current_token_balance;
                         {
                             if let Some(action) =
-                                RoleMut::get_action_mut::<TokenRecurringLimit>(actions, &mint)?
+                                RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?
                             {
                                 action.run(diff, slot)?;
                                 continue;
@@ -225,7 +224,7 @@ pub fn sign_v1(
                         }
                         {
                             if let Some(action) =
-                                RoleMut::get_action_mut::<TokenLimit>(actions, &mint)?
+                                RoleMut::get_action_mut::<TokenLimit>(actions, mint)?
                             {
                                 action.run(diff)?;
                                 matched = true;

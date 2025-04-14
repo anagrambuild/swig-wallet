@@ -32,3 +32,6 @@ directories = "6.0.0"
 secp256k1 = "0.30.0"
 solana-pubkey = "2.0"
 jupiter-swap-api-client = { git = "https://github.com/austbot/jupiter-swap-api-client.git" }
+
+[lints]
+workspace = true

@@ -82,7 +82,7 @@ fn impl_no_padding(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream>
     };
 
     let struct_ident = &input.ident;
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let (_impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     // Generate size assertions
     let size_assertions = generate_size_assertions(fields, struct_ident)?;

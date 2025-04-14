@@ -9,7 +9,19 @@ members = [
   "no-padding",
 ] #, "cli"]
 
-[workspace.lints.clippy]
+
+
+
+[workspace.lints.rust]
 unused_imports = "allow"
 unused_mut = "allow"
-op_ref = "allow"
+dead_code = "allow"
+unused_macros = "allow"
+unused_variables = "allow"
+
+
+[workspace.lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+    'cfg(target_os, values("solana"))',
+]

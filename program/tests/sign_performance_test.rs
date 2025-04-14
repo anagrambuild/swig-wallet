@@ -182,7 +182,8 @@ fn test_token_transfer_performance_comparison() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    // 3760 is the max difference in CU between the two transactions lets lower this as far as possible but never increase it
+    // 3760 is the max difference in CU between the two transactions lets lower this
+    // as far as possible but never increase it
     assert!(swig_transfer_cu - regular_transfer_cu <= 3949);
 }
 

@@ -41,7 +41,7 @@ jobs:
 
       - name: Check formatting
         run: |
-          cargo fmt --all -- --check
+          cargo +nightly fmt --all -- --check
 
       # - name: Run clippy
       #   run: |

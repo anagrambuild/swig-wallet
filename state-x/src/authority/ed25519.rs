@@ -4,9 +4,8 @@ use no_padding::NoPadding;
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
 use swig_assertions::sol_assert_bytes_eq;
 
-use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
-
 use super::{Authority, AuthorityInfo, AuthorityType};
+use crate::{IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut};
 
 #[repr(C, align(8))]
 #[derive(Debug, PartialEq, NoPadding)]
@@ -14,9 +13,28 @@ pub struct ED25519Authority {
     pub public_key: [u8; 32],
 }
 
+impl ED25519Authority {
+    pub fn from_create_bytes(bytes: &[u8]) -> Result<Self, ProgramError> {
+        if bytes.len() != 32 {
+            return Err(SwigStateError::InvalidRoleData.into());
+        }
+        let public_key = bytes.try_into().unwrap();
+        Ok(Self { public_key })
+    }
+}
+
 impl Authority for ED25519Authority {
     const TYPE: AuthorityType = AuthorityType::Ed25519;
     const SESSION_BASED: bool = false;
+
+    fn set_into_bytes(create_data: &[u8], bytes: &mut [u8]) -> Result<(), ProgramError> {
+        if create_data.len() != 32 {
+            return Err(SwigStateError::InvalidRoleData.into());
+        }
+        let authority = unsafe { ED25519Authority::load_mut_unchecked(bytes)? };
+        authority.public_key = create_data.try_into().unwrap();
+        Ok(())
+    }
 }
 
 impl AuthorityInfo for ED25519Authority {
@@ -41,7 +59,7 @@ impl AuthorityInfo for ED25519Authority {
     }
 
     fn authenticate(
-        &self,
+        &mut self,
         account_infos: &[AccountInfo],
         authority_payload: &[u8],
         _data_payload: &[u8],
@@ -74,6 +92,36 @@ impl IntoBytes for ED25519Authority {
 
 #[repr(C, align(8))]
 #[derive(Debug, PartialEq, NoPadding)]
+pub struct CreateEd25519SessionAuthority {
+    pub public_key: [u8; 32],
+    pub session_key: [u8; 32],
+    pub max_session_length: u64,
+}
+
+impl CreateEd25519SessionAuthority {
+    pub fn new(public_key: [u8; 32], session_key: [u8; 32], max_session_length: u64) -> Self {
+        Self {
+            public_key,
+            session_key,
+            max_session_length,
+        }
+    }
+}
+
+impl IntoBytes for CreateEd25519SessionAuthority {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
+        let bytes =
+            unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
+        Ok(bytes)
+    }
+}
+
+impl Transmutable for CreateEd25519SessionAuthority {
+    const LEN: usize = 64 + 8;
+}
+
+#[repr(C, align(8))]
+#[derive(Debug, PartialEq, NoPadding)]
 pub struct Ed25519SessionAuthority {
     pub public_key: [u8; 32],
     pub session_key: [u8; 32],
@@ -99,7 +147,7 @@ impl Transmutable for Ed25519SessionAuthority {
 impl TransmutableMut for Ed25519SessionAuthority {}
 
 impl IntoBytes for Ed25519SessionAuthority {
-    fn into_bytes(&self) -> Result<& [u8], ProgramError> {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         let bytes =
             unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
         Ok(bytes)
@@ -109,6 +157,15 @@ impl IntoBytes for Ed25519SessionAuthority {
 impl Authority for Ed25519SessionAuthority {
     const TYPE: AuthorityType = AuthorityType::Ed25519Session;
     const SESSION_BASED: bool = true;
+
+    fn set_into_bytes(create_data: &[u8], bytes: &mut [u8]) -> Result<(), ProgramError> {
+        let create = unsafe { CreateEd25519SessionAuthority::load_unchecked(create_data)? };
+        let authority = unsafe { Ed25519SessionAuthority::load_mut_unchecked(bytes)? };
+        authority.public_key = create.public_key;
+        authority.session_key = create.session_key;
+        authority.max_session_length = create.max_session_length;
+        Ok(())
+    }
 }
 
 impl AuthorityInfo for Ed25519SessionAuthority {
@@ -150,7 +207,7 @@ impl AuthorityInfo for Ed25519SessionAuthority {
     }
 
     fn authenticate_session(
-        &self,
+        &mut self,
         account_infos: &[AccountInfo],
         authority_payload: &[u8],
         _data_payload: &[u8],
@@ -170,7 +227,7 @@ impl AuthorityInfo for Ed25519SessionAuthority {
     }
 
     fn authenticate(
-        &self,
+        &mut self,
         account_infos: &[AccountInfo],
         authority_payload: &[u8],
         _data_payload: &[u8],
@@ -187,7 +244,7 @@ impl AuthorityInfo for Ed25519SessionAuthority {
     }
 }
 
-fn ed25519_authenticate(
+pub fn ed25519_authenticate(
     account_infos: &[AccountInfo],
     authority_index: usize,
     public_key: &[u8],

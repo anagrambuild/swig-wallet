@@ -1,3 +1,6 @@
+#[macro_use]
+pub mod bloom;
+
 pub mod ed25519;
 pub mod secp256k1;
 
@@ -5,8 +8,9 @@ use std::any::Any;
 
 use ed25519::{ED25519Authority, Ed25519SessionAuthority};
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
+use secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority};
 
-use crate::{IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut};
+use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
 
 /// Trait for authority data.
 ///
@@ -14,6 +18,8 @@ use crate::{IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, Tran
 pub trait Authority: Transmutable + TransmutableMut + IntoBytes {
     const TYPE: AuthorityType;
     const SESSION_BASED: bool;
+
+    fn set_into_bytes(create_data: &[u8], bytes: &mut [u8]) -> Result<(), ProgramError>;
 }
 
 pub trait AuthorityInfo: IntoBytes {
@@ -28,13 +34,13 @@ pub trait AuthorityInfo: IntoBytes {
     fn as_any(&self) -> &dyn Any;
 
     fn authenticate_session(
-        &self,
+        &mut self,
         _account_infos: &[AccountInfo],
         _authority_payload: &[u8],
         _data_payload: &[u8],
         _slot: u64,
     ) -> Result<(), ProgramError> {
-        return Err(SwigAuthenticateError::AuthorityDoesNotSupportSessionBasedAuth.into());
+        Err(SwigAuthenticateError::AuthorityDoesNotSupportSessionBasedAuth.into())
     }
 
     fn start_session(
@@ -43,11 +49,11 @@ pub trait AuthorityInfo: IntoBytes {
         _current_slot: u64,
         _duration: u64,
     ) -> Result<(), ProgramError> {
-        return Err(SwigAuthenticateError::AuthorityDoesNotSupportSessionBasedAuth.into());
+        Err(SwigAuthenticateError::AuthorityDoesNotSupportSessionBasedAuth.into())
     }
 
     fn authenticate(
-        &self,
+        &mut self,
         account_infos: &[AccountInfo],
         authority_payload: &[u8],
         data_payload: &[u8],
@@ -85,35 +91,14 @@ impl TryFrom<u16> for AuthorityType {
     }
 }
 
-pub struct AuthorityLoader;
-
-impl AuthorityLoader {
-    #[inline(always)]
-    pub fn authority_discriminator(data: &[u8]) -> Result<AuthorityType, ProgramError> {
-        let discriminator = u16::from_le_bytes(data[0..2].try_into().unwrap());
-        AuthorityType::try_from(discriminator)
-    }
-
-    pub fn load_authority<'a>(
-        authority_type: AuthorityType,
-        authority_data: &'a [u8],
-    ) -> Result<&'a dyn AuthorityInfo, ProgramError> {
-        match authority_type {
-            AuthorityType::Ed25519 => {
-                let authority = unsafe {
-                    ED25519Authority::load_unchecked(authority_data)
-                        .map_err(|_| SwigStateError::InvalidAuthorityData)?
-                };
-                Ok(authority as &dyn AuthorityInfo)
-            },
-            AuthorityType::Ed25519Session => {
-                let authority = unsafe {
-                    Ed25519SessionAuthority::load_unchecked(authority_data)
-                        .map_err(|_| SwigStateError::InvalidAuthorityData)?
-                };
-                Ok(authority as &dyn AuthorityInfo)
-            },
-            _ => Err(SwigStateError::InvalidAuthorityData.into()),
-        }
+pub const fn authority_type_to_length(
+    authority_type: &AuthorityType,
+) -> Result<usize, ProgramError> {
+    match authority_type {
+        AuthorityType::Ed25519 => Ok(ED25519Authority::LEN),
+        AuthorityType::Ed25519Session => Ok(Ed25519SessionAuthority::LEN),
+        AuthorityType::Secp256k1 => Ok(Secp256k1Authority::LEN),
+        AuthorityType::Secp256k1Session => Ok(Secp256k1SessionAuthority::LEN),
+        _ => Err(ProgramError::InvalidInstructionData),
     }
 }
