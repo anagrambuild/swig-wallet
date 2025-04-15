@@ -1,18 +1,14 @@
 mod common;
-use borsh::BorshDeserialize;
 use common::*;
-use litesvm_token::spl_token::{self, instruction::TokenInstruction};
+use litesvm_token::spl_token::{self};
 use solana_sdk::{
-    compute_budget::ComputeBudgetInstruction,
-    instruction::{AccountMeta, Instruction},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    transaction::{TransactionError, VersionedTransaction},
+    transaction::VersionedTransaction,
 };
-use swig_interface::AuthorityConfig;
-use swig_state::{swig_account_seeds, Action, AuthorityType, SolAction, Swig, TokenAction};
+use swig_state_x::swig::swig_account_seeds;
 
 /// This test compares the baseline performance of:
 /// 1. A regular token transfer (outside of swig)
@@ -45,9 +41,9 @@ fn test_token_transfer_performance_comparison() {
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
 
     // Setup swig account
-    let id = rand::random::<[u8; 13]>();
+    let id = rand::random::<[u8; 32]>();
     let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
-    let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, &id);
+    let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_result.is_ok());
 
     // Setup token accounts
@@ -186,7 +182,8 @@ fn test_token_transfer_performance_comparison() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    // 3760 is the max difference in CU between the two transactions lets lower this as far as possible but never increase it
+    // 3760 is the max difference in CU between the two transactions lets lower this
+    // as far as possible but never increase it
     assert!(swig_transfer_cu - regular_transfer_cu <= 3949);
 }
 
@@ -212,9 +209,9 @@ fn test_sol_transfer_performance_comparison() {
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
 
     // Setup swig account
-    let id = rand::random::<[u8; 13]>();
+    let id = rand::random::<[u8; 32]>();
     let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
-    let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, &id);
+    let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_result.is_ok());
 
     context.svm.airdrop(&swig, initial_sol_amount).unwrap();

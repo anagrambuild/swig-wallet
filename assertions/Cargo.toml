@@ -1,0 +1,17 @@
+[package]
+name = "swig-assertions"
+version = "0.1.0"
+edition = "2021"
+description = "Solana program assertion utilities"
+license = "AGPL-3.0"
+
+[dependencies]
+pinocchio = { version = "0.8.1"}
+pinocchio-system = { version = "0.2.3" }
+pinocchio-pubkey = { version = "0.2.4" }
+
+[features]
+default = []
+
+[lints]
+workspace = true

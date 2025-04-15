@@ -1,5 +1,4 @@
 mod common;
-use borsh::BorshDeserialize;
 use common::*;
 use litesvm_token::spl_token::{self, instruction::TokenInstruction};
 use solana_sdk::{
@@ -12,8 +11,12 @@ use solana_sdk::{
     system_instruction,
     transaction::{TransactionError, VersionedTransaction},
 };
-use swig_interface::AuthorityConfig;
-use swig_state::{swig_account_seeds, Action, AuthorityType, SolAction, Swig, TokenAction};
+use swig_interface::{AuthorityConfig, ClientAction};
+use swig_state_x::{
+    action::{all::All, sol_limit::SolLimit},
+    authority::AuthorityType,
+    swig::{swig_account_seeds, SwigWithRoles},
+};
 
 #[test_log::test]
 fn test_transfer_sol_with_additional_authority() {
@@ -29,7 +32,7 @@ fn test_transfer_sol_with_additional_authority() {
         .airdrop(&swig_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    let id = rand::random::<[u8; 13]>();
+    let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
@@ -48,13 +51,14 @@ fn test_transfer_sol_with_additional_authority() {
     )
     .unwrap();
 
-    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, &id);
+    let (_, transaction_metadata) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
     let second_authority = Keypair::new();
     context
         .svm
         .airdrop(&second_authority.pubkey(), 10_000_000_000)
         .unwrap();
-    add_authority_with_ed25519_root(
+    let amount = 100000;
+    let txn = add_authority_with_ed25519_root(
         &mut context,
         &swig,
         &swig_authority,
@@ -62,23 +66,20 @@ fn test_transfer_sol_with_additional_authority() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![Action::Sol {
-            action: SolAction::Manage(1000000000),
-        }],
-        0,
-        0,
+        vec![ClientAction::SolLimit(SolLimit { amount: amount / 2 })],
     )
     .unwrap();
+    println!("add authority txn {:?}", transaction_metadata.logs);
     context.svm.airdrop(&swig, 10_000_000_000).unwrap();
-    assert!(swig_create_txn.is_ok());
-    let amount = 100000;
-    let ixd = system_instruction::transfer(&swig, &recipient.pubkey(), amount);
+    context.svm.warp_to_slot(100);
+
+    let ixd = system_instruction::transfer(&swig, &recipient.pubkey(), amount / 2);
     let sign_ix = swig_interface::SignInstruction::new_ed25519(
         swig,
         second_authority.pubkey(),
         second_authority.pubkey(),
         ixd,
-        1, // new authority role id
+        1,
     )
     .unwrap();
     let transfer_message = v0::Message::try_compile(
@@ -96,21 +97,24 @@ fn test_transfer_sol_with_additional_authority() {
         println!("{:?}", res.err());
         assert!(false);
     } else {
-        println!("Sign Transfer CU {:?}", res.unwrap().compute_units_consumed);
+        let txn = res.unwrap();
+        println!("logs {:?}", txn.logs);
+        println!("Sign Transfer CU {:?}", txn.compute_units_consumed);
     }
-    let swig_account = context.svm.get_account(&swig).unwrap();
-    let swig = Swig::try_from_slice(&swig_account.data).unwrap();
-    let role = swig.roles.last().unwrap();
 
     let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
-    assert_eq!(swig.roles.len(), 2);
+    assert_eq!(recipient_account.lamports, 10_000_000_000 + amount / 2);
+    let swig_account = context.svm.get_account(&swig).unwrap();
+
+    let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let role1 = swig_state.get_role(1).unwrap().unwrap();
+    println!("role {:?}", role1.position);
+    let action = role1.get_action::<SolLimit>(&[]).unwrap().unwrap();
+    assert_eq!(action.amount, 0);
     assert_eq!(
-        role.actions[0],
-        Action::Sol {
-            action: SolAction::Manage(1000000000 - amount)
-        }
+        swig_account.lamports,
+        swig_state.state.reserved_lamports + 10_000_000_000 - amount / 2
     );
-    assert_eq!(recipient_account.lamports, 10_000_000_000 + amount);
 }
 
 #[test_log::test]
@@ -127,9 +131,9 @@ fn test_transfer_sol_all_with_authority() {
         .airdrop(&swig_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    let id = rand::random::<[u8; 13]>();
+    let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
-    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, &id);
+    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
 
     let second_authority = Keypair::new();
     context
@@ -145,11 +149,7 @@ fn test_transfer_sol_all_with_authority() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![Action::Sol {
-            action: SolAction::All,
-        }],
-        0,
-        0,
+        vec![ClientAction::All(All {})],
     )
     .unwrap();
     let swig_lamports_balance = context.svm.get_account(&swig).unwrap().lamports;
@@ -190,14 +190,9 @@ fn test_transfer_sol_all_with_authority() {
         swig_account_after.lamports,
         swig_lamports_balance + initial_swig_balance - amount
     );
-    let swig_state = Swig::try_from_slice(&swig_account_after.data).unwrap();
-    let role = swig_state.roles.last().unwrap();
-    assert_eq!(
-        role.actions[0],
-        Action::Sol {
-            action: SolAction::All
-        }
-    );
+    let swig_state = SwigWithRoles::from_bytes(&swig_account_after.data).unwrap();
+    let role = swig_state.get_role(1).unwrap().unwrap();
+    assert!(role.get_action::<All>(&[]).unwrap().is_some());
 }
 
 #[test_log::test]
@@ -214,7 +209,7 @@ fn test_transfer_sol_and_tokens_with_mixed_permissions() {
         .airdrop(&swig_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    let id = rand::random::<[u8; 13]>();
+    let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
     context.svm.warp_to_slot(10);
     // Setup token infrastructure
@@ -243,7 +238,7 @@ fn test_transfer_sol_and_tokens_with_mixed_permissions() {
     )
     .unwrap();
 
-    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, &id);
+    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_txn.is_ok());
 
     let second_authority = Keypair::new();
@@ -260,16 +255,7 @@ fn test_transfer_sol_and_tokens_with_mixed_permissions() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![
-            Action::Sol {
-                action: SolAction::Manage(100),
-            },
-            Action::Tokens {
-                action: TokenAction::All,
-            },
-        ],
-        0,
-        0,
+        vec![ClientAction::All(All {})],
     )
     .unwrap();
 
@@ -345,20 +331,9 @@ fn test_transfer_sol_and_tokens_with_mixed_permissions() {
     let swig_token_balance = spl_token::state::Account::unpack(&swig_token_account.data).unwrap();
     assert_eq!(swig_token_balance.amount, 1000 - token_amount);
     let swig_account = context.svm.get_account(&swig).unwrap();
-    let swig_state = Swig::try_from_slice(&swig_account.data).unwrap();
-    let role = swig_state.roles.last().unwrap();
-    assert_eq!(
-        role.actions[0],
-        Action::Sol {
-            action: SolAction::Manage(100 - sol_amount)
-        }
-    );
-    assert_eq!(
-        role.actions[1],
-        Action::Tokens {
-            action: TokenAction::All
-        }
-    );
+    let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let role = swig_state.get_role(1).unwrap().unwrap();
+    assert!(role.get_action::<All>(&[]).unwrap().is_some());
 }
 
 #[test_log::test]
@@ -375,9 +350,9 @@ fn test_fail_transfer_sol_with_additional_authority_not_enough() {
         .airdrop(&swig_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    let id = rand::random::<[u8; 13]>();
+    let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
-    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, &id);
+    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
     let second_authority = Keypair::new();
     context
         .svm
@@ -391,11 +366,7 @@ fn test_fail_transfer_sol_with_additional_authority_not_enough() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![Action::Sol {
-            action: SolAction::Manage(1000),
-        }],
-        0,
-        0,
+        vec![ClientAction::SolLimit(SolLimit { amount: 1000 })],
     )
     .unwrap();
     context.svm.airdrop(&swig, 10_000_000_000).unwrap();
@@ -424,7 +395,7 @@ fn test_fail_transfer_sol_with_additional_authority_not_enough() {
     assert!(res.is_err());
     assert_eq!(
         res.unwrap_err().err,
-        TransactionError::InstructionError(0, InstructionError::Custom(15))
+        TransactionError::InstructionError(0, InstructionError::Custom(3011))
     );
 }
 
@@ -442,9 +413,9 @@ fn fail_not_correct_authority() {
         .airdrop(&swig_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    let id = rand::random::<[u8; 13]>();
+    let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
-    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, &id);
+    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
     let second_authority = Keypair::new();
     context
         .svm
@@ -458,11 +429,7 @@ fn fail_not_correct_authority() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![Action::Sol {
-            action: SolAction::Manage(1000),
-        }],
-        0,
-        0,
+        vec![ClientAction::All(All {})],
     )
     .unwrap();
     context.svm.airdrop(&swig, 10_000_000_000).unwrap();
@@ -496,12 +463,12 @@ fn fail_not_correct_authority() {
     assert!(res.is_err());
     assert_eq!(
         res.unwrap_err().err,
-        TransactionError::InstructionError(0, InstructionError::Custom(10))
+        TransactionError::InstructionError(0, InstructionError::Custom(3005))
     );
 }
 
 #[test_log::test]
-fn fail_not_wrong_resource() {
+fn fail_wrong_resource() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
     let recipient = Keypair::new();
@@ -514,7 +481,7 @@ fn fail_not_wrong_resource() {
         .airdrop(&swig_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    let id = rand::random::<[u8; 13]>();
+    let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
@@ -540,7 +507,7 @@ fn fail_not_wrong_resource() {
     )
     .unwrap();
 
-    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, &id);
+    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_txn.is_ok());
     let second_authority = Keypair::new();
     context
@@ -555,11 +522,7 @@ fn fail_not_wrong_resource() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![Action::Sol {
-            action: SolAction::All,
-        }],
-        0,
-        0,
+        vec![ClientAction::SolLimit(SolLimit { amount: 1000 })],
     )
     .unwrap();
 
@@ -593,10 +556,10 @@ fn fail_not_wrong_resource() {
         VersionedTransaction::try_new(VersionedMessage::V0(transfer_message), &[&second_authority])
             .unwrap();
     let res = context.svm.send_transaction(transfer_tx);
-
+    println!("res {:?}", res);
     assert_eq!(
         res.unwrap_err().err,
-        TransactionError::InstructionError(0, InstructionError::Custom(15))
+        TransactionError::InstructionError(0, InstructionError::Custom(3006))
     );
     let account = context.svm.get_account(&swig_ata).unwrap();
     let token_account = spl_token::state::Account::unpack(&account.data).unwrap();

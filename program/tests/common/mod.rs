@@ -1,22 +1,25 @@
+use alloy_signer_local::{LocalSigner, PrivateKeySigner};
 use anyhow::Result;
-use borsh::BorshDeserialize;
-use litesvm::{
-    types::{TransactionMetadata, TransactionResult},
-    LiteSVM,
-};
+use litesvm::{types::TransactionMetadata, LiteSVM};
 use litesvm_token::{spl_token, CreateAssociatedTokenAccount, CreateMint, MintTo};
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
-    instruction::{AccountMeta, Instruction},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_program,
-    transaction::{Transaction, VersionedTransaction},
+    transaction::VersionedTransaction,
 };
-use swig_interface::{AddAuthorityInstruction, AuthorityConfig, CreateInstruction};
-use swig_state::{authority::Ed25519SessionAuthorityDataCreate, swig_account_seeds, Action, Swig};
+use swig_interface::{AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction};
+use swig_state_x::{
+    action::all::All,
+    authority::{
+        ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
+        AuthorityType,
+    },
+    swig::{swig_account_seeds, SwigWithRoles},
+    IntoBytes, Transmutable,
+};
 
 pub fn program_id() -> Pubkey {
     swig::ID.into()
@@ -27,27 +30,25 @@ pub fn add_authority_with_ed25519_root<'a>(
     swig_pubkey: &Pubkey,
     existing_ed25519_authority: &Keypair,
     new_authority: AuthorityConfig,
-    actions: Vec<Action>,
-    start_slot: u64,
-    end_slot: u64,
-) -> anyhow::Result<(Swig, TransactionMetadata)> {
+    actions: Vec<ClientAction>,
+) -> anyhow::Result<TransactionMetadata> {
     let payer_pubkey = context.default_payer.pubkey();
     let swig_account = context
         .svm
         .get_account(swig_pubkey)
         .ok_or(anyhow::anyhow!("Swig account not found"))?;
-    let swig = Swig::try_from_slice(&swig_account.data)?;
-    let role = swig
-        .lookup_role(existing_ed25519_authority.pubkey().as_ref())
+    let swig = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
+    let role_id = swig
+        .lookup_role_id(existing_ed25519_authority.pubkey().as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to lookup role id {:?}", e))?
         .unwrap();
     let add_authority_ix = AddAuthorityInstruction::new_with_ed25519_authority(
         *swig_pubkey,
         context.default_payer.pubkey(),
         existing_ed25519_authority.pubkey(),
-        role.index as u8,
+        role_id,
         new_authority,
-        start_slot,
-        end_slot,
         actions,
     )
     .map_err(|e| anyhow::anyhow!("Failed to create add authority instruction {:?}", e))?;
@@ -73,32 +74,71 @@ pub fn add_authority_with_ed25519_root<'a>(
         .svm
         .send_transaction(tx)
         .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
-    let swig_account = context
+    Ok(bench)
+}
+
+pub fn create_swig_secp256k1(
+    context: &mut SwigTestContext,
+    wallet: &PrivateKeySigner,
+    id: [u8; 32],
+) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
+    let payer_pubkey = context.default_payer.pubkey();
+    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+
+    // Get the Ethereum public key
+    let eth_pubkey = wallet
+        .credential()
+        .verifying_key()
+        .to_encoded_point(false)
+        .to_bytes();
+
+    let create_ix = CreateInstruction::new(
+        swig,
+        bump,
+        payer_pubkey,
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256k1,
+            authority: &eth_pubkey[1..],
+        },
+        vec![ClientAction::All(All {})],
+        id,
+    )?;
+    let msg = v0::Message::try_compile(
+        &payer_pubkey,
+        &[create_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[context.default_payer.insecure_clone()],
+    )
+    .unwrap();
+    let bench = context
         .svm
-        .get_account(swig_pubkey)
-        .ok_or(anyhow::anyhow!("Swig account not found"))?;
-    let swig = Swig::try_from_slice(&swig_account.data)?;
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
     Ok((swig, bench))
 }
 
 pub fn create_swig_ed25519(
     context: &mut SwigTestContext,
     authority: &Keypair,
-    id: &[u8],
+    id: [u8; 32],
 ) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
     let payer_pubkey = context.default_payer.pubkey();
-    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(id), &program_id());
+    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
         bump,
         payer_pubkey,
         AuthorityConfig {
-            authority_type: swig_state::AuthorityType::Ed25519,
+            authority_type: AuthorityType::Ed25519,
             authority: authority.pubkey().as_ref(),
         },
+        vec![ClientAction::All(All {})],
         id,
-        0,
-        0,
     )?;
 
     let msg = v0::Message::try_compile(
@@ -123,24 +163,34 @@ pub fn create_swig_ed25519(
 pub fn create_swig_ed25519_session(
     context: &mut SwigTestContext,
     authority: &Keypair,
-    id: &[u8],
+    id: [u8; 32],
+    session_max_length: u64,
+    initial_session_key: [u8; 32],
 ) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
     let payer_pubkey = context.default_payer.pubkey();
-    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(id), &program_id());
+    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
 
     let authority_pubkey = authority.pubkey().to_bytes();
-    let authority_data = Ed25519SessionAuthorityDataCreate::new(&authority_pubkey, &100);
+    let authority_data = CreateEd25519SessionAuthority::new(
+        authority_pubkey,
+        initial_session_key,
+        session_max_length,
+    );
+    let authority_data_bytes = authority_data
+        .into_bytes()
+        .map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?;
+    let initial_authority = AuthorityConfig {
+        authority_type: AuthorityType::Ed25519Session,
+        authority: authority_data_bytes,
+    };
+
     let create_ix = CreateInstruction::new(
         swig,
         bump,
         payer_pubkey,
-        AuthorityConfig {
-            authority_type: swig_state::AuthorityType::Ed25519Session,
-            authority: authority_data.into_bytes().as_ref(),
-        },
+        initial_authority,
+        vec![ClientAction::All(All {})],
         id,
-        0,
-        0,
     )?;
 
     let msg = v0::Message::try_compile(
@@ -159,6 +209,68 @@ pub fn create_swig_ed25519_session(
         .svm
         .send_transaction(tx)
         .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+    Ok((swig, bench))
+}
+
+pub fn create_swig_secp256k1_session(
+    context: &mut SwigTestContext,
+    wallet: &PrivateKeySigner,
+    id: [u8; 32],
+    session_max_length: u64,
+    initial_session_key: [u8; 32],
+) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
+    let payer_pubkey = context.default_payer.pubkey();
+    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+
+    // Get the Ethereum public key
+    let eth_pubkey = wallet
+        .credential()
+        .verifying_key()
+        .to_encoded_point(false)
+        .to_bytes();
+
+    // Create the session authority data
+    let mut authority_data = CreateSecp256k1SessionAuthority {
+        public_key: eth_pubkey[1..].try_into().unwrap(),
+        session_key: initial_session_key,
+        max_session_length: session_max_length,
+    };
+
+    let initial_authority = AuthorityConfig {
+        authority_type: AuthorityType::Secp256k1Session,
+        authority: authority_data
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?,
+    };
+
+    let create_ix = CreateInstruction::new(
+        swig,
+        bump,
+        payer_pubkey,
+        initial_authority,
+        vec![ClientAction::All(All {})],
+        id,
+    )?;
+
+    let msg = v0::Message::try_compile(
+        &payer_pubkey,
+        &[create_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[context.default_payer.insecure_clone()],
+    )
+    .unwrap();
+
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+
     Ok((swig, bench))
 }
 

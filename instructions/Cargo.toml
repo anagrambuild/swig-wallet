@@ -9,11 +9,10 @@ description = "Swig protocol instructions handling"
 client = ["solana-program"]
 
 [dependencies]
-bytemuck = { version = "1.21.0", default-features = false, features = [
-  "derive"
-] }
-pinocchio = { version = "0.7.1" }
-pinocchio-system = { version = "0.2.1" }
-thiserror = "2.0.3"
+pinocchio = { version = "0.8.1" }
+pinocchio-system = { version = "0.2.3" }
 solana-program = { version = "2.0.13", optional = true }
 bs58 = "*"
+
+[lints]
+workspace = true

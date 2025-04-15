@@ -1,17 +1,79 @@
-use borsh::{BorshDeserialize, BorshSerialize};
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
+    keccak::hash,
     pubkey::Pubkey,
     system_program,
 };
 pub use swig;
-use swig::{
-    actions::{add_authority_v1::AddAuthorityV1Args, sign_v1::SignV1Args},
-    util::ZeroCopy,
+use swig::actions::{
+    add_authority_v1::AddAuthorityV1Args, create_session_v1::CreateSessionV1Args,
+    create_v1::CreateV1Args, remove_authority_v1::RemoveAuthorityV1Args,
 };
 pub use swig_compact_instructions::*;
-pub use swig_state;
-use swig_state::{swig_account_seeds, Action, AuthorityType};
+use swig_state_x::{
+    action::{
+        all::All, manage_authority::ManageAuthority, program::Program, sol_limit::SolLimit,
+        sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount, token_limit::TokenLimit,
+        token_recurring_limit::TokenRecurringLimit, Action, Permission,
+    },
+    authority::AuthorityType,
+    swig::swig_account_seeds,
+    IntoBytes, Transmutable,
+};
+
+pub enum ClientAction {
+    TokenLimit(TokenLimit),
+    TokenRecurringLimit(TokenRecurringLimit),
+    SolLimit(SolLimit),
+    SolRecurringLimit(SolRecurringLimit),
+    Program(Program),
+    All(All),
+    ManageAuthority(ManageAuthority),
+    SubAccount(SubAccount),
+}
+
+impl ClientAction {
+    pub fn write(&self, data: &mut Vec<u8>) -> Result<(), anyhow::Error> {
+        let (permission, length) = match self {
+            ClientAction::TokenLimit(_) => (Permission::TokenLimit, TokenLimit::LEN),
+            ClientAction::TokenRecurringLimit(_) => {
+                (Permission::TokenRecurringLimit, TokenRecurringLimit::LEN)
+            },
+            ClientAction::SolLimit(_) => (Permission::SolLimit, SolLimit::LEN),
+            ClientAction::SolRecurringLimit(_) => {
+                (Permission::SolRecurringLimit, SolRecurringLimit::LEN)
+            },
+            ClientAction::Program(_) => (Permission::Program, Program::LEN),
+            ClientAction::All(_) => (Permission::All, All::LEN),
+            ClientAction::ManageAuthority(_) => (Permission::ManageAuthority, ManageAuthority::LEN),
+            ClientAction::SubAccount(_) => (Permission::SubAccount, SubAccount::LEN),
+        };
+        let offset = data.len() as u32;
+        let header = Action::new(
+            permission,
+            length as u16,
+            offset + Action::LEN as u32 + length as u32,
+        );
+        let header_bytes = header
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize header {:?}", e))?;
+        data.extend_from_slice(header_bytes);
+        let bytes_res = match self {
+            ClientAction::TokenLimit(action) => action.into_bytes(),
+            ClientAction::TokenRecurringLimit(action) => action.into_bytes(),
+            ClientAction::SolLimit(action) => action.into_bytes(),
+            ClientAction::SolRecurringLimit(action) => action.into_bytes(),
+            ClientAction::Program(action) => action.into_bytes(),
+            ClientAction::All(action) => action.into_bytes(),
+            ClientAction::ManageAuthority(action) => action.into_bytes(),
+            ClientAction::SubAccount(action) => action.into_bytes(),
+        };
+        data.extend_from_slice(
+            bytes_res.map_err(|e| anyhow::anyhow!("Failed to serialize action {:?}", e))?,
+        );
+        Ok(())
+    }
+}
 
 pub fn program_id() -> Pubkey {
     swig::ID.into()
@@ -26,6 +88,10 @@ pub struct AuthorityConfig<'a> {
     pub authority: &'a [u8],
 }
 
+fn prepare_secp_payload(current_slot: u64, data_payload: &[u8]) -> [u8; 32] {
+    hash(&[data_payload, &current_slot.to_le_bytes()].concat()).to_bytes()
+}
+
 pub struct CreateInstruction;
 impl CreateInstruction {
     pub fn new(
@@ -33,20 +99,30 @@ impl CreateInstruction {
         swig_bump_seed: u8,
         payer: Pubkey,
         initial_authority: AuthorityConfig,
-        id: &[u8],
-        start: u64,
-        end: u64,
+        actions: Vec<ClientAction>,
+        id: [u8; 32],
     ) -> anyhow::Result<Instruction> {
-        let create = swig_state::CreateV1 {
-            id: id.try_into().unwrap(),
-            bump: swig_bump_seed,
-            initial_authority: initial_authority.authority_type,
-            authority_data: initial_authority.authority.as_ref().to_vec(),
-            start_slot: start,
-            end_slot: end,
-        };
+        let create = CreateV1Args::new(
+            id,
+            swig_bump_seed,
+            initial_authority.authority_type,
+            initial_authority.authority.len() as u16,
+            actions.len() as u8,
+        );
         let mut write = Vec::new();
-        create.serialize(&mut write).unwrap();
+        write.extend_from_slice(
+            create
+                .into_bytes()
+                .map_err(|e| anyhow::anyhow!("Failed to serialize create {:?}", e))?,
+        );
+        write.extend_from_slice(initial_authority.authority);
+        let mut action_bytes = Vec::new();
+        for action in actions {
+            action
+                .write(&mut action_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize action {:?}", e))?;
+        }
+        write.append(&mut action_bytes);
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts: vec![
@@ -54,7 +130,7 @@ impl CreateInstruction {
                 AccountMeta::new(payer, true),
                 AccountMeta::new(system_program::ID, false),
             ],
-            data: [&[0], write.as_slice()].concat(),
+            data: write,
         })
     }
 }
@@ -65,11 +141,9 @@ impl AddAuthorityInstruction {
         swig_account: Pubkey,
         payer: Pubkey,
         authority: Pubkey,
-        acting_role_id: u8,
+        acting_role_id: u32,
         new_authority_config: AuthorityConfig,
-        start: u64,
-        end: u64,
-        actions: Vec<Action>,
+        actions: Vec<ClientAction>,
     ) -> anyhow::Result<Instruction> {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
@@ -77,71 +151,83 @@ impl AddAuthorityInstruction {
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
-        let mut data_vec = Vec::new();
 
-        actions
-            .serialize(&mut data_vec)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize actions {:?}", e))?;
+        let mut write = Vec::new();
+        let mut action_bytes = Vec::new();
+        let num_actions = actions.len() as u8;
+        for action in actions {
+            action
+                .write(&mut action_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize action {:?}", e))?;
+        }
         let args = AddAuthorityV1Args::new(
             acting_role_id,
             new_authority_config.authority_type,
             new_authority_config.authority.len() as u16,
-            data_vec.len() as u16,
-            start,
-            end,
+            action_bytes.len() as u16,
+            num_actions,
         );
-        Vec::<Action>::try_from_slice(&data_vec).unwrap();
+        write.extend_from_slice(args.into_bytes().unwrap());
+        write.extend_from_slice(new_authority_config.authority);
+        write.extend_from_slice(&action_bytes);
+        write.extend_from_slice(&[3]);
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [
-                args.as_bytes(),
-                new_authority_config.authority,
-                &data_vec,
-                &[3],
-            ]
-            .concat(),
+            data: write,
         })
     }
 
     pub fn new_with_secp256k1_authority<F>(
         swig_account: Pubkey,
         payer: Pubkey,
-        authority_payload_fn: F,
-        acting_role_id: u8,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        acting_role_id: u32,
         new_authority_config: AuthorityConfig,
-        start: u64,
-        end: u64,
-        actions: Vec<Action>,
+        actions: Vec<ClientAction>,
     ) -> anyhow::Result<Instruction>
     where
-        F: Fn(&[u8]) -> [u8; 64],
+        F: FnMut(&[u8]) -> [u8; 65],
     {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
             AccountMeta::new_readonly(system_program::ID, false),
         ];
-        let mut data_vec = vec![0; AddAuthorityV1Args::SIZE];
+        let mut action_bytes = Vec::new();
+        let num_actions = actions.len() as u8;
+        for action in actions {
+            action
+                .write(&mut action_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize action {:?}", e))?;
+        }
         let args = AddAuthorityV1Args::new(
             acting_role_id,
             new_authority_config.authority_type,
             new_authority_config.authority.len() as u16,
-            data_vec.len() as u16,
-            start,
-            end,
+            action_bytes.len() as u16,
+            num_actions,
         );
-        actions
-            .serialize(&mut data_vec)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize actions {:?}", e))?;
-        let authority_payload = authority_payload_fn(&data_vec);
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        let mut signature_bytes = Vec::new();
+        signature_bytes.extend_from_slice(arg_bytes);
+        signature_bytes.extend_from_slice(new_authority_config.authority);
+        signature_bytes.extend_from_slice(&action_bytes);
+        let nonced_payload = prepare_secp_payload(current_slot, &signature_bytes);
+        let signature = authority_payload_fn(&nonced_payload);
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&signature);
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
             data: [
-                args.as_bytes(),
+                arg_bytes,
                 new_authority_config.authority,
-                &data_vec,
+                &action_bytes,
                 &authority_payload,
             ]
             .concat(),
@@ -156,7 +242,7 @@ impl SignInstruction {
         payer: Pubkey,
         authority: Pubkey,
         inner_instruction: Instruction,
-        role_id: u8,
+        role_id: u32,
     ) -> anyhow::Result<Instruction> {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
@@ -164,31 +250,52 @@ impl SignInstruction {
             AccountMeta::new_readonly(authority, true),
         ];
         let (accounts, ixs) = compact_instructions(swig_account, accounts, vec![inner_instruction]);
-        let args = SignV1Args::new(role_id, 1, ixs.inner_instructions.len() as u16);
+        let ix_bytes = ixs.into_bytes();
+        let args = swig::actions::sign_v1::SignV1Args::new(role_id, ix_bytes.len() as u16);
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [args.as_bytes(), &[2], &ixs.into_bytes()].concat(),
+            data: [arg_bytes, &ix_bytes, &[2]].concat(),
         })
     }
 
-    pub fn new_secp256k1(
+    pub fn new_secp256k1<F>(
         swig_account: Pubkey,
         payer: Pubkey,
-        authority: [u8; 64],
-        inner_instructions: Vec<Instruction>,
-        role_id: u8,
-    ) -> anyhow::Result<Instruction> {
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        inner_instruction: Instruction,
+        role_id: u32,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
         ];
-        let (accounts, ixs) = compact_instructions(swig_account, accounts, inner_instructions);
-        let args = SignV1Args::new(role_id, 64, ixs.inner_instructions.len() as u16);
+        let (accounts, ixs) = compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        let ix_bytes = ixs.into_bytes();
+        let args = swig::actions::sign_v1::SignV1Args::new(role_id, ix_bytes.len() as u16);
+
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        let mut signature_bytes = Vec::new();
+        signature_bytes.extend_from_slice(&ix_bytes);
+        let nonced_payload = prepare_secp_payload(current_slot, &signature_bytes);
+        let signature = authority_payload_fn(&nonced_payload);
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&signature);
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [args.as_bytes(), authority.as_ref(), &ixs.into_bytes()].concat(),
+            data: [arg_bytes, &ix_bytes, &authority_payload].concat(),
         })
     }
 }
@@ -199,8 +306,8 @@ impl RemoveAuthorityInstruction {
         swig_account: Pubkey,
         payer: Pubkey,
         authority: Pubkey,
-        acting_role_id: u8,
-        authority_to_remove_id: u8,
+        acting_role_id: u32,
+        authority_to_remove_id: u32,
     ) -> anyhow::Result<Instruction> {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
@@ -209,145 +316,49 @@ impl RemoveAuthorityInstruction {
             AccountMeta::new_readonly(authority, true),
         ];
 
-        let args = swig::actions::remove_authority_v1::RemoveAuthorityV1Args::new(
-            acting_role_id,
-            authority_to_remove_id,
-            1,
-        );
-
+        let args = RemoveAuthorityV1Args::new(acting_role_id, authority_to_remove_id, 1);
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [args.as_bytes(), &[3]].concat(),
+            data: [arg_bytes, &[3]].concat(),
         })
     }
 
     pub fn new_with_secp256k1_authority<F>(
         swig_account: Pubkey,
         payer: Pubkey,
-        authority_payload_fn: F,
-        acting_role_id: u8,
-        authority_to_remove_id: u8,
+        mut authority_payload_fn: F,
+        acting_role_id: u32,
+        authority_to_remove_id: u32,
+        current_slot: u64,
     ) -> anyhow::Result<Instruction>
     where
-        F: Fn(&[u8]) -> [u8; 65],
+        F: FnMut(&[u8]) -> [u8; 65],
     {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
             AccountMeta::new_readonly(system_program::ID, false),
         ];
+        let args = RemoveAuthorityV1Args::new(acting_role_id, authority_to_remove_id, 65);
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
-        let args = swig::actions::remove_authority_v1::RemoveAuthorityV1Args::new(
-            acting_role_id,
-            authority_to_remove_id,
-            65,
-        );
-
-        let data_payload: [u8; 0] = [];
-
-        let authority_payload = authority_payload_fn(&data_payload);
-
+        let mut signature_bytes = Vec::new();
+        signature_bytes.extend_from_slice(arg_bytes);
+        let nonced_payload = prepare_secp_payload(current_slot, &signature_bytes);
+        let signature = authority_payload_fn(&nonced_payload);
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&signature);
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [args.as_bytes(), &authority_payload].concat(),
-        })
-    }
-}
-
-pub struct ReplaceAuthorityInstruction;
-impl ReplaceAuthorityInstruction {
-    pub fn new_with_ed25519_authority(
-        swig_account: Pubkey,
-        payer: Pubkey,
-        authority: Pubkey,
-        acting_role_id: u8,
-        authority_to_replace_id: u8,
-        new_authority_config: AuthorityConfig,
-        actions: Vec<Action>,
-        start: u64,
-        end: u64,
-    ) -> anyhow::Result<Instruction> {
-        let accounts = vec![
-            AccountMeta::new(swig_account, false),
-            AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
-            AccountMeta::new_readonly(authority, true),
-        ];
-
-        let authority_data = new_authority_config.authority;
-        let authority_data_len = authority_data.len() as u16;
-
-        let actions_bytes = borsh::to_vec(&actions)?;
-        let actions_payload_len = actions_bytes.len() as u16;
-
-        let args = swig::actions::replace_authority_v1::ReplaceAuthorityV1Args::new(
-            acting_role_id,
-            authority_to_replace_id,
-            new_authority_config.authority_type,
-            authority_data_len,
-            actions_payload_len,
-            start,
-            end,
-        );
-
-        Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
-            accounts,
-            data: [args.as_bytes(), authority_data, &actions_bytes, &[3]].concat(),
-        })
-    }
-
-    pub fn new_with_secp256k1_authority<F>(
-        swig_account: Pubkey,
-        payer: Pubkey,
-        authority_payload_fn: F,
-        acting_role_id: u8,
-        authority_to_replace_id: u8,
-        new_authority_config: AuthorityConfig,
-        actions: Vec<Action>,
-        start: u64,
-        end: u64,
-    ) -> anyhow::Result<Instruction>
-    where
-        F: Fn(&[u8]) -> [u8; 65],
-    {
-        let accounts = vec![
-            AccountMeta::new(swig_account, false),
-            AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
-        ];
-
-        let authority_data = new_authority_config.authority;
-        let authority_data_len = authority_data.len() as u16;
-
-        let actions_bytes = borsh::to_vec(&actions)?;
-        let actions_payload_len = actions_bytes.len() as u16;
-
-        let args = swig::actions::replace_authority_v1::ReplaceAuthorityV1Args::new(
-            acting_role_id,
-            authority_to_replace_id,
-            new_authority_config.authority_type,
-            authority_data_len,
-            actions_payload_len,
-            start,
-            end,
-        );
-
-        let data_payload = [authority_data, &actions_bytes].concat();
-        let authority_payload = authority_payload_fn(&data_payload);
-
-        Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
-            accounts,
-            data: [
-                args.as_bytes(),
-                authority_data,
-                &actions_bytes,
-                &authority_payload,
-            ]
-            .concat(),
+            data: [arg_bytes, &authority_payload].concat(),
         })
     }
 }
@@ -358,7 +369,7 @@ impl CreateSessionInstruction {
         swig_account: Pubkey,
         payer: Pubkey,
         authority: Pubkey,
-        role_id: u8,
+        role_id: u32,
         session_key: Pubkey,
         session_duration: u64,
     ) -> anyhow::Result<Instruction> {
@@ -368,17 +379,51 @@ impl CreateSessionInstruction {
             AccountMeta::new_readonly(authority, true),
         ];
 
-        let create_session_args = swig::actions::create_session_v1::CreateSessionV1Args::new(
-            role_id,
-            1,
-            session_duration,
-        );
-        let session_key_bytes = session_key.to_bytes();
-
+        let create_session_args =
+            CreateSessionV1Args::new(role_id, 1, session_duration, session_key.to_bytes());
+        let args_bytes = create_session_args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [create_session_args.as_bytes(), &[2], &session_key_bytes].concat(),
+            data: [args_bytes, &[2]].concat(),
+        })
+    }
+
+    pub fn new_with_secp256k1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        role_id: u32,
+        session_key: Pubkey,
+        session_duration: u64,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ];
+        let create_session_args =
+            CreateSessionV1Args::new(role_id, 1, session_duration, session_key.to_bytes());
+        let args_bytes = create_session_args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        let mut signature_bytes = Vec::new();
+        signature_bytes.extend_from_slice(args_bytes);
+        let nonced_payload = prepare_secp_payload(current_slot, &signature_bytes);
+        let signature = authority_payload_fn(&nonced_payload);
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&signature);
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
         })
     }
 }

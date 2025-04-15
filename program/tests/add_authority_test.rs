@@ -1,9 +1,11 @@
 mod common;
-use borsh::BorshDeserialize;
+
 use common::*;
 use solana_sdk::{signature::Keypair, signer::Signer};
-use swig_interface::AuthorityConfig;
-use swig_state::{Action, AuthorityType, Role, Swig};
+use swig_interface::{AuthorityConfig, ClientAction};
+use swig_state_x::{
+    action::manage_authority::ManageAuthority, authority::AuthorityType, swig::SwigWithRoles,
+};
 
 #[test_log::test]
 fn test_create_add_authority() {
@@ -15,10 +17,10 @@ fn test_create_add_authority() {
         .airdrop(&swig_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    let id = rand::random::<[u8; 13]>();
+    let id = rand::random::<[u8; 32]>();
 
     let (swig_key, swig_create_txn) =
-        create_swig_ed25519(&mut context, &swig_authority, &id).unwrap();
+        create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
     let second_authority = Keypair::new();
     context
         .svm
@@ -32,32 +34,200 @@ fn test_create_add_authority() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![Action::ManageAuthority],
-        0,
-        0,
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
     )
     .unwrap();
     let swig_account = context.svm.get_account(&swig_key).unwrap();
-    let swig = Swig::try_from_slice(&swig_account.data).unwrap();
-    assert_eq!(swig.roles.len(), 2);
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 2);
+    assert_eq!(swig.state.role_counter, 2);
+    let role_0 = swig.get_role(0).unwrap().unwrap();
+    assert_eq!(role_0.authority.authority_type(), AuthorityType::Ed25519);
+    assert!(!role_0.authority.session_based());
     assert_eq!(
-        swig.roles[0],
-        Role::new_with_size(
-            AuthorityType::Ed25519,
-            swig_authority.pubkey().as_ref().to_vec(),
-            0,
-            0,
-            vec![Action::All],
-        )
+        role_0.position.authority_type().unwrap(),
+        AuthorityType::Ed25519
     );
+    assert_eq!(role_0.position.authority_length(), 32);
+    assert_eq!(role_0.position.num_actions(), 1);
+}
+
+#[test_log::test]
+fn test_cannot_add_authority_with_zero_actions() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+
+    // Create a swig wallet with the root authority
+    let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    // Try to add a second authority with zero actions (should fail)
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![], // Empty actions vector
+    );
+
+    // Verify the operation failed
+    assert!(
+        result.is_err(),
+        "Adding authority with zero actions should fail"
+    );
+
+    // Verify the error is related to empty actions
+    if let Err(err) = result {
+        let error_string = format!("{:?}", err);
+        println!("Error: {}", error_string);
+        assert!(
+            error_string.contains("EmptyActions") || error_string.contains("Custom"),
+            "Expected empty actions error, got: {:?}",
+            err
+        );
+    }
+
+    // Verify no new authority was added
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
     assert_eq!(
-        swig.roles[1],
-        Role::new_with_size(
-            AuthorityType::Ed25519,
-            second_authority.pubkey().as_ref().to_vec(),
-            0,
-            0,
-            vec![Action::ManageAuthority],
-        )
+        swig.state.roles, 1,
+        "Should still have only the root authority"
+    );
+}
+
+#[test_log::test]
+fn test_multiple_authorities_with_different_actions() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+
+    // Create a swig wallet with the root authority
+    let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    // Add three authorities with different action combinations
+    let authority1 = Keypair::new();
+    let authority2 = Keypair::new();
+    let authority3 = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&authority1.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&authority2.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&authority3.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Add authority1 with ManageAuthority action
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: authority1.pubkey().as_ref(),
+        },
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    )
+    .unwrap();
+    context.svm.warp_to_slot(10);
+    // Add authority2 with SolLimit action (imported from remove_authority_test.rs)
+    use swig_state_x::action::sol_limit::SolLimit;
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: authority2.pubkey().as_ref(),
+        },
+        vec![ClientAction::SolLimit(SolLimit {
+            amount: 1000000000000000000,
+        })],
+    )
+    .unwrap();
+    context.svm.warp_to_slot(12);
+    // Add authority3 with All action
+    use swig_state_x::action::all::All;
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: authority3.pubkey().as_ref(),
+        },
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
+    context.svm.warp_to_slot(13);
+    // Verify all authorities were added
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(
+        swig.state.roles, 4,
+        "Should have 4 authorities (root + 3 added)"
+    );
+
+    // Verify authority1 has ManageAuthority permission
+    let role_id1 = swig
+        .lookup_role_id(authority1.pubkey().as_ref())
+        .unwrap()
+        .unwrap();
+    let role1 = swig.get_role(role_id1).unwrap().unwrap();
+    assert_eq!(
+        role1.position.num_actions(),
+        1,
+        "Authority1 should have 1 action"
+    );
+
+    // Verify authority2 has SolLimit permission
+    let role_id2 = swig
+        .lookup_role_id(authority2.pubkey().as_ref())
+        .unwrap()
+        .unwrap();
+    let role2 = swig.get_role(role_id2).unwrap().unwrap();
+    assert_eq!(
+        role2.position.num_actions(),
+        1,
+        "Authority2 should have 1 action"
+    );
+
+    // Verify authority3 has All permission
+    let role_id3 = swig
+        .lookup_role_id(authority3.pubkey().as_ref())
+        .unwrap()
+        .unwrap();
+    let role3 = swig.get_role(role_id3).unwrap().unwrap();
+    assert_eq!(
+        role3.position.num_actions(),
+        1,
+        "Authority3 should have 1 action"
     );
 }

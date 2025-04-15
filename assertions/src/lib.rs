@@ -6,7 +6,10 @@ use pinocchio::{
     pubkey::{create_program_address, find_program_address, Pubkey},
     ProgramResult,
 };
+use pinocchio_pubkey::declare_id;
 use pinocchio_system::ID as SYSTEM_ID;
+
+declare_id!("swigNmWhy8RvUYXBKV5TSU8Hh3f4o5EczHouzBzEsLC");
 
 #[allow(unused_imports)]
 use std::mem::MaybeUninit;
@@ -28,7 +31,7 @@ pub fn sol_assert_bytes_eq(left: &[u8], right: &[u8], len: usize) -> bool {
 
 #[cfg(not(target_os = "solana"))]
 pub fn sol_assert_bytes_eq(left: &[u8], right: &[u8], len: usize) -> bool {
-    left.len() != len || right.len() != len
+    (left.len() == len || right.len() != len) && right == left
 }
 
 macro_rules! sol_assert {
@@ -126,15 +129,21 @@ sol_assert!(check_bytes_match, left: &[u8], right: &[u8], len: usize |
 );
 
 sol_assert!(check_owner, account: &AccountInfo, owner: &Pubkey |
-  sol_assert_bytes_eq(account.owner().as_ref(), owner.as_ref(), 32)
+  sol_assert_bytes_eq(unsafe {
+      account.owner().as_ref()
+  }, owner.as_ref(), 32)
 );
 
 sol_assert!(check_system_owner, account: &AccountInfo |
-  sol_assert_bytes_eq(account.owner().as_ref(), SYSTEM_ID.as_ref(), 32)
+  sol_assert_bytes_eq(unsafe {
+      account.owner().as_ref()
+  }, SYSTEM_ID.as_ref(), 32)
 );
 
 sol_assert!(check_self_owned, account: &AccountInfo |
-  sol_assert_bytes_eq(account.owner().as_ref(), crate::ID.as_ref(), 32)
+  sol_assert_bytes_eq(unsafe {
+      account.owner().as_ref()
+  }, crate::ID.as_ref(), 32)
 );
 
 sol_assert!(check_zero_lamports, account: &AccountInfo |
@@ -172,7 +181,7 @@ pub fn is_on_curve(point: &[u8]) -> bool {
 }
 
 #[cfg(not(target_os = "solana"))]
-pub fn is_on_curve(point: &[u8]) -> bool {
+pub fn is_on_curve(_point: &[u8]) -> bool {
     unimplemented!()
 }
 
@@ -184,6 +193,6 @@ pub fn get_stack_height(expected: u64) -> bool {
 
 #[cfg(not(target_os = "solana"))]
 #[inline(always)]
-pub fn get_stack_height(expected: u64) -> bool {
+pub fn get_stack_height(_expected: u64) -> bool {
     unimplemented!()
 }

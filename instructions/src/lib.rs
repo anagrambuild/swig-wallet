@@ -1,5 +1,5 @@
 mod compact_instructions;
-use std::marker::PhantomData;
+use core::{marker::PhantomData, mem::MaybeUninit};
 
 pub use compact_instructions::*;
 use pinocchio::{
@@ -10,23 +10,25 @@ use pinocchio::{
     pubkey::Pubkey,
     ProgramResult,
 };
-use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[repr(u32)]
 pub enum InstructionError {
-    #[error("Missing instructions")]
-    MissingInstructions,
-    #[error("Missing AccountInfo")]
+    MissingInstructions = 2000,
     MissingAccountInfo,
-    #[error("Missing Data")]
     MissingData,
+}
+
+impl From<InstructionError> for ProgramError {
+    fn from(e: InstructionError) -> Self {
+        ProgramError::Custom(e as u32)
+    }
 }
 
 pub struct InstructionHolder<'a> {
     pub program_id: &'a Pubkey,
     pub cpi_accounts: Vec<Account<'a>>,
-    pub indexes: Vec<usize>,
-    pub accounts: Vec<AccountMeta<'a>>,
+    pub indexes: &'a [usize],
+    pub accounts: &'a [AccountMeta<'a>],
     pub data: &'a [u8],
 }
 
@@ -38,17 +40,23 @@ impl<'a> InstructionHolder<'a> {
         swig_signer: &[Signer],
     ) -> ProgramResult {
         if self.program_id == &pinocchio_system::ID
-            && self.data[0..4] == [2, 0, 0, 0]
-            && self.accounts[0].pubkey == swig_key
+            && self.data.len() >= 12
+            && unsafe { self.data.get_unchecked(0..4) == [2, 0, 0, 0] }
+            && unsafe { self.accounts.get_unchecked(0).pubkey == swig_key }
         {
             let amount = u64::from_le_bytes(
-                self.data[4..12]
+                unsafe { self.data.get_unchecked(4..12) }
                     .try_into()
                     .map_err(|_| ProgramError::InvalidInstructionData)?,
             );
             unsafe {
-                *all_accounts[self.indexes[0]].borrow_mut_lamports_unchecked() -= amount;
-                *all_accounts[self.indexes[1]].borrow_mut_lamports_unchecked() += amount;
+                let index = self.indexes.get_unchecked(0);
+                let index2 = self.indexes.get_unchecked(1);
+                let account1 = all_accounts.get_unchecked(*index);
+                let account2 = all_accounts.get_unchecked(*index2);
+
+                *account1.borrow_mut_lamports_unchecked() -= amount;
+                *account2.borrow_mut_lamports_unchecked() += amount;
             }
         } else {
             unsafe {
@@ -80,7 +88,7 @@ impl<'a> InstructionHolder<'a> {
     pub fn borrow(&'a self) -> Instruction<'a, 'a, 'a, 'a> {
         Instruction {
             program_id: self.program_id,
-            accounts: &self.accounts,
+            accounts: self.accounts,
             data: self.data,
         }
     }
@@ -151,7 +159,7 @@ impl<'a> InstructionIterator<'a, &'a [AccountInfo], &'a [&'a Pubkey], &'a Accoun
             accounts,
             data,
             cursor: 1, // Start after the number of instructions
-            remaining: data[0] as usize,
+            remaining: unsafe { *data.get_unchecked(0) } as usize,
             restricted_keys,
             signer,
             _phantom: PhantomData,
@@ -193,16 +201,18 @@ where
         let (num_accounts, cursor) = self.read_u8()?;
         self.cursor = cursor;
         let num_accounts = num_accounts as usize;
-        let mut accounts = Vec::with_capacity(num_accounts);
+        const AM_UNINIT: MaybeUninit<AccountMeta> = MaybeUninit::uninit();
+        let mut accounts = [AM_UNINIT; 64];
         let mut infos = Vec::with_capacity(num_accounts);
-        let mut indexes = Vec::with_capacity(num_accounts);
-        for _ in 0..num_accounts {
+        const INDEX_UNINIT: MaybeUninit<usize> = MaybeUninit::uninit();
+        let mut indexes = [INDEX_UNINIT; 64];
+        for i in 0..num_accounts {
             let (pubkey_index, cursor) = self.read_u8()?;
             self.cursor = cursor;
             let account = self.accounts.get_account(pubkey_index as usize)?;
-            indexes.push(pubkey_index as usize);
+            indexes[i].write(pubkey_index as usize);
             let pubkey = account.pubkey();
-            accounts.push(AccountMeta {
+            accounts[i].write(AccountMeta {
                 pubkey,
                 is_signer: (pubkey == self.signer || account.signer())
                     && !self.restricted_keys.is_restricted(pubkey),
@@ -220,8 +230,8 @@ where
         Ok(InstructionHolder {
             program_id,
             cpi_accounts: infos,
-            accounts,
-            indexes,
+            accounts: unsafe { core::slice::from_raw_parts(accounts.as_ptr() as _, num_accounts) },
+            indexes: unsafe { core::slice::from_raw_parts(indexes.as_ptr() as _, num_accounts) },
             data,
         })
     }
@@ -231,25 +241,29 @@ where
         if self.cursor >= self.data.len() {
             return Err(InstructionError::MissingData);
         }
-        let value = self.data[self.cursor];
-        Ok((value, self.cursor + 1))
+        let value = unsafe { self.data.get_unchecked(self.cursor) };
+        Ok((*value, self.cursor + 1))
     }
 
     #[inline(always)]
     fn read_u16(&self) -> Result<(u16, usize), InstructionError> {
-        if self.cursor + 2 > self.data.len() {
+        let end = self.cursor + 2;
+        if end > self.data.len() {
             return Err(InstructionError::MissingData);
         }
-        let value = u16::from_le_bytes(self.data[self.cursor..self.cursor + 2].try_into().unwrap());
-        Ok((value, self.cursor + 2))
+        let value_bytes = unsafe { self.data.get_unchecked(self.cursor..end) };
+        let value = unsafe { *(value_bytes.as_ptr() as *const u16) };
+        Ok((value, end))
     }
 
     #[inline(always)]
     fn read_slice(&self, len: usize) -> Result<(&'a [u8], usize), InstructionError> {
-        if self.cursor + len > self.data.len() {
+        let end = self.cursor + len;
+        if end > self.data.len() {
             return Err(InstructionError::MissingData);
         }
-        let slice = &self.data[self.cursor..self.cursor + len];
-        Ok((slice, self.cursor + len))
+
+        let slice = unsafe { self.data.get_unchecked(self.cursor..end) };
+        Ok((slice, end))
     }
 }

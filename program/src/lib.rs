@@ -1,10 +1,7 @@
 pub mod actions;
-mod assertions;
-mod authority_models;
 mod error;
 pub mod instruction;
-pub mod util;
-use std::mem::MaybeUninit;
+use core::mem::MaybeUninit;
 
 use actions::process_action;
 use error::SwigError;
@@ -19,7 +16,8 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_pubkey::{declare_id, pubkey};
-use swig_state::Discriminator;
+use swig_state_x::{swig::Swig, AccountClassification, Discriminator, Transmutable};
+
 declare_id!("swigNmWhy8RvUYXBKV5TSU8Hh3f4o5EczHouzBzEsLC");
 const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const SPL_TOKEN_2022_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
@@ -41,30 +39,7 @@ pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
     Ok(())
 }
 
-#[derive(PartialEq, Debug, Copy, Clone)]
-pub enum StakeAccountState {
-    Uninitialized,
-    Initialized,
-    Stake,
-    RewardsPool,
-}
-
-#[derive(PartialEq, Debug, Copy, Clone)]
-
-pub enum AccountClassification {
-    None,
-    ThisSwig {
-        lamports: u64,
-    },
-    SwigTokenAccount {
-        balance: u64,
-    },
-    SwigStakingAccount {
-        state: StakeAccountState,
-        balance: u64,
-    },
-}
-/// classify_accounts
+/// classify_accountstest_token_transfer_performance_comparison
 /// This functions classifies all accounts as either the swig account (assumed
 /// in all instructions to be the first account) or an asset account owned by
 /// the swig.
@@ -104,12 +79,13 @@ unsafe fn classify_account(
     accounts: &[MaybeUninit<AccountInfo>],
 ) -> Result<AccountClassification, ProgramError> {
     match account.owner() {
-        &crate::ID if index != 0 => {
-            Err(SwigError::InvalidAccounts("Swig Account must be first account").into())
-        },
+        &crate::ID if index != 0 => Err(SwigError::InvalidAccountsSwigMustBeFirst.into()),
         &crate::ID => {
             let data = account.borrow_data_unchecked();
-            if data[0] == Discriminator::SwigAccount as u8 {
+            if data.len() < Swig::LEN {
+                return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+            }
+            if unsafe { *data.get_unchecked(0) == Discriminator::SwigAccount as u8 } {
                 Ok(AccountClassification::ThisSwig {
                     lamports: account.lamports(),
                 })
@@ -125,10 +101,15 @@ unsafe fn classify_account(
         },
         &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if account.data_len() == 165 && index > 0 => unsafe {
             let data = account.borrow_data_unchecked();
-            if sol_memcmp(accounts[0].assume_init_ref().key(), &data[32..64], 32) == 0 {
+            if sol_memcmp(
+                accounts.get_unchecked(0).assume_init_ref().key(),
+                data.get_unchecked(32..64),
+                32,
+            ) == 0
+            {
                 Ok(AccountClassification::SwigTokenAccount {
                     balance: u64::from_le_bytes(
-                        data[64..72]
+                        data.get_unchecked(64..72)
                             .try_into()
                             .map_err(|_| ProgramError::InvalidAccountData)?,
                     ),
