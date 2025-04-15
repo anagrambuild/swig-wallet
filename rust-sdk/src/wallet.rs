@@ -44,7 +44,7 @@ impl SwigWallet {
         rpc_url: String,
     ) -> Result<Self, SwigError> {
         let rpc_client =
-            RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::confirmed());
+            RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::finalized());
 
         println!(
             "Balance of fee payer: {:?}",
@@ -53,9 +53,8 @@ impl SwigWallet {
 
         // Check if the Swig account already exists
         let swig_account = SwigInstructionBuilder::swig_key(&swig_id);
-        let swig_data = rpc_client.get_account_data(&swig_account)?;
-
-        if swig_data.is_empty() {
+        let swig_data = rpc_client.get_account_data(&swig_account);
+        if swig_data.is_err() {
             println!("Swig account does not exist, creating new one");
             let instruction_builder = SwigInstructionBuilder::new(
                 swig_id,
@@ -92,7 +91,7 @@ impl SwigWallet {
             });
         } else {
             println!("Swig account already exists");
-
+            let swig_data = rpc_client.get_account_data(&swig_account).unwrap();
             let swig_with_roles =
                 SwigWithRoles::from_bytes(&swig_data).map_err(|_| SwigError::InvalidSwigData)?;
 

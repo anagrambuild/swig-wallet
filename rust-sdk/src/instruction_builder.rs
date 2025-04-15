@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
     program_id, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
@@ -66,7 +68,7 @@ impl SwigInstructionBuilder {
             Pubkey::find_program_address(&swig_account_seeds(&self.swig_id), &program_id);
 
         let auth_bytes = match self.authority_type {
-            AuthorityType::Ed25519 => bs58::decode(self.authority).into_vec()?,
+            AuthorityType::Ed25519 => bs58::decode(self.authority.to_string()).into_vec()?,
             // AuthorityType::Secp256k1 => hex::decode(self.authority).unwrap(),
             _ => todo!(),
         };
