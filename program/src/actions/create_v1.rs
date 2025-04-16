@@ -1,10 +1,3 @@
-use crate::{
-    error::SwigError,
-    instruction::{
-        accounts::{Context, CreateV1Accounts},
-        SwigInstruction,
-    },
-};
 use no_padding::NoPadding;
 use pinocchio::{
     msg,
@@ -16,10 +9,18 @@ use pinocchio_system::instructions::CreateAccount;
 use swig_assertions::*;
 use swig_state_x::{
     action::{all::All, manage_authority::ManageAuthority, ActionLoader, Actionable},
-    authority::{AuthorityInfo, AuthorityLoader, AuthorityType},
+    authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::{swig_account_seeds_with_bump, swig_account_signer, Swig, SwigBuilder},
     IntoBytes, Transmutable,
+};
+
+use crate::{
+    error::SwigError,
+    instruction::{
+        accounts::{Context, CreateV1Accounts},
+        SwigInstruction,
+    },
 };
 
 #[repr(C, align(8))]
@@ -71,7 +72,7 @@ pub struct CreateV1<'a> {
 impl<'a> CreateV1<'a> {
     pub fn from_instruction_bytes(bytes: &'a [u8]) -> Result<Self, ProgramError> {
         if bytes.len() < CreateV1Args::LEN {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(SwigError::InvalidSwigCreateInstructionDataTooShort.into());
         }
         let (args, rest) = unsafe { bytes.split_at_unchecked(CreateV1Args::LEN) };
         let args = unsafe { CreateV1Args::load_unchecked(args)? };
@@ -82,12 +83,6 @@ impl<'a> CreateV1<'a> {
             authority_data,
             actions,
         })
-    }
-
-    pub fn get_authority(&'a self) -> Result<&dyn AuthorityInfo, ProgramError> {
-        let authority_type = AuthorityType::try_from(self.args.authority_type)?;
-
-        AuthorityLoader::load_authority(authority_type, self.authority_data)
     }
 
     pub fn get_action<T: Actionable<'a>>(&'a self) -> Result<Option<&'a T>, ProgramError> {
@@ -113,12 +108,10 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
         msg!("Root authority type must had one of the following actions: ManageAuthority or All");
         return Err(SwigError::InvalidAuthorityType.into());
     }
-    let authority = create_v1.get_authority()?;
+    let authority_type = AuthorityType::try_from(create_v1.args.authority_type)?;
+    let authority_length = authority_type_to_length(&authority_type)?;
     let account_size = core::alloc::Layout::from_size_align(
-        Swig::LEN
-            + Position::LEN
-            + authority.length()
-            + create_v1.actions.len(),
+        Swig::LEN + Position::LEN + authority_length + create_v1.actions.len(),
         core::mem::size_of::<u64>(),
     )
     .map_err(|_| SwigError::InvalidAlignment)?
@@ -139,6 +132,12 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
         .into()])?;
     let swig_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let mut swig_builder = SwigBuilder::create(swig_data, swig)?;
-    swig_builder.add_role(authority, create_v1.args.num_actions, create_v1.actions)?;
+
+    swig_builder.add_role(
+        authority_type,
+        create_v1.authority_data,
+        create_v1.args.num_actions,
+        create_v1.actions,
+    )?;
     Ok(())
 }

@@ -1,15 +1,13 @@
+use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 
 use super::{Actionable, Permission};
-use crate::IntoBytes;
-use crate::Transmutable;
-use crate::TransmutableMut;
-use no_padding::NoPadding;
+use crate::{IntoBytes, Transmutable, TransmutableMut};
 
-#[repr(C,align(8))]
-#[derive(Debug,NoPadding)]
+#[repr(C, align(8))]
+#[derive(Debug, NoPadding)]
 pub struct SubAccount {
-  pub sub_account: [u8; 32],
+    pub sub_account: [u8; 32],
 }
 
 impl Transmutable for SubAccount {
@@ -23,7 +21,6 @@ impl IntoBytes for SubAccount {
         Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
     }
 }
-
 
 impl<'a> Actionable<'a> for SubAccount {
     const TYPE: Permission = Permission::SubAccount;

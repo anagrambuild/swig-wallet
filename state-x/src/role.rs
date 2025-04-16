@@ -1,5 +1,4 @@
-use core::mem;
-
+use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 
 use crate::{
@@ -8,9 +7,8 @@ use crate::{
     IntoBytes, Transmutable, TransmutableMut,
 };
 
-static_assertions::const_assert!(mem::size_of::<Position>() % 8 == 0);
-#[repr(C)]
-#[derive(Debug)]
+#[repr(C, align(8))]
+#[derive(Debug, NoPadding)]
 pub struct Position {
     pub authority_type: u16,
     pub authority_length: u16,
@@ -42,7 +40,7 @@ impl<'a> Role<'a> {
             cursor += Action::LEN;
             if action.permission()? == A::TYPE {
                 let action_obj = unsafe {
-                    A::load_unchecked(&self.actions.get_unchecked(cursor..cursor + A::LEN))?
+                    A::load_unchecked(self.actions.get_unchecked(cursor..cursor + A::LEN))?
                 };
                 if !A::REPEATABLE || action_obj.match_data(match_data) {
                     return Ok(Some(action_obj));
@@ -63,6 +61,33 @@ pub struct RoleMut<'a> {
 }
 
 impl<'a> RoleMut<'a> {
+    pub fn get_action<A: Actionable<'a>>(
+        &'a self,
+        match_data: &[u8],
+    ) -> Result<Option<&'a A>, ProgramError> {
+        let mut cursor = 0;
+        if self.actions.len() < Action::LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        while cursor < self.actions.len() {
+            let action = unsafe {
+                Action::load_unchecked(self.actions.get_unchecked(cursor..cursor + Action::LEN))?
+            };
+            cursor += Action::LEN;
+            if action.permission()? == A::TYPE {
+                let action_obj = unsafe {
+                    A::load_unchecked(self.actions.get_unchecked(cursor..cursor + A::LEN))?
+                };
+                if !A::REPEATABLE || action_obj.match_data(match_data) {
+                    return Ok(Some(action_obj));
+                }
+            }
+
+            cursor = action.boundary() as usize;
+        }
+        Ok(None)
+    }
+
     pub fn get_action_mut<A: Actionable<'a>>(
         actions_data: &'a mut [u8],
         match_data: &[u8],
@@ -80,7 +105,7 @@ impl<'a> RoleMut<'a> {
                 cursor += Action::LEN;
                 if action.permission()? == A::TYPE {
                     let action_obj = unsafe {
-                        A::load_unchecked(&actions_data.get_unchecked(cursor..cursor + A::LEN))?
+                        A::load_unchecked(actions_data.get_unchecked(cursor..cursor + A::LEN))?
                     };
                     if !A::REPEATABLE || action_obj.match_data(match_data) {
                         found_offset = Some(cursor);

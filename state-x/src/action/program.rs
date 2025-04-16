@@ -1,10 +1,11 @@
+use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 
 use super::{Actionable, Permission};
 use crate::{IntoBytes, Transmutable, TransmutableMut};
 
-static_assertions::const_assert!(core::mem::size_of::<Program>() % 8 == 0);
-#[repr(C)]
+#[derive(NoPadding)]
+#[repr(C, align(8))]
 pub struct Program {
     pub program_id: [u8; 32],
 }

@@ -1,9 +1,7 @@
 use pinocchio::program_error::ProgramError;
 
 use super::{Actionable, Permission};
-use crate::IntoBytes;
-use crate::Transmutable;
-use crate::TransmutableMut;
+use crate::{IntoBytes, Transmutable, TransmutableMut};
 
 pub struct All;
 

@@ -6,12 +6,8 @@ license = "AGPL-3.0"
 description = "Solana program for the Swig protocol"
 publish = false
 
-[lints.clippy]
-unused_mut = "allow"
-dead_code = "allow"
-unused_macros = "allow"
-unused_variables = "allow"
-
+[lints]
+workspace = true
 
 [dependencies]
 pinocchio-pubkey = { version = "0.2.4" }
@@ -28,14 +24,17 @@ bytemuck = { version = "1.13.1", features = ["derive"] }
 no-padding = { path = "../no-padding" }
 
 [dev-dependencies]
-solana-sdk = "=2.1.0"
-rand = "0.8.5"
+solana-sdk = "2"
+rand = "0.9.0"
 swig-interface = { path = "../interface" }
-litesvm-token = { git = "https://github.com/litesvm/litesvm" }
-litesvm = { git = "https://github.com/litesvm/litesvm" }
+litesvm-token = { version = "0.6.1" }
+litesvm = { version = "0.6.1" }
 test-log = "0.2.16"
 anyhow = "1.0.71"
-
+ecdsa = "0.16.9"
+alloy-primitives = { version = "1.0.0", features = ["k256"] }
+alloy-signer = { version = "0.14.0" }
+alloy-signer-local = { version = "0.14.0" }
 [features]
 test-bpf = []
 no-entrypoint = []

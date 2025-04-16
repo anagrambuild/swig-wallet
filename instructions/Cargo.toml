@@ -13,3 +13,6 @@ pinocchio = { version = "0.8.1" }
 pinocchio-system = { version = "0.2.3" }
 solana-program = { version = "2.0.13", optional = true }
 bs58 = "*"
+
+[lints]
+workspace = true

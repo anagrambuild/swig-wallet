@@ -6,8 +6,8 @@ use pinocchio::{
     pubkey::{create_program_address, find_program_address, Pubkey},
     ProgramResult,
 };
-use pinocchio_system::ID as SYSTEM_ID;
 use pinocchio_pubkey::declare_id;
+use pinocchio_system::ID as SYSTEM_ID;
 
 declare_id!("swigNmWhy8RvUYXBKV5TSU8Hh3f4o5EczHouzBzEsLC");
 
@@ -181,7 +181,7 @@ pub fn is_on_curve(point: &[u8]) -> bool {
 }
 
 #[cfg(not(target_os = "solana"))]
-pub fn is_on_curve(point: &[u8]) -> bool {
+pub fn is_on_curve(_point: &[u8]) -> bool {
     unimplemented!()
 }
 
@@ -193,6 +193,6 @@ pub fn get_stack_height(expected: u64) -> bool {
 
 #[cfg(not(target_os = "solana"))]
 #[inline(always)]
-pub fn get_stack_height(expected: u64) -> bool {
+pub fn get_stack_height(_expected: u64) -> bool {
     unimplemented!()
 }

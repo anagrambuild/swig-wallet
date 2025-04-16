@@ -9,7 +9,7 @@ use pinocchio::{
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state_x::{
     action::{all::All, manage_authority::ManageAuthority},
-    swig::{SwigBuilder, SwigWithRoles},
+    swig::{Swig, SwigBuilder},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
@@ -57,10 +57,6 @@ impl RemoveAuthorityV1Args {
     }
 }
 
-impl RemoveAuthorityV1Args {
-    pub const SIZE: usize = core::mem::size_of::<Self>();
-}
-
 impl IntoBytes for RemoveAuthorityV1Args {
     fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
@@ -69,15 +65,15 @@ impl IntoBytes for RemoveAuthorityV1Args {
 
 impl<'a> RemoveAuthorityV1<'a> {
     pub fn from_instruction_bytes(data: &'a [u8]) -> Result<Self, ProgramError> {
-        let (inst, rest) = data.split_at(RemoveAuthorityV1Args::SIZE);
+        if data.len() < RemoveAuthorityV1Args::LEN {
+            return Err(SwigError::InvalidSwigRemoveAuthorityInstructionDataTooShort.into());
+        }
+        let (inst, authority_payload) = data.split_at(RemoveAuthorityV1Args::LEN);
         let args = unsafe { RemoveAuthorityV1Args::load_unchecked(inst)? };
-
-        let (authority_payload, data_payload) = rest.split_at(args.authority_payload_len as usize);
-
         Ok(Self {
             args,
             authority_payload,
-            data_payload,
+            data_payload: &data[..RemoveAuthorityV1Args::LEN],
         })
     }
 }
@@ -105,64 +101,63 @@ pub fn remove_authority_v1(
     if remove_authority_v1.args.authority_to_remove_id == 0 {
         return Err(SwigAuthenticateError::PermissionDeniedCannotRemoveRootAuthority.into());
     }
-
-    // All validation and processing as a closure to avoid borrowing swig_account_data for too long
+    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+    // All validation and processing as a closure to avoid borrowing
+    // swig_account_data for too long
     {
-        let swig_account_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
         if swig_account_data[0] != Discriminator::SwigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
+        let (_swig_header, swig_roles) =
+            unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+        {
+            let acting_role =
+                Swig::get_mut_role(remove_authority_v1.args.acting_role_id, swig_roles)?;
+            if acting_role.is_none() {
+                return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+            }
+            let acting_role = acting_role.unwrap();
 
-        let swig = SwigWithRoles::from_bytes(swig_account_data)?;
+            // Authenticate the caller
+            let clock = Clock::get()?;
+            let slot = clock.slot;
 
-        // Get the acting role
-        let acting_role = swig.get_role(remove_authority_v1.args.acting_role_id)?;
-        if acting_role.is_none() {
-            return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+            if acting_role.authority.session_based() {
+                acting_role.authority.authenticate_session(
+                    all_accounts,
+                    remove_authority_v1.authority_payload,
+                    remove_authority_v1.data_payload,
+                    slot,
+                )?;
+            } else {
+                acting_role.authority.authenticate(
+                    all_accounts,
+                    remove_authority_v1.authority_payload,
+                    remove_authority_v1.data_payload,
+                    slot,
+                )?;
+            }
+            let all = acting_role.get_action::<All>(&[])?;
+            let manage_authority = acting_role.get_action::<ManageAuthority>(&[])?;
+            let not_self = remove_authority_v1.args.acting_role_id
+                != remove_authority_v1.args.authority_to_remove_id;
+            let no_permission = all.is_none() && manage_authority.is_none();
+
+            if no_permission && not_self {
+                return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
+            }
         }
-        let acting_role = acting_role.unwrap();
 
         // Get the role to remove
-        let role_to_remove = swig.get_role(remove_authority_v1.args.authority_to_remove_id)?;
+        let role_to_remove =
+            Swig::get_mut_role(remove_authority_v1.args.authority_to_remove_id, swig_roles)?;
+
         if role_to_remove.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-        }
-
-        // Authenticate the caller
-        let clock = Clock::get()?;
-        let slot = clock.slot;
-
-        if acting_role.authority.session_based() {
-            acting_role.authority.authenticate_session(
-                all_accounts,
-                remove_authority_v1.authority_payload,
-                remove_authority_v1.data_payload,
-                slot,
-            )?;
-        } else {
-            acting_role.authority.authenticate(
-                all_accounts,
-                remove_authority_v1.authority_payload,
-                remove_authority_v1.data_payload,
-                slot,
-            )?;
-        }
-
-        // Check if the acting role has permission to manage authorities
-        let all = acting_role.get_action::<All>(&[])?;
-        let manage_authority = acting_role.get_action::<ManageAuthority>(&[])?;
-        let not_self = remove_authority_v1.args.acting_role_id
-            != remove_authority_v1.args.authority_to_remove_id;
-        let no_permission = all.is_none() && manage_authority.is_none();
-
-        if no_permission && not_self {
-            return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
         }
     }
 
     // Calculate the new size and remove the role
-
-    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let data_len = swig_account_data.len();
     let swig_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
     let mut swig_builder = SwigBuilder::new_from_bytes(swig_account_data)?;

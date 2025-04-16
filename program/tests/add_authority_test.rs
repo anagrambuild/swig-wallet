@@ -4,9 +4,7 @@ use common::*;
 use solana_sdk::{signature::Keypair, signer::Signer};
 use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state_x::{
-    action::manage_authority::ManageAuthority,
-    authority::AuthorityType,
-    swig::SwigWithRoles,
+    action::manage_authority::ManageAuthority, authority::AuthorityType, swig::SwigWithRoles,
 };
 
 #[test_log::test]
@@ -45,7 +43,7 @@ fn test_create_add_authority() {
     assert_eq!(swig.state.role_counter, 2);
     let role_0 = swig.get_role(0).unwrap().unwrap();
     assert_eq!(role_0.authority.authority_type(), AuthorityType::Ed25519);
-    assert_eq!(role_0.authority.session_based(), false);
+    assert!(!role_0.authority.session_based());
     assert_eq!(
         role_0.position.authority_type().unwrap(),
         AuthorityType::Ed25519

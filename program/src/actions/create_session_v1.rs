@@ -7,9 +7,7 @@ use pinocchio::{
     ProgramResult,
 };
 use swig_assertions::check_self_owned;
-use swig_state_x::{
-    swig::Swig, Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
-};
+use swig_state_x::{swig::Swig, Discriminator, IntoBytes, SwigAuthenticateError, Transmutable};
 
 use crate::{
     error::SwigError,
@@ -59,12 +57,16 @@ impl CreateSessionV1Args {
 pub struct CreateSessionV1<'a> {
     pub args: &'a CreateSessionV1Args,
     pub authority_payload: &'a [u8],
-    pub session_data: &'a [u8],
+    pub data_payload: &'a [u8],
 }
 
 impl<'a> CreateSessionV1<'a> {
     pub fn load(data: &'a [u8]) -> Result<Self, ProgramError> {
-        let (inst, rest) = unsafe { data.split_at_unchecked(CreateSessionV1Args::LEN) };
+        if data.len() < CreateSessionV1Args::LEN {
+            return Err(SwigError::InvalidSwigCreateSessionInstructionDataTooShort.into());
+        }
+        let (inst, authority_payload) =
+            unsafe { data.split_at_unchecked(CreateSessionV1Args::LEN) };
         let args = unsafe {
             CreateSessionV1Args::load_unchecked(inst).map_err(|e| {
                 msg!("CreateSessionV1Args Args Error: {:?}", e);
@@ -72,12 +74,10 @@ impl<'a> CreateSessionV1<'a> {
             })?
         };
 
-        let (authority_payload, session_data) = rest.split_at(args.authority_payload_len as usize);
-
         Ok(Self {
             args,
             authority_payload,
-            session_data,
+            data_payload: &data[..CreateSessionV1Args::LEN],
         })
     }
 }
@@ -110,7 +110,7 @@ pub fn create_session_v1(
     role.authority.authenticate(
         account_infos,
         create_session_v1.authority_payload,
-        create_session_v1.session_data,
+        create_session_v1.data_payload,
         slot,
     )?;
 

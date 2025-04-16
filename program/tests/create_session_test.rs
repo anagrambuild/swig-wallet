@@ -1,16 +1,22 @@
 mod common;
 
+use alloy_primitives::B256;
+use alloy_signer::SignerSync;
+use alloy_signer_local::LocalSigner;
 use common::*;
 use solana_sdk::{
-    clock::Clock, message::v0, signature::Keypair, signer::Signer, system_instruction,
-};
-use solana_sdk::{
-    message::VersionedMessage,
+    clock::Clock,
+    message::{v0, VersionedMessage},
+    signature::Keypair,
+    signer::Signer,
+    system_instruction,
     transaction::VersionedTransaction,
 };
 use swig_interface::{CreateSessionInstruction, SignInstruction};
 use swig_state_x::{
-    authority::{ed25519::Ed25519SessionAuthority, AuthorityType},
+    authority::{
+        ed25519::Ed25519SessionAuthority, secp256k1::Secp256k1SessionAuthority, AuthorityType,
+    },
     swig::SwigWithRoles,
 };
 
@@ -43,7 +49,7 @@ fn test_create_session() {
         role.authority.authority_type(),
         AuthorityType::Ed25519Session
     );
-    assert_eq!(role.authority.session_based(), true);
+    assert!(role.authority.session_based());
     let auth: &Ed25519SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
     assert_eq!(auth.max_session_length, 100);
     assert_eq!(auth.public_key, swig_authority.pubkey().to_bytes());
@@ -82,7 +88,6 @@ fn test_create_session() {
         &[&context.default_payer, &swig_authority],
     )
     .unwrap();
-
     let result = context.svm.send_transaction(tx);
     assert!(
         result.is_ok(),
@@ -97,7 +102,7 @@ fn test_create_session() {
         role.authority.authority_type(),
         AuthorityType::Ed25519Session
     );
-    assert_eq!(role.authority.session_based(), true);
+    assert!(role.authority.session_based());
     let auth: &Ed25519SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
     assert_eq!(auth.max_session_length, 100);
     assert_eq!(
@@ -463,11 +468,152 @@ fn test_transfer_sol_with_session() {
         "Receiver balance did not increase by the correct amount"
     );
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    
 
     assert_eq!(
         swig_final_balance - swig.state.reserved_lamports,
         initial_swig_balance - transfer_amount,
         "Swig balance did not decrease by the correct amount"
+    );
+}
+
+#[test_log::test]
+fn test_secp256k1_session() {
+    let mut context = setup_test_context().unwrap();
+
+    // Generate a random Ethereum wallet
+    let wallet = LocalSigner::random();
+
+    let id = rand::random::<[u8; 32]>();
+
+    // Create a swig with secp256k1 session authority type
+    let (swig_key, res) =
+        create_swig_secp256k1_session(&mut context, &wallet, id, 100, [0; 32]).unwrap();
+
+    println!("res: {:?}", res.logs);
+    // Airdrop funds to the swig account so it can transfer SOL
+    context.svm.airdrop(&swig_key, 50_000_000_000).unwrap();
+
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 1);
+    let role = swig.get_role(0).unwrap().unwrap();
+
+    assert_eq!(
+        role.authority.authority_type(),
+        AuthorityType::Secp256k1Session
+    );
+    assert!(role.authority.session_based());
+    let auth: &Secp256k1SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
+    assert_eq!(auth.max_session_age, 100);
+    let compressed_eth_pubkey = wallet
+        .credential()
+        .verifying_key()
+        .to_encoded_point(true)
+        .to_bytes();
+    assert_eq!(auth.public_key, compressed_eth_pubkey.as_ref());
+    assert_eq!(auth.current_session_expiration, 0);
+    assert_eq!(auth.session_key, [0; 32]);
+
+    context
+        .svm
+        .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + 1);
+
+    // Create a session key
+    let session_key = Keypair::new();
+
+    // Create a session with the session key
+    let session_duration = 100; // 100 slots
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    let signing_fn = |payload: &[u8]| -> [u8; 65] {
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&payload[..32]);
+        let hash = B256::from(hash);
+        wallet.sign_hash_sync(&hash).unwrap().as_bytes()
+    };
+
+    let create_session_ix = CreateSessionInstruction::new_with_secp256k1_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        signing_fn,
+        current_slot,
+        0, // Role ID 0 is the root authority
+        session_key.pubkey(),
+        session_duration,
+    )
+    .unwrap();
+
+    // Send the create session transaction
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[create_session_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&context.default_payer])
+        .unwrap();
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_ok(),
+        "Failed to create session: {:?}",
+        result.err()
+    );
+
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let role = swig.get_role(0).unwrap().unwrap();
+    assert_eq!(
+        role.authority.authority_type(),
+        AuthorityType::Secp256k1Session
+    );
+    assert!(role.authority.session_based());
+    let auth: &Secp256k1SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
+    assert_eq!(auth.max_session_age, 100);
+    assert_eq!(
+        auth.current_session_expiration,
+        current_slot + session_duration
+    );
+    assert_eq!(auth.session_key, session_key.pubkey().to_bytes());
+
+    // Create a receiver keypair
+    let receiver = Keypair::new();
+
+    // Create a real SOL transfer instruction with swig_key as sender
+    let dummy_ix = system_instruction::transfer(
+        &swig_key,
+        &receiver.pubkey(),
+        1000000, // 0.001 SOL in lamports
+    );
+
+    // Create a sign instruction using the session key
+    let sign_ix = SignInstruction::new_ed25519(
+        swig_key,
+        context.default_payer.pubkey(),
+        session_key.pubkey(),
+        dummy_ix,
+        0, // Role ID 0
+    )
+    .unwrap();
+
+    let sign_msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let sign_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(sign_msg),
+        &[&context.default_payer, &session_key],
+    )
+    .unwrap();
+
+    let sign_result = context.svm.send_transaction(sign_tx);
+    assert!(
+        sign_result.is_ok(),
+        "Failed to sign with session key: {:?}",
+        sign_result.err()
     );
 }

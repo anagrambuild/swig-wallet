@@ -395,7 +395,7 @@ fn test_fail_transfer_sol_with_additional_authority_not_enough() {
     assert!(res.is_err());
     assert_eq!(
         res.unwrap_err().err,
-        TransactionError::InstructionError(0, InstructionError::Custom(3010))
+        TransactionError::InstructionError(0, InstructionError::Custom(3011))
     );
 }
 
@@ -463,7 +463,7 @@ fn fail_not_correct_authority() {
     assert!(res.is_err());
     assert_eq!(
         res.unwrap_err().err,
-        TransactionError::InstructionError(0, InstructionError::Custom(3004))
+        TransactionError::InstructionError(0, InstructionError::Custom(3005))
     );
 }
 
@@ -559,7 +559,7 @@ fn fail_wrong_resource() {
     println!("res {:?}", res);
     assert_eq!(
         res.unwrap_err().err,
-        TransactionError::InstructionError(0, InstructionError::Custom(3005))
+        TransactionError::InstructionError(0, InstructionError::Custom(3006))
     );
     let account = context.svm.get_account(&swig_ata).unwrap();
     let token_account = spl_token::state::Account::unpack(&account.data).unwrap();

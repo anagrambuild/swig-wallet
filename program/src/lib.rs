@@ -101,7 +101,12 @@ unsafe fn classify_account(
         },
         &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if account.data_len() == 165 && index > 0 => unsafe {
             let data = account.borrow_data_unchecked();
-            if sol_memcmp(accounts.get_unchecked(0).assume_init_ref().key(), data.get_unchecked(32..64), 32) == 0 {
+            if sol_memcmp(
+                accounts.get_unchecked(0).assume_init_ref().key(),
+                data.get_unchecked(32..64),
+                32,
+            ) == 0
+            {
                 Ok(AccountClassification::SwigTokenAccount {
                     balance: u64::from_le_bytes(
                         data.get_unchecked(64..72)

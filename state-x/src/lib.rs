@@ -1,7 +1,4 @@
 //#![no_std]
-
-extern crate static_assertions;
-
 use pinocchio::program_error::ProgramError;
 
 pub mod action;
@@ -50,10 +47,11 @@ pub enum SwigStateError {
 pub enum SwigAuthenticateError {
     InvalidAuthority = 3000,
     InvalidAuthorityPayload,
+    InvalidDataPayload,
     InvalidAuthorityEd25519MissingAuthorityAccount,
     AuthorityDoesNotSupportSessionBasedAuth,
     PermissionDenied,
-    //PermissionDenied,
+    // PermissionDenied,
     PermissionDeniedMissingPermission,
     PermissionDeniedTokenAccountPermissionFailure,
     PermissionDeniedTokenAccountDelegatePresent,
@@ -62,6 +60,10 @@ pub enum SwigAuthenticateError {
     PermissionDeniedInsufficientBalance,
     PermissionDeniedCannotRemoveRootAuthority,
     PermissionDeniedSessionExpired,
+    PermissionDeniedSecp256k1InvalidSignature,
+    PermissionDeniedSecp256k1InvalidSignatureAge,
+    PermissionDeniedSecp256k1SignatureReused,
+    PermissionDeniedSecp256k1InvalidHash,
     InvalidSessionKeyCannotReuseSessionKey,
     InvalidSessionDuration,
 }
@@ -93,7 +95,8 @@ pub trait Transmutable: Sized {
     ///
     /// # Safety
     ///
-    /// The caller must ensure that `bytes` contains a valid representation of `T`.
+    /// The caller must ensure that `bytes` contains a valid representation of
+    /// `T`.
     #[inline(always)]
     unsafe fn load_unchecked(bytes: &[u8]) -> Result<&Self, ProgramError> {
         if bytes.len() != Self::LEN {
@@ -113,7 +116,8 @@ pub trait TransmutableMut: Transmutable {
     ///
     /// # Safety
     ///
-    /// The caller must ensure that `bytes` contains a valid representation of `T`.
+    /// The caller must ensure that `bytes` contains a valid representation of
+    /// `T`.
     #[inline(always)]
     unsafe fn load_mut_unchecked(bytes: &mut [u8]) -> Result<&mut Self, ProgramError> {
         if bytes.len() != Self::LEN {
