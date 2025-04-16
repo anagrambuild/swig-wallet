@@ -215,6 +215,10 @@ impl SwigWallet {
         self.send_and_confirm_transaction(tx)
     }
 
+    /// Signs a transaction with the given instructions
+    ///
+    /// # Arguments
+    /// * `inner_instructions` - The instructions to sign
     pub fn sign(&mut self, inner_instructions: Vec<Instruction>) -> Result<Signature, SwigError> {
         let sign_ix = self
             .instruction_builder
@@ -298,7 +302,8 @@ impl SwigWallet {
         self.instruction_builder.get_swig_account()
     }
 
-    pub fn display_swig(&self, authority_id: u32) -> Result<(), SwigError> {
+    /// Prints the Swig account
+    pub fn display_swig(&self) -> Result<(), SwigError> {
         let swig_pubkey = self.get_swig_account()?;
 
         #[cfg(not(test))]
@@ -397,6 +402,11 @@ impl SwigWallet {
         Ok(())
     }
 
+    /// Switches the authority of the Swig account
+    ///
+    /// # Arguments
+    /// * `role_id` - The ID of the role to switch to
+    /// * `authority` - The new authority's credentials
     pub fn switch_authority(&mut self, role_id: u32, authority: Pubkey) -> Result<(), SwigError> {
         let instruction = self
             .instruction_builder
@@ -404,6 +414,10 @@ impl SwigWallet {
         Ok(())
     }
 
+    /// Switches the payer of the Swig account
+    ///
+    /// # Arguments
+    /// * `payer` - The new payer's credentials
     pub fn switch_payer(&mut self, payer: Keypair) -> Result<(), SwigError> {
         self.instruction_builder.switch_payer(payer.pubkey())?;
         self.fee_payer = payer;
@@ -450,7 +464,7 @@ mod tests {
         .unwrap();
 
         // Verify the wallet was created successfully
-        swig_wallet.display_swig(0).unwrap();
+        swig_wallet.display_swig().unwrap();
     }
 
     #[test]
@@ -481,8 +495,8 @@ mod tests {
             .unwrap();
 
         // Verify both authorities exist
-        swig_wallet.display_swig(0).unwrap();
-        swig_wallet.display_swig(1).unwrap();
+        swig_wallet.display_swig().unwrap();
+        swig_wallet.display_swig().unwrap();
     }
 
     #[test]
@@ -522,7 +536,7 @@ mod tests {
         swig_wallet.switch_payer(secondary_authority).unwrap();
 
         // Verify the switch was successful
-        swig_wallet.display_swig(1).unwrap();
+        swig_wallet.display_swig().unwrap();
     }
 
     #[test]
@@ -577,7 +591,7 @@ mod tests {
         swig_wallet.sign(vec![transfer_ix]).unwrap();
 
         // Verify the transfer was successful
-        swig_wallet.display_swig(1).unwrap();
+        swig_wallet.display_swig().unwrap();
     }
 
     #[test]
