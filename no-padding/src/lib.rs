@@ -5,7 +5,7 @@ use syn::{parse_macro_input, spanned::Spanned, Data, DeriveInput, Error, Fields}
 /// A derive macro that ensures a struct has no padding and is 8-byte aligned.
 ///
 /// # Example
-/// ```rust
+/// ```rust-ignore
 /// #[derive(NoPadding)]
 /// #[repr(C, align(8))]
 /// struct MyStruct {

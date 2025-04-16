@@ -4,7 +4,7 @@ use no_padding::NoPadding;
 use pinocchio::{instruction::Seed, program_error::ProgramError};
 
 use crate::{
-    action::{Action, ActionLoader},
+    action::{program_scope::ProgramScope, Action, ActionLoader, Actionable},
     authority::{
         ed25519::{ED25519Authority, Ed25519SessionAuthority},
         secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority},
@@ -430,6 +430,61 @@ impl<'a> SwigWithRoles<'a> {
             cursor = position.boundary() as usize;
         }
         Ok(None)
+    }
+
+    /// Find a program scope action by target account
+    pub fn find_program_scope_by_target(
+        &self,
+        target_account: &[u8],
+    ) -> Option<(u8, ProgramScope)> {
+        for role_id in 0..self.state.role_counter {
+            if let Ok(Some(role)) = self.get_role(role_id) {
+                let mut cursor = 0;
+                while cursor < role.actions.len() {
+                    if cursor + Action::LEN > role.actions.len() {
+                        break;
+                    }
+
+                    // Load the action header
+                    if let Ok(action_header) = unsafe {
+                        Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN])
+                    } {
+                        cursor += Action::LEN;
+
+                        // Check if we have enough data for the action content
+                        let action_len = action_header.length() as usize;
+                        if cursor + action_len > role.actions.len() {
+                            break;
+                        }
+
+                        // Try to load as ProgramScope
+                        if action_header.permission().ok() == Some(ProgramScope::TYPE) {
+                            let action_data = &role.actions[cursor..cursor + action_len];
+                            if action_data.len() == core::mem::size_of::<ProgramScope>() {
+                                // SAFETY: We've verified the length matches exactly
+                                let program_scope = unsafe {
+                                    core::mem::transmute_copy::<
+                                        [u8; core::mem::size_of::<ProgramScope>()],
+                                        ProgramScope,
+                                    >(
+                                        action_data.try_into().unwrap()
+                                    )
+                                };
+
+                                if program_scope.target_account == target_account {
+                                    return Some((role_id as u8, program_scope));
+                                }
+                            }
+                        }
+
+                        cursor += action_len;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        None
     }
 }
 

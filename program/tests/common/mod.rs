@@ -12,7 +12,7 @@ use solana_sdk::{
 };
 use swig_interface::{AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction};
 use swig_state_x::{
-    action::all::All,
+    action::{all::All, manage_authority::ManageAuthority},
     authority::{
         ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
         AuthorityType,
@@ -137,6 +137,9 @@ pub fn create_swig_ed25519(
             authority_type: AuthorityType::Ed25519,
             authority: authority.pubkey().as_ref(),
         },
+        #[cfg(feature = "program_scope_test")]
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+        #[cfg(not(feature = "program_scope_test"))]
         vec![ClientAction::All(All {})],
         id,
     )?;

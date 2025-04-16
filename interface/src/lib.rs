@@ -12,9 +12,9 @@ use swig::actions::{
 pub use swig_compact_instructions::*;
 use swig_state_x::{
     action::{
-        all::All, manage_authority::ManageAuthority, program::Program, sol_limit::SolLimit,
-        sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount, token_limit::TokenLimit,
-        token_recurring_limit::TokenRecurringLimit, Action, Permission,
+        all::All, manage_authority::ManageAuthority, program::Program, program_scope::ProgramScope,
+        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
+        token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit, Action, Permission,
     },
     authority::AuthorityType,
     swig::swig_account_seeds,
@@ -27,6 +27,7 @@ pub enum ClientAction {
     SolLimit(SolLimit),
     SolRecurringLimit(SolRecurringLimit),
     Program(Program),
+    ProgramScope(ProgramScope),
     All(All),
     ManageAuthority(ManageAuthority),
     SubAccount(SubAccount),
@@ -44,6 +45,7 @@ impl ClientAction {
                 (Permission::SolRecurringLimit, SolRecurringLimit::LEN)
             },
             ClientAction::Program(_) => (Permission::Program, Program::LEN),
+            ClientAction::ProgramScope(_) => (Permission::ProgramScope, ProgramScope::LEN),
             ClientAction::All(_) => (Permission::All, All::LEN),
             ClientAction::ManageAuthority(_) => (Permission::ManageAuthority, ManageAuthority::LEN),
             ClientAction::SubAccount(_) => (Permission::SubAccount, SubAccount::LEN),
@@ -64,6 +66,7 @@ impl ClientAction {
             ClientAction::SolLimit(action) => action.into_bytes(),
             ClientAction::SolRecurringLimit(action) => action.into_bytes(),
             ClientAction::Program(action) => action.into_bytes(),
+            ClientAction::ProgramScope(action) => action.into_bytes(),
             ClientAction::All(action) => action.into_bytes(),
             ClientAction::ManageAuthority(action) => action.into_bytes(),
             ClientAction::SubAccount(action) => action.into_bytes(),
