@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
     program_id, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
@@ -223,5 +221,24 @@ impl SwigInstructionBuilder {
     /// Returns the role id of the Swig account
     pub fn get_role_id(&self) -> u32 {
         self.role_id
+    }
+
+    /// Switches the authority of the Swig instruction builder
+    ///
+    /// # Arguments
+    /// * `authority_id` - The ID of the authority to switch to
+    pub fn switch_authority(&mut self, role_id: u32, authority: Pubkey) -> Result<(), SwigError> {
+        self.role_id = role_id;
+        self.authority = authority;
+        Ok(())
+    }
+
+    /// Switches the payer of the Swig instruction builder
+    ///
+    /// # Arguments
+    /// * `payer` - The new payer
+    pub fn switch_payer(&mut self, payer: Pubkey) -> Result<(), SwigError> {
+        self.payer = payer;
+        Ok(())
     }
 }

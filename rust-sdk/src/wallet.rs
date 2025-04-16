@@ -1,14 +1,18 @@
+#[cfg(test)]
+use litesvm::LiteSVM;
 use solana_client::{rpc_client::RpcClient, rpc_request::TokenAccountsFilter};
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use solana_sdk::{
     account::ReadableAccount,
     commitment_config::CommitmentConfig,
     message::{v0, VersionedMessage},
+    pubkey::{self, ParsePubkeyError},
     rent::Rent,
-    signature::{Keypair, Signer},
+    signature::{Keypair, Signature, Signer},
+    system_instruction::{self, SystemInstruction},
     transaction::{Transaction, VersionedTransaction},
 };
-use swig_interface::swig_key;
+use swig_interface::{swig, swig_key};
 use swig_state_x::{
     action::{all::All, manage_authority::ManageAuthority, sol_limit::SolLimit},
     authority::AuthorityType,
@@ -17,7 +21,6 @@ use swig_state_x::{
 };
 
 use crate::{error::SwigError, instruction_builder::SwigInstructionBuilder, types::Permission};
-
 pub struct SwigWallet {
     /// The underlying instruction builder
     instruction_builder: SwigInstructionBuilder,
@@ -25,6 +28,9 @@ pub struct SwigWallet {
     pub rpc_client: RpcClient,
     /// The wallet's fee payer
     fee_payer: Keypair,
+    /// The LiteSVM instance for testing
+    #[cfg(test)]
+    litesvm: LiteSVM,
 }
 
 impl SwigWallet {
@@ -42,19 +48,28 @@ impl SwigWallet {
         authority: Pubkey,
         fee_payer: Keypair,
         rpc_url: String,
+        #[cfg(test)] mut litesvm: LiteSVM,
     ) -> Result<Self, SwigError> {
-        let rpc_client =
-            RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::finalized());
+        println!("In test configuration: {}", cfg!(test));
 
-        println!(
-            "Balance of fee payer: {:?}",
-            rpc_client.get_balance(&fee_payer.pubkey())?
-        );
+        let rpc_client =
+            RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::confirmed());
 
         // Check if the Swig account already exists
         let swig_account = SwigInstructionBuilder::swig_key(&swig_id);
+        println!("Swig account: {:?}", swig_account);
+
+        #[cfg(not(test))]
         let swig_data = rpc_client.get_account_data(&swig_account);
-        if swig_data.is_err() {
+        #[cfg(test)]
+        let swig_data = litesvm.get_account(&swig_account);
+
+        #[cfg(not(test))]
+        let account_exists = swig_data.is_ok();
+        #[cfg(test)]
+        let account_exists = swig_data.is_some();
+
+        if !account_exists {
             println!("Swig account does not exist, creating new one");
             let instruction_builder = SwigInstructionBuilder::new(
                 swig_id,
@@ -70,7 +85,10 @@ impl SwigWallet {
                 &fee_payer.pubkey(),
                 &[create_ix],
                 &[],
+                #[cfg(not(test))]
                 rpc_client.get_latest_blockhash()?,
+                #[cfg(test)]
+                litesvm.latest_blockhash(),
             )
             .unwrap();
 
@@ -80,7 +98,11 @@ impl SwigWallet {
             )
             .unwrap();
 
+            #[cfg(not(test))]
             let signature = rpc_client.send_and_confirm_transaction(&tx)?;
+            #[cfg(test)]
+            let signature = litesvm.send_transaction(tx).unwrap().signature;
+
             println!("Swig account created");
             println!("Transaction signature: {:?}", signature);
 
@@ -88,10 +110,16 @@ impl SwigWallet {
                 instruction_builder,
                 rpc_client,
                 fee_payer,
+                #[cfg(test)]
+                litesvm,
             });
         } else {
             println!("Swig account already exists");
+            #[cfg(not(test))]
             let swig_data = rpc_client.get_account_data(&swig_account).unwrap();
+            #[cfg(test)]
+            let swig_data = litesvm.get_account(&swig_account).unwrap().data;
+
             let swig_with_roles =
                 SwigWithRoles::from_bytes(&swig_data).map_err(|_| SwigError::InvalidSwigData)?;
 
@@ -129,6 +157,8 @@ impl SwigWallet {
                 instruction_builder,
                 rpc_client,
                 fee_payer,
+                #[cfg(test)]
+                litesvm,
             })
         }
     }
@@ -219,11 +249,11 @@ impl SwigWallet {
     /// * `new_authority` - The new authority's credentials
     /// * `permissions` - Vector of permissions to grant to the new authority
     pub fn add_authority(
-        &self,
+        &mut self,
         new_authority_type: AuthorityType,
         new_authority: &[u8],
         permissions: Vec<Permission>,
-    ) -> Result<String, SwigError> {
+    ) -> Result<Signature, SwigError> {
         let instruction = self.instruction_builder.add_authority_instruction(
             new_authority_type,
             new_authority,
@@ -233,7 +263,10 @@ impl SwigWallet {
             &self.fee_payer.pubkey(),
             &[instruction],
             &[],
+            #[cfg(not(test))]
             self.rpc_client.get_latest_blockhash()?,
+            #[cfg(test)]
+            self.litesvm.latest_blockhash(),
         )
         .unwrap();
 
@@ -250,7 +283,7 @@ impl SwigWallet {
     ///
     /// # Arguments
     /// * `authority_id` - The ID of the authority to remove
-    pub fn remove_authority(&self, authority_id: u32) -> Result<String, SwigError> {
+    pub fn remove_authority(&mut self, authority_id: u32) -> Result<Signature, SwigError> {
         let instruction = self.instruction_builder.remove_authority(authority_id)?;
         let msg = v0::Message::try_compile(
             &self.fee_payer.pubkey(),
@@ -267,6 +300,35 @@ impl SwigWallet {
 
         self.send_and_confirm_transaction(tx)
     }
+
+    pub fn sign(&mut self, inner_instructions: Vec<Instruction>) -> Result<Signature, SwigError> {
+        let sign_ix = self
+            .instruction_builder
+            .sign_instruction(inner_instructions)
+            .unwrap();
+
+        println!("Sign ix: {:?}", sign_ix);
+
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &[sign_ix],
+            &[],
+            #[cfg(not(test))]
+            self.rpc_client.get_latest_blockhash()?,
+            #[cfg(test)]
+            self.litesvm.latest_blockhash(),
+        )
+        .unwrap();
+
+        let tx = VersionedTransaction::try_new(
+            VersionedMessage::V0(msg),
+            &[&self.fee_payer.insecure_clone()],
+        )
+        .unwrap();
+
+        self.send_and_confirm_transaction(tx)
+    }
+
     /// Replaces an existing authority
     ///
     /// # Arguments
@@ -275,12 +337,12 @@ impl SwigWallet {
     /// * `new_authority` - The new authority's credentials
     /// * `permissions` - Vector of permissions to grant to the new authority
     pub fn replace_authority(
-        &self,
+        &mut self,
         authority_to_replace_id: u32,
         new_authority_type: AuthorityType,
         new_authority: &[u8],
         permissions: Vec<Permission>,
-    ) -> Result<String, SwigError> {
+    ) -> Result<Signature, SwigError> {
         let instructions = self.instruction_builder.replace_authority(
             authority_to_replace_id,
             new_authority_type,
@@ -308,10 +370,16 @@ impl SwigWallet {
     ///
     /// # Arguments
     /// * `instructions` - The instructions to include in the transaction
-    fn send_and_confirm_transaction(&self, tx: VersionedTransaction) -> Result<String, SwigError> {
+    fn send_and_confirm_transaction(
+        &mut self,
+        tx: VersionedTransaction,
+    ) -> Result<Signature, SwigError> {
+        #[cfg(not(test))]
         // Send and confirm the transaction
         let signature = self.rpc_client.send_and_confirm_transaction(&tx)?;
-        Ok(signature.to_string())
+        #[cfg(test)]
+        let signature = self.litesvm.send_transaction(tx).unwrap().signature;
+        Ok(signature)
     }
 
     /// Returns the public key of the Swig account
@@ -319,17 +387,19 @@ impl SwigWallet {
         self.instruction_builder.get_swig_account()
     }
 
-    /// Print the Swig account
-    pub fn print_swig_account(&self) -> Result<(), SwigError> {
-        let swig_account = self.get_swig_account()?;
-        println!("Swig account: {:?}", swig_account);
-        Ok(())
-    }
+    pub fn display_swig(&self, authority_id: u32) -> Result<(), SwigError> {
+        let swig_pubkey = self.get_swig_account()?;
 
-    pub fn diplay_swig(&self, swig_pubkey: Pubkey, authority_id: u32) -> Result<(), SwigError> {
+        #[cfg(not(test))]
         let swig_account = self.rpc_client.get_account(&swig_pubkey)?;
+        #[cfg(test)]
+        let swig_account = self.litesvm.get_account(&swig_pubkey).unwrap();
 
+        #[cfg(not(test))]
         let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
+        #[cfg(test)]
+        let swig_data = self.litesvm.get_account(&swig_pubkey).unwrap().data;
+
         let swig_with_roles =
             SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
 
@@ -417,4 +487,93 @@ impl SwigWallet {
         // }
         Ok(())
     }
+
+    pub fn switch_authority(&mut self, role_id: u32, authority: Pubkey) -> Result<(), SwigError> {
+        let instruction = self
+            .instruction_builder
+            .switch_authority(role_id, authority)?;
+        Ok(())
+    }
+
+    pub fn switch_payer(&mut self, payer: Keypair) -> Result<(), SwigError> {
+        self.instruction_builder.switch_payer(payer.pubkey())?;
+        self.fee_payer = payer;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn litesvm(&mut self) -> &mut LiteSVM {
+        &mut self.litesvm
+    }
+}
+
+#[test]
+fn test_swig_wallet_sdk() {
+    println!("In test configuration: {}", cfg!(test));
+
+    let mut litesvm = LiteSVM::new();
+    let main_authority = Keypair::new();
+    let secondary_authority = Keypair::new();
+
+    litesvm
+        .add_program_from_file(Pubkey::new_from_array(swig::ID), "../target/deploy/swig.so")
+        .map_err(|_| anyhow::anyhow!("Failed to load program"))
+        .unwrap();
+    litesvm
+        .airdrop(&main_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    litesvm
+        .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    println!(
+        "Balance of fee payer: {:?}",
+        litesvm.get_balance(&main_authority.pubkey()).unwrap()
+    );
+
+    let mut swig_wallet = SwigWallet::new(
+        [0; 32],
+        AuthorityType::Ed25519,
+        main_authority.pubkey(),
+        main_authority,
+        "http://localhost:8899".to_string(),
+        #[cfg(test)]
+        litesvm,
+    )
+    .unwrap();
+
+    swig_wallet
+        .add_authority(
+            AuthorityType::Ed25519,
+            &secondary_authority.pubkey().to_bytes(),
+            vec![Permission::Sol {
+                amount: 10_000_000_000,
+                recurring: None,
+            }],
+        )
+        .unwrap();
+
+    swig_wallet.display_swig(0).unwrap();
+    swig_wallet.display_swig(1).unwrap();
+
+    swig_wallet
+        .switch_authority(1, secondary_authority.pubkey())
+        .unwrap();
+
+    swig_wallet.switch_payer(secondary_authority).unwrap();
+
+    let recipient = Keypair::new();
+    let transfer_ix = system_instruction::transfer(
+        &swig_wallet.get_swig_account().unwrap(),
+        &recipient.pubkey(),
+        2_000_000_000,
+    );
+
+    let swig_account = swig_wallet.get_swig_account().unwrap();
+    swig_wallet
+        .litesvm()
+        .airdrop(&swig_account, 10_000_000_000)
+        .unwrap();
+
+    swig_wallet.sign(vec![transfer_ix]).unwrap();
+    swig_wallet.display_swig(1).unwrap();
 }
