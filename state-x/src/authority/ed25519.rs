@@ -7,6 +7,9 @@ use swig_assertions::sol_assert_bytes_eq;
 use super::{Authority, AuthorityInfo, AuthorityType};
 use crate::{IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut};
 
+#[cfg(feature = "client")]
+use bs58;
+
 #[repr(C, align(8))]
 #[derive(Debug, PartialEq, NoPadding)]
 pub struct ED25519Authority {
@@ -56,6 +59,10 @@ impl AuthorityInfo for ED25519Authority {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    fn identity(&self) -> Result<&[u8], ProgramError> {
+        Ok(self.public_key.as_ref())
     }
 
     fn authenticate(
@@ -179,6 +186,10 @@ impl AuthorityInfo for Ed25519SessionAuthority {
 
     fn session_based(&self) -> bool {
         Self::SESSION_BASED
+    }
+
+    fn identity(&self) -> Result<&[u8], ProgramError> {
+        Ok(self.public_key.as_ref())
     }
 
     fn as_any(&self) -> &dyn Any {

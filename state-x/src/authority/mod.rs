@@ -33,6 +33,8 @@ pub trait AuthorityInfo: IntoBytes {
 
     fn as_any(&self) -> &dyn Any;
 
+    fn identity(&self) -> Result<&[u8], ProgramError>;
+
     fn authenticate_session(
         &mut self,
         _account_infos: &[AccountInfo],

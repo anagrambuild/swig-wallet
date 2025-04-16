@@ -21,6 +21,16 @@ pub struct CreateSecp256k1SessionAuthority {
     pub max_session_length: u64,
 }
 
+impl CreateSecp256k1SessionAuthority {
+    pub fn new(public_key: [u8; 64], session_key: [u8; 32], max_session_length: u64) -> Self {
+        Self {
+            public_key,
+            session_key,
+            max_session_length,
+        }
+    }
+}
+
 impl Transmutable for CreateSecp256k1SessionAuthority {
     const LEN: usize = 64 + 32 + 8;
 }
@@ -75,6 +85,10 @@ impl AuthorityInfo for Secp256k1Authority {
 
     fn session_based(&self) -> bool {
         Self::SESSION_BASED
+    }
+
+    fn identity(&self) -> Result<&[u8], ProgramError> {
+        Ok(self.public_key.as_ref())
     }
 
     fn match_data(&self, data: &[u8]) -> bool {
@@ -165,6 +179,10 @@ impl AuthorityInfo for Secp256k1SessionAuthority {
         }
         let expanded = compress(data.try_into().unwrap());
         sol_assert_bytes_eq(data, &expanded, 33)
+    }
+
+    fn identity(&self) -> Result<&[u8], ProgramError> {
+        Ok(self.public_key.as_ref())
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
