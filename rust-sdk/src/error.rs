@@ -34,10 +34,20 @@ pub enum SwigError {
     /// Invalid swig account discriminator
     #[error("Invalid swig account discriminator")]
     InvalidSwigAccountDiscriminator,
+
+    /// Error occurred during message compilation
+    #[error("Message compilation error: {0}")]
+    MessageCompilationError(String),
 }
 
 impl From<anyhow::Error> for SwigError {
     fn from(error: anyhow::Error) -> Self {
         SwigError::InterfaceError(error.to_string())
+    }
+}
+
+impl From<solana_sdk::message::CompileError> for SwigError {
+    fn from(error: solana_sdk::message::CompileError) -> Self {
+        SwigError::MessageCompilationError(error.to_string())
     }
 }

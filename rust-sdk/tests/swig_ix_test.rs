@@ -113,8 +113,6 @@ fn test_sign_instruction_execution() {
 
     let sign_ix = builder.sign_instruction(vec![transfer_ix]).unwrap();
 
-    println!("Sign ix: {:?}", sign_ix);
-
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
         &[sign_ix],
@@ -173,8 +171,6 @@ fn test_add_authority_instruction_execution() {
     let add_auth_ix = builder
         .add_authority_instruction(AuthorityType::Ed25519, &new_authority_bytes, permissions)
         .unwrap();
-
-    println!("Add authority ix: {:?}", add_auth_ix);
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
