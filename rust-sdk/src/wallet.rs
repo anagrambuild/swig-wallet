@@ -227,7 +227,7 @@ impl SwigWallet {
 
         let msg = v0::Message::try_compile(
             &self.fee_payer.pubkey(),
-            &[sign_ix],
+            &sign_ix,
             &[],
             #[cfg(not(test))]
             self.rpc_client.get_latest_blockhash()?,

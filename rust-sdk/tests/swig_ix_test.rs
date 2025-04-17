@@ -115,7 +115,7 @@ fn test_sign_instruction_execution() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[sign_ix],
+        &sign_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -260,7 +260,7 @@ fn test_add_authority_and_transfer_sol() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[sign_ix],
+        &sign_ix,
         &[],
         context.svm.latest_blockhash(),
     )

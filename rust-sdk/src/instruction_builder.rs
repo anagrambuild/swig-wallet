@@ -8,7 +8,7 @@ use swig_state_x::{authority::AuthorityType, swig::swig_account_seeds};
 use crate::{error::SwigError, types::Permission as ClientPermission};
 
 /// Represents a Swig wallet instance
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct SwigInstructionBuilder {
     /// The id of the Swig account
     swig_id: [u8; 32],
@@ -94,24 +94,28 @@ impl SwigInstructionBuilder {
     pub fn sign_instruction(
         &self,
         instructions: Vec<Instruction>,
-    ) -> Result<Instruction, SwigError> {
-        match self.authority_type {
-            AuthorityType::Ed25519 => {
-                let swig_signed_instruction = SignInstruction::new_ed25519(
-                    self.swig_account,
-                    self.payer,
-                    self.authority,
-                    instructions[0].clone(),
-                    self.role_id,
-                )?;
-                Ok(swig_signed_instruction)
-            },
-            AuthorityType::Secp256k1 => {
-                // Secp256k1 signing is not yet implemented
-                todo!("Secp256k1 signing not yet implemented")
-            },
-            _ => todo!(),
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let mut signed_instructions = Vec::new();
+        for instruction in instructions {
+            match self.authority_type {
+                AuthorityType::Ed25519 => {
+                    let swig_signed_instruction = SignInstruction::new_ed25519(
+                        self.swig_account,
+                        self.payer,
+                        self.authority,
+                        instruction,
+                        self.role_id,
+                    )?;
+                    signed_instructions.push(swig_signed_instruction);
+                },
+                AuthorityType::Secp256k1 => {
+                    // Secp256k1 signing is not yet implemented
+                    todo!("Secp256k1 signing not yet implemented")
+                },
+                _ => todo!(),
+            }
         }
+        Ok(signed_instructions)
     }
 
     /// Creates an instruction to add a new authority
