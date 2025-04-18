@@ -38,6 +38,14 @@ pub enum SwigError {
     /// Error occurred during message compilation
     #[error("Message compilation error: {0}")]
     MessageCompilationError(String),
+
+    /// Invalid secp256k1 signature
+    #[error("Invalid secp256k1 signature")]
+    InvalidSecp256k1,
+
+    /// Transaction error
+    #[error("Transaction error")]
+    TransactionError,
 }
 
 impl From<anyhow::Error> for SwigError {

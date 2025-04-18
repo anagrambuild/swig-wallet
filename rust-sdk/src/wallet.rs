@@ -20,7 +20,11 @@ use swig_state_x::{
     swig::SwigWithRoles,
 };
 
-use crate::{error::SwigError, instruction_builder::SwigInstructionBuilder, types::Permission};
+use crate::{
+    error::SwigError,
+    instruction_builder::{AuthorityManager, SwigInstructionBuilder},
+    types::Permission,
+};
 pub struct SwigWallet {
     /// The underlying instruction builder
     instruction_builder: SwigInstructionBuilder,
@@ -70,8 +74,7 @@ impl SwigWallet {
             println!("Swig account does not exist, creating new one");
             let instruction_builder = SwigInstructionBuilder::new(
                 swig_id,
-                authority_type,
-                authority,
+                AuthorityManager::Ed25519(authority),
                 fee_payer.pubkey(),
                 0,
             );
@@ -140,8 +143,7 @@ impl SwigWallet {
 
             let instruction_builder = SwigInstructionBuilder::new(
                 swig_id,
-                authority_type,
-                authority,
+                AuthorityManager::Ed25519(authority),
                 fee_payer.pubkey(),
                 role_id,
             );
@@ -172,6 +174,7 @@ impl SwigWallet {
             new_authority_type,
             new_authority,
             permissions,
+            None,
         )?;
         let msg = v0::Message::try_compile(
             &self.fee_payer.pubkey(),
@@ -222,7 +225,7 @@ impl SwigWallet {
     pub fn sign(&mut self, inner_instructions: Vec<Instruction>) -> Result<Signature, SwigError> {
         let sign_ix = self
             .instruction_builder
-            .sign_instruction(inner_instructions)
+            .sign_instruction(inner_instructions, None)
             .unwrap();
 
         let msg = v0::Message::try_compile(
@@ -293,7 +296,12 @@ impl SwigWallet {
         #[cfg(not(test))]
         let signature = self.rpc_client.send_and_confirm_transaction(&tx)?;
         #[cfg(test)]
-        let signature = self.litesvm.send_transaction(tx).unwrap().signature;
+        let signature = self
+            .litesvm
+            .send_transaction(tx)
+            .map_err(|_| SwigError::TransactionError)?
+            .signature;
+
         Ok(signature)
     }
 
