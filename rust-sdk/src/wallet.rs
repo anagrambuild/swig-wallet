@@ -502,6 +502,22 @@ impl SwigWallet {
         Ok(())
     }
 
+    /// Authenticate the authority of the Swig account
+    pub fn authenticate_authority(&self, authority: &[u8]) -> Result<(), SwigError> {
+        let swig_pubkey = self.get_swig_account()?;
+        #[cfg(not(test))]
+        let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
+        #[cfg(test)]
+        let swig_data = self.litesvm.get_account(&swig_pubkey).unwrap().data;
+        let swig_with_roles =
+            SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
+
+        let indexed_authority = swig_with_roles.lookup_role_id(authority.as_ref()).unwrap();
+
+        println!("Indexed Authority: {:?}", indexed_authority);
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn litesvm(&mut self) -> &mut LiteSVM {
         &mut self.litesvm
@@ -534,9 +550,10 @@ mod tests {
     fn test_wallet_creation() {
         let (mut litesvm, main_authority) = setup_litesvm();
 
+        let main_auth_pubkey = main_authority.pubkey();
         let swig_wallet = SwigWallet::new(
             [0; 32],
-            AuthorityManager::Ed25519(main_authority.pubkey()),
+            AuthorityManager::Ed25519(main_auth_pubkey),
             main_authority,
             "http://localhost:8899".to_string(),
             litesvm,
@@ -619,6 +636,11 @@ mod tests {
         swig_wallet.display_swig().unwrap();
 
         let third_authority = Keypair::new();
+
+        swig_wallet
+            .authenticate_authority(&third_authority.pubkey().to_bytes())
+            .unwrap();
+
         swig_wallet
             .add_authority(
                 AuthorityType::Ed25519,
@@ -644,6 +666,10 @@ mod tests {
             "\n\nCurrent Authority Permissions: {:?}",
             swig_wallet.get_current_authority_permissions().unwrap()
         );
+
+        swig_wallet
+            .authenticate_authority(&third_authority.pubkey().to_bytes())
+            .unwrap();
     }
 
     #[test]
