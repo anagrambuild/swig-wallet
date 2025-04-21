@@ -367,6 +367,22 @@ impl<'a> SwigWithRoles<'a> {
                         self.roles.get_unchecked(offset..offset + auth_len),
                     )?
                 },
+                AuthorityType::Ed25519Session => unsafe {
+                    Ed25519SessionAuthority::load_unchecked(
+                        self.roles.get_unchecked(offset..offset + auth_len),
+                    )?
+                },
+                AuthorityType::Secp256k1 => unsafe {
+                    Secp256k1Authority::load_unchecked(
+                        self.roles.get_unchecked(offset..offset + auth_len),
+                    )?
+                },
+                AuthorityType::Secp256k1Session => unsafe {
+                    Secp256k1SessionAuthority::load_unchecked(
+                        self.roles.get_unchecked(offset..offset + auth_len),
+                    )?
+                },
+
                 _ => return Err(ProgramError::InvalidAccountData),
             };
 

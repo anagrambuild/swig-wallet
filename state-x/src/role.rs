@@ -51,6 +51,23 @@ impl<'a> Role<'a> {
         }
         Ok(None)
     }
+
+    pub fn get_all_actions(&'a self) -> Result<Vec<&Action>, ProgramError> {
+        let mut actions = Vec::new();
+        let mut cursor = 0;
+        while cursor < self.actions.len() {
+            let action = unsafe {
+                Action::load_unchecked(self.actions.get_unchecked(cursor..cursor + Action::LEN))?
+            };
+            actions.push(action);
+            cursor += action.boundary() as usize;
+        }
+        Ok(actions)
+    }
+
+    pub fn authority_type(&self) -> Result<AuthorityType, ProgramError> {
+        self.position.authority_type()
+    }
 }
 
 pub struct RoleMut<'a> {

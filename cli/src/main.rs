@@ -6,7 +6,6 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use borsh::BorshDeserialize;
 use clap::{command, Parser, Subcommand, ValueEnum};
 use directories::BaseDirs;
 use jupiter_swap_api_client::{
@@ -40,9 +39,21 @@ use spl_associated_token_account::instruction::create_associated_token_account_i
 use spl_token::instruction::TokenInstruction;
 use swig_interface::{
     swig::{self},
-    swig_key,
-    swig_state::{swig_account_seeds, Action, AuthorityType, SolAction, Swig, TokenAction},
-    AddAuthorityInstruction, AuthorityConfig, CreateInstruction, SignInstruction,
+    swig_key, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
+    CreateSessionInstruction, SignInstruction,
+};
+
+use swig_state_x::{
+    action::{
+        all::All, manage_authority::ManageAuthority, sol_limit::SolLimit, token_limit::TokenLimit,
+    },
+    authority::{
+        ed25519::{CreateEd25519SessionAuthority, Ed25519SessionAuthority},
+        secp256k1::{CreateSecp256k1SessionAuthority, Secp256k1SessionAuthority},
+        AuthorityType,
+    },
+    swig::{swig_account_seeds, SwigWithRoles},
+    IntoBytes,
 };
 use tokio::runtime::Runtime;
 const TOKEN_PROGRAM_ID: Pubkey = pubkey_macro!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
@@ -56,7 +67,9 @@ pub struct Session {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SwigAuthContext {
-    pub role_id: u8,
+    pub swig_key: Pubkey,
+    pub swig_id: String,
+    pub role_id: u32,
     pub authority_type: CliAuthorityType,
     pub authority_identifier: String,
     pub authority_payload: Vec<u8>,
@@ -82,6 +95,60 @@ impl Signer for SwigAuthContext {
     }
 }
 impl SwigAuthContext {
+    pub fn start_session(&mut self, ctx: &SwigCliContext, max_session_duration: u64) -> Result<()> {
+        let session_key = Keypair::new();
+        let current_slot = ctx.rpc_client.get_slot()?;
+        let session_end_slot = current_slot + max_session_duration;
+        let create_session = CreateSessionInstruction::new_with_ed25519_authority(
+            self.swig_key,
+            ctx.payer.pubkey(),
+            self.authority_identifier.parse()?,
+            self.role_id,
+            session_key.pubkey(),
+            max_session_duration,
+        )
+        .map_err(|e| anyhow!("Failed to create session: {:?}", e))?;
+        send_instruction(&ctx, &ctx.payer.pubkey(), &[&ctx.payer], create_session)?;
+        let swig_data = ctx.rpc_client.get_account_data(&self.swig_key)?;
+        let swig = SwigWithRoles::from_bytes(&swig_data)
+            .map_err(|e| anyhow!("Failed to load swig account: {:?}", e))?;
+        let role = swig
+            .get_role(self.role_id)
+            .map_err(|e| anyhow!("Failed to get role: {:?}", e))?
+            .ok_or(anyhow!("Failed to get role"))?;
+        match role
+            .authority_type()
+            .map_err(|e| anyhow!("Failed to get authority type: {:?}", e))?
+        {
+            AuthorityType::Ed25519Session => {
+                let auth: &Ed25519SessionAuthority = role
+                    .authority
+                    .as_any()
+                    .downcast_ref::<Ed25519SessionAuthority>()
+                    .ok_or(anyhow!("Failed to read authority"))?;
+                self.session = Some(Session {
+                    session_key: session_key.to_bytes().to_vec(),
+                    start_slot: current_slot,
+                    end_slot: auth.current_session_expiration,
+                });
+            },
+            AuthorityType::Secp256k1Session => {
+                let auth: &Secp256k1SessionAuthority = role
+                    .authority
+                    .as_any()
+                    .downcast_ref::<Secp256k1SessionAuthority>()
+                    .ok_or(anyhow!("Failed to read authority"))?;
+                self.session = Some(Session {
+                    session_key: session_key.to_bytes().to_vec(),
+                    start_slot: current_slot,
+                    end_slot: auth.current_session_expiration,
+                });
+            },
+            _ => anyhow::bail!("Invalid authority type"),
+        }
+        Ok(())
+    }
+
     pub fn sign(&self, message: &[u8]) -> Result<Vec<u8>> {
         match self.authority_type {
             CliAuthorityType::Ed25519 => {
@@ -99,6 +166,12 @@ impl SwigAuthContext {
                 let signature = secp.sign_ecdsa(&message, &secret_key);
                 Ok(signature.serialize_compact().to_vec())
             },
+            CliAuthorityType::Ed25519Session => {
+                todo!()
+            },
+            CliAuthorityType::Secp256k1Session => {
+                todo!()
+            },
         }
     }
 }
@@ -113,6 +186,8 @@ pub struct SwigCliContext {
 pub enum CliAuthorityType {
     Ed25519,
     Secp256k1,
+    Ed25519Session,
+    Secp256k1Session,
 }
 
 impl From<CliAuthorityType> for AuthorityType {
@@ -120,6 +195,8 @@ impl From<CliAuthorityType> for AuthorityType {
         match val {
             CliAuthorityType::Ed25519 => AuthorityType::Ed25519,
             CliAuthorityType::Secp256k1 => AuthorityType::Secp256k1,
+            CliAuthorityType::Ed25519Session => AuthorityType::Ed25519Session,
+            CliAuthorityType::Secp256k1Session => AuthorityType::Secp256k1Session,
         }
     }
 }
@@ -147,7 +224,9 @@ pub struct SwigCli {
 pub enum Command {
     Authenticate {
         #[arg(short, long)]
-        id: String,
+        id: Option<String>,
+        #[arg(short, long)]
+        key: Option<String>,
         #[arg(short, long)]
         authority_identifier: String,
         #[arg(short = 'd', long)]
@@ -193,7 +272,9 @@ pub enum Command {
     },
     View {
         #[arg(short, long)]
-        id: String,
+        id: Option<String>,
+        #[arg(short, long)]
+        key: Option<String>,
     },
     Swap {
         #[arg(short, long = "swig-id")]
@@ -222,18 +303,37 @@ fn main_fn() -> Result<()> {
     match cli.command {
         Command::Authenticate {
             id,
+            key,
             authority_identifier,
             authority_data,
         } => {
-            let swig_id = swig_key(format!("{:0<13}", id));
-            let swig_data = ctx.rpc_client.get_account_data(&swig_id)?;
-            let swig = Swig::try_from_slice(&swig_data)
+            if id.is_none() && key.is_none() {
+                anyhow::bail!("Either id or key must be provided");
+            }
+
+            let swig_key = if let Some(id_val) = id {
+                swig_key(format!("{:0<32}", id_val))
+            } else {
+                // Handle key-based lookup
+                Pubkey::from_str(&key.unwrap())?
+            };
+
+            let swig_data = ctx.rpc_client.get_account_data(&swig_key)?;
+            let swig = SwigWithRoles::from_bytes(&swig_data)
                 .map_err(|e| anyhow!("Failed to load swig account: {:?}", e))?;
             let auth_key = Pubkey::from_str(&authority_identifier).unwrap();
             let indexed_authority = swig
-                .lookup_role(auth_key.as_ref())
+                .lookup_role_id(auth_key.as_ref())
+                .map_err(|e| anyhow!("Failed to find authority: {:?}", e))?
                 .ok_or(anyhow!("Failed to find authority"))?;
-            let auth_data = match indexed_authority.role.authority_type {
+            let role = swig
+                .get_role(indexed_authority)
+                .map_err(|e| anyhow!("Failed to find role: {:?}", e))?
+                .ok_or(anyhow!("Failed to find role"))?;
+            let auth_data = match role
+                .authority_type()
+                .map_err(|e| anyhow!("Failed to get authority type: {:?}", e))?
+            {
                 AuthorityType::Ed25519 => {
                     // authority payload is a file path to a keypair
                     let authority_kp = read_keypair_file(Path::new(&authority_data))
@@ -243,7 +343,9 @@ fn main_fn() -> Result<()> {
                         anyhow::bail!("Authority Identifier Mismatch");
                     }
                     SwigAuthContext {
-                        role_id: indexed_authority.index,
+                        swig_key,
+                        swig_id: bs58::encode(swig.state.id).into_string(),
+                        role_id: indexed_authority,
                         authority_payload: authority_kp.to_bytes().to_vec(),
                         authority_identifier: auth_key.to_string(),
                         authority_type: CliAuthorityType::Ed25519,
@@ -257,19 +359,67 @@ fn main_fn() -> Result<()> {
                             anyhow!("Failed to read secp256k1 keypair from file: {:?}", e)
                         })?;
                     SwigAuthContext {
-                        role_id: indexed_authority.index,
+                        swig_key,
+                        swig_id: bs58::encode(swig.state.id).into_string(),
+                        role_id: indexed_authority,
                         authority_payload: secret_key.secret_bytes().to_vec(),
                         authority_identifier: public_key.to_string(),
                         authority_type: CliAuthorityType::Secp256k1,
                         session: None,
                     }
                 },
-                _ => todo!(),
-                /* TODO for session based authorities we will create session keypair and sign
-                 * the data */
+                AuthorityType::Ed25519Session => {
+                    let auth: &Ed25519SessionAuthority = role
+                        .authority
+                        .as_any()
+                        .downcast_ref::<Ed25519SessionAuthority>()
+                        .ok_or(anyhow!("Failed to read authority"))?;
+                    let authority_kp = read_keypair_file(Path::new(&authority_data))
+                        .map_err(|e| anyhow!("Failed to load authority keypair: {:?}", e))?;
+                    let authority = authority_kp.pubkey();
+                    if authority != auth_key {
+                        anyhow::bail!("Authority Identifier Mismatch");
+                    }
+
+                    let mut auth_ctx = SwigAuthContext {
+                        swig_key,
+                        swig_id: bs58::encode(swig.state.id).into_string(),
+                        role_id: indexed_authority,
+                        authority_payload: authority_kp.to_bytes().to_vec(),
+                        authority_identifier: auth_key.to_string(),
+                        authority_type: CliAuthorityType::Ed25519Session,
+                        session: None,
+                    };
+                    auth_ctx.start_session(&ctx, auth.max_session_length)?;
+                    auth_ctx
+                },
+                AuthorityType::Secp256k1Session => {
+                    let auth: &Secp256k1SessionAuthority = role
+                        .authority
+                        .as_any()
+                        .downcast_ref::<Secp256k1SessionAuthority>()
+                        .ok_or(anyhow!("Failed to read authority"))?;
+                    let (secret_key, public_key) = read_eth_keypair_from_file(authority_data)
+                        .map_err(|e| {
+                            anyhow!("Failed to read secp256k1 keypair from file: {:?}", e)
+                        })?;
+                    let mut auth_ctx = SwigAuthContext {
+                        swig_key,
+                        swig_id: bs58::encode(swig.state.id).into_string(),
+                        role_id: indexed_authority,
+                        authority_payload: secret_key.secret_bytes().to_vec(),
+                        authority_identifier: public_key.to_string(),
+                        authority_type: CliAuthorityType::Secp256k1Session,
+                        session: None,
+                    };
+                    auth_ctx.start_session(&ctx, auth.max_session_age)?;
+                    auth_ctx
+                },
+                _ => anyhow::bail!("Invalid authority type"),
             };
 
-            let auth_file_path = Path::new(&ctx.config_dir).join(format!("{:0<13}.auth", id));
+            let auth_file_path =
+                Path::new(&ctx.config_dir).join(format!("{:0<32}.auth", swig_key.to_string()));
             // write authenticated file to disk
             let auth_file = File::create(&auth_file_path)?;
             serde_json::to_writer(auth_file, &auth_data)?;
@@ -311,39 +461,46 @@ fn main_fn() -> Result<()> {
                 },
             };
             let compute = prio_fees(&ctx, &[swig_id])?;
-            match auth_context.authority_type {
+            let ix = match auth_context.authority_type {
                 CliAuthorityType::Ed25519 => {
                     let auth_pubkey = Pubkey::from_str(&auth_context.authority_identifier).unwrap();
-                    let outerix = SignInstruction::new_ed25519(
+                    SignInstruction::new_ed25519(
                         swig_id,
                         ctx.payer.pubkey(),
                         auth_pubkey,
                         transfer_ix,
                         auth_context.role_id,
-                    )?;
-                    let me = v0::Message::try_compile(
-                        &ctx.payer.pubkey(),
-                        &[
-                            ComputeBudgetInstruction::set_compute_unit_limit(10000),
-                            compute,
-                            outerix,
-                        ],
-                        &[],
-                        ctx.rpc_client.get_latest_blockhash()?,
-                    )?;
-                    let signers: Vec<&dyn Signer> = vec![&ctx.payer, &auth_context];
-                    let txn = VersionedTransaction::try_new(
-                        VersionedMessage::V0(me),
-                        signers.as_slice(),
-                    )?;
-                    let result = ctx
-                        .rpc_client
-                        .send_and_confirm_transaction_with_spinner(&txn)?;
-                    println!("Transaction result: {:?}", result);
-                    diplay_swig(&ctx, swig_id).unwrap();
+                    )?
                 },
+                CliAuthorityType::Secp256k1 => {
+                    let current_slot = ctx.rpc_client.get_slot()?;
+                    SignInstruction::new_secp256k1(
+                        swig_id,
+                        ctx.payer.pubkey(),
+                        |data| {
+                            let sig = auth_context.sign(data).unwrap();
+                            sig[0..65].try_into().unwrap()
+                        },
+                        current_slot,
+                        transfer_ix,
+                        auth_context.role_id,
+                    )?
+                },
+
                 _ => todo!(),
             };
+            let me = v0::Message::try_compile(
+                &ctx.payer.pubkey(),
+                &[ix],
+                &[],
+                ctx.rpc_client.get_latest_blockhash()?,
+            )?;
+            let txn = VersionedTransaction::try_new(VersionedMessage::V0(me), &[&ctx.payer])?;
+            let result = ctx
+                .rpc_client
+                .send_and_confirm_transaction_with_spinner(&txn)?;
+            println!("Transaction result: {:?}", result);
+            diplay_swig(&ctx, swig_id).unwrap();
         },
         Command::AddAuthority {
             new_authority_type,
@@ -368,28 +525,32 @@ fn main_fn() -> Result<()> {
                             authority_type: new_authority_type.into(),
                             authority: new_authority.as_bytes(),
                         },
-                        start_slot.unwrap_or(0),
-                        end_slot.unwrap_or(0),
                         permissions_to_actions(permissions),
                     )
                 },
                 CliAuthorityType::Secp256k1 => {
+                    let current_slot = ctx.rpc_client.get_slot()?;
                     AddAuthorityInstruction::new_with_secp256k1_authority(
                         swig_id,
                         ctx.payer.pubkey(),
                         |data| {
                             let sig = auth_context.sign(data).unwrap();
-                            sig[0..64].try_into().unwrap()
+                            sig.try_into().unwrap()
                         },
+                        current_slot,
                         auth_context.role_id,
                         AuthorityConfig {
                             authority_type: new_authority_type.into(),
                             authority: new_authority.as_bytes(),
                         },
-                        start_slot.unwrap_or(0),
-                        end_slot.unwrap_or(0),
                         permissions_to_actions(permissions),
                     )
+                },
+                CliAuthorityType::Ed25519Session => {
+                    todo!()
+                },
+                CliAuthorityType::Secp256k1Session => {
+                    todo!()
                 },
             }?;
 
@@ -440,8 +601,17 @@ fn main_fn() -> Result<()> {
             println!("Transaction result: {:?}", result);
             diplay_swig(&ctx, swig_id).unwrap();
         },
-        Command::View { id } => {
-            let swig_id = swig_key(format!("{:0<13}", id));
+        Command::View { id, key } => {
+            if id.is_none() && key.is_none() {
+                anyhow::bail!("Either id or key must be provided");
+            }
+
+            let swig_id = if let Some(id_val) = id {
+                swig_key(format!("{:0<32}", id_val))
+            } else {
+                // Handle key-based lookup
+                Pubkey::from_str(&key.unwrap())?
+            };
             diplay_swig(&ctx, swig_id).unwrap();
         },
         Command::Create {
@@ -449,12 +619,9 @@ fn main_fn() -> Result<()> {
             authority,
             id,
         } => {
-            let authority_type = match root {
-                CliAuthorityType::Ed25519 => AuthorityType::Ed25519,
-                CliAuthorityType::Secp256k1 => AuthorityType::Secp256k1,
-            };
-            let id: [u8; 13] = id
-                .and_then(|i| format!("{:0<13}", i).as_bytes()[..13].try_into().ok())
+            let authority_type = root.into();
+            let id: [u8; 32] = id
+                .and_then(|i| format!("{:0<32}", i).as_bytes()[..32].try_into().ok())
                 .unwrap_or_else(rand::random);
             create(&ctx, authority_type, authority, id).unwrap();
         },
@@ -583,7 +750,7 @@ fn ensure_config_dir() -> std::io::Result<PathBuf> {
 }
 
 fn load_auth_context(id: &str) -> Result<SwigAuthContext> {
-    let auth_file = Path::new(&get_config_path()).join(format!("{:0<13}.auth", id));
+    let auth_file = Path::new(&get_config_path()).join(format!("{:0<32}.auth", id));
     let auth_file = File::open(auth_file)?;
     let auth_data: SwigAuthContext = serde_json::from_reader(auth_file)?;
     Ok(auth_data)
@@ -608,112 +775,76 @@ fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
         TokenAccountsFilter::ProgramId(TOKEN_22_PROGRAM_ID),
     )?;
 
-    let swig = Swig::try_from_slice(&swig_account.data)
+    let swig = SwigWithRoles::from_bytes(&swig_account.data)
         .map_err(|e| anyhow!("Failed to load swig account: {:?}", e))?;
     println!("\tKEY: {}", swig_id);
-    println!("\tID: {}", String::from_utf8(swig.id.to_vec()).unwrap());
+    println!(
+        "\tID Bytes(bs58): {:?}",
+        bs58::encode(swig.state.id.to_vec()).into_string()
+    );
     println!(
         "\tLamports: {}",
-        swig_account.lamports() - Rent::default().minimum_balance(swig.size())
+        swig_account.lamports() - swig.state.reserved_lamports
     );
-    for (index, role) in swig.roles.iter().enumerate() {
+
+    for index in 0..swig.state.roles {
+        let role = swig
+            .get_role(index as u32)
+            .map_err(|e| anyhow!("Failed to get role: {:?}", e))?
+            .ok_or(anyhow!("Failed to get role"))?;
         println!("\tRole {}", index);
-        println!("\t\tAuthority Type: {:?}", role.authority_type);
-        println!(
-            "\t\tAuthority: {:?}",
-            match role.authority_type {
-                AuthorityType::Ed25519 =>
-                    bs58::encode(role.authority_data.as_slice()).into_string(),
-                AuthorityType::Secp256k1 => hex::encode(role.authority_data.as_slice()),
-                _ => todo!(),
-            }
-        );
-        println!("\t\tStart Slot: {}", role.start_slot);
-        println!("\t\tEnd Slot: {}", role.end_slot);
-        println!("\t\tPermissions:");
-        for (index, action) in role.actions.iter().enumerate() {
-            match action {
-                Action::ManageAuthority => {
-                    println!("\t\t{}: ManageAuthority", index);
-                },
-                Action::Program { key } => {
-                    println!("\t\t{}: Program {:?}", index, key);
-                },
-                Action::All => {
-                    println!("\t\t{}: All", index);
-                },
-                Action::Sol {
-                    action: SolAction::All,
-                } => {
-                    println!("\t\t{}: Sol All", index);
-                },
-                Action::Sol {
-                    action: SolAction::Manage(amount),
-                } => {
-                    println!("\t\t{}: Sol Manage {:?}", index, amount);
-                },
-                Action::Sol {
-                    action: SolAction::Temporal(amount, interval, last_action),
-                } => {
-                    println!(
-                        "\t\t{}: Sol Temporal {:?} {:?} {:?}",
-                        index, amount, interval, last_action
-                    );
-                },
-                Action::Token {
-                    key,
-                    action: TokenAction::All,
-                } => {
-                    println!(
-                        "\t\t{}: Token {:?} All",
-                        index,
-                        bs58::encode(key.as_ref()).into_string()
-                    );
-                },
-                Action::Token {
-                    key,
-                    action: TokenAction::Manage(amount),
-                } => {
-                    println!(
-                        "\t\t{}: Token {:?} Manage {:?}",
-                        index,
-                        bs58::encode(key.as_ref()).into_string(),
-                        amount
-                    );
-                },
-                Action::Token {
-                    key,
-                    action: TokenAction::Temporal(amount, interval, last_action),
-                } => {
-                    println!(
-                        "\t\t{}: Token {:?} Temporal {:?} {:?} {:?}",
-                        index,
-                        bs58::encode(key.as_ref()).into_string(),
-                        amount,
-                        interval,
-                        last_action
-                    );
-                },
-                Action::Tokens {
-                    action: TokenAction::All,
-                } => {
-                    println!("\t\t{}: Tokens All", index);
-                },
-                Action::Tokens {
-                    action: TokenAction::Manage(amount),
-                } => {
-                    println!("\t\t{}: Tokens Manage {:?}", index, amount);
-                },
-                Action::Tokens {
-                    action: TokenAction::Temporal(amount, interval, last_action),
-                } => {
-                    println!(
-                        "\t\t{}: Tokens Temporal {:?} {:?} {:?}",
-                        index, amount, interval, last_action
-                    );
-                },
-            }
+        let authority_type = role
+            .authority_type()
+            .map_err(|e| anyhow!("Failed to get authority type: {:?}", e))?;
+        println!("\t\tAuthority Type: {:?}", authority_type);
+        match authority_type {
+            AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
+                let authority = role
+                    .authority
+                    .identity()
+                    .map_err(|e| anyhow!("Failed to get authority identity: {:?}", e))?;
+                let authority = bs58::encode(authority).into_string();
+                println!("\t\tAuthority: {}", authority);
+            },
+            AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
+                let authority = role
+                    .authority
+                    .identity()
+                    .map_err(|e| anyhow!("Failed to get authority identity: {:?}", e))?;
+                let authority_hex = hex::encode([&[0x4].as_slice(), authority].concat());
+                //get eth address from public key
+                let mut hasher = solana_sdk::keccak::Hasher::default();
+                hasher.hash(authority);
+                let hash = hasher.result();
+                let address = format!("0x{}", hex::encode(&hash.0[12..32]));
+                println!(
+                    "\t\tAuthority Public Key: 0x{} address {}",
+                    authority_hex, address
+                );
+            },
+            _ => {
+                println!(
+                    "\t\tAuthority: {:?}",
+                    role.authority
+                        .identity()
+                        .map_err(|e| anyhow!("Failed to get authority identity: {:?}", e))?
+                );
+            },
+        };
+        println!("\t\tPermissions");
+        println!("{}", "/".repeat(80));
+        let actions = role
+            .get_all_actions()
+            .map_err(|e| anyhow!("Failed to get actions: {:?}", e))?;
+        for action in actions {
+            print!(
+                "\t\t\t{:?}",
+                action
+                    .permission()
+                    .map_err(|e| anyhow!("Failed to get permission type: {:?}", e))?
+            );
         }
+        println!("\n{}", "\\".repeat(80));
     }
     if !token_accounts.is_empty() || !token_accounts_22.is_empty() {
         println!("\tToken Accounts:");
@@ -741,11 +872,70 @@ fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
     Ok(())
 }
 
+fn parse_session_authority(authority_type: &AuthorityType, authority: String) -> Result<Vec<u8>> {
+    let split = authority.split(':').collect::<Vec<&str>>();
+    return match authority_type {
+        AuthorityType::Ed25519Session => {
+            let key = bs58::decode(split[0])
+                .into_vec()
+                .map_err(|e| anyhow!("Failed to decode key: {:?}", e))?;
+            if key.len() != 32 {
+                anyhow::bail!("Invalid key length");
+            }
+            let key = key.try_into().unwrap();
+            let max_session_duration = split[1].parse::<u64>().unwrap();
+            let create_session_authority =
+                CreateEd25519SessionAuthority::new(key, [0; 32], max_session_duration);
+
+            create_session_authority
+                .into_bytes()
+                .map(|b| b.to_vec())
+                .map_err(|e| anyhow!("Failed to create session authority: {:?}", e))
+        },
+        AuthorityType::Secp256k1Session => {
+            let key =
+                hex::decode(split[0]).map_err(|e| anyhow!("Failed to decode key: {:?}", e))?;
+            if key.len() != 65 || key[0] != 4 {
+                anyhow::bail!("Invalid key length");
+            }
+            let key: [u8; 64] = key[1..].try_into().unwrap();
+            let max_session_duration = split[1].parse::<u64>()?;
+            let create_session_authority =
+                CreateSecp256k1SessionAuthority::new(key, [0; 32], max_session_duration);
+
+            create_session_authority
+                .into_bytes()
+                .map(|b| b.to_vec())
+                .map_err(|e| anyhow!("Failed to create session authority: {:?}", e))
+        },
+        _ => anyhow::bail!("Invalid authority type"),
+    };
+}
+
+fn send_instruction(
+    ctx: &SwigCliContext,
+    payer: &Pubkey,
+    signers: &[&dyn Signer],
+    instruction: Instruction,
+) -> Result<()> {
+    let msg = v0::Message::try_compile(
+        &payer,
+        &[instruction],
+        &[],
+        ctx.rpc_client.get_latest_blockhash()?,
+    )
+    .unwrap();
+    let txn = VersionedTransaction::try_new(VersionedMessage::V0(msg), signers)?;
+    ctx.rpc_client
+        .send_and_confirm_transaction_with_spinner(&txn)?;
+    Ok(())
+}
+
 fn create(
     ctx: &SwigCliContext,
     authority_type: AuthorityType,
     authority: String,
-    id: [u8; 13],
+    id: [u8; 32],
 ) -> Result<()> {
     let program_id = Pubkey::from(swig::ID);
     let swig_account = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id);
@@ -753,7 +943,9 @@ fn create(
     let auth_bytes = match authority_type {
         AuthorityType::Ed25519 => bs58::decode(authority).into_vec()?,
         AuthorityType::Secp256k1 => hex::decode(authority).unwrap(),
-        _ => todo!(),
+        AuthorityType::Ed25519Session => parse_session_authority(&authority_type, authority)?,
+        AuthorityType::Secp256k1Session => parse_session_authority(&authority_type, authority)?,
+        _ => anyhow::bail!("Invalid authority type"),
     };
 
     let instruction = CreateInstruction::new(
@@ -764,9 +956,8 @@ fn create(
             authority_type,
             authority: &auth_bytes,
         },
-        &id,
-        0,
-        0,
+        vec![ClientAction::All(All {})],
+        id,
     )?;
     let msg = v0::Message::try_compile(
         &ctx.payer.pubkey(),
@@ -840,64 +1031,46 @@ fn read_eth_keypair_from_file(
     Ok((secret_key, public_key))
 }
 
-fn permissions_to_actions(permissions: Vec<String>) -> Vec<Action> {
+fn permissions_to_actions(permissions: Vec<String>) -> Vec<ClientAction> {
     let mut actions = Vec::new();
     for permission in permissions {
         let permission = permission.split(':').collect::<Vec<&str>>();
         let len = permission.len();
         match permission[0] {
             "all" => {
-                actions.push(Action::All);
+                actions.push(ClientAction::All(All {}));
             },
             "manage_authority" => {
-                actions.push(Action::ManageAuthority);
+                actions.push(ClientAction::ManageAuthority(ManageAuthority {}));
             },
             "token" => {
                 if len == 2 {
                     let token = permission[1].parse::<String>().unwrap();
                     let token = Pubkey::from_str(&token).unwrap();
-                    actions.push(Action::Token {
-                        key: token.to_bytes(),
-                        action: TokenAction::All,
-                    });
+                    actions.push(ClientAction::TokenLimit(TokenLimit {
+                        token_mint: token.to_bytes(),
+                        current_amount: u64::MAX,
+                    }));
                     continue;
                 }
                 if len == 3 {
                     let token = permission[1].parse::<String>().unwrap();
                     let token = Pubkey::from_str(&token).unwrap();
                     let amount = permission[2].parse::<u64>().unwrap();
-                    actions.push(Action::Token {
-                        key: token.to_bytes(),
-                        action: TokenAction::Manage(amount),
-                    });
-                }
-            },
-            "tokens" => {
-                if len == 1 {
-                    actions.push(Action::Tokens {
-                        action: TokenAction::All,
-                    });
-                    continue;
-                }
-                if len == 3 {
-                    let amount = permission[1].parse::<u64>().unwrap();
-                    actions.push(Action::Tokens {
-                        action: TokenAction::Manage(amount),
-                    });
+                    actions.push(ClientAction::TokenLimit(TokenLimit {
+                        token_mint: token.to_bytes(),
+                        current_amount: amount,
+                    }));
                 }
             },
             "sol" => {
                 if len == 1 {
-                    actions.push(Action::Sol {
-                        action: SolAction::All,
-                    });
+                    actions.push(ClientAction::SolLimit(SolLimit { amount: u64::MAX }));
                     continue;
                 }
                 if len == 2 {
                     let amount = permission[1].parse::<u64>().unwrap();
-                    actions.push(Action::Sol {
-                        action: SolAction::Manage(amount),
-                    });
+                    actions.push(ClientAction::SolLimit(SolLimit { amount }));
                 }
             },
             _ => {

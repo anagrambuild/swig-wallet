@@ -14,6 +14,7 @@ solana-transaction-status = "2.0"
 libsecp256k1 = "0.7.1"
 rand = "0.8.5"
 swig-interface = { path = "../interface" }
+swig-state-x = { path = "../state-x" }
 solana-cli-config = "2"
 anyhow = "1.0.75"
 bs58 = "0.5.1"

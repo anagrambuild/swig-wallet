@@ -5,11 +5,10 @@ members = [
   "interface",
   "instructions",
   "state-x",
-  "assertions", 
+  "assertions",
   "no-padding",
-] #, "cli"]
-
-
+  "cli",
+]
 
 
 [workspace.lints.rust]
@@ -22,6 +21,4 @@ unused_variables = "allow"
 
 [workspace.lints.rust.unexpected_cfgs]
 level = "warn"
-check-cfg = [
-    'cfg(target_os, values("solana"))',
-]
+check-cfg = ['cfg(target_os, values("solana"))']
