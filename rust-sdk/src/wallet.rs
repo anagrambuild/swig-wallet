@@ -4,8 +4,9 @@ use solana_client::{rpc_client::RpcClient, rpc_request::TokenAccountsFilter};
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use solana_sdk::{
     account::ReadableAccount,
+    clock::Clock,
     commitment_config::CommitmentConfig,
-    message::{v0, VersionedMessage},
+    message::{v0, AddressLookupTableAccount, VersionedMessage},
     pubkey::{self, ParsePubkeyError},
     rent::Rent,
     signature::{Keypair, Signature, Signer},
@@ -18,7 +19,7 @@ use swig_state_x::{
         all::All, manage_authority::ManageAuthority, sol_limit::SolLimit,
         sol_recurring_limit::SolRecurringLimit,
     },
-    authority::AuthorityType,
+    authority::{self, AuthorityType},
     role::Role,
     swig::SwigWithRoles,
 };
@@ -196,42 +197,63 @@ impl SwigWallet {
     /// Removes an authority from the wallet
     ///
     /// # Arguments
-    /// * `authority_id` - The ID of the authority to remove
-    pub fn remove_authority(&mut self, authority_id: u32) -> Result<Signature, SwigError> {
-        let instruction = self
-            .instruction_builder
-            .remove_authority(authority_id, None)?;
-        let msg = v0::Message::try_compile(
-            &self.fee_payer.pubkey(),
-            &[instruction],
-            &[],
-            #[cfg(not(test))]
-            self.rpc_client.get_latest_blockhash()?,
-            #[cfg(test)]
-            self.litesvm.latest_blockhash(),
-        )?;
+    /// * `authority` - The authority to remove
+    pub fn remove_authority(&mut self, authority: &[u8]) -> Result<Signature, SwigError> {
+        let swig_pubkey = self.get_swig_account()?;
+        #[cfg(not(test))]
+        let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
+        #[cfg(test)]
+        let swig_data = self.litesvm.get_account(&swig_pubkey).unwrap().data;
+        let swig_with_roles =
+            SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
 
-        let tx = VersionedTransaction::try_new(
-            VersionedMessage::V0(msg),
-            &[self.fee_payer.insecure_clone()],
-        )?;
+        let authority_id = swig_with_roles.lookup_role_id(authority.as_ref()).unwrap();
 
-        self.send_and_confirm_transaction(tx)
+        if let Some(authority_id) = authority_id {
+            let instruction = self
+                .instruction_builder
+                .remove_authority(authority_id, None)?;
+
+            let msg = v0::Message::try_compile(
+                &self.fee_payer.pubkey(),
+                &[instruction],
+                &[],
+                #[cfg(not(test))]
+                self.rpc_client.get_latest_blockhash()?,
+                #[cfg(test)]
+                self.litesvm.latest_blockhash(),
+            )?;
+
+            let tx = VersionedTransaction::try_new(
+                VersionedMessage::V0(msg),
+                &[self.fee_payer.insecure_clone()],
+            )?;
+
+            self.send_and_confirm_transaction(tx)
+        } else {
+            return Err(SwigError::AuthorityNotFound);
+        }
     }
 
     /// Signs a transaction with the given instructions
     ///
     /// # Arguments
     /// * `inner_instructions` - The instructions to sign
-    pub fn sign(&mut self, inner_instructions: Vec<Instruction>) -> Result<Signature, SwigError> {
+    pub fn sign(
+        &mut self,
+        inner_instructions: Vec<Instruction>,
+        alt: Option<&[AddressLookupTableAccount]>,
+    ) -> Result<Signature, SwigError> {
         let sign_ix = self
             .instruction_builder
-            .sign_instruction(inner_instructions, None)?;
+            .sign_instruction(inner_instructions, Some(self.get_current_slot()?))?;
+
+        let alt = if alt.is_some() { alt.unwrap() } else { &[] };
 
         let msg = v0::Message::try_compile(
             &self.fee_payer.pubkey(),
             &sign_ix,
-            &[],
+            alt,
             #[cfg(not(test))]
             self.rpc_client.get_latest_blockhash()?,
             #[cfg(test)]
@@ -518,6 +540,27 @@ impl SwigWallet {
         Ok(())
     }
 
+    /// Create a session for the authority
+    pub fn create_session(&self, authority: &[u8]) -> Result<(), SwigError> {
+        let swig_pubkey = self.get_swig_account()?;
+        let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
+        let swig_with_roles =
+            SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
+
+        let indexed_authority = swig_with_roles.lookup_role_id(authority.as_ref()).unwrap();
+
+        println!("Indexed Authority: {:?}", indexed_authority);
+        Ok(())
+    }
+
+    pub fn get_current_slot(&self) -> Result<u64, SwigError> {
+        #[cfg(not(test))]
+        let slot = self.rpc_client.get_slot()?;
+        #[cfg(test)]
+        let slot = self.litesvm.get_sysvar::<Clock>().slot;
+        Ok(slot)
+    }
+
     #[cfg(test)]
     pub fn litesvm(&mut self) -> &mut LiteSVM {
         &mut self.litesvm
@@ -631,7 +674,9 @@ mod tests {
         // Verify both authorities exist
         swig_wallet.display_swig().unwrap();
 
-        swig_wallet.remove_authority(1).unwrap();
+        swig_wallet
+            .remove_authority(&secondary_authority.pubkey().to_bytes())
+            .unwrap();
 
         swig_wallet.display_swig().unwrap();
 
@@ -759,7 +804,7 @@ mod tests {
             .airdrop(&swig_account, 10_000_000_000)
             .unwrap();
 
-        swig_wallet.sign(vec![transfer_ix]).unwrap();
+        swig_wallet.sign(vec![transfer_ix], None).unwrap();
 
         // Verify the transfer was successful
         swig_wallet.display_swig().unwrap();
@@ -806,7 +851,7 @@ mod tests {
             2_000_000_000,
         );
 
-        let result = swig_wallet.sign(vec![transfer_ix]);
+        let result = swig_wallet.sign(vec![transfer_ix], None);
         assert!(result.is_err());
     }
 }
