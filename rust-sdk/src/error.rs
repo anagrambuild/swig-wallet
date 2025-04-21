@@ -1,5 +1,4 @@
 use thiserror::Error;
-
 /// Errors that can occur when using the Swig wallet SDK
 #[derive(Error, Debug)]
 pub enum SwigError {
@@ -46,6 +45,18 @@ pub enum SwigError {
     /// Transaction error
     #[error("Transaction error")]
     TransactionError,
+
+    /// Current slot not set
+    #[error("Current slot not set")]
+    CurrentSlotNotSet,
+
+    /// Swig data not found
+    #[error("Swig data not found")]
+    SwigDataNotFound,
+
+    /// Transaction failed
+    #[error("Transaction failed")]
+    TransactionFailed,
 }
 
 impl From<anyhow::Error> for SwigError {
@@ -57,5 +68,22 @@ impl From<anyhow::Error> for SwigError {
 impl From<solana_sdk::message::CompileError> for SwigError {
     fn from(error: solana_sdk::message::CompileError) -> Self {
         SwigError::MessageCompilationError(error.to_string())
+    }
+}
+
+impl From<solana_sdk::signature::SignerError> for SwigError {
+    fn from(error: solana_sdk::signature::SignerError) -> Self {
+        SwigError::TransactionError
+    }
+}
+
+impl From<swig_state_x::SwigStateError> for SwigError {
+    fn from(error: swig_state_x::SwigStateError) -> Self {
+        match error {
+            swig_state_x::SwigStateError::InvalidSwigData => SwigError::InvalidSwigData,
+            _ => SwigError::ProgramError(solana_program::program_error::ProgramError::Custom(
+                error as u32,
+            )),
+        }
     }
 }

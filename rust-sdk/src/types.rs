@@ -11,6 +11,18 @@ use swig_state_x::action::{
 pub struct RecurringConfig {
     /// The time window in slots after which the limit resets
     pub window: u64,
+    pub last_reset: u64,
+    pub current_amount: u64,
+}
+
+impl RecurringConfig {
+    pub fn new(window: u64) -> Self {
+        Self {
+            window,
+            last_reset: 0,
+            current_amount: 0,
+        }
+    }
 }
 
 /// Represents the permissions that can be granted to a wallet authority.

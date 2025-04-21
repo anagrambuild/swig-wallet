@@ -65,7 +65,7 @@ fn test_build_and_execute_swig_account_secp256k1() {
 
     let wallet = LocalSigner::random();
 
-    let eth_pubkey = wallet
+    let secp_pubkey = wallet
         .credential()
         .verifying_key()
         .to_encoded_point(false)
@@ -76,7 +76,7 @@ fn test_build_and_execute_swig_account_secp256k1() {
 
     let builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Secp256k1(eth_pubkey, Box::new(|_| [0u8; 65])),
+        AuthorityManager::Secp256k1(secp_pubkey, Box::new(|_| [0u8; 65])),
         payer.pubkey(),
         role_id,
     );
@@ -199,7 +199,7 @@ fn test_sign_instruction_execution_secp256k1() {
     let role_id = 0;
 
     let wallet = LocalSigner::random();
-    let eth_pubkey = wallet
+    let secp_pubkey = wallet
         .credential()
         .verifying_key()
         .to_encoded_point(false)
@@ -224,7 +224,7 @@ fn test_sign_instruction_execution_secp256k1() {
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Secp256k1(eth_pubkey, Box::new(sign_fn)),
+        AuthorityManager::Secp256k1(secp_pubkey, Box::new(sign_fn)),
         payer.pubkey(),
         role_id,
     );
@@ -366,7 +366,7 @@ fn test_add_authority_instruction_execution_secp256k1() {
 
     let wallet = LocalSigner::random();
 
-    let eth_pubkey = wallet
+    let secp_pubkey = wallet
         .credential()
         .verifying_key()
         .to_encoded_point(false)
@@ -384,7 +384,7 @@ fn test_add_authority_instruction_execution_secp256k1() {
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Secp256k1(eth_pubkey, Box::new(sign_fn)),
+        AuthorityManager::Secp256k1(secp_pubkey, Box::new(sign_fn)),
         payer.pubkey(),
         role_id,
     );
@@ -407,7 +407,7 @@ fn test_add_authority_instruction_execution_secp256k1() {
     let new_ed_authority = Keypair::new();
     let new_authority = LocalSigner::random();
     println!("new authority {:?}", new_authority.address());
-    let eth_pubkey_bytes = new_authority
+    let secp_pubkey_bytes = new_authority
         .credential()
         .verifying_key()
         .to_encoded_point(false)
@@ -422,7 +422,7 @@ fn test_add_authority_instruction_execution_secp256k1() {
     let add_auth_ix = builder
         .add_authority_instruction(
             AuthorityType::Secp256k1,
-            &eth_pubkey_bytes,
+            &secp_pubkey_bytes,
             permissions,
             Some(current_slot),
         )
@@ -557,7 +557,7 @@ fn test_add_authority_and_transfer_sol_secp256k1() {
 
     // Create Swig Wallet with Secp256k1 authority
     let wallet = LocalSigner::random();
-    let eth_pubkey = wallet
+    let secp_pubkey = wallet
         .credential()
         .verifying_key()
         .to_encoded_point(false)
@@ -582,7 +582,7 @@ fn test_add_authority_and_transfer_sol_secp256k1() {
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Secp256k1(eth_pubkey.clone(), Box::new(sign_fn.clone())),
+        AuthorityManager::Secp256k1(secp_pubkey.clone(), Box::new(sign_fn.clone())),
         payer.pubkey(),
         role_id,
     );
@@ -604,7 +604,7 @@ fn test_add_authority_and_transfer_sol_secp256k1() {
     let swig_key = builder.get_swig_account().unwrap();
 
     let new_authority = LocalSigner::random();
-    let new_eth_pubkey = new_authority
+    let new_secp_pubkey = new_authority
         .credential()
         .verifying_key()
         .to_encoded_point(false)
@@ -620,7 +620,7 @@ fn test_add_authority_and_transfer_sol_secp256k1() {
     let add_auth_ix = builder
         .add_authority_instruction(
             AuthorityType::Secp256k1,
-            &new_eth_pubkey,
+            &new_secp_pubkey,
             permissions,
             Some(current_slot),
         )
@@ -654,7 +654,7 @@ fn test_add_authority_and_transfer_sol_secp256k1() {
 
     let mut builder_with_new_authority = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Secp256k1(new_eth_pubkey, Box::new(sign_fn2)),
+        AuthorityManager::Secp256k1(new_secp_pubkey, Box::new(sign_fn2)),
         payer.pubkey(),
         1,
     );

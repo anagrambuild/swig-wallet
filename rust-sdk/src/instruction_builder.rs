@@ -111,7 +111,7 @@ impl SwigInstructionBuilder {
                     signed_instructions.push(swig_signed_instruction);
                 },
                 AuthorityManager::Secp256k1(authority, signing_fn) => {
-                    let current_slot = current_slot.unwrap();
+                    let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
                     let swig_signed_instruction = SignInstruction::new_secp256k1(
                         self.swig_account,
                         self.payer,
@@ -122,7 +122,6 @@ impl SwigInstructionBuilder {
                     )?;
                     signed_instructions.push(swig_signed_instruction);
                 },
-                _ => todo!(),
             }
         }
         Ok(signed_instructions)
@@ -158,7 +157,7 @@ impl SwigInstructionBuilder {
                 )?)
             },
             AuthorityManager::Secp256k1(authority, signing_fn) => {
-                let current_slot = current_slot.unwrap();
+                let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
                 Ok(AddAuthorityInstruction::new_with_secp256k1_authority(
                     self.swig_account,
                     self.payer,
@@ -172,7 +171,6 @@ impl SwigInstructionBuilder {
                     actions,
                 )?)
             },
-            _ => todo!(),
         }
     }
 
@@ -180,18 +178,32 @@ impl SwigInstructionBuilder {
     ///
     /// # Arguments
     /// * `authority_to_remove_id` - The ID of the authority to remove
-    pub fn remove_authority(&self, authority_to_remove_id: u32) -> Result<Instruction, SwigError> {
-        match self.authority_manager {
+    pub fn remove_authority(
+        &mut self,
+        authority_to_remove_id: u32,
+        current_slot: Option<u64>,
+    ) -> Result<Instruction, SwigError> {
+        match &mut self.authority_manager {
             AuthorityManager::Ed25519(authority) => {
                 Ok(RemoveAuthorityInstruction::new_with_ed25519_authority(
                     self.swig_account,
                     self.payer,
-                    authority,
+                    *authority,
                     self.role_id,
                     authority_to_remove_id,
                 )?)
             },
-            _ => todo!(),
+            AuthorityManager::Secp256k1(authority, signing_fn) => {
+                let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                Ok(RemoveAuthorityInstruction::new_with_secp256k1_authority(
+                    self.swig_account,
+                    self.payer,
+                    signing_fn,
+                    self.role_id,
+                    authority_to_remove_id,
+                    current_slot,
+                )?)
+            },
         }
     }
 
@@ -277,5 +289,13 @@ impl SwigInstructionBuilder {
     pub fn switch_payer(&mut self, payer: Pubkey) -> Result<(), SwigError> {
         self.payer = payer;
         Ok(())
+    }
+
+    /// Returns the current authority of the Swig instruction builder
+    pub fn get_current_authority(&self) -> Result<Vec<u8>, SwigError> {
+        match &self.authority_manager {
+            AuthorityManager::Ed25519(authority) => Ok(authority.to_bytes().to_vec()),
+            AuthorityManager::Secp256k1(authority, _) => Ok(authority[1..].to_vec()),
+        }
     }
 }
