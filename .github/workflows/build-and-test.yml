@@ -26,6 +26,11 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
           components: rustfmt, clippy, rust-analyzer
 
+      - name: Install libudev-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev
+
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.8
 
