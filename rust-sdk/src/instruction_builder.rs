@@ -1,15 +1,24 @@
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
     program_id, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
-    RemoveAuthorityInstruction, SignInstruction,
+    CreateSessionInstruction, RemoveAuthorityInstruction, SignInstruction,
 };
-use swig_state_x::{authority::AuthorityType, swig::swig_account_seeds};
+use swig_state_x::{
+    authority::{
+        ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
+        AuthorityType,
+    },
+    swig::swig_account_seeds,
+    IntoBytes,
+};
 
 use crate::{error::SwigError, types::Permission as ClientPermission};
 
 pub enum AuthorityManager {
     Ed25519(Pubkey),
     Secp256k1(Box<[u8]>, Box<dyn FnMut(&[u8]) -> [u8; 65]>),
+    Ed25519Session(CreateEd25519SessionAuthority),
+    Secp256k1Session(CreateSecp256k1SessionAuthority),
 }
 
 /// Represents a Swig wallet instance
@@ -70,6 +79,14 @@ impl SwigInstructionBuilder {
             AuthorityManager::Secp256k1(authority, _) => {
                 (AuthorityType::Secp256k1, &authority[1..])
             },
+            AuthorityManager::Ed25519Session(session_authority) => (
+                AuthorityType::Ed25519Session,
+                &session_authority.into_bytes().unwrap(),
+            ),
+            AuthorityManager::Secp256k1Session(session_authority) => (
+                AuthorityType::Secp256k1Session,
+                &session_authority.into_bytes().unwrap(),
+            ),
         };
 
         let actions = vec![ClientAction::All(swig_state_x::action::all::All {})];
@@ -122,6 +139,21 @@ impl SwigInstructionBuilder {
                     )?;
                     signed_instructions.push(swig_signed_instruction);
                 },
+                AuthorityManager::Ed25519Session(session_authority) => {
+                    let session_authority_pubkey =
+                        Pubkey::new_from_array(session_authority.public_key);
+                    let swig_signed_instruction = SignInstruction::new_ed25519(
+                        self.swig_account,
+                        self.payer,
+                        session_authority_pubkey,
+                        instruction,
+                        self.role_id,
+                    )?;
+                    signed_instructions.push(swig_signed_instruction);
+                },
+                AuthorityManager::Secp256k1Session(session_authority) => {
+                    todo!()
+                },
             }
         }
         Ok(signed_instructions)
@@ -171,6 +203,25 @@ impl SwigInstructionBuilder {
                     actions,
                 )?)
             },
+            AuthorityManager::Ed25519Session(session_authority) => {
+                println!("session authority: {:?}", session_authority.public_key);
+                println!("new authority: {:?}", new_authority);
+
+                Ok(AddAuthorityInstruction::new_with_ed25519_authority(
+                    self.swig_account,
+                    self.payer,
+                    session_authority.public_key.into(),
+                    self.role_id,
+                    AuthorityConfig {
+                        authority_type: new_authority_type,
+                        authority: new_authority,
+                    },
+                    actions,
+                )?)
+            },
+            AuthorityManager::Secp256k1Session(session_authority) => {
+                todo!()
+            },
         }
     }
 
@@ -203,6 +254,12 @@ impl SwigInstructionBuilder {
                     authority_to_remove_id,
                     current_slot,
                 )?)
+            },
+            AuthorityManager::Ed25519Session(session_authority) => {
+                todo!()
+            },
+            AuthorityManager::Secp256k1Session(session_authority) => {
+                todo!()
             },
         }
     }
@@ -254,6 +311,36 @@ impl SwigInstructionBuilder {
         }
     }
 
+    /// Returns instruction to create a session
+    pub fn create_session_instruction(
+        &self,
+        session_key: Pubkey,
+        session_duration: u64,
+    ) -> Result<Instruction, SwigError> {
+        match &self.authority_manager {
+            AuthorityManager::Ed25519Session(session_authority) => {
+                Ok(CreateSessionInstruction::new_with_ed25519_authority(
+                    self.swig_account,
+                    self.payer,
+                    session_authority.public_key.into(),
+                    self.role_id,
+                    session_key,
+                    session_duration,
+                )?)
+            },
+            AuthorityManager::Ed25519(authority) => {
+                Ok(CreateSessionInstruction::new_with_ed25519_authority(
+                    self.swig_account,
+                    self.payer,
+                    *authority,
+                    self.role_id,
+                    session_key,
+                    session_duration,
+                )?)
+            },
+            _ => todo!(),
+        }
+    }
     /// Returns the public key of the Swig account
     pub fn get_swig_account(&self) -> Result<Pubkey, SwigError> {
         Ok(self.swig_account)
@@ -296,6 +383,12 @@ impl SwigInstructionBuilder {
         match &self.authority_manager {
             AuthorityManager::Ed25519(authority) => Ok(authority.to_bytes().to_vec()),
             AuthorityManager::Secp256k1(authority, _) => Ok(authority[1..].to_vec()),
+            AuthorityManager::Ed25519Session(session_authority) => {
+                Ok(session_authority.public_key.to_vec())
+            },
+            AuthorityManager::Secp256k1Session(session_authority) => {
+                Ok(session_authority.public_key.to_vec())
+            },
         }
     }
 }

@@ -37,6 +37,7 @@ pub struct SwigWallet {
     pub rpc_client: RpcClient,
     /// The wallet's fee payer
     fee_payer: Keypair,
+    /// Authority keypair
     /// The LiteSVM instance for testing
     #[cfg(test)]
     litesvm: LiteSVM,
@@ -126,6 +127,12 @@ impl SwigWallet {
                     .map_err(|_| SwigError::AuthorityNotFound)?,
                 AuthorityManager::Secp256k1(authority, _) => swig_with_roles
                     .lookup_role_id(authority.as_ref())
+                    .map_err(|_| SwigError::AuthorityNotFound)?,
+                AuthorityManager::Ed25519Session(session_authority) => swig_with_roles
+                    .lookup_role_id(session_authority.public_key.as_ref())
+                    .map_err(|_| SwigError::AuthorityNotFound)?,
+                AuthorityManager::Secp256k1Session(session_authority) => swig_with_roles
+                    .lookup_role_id(session_authority.public_key.as_ref())
                     .map_err(|_| SwigError::AuthorityNotFound)?,
             }
             .ok_or(SwigError::AuthorityNotFound)?;
@@ -318,7 +325,10 @@ impl SwigWallet {
         let signature = self
             .litesvm
             .send_transaction(tx)
-            .map_err(|_| SwigError::TransactionFailed)?
+            .map_err(|e| {
+                println!("Error: {:?}", e);
+                SwigError::TransactionFailed
+            })?
             .signature;
 
         Ok(signature)
@@ -424,6 +434,11 @@ impl SwigWallet {
                 .get_role(i)
                 .map_err(|e| SwigError::AuthorityNotFound)?;
             if let Some(role) = role {
+                if role.authority.session_based() {
+                    println!("\tRole {} is session based", i);
+                } else {
+                    println!("\tRole {} is not session based", i);
+                }
                 println!("\tRole {}", i);
                 println!("\t\tAuthority Type: {:?}", role.authority.authority_type());
                 println!(
@@ -434,6 +449,7 @@ impl SwigWallet {
                         // into_string(),
                         AuthorityType::Secp256k1 => "Secp256k1".to_string(), // hex::encode(role.
                         // authority.as_slice()),
+                        AuthorityType::Ed25519Session => "Ed25519Session".to_string(),
                         _ => todo!(),
                     }
                 );
@@ -541,15 +557,27 @@ impl SwigWallet {
     }
 
     /// Create a session for the authority
-    pub fn create_session(&self, authority: &[u8]) -> Result<(), SwigError> {
-        let swig_pubkey = self.get_swig_account()?;
-        let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
-        let swig_with_roles =
-            SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
+    pub fn create_session(&mut self, session_key: Pubkey, duration: u64) -> Result<(), SwigError> {
+        let create_session_ix = self
+            .instruction_builder
+            .create_session_instruction(session_key, duration)?;
 
-        let indexed_authority = swig_with_roles.lookup_role_id(authority.as_ref()).unwrap();
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &[create_session_ix],
+            &[],
+            #[cfg(not(test))]
+            self.rpc_client.get_latest_blockhash()?,
+            #[cfg(test)]
+            self.litesvm.latest_blockhash(),
+        )?;
 
-        println!("Indexed Authority: {:?}", indexed_authority);
+        let tx = VersionedTransaction::try_new(
+            VersionedMessage::V0(msg),
+            &[&self.fee_payer.insecure_clone()],
+        )?;
+
+        self.send_and_confirm_transaction(tx)?;
         Ok(())
     }
 
@@ -573,6 +601,7 @@ mod tests {
     use alloy_primitives::B256;
     use alloy_signer::SignerSync;
     use alloy_signer_local::LocalSigner;
+    use authority::ed25519::CreateEd25519SessionAuthority;
 
     fn setup_litesvm() -> (LiteSVM, Keypair) {
         let mut litesvm = LiteSVM::new();
@@ -587,6 +616,55 @@ mod tests {
             .unwrap();
 
         (litesvm, main_authority)
+    }
+
+    #[test]
+    fn test_create_ed25519_session() {
+        let (mut litesvm, main_authority) = setup_litesvm();
+
+        // 1. Create a session based authority
+        let mut swig_wallet = SwigWallet::new(
+            [0; 32],
+            AuthorityManager::Ed25519Session(CreateEd25519SessionAuthority::new(
+                main_authority.pubkey().to_bytes(),
+                [0; 32],
+                100,
+            )),
+            main_authority,
+            "http://localhost:8899".to_string(),
+            litesvm,
+        )
+        .unwrap();
+
+        let swig_pubkey = swig_wallet.get_swig_account().unwrap();
+
+        swig_wallet
+            .litesvm()
+            .airdrop(&swig_pubkey, 10_000_000_000)
+            .unwrap();
+
+        // Start a session
+        let session_key = Keypair::new();
+
+        swig_wallet
+            .create_session(session_key.pubkey(), 100)
+            .unwrap();
+
+        // Add a second non session based authority
+        let second_authority_key = Keypair::new();
+
+        swig_wallet
+            .add_authority(
+                AuthorityType::Ed25519,
+                &second_authority_key.pubkey().to_bytes(),
+                vec![Permission::Sol {
+                    amount: 10_000_000_000,
+                    recurring: None,
+                }],
+            )
+            .unwrap();
+
+        swig_wallet.display_swig().unwrap();
     }
 
     #[test]
