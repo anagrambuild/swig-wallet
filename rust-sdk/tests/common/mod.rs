@@ -51,8 +51,6 @@ pub fn create_swig_ed25519(
     let (swig, bump) =
         Pubkey::find_program_address(&swig_account_seeds(&id), &Pubkey::new_from_array(swig::ID));
 
-    println!("swig: {:?}", swig);
-    println!("bump: {:?}", bump);
     let create_ix = CreateInstruction::new(
         swig,
         bump,

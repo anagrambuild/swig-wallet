@@ -55,8 +55,16 @@ pub enum SwigError {
     SwigDataNotFound,
 
     /// Transaction failed
-    #[error("Transaction failed")]
-    TransactionFailed,
+    #[error("Transaction failed: {0}")]
+    TransactionFailed(String),
+
+    /// Transaction creation failed
+    #[error("Transaction creation failed")]
+    TransactionCreationFailed,
+
+    /// Transaction compilation failed
+    #[error("Transaction compilation failed")]
+    TransactionCompilationFailed,
 }
 
 impl From<anyhow::Error> for SwigError {

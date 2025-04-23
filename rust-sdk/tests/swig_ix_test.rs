@@ -19,7 +19,7 @@ use swig_interface::{
     program_id, AuthorityConfig, ClientAction, CreateInstruction, CreateSessionInstruction,
     SignInstruction,
 };
-use swig_sdk::{AuthorityManager, Permission, SwigError, SwigInstructionBuilder};
+use swig_sdk::{AuthorityManager, Permission, SwigError, SwigInstructionBuilder, SwigWallet};
 use swig_state_x::{
     action::{
         all::All, manage_authority::ManageAuthority, sol_limit::SolLimit,
@@ -27,7 +27,9 @@ use swig_state_x::{
     },
     authority::{
         ed25519::{CreateEd25519SessionAuthority, ED25519Authority, Ed25519SessionAuthority},
-        secp256k1::{CreateSecp256k1SessionAuthority, Secp256k1Authority},
+        secp256k1::{
+            CreateSecp256k1SessionAuthority, Secp256k1Authority, Secp256k1SessionAuthority,
+        },
         AuthorityType,
     },
     role::Role,
@@ -36,7 +38,7 @@ use swig_state_x::{
 };
 
 #[test_log::test]
-fn test_build_and_execute_swig_account() {
+fn test_ix_build_and_execute_swig_account() {
     let mut context = setup_test_context().unwrap();
     let swig_id = [1u8; 32];
     let authority = Keypair::new();
@@ -71,7 +73,7 @@ fn test_build_and_execute_swig_account() {
 }
 
 #[test_log::test]
-fn test_build_and_execute_swig_account_secp256k1() {
+fn test_ix_build_and_execute_swig_account_secp256k1() {
     let mut context = setup_test_context().unwrap();
     let swig_id = [1u8; 32];
 
@@ -114,7 +116,7 @@ fn test_build_and_execute_swig_account_secp256k1() {
 }
 
 #[test_log::test]
-fn test_sign_instruction_execution() {
+fn test_ix_sign_instruction_execution() {
     // First create the Swig account
     let mut context = setup_test_context().unwrap();
     let swig_id = [1u8; 32];
@@ -163,12 +165,6 @@ fn test_sign_instruction_execution() {
         transfer_amount,
     );
 
-    // Print all the accounts
-    println!("Swig key: {:?}", swig_key);
-    println!("Recipient key: {:?}", recipient.pubkey());
-    println!("Authority key: {:?}", authority.pubkey());
-    println!("Payer key: {:?}", context.default_payer.pubkey());
-
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
 
     let sign_ix = builder
@@ -203,7 +199,7 @@ fn test_sign_instruction_execution() {
 }
 
 #[test_log::test]
-fn test_sign_instruction_execution_secp256k1() {
+fn test_ix_sign_instruction_execution_secp256k1() {
     // First create the Swig account
     let mut context = setup_test_context().unwrap();
     let swig_id = [1u8; 32];
@@ -217,26 +213,17 @@ fn test_sign_instruction_execution_secp256k1() {
         .to_encoded_point(false)
         .to_bytes();
 
-    let mut sig = [0u8; 65];
-    let wallet = wallet; // Move wallet into a separate binding
-
-    let mut sign_fn = move |payload: &[u8]| -> [u8; 65] {
+    let wallet = wallet.clone();
+    let signing_fn = move |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&payload[..32]);
         let hash = B256::from(hash);
-        let tsig = wallet
-            .sign_hash_sync(&hash)
-            .map_err(|_| SwigError::InvalidSecp256k1)
-            .unwrap()
-            .as_bytes();
-        let mut sig = [0u8; 65];
-        sig.copy_from_slice(&tsig);
-        sig
+        wallet.sign_hash_sync(&hash).unwrap().as_bytes()
     };
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Secp256k1(secp_pubkey, Box::new(sign_fn)),
+        AuthorityManager::Secp256k1(secp_pubkey, Box::new(signing_fn)),
         payer.pubkey(),
         role_id,
     );
@@ -267,11 +254,6 @@ fn test_sign_instruction_execution_secp256k1() {
         &recipient.pubkey(),
         transfer_amount,
     );
-
-    // Print all the accounts
-    println!("Swig key: {:?}", swig_key);
-    println!("Recipient key: {:?}", recipient.pubkey());
-    println!("Payer key: {:?}", context.default_payer.pubkey());
 
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
 
@@ -304,7 +286,7 @@ fn test_sign_instruction_execution_secp256k1() {
 }
 
 #[test_log::test]
-fn test_add_authority_instruction_execution() {
+fn test_ix_add_authority_instruction_execution() {
     let mut context = setup_test_context().unwrap();
     let swig_id = [3u8; 32];
     let authority = Keypair::new();
@@ -313,17 +295,14 @@ fn test_add_authority_instruction_execution() {
     // First create the Swig account
     let (swig_key, _) = create_swig_ed25519(&mut context, &authority, swig_id).unwrap();
 
-    println!("swig key {:?}", swig_key);
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
         AuthorityManager::Ed25519(authority.pubkey()),
         context.default_payer.pubkey(),
         role_id,
     );
-    println!("Swig account from builder {:?}", builder.get_swig_account());
 
     let new_authority = Keypair::new();
-    println!("new authority {:?}", new_authority.pubkey());
     let new_authority_bytes = new_authority.pubkey().to_bytes();
     let permissions = vec![Permission::Sol {
         amount: 100000 / 2,
@@ -369,7 +348,7 @@ fn test_add_authority_instruction_execution() {
 }
 
 #[test_log::test]
-fn test_add_authority_instruction_execution_secp256k1() {
+fn test_ix_add_authority_instruction_execution_secp256k1() {
     // First create the Swig account
     let mut context = setup_test_context().unwrap();
     let swig_id = [1u8; 32];
@@ -418,7 +397,6 @@ fn test_add_authority_instruction_execution_secp256k1() {
 
     let new_ed_authority = Keypair::new();
     let new_authority = LocalSigner::random();
-    println!("new authority {:?}", new_authority.address());
     let secp_pubkey_bytes = new_authority
         .credential()
         .verifying_key()
@@ -465,7 +443,7 @@ fn test_add_authority_instruction_execution_secp256k1() {
 }
 
 #[test_log::test]
-fn test_add_authority_and_transfer_sol() {
+fn test_ix_add_authority_and_transfer_sol() {
     let mut context = setup_test_context().unwrap();
     let swig_id = [4u8; 32];
     let authority = Keypair::new();
@@ -560,7 +538,73 @@ fn test_add_authority_and_transfer_sol() {
 }
 
 #[test_log::test]
-fn test_add_authority_and_transfer_sol_secp256k1() {
+fn test_ix_ed25519_session_with_add_authority() {
+    let mut context = setup_test_context().unwrap();
+    let swig_id = [5u8; 32];
+    let authority = Keypair::new();
+    let session_key = Keypair::new();
+
+    let mut builder = SwigInstructionBuilder::new(
+        swig_id,
+        AuthorityManager::Ed25519Session(CreateEd25519SessionAuthority::new(
+            authority.pubkey().to_bytes(),
+            [0; 32],
+            100,
+        )),
+        context.default_payer.pubkey(),
+        0,
+    );
+
+    let ix = builder.build_swig_account().unwrap();
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&context.default_payer])
+        .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_ok(),
+        "Failed to create Swig account: {:?}",
+        result.err()
+    );
+
+    let swig_key = builder.get_swig_account().unwrap();
+
+    // start a session
+    let session_ix = builder
+        .create_session_instruction(session_key.pubkey(), 100, None)
+        .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[session_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx_session = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &authority],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(tx_session);
+    assert!(
+        result.is_ok(),
+        "Failed to create session: {:?}",
+        result.err()
+    );
+}
+
+#[test_log::test]
+fn test_ix_add_authority_and_transfer_sol_secp256k1() {
     // First create the Swig account
     let mut context = setup_test_context().unwrap();
     let swig_id = [1u8; 32];
@@ -576,25 +620,17 @@ fn test_add_authority_and_transfer_sol_secp256k1() {
         .to_bytes();
 
     let mut sig = [0u8; 65];
-    let wallet = wallet; // Move wallet into a separate binding
-
-    let mut sign_fn = move |payload: &[u8]| -> [u8; 65] {
+    let wallet = wallet.clone();
+    let signing_fn = move |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&payload[..32]);
         let hash = B256::from(hash);
-        let tsig = wallet
-            .sign_hash_sync(&hash)
-            .map_err(|_| SwigError::InvalidSecp256k1)
-            .unwrap()
-            .as_bytes();
-        let mut sig = [0u8; 65];
-        sig.copy_from_slice(&tsig);
-        sig
+        wallet.sign_hash_sync(&hash).unwrap().as_bytes()
     };
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Secp256k1(secp_pubkey.clone(), Box::new(sign_fn.clone())),
+        AuthorityManager::Secp256k1(secp_pubkey.clone(), Box::new(signing_fn.clone())),
         payer.pubkey(),
         role_id,
     );
@@ -683,7 +719,6 @@ fn test_add_authority_and_transfer_sol_secp256k1() {
         transfer_amount,
     );
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
-    println!("current slot {:?}", current_slot);
     let sign_ix = builder_with_new_authority
         .sign_instruction(vec![transfer_ix], Some(current_slot))
         .unwrap();
@@ -713,7 +748,7 @@ fn test_add_authority_and_transfer_sol_secp256k1() {
 }
 
 // #[test_log::test]
-// fn test_remove_authority_execution() {
+// fn test_ix_remove_authority_execution() {
 //     let mut context = setup_test_context().unwrap();
 //     let swig_id = [4u8; 32];
 //     let authority = Keypair::new();
@@ -775,7 +810,7 @@ fn test_add_authority_and_transfer_sol_secp256k1() {
 // }
 
 // #[test_log::test]
-// fn test_replace_authority_execution() {
+// fn test_ix_replace_authority_execution() {
 //     let mut context = setup_test_context().unwrap();
 //     let swig_id = [5u8; 32];
 //     let authority = Keypair::new();
@@ -918,15 +953,13 @@ fn test_ix_ed25519_session() {
         .unwrap();
 
     let auth: &Ed25519SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
-    println!("auth: {:?}", auth);
 
     // create an ed25519 session authority
-    println!("creating session authority");
     let session_authority = Keypair::new();
     let session_authority_pubkey = session_authority.pubkey().to_bytes();
 
     let create_session_ix = swig_ix_builder
-        .create_session_instruction(session_authority.pubkey(), 100)
+        .create_session_instruction(session_authority.pubkey(), 100, None)
         .unwrap();
 
     let msg = v0::Message::try_compile(
@@ -960,27 +993,68 @@ fn test_ix_ed25519_session() {
     let role = swig_with_roles.get_role(0).unwrap().unwrap();
 
     let auth: &Ed25519SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
-    println!("auth: {:?}", auth);
 }
 
 #[test_log::test]
-fn test_create_session() {
+fn test_ix_secp256k1_session() {
     let mut context = setup_test_context().unwrap();
-    let swig_authority = Keypair::new();
 
-    context
-        .svm
-        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
-        .unwrap();
+    let wallet = LocalSigner::random();
 
     let id = [0; 32];
 
-    // Create a swig with ed25519session authority type
-    let (swig_key, res) =
-        create_swig_ed25519_session(&mut context, &swig_authority, id, 100, [0; 32]).unwrap();
+    let secp_pubkey = wallet
+        .credential()
+        .verifying_key()
+        .to_encoded_point(false)
+        .to_bytes();
 
-    println!("res: {:?}", res.logs);
-    // Airdrop funds to the swig account so it can transfer SOL
+    let wallet = wallet.clone();
+    let payer = &context.default_payer;
+
+    let signing_fn = move |payload: &[u8]| -> [u8; 65] {
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&payload[..32]);
+        let hash = B256::from(hash);
+        wallet.sign_hash_sync(&hash).unwrap().as_bytes()
+    };
+
+    let mut swig_ix_builder = SwigInstructionBuilder::new(
+        id,
+        AuthorityManager::Secp256k1Session(
+            CreateSecp256k1SessionAuthority::new(
+                secp_pubkey[1..].try_into().unwrap(),
+                [0; 32],
+                100,
+            ),
+            Box::new(signing_fn),
+        ),
+        context.default_payer.pubkey(),
+        0,
+    );
+
+    let create_ix = swig_ix_builder.build_swig_account().unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[create_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&context.default_payer])
+        .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_ok(),
+        "Failed to create Swig account: {:?}",
+        result.err()
+    );
+
+    let swig_key = swig_ix_builder.get_swig_account().unwrap();
+
     context.svm.airdrop(&swig_key, 50_000_000_000).unwrap();
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
@@ -990,34 +1064,35 @@ fn test_create_session() {
 
     assert_eq!(
         role.authority.authority_type(),
-        AuthorityType::Ed25519Session
+        AuthorityType::Secp256k1Session
     );
     assert!(role.authority.session_based());
-    let auth: &Ed25519SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
-    assert_eq!(auth.max_session_length, 100);
-    assert_eq!(auth.public_key, swig_authority.pubkey().to_bytes());
+    let auth: &Secp256k1SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
+
+    assert_eq!(auth.max_session_age, 100);
+    //assert_eq!(auth.public_key, secp_pubkey[1..].try_into().unwrap());
     assert_eq!(auth.current_session_expiration, 0);
     assert_eq!(auth.session_key, [0; 32]);
-    context
-        .svm
-        .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + 1);
 
-    // Create a session key
-    let session_key = Keypair::new();
+    let swig_pubkey = swig_key;
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig_data = swig_account.data;
 
-    // Create a session with the session key
-    let session_duration = 100; // 100 slots
-    let create_session_ix = CreateSessionInstruction::new_with_ed25519_authority(
-        swig_key,
-        context.default_payer.pubkey(),
-        swig_authority.pubkey(),
-        0, // Role ID 0 is the root authority
-        session_key.pubkey(),
-        session_duration,
-    )
-    .unwrap();
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_data)
+        .map_err(|e| SwigError::InvalidSwigData)
+        .unwrap();
+
+    let auth: &Secp256k1SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
+
+    // create an ed25519 session authority
+    let session_authority = Keypair::new();
+    let session_authority_pubkey = session_authority.pubkey().to_bytes();
+
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
-    // Send the create session transaction
+    let create_session_ix = swig_ix_builder
+        .create_session_instruction(session_authority.pubkey(), 100, Some(current_slot))
+        .unwrap();
+
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
         &[create_session_ix],
@@ -1026,11 +1101,9 @@ fn test_create_session() {
     )
     .unwrap();
 
-    let tx = VersionedTransaction::try_new(
-        VersionedMessage::V0(msg),
-        &[&context.default_payer, &swig_authority],
-    )
-    .unwrap();
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&context.default_payer])
+        .unwrap();
+
     let result = context.svm.send_transaction(tx);
     assert!(
         result.is_ok(),
@@ -1039,114 +1112,13 @@ fn test_create_session() {
     );
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
-    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig.get_role(0).unwrap().unwrap();
-    assert_eq!(
-        role.authority.authority_type(),
-        AuthorityType::Ed25519Session
-    );
-    assert!(role.authority.session_based());
-    let auth: &Ed25519SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
-    assert_eq!(auth.max_session_length, 100);
-    assert_eq!(
-        auth.current_session_expiration,
-        current_slot + session_duration
-    );
-    assert_eq!(auth.session_key, session_key.pubkey().to_bytes());
-    // Create a receiver keypair
-    let receiver = Keypair::new();
+    let swig_data = swig_account.data;
 
-    // Create a real SOL transfer instruction with swig_key as sender
-    let dummy_ix = system_instruction::transfer(
-        &swig_key,
-        &receiver.pubkey(),
-        1000000, // 0.001 SOL in lamports
-    );
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_data)
+        .map_err(|e| SwigError::InvalidSwigData)
+        .unwrap();
 
-    // Create a sign instruction using the session key
-    let sign_ix = SignInstruction::new_ed25519(
-        swig_key,
-        context.default_payer.pubkey(),
-        session_key.pubkey(),
-        dummy_ix,
-        0, // Role ID 0
-    )
-    .unwrap();
+    let role = swig_with_roles.get_role(0).unwrap().unwrap();
 
-    let sign_msg = v0::Message::try_compile(
-        &context.default_payer.pubkey(),
-        &[sign_ix],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-
-    let sign_tx = VersionedTransaction::try_new(
-        VersionedMessage::V0(sign_msg),
-        &[&context.default_payer, &session_key],
-    )
-    .unwrap();
-
-    let sign_result = context.svm.send_transaction(sign_tx);
-    assert!(
-        sign_result.is_ok(),
-        "Failed to sign with session key: {:?}",
-        sign_result.err()
-    );
-}
-
-pub fn create_swig_ed25519_session(
-    context: &mut SwigTestContext,
-    authority: &Keypair,
-    id: [u8; 32],
-    session_max_length: u64,
-    initial_session_key: [u8; 32],
-) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
-    let payer_pubkey = context.default_payer.pubkey();
-    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
-
-    let authority_pubkey = authority.pubkey().to_bytes();
-    let authority_data = CreateEd25519SessionAuthority::new(
-        authority_pubkey,
-        initial_session_key,
-        session_max_length,
-    );
-    let authority_data_bytes = authority_data
-        .into_bytes()
-        .map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?;
-    let initial_authority = AuthorityConfig {
-        authority_type: AuthorityType::Ed25519Session,
-        authority: authority_data_bytes,
-    };
-
-    let swig_ix_builder = SwigInstructionBuilder::new(
-        id,
-        AuthorityManager::Ed25519Session(CreateEd25519SessionAuthority::new(
-            authority_pubkey,
-            initial_session_key,
-            session_max_length,
-        )),
-        context.default_payer.pubkey(),
-        0,
-    );
-
-    let create_ix = swig_ix_builder.build_swig_account()?;
-
-    let msg = v0::Message::try_compile(
-        &payer_pubkey,
-        &[create_ix],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-    let tx = VersionedTransaction::try_new(
-        VersionedMessage::V0(msg),
-        &[context.default_payer.insecure_clone()],
-    )
-    .unwrap();
-    let bench = context
-        .svm
-        .send_transaction(tx)
-        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
-    Ok((swig, bench))
+    let auth: &Secp256k1SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
 }

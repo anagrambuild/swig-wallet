@@ -16,9 +16,12 @@ use crate::{error::SwigError, types::Permission as ClientPermission};
 
 pub enum AuthorityManager {
     Ed25519(Pubkey),
-    Secp256k1(Box<[u8]>, Box<dyn FnMut(&[u8]) -> [u8; 65]>),
+    Secp256k1(Box<[u8]>, Box<dyn Fn(&[u8]) -> [u8; 65]>),
     Ed25519Session(CreateEd25519SessionAuthority),
-    Secp256k1Session(CreateSecp256k1SessionAuthority),
+    Secp256k1Session(
+        CreateSecp256k1SessionAuthority,
+        Box<dyn Fn(&[u8]) -> [u8; 65]>,
+    ),
 }
 
 /// Represents a Swig wallet instance
@@ -83,7 +86,7 @@ impl SwigInstructionBuilder {
                 AuthorityType::Ed25519Session,
                 &session_authority.into_bytes().unwrap(),
             ),
-            AuthorityManager::Secp256k1Session(session_authority) => (
+            AuthorityManager::Secp256k1Session(session_authority, _) => (
                 AuthorityType::Secp256k1Session,
                 &session_authority.into_bytes().unwrap(),
             ),
@@ -151,7 +154,7 @@ impl SwigInstructionBuilder {
                     )?;
                     signed_instructions.push(swig_signed_instruction);
                 },
-                AuthorityManager::Secp256k1Session(session_authority) => {
+                AuthorityManager::Secp256k1Session(session_authority, _) => {
                     todo!()
                 },
             }
@@ -219,7 +222,7 @@ impl SwigInstructionBuilder {
                     actions,
                 )?)
             },
-            AuthorityManager::Secp256k1Session(session_authority) => {
+            AuthorityManager::Secp256k1Session(session_authority, _) => {
                 todo!()
             },
         }
@@ -258,7 +261,7 @@ impl SwigInstructionBuilder {
             AuthorityManager::Ed25519Session(session_authority) => {
                 todo!()
             },
-            AuthorityManager::Secp256k1Session(session_authority) => {
+            AuthorityManager::Secp256k1Session(session_authority, _) => {
                 todo!()
             },
         }
@@ -316,6 +319,7 @@ impl SwigInstructionBuilder {
         &self,
         session_key: Pubkey,
         session_duration: u64,
+        current_slot: Option<u64>,
     ) -> Result<Instruction, SwigError> {
         match &self.authority_manager {
             AuthorityManager::Ed25519Session(session_authority) => {
@@ -333,6 +337,18 @@ impl SwigInstructionBuilder {
                     self.swig_account,
                     self.payer,
                     *authority,
+                    self.role_id,
+                    session_key,
+                    session_duration,
+                )?)
+            },
+            AuthorityManager::Secp256k1Session(session_authority, signing_fn) => {
+                let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                Ok(CreateSessionInstruction::new_with_secp256k1_authority(
+                    self.swig_account,
+                    self.payer,
+                    signing_fn,
+                    current_slot,
                     self.role_id,
                     session_key,
                     session_duration,
@@ -386,7 +402,7 @@ impl SwigInstructionBuilder {
             AuthorityManager::Ed25519Session(session_authority) => {
                 Ok(session_authority.public_key.to_vec())
             },
-            AuthorityManager::Secp256k1Session(session_authority) => {
+            AuthorityManager::Secp256k1Session(session_authority, _) => {
                 Ok(session_authority.public_key.to_vec())
             },
         }
