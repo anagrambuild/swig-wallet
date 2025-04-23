@@ -209,9 +209,6 @@ mod authority_management_tests {
 
         // Add third authority with recurring permissions
         let third_authority = Keypair::new();
-        swig_wallet
-            .authenticate_authority(&third_authority.pubkey().to_bytes())
-            .unwrap();
 
         swig_wallet
             .add_authority(
@@ -264,6 +261,57 @@ mod authority_management_tests {
 
         swig_wallet.switch_payer(&secondary_authority).unwrap();
         swig_wallet.display_swig().unwrap();
+    }
+
+    #[test]
+    fn should_replace_authority() {
+        let (mut litesvm, main_authority) = setup_test_environment();
+        let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+        let old_authority = Keypair::new();
+        let new_authority = Keypair::new();
+
+        println!("old authority: {:?}", old_authority.pubkey());
+        println!("new authority: {:?}", new_authority.pubkey());
+        // Add old authority with SOL permission
+        swig_wallet
+            .add_authority(
+                AuthorityType::Ed25519,
+                &old_authority.pubkey().to_bytes(),
+                vec![Permission::Sol {
+                    amount: 10_000_000_000,
+                    recurring: None,
+                }],
+            )
+            .unwrap();
+
+        // Verify old authority exists
+        swig_wallet.display_swig().unwrap();
+
+        // Replace old authority with new authority
+        swig_wallet
+            .replace_authority(
+                1,
+                AuthorityType::Ed25519,
+                &new_authority.pubkey().to_bytes(),
+                vec![Permission::Sol {
+                    amount: 5_000_000_000, // Different amount to verify the replacement
+                    recurring: None,
+                }],
+            )
+            .unwrap();
+
+        // Verify the replacement
+        swig_wallet.display_swig().unwrap();
+
+        // Try to authenticate with new authority (should succeed)
+        assert!(swig_wallet
+            .authenticate_authority(&new_authority.pubkey().to_bytes())
+            .is_ok());
+
+        // Try to authenticate with old authority (should fail)
+        assert!(swig_wallet
+            .authenticate_authority(&old_authority.pubkey().to_bytes())
+            .is_err());
     }
 }
 

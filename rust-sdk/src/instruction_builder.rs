@@ -154,8 +154,17 @@ impl SwigInstructionBuilder {
                     )?;
                     signed_instructions.push(swig_signed_instruction);
                 },
-                AuthorityManager::Secp256k1Session(session_authority, _) => {
-                    todo!()
+                AuthorityManager::Secp256k1Session(session_authority, signing_fn) => {
+                    let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                    let swig_signed_instruction = SignInstruction::new_secp256k1(
+                        self.swig_account,
+                        self.payer,
+                        signing_fn,
+                        current_slot,
+                        instruction,
+                        self.role_id,
+                    )?;
+                    signed_instructions.push(swig_signed_instruction);
                 },
             }
         }
@@ -207,9 +216,6 @@ impl SwigInstructionBuilder {
                 )?)
             },
             AuthorityManager::Ed25519Session(session_authority) => {
-                println!("session authority: {:?}", session_authority.public_key);
-                println!("new authority: {:?}", new_authority);
-
                 Ok(AddAuthorityInstruction::new_with_ed25519_authority(
                     self.swig_account,
                     self.payer,
@@ -222,8 +228,20 @@ impl SwigInstructionBuilder {
                     actions,
                 )?)
             },
-            AuthorityManager::Secp256k1Session(session_authority, _) => {
-                todo!()
+            AuthorityManager::Secp256k1Session(session_authority, signing_fn) => {
+                let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                Ok(AddAuthorityInstruction::new_with_secp256k1_authority(
+                    self.swig_account,
+                    self.payer,
+                    signing_fn,
+                    current_slot,
+                    self.role_id,
+                    AuthorityConfig {
+                        authority_type: new_authority_type,
+                        authority: new_authority,
+                    },
+                    actions,
+                )?)
             },
         }
     }
@@ -259,10 +277,24 @@ impl SwigInstructionBuilder {
                 )?)
             },
             AuthorityManager::Ed25519Session(session_authority) => {
-                todo!()
+                Ok(RemoveAuthorityInstruction::new_with_ed25519_authority(
+                    self.swig_account,
+                    self.payer,
+                    session_authority.public_key.into(),
+                    self.role_id,
+                    authority_to_remove_id,
+                )?)
             },
-            AuthorityManager::Secp256k1Session(session_authority, _) => {
-                todo!()
+            AuthorityManager::Secp256k1Session(session_authority, signing_fn) => {
+                let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                Ok(RemoveAuthorityInstruction::new_with_secp256k1_authority(
+                    self.swig_account,
+                    self.payer,
+                    signing_fn,
+                    self.role_id,
+                    authority_to_remove_id,
+                    current_slot,
+                )?)
             },
         }
     }
@@ -275,16 +307,44 @@ impl SwigInstructionBuilder {
     /// * `new_authority` - The new authority's credentials
     /// * `permissions` - Vector of permissions to grant to the new authority
     pub fn replace_authority(
-        &self,
+        &mut self,
         authority_to_replace_id: u32,
         new_authority_type: AuthorityType,
         new_authority: &[u8],
         permissions: Vec<ClientPermission>,
+        current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let actions = ClientPermission::to_client_actions(permissions);
 
-        match self.authority_manager {
+        match &mut self.authority_manager {
             AuthorityManager::Ed25519(authority) => {
+                let remove_authority_instruction =
+                    RemoveAuthorityInstruction::new_with_ed25519_authority(
+                        self.swig_account,
+                        self.payer,
+                        *authority,
+                        self.role_id,
+                        authority_to_replace_id,
+                    )?;
+                let add_authority_instruction =
+                    AddAuthorityInstruction::new_with_ed25519_authority(
+                        self.swig_account,
+                        self.payer,
+                        *authority,
+                        self.role_id,
+                        AuthorityConfig {
+                            authority_type: new_authority_type,
+                            authority: new_authority,
+                        },
+                        actions,
+                    )?;
+                Ok(vec![
+                    remove_authority_instruction,
+                    add_authority_instruction,
+                ])
+            },
+            AuthorityManager::Ed25519Session(session_authority) => {
+                let authority: Pubkey = session_authority.public_key.into();
                 let remove_authority_instruction =
                     RemoveAuthorityInstruction::new_with_ed25519_authority(
                         self.swig_account,
@@ -310,6 +370,32 @@ impl SwigInstructionBuilder {
                     add_authority_instruction,
                 ])
             },
+            AuthorityManager::Secp256k1(authority, signing_fn) => {
+                todo!("Must manually remove and add authority due to Signing Function")
+                // let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                // Ok(vec![
+                //     RemoveAuthorityInstruction::new_with_secp256k1_authority(
+                //         self.swig_account,
+                //         self.payer,
+                //         signing_fn,
+                //         self.role_id,
+                //         authority_to_replace_id,
+                //         current_slot,
+                //     )?,
+                //     AddAuthorityInstruction::new_with_secp256k1_authority(
+                //         self.swig_account,
+                //         self.payer,
+                //         signing_fn,
+                //         current_slot,
+                //         self.role_id,
+                //         AuthorityConfig {
+                //             authority_type: new_authority_type,
+                //             authority: new_authority,
+                //         },
+                //         actions,
+                //     )?,
+                // ])
+            },
             _ => todo!(),
         }
     }
@@ -332,16 +418,6 @@ impl SwigInstructionBuilder {
                     session_duration,
                 )?)
             },
-            AuthorityManager::Ed25519(authority) => {
-                Ok(CreateSessionInstruction::new_with_ed25519_authority(
-                    self.swig_account,
-                    self.payer,
-                    *authority,
-                    self.role_id,
-                    session_key,
-                    session_duration,
-                )?)
-            },
             AuthorityManager::Secp256k1Session(session_authority, signing_fn) => {
                 let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
                 Ok(CreateSessionInstruction::new_with_secp256k1_authority(
@@ -354,7 +430,28 @@ impl SwigInstructionBuilder {
                     session_duration,
                 )?)
             },
-            _ => todo!(),
+            AuthorityManager::Ed25519(authority) => {
+                Ok(CreateSessionInstruction::new_with_ed25519_authority(
+                    self.swig_account,
+                    self.payer,
+                    *authority,
+                    self.role_id,
+                    session_key,
+                    session_duration,
+                )?)
+            },
+            AuthorityManager::Secp256k1(authority, signing_fn) => {
+                let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                Ok(CreateSessionInstruction::new_with_secp256k1_authority(
+                    self.swig_account,
+                    self.payer,
+                    signing_fn,
+                    current_slot,
+                    self.role_id,
+                    session_key,
+                    session_duration,
+                )?)
+            },
         }
     }
     /// Returns the public key of the Swig account

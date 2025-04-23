@@ -294,18 +294,24 @@ impl<'c> SwigWallet<'c> {
         new_authority: &[u8],
         permissions: Vec<Permission>,
     ) -> Result<Signature, SwigError> {
+        let current_slot = self.get_current_slot()?;
+
         let instructions = self.instruction_builder.replace_authority(
             authority_to_replace_id,
             new_authority_type,
             new_authority,
             permissions,
+            Some(current_slot),
         )?;
 
         let msg = v0::Message::try_compile(
             &self.fee_payer.pubkey(),
             &instructions,
             &[],
+            #[cfg(not(test))]
             self.rpc_client.get_latest_blockhash()?,
+            #[cfg(test)]
+            self.litesvm.latest_blockhash(),
         )?;
 
         let tx = VersionedTransaction::try_new(
@@ -564,7 +570,11 @@ impl<'c> SwigWallet<'c> {
         let indexed_authority = swig_with_roles.lookup_role_id(authority.as_ref()).unwrap();
 
         println!("Indexed Authority: {:?}", indexed_authority);
-        Ok(())
+        if indexed_authority.is_some() {
+            Ok(())
+        } else {
+            Err(SwigError::AuthorityNotFound)
+        }
     }
 
     /// Create a session for the authority
