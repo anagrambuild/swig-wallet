@@ -48,7 +48,7 @@ impl From<NumericType> for u8 {
 }
 
 #[repr(C, align(8))]
-#[derive(Debug, NoPadding)]
+#[derive(NoPadding)]
 pub struct ProgramScope {
     // 8-byte aligned fields
     pub current_amount: u128,     // 16 bytes
