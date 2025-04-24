@@ -38,6 +38,7 @@ alloy-signer-local = { version = "0.14.0" }
 [features]
 test-bpf = []
 no-entrypoint = []
+program_scope_test = []
 
 [lib]
 crate-type = ["cdylib", "lib"]

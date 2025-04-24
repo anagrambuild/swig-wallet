@@ -3,6 +3,7 @@ use core::mem::MaybeUninit;
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
+    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
     sysvars::{clock::Clock, Sysvar},
@@ -13,8 +14,9 @@ use swig_assertions::*;
 use swig_compact_instructions::InstructionIterator;
 use swig_state_x::{
     action::{
-        all::All, sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
-        token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit,
+        all::All, program_scope::ProgramScope, sol_limit::SolLimit,
+        sol_recurring_limit::SolRecurringLimit, token_limit::TokenLimit,
+        token_recurring_limit::TokenRecurringLimit,
     },
     authority::AuthorityType,
     role::RoleMut,
@@ -214,6 +216,7 @@ pub fn sign_v1(
                     if balance > &current_token_balance {
                         let mut matched = false;
                         let diff = balance - current_token_balance;
+
                         {
                             if let Some(action) =
                                 RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?
@@ -237,6 +240,73 @@ pub fn sign_v1(
                             );
                         }
                     }
+                },
+                AccountClassification::ProgramScope {
+                    role_index,
+                    balance,
+                } => {
+                    // Get the data from the account
+                    let data =
+                        unsafe { &all_accounts.get_unchecked(index).borrow_data_unchecked() };
+
+                    // Get the role with the ProgramScope action
+                    let owner = unsafe { all_accounts.get_unchecked(index).owner() };
+                    let program_scope =
+                        RoleMut::get_action_mut::<ProgramScope>(actions, owner.as_ref())?;
+
+                    match program_scope {
+                        Some(program_scope) => {
+                            // First verify this is the target account
+                            let account_key =
+                                unsafe { all_accounts.get_unchecked(index).key().as_slice() };
+                            if account_key != program_scope.target_account {
+                                return Err(
+                                    SwigAuthenticateError::PermissionDeniedMissingPermission.into(),
+                                );
+                            }
+
+                            match program_scope.scope_type {
+                                x if x == 0 => Ok::<(), ProgramError>(()), // Basic type always
+                                // passes
+                                x if x == 1 => {
+                                    // Limit type
+                                    if program_scope.current_amount == 0 {
+                                        return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
+                                    }
+                                    Ok::<(), ProgramError>(())
+                                },
+                                x if x == 2 => {
+                                    // RecurringLimit type
+                                    // Get current slot for window check
+                                    let clock = Clock::get()?;
+                                    let current_slot = clock.slot;
+
+                                    if current_slot - program_scope.last_reset
+                                        > program_scope.window
+                                    {
+                                        program_scope.current_amount = program_scope.limit;
+                                        program_scope.last_reset = current_slot;
+                                    }
+
+                                    if program_scope.current_amount == 0 {
+                                        return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
+                                    }
+                                    Ok::<(), ProgramError>(())
+                                },
+                                _ => {
+                                    Err(SwigAuthenticateError::PermissionDeniedMissingPermission
+                                        .into())
+                                },
+                            }?;
+                        },
+                        None => {
+                            return Err(
+                                SwigAuthenticateError::PermissionDeniedMissingPermission.into()
+                            );
+                        },
+                    }
+
+                    continue;
                 },
                 _ => {},
             }
