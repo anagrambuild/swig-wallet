@@ -34,14 +34,17 @@ use crate::{
 #[cfg(test)]
 use crate::tests::wallet_tests;
 
+/// Swig protocol for transaction signing and authority management.
+///
+/// This struct provides methods for interacting with a Swig wallet on chain,
 pub struct SwigWallet<'a> {
-    /// The underlying instruction builder
+    /// The underlying instruction builder for creating Swig instructions
     instruction_builder: SwigInstructionBuilder,
     /// RPC client for interacting with the Solana network
     pub rpc_client: RpcClient,
-    /// The wallet's fee payer
+    /// The wallet's fee payer keypair
     fee_payer: &'a Keypair,
-    /// Authority keypair
+    /// The authority keypair for signing transactions
     authority: &'a Keypair,
     /// The LiteSVM instance for testing
     #[cfg(test)]
@@ -49,14 +52,20 @@ pub struct SwigWallet<'a> {
 }
 
 impl<'c> SwigWallet<'c> {
-    /// Creates a new SwigWallet instance
+    /// Creates a new SwigWallet instance or initializes an existing one
     ///
     /// # Arguments
-    /// * `swig_account` - The public key of the Swig account
-    /// * `authority` - The wallet's authority credentials
+    ///
+    /// * `swig_id` - The unique identifier for the Swig account
+    /// * `authority_manager` - The authority manager specifying the type of signing authority
     /// * `fee_payer` - The keypair that will pay for transactions
-    /// * `role_id` - The role id for this wallet
+    /// * `authority` - The wallet's authority keypair
     /// * `rpc_url` - The URL of the Solana RPC endpoint
+    /// * `litesvm` - (test only) The LiteSVM instance for testing
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the new `SwigWallet` instance or a `SwigError`
     pub fn new(
         swig_id: [u8; 32],
         authority_manager: AuthorityManager,
@@ -170,12 +179,17 @@ impl<'c> SwigWallet<'c> {
         }
     }
 
-    /// Adds a new authority to the wallet
+    /// Adds a new authority to the wallet with specified permissions
     ///
     /// # Arguments
-    /// * `new_authority_type` - The type of the new authority
-    /// * `new_authority` - The new authority's credentials
+    ///
+    /// * `new_authority_type` - The type of authority to add (Ed25519, Secp256k1, etc.)
+    /// * `new_authority` - The new authority's credentials as bytes
     /// * `permissions` - Vector of permissions to grant to the new authority
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the transaction signature or a `SwigError`
     pub fn add_authority(
         &mut self,
         new_authority_type: AuthorityType,
@@ -206,10 +220,15 @@ impl<'c> SwigWallet<'c> {
         self.send_and_confirm_transaction(tx)
     }
 
-    /// Removes an authority from the wallet
+    /// Removes an existing authority from the wallet
     ///
     /// # Arguments
-    /// * `authority` - The authority to remove
+    ///
+    /// * `authority` - The authority's public key as bytes to remove
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the transaction signature or a `SwigError`
     pub fn remove_authority(&mut self, authority: &[u8]) -> Result<Signature, SwigError> {
         let swig_pubkey = self.get_swig_account()?;
         #[cfg(not(test))]
@@ -247,10 +266,16 @@ impl<'c> SwigWallet<'c> {
         }
     }
 
-    /// Signs a transaction with the given instructions
+    /// Signs a transaction containing the provided instructions
     ///
     /// # Arguments
-    /// * `inner_instructions` - The instructions to sign
+    ///
+    /// * `inner_instructions` - Vector of instructions to include in the transaction
+    /// * `alt` - Optional slice of Address Lookup Table accounts
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the transaction signature or a `SwigError`
     pub fn sign(
         &mut self,
         inner_instructions: Vec<Instruction>,
@@ -280,13 +305,18 @@ impl<'c> SwigWallet<'c> {
         self.send_and_confirm_transaction(tx)
     }
 
-    /// Replaces an existing authority
+    /// Replaces an existing authority with a new one
     ///
     /// # Arguments
+    ///
     /// * `authority_to_replace_id` - The ID of the authority to replace
     /// * `new_authority_type` - The type of the new authority
-    /// * `new_authority` - The new authority's credentials
+    /// * `new_authority` - The new authority's credentials as bytes
     /// * `permissions` - Vector of permissions to grant to the new authority
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the transaction signature or a `SwigError`
     pub fn replace_authority(
         &mut self,
         authority_to_replace_id: u32,
@@ -322,10 +352,15 @@ impl<'c> SwigWallet<'c> {
         self.send_and_confirm_transaction(tx)
     }
 
-    /// Signs and executes a transaction with the given instructions
+    /// Sends and confirms a transaction on the Solana network
     ///
     /// # Arguments
-    /// * `instructions` - The instructions to include in the transaction
+    ///
+    /// * `tx` - The versioned transaction to send
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the transaction signature or a `SwigError`
     fn send_and_confirm_transaction(
         &mut self,
         tx: VersionedTransaction,
@@ -343,11 +378,19 @@ impl<'c> SwigWallet<'c> {
     }
 
     /// Returns the public key of the Swig account
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the Swig account's public key or a `SwigError`
     pub fn get_swig_account(&self) -> Result<Pubkey, SwigError> {
         self.instruction_builder.get_swig_account()
     }
 
-    /// Returns the permissions of the authority of the Swig account
+    /// Retrieves the current authority's permissions from the Swig account
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing a vector of the authority's permissions or a `SwigError`
     pub fn get_current_authority_permissions(&self) -> Result<Vec<Permission>, SwigError> {
         let swig_pubkey = self.get_swig_account()?;
 
@@ -413,7 +456,13 @@ impl<'c> SwigWallet<'c> {
         Ok(permissions)
     }
 
-    /// Prints the Swig account
+    /// Displays detailed information about the Swig wallet
+    ///
+    /// This includes account details, roles, and permissions for all authorities.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing unit type or a `SwigError`
     pub fn display_swig(&self) -> Result<(), SwigError> {
         let swig_pubkey = self.get_swig_account()?;
 
@@ -536,28 +585,46 @@ impl<'c> SwigWallet<'c> {
         Ok(())
     }
 
-    /// Switches the authority of the Swig account
+    /// Switches to a different authority for the Swig wallet
     ///
     /// # Arguments
-    /// * `role_id` - The ID of the role to switch to
-    /// * `authority` - The new authority's credentials
+    ///
+    /// * `role_id` - The new role ID to switch to
+    /// * `authority` - The public key of the new authority
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing unit type or a `SwigError`
     pub fn switch_authority(&mut self, role_id: u32, authority: Pubkey) -> Result<(), SwigError> {
         self.instruction_builder
             .switch_authority(role_id, authority)?;
         Ok(())
     }
 
-    /// Switches the payer of the Swig account
+    /// Updates the fee payer for the Swig wallet
     ///
     /// # Arguments
-    /// * `payer` - The new payer's credentials
+    ///
+    /// * `payer` - The new fee payer's keypair
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing unit type or a `SwigError`
     pub fn switch_payer(&mut self, payer: &'c Keypair) -> Result<(), SwigError> {
         self.instruction_builder.switch_payer(payer.pubkey())?;
         self.fee_payer = payer;
         Ok(())
     }
 
-    /// Authenticate the authority of the Swig account
+    /// Verifies if the provided authority exists in the Swig wallet
+    ///
+    /// # Arguments
+    ///
+    /// * `authority` - The authority's public key as bytes to verify
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing unit type or a `SwigError` if the authority is not found
     pub fn authenticate_authority(&self, authority: &[u8]) -> Result<(), SwigError> {
         let swig_pubkey = self.get_swig_account()?;
         #[cfg(not(test))]
@@ -577,7 +644,16 @@ impl<'c> SwigWallet<'c> {
         }
     }
 
-    /// Create a session for the authority
+    /// Creates a new session for the current authority
+    ///
+    /// # Arguments
+    ///
+    /// * `session_key` - The public key for the new session
+    /// * `duration` - The duration of the session in slots
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing unit type or a `SwigError`
     pub fn create_session(&mut self, session_key: Pubkey, duration: u64) -> Result<(), SwigError> {
         let current_slot = self.get_current_slot()?;
         let create_session_ix = self.instruction_builder.create_session_instruction(
@@ -605,6 +681,11 @@ impl<'c> SwigWallet<'c> {
         Ok(())
     }
 
+    /// Retrieves the current slot number from the Solana network
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the current slot number or a `SwigError`
     pub fn get_current_slot(&self) -> Result<u64, SwigError> {
         #[cfg(not(test))]
         let slot = self.rpc_client.get_slot()?;
@@ -613,6 +694,11 @@ impl<'c> SwigWallet<'c> {
         Ok(slot)
     }
 
+    /// Returns the SOL balance of the Swig account
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the balance in lamports or a `SwigError`
     pub fn get_balance(&self) -> Result<u64, SwigError> {
         let swig_pubkey = self.get_swig_account()?;
         #[cfg(not(test))]
@@ -622,6 +708,11 @@ impl<'c> SwigWallet<'c> {
         Ok(balance)
     }
 
+    /// Returns a mutable reference to the LiteSVM instance (test only)
+    ///
+    /// # Returns
+    ///
+    /// Returns a mutable reference to the LiteSVM instance
     #[cfg(test)]
     pub fn litesvm(&mut self) -> &mut LiteSVM {
         &mut self.litesvm
