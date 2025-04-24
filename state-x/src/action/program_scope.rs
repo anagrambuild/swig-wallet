@@ -50,7 +50,6 @@ impl From<NumericType> for u8 {
 #[repr(C, align(8))]
 #[derive(NoPadding)]
 pub struct ProgramScope {
-    // 8-byte aligned fields
     pub current_amount: u128,     // 16 bytes
     pub limit: u128,              // 16 bytes
     pub window: u64,              // 8 bytes
