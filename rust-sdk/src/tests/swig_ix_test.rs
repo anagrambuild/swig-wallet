@@ -1081,7 +1081,8 @@ fn test_switch_authority_and_payer() {
     let new_authority = Keypair::new();
     let new_payer = Keypair::new();
 
-    builder.switch_authority(1, new_authority.pubkey()).unwrap();
+    let authority_manager = AuthorityManager::Ed25519(new_authority.pubkey());
+    builder.switch_authority(1, authority_manager).unwrap();
     assert_eq!(builder.get_role_id(), 1);
     assert_eq!(
         builder.get_current_authority().unwrap(),

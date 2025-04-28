@@ -595,9 +595,13 @@ impl<'c> SwigWallet<'c> {
     /// # Returns
     ///
     /// Returns a `Result` containing unit type or a `SwigError`
-    pub fn switch_authority(&mut self, role_id: u32, authority: Pubkey) -> Result<(), SwigError> {
+    pub fn switch_authority(
+        &mut self,
+        role_id: u32,
+        authority_manager: AuthorityManager,
+    ) -> Result<(), SwigError> {
         self.instruction_builder
-            .switch_authority(role_id, authority)?;
+            .switch_authority(role_id, authority_manager)?;
         Ok(())
     }
 

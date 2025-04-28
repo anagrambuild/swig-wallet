@@ -6,6 +6,10 @@ pub enum SwigError {
     #[error("Invalid authority type provided")]
     InvalidAuthorityType,
 
+    /// Indicates that an invalid authority was provided
+    #[error("Invalid authority provided")]
+    InvalidAuthority,
+
     /// Error occurred during base58 decoding
     #[error("Base58 decode error: {0}")]
     Base58DecodeError(#[from] bs58::decode::Error),
@@ -65,6 +69,10 @@ pub enum SwigError {
     /// Transaction compilation failed
     #[error("Transaction compilation failed")]
     TransactionCompilationFailed,
+
+    /// Invalid signing function
+    #[error("Invalid signing function")]
+    InvalidSigningFunction,
 }
 
 impl From<anyhow::Error> for SwigError {
