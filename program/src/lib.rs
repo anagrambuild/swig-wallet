@@ -27,7 +27,14 @@ use swig_state_x::{
 };
 use util::ProgramScopeCache;
 
-declare_id!("swigNmWhy8RvUYXBKV5TSU8Hh3f4o5EczHouzBzEsLC");
+#[cfg(feature = "devnet")]
+const PROGRAM_ID: &str = "swigDk8JezhiAVde8k6NMwxpZfgGm2NNuMe1KYCmUjP";
+#[cfg(not(feature = "devnet"))]
+#[cfg(feature = "mainnet")]
+const PROGRAM_ID: &str = "swigNmWhy8RvUYXBKV5TSU8Hh3f4o5EczHouzBzEsLC";
+
+declare_id!(PROGRAM_ID);
+
 const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const SPL_TOKEN_2022_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 const STAKING_ID: Pubkey = pubkey!("Stake11111111111111111111111111111111111111");

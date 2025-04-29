@@ -9,7 +9,13 @@ use pinocchio::{
 use pinocchio_pubkey::declare_id;
 use pinocchio_system::ID as SYSTEM_ID;
 
-declare_id!("swigNmWhy8RvUYXBKV5TSU8Hh3f4o5EczHouzBzEsLC");
+#[cfg(feature = "devnet")]
+const PROGRAM_ID: &str = "swigDk8JezhiAVde8k6NMwxpZfgGm2NNuMe1KYCmUjP";
+#[cfg(not(feature = "devnet"))]
+#[cfg(feature = "mainnet")]
+const PROGRAM_ID: &str = "swigNmWhy8RvUYXBKV5TSU8Hh3f4o5EczHouzBzEsLC";
+
+declare_id!(PROGRAM_ID);
 
 #[allow(unused_imports)]
 use std::mem::MaybeUninit;
