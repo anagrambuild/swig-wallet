@@ -109,7 +109,6 @@ impl AuthorityInfo for Secp256k1Authority {
         slot: u64,
     ) -> Result<(), ProgramError> {
         secp_authority_authenticate(
-            // &mut self.sig_filter,
             &self.public_key,
             authority_payload,
             data_payload,
@@ -132,7 +131,6 @@ impl IntoBytes for Secp256k1Authority {
 pub struct Secp256k1SessionAuthority {
     pub public_key: [u8; 33],
     _padding: [u8; 7],
-    // pub sig_filter: Secp256k1SigFilter,
     pub session_key: [u8; 32],
     pub max_session_age: u64,
     pub current_session_expiration: u64,
