@@ -4,14 +4,13 @@ use core::mem::MaybeUninit;
 
 #[allow(unused_imports)]
 use pinocchio::syscalls::{sol_keccak256, sol_secp256k1_recover};
-use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
+use pinocchio::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey};
 use swig_assertions::sol_assert_bytes_eq;
 
 use super::{ed25519::ed25519_authenticate, Authority, AuthorityInfo, AuthorityType};
 use crate::{IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut};
 
 const MAX_SIGNATURE_AGE_IN_SLOTS: u64 = 60;
-define_tiny_filter!(Secp256k1SigFilter, 60, 10, 8);
 
 #[derive(Debug, no_padding::NoPadding)]
 #[repr(C, align(8))]
@@ -50,7 +49,6 @@ impl IntoBytes for CreateSecp256k1SessionAuthority {
 pub struct Secp256k1Authority {
     pub public_key: [u8; 33],
     _padding: [u8; 7],
-    pub sig_filter: Secp256k1SigFilter,
 }
 
 impl Transmutable for Secp256k1Authority {
@@ -105,17 +103,17 @@ impl AuthorityInfo for Secp256k1Authority {
 
     fn authenticate(
         &mut self,
-        _account_infos: &[pinocchio::account_info::AccountInfo],
+        account_infos: &[pinocchio::account_info::AccountInfo],
         authority_payload: &[u8],
         data_payload: &[u8],
         slot: u64,
     ) -> Result<(), ProgramError> {
         secp_authority_authenticate(
-            &mut self.sig_filter,
             &self.public_key,
             authority_payload,
             data_payload,
             slot,
+            account_infos,
         )
     }
 }
@@ -133,7 +131,6 @@ impl IntoBytes for Secp256k1Authority {
 pub struct Secp256k1SessionAuthority {
     pub public_key: [u8; 33],
     _padding: [u8; 7],
-    pub sig_filter: Secp256k1SigFilter,
     pub session_key: [u8; 32],
     pub max_session_age: u64,
     pub current_session_expiration: u64,
@@ -191,17 +188,17 @@ impl AuthorityInfo for Secp256k1SessionAuthority {
 
     fn authenticate(
         &mut self,
-        _account_infos: &[pinocchio::account_info::AccountInfo],
+        account_infos: &[pinocchio::account_info::AccountInfo],
         authority_payload: &[u8],
         data_payload: &[u8],
         slot: u64,
     ) -> Result<(), ProgramError> {
         secp_authority_authenticate(
-            &mut self.sig_filter,
             &self.public_key,
             authority_payload,
             data_payload,
             slot,
+            account_infos,
         )
     }
 
@@ -249,33 +246,26 @@ impl IntoBytes for Secp256k1SessionAuthority {
 }
 
 fn secp_authority_authenticate(
-    filter: &mut Secp256k1SigFilter,
     expected_key: &[u8; 33],
     authority_payload: &[u8],
     data_payload: &[u8],
     current_slot: u64,
+    account_infos: &[AccountInfo],
 ) -> Result<(), ProgramError> {
     if authority_payload.len() < 73 {
         return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
     }
     let authority_slot =
         u64::from_le_bytes(unsafe { authority_payload.get_unchecked(..8).try_into().unwrap() });
-    if filter.contains(
-        authority_payload,
-        authority_slot,
-        MAX_SIGNATURE_AGE_IN_SLOTS,
-    ) {
-        return Err(SwigAuthenticateError::PermissionDeniedSecp256k1InvalidSignature.into());
-    }
+
     secp256k1_authenticate(
         expected_key,
         authority_payload[8..].try_into().unwrap(),
         data_payload,
         authority_slot,
         current_slot,
+        account_infos,
     )?;
-
-    filter.insert(authority_payload, authority_slot);
     Ok(())
 }
 
@@ -285,6 +275,7 @@ fn secp256k1_authenticate(
     data_payload: &[u8],
     authority_slot: u64,
     current_slot: u64,
+    account_infos: &[AccountInfo],
 ) -> Result<(), ProgramError> {
     if authority_payload.len() != 65 {
         return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
@@ -292,16 +283,32 @@ fn secp256k1_authenticate(
     if current_slot < authority_slot || current_slot - authority_slot > MAX_SIGNATURE_AGE_IN_SLOTS {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256k1InvalidSignature.into());
     }
+
+    let mut accounts_payload = [0u8; 64 * AccountsPayload::LEN];
+
+    let mut cursor = 0;
+
+    for account in account_infos {
+        let offset = cursor + AccountsPayload::LEN;
+        accounts_payload[cursor..offset]
+            .copy_from_slice(AccountsPayload::from(account).into_bytes()?);
+        cursor = offset;
+    }
+
     #[allow(unused)]
     let mut recovered_key = MaybeUninit::<[u8; 64]>::uninit();
     #[allow(unused)]
     let mut hash = MaybeUninit::<[u8; 32]>::uninit();
     #[allow(unused)]
-    let data: &[&[u8]] = &[data_payload, &authority_slot.to_le_bytes()];
+    let data: &[&[u8]] = &[
+        data_payload,
+        &accounts_payload[..cursor],
+        &authority_slot.to_le_bytes(),
+    ];
     let matches = unsafe {
         // do not remove this line we must hash the instruction payload
         #[cfg(target_os = "solana")]
-        let res = sol_keccak256(data.as_ptr() as *const u8, 2, hash.as_mut_ptr() as *mut u8);
+        let res = sol_keccak256(data.as_ptr() as *const u8, 3, hash.as_mut_ptr() as *mut u8);
         #[cfg(not(target_os = "solana"))]
         let res = 0;
         if res != 0 {
@@ -344,4 +351,42 @@ fn compress(key: &[u8; 64]) -> [u8; 33] {
     compressed[0] = if key[63] & 1 == 0 { 0x02 } else { 0x03 };
     compressed[1..33].copy_from_slice(&key[..32]);
     compressed
+}
+
+#[repr(C, align(8))]
+#[derive(Copy, Clone, no_padding::NoPadding)]
+pub struct AccountsPayload {
+    pub pubkey: Pubkey,
+    pub is_writable: bool,
+    pub is_signer: bool,
+    _padding: [u8; 6],
+}
+
+impl AccountsPayload {
+    pub fn new(pubkey: Pubkey, is_writable: bool, is_signer: bool) -> Self {
+        Self {
+            pubkey,
+            is_writable,
+            is_signer,
+            _padding: [0u8; 6],
+        }
+    }
+}
+
+impl Transmutable for AccountsPayload {
+    const LEN: usize = core::mem::size_of::<AccountsPayload>();
+}
+
+impl IntoBytes for AccountsPayload {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
+        let bytes =
+            unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
+        Ok(bytes)
+    }
+}
+
+impl From<&AccountInfo> for AccountsPayload {
+    fn from(info: &AccountInfo) -> Self {
+        Self::new(*info.key(), info.is_writable(), info.is_signer())
+    }
 }

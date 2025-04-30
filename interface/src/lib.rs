@@ -16,7 +16,7 @@ use swig_state_x::{
         sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
         token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit, Action, Permission,
     },
-    authority::AuthorityType,
+    authority::{secp256k1::AccountsPayload, AuthorityType},
     swig::swig_account_seeds,
     IntoBytes, Transmutable,
 };
@@ -91,8 +91,16 @@ pub struct AuthorityConfig<'a> {
     pub authority: &'a [u8],
 }
 
-fn prepare_secp_payload(current_slot: u64, data_payload: &[u8]) -> [u8; 32] {
-    hash(&[data_payload, &current_slot.to_le_bytes()].concat()).to_bytes()
+fn prepare_secp_payload(
+    current_slot: u64,
+    data_payload: &[u8],
+    accounts_payload: &[u8],
+) -> [u8; 32] {
+    hash(&[data_payload, accounts_payload, &current_slot.to_le_bytes()].concat()).to_bytes()
+}
+
+fn accounts_payload_from_meta(meta: &AccountMeta) -> AccountsPayload {
+    AccountsPayload::new(meta.pubkey.to_bytes(), meta.is_writable, meta.is_signer)
 }
 
 pub struct CreateInstruction;
@@ -215,11 +223,19 @@ impl AddAuthorityInstruction {
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes
+                .extend_from_slice(accounts_payload_from_meta(account).into_bytes().unwrap());
+        }
+
         let mut signature_bytes = Vec::new();
         signature_bytes.extend_from_slice(arg_bytes);
         signature_bytes.extend_from_slice(new_authority_config.authority);
         signature_bytes.extend_from_slice(&action_bytes);
-        let nonced_payload = prepare_secp_payload(current_slot, &signature_bytes);
+        let nonced_payload =
+            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes);
         let signature = authority_payload_fn(&nonced_payload);
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
@@ -288,9 +304,20 @@ impl SignInstruction {
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
         let mut signature_bytes = Vec::new();
         signature_bytes.extend_from_slice(&ix_bytes);
-        let nonced_payload = prepare_secp_payload(current_slot, &signature_bytes);
+        let nonced_payload =
+            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes);
         let signature = authority_payload_fn(&nonced_payload);
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
@@ -351,9 +378,19 @@ impl RemoveAuthorityInstruction {
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
         let mut signature_bytes = Vec::new();
         signature_bytes.extend_from_slice(arg_bytes);
-        let nonced_payload = prepare_secp_payload(current_slot, &signature_bytes);
+        let nonced_payload =
+            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes);
         let signature = authority_payload_fn(&nonced_payload);
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
@@ -416,9 +453,20 @@ impl CreateSessionInstruction {
         let args_bytes = create_session_args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
         let mut signature_bytes = Vec::new();
         signature_bytes.extend_from_slice(args_bytes);
-        let nonced_payload = prepare_secp_payload(current_slot, &signature_bytes);
+        let nonced_payload =
+            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes);
         let signature = authority_payload_fn(&nonced_payload);
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
