@@ -247,21 +247,49 @@ impl<'a> SwigBuilder<'a> {
 pub struct Swig {
     pub discriminator: u8,
     pub bump: u8,
+    pub is_sub_account: u8, // 0 = not a sub-account, 1 = is a sub-account
+    pub _reserved: u8,      // Reserved for future use
+    pub roles: u32,
     pub id: [u8; 32],
-    pub roles: u16,
-    pub role_counter: u32, // ensure unique ids up to 2^32
+    pub role_counter: u32,       // ensure unique ids up to 2^32
+    pub sub_accounts_count: u32, // Number of sub-accounts this wallet has
     pub reserved_lamports: u64,
+    pub parent: [u8; 32], // 32 bytes for parent pubkey, all zeros for main accounts
 }
 
 impl Swig {
     pub fn new(id: [u8; 32], bump: u8, reserved_lamports: u64) -> Self {
         Self {
             discriminator: Discriminator::SwigAccount as u8,
-            id,
             bump,
+            is_sub_account: 0,
+            _reserved: 0,
             roles: 0,
+            id,
             role_counter: 0,
+            sub_accounts_count: 0,
             reserved_lamports,
+            parent: [0; 32],
+        }
+    }
+
+    pub fn new_sub_account(
+        id: [u8; 32],
+        bump: u8,
+        parent: [u8; 32],
+        reserved_lamports: u64,
+    ) -> Self {
+        Self {
+            discriminator: Discriminator::SwigAccount as u8,
+            bump,
+            is_sub_account: 1,
+            _reserved: 0,
+            roles: 0,
+            id,
+            role_counter: 0,
+            sub_accounts_count: 0,
+            reserved_lamports,
+            parent,
         }
     }
 }

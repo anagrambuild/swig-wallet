@@ -1,6 +1,8 @@
 pub mod add_authority_v1;
 pub mod create_session_v1;
+pub mod create_sub_account_v1;
 pub mod create_v1;
+pub mod manage_sub_account_v1;
 pub mod remove_authority_v1;
 pub mod sign_v1;
 
@@ -8,13 +10,15 @@ use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError, ProgramResult};
 
 use self::{
-    add_authority_v1::*, create_session_v1::*, create_v1::*, remove_authority_v1::*, sign_v1::*,
+    add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*, create_v1::*,
+    manage_sub_account_v1::*, remove_authority_v1::*, sign_v1::*,
 };
 use crate::{
     instruction::{
         accounts::{
-            AddAuthorityV1Accounts, CreateSessionV1Accounts, CreateV1Accounts,
-            RemoveAuthorityV1Accounts, SignV1Accounts,
+            AddAuthorityV1Accounts, CreateSessionV1Accounts, CreateSubAccountV1Accounts,
+            CreateV1Accounts, ManageSubAccountV1Accounts, RemoveAuthorityV1Accounts,
+            SignV1Accounts,
         },
         SwigInstruction,
     },
@@ -52,6 +56,14 @@ pub fn process_action(
         SwigInstruction::CreateSessionV1 => {
             let account_ctx = CreateSessionV1Accounts::context(accounts)?;
             create_session_v1(account_ctx, data, accounts)
+        },
+        SwigInstruction::CreateSubAccountV1 => {
+            let account_ctx = CreateSubAccountV1Accounts::context(accounts)?;
+            create_sub_account_v1(account_ctx, data, accounts)
+        },
+        SwigInstruction::ManageSubAccountV1 => {
+            let account_ctx = ManageSubAccountV1Accounts::context(accounts)?;
+            manage_sub_account_v1(account_ctx, data, accounts)
         },
     }
 }

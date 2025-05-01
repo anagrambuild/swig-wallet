@@ -29,4 +29,25 @@ pub enum SwigInstruction {
   #[account(1, writable, signer, name="payer", desc="the payer")]
   #[account(2, name="system_program", desc="the system program")]
   CreateSessionV1 = 5,
+  #[account(0, writable, signer, name="parent_swig", desc="the parent swig wallet")]
+  #[account(1, writable, name="sub_account", desc="the new sub-account to be created")]
+  #[account(2, writable, signer, name="payer", desc="the payer")]
+  #[account(3, name="system_program", desc="the system program")]
+  CreateSubAccountV1 = 6,
+  #[account(0, writable, signer, name="swig", desc="the swig wallet (parent or sub)")]
+  #[account(1, writable, name="target_sub_account", desc="the sub-account to manage")]
+  #[account(2, writable, signer, name="payer", desc="the payer")]
+  #[account(3, name="system_program", desc="the system program")]
+  ManageSubAccountV1 = 7,
+}
+
+pub mod management_actions {
+    /// Sub-account management operations
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    #[repr(u8)]
+    pub enum SubAccountAction {
+        UpdatePermissions = 0,
+        TransferOwnership = 1,
+        RemoveSubAccount = 2,
+    }
 }
