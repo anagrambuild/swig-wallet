@@ -1463,7 +1463,7 @@ pub fn display_swig(
 }
 
 #[test_log::test]
-fn test_token_transfer_with_program_scope() {
+fn test_sdk_token_transfer_with_program_scope() {
     let mut context = setup_test_context().unwrap();
 
     // Setup payers and recipients
@@ -1526,7 +1526,7 @@ fn test_token_transfer_with_program_scope() {
         &swig_authority,
         AuthorityConfig {
             authority_type: swig_state_x::authority::AuthorityType::Ed25519,
-            authority: swig_authority.pubkey().as_ref(),
+            authority: new_authority.pubkey().as_ref(),
         },
         vec![ClientAction::ProgramScope(program_scope)],
     );
@@ -1621,15 +1621,15 @@ fn test_token_transfer_with_program_scope() {
 
     let sign_ix = swig_interface::SignInstruction::new_ed25519(
         swig,
-        swig_authority.pubkey(),
-        swig_authority.pubkey(),
+        new_authority.pubkey(),
+        new_authority.pubkey(),
         swig_transfer_ix,
         0, // authority role id
     )
     .unwrap();
 
     let swig_transfer_message = v0::Message::try_compile(
-        &swig_authority.pubkey(),
+        &new_authority.pubkey(),
         &[sign_ix],
         &[],
         context.svm.latest_blockhash(),
@@ -1640,7 +1640,7 @@ fn test_token_transfer_with_program_scope() {
 
     let swig_transfer_tx = VersionedTransaction::try_new(
         VersionedMessage::V0(swig_transfer_message),
-        &[swig_authority],
+        &[new_authority],
     )
     .unwrap();
 
