@@ -539,12 +539,13 @@ impl SwigInstructionBuilder {
     /// # Returns
     ///
     /// Returns a `Result` containing unit type or a `SwigError`
-    pub fn switch_authority(&mut self, role_id: u32, authority: Pubkey) -> Result<(), SwigError> {
+    pub fn switch_authority(
+        &mut self,
+        role_id: u32,
+        new_authority_manager: AuthorityManager,
+    ) -> Result<(), SwigError> {
         self.role_id = role_id;
-        self.authority_manager = match self.authority_manager {
-            AuthorityManager::Ed25519(_) => AuthorityManager::Ed25519(authority),
-            _ => todo!("Secp256k1 not yet implemented"),
-        };
+        self.authority_manager = new_authority_manager;
         Ok(())
     }
 

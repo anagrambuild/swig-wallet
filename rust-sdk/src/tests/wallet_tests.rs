@@ -225,7 +225,7 @@ mod authority_management_tests {
 
         // Switch to third authority
         swig_wallet
-            .switch_authority(1, third_authority.pubkey())
+            .switch_authority(1, AuthorityManager::Ed25519(third_authority.pubkey()))
             .unwrap();
 
         swig_wallet
@@ -256,7 +256,7 @@ mod authority_management_tests {
             .unwrap();
 
         swig_wallet
-            .switch_authority(1, secondary_authority.pubkey())
+            .switch_authority(1, AuthorityManager::Ed25519(secondary_authority.pubkey()))
             .unwrap();
 
         swig_wallet.switch_payer(&secondary_authority).unwrap();
@@ -342,7 +342,7 @@ mod transfer_tests {
             .unwrap();
 
         swig_wallet
-            .switch_authority(1, secondary_authority.pubkey())
+            .switch_authority(1, AuthorityManager::Ed25519(secondary_authority.pubkey()))
             .unwrap();
         swig_wallet.switch_payer(&secondary_authority).unwrap();
 
@@ -386,7 +386,7 @@ mod transfer_tests {
             .unwrap();
 
         swig_wallet
-            .switch_authority(1, secondary_authority.pubkey())
+            .switch_authority(1, AuthorityManager::Ed25519(secondary_authority.pubkey()))
             .unwrap();
         swig_wallet.switch_payer(&secondary_authority).unwrap();
 
