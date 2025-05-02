@@ -1,12 +1,14 @@
-#[cfg(test)]
+#[cfg(all(feature = "rust_sdk_test", test))]
 use litesvm::LiteSVM;
 use solana_client::{rpc_client::RpcClient, rpc_request::TokenAccountsFilter};
+use solana_program::hash::Hash;
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use solana_sdk::{
     account::ReadableAccount,
+    address_lookup_table::{state::AddressLookupTable, AddressLookupTableAccount},
     clock::Clock,
     commitment_config::CommitmentConfig,
-    message::{v0, AddressLookupTableAccount, VersionedMessage},
+    message::{v0, VersionedMessage},
     pubkey::{self, ParsePubkeyError},
     rent::Rent,
     signature::{Keypair, Signature, Signer},
@@ -31,9 +33,6 @@ use crate::{
     RecurringConfig,
 };
 
-#[cfg(test)]
-use crate::tests::wallet_tests;
-
 /// Swig protocol for transaction signing and authority management.
 ///
 /// This struct provides methods for interacting with a Swig wallet on chain,
@@ -47,7 +46,7 @@ pub struct SwigWallet<'a> {
     /// The authority keypair for signing transactions
     authority: &'a Keypair,
     /// The LiteSVM instance for testing
-    #[cfg(test)]
+    #[cfg(all(feature = "rust_sdk_test", test))]
     litesvm: LiteSVM,
 }
 
@@ -72,7 +71,7 @@ impl<'c> SwigWallet<'c> {
         fee_payer: &'c Keypair,
         authority: &'c Keypair,
         rpc_url: String,
-        #[cfg(test)] mut litesvm: LiteSVM,
+        #[cfg(all(feature = "rust_sdk_test", test))] mut litesvm: LiteSVM,
     ) -> Result<Self, SwigError> {
         let rpc_client =
             RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::confirmed());
@@ -80,14 +79,14 @@ impl<'c> SwigWallet<'c> {
         // Check if the Swig account already exists
         let swig_account = SwigInstructionBuilder::swig_key(&swig_id);
 
-        #[cfg(not(test))]
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let swig_data = rpc_client.get_account_data(&swig_account);
-        #[cfg(test)]
+        #[cfg(all(feature = "rust_sdk_test", test))]
         let swig_data = litesvm.get_account(&swig_account);
 
-        #[cfg(not(test))]
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let account_exists = swig_data.is_ok();
-        #[cfg(test)]
+        #[cfg(all(feature = "rust_sdk_test", test))]
         let account_exists = swig_data.is_some();
 
         if !account_exists {
@@ -96,24 +95,21 @@ impl<'c> SwigWallet<'c> {
 
             let create_ix = instruction_builder.build_swig_account()?;
 
-            let msg = v0::Message::try_compile(
-                &fee_payer.pubkey(),
-                &[create_ix],
-                &[],
-                #[cfg(not(test))]
-                rpc_client.get_latest_blockhash()?,
-                #[cfg(test)]
-                litesvm.latest_blockhash(),
-            )?;
+            #[cfg(not(all(feature = "rust_sdk_test", test)))]
+            let blockhash = rpc_client.get_latest_blockhash()?;
+            #[cfg(all(feature = "rust_sdk_test", test))]
+            let blockhash = litesvm.latest_blockhash();
+
+            let msg = v0::Message::try_compile(&fee_payer.pubkey(), &[create_ix], &[], blockhash)?;
 
             let tx = VersionedTransaction::try_new(
                 VersionedMessage::V0(msg),
                 &[fee_payer.insecure_clone()],
             )?;
 
-            #[cfg(not(test))]
+            #[cfg(not(all(feature = "rust_sdk_test", test)))]
             let signature = rpc_client.send_and_confirm_transaction(&tx)?;
-            #[cfg(test)]
+            #[cfg(all(feature = "rust_sdk_test", test))]
             let signature = litesvm.send_transaction(tx).unwrap().signature;
 
             Ok(Self {
@@ -121,14 +117,14 @@ impl<'c> SwigWallet<'c> {
                 rpc_client,
                 fee_payer,
                 authority,
-                #[cfg(test)]
+                #[cfg(all(feature = "rust_sdk_test", test))]
                 litesvm,
             })
         } else {
             // Safe unwrap because we know the account exists
-            #[cfg(not(test))]
+            #[cfg(not(all(feature = "rust_sdk_test", test)))]
             let swig_data = swig_data.unwrap();
-            #[cfg(test)]
+            #[cfg(all(feature = "rust_sdk_test", test))]
             let swig_data = swig_data.unwrap().data;
 
             let swig_with_roles =
@@ -173,7 +169,7 @@ impl<'c> SwigWallet<'c> {
                 rpc_client,
                 fee_payer: &fee_payer,
                 authority: &authority,
-                #[cfg(test)]
+                #[cfg(all(feature = "rust_sdk_test", test))]
                 litesvm,
             })
         }
@@ -206,10 +202,7 @@ impl<'c> SwigWallet<'c> {
             &self.fee_payer.pubkey(),
             &[instruction],
             &[],
-            #[cfg(not(test))]
-            self.rpc_client.get_latest_blockhash()?,
-            #[cfg(test)]
-            self.litesvm.latest_blockhash(),
+            self.get_current_blockhash()?,
         )?;
 
         let tx = VersionedTransaction::try_new(
@@ -231,9 +224,9 @@ impl<'c> SwigWallet<'c> {
     /// Returns a `Result` containing the transaction signature or a `SwigError`
     pub fn remove_authority(&mut self, authority: &[u8]) -> Result<Signature, SwigError> {
         let swig_pubkey = self.get_swig_account()?;
-        #[cfg(not(test))]
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
-        #[cfg(test)]
+        #[cfg(all(feature = "rust_sdk_test", test))]
         let swig_data = self.litesvm.get_account(&swig_pubkey).unwrap().data;
         let swig_with_roles =
             SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
@@ -249,10 +242,7 @@ impl<'c> SwigWallet<'c> {
                 &self.fee_payer.pubkey(),
                 &[instruction],
                 &[],
-                #[cfg(not(test))]
-                self.rpc_client.get_latest_blockhash()?,
-                #[cfg(test)]
-                self.litesvm.latest_blockhash(),
+                self.get_current_blockhash()?,
             )?;
 
             let tx = VersionedTransaction::try_new(
@@ -291,10 +281,7 @@ impl<'c> SwigWallet<'c> {
             &self.fee_payer.pubkey(),
             &sign_ix,
             alt,
-            #[cfg(not(test))]
-            self.rpc_client.get_latest_blockhash()?,
-            #[cfg(test)]
-            self.litesvm.latest_blockhash(),
+            self.get_current_blockhash()?,
         )?;
 
         let tx = VersionedTransaction::try_new(
@@ -338,10 +325,7 @@ impl<'c> SwigWallet<'c> {
             &self.fee_payer.pubkey(),
             &instructions,
             &[],
-            #[cfg(not(test))]
-            self.rpc_client.get_latest_blockhash()?,
-            #[cfg(test)]
-            self.litesvm.latest_blockhash(),
+            self.get_current_blockhash()?,
         )?;
 
         let tx = VersionedTransaction::try_new(
@@ -365,9 +349,9 @@ impl<'c> SwigWallet<'c> {
         &mut self,
         tx: VersionedTransaction,
     ) -> Result<Signature, SwigError> {
-        #[cfg(not(test))]
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let signature = self.rpc_client.send_and_confirm_transaction(&tx)?;
-        #[cfg(test)]
+        #[cfg(all(feature = "rust_sdk_test", test))]
         let signature = self
             .litesvm
             .send_transaction(tx)
@@ -394,14 +378,14 @@ impl<'c> SwigWallet<'c> {
     pub fn get_current_authority_permissions(&self) -> Result<Vec<Permission>, SwigError> {
         let swig_pubkey = self.get_swig_account()?;
 
-        #[cfg(not(test))]
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let swig_account = self.rpc_client.get_account(&swig_pubkey)?;
-        #[cfg(test)]
+        #[cfg(all(feature = "rust_sdk_test", test))]
         let swig_account = self.litesvm.get_account(&swig_pubkey).unwrap();
 
-        #[cfg(not(test))]
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
-        #[cfg(test)]
+        #[cfg(all(feature = "rust_sdk_test", test))]
         let swig_data = self.litesvm.get_account(&swig_pubkey).unwrap().data;
         let swig_with_roles =
             SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
@@ -466,14 +450,14 @@ impl<'c> SwigWallet<'c> {
     pub fn display_swig(&self) -> Result<(), SwigError> {
         let swig_pubkey = self.get_swig_account()?;
 
-        #[cfg(not(test))]
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let swig_account = self.rpc_client.get_account(&swig_pubkey)?;
-        #[cfg(test)]
+        #[cfg(all(feature = "rust_sdk_test", test))]
         let swig_account = self.litesvm.get_account(&swig_pubkey).unwrap();
 
-        #[cfg(not(test))]
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
-        #[cfg(test)]
+        #[cfg(all(feature = "rust_sdk_test", test))]
         let swig_data = self.litesvm.get_account(&swig_pubkey).unwrap().data;
 
         let swig_with_roles =
@@ -627,9 +611,9 @@ impl<'c> SwigWallet<'c> {
     /// Returns a `Result` containing unit type or a `SwigError` if the authority is not found
     pub fn authenticate_authority(&self, authority: &[u8]) -> Result<(), SwigError> {
         let swig_pubkey = self.get_swig_account()?;
-        #[cfg(not(test))]
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
-        #[cfg(test)]
+        #[cfg(all(feature = "rust_sdk_test", test))]
         let swig_data = self.litesvm.get_account(&swig_pubkey).unwrap().data;
         let swig_with_roles =
             SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
@@ -666,10 +650,7 @@ impl<'c> SwigWallet<'c> {
             &self.fee_payer.pubkey(),
             &[create_session_ix],
             &[],
-            #[cfg(not(test))]
-            self.rpc_client.get_latest_blockhash()?,
-            #[cfg(test)]
-            self.litesvm.latest_blockhash(),
+            self.get_current_blockhash()?,
         )?;
 
         let tx = VersionedTransaction::try_new(
@@ -687,11 +668,24 @@ impl<'c> SwigWallet<'c> {
     ///
     /// Returns a `Result` containing the current slot number or a `SwigError`
     pub fn get_current_slot(&self) -> Result<u64, SwigError> {
-        #[cfg(not(test))]
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let slot = self.rpc_client.get_slot()?;
-        #[cfg(test)]
+        #[cfg(all(feature = "rust_sdk_test", test))]
         let slot = self.litesvm.get_sysvar::<Clock>().slot;
         Ok(slot)
+    }
+
+    /// Returns the current blockhash from the Solana network
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the current blockhash or a `SwigError`
+    pub fn get_current_blockhash(&self) -> Result<Hash, SwigError> {
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let blockhash = self.rpc_client.get_latest_blockhash()?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let blockhash = self.litesvm.latest_blockhash();
+        Ok(blockhash)
     }
 
     /// Returns the SOL balance of the Swig account
@@ -701,9 +695,9 @@ impl<'c> SwigWallet<'c> {
     /// Returns a `Result` containing the balance in lamports or a `SwigError`
     pub fn get_balance(&self) -> Result<u64, SwigError> {
         let swig_pubkey = self.get_swig_account()?;
-        #[cfg(not(test))]
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let balance = self.rpc_client.get_balance(&swig_pubkey)?;
-        #[cfg(test)]
+        #[cfg(all(feature = "rust_sdk_test", test))]
         let balance = self.litesvm.get_balance(&swig_pubkey).unwrap();
         Ok(balance)
     }
@@ -713,13 +707,13 @@ impl<'c> SwigWallet<'c> {
     /// # Returns
     ///
     /// Returns a mutable reference to the LiteSVM instance
-    #[cfg(test)]
+    #[cfg(all(feature = "rust_sdk_test", test))]
     pub fn litesvm(&mut self) -> &mut LiteSVM {
         &mut self.litesvm
     }
 }
 
-#[cfg(test)]
+#[cfg(all(feature = "rust_sdk_test", test))]
 mod tests {
     use super::*;
     use crate::tests::wallet_tests;

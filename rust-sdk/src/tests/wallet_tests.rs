@@ -51,7 +51,7 @@ fn create_test_wallet(litesvm: LiteSVM, authority: &Keypair) -> SwigWallet {
 mod wallet_creation_tests {
     use super::*;
 
-    #[test]
+    #[test_log::test]
     fn should_create_ed25519_wallet() {
         let (litesvm, main_authority) = setup_test_environment();
         let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
@@ -64,7 +64,7 @@ mod wallet_creation_tests {
         assert_eq!(swig_with_roles.state.id, [0; 32]);
     }
 
-    #[test]
+    #[test_log::test]
     fn should_create_secp256k1_wallet() {
         let (mut litesvm, main_authority) = setup_test_environment();
         let wallet = LocalSigner::random();
@@ -105,7 +105,7 @@ mod wallet_creation_tests {
 mod session_authority_tests {
     use super::*;
 
-    #[test]
+    #[test_log::test]
     fn should_create_ed25519_session_authority() {
         let (mut litesvm, main_authority) = setup_test_environment();
         let session_key = Keypair::new();
@@ -138,7 +138,7 @@ mod session_authority_tests {
         swig_wallet.display_swig().unwrap();
     }
 
-    #[test]
+    #[test_log::test]
     fn should_create_secp256k1_session_authority() {
         let (mut litesvm, main_authority) = setup_test_environment();
         let wallet = LocalSigner::random();
@@ -179,7 +179,7 @@ mod session_authority_tests {
 mod authority_management_tests {
     use super::*;
 
-    #[test]
+    #[test_log::test]
     fn should_manage_authorities_successfully() {
         let (mut litesvm, main_authority) = setup_test_environment();
         let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
@@ -233,7 +233,7 @@ mod authority_management_tests {
             .unwrap();
     }
 
-    #[test]
+    #[test_log::test]
     fn should_switch_authority_and_payer() {
         let (mut litesvm, main_authority) = setup_test_environment();
         let secondary_authority = Keypair::new();
@@ -263,7 +263,7 @@ mod authority_management_tests {
         swig_wallet.display_swig().unwrap();
     }
 
-    #[test]
+    #[test_log::test]
     fn should_replace_authority() {
         let (mut litesvm, main_authority) = setup_test_environment();
         let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
@@ -319,7 +319,7 @@ mod transfer_tests {
     use super::*;
     use solana_program::system_instruction;
 
-    #[test]
+    #[test_log::test]
     fn should_transfer_within_limits() {
         let (mut litesvm, main_authority) = setup_test_environment();
         let secondary_authority = Keypair::new();
@@ -363,7 +363,7 @@ mod transfer_tests {
         swig_wallet.display_swig().unwrap();
     }
 
-    #[test]
+    #[test_log::test]
     fn should_fail_transfer_beyond_limits() {
         let (mut litesvm, main_authority) = setup_test_environment();
         let secondary_authority = Keypair::new();

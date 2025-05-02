@@ -23,5 +23,8 @@ alloy-primitives = { version = "1.0.0", features = ["k256"] }
 alloy-signer = { version = "0.14.0" }
 alloy-signer-local = { version = "0.14.0" }
 
+[features]
+rust_sdk_test = []
+
 [lints]
 workspace = true
