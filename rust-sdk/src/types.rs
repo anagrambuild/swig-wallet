@@ -1,7 +1,8 @@
 use solana_program::pubkey::Pubkey;
 use swig_interface::ClientAction;
 use swig_state_x::action::{
-    all::All, manage_authority::ManageAuthority, program::Program, sol_limit::SolLimit,
+    all::All, manage_authority::ManageAuthority, program::Program,
+    program_scope::ProgramScope as ProgramScopeAction, sol_limit::SolLimit,
     sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount, token_limit::TokenLimit,
     token_recurring_limit::TokenRecurringLimit,
 };
@@ -70,6 +71,19 @@ pub enum Permission {
         program_id: Pubkey,
     },
 
+    /// Advanced program permission with optional limits and recurring windows
+    ProgramScope {
+        /// The program ID that this permission grants access to
+        program_id: Pubkey,
+        /// The target account this scope applies to
+        target_account: Pubkey,
+        /// Optional amount limit for program interactions
+        amount: Option<u64>,
+        /// Optional recurring configuration. If provided along with amount,
+        /// creates a recurring limit that resets after the specified window
+        recurring: Option<RecurringConfig>,
+    },
+
     /// Permission to manage sub-accounts. This allows creating and managing
     /// hierarchical wallet structures through sub-accounts.
     SubAccount {
@@ -129,6 +143,49 @@ impl Permission {
                     actions.push(ClientAction::Program(Program {
                         program_id: program_id.to_bytes(),
                     }));
+                },
+                Permission::ProgramScope {
+                    program_id,
+                    target_account,
+                    amount,
+                    recurring,
+                } => {
+                    println!("program id: {:?}", program_id);
+                    println!("target account: {:?}", target_account);
+                    println!("amount: {:?}", amount);
+                    println!("recurring: {:?}", recurring);
+
+                    // Add debug logging for byte conversion
+                    println!(
+                        "DEBUG: Converting program_id bytes: {:?}",
+                        program_id.to_bytes()
+                    );
+                    println!(
+                        "DEBUG: Converting target_account bytes: {:?}",
+                        target_account.to_bytes()
+                    );
+
+                    let scope = match (amount, recurring) {
+                        (None, _) => ProgramScopeAction::new_basic(
+                            program_id.to_bytes(),
+                            target_account.to_bytes(),
+                        ),
+                        (Some(limit), None) => ProgramScopeAction::new_limit(
+                            program_id.to_bytes(),
+                            target_account.to_bytes(),
+                            limit,
+                            swig_state_x::action::program_scope::NumericType::U64,
+                        ),
+                        (Some(limit), Some(config)) => ProgramScopeAction::new_recurring_limit(
+                            program_id.to_bytes(),
+                            target_account.to_bytes(),
+                            limit,
+                            config.window,
+                            swig_state_x::action::program_scope::NumericType::U64,
+                        ),
+                    };
+
+                    actions.push(ClientAction::ProgramScope(scope));
                 },
                 Permission::SubAccount { sub_account } => {
                     actions.push(ClientAction::SubAccount(SubAccount {

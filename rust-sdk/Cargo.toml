@@ -18,10 +18,16 @@ anyhow = "1.0.75"
 [dev-dependencies]
 test-log = "0.2"
 rand = "0.8"
-litesvm = { git = "https://github.com/litesvm/litesvm" }
+litesvm = { version = "0.6.1" }
 alloy-primitives = { version = "1.0.0", features = ["k256"] }
 alloy-signer = { version = "0.14.0" }
 alloy-signer-local = { version = "0.14.0" }
+spl-token = { version = "7.0.0", features = ["no-entrypoint"] }
+spl-associated-token-account = { version = "6.0.0", features = [
+    "no-entrypoint",
+] }
+litesvm-token = { version = "0.6.1" }
+
 
 [lints]
 workspace = true

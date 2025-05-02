@@ -16,8 +16,9 @@ use solana_sdk::{
 use swig_interface::{swig, swig_key};
 use swig_state_x::{
     action::{
-        all::All, manage_authority::ManageAuthority, sol_limit::SolLimit,
-        sol_recurring_limit::SolRecurringLimit,
+        all::All, manage_authority::ManageAuthority, program_scope::ProgramScope,
+        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, token_limit::TokenLimit,
+        token_recurring_limit::TokenRecurringLimit,
     },
     authority::{self, AuthorityType},
     role::Role,
@@ -534,48 +535,103 @@ impl<'c> SwigWallet<'c> {
 
                 println!("║ ├─ Permissions:");
 
-                // Check All permission
-                if (Role::get_action::<All>(&role, &[])
-                    .map_err(|_| SwigError::AuthorityNotFound)?)
-                .is_some()
-                {
-                    println!("║ │  ├─ Full Access (All Permissions)");
+                let actions = role
+                    .get_all_actions()
+                    .map_err(|_| SwigError::AuthorityNotFound)?;
+
+                for action in actions {
+                    match action.permission() {
+                        Ok(swig_state_x::action::Permission::All) => {
+                            println!("║ │  ├─ Full Access (All Permissions)");
+                        },
+                        Ok(swig_state_x::action::Permission::ManageAuthority) => {
+                            println!("║ │  ├─ Manage Authority");
+                        },
+                        Ok(swig_state_x::action::Permission::SolLimit) => {
+                            // Get sol limit by casting the action as raw pointer
+                            let sol_limit = unsafe { &*(action as *const _ as *const SolLimit) };
+                            println!(
+                                "║ │  ├─ SOL Limit: {} SOL",
+                                sol_limit.amount as f64 / 1_000_000_000.0
+                            );
+                        },
+                        Ok(swig_state_x::action::Permission::SolRecurringLimit) => {
+                            // Get sol recurring limit by casting the action as raw pointer
+                            let recurring_limit =
+                                unsafe { &*(action as *const _ as *const SolRecurringLimit) };
+                            println!("║ │  ├─ Recurring SOL Limit:");
+                            println!(
+                                "║ │  │  ├─ Amount: {} SOL",
+                                recurring_limit.recurring_amount as f64 / 1_000_000_000.0
+                            );
+                            println!("║ │  │  ├─ Window: {} slots", recurring_limit.window);
+                            println!(
+                                "║ │  │  ├─ Current Usage: {} SOL",
+                                recurring_limit.current_amount as f64 / 1_000_000_000.0
+                            );
+                            println!("║ │  │  └─ Last Reset: Slot {}", recurring_limit.last_reset);
+                        },
+                        Ok(swig_state_x::action::Permission::TokenLimit) => {
+                            // Get token limit by casting the action as raw pointer
+                            let token_limit =
+                                unsafe { &*(action as *const _ as *const TokenLimit) };
+                            println!("║ │  ├─ Token Limit:");
+                            println!(
+                                "║ │  │  ├─ Token Mint: {}",
+                                Pubkey::new_from_array(token_limit.token_mint)
+                            );
+                            println!("║ │  │  └─ Amount: {}", token_limit.current_amount);
+                        },
+                        Ok(swig_state_x::action::Permission::TokenRecurringLimit) => {
+                            // Get token recurring limit by casting the action as raw pointer
+                            let recurring_limit =
+                                unsafe { &*(action as *const _ as *const TokenRecurringLimit) };
+                            println!("║ │  ├─ Token Recurring Limit:");
+                            println!(
+                                "║ │  │  ├─ Token Mint: {}",
+                                Pubkey::new_from_array(recurring_limit.token_mint)
+                            );
+                            println!("║ │  │  ├─ Window: {} slots", recurring_limit.window);
+                            println!("║ │  │  ├─ Limit: {}", recurring_limit.limit);
+                            println!("║ │  │  ├─ Current Usage: {}", recurring_limit.current);
+                            println!("║ │  │  └─ Last Reset: Slot {}", recurring_limit.last_reset);
+                        },
+                        Ok(swig_state_x::action::Permission::ProgramScope) => {
+                            // Get program scope by casting the action as raw pointer
+                            let program_scope =
+                                unsafe { &*(action as *const _ as *const ProgramScope) };
+                            println!("║ │  ├─ Program Scope");
+
+                            // Add debug logging for raw bytes
+                            println!(
+                                "DEBUG: Raw program_id bytes: {:?}",
+                                program_scope.program_id
+                            );
+                            println!(
+                                "DEBUG: Raw target_account bytes: {:?}",
+                                program_scope.target_account
+                            );
+
+                            println!(
+                                "║ │  │  ├─ Program ID: {}",
+                                Pubkey::from(program_scope.program_id).to_string()
+                            );
+                            println!(
+                                "║ │  │  ├─ Target Account: {}",
+                                Pubkey::from(program_scope.target_account).to_string()
+                            );
+                            println!("║ │  │  ├─ Scope Type: {}", program_scope.scope_type);
+                            println!("║ │  │  ├─ Numeric Type: {}", program_scope.numeric_type);
+                            println!(
+                                "║ │  │  ├─ Current Amount: {}",
+                                program_scope.current_amount
+                            );
+                            println!("║ │  │  └─ Limit: {}", program_scope.limit);
+                        },
+                        _ => {},
+                    }
                 }
 
-                // Check Manage Authority permission
-                if (Role::get_action::<ManageAuthority>(&role, &[])
-                    .map_err(|_| SwigError::AuthorityNotFound)?)
-                .is_some()
-                {
-                    println!("║ │  ├─ Manage Authority");
-                }
-
-                // Check Sol Limit
-                if let Some(action) = Role::get_action::<SolLimit>(&role, &[])
-                    .map_err(|_| SwigError::AuthorityNotFound)?
-                {
-                    println!(
-                        "║ │  ├─ SOL Limit: {} SOL",
-                        action.amount as f64 / 1_000_000_000.0
-                    );
-                }
-
-                // Check Sol Recurring Limit
-                if let Some(action) = Role::get_action::<SolRecurringLimit>(&role, &[])
-                    .map_err(|_| SwigError::AuthorityNotFound)?
-                {
-                    println!("║ │  ├─ Recurring SOL Limit:");
-                    println!(
-                        "║ │  │  ├─ Amount: {} SOL",
-                        action.recurring_amount as f64 / 1_000_000_000.0
-                    );
-                    println!("║ │  │  ├─ Window: {} slots", action.window);
-                    println!(
-                        "║ │  │  ├─ Current Usage: {} SOL",
-                        action.current_amount as f64 / 1_000_000_000.0
-                    );
-                    println!("║ │  │  └─ Last Reset: Slot {}", action.last_reset);
-                }
                 println!("║ │  ");
             }
         }
@@ -595,9 +651,13 @@ impl<'c> SwigWallet<'c> {
     /// # Returns
     ///
     /// Returns a `Result` containing unit type or a `SwigError`
-    pub fn switch_authority(&mut self, role_id: u32, authority: Pubkey) -> Result<(), SwigError> {
+    pub fn switch_authority(
+        &mut self,
+        role_id: u32,
+        authority_manager: AuthorityManager,
+    ) -> Result<(), SwigError> {
         self.instruction_builder
-            .switch_authority(role_id, authority)?;
+            .switch_authority(role_id, authority_manager)?;
         Ok(())
     }
 

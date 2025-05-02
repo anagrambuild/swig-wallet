@@ -1,10 +1,13 @@
 use anyhow::Result;
 use litesvm::{types::TransactionMetadata, LiteSVM};
+use litesvm_token::{spl_token, CreateAssociatedTokenAccount, CreateMint, MintTo};
 use solana_sdk::{
     message::{v0, VersionedMessage},
+    program_pack::Pack,
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
+    system_instruction,
     transaction::VersionedTransaction,
 };
 use swig_interface::{
@@ -129,4 +132,38 @@ pub fn add_authority_with_ed25519_root(
         .send_transaction(tx)
         .map_err(|e| anyhow::anyhow!("Failed to send transaction: {:?}", e))?;
     Ok(bench)
+}
+
+pub fn setup_mint(svm: &mut LiteSVM, payer: &Keypair) -> anyhow::Result<Pubkey> {
+    let mint = CreateMint::new(svm, payer)
+        .decimals(9)
+        .token_program_id(&spl_token::ID)
+        .send()
+        .map_err(|e| anyhow::anyhow!("Failed to create mint {:?}", e))?;
+    Ok(mint)
+}
+
+pub fn mint_to(
+    svm: &mut LiteSVM,
+    mint: &Pubkey,
+    authority: &Keypair,
+    to: &Pubkey,
+    amount: u64,
+) -> Result<(), anyhow::Error> {
+    MintTo::new(svm, authority, mint, to, amount)
+        .send()
+        .map_err(|e| anyhow::anyhow!("Failed to mint {:?}", e))?;
+    Ok(())
+}
+
+pub fn setup_ata(
+    svm: &mut LiteSVM,
+    mint: &Pubkey,
+    user: &Pubkey,
+    payer: &Keypair,
+) -> Result<Pubkey, anyhow::Error> {
+    CreateAssociatedTokenAccount::new(svm, payer, mint)
+        .owner(user)
+        .send()
+        .map_err(|_| anyhow::anyhow!("Failed to create associated token account"))
 }

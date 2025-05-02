@@ -225,7 +225,7 @@ mod authority_management_tests {
 
         // Switch to third authority
         swig_wallet
-            .switch_authority(1, third_authority.pubkey())
+            .switch_authority(1, AuthorityManager::Ed25519(third_authority.pubkey()))
             .unwrap();
 
         swig_wallet
@@ -256,7 +256,7 @@ mod authority_management_tests {
             .unwrap();
 
         swig_wallet
-            .switch_authority(1, secondary_authority.pubkey())
+            .switch_authority(1, AuthorityManager::Ed25519(secondary_authority.pubkey()))
             .unwrap();
 
         swig_wallet.switch_payer(&secondary_authority).unwrap();
@@ -342,7 +342,7 @@ mod transfer_tests {
             .unwrap();
 
         swig_wallet
-            .switch_authority(1, secondary_authority.pubkey())
+            .switch_authority(1, AuthorityManager::Ed25519(secondary_authority.pubkey()))
             .unwrap();
         swig_wallet.switch_payer(&secondary_authority).unwrap();
 
@@ -386,7 +386,7 @@ mod transfer_tests {
             .unwrap();
 
         swig_wallet
-            .switch_authority(1, secondary_authority.pubkey())
+            .switch_authority(1, AuthorityManager::Ed25519(secondary_authority.pubkey()))
             .unwrap();
         swig_wallet.switch_payer(&secondary_authority).unwrap();
 
@@ -399,5 +399,33 @@ mod transfer_tests {
         );
 
         assert!(swig_wallet.sign(vec![transfer_ix], None).is_err());
+    }
+
+    #[test]
+    pub fn test_program_scope_success() {
+        let (mut litesvm, main_authority) = setup_test_environment();
+        let secondary_authority = Keypair::new();
+        litesvm
+            .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
+            .unwrap();
+
+        let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+
+        swig_wallet.display_swig().unwrap();
+
+        swig_wallet
+            .add_authority(
+                AuthorityType::Ed25519,
+                &secondary_authority.pubkey().to_bytes(),
+                vec![Permission::ProgramScope {
+                    program_id: spl_token::ID,
+                    target_account: swig_wallet.get_swig_account().unwrap(),
+                    amount: None,
+                    recurring: None,
+                }],
+            )
+            .unwrap();
+
+        swig_wallet.display_swig().unwrap();
     }
 }
