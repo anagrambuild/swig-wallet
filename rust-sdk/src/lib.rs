@@ -10,5 +10,5 @@ pub use instruction_builder::{AuthorityManager, SwigInstructionBuilder};
 pub use types::{Permission, RecurringConfig};
 pub use wallet::SwigWallet;
 
-#[cfg(test)]
+#[cfg(all(feature = "rust_sdk_test", test))]
 mod tests;
