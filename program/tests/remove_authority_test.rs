@@ -664,3 +664,112 @@ fn test_authority_with_management_can_remove_other_authorities() {
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
     assert_eq!(swig.state.roles, 2);
 }
+
+#[test_log::test]
+fn test_create_remove_authority_with_balance_checks() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+
+    // Create a swig wallet with the first authority
+    let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    context.svm.airdrop(&swig_key, 100_000_000_000).unwrap();
+
+    // Add a second authority
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    )
+    .unwrap();
+
+    // Verify we have two authorities
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 2);
+
+    let swig_old_balance = context.svm.get_balance(&swig_key).unwrap();
+    let payer_old_balance = context
+        .svm
+        .get_balance(&context.default_payer.pubkey())
+        .unwrap();
+
+    // Remove the second authority
+    let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        swig_authority.pubkey(),
+        0, // Acting role ID (using the first authority)
+        1, // Authority to remove (the second one)
+    )
+    .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[remove_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &swig_authority],
+    )
+    .unwrap();
+
+    context.svm.send_transaction(tx).unwrap();
+
+    // Verify that only one authority remains
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 1);
+
+    // Verify it's the root authority
+    let found_root = swig
+        .lookup_role_id(swig_authority.pubkey().as_ref())
+        .unwrap()
+        .is_some();
+    assert!(found_root, "Only the root authority should remain");
+
+    // Check the balance of the swig wallet
+    let swig_new_balance = context.svm.get_balance(&swig_key).unwrap();
+    let payer_new_balance = context
+        .svm
+        .get_balance(&context.default_payer.pubkey())
+        .unwrap();
+
+    let txn_fee_per_sig = 5000;
+    let swig_balance_diff = swig_old_balance - swig_new_balance;
+    let payer_balance_diff = payer_new_balance - payer_old_balance;
+
+    assert!(
+        swig_balance_diff <= 400_000,
+        "SWIG balance should increase by at most 400_000"
+    );
+    assert!(
+        payer_balance_diff >= 370_000,
+        "Payer balance should increase by at least 370_000"
+    );
+    let diff = swig_balance_diff - payer_balance_diff - 2 * txn_fee_per_sig; // 2 sigs from swig and payer
+
+    assert_eq!(diff, 0);
+}
