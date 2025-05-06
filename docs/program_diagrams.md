@@ -4,7 +4,7 @@
 ┌───────────────────────────────────────────────────────────────────────┐
 │                           SWIG SOLANA PROGRAM                         │
 │                                                                       │
-│   Program ID: swigNmWhy8RvUYXBKV5TSU8Hh3f4o5EczHouzBzEsLC             │
+│   Program ID: swigDk8JezhiAVde8k6NMwxpZfgGm2NNuMe1KYCmUjP             │
 └───────────────────────────────────────────────────────────────────────┘
                                    │
                                    ▼
