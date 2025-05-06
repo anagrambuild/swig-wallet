@@ -167,11 +167,12 @@ pub fn remove_authority_v1(
 
     let new_size = data_len - removed.1;
     let rent = Rent::get()?;
-    let rent_lamports = rent.minimum_balance(new_size);
-    let diff = swig_lamports - rent_lamports;
-    swig_builder.swig.reserved_lamports = rent_lamports;
+    let old_rent_lamports = rent.minimum_balance(data_len);
+    let new_rent_lamports = rent.minimum_balance(new_size);
+    let diff = old_rent_lamports - new_rent_lamports;
+    swig_builder.swig.reserved_lamports = new_rent_lamports;
     unsafe {
-        *ctx.accounts.swig.borrow_mut_lamports_unchecked() = rent_lamports;
+        *ctx.accounts.swig.borrow_mut_lamports_unchecked() = swig_lamports - diff;
         *ctx.accounts.payer.borrow_mut_lamports_unchecked() = ctx.accounts.payer.lamports() + diff;
     };
     ctx.accounts.swig.realloc(new_size, false)?;
