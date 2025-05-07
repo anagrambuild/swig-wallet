@@ -5,5 +5,5 @@ cargo --version
 cargo build-sbf && solana-test-validator \
    --limit-ledger-size 0 \
    --bind-address 0.0.0.0 \
-   --bpf-program Swig111111111111111111111111111111111111111 target/deploy/swig.so  \
+   --bpf-program swigDk8JezhiAVde8k6NMwxpZfgGm2NNuMe1KYCmUjP target/deploy/swig.so  \
     -r
