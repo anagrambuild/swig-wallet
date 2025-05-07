@@ -14,8 +14,11 @@ use swig_assertions::*;
 use swig_compact_instructions::InstructionIterator;
 use swig_state_x::{
     action::{
-        all::All, program_scope::ProgramScope, sol_limit::SolLimit,
-        sol_recurring_limit::SolRecurringLimit, token_limit::TokenLimit,
+        all::All,
+        program_scope::{NumericType, ProgramScope},
+        sol_limit::SolLimit,
+        sol_recurring_limit::SolRecurringLimit,
+        token_limit::TokenLimit,
         token_recurring_limit::TokenRecurringLimit,
     },
     authority::AuthorityType,
@@ -265,39 +268,32 @@ pub fn sign_v1(
                                 );
                             }
 
-                            match program_scope.scope_type {
-                                x if x == 0 => Ok::<(), ProgramError>(()), // Basic type always
-                                // passes
-                                x if x == 1 => {
-                                    // Limit type
-                                    if program_scope.current_amount == 0 {
-                                        return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
-                                    }
-                                    Ok::<(), ProgramError>(())
-                                },
-                                x if x == 2 => {
-                                    // RecurringLimit type
-                                    // Get current slot for window check
-                                    let clock = Clock::get()?;
-                                    let current_slot = clock.slot;
+                            // Get the current balance by using the program_scope's read_account_balance method
+                            let account = unsafe { all_accounts.get_unchecked(index) };
+                            let data = unsafe { account.borrow_data_unchecked() };
 
-                                    if current_slot - program_scope.last_reset
-                                        > program_scope.window
-                                    {
-                                        program_scope.current_amount = program_scope.limit;
-                                        program_scope.last_reset = current_slot;
-                                    }
+                            let current_balance = if program_scope.balance_field_end
+                                - program_scope.balance_field_start
+                                > 0
+                            {
+                                // Use the defined balance field indices to read the balance
+                                match program_scope.read_account_balance(data) {
+                                    Ok(bal) => bal,
+                                    Err(err) => {
+                                        msg!("Error reading balance from account data: {:?}", err);
+                                        return Err(
+                                            SwigError::InvalidProgramScopeBalanceFields.into()
+                                        );
+                                    },
+                                }
+                            } else {
+                                return Err(SwigError::InvalidProgramScopeBalanceFields.into());
+                            };
 
-                                    if program_scope.current_amount == 0 {
-                                        return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
-                                    }
-                                    Ok::<(), ProgramError>(())
-                                },
-                                _ => {
-                                    Err(SwigAuthenticateError::PermissionDeniedMissingPermission
-                                        .into())
-                                },
-                            }?;
+                            let amount_spent = balance - current_balance;
+
+                            // Execute the program scope run with proper amount and slot
+                            program_scope.run(amount_spent, Some(slot))?;
                         },
                         None => {
                             return Err(

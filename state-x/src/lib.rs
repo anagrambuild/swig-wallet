@@ -5,6 +5,7 @@ pub mod action;
 pub mod authority;
 pub mod role;
 pub mod swig;
+pub mod util;
 
 #[repr(u8)]
 pub enum Discriminator {
