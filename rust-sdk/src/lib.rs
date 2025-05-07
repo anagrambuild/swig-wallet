@@ -8,7 +8,7 @@ pub mod wallet;
 pub use error::SwigError;
 pub use instruction_builder::{AuthorityManager, SwigInstructionBuilder};
 
-pub use swig_state_x::authority;
+pub use swig_state_x::{authority, swig};
 pub use types::{Permission, RecurringConfig};
 pub use wallet::SwigWallet;
 
