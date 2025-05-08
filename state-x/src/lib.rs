@@ -9,6 +9,7 @@ pub mod swig;
 #[repr(u8)]
 pub enum Discriminator {
     SwigAccount,
+    SwigSubAccount,
 }
 
 #[derive(PartialEq, Debug, Copy, Clone)]

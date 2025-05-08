@@ -15,6 +15,7 @@ use program::Program;
 use program_scope::ProgramScope;
 use sol_limit::SolLimit;
 use sol_recurring_limit::SolRecurringLimit;
+use sub_account::SubAccount;
 use token_limit::TokenLimit;
 use token_recurring_limit::TokenRecurringLimit;
 
@@ -136,6 +137,7 @@ impl ActionLoader {
             Permission::TokenRecurringLimit => TokenRecurringLimit::valid_layout(data),
             Permission::All => All::valid_layout(data),
             Permission::ManageAuthority => ManageAuthority::valid_layout(data),
+            Permission::SubAccount => SubAccount::valid_layout(data),
             _ => Ok(false),
         }
     }

@@ -7,7 +7,7 @@ use crate::{IntoBytes, Transmutable, TransmutableMut};
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct SubAccount {
-    pub sub_account: [u8; 32],
+    pub sub_account: [u8; 32], // this will be 0 until the sub-account is created
 }
 
 impl Transmutable for SubAccount {
@@ -28,5 +28,9 @@ impl<'a> Actionable<'a> for SubAccount {
 
     fn match_data(&self, data: &[u8]) -> bool {
         data[0..32] == self.sub_account
+    }
+
+    fn valid_layout(data: &'a [u8]) -> Result<bool, ProgramError> {
+        Ok(data.len() == Self::LEN && data[0..32] == [0u8; 32])
     }
 }

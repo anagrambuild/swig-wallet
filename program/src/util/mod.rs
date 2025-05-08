@@ -1,3 +1,12 @@
+use std::mem::MaybeUninit;
+
+use pinocchio::{
+    account_info::AccountInfo,
+    cpi::invoke_signed,
+    instruction::{AccountMeta, Instruction, Signer},
+    pubkey::Pubkey,
+    ProgramResult,
+};
 use swig_state_x::{
     action::{program_scope::ProgramScope, Action, Permission},
     swig::{Swig, SwigWithRoles},
@@ -98,5 +107,55 @@ impl ProgramScopeCache {
                     unsafe { core::mem::transmute::<[u8; 128], ProgramScope>(*scope_bytes) };
                 (*role_id, program_scope)
             })
+    }
+}
+
+// Adapted from pinocchio-token
+
+const UNINIT_BYTE: MaybeUninit<u8> = MaybeUninit::<u8>::uninit();
+
+pub struct TokenTransfer<'a> {
+    pub token_program: &'a Pubkey,
+    /// Sender account.
+    pub from: &'a AccountInfo,
+    /// Recipient account.
+    pub to: &'a AccountInfo,
+    /// Authority account.
+    pub authority: &'a AccountInfo,
+    /// Amount of microtokens to transfer.
+    pub amount: u64,
+}
+
+impl<'a> TokenTransfer<'a> {
+    #[inline(always)]
+    pub fn invoke(&self) -> ProgramResult {
+        self.invoke_signed(&[])
+    }
+
+    pub fn invoke_signed(&self, signers: &[Signer]) -> ProgramResult {
+        // account metadata
+        let account_metas: [AccountMeta; 3] = [
+            AccountMeta::writable(self.from.key()),
+            AccountMeta::writable(self.to.key()),
+            AccountMeta::readonly_signer(self.authority.key()),
+        ];
+
+        // Instruction data layout:
+        // -  [0]: instruction discriminator (1 byte, u8)
+        // -  [1..9]: amount (8 bytes, u64)
+        let mut instruction_data = [0u8; 9];
+
+        // Set discriminator as u8 at offset [0]
+        instruction_data[0] = 3;
+        // Set amount as u64 at offset [1..9]
+        instruction_data[1..9].copy_from_slice(&self.amount.to_le_bytes());
+
+        let instruction = Instruction {
+            program_id: self.token_program,
+            accounts: &account_metas,
+            data: &instruction_data,
+        };
+
+        invoke_signed(&instruction, &[self.from, self.to, self.authority], signers)
     }
 }
