@@ -2,6 +2,7 @@ use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 
 use super::{Actionable, Permission};
+use crate::constants::PROGRAM_SCOPE_BYTE_SIZE;
 use crate::read_numeric_field;
 use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
 
@@ -292,7 +293,7 @@ impl ProgramScope {
 }
 
 impl Transmutable for ProgramScope {
-    const LEN: usize = 144;
+    const LEN: usize = PROGRAM_SCOPE_BYTE_SIZE;
 }
 
 impl TransmutableMut for ProgramScope {}

@@ -4,6 +4,7 @@ use swig_state_x::{
         program_scope::{NumericType, ProgramScope},
         Action, Permission,
     },
+    constants::PROGRAM_SCOPE_BYTE_SIZE,
     read_numeric_field,
     swig::{Swig, SwigWithRoles},
     Transmutable,
@@ -13,7 +14,7 @@ use crate::error::SwigError;
 
 pub(crate) struct ProgramScopeCache {
     // Maps target account pubkey to (role_id, raw program scope bytes)
-    scopes: Vec<([u8; 32], (u8, [u8; 144]))>, // 144 is size of ProgramScope
+    scopes: Vec<([u8; 32], (u8, [u8; PROGRAM_SCOPE_BYTE_SIZE]))>,
 }
 
 impl ProgramScopeCache {
@@ -54,16 +55,16 @@ impl ProgramScopeCache {
                         // Try to load as ProgramScope
                         if action_header.permission().ok() == Some(Permission::ProgramScope) {
                             let action_data = &role.actions[cursor..cursor + action_len];
-                            if action_data.len() == 144 {
+                            if action_data.len() == PROGRAM_SCOPE_BYTE_SIZE {
                                 // Size of ProgramScope
                                 // Store in cache using target account as key
                                 let program_scope = unsafe {
                                     // SAFETY: We've verified the length matches exactly
-                                    let mut scope_bytes = [0u8; 144];
+                                    let mut scope_bytes = [0u8; PROGRAM_SCOPE_BYTE_SIZE];
                                     core::ptr::copy_nonoverlapping(
                                         action_data.as_ptr(),
                                         scope_bytes.as_mut_ptr(),
-                                        144,
+                                        PROGRAM_SCOPE_BYTE_SIZE,
                                     );
                                     let program_scope: ProgramScope =
                                         core::mem::transmute(scope_bytes);
@@ -75,7 +76,10 @@ impl ProgramScopeCache {
 
                                 // Store raw bytes
                                 let scope_bytes = unsafe {
-                                    core::mem::transmute::<ProgramScope, [u8; 144]>(program_scope)
+                                    core::mem::transmute::<
+                                        ProgramScope,
+                                        [u8; PROGRAM_SCOPE_BYTE_SIZE],
+                                    >(program_scope)
                                 };
                                 cache
                                     .scopes
@@ -101,8 +105,11 @@ impl ProgramScopeCache {
             .map(|(_, (role_id, scope_bytes))| {
                 // SAFETY: We know these bytes represent a valid ProgramScope since we stored
                 // them that way
-                let program_scope =
-                    unsafe { core::mem::transmute::<[u8; 144], ProgramScope>(*scope_bytes) };
+                let program_scope = unsafe {
+                    core::mem::transmute::<[u8; PROGRAM_SCOPE_BYTE_SIZE], ProgramScope>(
+                        *scope_bytes,
+                    )
+                };
                 (*role_id, program_scope)
             })
     }
