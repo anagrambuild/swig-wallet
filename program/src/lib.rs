@@ -25,7 +25,7 @@ use swig_state_x::{
     swig::{Swig, SwigWithRoles},
     AccountClassification, Discriminator, Transmutable,
 };
-use util::ProgramScopeCache;
+use util::{read_program_scope_account_balance, ProgramScopeCache};
 
 declare_id!("swigDk8JezhiAVde8k6NMwxpZfgGm2NNuMe1KYCmUjP");
 const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
@@ -150,6 +150,9 @@ unsafe fn classify_account(
             // TODO add staking account
             Ok(AccountClassification::None)
         },
+        // This feature flag ensures that when program_scope_test feature is enabled,
+        // this branch is excluded, allowing program_scope_test to provide a custom implementation
+        // to test program scope functionality in isolation.
         #[cfg(not(feature = "program_scope_test"))]
         &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if account.data_len() == 165 && index > 0 => unsafe {
             let data = account.borrow_data_unchecked();
@@ -177,30 +180,11 @@ unsafe fn classify_account(
                     if let Some((role_id, program_scope)) =
                         cache.find_program_scope(account.key().as_ref())
                     {
+                        let data = account.borrow_data_unchecked();
+                        let balance = read_program_scope_account_balance(data, &program_scope)?;
                         return Ok(AccountClassification::ProgramScope {
                             role_index: role_id,
-                            balance: match program_scope.scope_type {
-                                x if x == 0 => 0, // Basic type
-                                x if x == 1 || x == 2 => {
-                                    // Convert based on numeric type
-                                    match program_scope.numeric_type {
-                                        x if x == NumericType::U8 as u8 => {
-                                            program_scope.current_amount
-                                        },
-                                        x if x == NumericType::U32 as u8 => {
-                                            program_scope.current_amount
-                                        },
-                                        x if x == NumericType::U64 as u8 => {
-                                            program_scope.current_amount
-                                        },
-                                        x if x == NumericType::U128 as u8 => {
-                                            program_scope.current_amount
-                                        },
-                                        _ => return Err(SwigError::InvalidOperation.into()),
-                                    }
-                                },
-                                _ => return Err(SwigError::InvalidOperation.into()),
-                            },
+                            balance,
                         });
                     }
                 }

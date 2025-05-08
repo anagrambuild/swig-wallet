@@ -1,12 +1,20 @@
+use pinocchio::program_error::ProgramError;
 use swig_state_x::{
-    action::{program_scope::ProgramScope, Action, Permission},
+    action::{
+        program_scope::{NumericType, ProgramScope},
+        Action, Permission,
+    },
+    constants::PROGRAM_SCOPE_BYTE_SIZE,
+    read_numeric_field,
     swig::{Swig, SwigWithRoles},
     Transmutable,
 };
 
+use crate::error::SwigError;
+
 pub(crate) struct ProgramScopeCache {
     // Maps target account pubkey to (role_id, raw program scope bytes)
-    scopes: Vec<([u8; 32], (u8, [u8; 128]))>, // 128 is size of ProgramScope
+    scopes: Vec<([u8; 32], (u8, [u8; PROGRAM_SCOPE_BYTE_SIZE]))>,
 }
 
 impl ProgramScopeCache {
@@ -47,16 +55,16 @@ impl ProgramScopeCache {
                         // Try to load as ProgramScope
                         if action_header.permission().ok() == Some(Permission::ProgramScope) {
                             let action_data = &role.actions[cursor..cursor + action_len];
-                            if action_data.len() == 128 {
+                            if action_data.len() == PROGRAM_SCOPE_BYTE_SIZE {
                                 // Size of ProgramScope
                                 // Store in cache using target account as key
                                 let program_scope = unsafe {
                                     // SAFETY: We've verified the length matches exactly
-                                    let mut scope_bytes = [0u8; 128];
+                                    let mut scope_bytes = [0u8; PROGRAM_SCOPE_BYTE_SIZE];
                                     core::ptr::copy_nonoverlapping(
                                         action_data.as_ptr(),
                                         scope_bytes.as_mut_ptr(),
-                                        128,
+                                        PROGRAM_SCOPE_BYTE_SIZE,
                                     );
                                     let program_scope: ProgramScope =
                                         core::mem::transmute(scope_bytes);
@@ -68,7 +76,10 @@ impl ProgramScopeCache {
 
                                 // Store raw bytes
                                 let scope_bytes = unsafe {
-                                    core::mem::transmute::<ProgramScope, [u8; 128]>(program_scope)
+                                    core::mem::transmute::<
+                                        ProgramScope,
+                                        [u8; PROGRAM_SCOPE_BYTE_SIZE],
+                                    >(program_scope)
                                 };
                                 cache
                                     .scopes
@@ -94,9 +105,72 @@ impl ProgramScopeCache {
             .map(|(_, (role_id, scope_bytes))| {
                 // SAFETY: We know these bytes represent a valid ProgramScope since we stored
                 // them that way
-                let program_scope =
-                    unsafe { core::mem::transmute::<[u8; 128], ProgramScope>(*scope_bytes) };
+                let program_scope = unsafe {
+                    core::mem::transmute::<[u8; PROGRAM_SCOPE_BYTE_SIZE], ProgramScope>(
+                        *scope_bytes,
+                    )
+                };
                 (*role_id, program_scope)
             })
+    }
+}
+
+/// Reads a numeric balance from an account's data based on a `ProgramScope` configuration.
+///
+/// This function extracts a numeric value (balance) from the raw data of an account according
+/// to the field positions and numeric type specified in the `ProgramScope`. It supports reading
+/// different size integers (u8, u32, u64, u128) and handles byte order assembly for little-endian
+/// representation.
+///
+/// # Arguments
+/// * `data` - The raw account data to read from
+/// * `program_scope` - The ProgramScope containing balance field specifications
+///
+/// # Returns
+/// * `Result<u128, ProgramError>` - The account balance as u128 or an error if reading fails
+///
+/// # Errors
+/// Returns `SwigError::InvalidProgramScopeBalanceFields` if:
+/// * The balance field range is invalid
+/// * The account data doesn't have enough bytes
+/// * The specified numeric type doesn't match the field width
+///
+/// # Safety
+/// This function uses unchecked memory access for performance and assumes the caller
+/// has verified the `data` parameter contains valid account data.
+#[inline(always)]
+pub unsafe fn read_program_scope_account_balance(
+    data: &[u8],
+    program_scope: &ProgramScope,
+) -> Result<u128, ProgramError> {
+    // For Basic scope, return 0
+    if program_scope.scope_type == 0 {
+        return Ok(0);
+    }
+
+    // Check if we can read the balance directly from data
+    let start = program_scope.balance_field_start as usize;
+    let end = program_scope.balance_field_end as usize;
+    // Index out of bounds check & return error
+    if data.len() < end {
+        return Err(SwigError::InvalidProgramScopeBalanceFields.into());
+    }
+
+    // Handle Possible NumericType fields
+    let error = SwigError::InvalidProgramScopeBalanceFields.into();
+    match program_scope.numeric_type as u8 {
+        numeric_type if numeric_type == NumericType::U8 as u8 => {
+            read_numeric_field!(data, start, end, u8, 1, error)
+        },
+        numeric_type if numeric_type == NumericType::U32 as u8 => {
+            read_numeric_field!(data, start, end, u32, 4, error)
+        },
+        numeric_type if numeric_type == NumericType::U64 as u8 => {
+            read_numeric_field!(data, start, end, u64, 8, error)
+        },
+        numeric_type if numeric_type == NumericType::U128 as u8 => {
+            read_numeric_field!(data, start, end, u128, 16, error)
+        },
+        _ => Err(SwigError::InvalidProgramScopeBalanceFields.into()),
     }
 }

@@ -40,6 +40,8 @@ pub enum SwigError {
     DuplicateAuthority,
     InvalidOperation,
     InvalidAlignment,
+
+    InvalidProgramScopeBalanceFields,
 }
 
 impl From<SwigError> for ProgramError {

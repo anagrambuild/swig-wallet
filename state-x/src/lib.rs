@@ -3,8 +3,10 @@ use pinocchio::program_error::ProgramError;
 
 pub mod action;
 pub mod authority;
+pub mod constants;
 pub mod role;
 pub mod swig;
+pub mod util;
 
 #[repr(u8)]
 pub enum Discriminator {
