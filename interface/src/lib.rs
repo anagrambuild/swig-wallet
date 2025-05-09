@@ -16,8 +16,10 @@ pub use swig_compact_instructions::*;
 use swig_state_x::{
     action::{
         all::All, manage_authority::ManageAuthority, program::Program, program_scope::ProgramScope,
-        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
-        token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit, Action, Permission,
+        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll,
+        stake_limit::StakeLimit, stake_recurring_limit::StakeRecurringLimit,
+        sub_account::SubAccount, token_limit::TokenLimit,
+        token_recurring_limit::TokenRecurringLimit, Action, Permission,
     },
     authority::{secp256k1::AccountsPayload, AuthorityType},
     swig::swig_account_seeds,
@@ -34,6 +36,9 @@ pub enum ClientAction {
     All(All),
     ManageAuthority(ManageAuthority),
     SubAccount(SubAccount),
+    StakeLimit(StakeLimit),
+    StakeRecurringLimit(StakeRecurringLimit),
+    StakeAll(StakeAll),
 }
 
 impl ClientAction {
@@ -52,6 +57,11 @@ impl ClientAction {
             ClientAction::All(_) => (Permission::All, All::LEN),
             ClientAction::ManageAuthority(_) => (Permission::ManageAuthority, ManageAuthority::LEN),
             ClientAction::SubAccount(_) => (Permission::SubAccount, SubAccount::LEN),
+            ClientAction::StakeLimit(_) => (Permission::StakeLimit, StakeLimit::LEN),
+            ClientAction::StakeRecurringLimit(_) => {
+                (Permission::StakeRecurringLimit, StakeRecurringLimit::LEN)
+            },
+            ClientAction::StakeAll(_) => (Permission::StakeAll, StakeAll::LEN),
         };
         let offset = data.len() as u32;
         let header = Action::new(
@@ -73,6 +83,9 @@ impl ClientAction {
             ClientAction::All(action) => action.into_bytes(),
             ClientAction::ManageAuthority(action) => action.into_bytes(),
             ClientAction::SubAccount(action) => action.into_bytes(),
+            ClientAction::StakeLimit(action) => action.into_bytes(),
+            ClientAction::StakeRecurringLimit(action) => action.into_bytes(),
+            ClientAction::StakeAll(action) => action.into_bytes(),
         };
         data.extend_from_slice(
             bytes_res.map_err(|e| anyhow::anyhow!("Failed to serialize action {:?}", e))?,

@@ -3,8 +3,10 @@ use pinocchio::program_error::ProgramError;
 
 pub mod action;
 pub mod authority;
+pub mod constants;
 pub mod role;
 pub mod swig;
+pub mod util;
 
 #[repr(u8)]
 pub enum Discriminator {
@@ -39,7 +41,7 @@ pub enum AccountClassification {
     SwigTokenAccount {
         balance: u64,
     },
-    SwigStakingAccount {
+    SwigStakeAccount {
         state: StakeAccountState,
         balance: u64,
     },
@@ -82,6 +84,7 @@ pub enum SwigAuthenticateError {
     PermissionDeniedSecp256k1InvalidSignatureAge,
     PermissionDeniedSecp256k1SignatureReused,
     PermissionDeniedSecp256k1InvalidHash,
+    PermissionDeniedStakeAccountInvalidState,
     InvalidSessionKeyCannotReuseSessionKey,
     InvalidSessionDuration,
 }
