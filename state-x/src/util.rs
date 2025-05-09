@@ -1,4 +1,3 @@
-
 /// Macro for reading numeric fields from byte arrays with appropriate
 /// validation.
 ///
