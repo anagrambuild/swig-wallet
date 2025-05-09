@@ -28,7 +28,8 @@ use swig_state_x::{
     IntoBytes, Transmutable, TransmutableMut,
 };
 
-// Helper function to set up a test with a root authority and a sub-account authority
+// Helper function to set up a test with a root authority and a sub-account
+// authority
 fn setup_test_with_sub_account_authority(
     context: &mut SwigTestContext,
 ) -> anyhow::Result<(Pubkey, Keypair, Keypair, [u8; 32])> {
@@ -292,7 +293,7 @@ fn test_toggle_sub_account() {
         sign_result.is_err(),
         "Transaction should fail with disabled sub-account"
     );
-    //warp ahead 10 slots
+    // warp ahead 10 slots
     context.svm.warp_to_slot(10);
     // Re-enable the sub-account using the sub-account authority
     let enable_result = toggle_sub_account(
@@ -340,7 +341,8 @@ fn test_toggle_sub_account() {
     );
 }
 
-// Test that a non-root authority without proper permissions cannot disable a sub-account
+// Test that a non-root authority without proper permissions cannot disable a
+// sub-account
 #[test_log::test]
 fn test_non_root_authority_cannot_disable_sub_account() {
     let mut context = setup_test_context().unwrap();
@@ -349,14 +351,16 @@ fn test_non_root_authority_cannot_disable_sub_account() {
     let (swig_key, root_authority, sub_account_authority, id) =
         setup_test_with_sub_account_authority(&mut context).unwrap();
 
-    // Create a new authority with some permissions but NOT the ManageAuthority permission
+    // Create a new authority with some permissions but NOT the ManageAuthority
+    // permission
     let unauthorized_authority = Keypair::new();
     context
         .svm
         .airdrop(&unauthorized_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Add the unauthorized authority with insufficient permissions (not including ManageAuthority or All)
+    // Add the unauthorized authority with insufficient permissions (not including
+    // ManageAuthority or All)
     add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
@@ -379,7 +383,8 @@ fn test_non_root_authority_cannot_disable_sub_account() {
     let initial_balance = 5_000_000_000;
     context.svm.airdrop(&sub_account, initial_balance).unwrap();
 
-    // Attempt to disable the sub-account using the unauthorized authority - this should fail
+    // Attempt to disable the sub-account using the unauthorized authority - this
+    // should fail
     let disable_result = toggle_sub_account(
         &mut context,
         &swig_key,
@@ -404,7 +409,8 @@ fn test_non_root_authority_cannot_disable_sub_account() {
     );
 }
 
-// Test that a non-root authority without proper permissions cannot withdraw from a sub-account
+// Test that a non-root authority without proper permissions cannot withdraw
+// from a sub-account
 #[test_log::test]
 fn test_non_root_authority_cannot_withdraw_from_sub_account() {
     let mut context = setup_test_context().unwrap();
@@ -413,7 +419,8 @@ fn test_non_root_authority_cannot_withdraw_from_sub_account() {
     let (swig_key, root_authority, sub_account_authority, id) =
         setup_test_with_sub_account_authority(&mut context).unwrap();
 
-    // Create a new authority with some permissions but NOT the withdrawal permission
+    // Create a new authority with some permissions but NOT the withdrawal
+    // permission
     let unauthorized_authority = Keypair::new();
     context
         .svm
@@ -443,7 +450,8 @@ fn test_non_root_authority_cannot_withdraw_from_sub_account() {
     let initial_balance = 5_000_000_000;
     context.svm.airdrop(&sub_account, initial_balance).unwrap();
 
-    // Attempt to withdraw from the sub-account using the unauthorized authority - this should fail
+    // Attempt to withdraw from the sub-account using the unauthorized authority -
+    // this should fail
     let withdraw_amount = 1_000_000_000;
     let withdraw_result = withdraw_from_sub_account(
         &mut context,

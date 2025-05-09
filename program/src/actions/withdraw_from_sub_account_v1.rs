@@ -150,8 +150,8 @@ pub fn withdraw_from_sub_account_v1(
     if all_accounts.len() >= action_accounts_len {
         let token_account = &all_accounts[action_accounts_index];
         let token_account_data = unsafe { token_account.borrow_data_unchecked() };
-        // we dont need to check the owner of the token account because the token program will check it in transfer
-
+        // we dont need to check the owner of the token account because the token
+        // program will check it in transfer
         let swig_token_account = &all_accounts[action_accounts_index + 1];
         let swig_token_account_data = unsafe { swig_token_account.borrow_data_unchecked() };
         let swig_token_account_owner = unsafe { swig_token_account_data.get_unchecked(32..64) };

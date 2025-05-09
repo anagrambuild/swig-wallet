@@ -83,7 +83,8 @@ impl ValidatorProcess {
         println!("Starting validator process...");
 
         // Find the project root and the swig.so path
-        // The workspace root should be the directory containing the top-level Cargo.toml
+        // The workspace root should be the directory containing the top-level
+        // Cargo.toml
         let project_root = find_project_root()?;
         println!("Project root directory: {}", project_root.display());
 
@@ -286,7 +287,8 @@ fn find_project_root() -> anyhow::Result<std::path::PathBuf> {
         if cargo_toml_path.exists() {
             println!("Found Cargo.toml at: {}", cargo_toml_path.display());
 
-            // Check if this is the workspace root by looking for the target/deploy directory
+            // Check if this is the workspace root by looking for the target/deploy
+            // directory
             let deploy_dir = current_dir.join("target/deploy");
             if deploy_dir.exists() {
                 println!("Found target/deploy at: {}", deploy_dir.display());

@@ -57,7 +57,6 @@ pub enum SwigError {
     InvalidSwigSubAccountRoleIdMismatch,
     InvalidSwigTokenAccountOwner,
     InvalidProgramScopeBalanceFields,
-
 }
 
 impl From<SwigError> for ProgramError {

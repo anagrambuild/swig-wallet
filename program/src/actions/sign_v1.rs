@@ -101,7 +101,8 @@ pub fn sign_v1(
     account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
-    //KEEP remove since we enfoce swig is owned in lib.rs check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
+    // KEEP remove since we enfoce swig is owned in lib.rs
+    // check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     let sign_v1 = SignV1::from_instruction_bytes(data)?;
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigAccount as u8 {

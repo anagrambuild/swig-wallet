@@ -43,7 +43,6 @@ use swig_interface::{
     CreateSessionInstruction, CreateSubAccountInstruction, SignInstruction,
     SubAccountSignInstruction, ToggleSubAccountInstruction, WithdrawFromSubAccountInstruction,
 };
-
 use swig_state_x::{
     action::{
         all::All, manage_authority::ManageAuthority, sol_limit::SolLimit, sub_account::SubAccount,
@@ -1228,7 +1227,7 @@ fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
                     .identity()
                     .map_err(|e| anyhow!("Failed to get authority identity: {:?}", e))?;
                 let authority_hex = hex::encode([&[0x4].as_slice(), authority].concat());
-                //get eth address from public key
+                // get eth address from public key
                 let mut hasher = solana_sdk::keccak::Hasher::default();
                 hasher.hash(authority);
                 let hash = hasher.result();

@@ -1,13 +1,12 @@
-
 use std::mem::MaybeUninit;
 
 use pinocchio::{
     account_info::AccountInfo,
     cpi::invoke_signed,
     instruction::{AccountMeta, Instruction, Signer},
+    program_error::ProgramError,
     pubkey::Pubkey,
     ProgramResult,
-    program_error::ProgramError;
 };
 use swig_state_x::{
     action::{
@@ -125,19 +124,21 @@ impl ProgramScopeCache {
     }
 }
 
-/// Reads a numeric balance from an account's data based on a `ProgramScope` configuration.
+/// Reads a numeric balance from an account's data based on a `ProgramScope`
+/// configuration.
 ///
-/// This function extracts a numeric value (balance) from the raw data of an account according
-/// to the field positions and numeric type specified in the `ProgramScope`. It supports reading
-/// different size integers (u8, u32, u64, u128) and handles byte order assembly for little-endian
-/// representation.
+/// This function extracts a numeric value (balance) from the raw data of an
+/// account according to the field positions and numeric type specified in the
+/// `ProgramScope`. It supports reading different size integers (u8, u32, u64,
+/// u128) and handles byte order assembly for little-endian representation.
 ///
 /// # Arguments
 /// * `data` - The raw account data to read from
 /// * `program_scope` - The ProgramScope containing balance field specifications
 ///
 /// # Returns
-/// * `Result<u128, ProgramError>` - The account balance as u128 or an error if reading fails
+/// * `Result<u128, ProgramError>` - The account balance as u128 or an error if
+///   reading fails
 ///
 /// # Errors
 /// Returns `SwigError::InvalidProgramScopeBalanceFields` if:
@@ -146,8 +147,8 @@ impl ProgramScopeCache {
 /// * The specified numeric type doesn't match the field width
 ///
 /// # Safety
-/// This function uses unchecked memory access for performance and assumes the caller
-/// has verified the `data` parameter contains valid account data.
+/// This function uses unchecked memory access for performance and assumes the
+/// caller has verified the `data` parameter contains valid account data.
 #[inline(always)]
 pub unsafe fn read_program_scope_account_balance(
     data: &[u8],
@@ -186,9 +187,7 @@ pub unsafe fn read_program_scope_account_balance(
 }
 
 // Adapted from pinocchio-token
-
 const UNINIT_BYTE: MaybeUninit<u8> = MaybeUninit::<u8>::uninit();
-
 pub struct TokenTransfer<'a> {
     pub token_program: &'a Pubkey,
     /// Sender account.
@@ -216,8 +215,8 @@ impl<'a> TokenTransfer<'a> {
         ];
 
         // Instruction data layout:
-        // -  [0]: instruction discriminator (1 byte, u8)
-        // -  [1..9]: amount (8 bytes, u64)
+        // - [0]: instruction discriminator (1 byte, u8)
+        // - [1..9]: amount (8 bytes, u64)
         let mut instruction_data = [0u8; 9];
 
         // Set discriminator as u8 at offset [0]
@@ -232,7 +231,5 @@ impl<'a> TokenTransfer<'a> {
         };
 
         invoke_signed(&instruction, &[self.from, self.to, self.authority], signers)
-  }
+    }
 }
-
-

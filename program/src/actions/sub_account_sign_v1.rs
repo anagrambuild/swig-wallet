@@ -112,7 +112,8 @@ pub fn sub_account_sign_v1(
         return Err(SwigError::InvalidSwigSubAccountRoleIdMismatch.into());
     }
     if !sub_account.enabled {
-        // All/Manageauthority authorities can disable the sub account which means current auth can't sign
+        // All/Manageauthority authorities can disable the sub account which means
+        // current auth can't sign
         return Err(SwigError::InvalidSwigSubAccountDisabled.into());
     }
 
@@ -171,7 +172,8 @@ pub fn sub_account_sign_v1(
                 &[signer.into()],
             )?;
 
-            // Check after each instruction that we haven't dropped below reserved lamports
+            // Check after each instruction that we haven't dropped below
+            // reserved lamports
         } else {
             return Err(SwigError::InstructionExecutionError.into());
         }

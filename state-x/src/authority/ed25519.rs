@@ -1,14 +1,13 @@
 use core::any::Any;
 
+#[cfg(feature = "client")]
+use bs58;
 use no_padding::NoPadding;
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
 use swig_assertions::sol_assert_bytes_eq;
 
 use super::{Authority, AuthorityInfo, AuthorityType};
 use crate::{IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut};
-
-#[cfg(feature = "client")]
-use bs58;
 
 #[repr(C, align(8))]
 #[derive(Debug, PartialEq, NoPadding)]
