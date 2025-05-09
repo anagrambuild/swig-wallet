@@ -196,7 +196,7 @@ impl<'c> SwigWallet<'c> {
             new_authority_type,
             new_authority,
             permissions,
-            None,
+            Some(self.get_current_slot()?),
         )?;
         let msg = v0::Message::try_compile(
             &self.fee_payer.pubkey(),
@@ -236,7 +236,7 @@ impl<'c> SwigWallet<'c> {
         if let Some(authority_id) = authority_id {
             let instruction = self
                 .instruction_builder
-                .remove_authority(authority_id, None)?;
+                .remove_authority(authority_id, Some(self.get_current_slot()?))?;
 
             let msg = v0::Message::try_compile(
                 &self.fee_payer.pubkey(),

@@ -234,6 +234,69 @@ mod authority_management_tests {
     }
 
     #[test_log::test]
+    fn should_add_secp256k1_authority() {
+        let (mut litesvm, main_authority) = setup_test_environment();
+        let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+        let secondary_authority = Keypair::new();
+
+        let wallet = LocalSigner::random();
+        println!("wallet: {:?}", wallet.address());
+
+        let secp_pubkey = wallet
+            .credential()
+            .verifying_key()
+            .to_encoded_point(false)
+            .to_bytes();
+
+        // Add secondary authority with SOL permission
+        swig_wallet
+            .add_authority(
+                AuthorityType::Secp256k1,
+                &secp_pubkey.as_ref()[1..],
+                vec![Permission::Sol {
+                    amount: 10_000_000_000,
+                    recurring: None,
+                }],
+            )
+            .unwrap();
+
+        // Verify both authorities exist
+        swig_wallet.display_swig().unwrap();
+
+        // Remove secondary authority
+        swig_wallet
+            .remove_authority(&secp_pubkey.as_ref()[1..])
+            .unwrap();
+
+        swig_wallet.display_swig().unwrap();
+
+        // Add third authority with recurring permissions
+        let third_authority = Keypair::new();
+
+        swig_wallet
+            .add_authority(
+                AuthorityType::Ed25519,
+                &third_authority.pubkey().to_bytes(),
+                vec![Permission::Sol {
+                    amount: 10_000_000_000,
+                    recurring: Some(RecurringConfig::new(100)),
+                }],
+            )
+            .unwrap();
+
+        swig_wallet.display_swig().unwrap();
+
+        // Switch to third authority
+        swig_wallet
+            .switch_authority(1, AuthorityManager::Ed25519(third_authority.pubkey()))
+            .unwrap();
+
+        swig_wallet
+            .authenticate_authority(&third_authority.pubkey().to_bytes())
+            .unwrap();
+    }
+
+    #[test_log::test]
     fn should_switch_authority_and_payer() {
         let (mut litesvm, main_authority) = setup_test_environment();
         let secondary_authority = Keypair::new();

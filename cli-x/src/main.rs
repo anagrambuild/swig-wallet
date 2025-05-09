@@ -1,4 +1,5 @@
 use alloy_primitives::B256;
+use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
 use std::{
     collections::HashMap,
@@ -184,22 +185,12 @@ fn run_interactive_mode(ctx: &mut SwigCliContext) -> Result<()> {
 fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
     println!("\n{}", "Creating new SWIG wallet...".bright_blue().bold());
 
-    let authority_type = get_authority_type()?;
-
-    let authority_keypair = Password::with_theme(&ColorfulTheme::default())
-        .with_prompt("Enter authority keypair")
-        .interact()?;
-
-    let authority = Keypair::from_base58_string(&authority_keypair);
-    let authority_pubkey = authority.pubkey();
-    println!("Authority public key: {}", authority_pubkey);
-
     let use_random_id = Confirm::with_theme(&ColorfulTheme::default())
         .with_prompt("Use random SWIG ID?")
         .default(true)
         .interact()?;
 
-    let id = if use_random_id {
+    let swig_id = if use_random_id {
         None
     } else {
         Some(
@@ -207,15 +198,81 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                 .with_prompt("Enter SWIG ID")
                 .interact_text()?,
         )
+    }
+    .map(|i| format!("{:0<32}", i).as_bytes()[..32].try_into().unwrap())
+    .unwrap_or_else(rand::random);
+
+    println!("SWIG ID: {}", bs58::encode(swig_id).into_string());
+
+    let authority_type = get_authority_type()?;
+
+    let (authority_manager, fee_payer) = match authority_type {
+        AuthorityType::Ed25519 => {
+            let authority_keypair = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter authority keypair")
+                .interact()?;
+
+            let authority = Keypair::from_base58_string(&authority_keypair);
+            let authority_pubkey = authority.pubkey();
+            println!("Authority public key: {}", authority_pubkey);
+            (
+                AuthorityManager::Ed25519(authority_pubkey),
+                authority.insecure_clone(),
+            )
+        },
+        AuthorityType::Secp256k1 => {
+            let fee_payer_kp_str = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter Fee payer keypair")
+                .interact()?;
+
+            let fee_payer_keypair = Keypair::from_base58_string(&fee_payer_kp_str);
+            let authority_keypair = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter Secp256k1 authority keypair")
+                .interact()?;
+
+            let wallet = LocalSigner::from_str(&authority_keypair)?;
+            let secp_pubkey = wallet
+                .credential()
+                .verifying_key()
+                .to_encoded_point(false)
+                .to_bytes();
+
+            let sign_fn = move |payload: &[u8]| -> [u8; 65] {
+                let mut hash = [0u8; 32];
+                hash.copy_from_slice(&payload[..32]);
+                let hash = B256::from(hash);
+                let tsig = wallet
+                    .sign_hash_sync(&hash)
+                    .map_err(|_| SwigError::InvalidSecp256k1)
+                    .unwrap()
+                    .as_bytes();
+                let mut sig = [0u8; 65];
+                sig.copy_from_slice(&tsig);
+                sig
+            };
+
+            (
+                AuthorityManager::Secp256k1(secp_pubkey, Box::new(sign_fn)),
+                fee_payer_keypair,
+            )
+        },
+        _ => todo!(),
     };
 
-    execute_create(
-        ctx,
-        authority_type,
-        authority_pubkey.to_string(),
-        authority,
-        id,
-    )?;
+    let fee_payer = Box::leak(Box::new(fee_payer));
+    let wallet = SwigWallet::new(
+        swig_id,
+        authority_manager,
+        fee_payer,
+        fee_payer,
+        "http://localhost:8899".to_string(),
+    )
+    .unwrap();
+
+    wallet.display_swig()?;
+
+    ctx.wallet = Some(Box::new(wallet));
+    ctx.payer = fee_payer.insecure_clone();
 
     Ok(())
 }
@@ -240,12 +297,20 @@ fn add_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
     let permissions = get_permissions_interactive()?;
 
     // Use the existing wallet instance to add the authority
-    ctx.wallet
-        .as_mut()
-        .unwrap()
-        .add_authority(authority_type, &authority, permissions)?;
+    let signature =
+        ctx.wallet
+            .as_mut()
+            .unwrap()
+            .add_authority(authority_type, &authority, permissions);
 
-    println!("\n{}", "Authority added successfully!".bright_green());
+    if let Ok(signature) = signature {
+        println!("\n{}", "Authority added successfully!".bright_green());
+        println!("Signature: {}", signature);
+    } else {
+        println!("\n{}", "Failed to add authority".bright_red());
+        println!("Error: {}", signature.err().unwrap());
+    }
+
     Ok(())
 }
 
