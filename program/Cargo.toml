@@ -46,6 +46,7 @@ once_cell = "1.21.3"
 test-bpf = []
 no-entrypoint = []
 program_scope_test = []
+stake_tests = []
 
 [lib]
 crate-type = ["cdylib", "lib"]

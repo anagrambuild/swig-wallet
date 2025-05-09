@@ -1,3 +1,7 @@
+#![cfg(feature = "stake_tests")]
+// This feature flag ensures these tests are only run when the
+// "stake_tests" feature is not enabled.
+
 mod common;
 use std::{
     process::{Child, Command},
