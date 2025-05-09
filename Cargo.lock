@@ -4080,6 +4080,12 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pinocchio"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43a8a77bf74e1c4050a2bad53648acfcfbf22b1806473f9c9334a58ef3b38ec4"
+
+[[package]]
+name = "pinocchio"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "530596fa307103e53257f2cf064815919ee7fbc4c7ab999f6f13cc7067c3aff1"
@@ -4091,7 +4097,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c6b20fcebc172c3cd3f54114b0241b48fa8e30893ced2eb4927aaba5e3a0ba5"
 dependencies = [
  "five8_const",
- "pinocchio",
+ "pinocchio 0.8.1",
 ]
 
 [[package]]
@@ -4100,7 +4106,17 @@ version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f75423420ae70aa748cf611cab14cfd00af08d0d2d3d258cb0cf5e2880ec19c"
 dependencies = [
- "pinocchio",
+ "pinocchio 0.8.1",
+ "pinocchio-pubkey",
+]
+
+[[package]]
+name = "pinocchio-token"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d94c71afd8ddf3d2befc8c64e6efc58ede172bb98051c0faa02db8a737c958cd"
+dependencies = [
+ "pinocchio 0.7.1",
  "pinocchio-pubkey",
 ]
 
@@ -8548,9 +8564,10 @@ dependencies = [
  "no-padding",
  "num_enum",
  "once_cell",
- "pinocchio",
+ "pinocchio 0.8.1",
  "pinocchio-pubkey",
  "pinocchio-system",
+ "pinocchio-token",
  "rand 0.9.0",
  "shank",
  "solana-client",
@@ -8570,7 +8587,7 @@ dependencies = [
 name = "swig-assertions"
 version = "0.1.0"
 dependencies = [
- "pinocchio",
+ "pinocchio 0.8.1",
  "pinocchio-pubkey",
  "pinocchio-system",
 ]
@@ -8610,7 +8627,7 @@ name = "swig-compact-instructions"
 version = "0.0.1"
 dependencies = [
  "bs58",
- "pinocchio",
+ "pinocchio 0.8.1",
  "pinocchio-system",
  "solana-program",
 ]
@@ -8655,7 +8672,7 @@ dependencies = [
  "hex",
  "murmur3",
  "no-padding",
- "pinocchio",
+ "pinocchio 0.8.1",
  "rand 0.9.0",
  "swig-assertions",
 ]

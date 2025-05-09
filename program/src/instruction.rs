@@ -29,4 +29,22 @@ pub enum SwigInstruction {
   #[account(1, writable, signer, name="payer", desc="the payer")]
   #[account(2, name="system_program", desc="the system program")]
   CreateSessionV1 = 5,
+  #[account(0, writable, name="swig", desc="the swig smart wallet")]
+  #[account(1, writable, signer, name="payer", desc="the payer")]
+  #[account(2, writable, name="sub_account", desc="the sub account to be created")]
+  #[account(3, name="system_program", desc="the system program")]
+  CreateSubAccountV1 = 6,
+  #[account(0, writable, name="swig", desc="the swig smart wallet")]
+  #[account(1, writable, signer, name="payer", desc="the payer")]
+  #[account(2, writable, name="sub_account", desc="the sub account to withdraw from")]
+  WithdrawFromSubAccountV1 = 7,
+  #[account(0, name="swig", desc="the swig smart wallet")]
+  #[account(1, writable, signer, name="payer", desc="the payer")]
+  #[account(2, writable, name="sub_account", desc="the sub account")]
+  #[account(3, name="system_program", desc="the system program")]
+  SubAccountSignV1 = 9,
+  #[account(0, writable, name="swig", desc="the swig smart wallet")]
+  #[account(1, signer, name="payer", desc="the payer")]
+  #[account(2, writable, name="sub_account", desc="the sub account to toggle enabled state")]
+  ToggleSubAccountV1 = 10,
 }

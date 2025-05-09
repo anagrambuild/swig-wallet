@@ -1,7 +1,7 @@
 #![cfg(feature = "program_scope_test")]
 // This file contains tests specifically for the program_scope feature.
-// The feature flag ensures that only these tests run when the program_scope_test
-// feature is enabled, and all other tests are excluded.
+// The feature flag ensures that only these tests run when the
+// program_scope_test feature is enabled, and all other tests are excluded.
 
 mod common;
 use common::*;

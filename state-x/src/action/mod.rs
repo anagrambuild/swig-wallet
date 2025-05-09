@@ -21,6 +21,7 @@ use sol_recurring_limit::SolRecurringLimit;
 use stake_all::StakeAll;
 use stake_limit::StakeLimit;
 use stake_recurring_limit::StakeRecurringLimit;
+use sub_account::SubAccount;
 use token_limit::TokenLimit;
 use token_recurring_limit::TokenRecurringLimit;
 
@@ -145,6 +146,7 @@ impl ActionLoader {
             Permission::TokenRecurringLimit => TokenRecurringLimit::valid_layout(data),
             Permission::All => All::valid_layout(data),
             Permission::ManageAuthority => ManageAuthority::valid_layout(data),
+            Permission::SubAccount => SubAccount::valid_layout(data),
             Permission::StakeLimit => StakeLimit::valid_layout(data),
             Permission::StakeRecurringLimit => StakeRecurringLimit::valid_layout(data),
             Permission::StakeAll => StakeAll::valid_layout(data),

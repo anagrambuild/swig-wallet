@@ -2,9 +2,10 @@ use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 
 use super::{Actionable, Permission};
-use crate::constants::PROGRAM_SCOPE_BYTE_SIZE;
-use crate::read_numeric_field;
-use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
+use crate::{
+    constants::PROGRAM_SCOPE_BYTE_SIZE, read_numeric_field, IntoBytes, SwigAuthenticateError,
+    Transmutable, TransmutableMut,
+};
 
 #[repr(u8)]
 pub enum ProgramScopeType {
@@ -132,11 +133,13 @@ impl ProgramScope {
         Ok(())
     }
 
-    /// Reads account balance from raw account data based on the configured field positions and type.
+    /// Reads account balance from raw account data based on the configured
+    /// field positions and type.
     ///
-    /// This method reads a numeric balance value from the specified field range within account data
-    /// according to the configured numeric type. It supports reading u8, u32, u64, and u128 values
-    /// and handles their proper byte assembly.
+    /// This method reads a numeric balance value from the specified field range
+    /// within account data according to the configured numeric type. It
+    /// supports reading u8, u32, u64, and u128 values and handles their
+    /// proper byte assembly.
     ///
     /// # Arguments
     /// * `account_data` - The raw account data bytes to read from
@@ -151,7 +154,8 @@ impl ProgramScope {
     pub fn read_account_balance(&self, account_data: &[u8]) -> Result<u128, ProgramError> {
         // Check if we have a valid balance field range
         if self.balance_field_start == 0 && self.balance_field_end == 0 {
-            // No balance field configured - use account lamports instead (handled elsewhere)
+            // No balance field configured - use account lamports instead (handled
+            // elsewhere)
             return Ok(0);
         }
 
@@ -230,7 +234,8 @@ impl ProgramScope {
                     self.last_reset = current_slot;
                 }
 
-                // Check if the requested amount plus what's already spent would exceed the limit
+                // Check if the requested amount plus what's already spent would exceed the
+                // limit
                 if self.current_amount.saturating_add(amount) > self.limit {
                     return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
                 }

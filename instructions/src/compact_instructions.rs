@@ -51,9 +51,57 @@ mod inner {
             },
         )
     }
+
+    pub fn compact_instructions_sub_account(
+        swig_account: Pubkey,
+        sub_account: Pubkey,
+        mut accounts: Vec<AccountMeta>,
+        inner_instructions: Vec<Instruction>,
+    ) -> (Vec<AccountMeta>, CompactInstructions) {
+        let mut compact_ix = Vec::with_capacity(inner_instructions.len());
+        let mut hashmap = accounts
+            .iter()
+            .enumerate()
+            .map(|(i, x)| (x.pubkey, i))
+            .collect::<HashMap<Pubkey, usize>>();
+        for ix in inner_instructions.into_iter() {
+            let program_id_index = accounts.len();
+            accounts.push(AccountMeta::new_readonly(ix.program_id, false));
+            let mut accts = Vec::with_capacity(ix.accounts.len());
+            for mut ix_account in ix.accounts.into_iter() {
+                if ix_account.pubkey == swig_account {
+                    ix_account.is_signer = false;
+                }
+                if ix_account.pubkey == sub_account {
+                    ix_account.is_signer = false;
+                }
+                let account_index = hashmap.get(&ix_account.pubkey);
+                if let Some(index) = account_index {
+                    accts.push(*index as u8);
+                } else {
+                    let idx = accounts.len();
+                    hashmap.insert(ix_account.pubkey, idx);
+                    accounts.push(ix_account);
+                    accts.push(idx as u8);
+                }
+            }
+            compact_ix.push(CompactInstruction {
+                program_id_index: program_id_index as u8,
+                accounts: accts,
+                data: ix.data,
+            });
+        }
+
+        (
+            accounts,
+            CompactInstructions {
+                inner_instructions: compact_ix,
+            },
+        )
+    }
 }
 #[cfg(feature = "client")]
-pub use inner::compact_instructions;
+pub use inner::{compact_instructions, compact_instructions_sub_account};
 pub struct CompactInstructions {
     pub inner_instructions: Vec<CompactInstruction>,
 }

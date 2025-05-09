@@ -11,6 +11,17 @@ pub mod util;
 #[repr(u8)]
 pub enum Discriminator {
     SwigAccount,
+    SwigSubAccount,
+}
+
+impl From<u8> for Discriminator {
+    fn from(discriminator: u8) -> Self {
+        match discriminator {
+            0 => Discriminator::SwigAccount,
+            1 => Discriminator::SwigSubAccount,
+            _ => panic!("Invalid discriminator"),
+        }
+    }
 }
 
 #[derive(PartialEq, Debug, Copy, Clone)]
@@ -37,6 +48,9 @@ pub enum AccountClassification {
     ProgramScope {
         role_index: u8,
         balance: u128,
+    },
+    SwigSubAccount {
+        lamports: u64,
     },
 }
 

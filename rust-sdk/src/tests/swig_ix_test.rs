@@ -1,8 +1,3 @@
-use super::*;
-use crate::{
-    error::SwigError, instruction_builder::AuthorityManager, types::Permission, RecurringConfig,
-    SwigInstructionBuilder, SwigWallet,
-};
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
@@ -37,6 +32,12 @@ use swig_state_x::{
     role::Role,
     swig::{swig_account_seeds, SwigWithRoles},
     IntoBytes,
+};
+
+use super::*;
+use crate::{
+    error::SwigError, instruction_builder::AuthorityManager, types::Permission, RecurringConfig,
+    SwigInstructionBuilder, SwigWallet,
 };
 
 #[test_log::test]
@@ -767,7 +768,7 @@ fn test_create_secp256k1_session() {
     let auth: &Secp256k1SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
 
     assert_eq!(auth.max_session_age, 100);
-    //assert_eq!(auth.public_key, secp_pubkey[1..].try_into().unwrap());
+    // assert_eq!(auth.public_key, secp_pubkey[1..].try_into().unwrap());
     assert_eq!(auth.current_session_expiration, 0);
     assert_eq!(auth.session_key, [0; 32]);
 

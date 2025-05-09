@@ -1,10 +1,9 @@
-use pinocchio::program_error::ProgramError;
-
-/// Macro for reading numeric fields from byte arrays with appropriate validation.
+/// Macro for reading numeric fields from byte arrays with appropriate
+/// validation.
 ///
-/// This macro handles reading different integer types (u8, u32, u64, u128) from raw byte arrays
-/// with proper size validation and byte order assembly. It uses unchecked access for performance
-/// in verified contexts.
+/// This macro handles reading different integer types (u8, u32, u64, u128) from
+/// raw byte arrays with proper size validation and byte order assembly. It uses
+/// unchecked access for performance in verified contexts.
 ///
 /// # Arguments
 /// * `$data` - The source byte array to read from
@@ -14,7 +13,8 @@ use pinocchio::program_error::ProgramError;
 /// * `$width` - Expected width in bytes (1, 4, 8, or 16) for the numeric type
 ///
 /// # Returns
-/// * `Result<u128, ProgramError>` - The numeric value converted to u128 or an error
+/// * `Result<u128, ProgramError>` - The numeric value converted to u128 or an
+///   error
 ///
 /// # Safety
 /// This macro uses unchecked memory access and assumes the caller has verified
