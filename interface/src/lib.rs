@@ -7,7 +7,10 @@ use solana_sdk::{
 pub use swig;
 use swig::actions::{
     add_authority_v1::AddAuthorityV1Args, create_session_v1::CreateSessionV1Args,
-    create_v1::CreateV1Args, remove_authority_v1::RemoveAuthorityV1Args,
+    create_sub_account_v1::CreateSubAccountV1Args, create_v1::CreateV1Args,
+    remove_authority_v1::RemoveAuthorityV1Args, sub_account_sign_v1::SubAccountSignV1Args,
+    toggle_sub_account_v1::ToggleSubAccountV1Args,
+    withdraw_from_sub_account_v1::WithdrawFromSubAccountV1Args,
 };
 pub use swig_compact_instructions::*;
 use swig_state_x::{
@@ -499,19 +502,15 @@ impl CreateSubAccountInstruction {
             AccountMeta::new_readonly(authority, true),
         ];
 
-        let mut buffer = vec![];
-        buffer.extend_from_slice(&(6u16).to_le_bytes()); // CreateSubAccountV1 = 6
-        buffer.extend_from_slice(&0u16.to_le_bytes()); // padding
-        buffer.extend_from_slice(&role_id.to_le_bytes());
-        buffer.push(sub_account_bump);
-        buffer.extend_from_slice(&[0; 7]); // padding
-                                           // Add authority index (4 for Ed25519 authority - fifth account in accounts list)
-        buffer.push(4);
+        let args = CreateSubAccountV1Args::new(role_id, sub_account_bump);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: buffer,
+            data: [args_bytes, &[4]].concat(),
         })
     }
 
@@ -534,14 +533,10 @@ impl CreateSubAccountInstruction {
             AccountMeta::new_readonly(system_program::ID, false),
         ];
 
-        let mut buffer = vec![];
-        buffer.extend_from_slice(&(6u16).to_le_bytes()); // CreateSubAccountV1 = 6
-        buffer.extend_from_slice(&0u16.to_le_bytes()); // padding
-        buffer.extend_from_slice(&role_id.to_le_bytes());
-        buffer.push(sub_account_bump);
-        buffer.extend_from_slice(&[0; 7]); // padding
-
-        let args_data = buffer.clone();
+        let args = CreateSubAccountV1Args::new(role_id, sub_account_bump);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         // Create account payload for signature
         let mut account_payload_bytes = Vec::new();
@@ -554,7 +549,8 @@ impl CreateSubAccountInstruction {
         }
 
         // Sign the payload
-        let nonced_payload = prepare_secp_payload(current_slot, &args_data, &account_payload_bytes);
+        let nonced_payload =
+            prepare_secp_payload(current_slot, &args_bytes, &account_payload_bytes);
         let signature = authority_payload_fn(&nonced_payload);
 
         // Add authority payload
@@ -562,13 +558,10 @@ impl CreateSubAccountInstruction {
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
 
-        // Combine all data
-        buffer.extend_from_slice(&authority_payload);
-
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: buffer,
+            data: [args_bytes, &authority_payload].concat(),
         })
     }
 }
@@ -591,18 +584,15 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new_readonly(authority, true),
         ];
 
-        let mut buffer = vec![];
-        buffer.extend_from_slice(&(7u16).to_le_bytes()); // WithdrawFromSubAccountV1 = 7
-        buffer.extend_from_slice(&0u16.to_le_bytes()); // padding
-        buffer.extend_from_slice(&role_id.to_le_bytes());
-        buffer.extend_from_slice(&amount.to_le_bytes());
-        // Add authority index (3 for Ed25519 authority - fourth account in accounts list)
-        buffer.push(3);
+        let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: buffer,
+            data: [args_bytes, &[3]].concat(),
         })
     }
 
@@ -624,13 +614,10 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(sub_account, false),
         ];
 
-        let mut buffer = vec![];
-        buffer.extend_from_slice(&(7u16).to_le_bytes()); // WithdrawFromSubAccountV1 = 7
-        buffer.extend_from_slice(&0u16.to_le_bytes()); // padding
-        buffer.extend_from_slice(&role_id.to_le_bytes());
-        buffer.extend_from_slice(&amount.to_le_bytes());
-
-        let args_data = buffer.clone();
+        let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         // Create account payload for signature
         let mut account_payload_bytes = Vec::new();
@@ -643,7 +630,8 @@ impl WithdrawFromSubAccountInstruction {
         }
 
         // Sign the payload
-        let nonced_payload = prepare_secp_payload(current_slot, &args_data, &account_payload_bytes);
+        let nonced_payload =
+            prepare_secp_payload(current_slot, &args_bytes, &account_payload_bytes);
         let signature = authority_payload_fn(&nonced_payload);
 
         // Add authority payload
@@ -651,13 +639,99 @@ impl WithdrawFromSubAccountInstruction {
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
 
-        // Combine all data
-        buffer.extend_from_slice(&authority_payload);
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        })
+    }
+
+    pub fn new_token_with_ed25519_authority(
+        swig_account: Pubkey,
+        authority: Pubkey,
+        payer: Pubkey,
+        sub_account: Pubkey,
+        sub_account_token: Pubkey,
+        swig_token: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        amount: u64,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(sub_account_token, false),
+            AccountMeta::new(swig_token, false),
+            AccountMeta::new_readonly(token_program, false),
+        ];
+
+        let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: buffer,
+            data: [args_bytes, &[3]].concat(),
+        })
+    }
+
+    pub fn new_token_with_secp256k1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        sub_account: Pubkey,
+        sub_account_token: Pubkey,
+        swig_token: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        amount: u64,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new(sub_account_token, false),
+            AccountMeta::new(swig_token, false),
+            AccountMeta::new_readonly(token_program, false),
+        ];
+
+        let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Create account payload for signature
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        // Sign the payload
+        let nonced_payload =
+            prepare_secp_payload(current_slot, &args_bytes, &account_payload_bytes);
+        let signature = authority_payload_fn(&nonced_payload);
+
+        // Add authority payload
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&signature);
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
         })
     }
 }
@@ -666,60 +740,37 @@ pub struct SubAccountSignInstruction;
 
 impl SubAccountSignInstruction {
     pub fn new_with_ed25519_authority(
-        sub_account: Pubkey,
         swig_account: Pubkey,
+        sub_account: Pubkey,
         authority: Pubkey,
         payer: Pubkey,
         role_id: u32,
         instructions: Vec<Instruction>,
     ) -> anyhow::Result<Instruction> {
         let accounts = vec![
-            AccountMeta::new(sub_account, false),
             AccountMeta::new_readonly(swig_account, false),
             AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(sub_account, false),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
-
-        let mut instruction_data = vec![];
-        for ix in &instructions {
-            instruction_data.extend_from_slice(&ix.program_id.to_bytes());
-
-            // Encode the accounts
-            instruction_data.extend_from_slice(&(ix.accounts.len() as u16).to_le_bytes());
-            for account in &ix.accounts {
-                instruction_data.extend_from_slice(&account.pubkey.to_bytes());
-                let meta_byte =
-                    if account.is_signer { 1 } else { 0 } | if account.is_writable { 2 } else { 0 };
-                instruction_data.push(meta_byte);
-            }
-
-            // Encode the data
-            instruction_data.extend_from_slice(&(ix.data.len() as u16).to_le_bytes());
-            instruction_data.extend_from_slice(&ix.data);
-        }
-
-        let instruction_payload_len = instruction_data.len() as u16;
-
-        let mut buffer = vec![];
-        buffer.extend_from_slice(&(9u16).to_le_bytes()); // SubAccountSignV1 = 9
-        buffer.extend_from_slice(&instruction_payload_len.to_le_bytes());
-        buffer.extend_from_slice(&role_id.to_le_bytes());
-        buffer.extend_from_slice(&[0; 8]); // padding
-        buffer.extend_from_slice(&instruction_data);
-        // Add authority index (4 for Ed25519 authority - fifth account in accounts list)
-        buffer.push(4);
-
+        let (accounts, ixs) =
+            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions);
+        let ix_bytes = ixs.into_bytes();
+        let args = SubAccountSignV1Args::new(role_id, ix_bytes.len() as u16);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: buffer,
+            data: [args_bytes, &ix_bytes, &[4]].concat(),
         })
     }
 
     pub fn new_with_secp256k1_authority<F>(
-        sub_account: Pubkey,
         swig_account: Pubkey,
+        sub_account: Pubkey,
         payer: Pubkey,
         mut authority_payload_fn: F,
         current_slot: u64,
@@ -730,42 +781,19 @@ impl SubAccountSignInstruction {
         F: FnMut(&[u8]) -> [u8; 65],
     {
         let accounts = vec![
-            AccountMeta::new(sub_account, false),
             AccountMeta::new_readonly(swig_account, false),
             AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(sub_account, false),
             AccountMeta::new_readonly(system_program::ID, false),
         ];
 
-        let mut instruction_data = vec![];
-        for ix in &instructions {
-            instruction_data.extend_from_slice(&ix.program_id.to_bytes());
-
-            // Encode the accounts
-            instruction_data.extend_from_slice(&(ix.accounts.len() as u16).to_le_bytes());
-            for account in &ix.accounts {
-                instruction_data.extend_from_slice(&account.pubkey.to_bytes());
-                let meta_byte =
-                    if account.is_signer { 1 } else { 0 } | if account.is_writable { 2 } else { 0 };
-                instruction_data.push(meta_byte);
-            }
-
-            // Encode the data
-            instruction_data.extend_from_slice(&(ix.data.len() as u16).to_le_bytes());
-            instruction_data.extend_from_slice(&ix.data);
-        }
-
-        let instruction_payload_len = instruction_data.len() as u16;
-
-        let mut buffer = vec![];
-        buffer.extend_from_slice(&(9u16).to_le_bytes()); // SubAccountSignV1 = 9
-        buffer.extend_from_slice(&instruction_payload_len.to_le_bytes());
-        buffer.extend_from_slice(&role_id.to_le_bytes());
-        buffer.extend_from_slice(&[0; 8]); // padding
-        buffer.extend_from_slice(&instruction_data);
-
-        let args_data = buffer.clone();
-
-        // Create account payload for signature
+        let (accounts, ixs) =
+            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions);
+        let ix_bytes = ixs.into_bytes();
+        let args = SubAccountSignV1Args::new(role_id, ix_bytes.len() as u16);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
         let mut account_payload_bytes = Vec::new();
         for account in &accounts {
             account_payload_bytes.extend_from_slice(
@@ -776,7 +804,7 @@ impl SubAccountSignInstruction {
         }
 
         // Sign the payload
-        let nonced_payload = prepare_secp_payload(current_slot, &args_data, &account_payload_bytes);
+        let nonced_payload = prepare_secp_payload(current_slot, &ix_bytes, &account_payload_bytes);
         let signature = authority_payload_fn(&nonced_payload);
 
         // Add authority payload
@@ -784,13 +812,10 @@ impl SubAccountSignInstruction {
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
 
-        // Combine all data
-        buffer.extend_from_slice(&authority_payload);
-
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: buffer,
+            data: [args_bytes, &ix_bytes, &authority_payload].concat(),
         })
     }
 }
@@ -813,18 +838,15 @@ impl ToggleSubAccountInstruction {
             AccountMeta::new_readonly(authority, true),
         ];
 
-        let mut buffer = vec![];
-        buffer.extend_from_slice(&(10u16).to_le_bytes()); // ToggleSubAccountV1 = 10
-        buffer.extend_from_slice(&[0]); // padding
-        buffer.push(if enabled { 1 } else { 0 });
-        buffer.extend_from_slice(&role_id.to_le_bytes());
-        // Add authority index (3 for Ed25519 authority - fourth account in accounts list)
-        buffer.push(3);
+        let args = ToggleSubAccountV1Args::new(role_id, enabled);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: buffer,
+            data: [args_bytes, &[3]].concat(),
         })
     }
 
@@ -846,13 +868,10 @@ impl ToggleSubAccountInstruction {
             AccountMeta::new(sub_account, false),
         ];
 
-        let mut buffer = vec![];
-        buffer.extend_from_slice(&(10u16).to_le_bytes()); // ToggleSubAccountV1 = 10
-        buffer.extend_from_slice(&[0]); // padding
-        buffer.push(if enabled { 1 } else { 0 });
-        buffer.extend_from_slice(&role_id.to_le_bytes());
-
-        let args_data = buffer.clone();
+        let args = ToggleSubAccountV1Args::new(role_id, enabled);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         // Create account payload for signature
         let mut account_payload_bytes = Vec::new();
@@ -865,7 +884,8 @@ impl ToggleSubAccountInstruction {
         }
 
         // Sign the payload
-        let nonced_payload = prepare_secp_payload(current_slot, &args_data, &account_payload_bytes);
+        let nonced_payload =
+            prepare_secp_payload(current_slot, &args_bytes, &account_payload_bytes);
         let signature = authority_payload_fn(&nonced_payload);
 
         // Add authority payload
@@ -873,13 +893,10 @@ impl ToggleSubAccountInstruction {
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
 
-        // Combine all data
-        buffer.extend_from_slice(&authority_payload);
-
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: buffer,
+            data: [args_bytes, &authority_payload].concat(),
         })
     }
 }

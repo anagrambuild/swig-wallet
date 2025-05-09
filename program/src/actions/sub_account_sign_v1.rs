@@ -92,13 +92,12 @@ pub fn sub_account_sign_v1(
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
     check_self_owned(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
-    check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     let sign_v1 = SubAccountSignV1::from_instruction_bytes(data)?;
     let sub_account_data = unsafe { ctx.accounts.sub_account.borrow_data_unchecked() };
     if unsafe { *sub_account_data.get_unchecked(0) } != Discriminator::SwigSubAccount as u8 {
         return Err(SwigError::InvalidSwigSubAccountDiscriminator.into());
     }
-    let sub_swig = unsafe { SwigSubAccount::load_unchecked(sub_account_data)? };
+    let sub_account = unsafe { SwigSubAccount::load_unchecked(sub_account_data)? };
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
@@ -106,13 +105,13 @@ pub fn sub_account_sign_v1(
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_unchecked(swig_header)? };
 
-    if sub_swig.swig_id != swig.id {
+    if sub_account.swig_id != swig.id {
         return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
     }
-    if sub_swig.role_id != sign_v1.args.role_id {
+    if sub_account.role_id != sign_v1.args.role_id {
         return Err(SwigError::InvalidSwigSubAccountRoleIdMismatch.into());
     }
-    if !sub_swig.enabled {
+    if !sub_account.enabled {
         // All/Manageauthority authorities can disable the sub account which means current auth can't sign
         return Err(SwigError::InvalidSwigSubAccountDisabled.into());
     }
@@ -151,7 +150,6 @@ pub fn sub_account_sign_v1(
             core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 2)
         } else {
             restricted_keys[0].write(ctx.accounts.payer.key());
-
             core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 1)
         }
     };
@@ -161,11 +159,10 @@ pub fn sub_account_sign_v1(
         ctx.accounts.sub_account.key(),
         rkeys,
     )?;
-    let role_id_bytes = sign_v1.args.role_id.to_le_bytes();
-    let bump_byte = [sub_swig.bump];
-    let seeds = sub_account_signer(&sub_swig.swig_id, &role_id_bytes, &bump_byte);
+    let role_id_bytes = sub_account.role_id.to_le_bytes();
+    let bump_byte = [sub_account.bump];
+    let seeds = sub_account_signer(&sub_account.swig_id, &role_id_bytes, &bump_byte);
     let signer = seeds.as_slice();
-
     for ix in ix_iter {
         if let Ok(instruction) = ix {
             instruction.execute(
@@ -181,7 +178,7 @@ pub fn sub_account_sign_v1(
     }
 
     let lamports_after = unsafe { *ctx.accounts.sub_account.borrow_lamports_unchecked() };
-    if lamports_after < sub_swig.reserved_lamports {
+    if lamports_after < sub_account.reserved_lamports {
         return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
     }
     Ok(())

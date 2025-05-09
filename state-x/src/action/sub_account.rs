@@ -27,7 +27,7 @@ impl<'a> Actionable<'a> for SubAccount {
     const REPEATABLE: bool = true;
 
     fn match_data(&self, data: &[u8]) -> bool {
-        data[0..32] == self.sub_account
+        true
     }
 
     fn valid_layout(data: &'a [u8]) -> Result<bool, ProgramError> {

@@ -55,6 +55,7 @@ pub enum SwigError {
     InvalidSwigSubAccountDisabled,
     InvalidSwigSubAccountSwigIdMismatch,
     InvalidSwigSubAccountRoleIdMismatch,
+    InvalidSwigTokenAccountOwner,
 }
 
 impl From<SwigError> for ProgramError {

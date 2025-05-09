@@ -12,6 +12,7 @@ use pinocchio::{
     account_info::AccountInfo,
     lazy_entrypoint::{InstructionContext, MaybeAccount},
     memory::sol_memcmp,
+    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
     ProgramResult,
@@ -130,19 +131,19 @@ unsafe fn classify_account(
     accounts: &[MaybeUninit<AccountInfo>],
     program_scope_cache: Option<&ProgramScopeCache>,
 ) -> Result<AccountClassification, ProgramError> {
+    let mut target_index: usize = 0;
     match account.owner() {
-        &crate::ID if index != 0 => Err(SwigError::InvalidAccountsSwigMustBeFirst.into()),
         &crate::ID => {
             let data = account.borrow_data_unchecked();
-            if data.len() < Swig::LEN {
-                return Err(SwigError::InvalidSwigAccountDiscriminator.into());
-            }
-            if unsafe { *data.get_unchecked(0) == Discriminator::SwigAccount as u8 } {
-                Ok(AccountClassification::ThisSwig {
+            let first_byte = unsafe { *data.get_unchecked(0) }.into();
+            match first_byte {
+                Discriminator::SwigAccount if index == 0 => Ok(AccountClassification::ThisSwig {
                     lamports: account.lamports(),
-                })
-            } else {
-                Ok(AccountClassification::None)
+                }),
+                Discriminator::SwigAccount if index != 0 => {
+                    return Err(SwigError::InvalidAccountsSwigMustBeFirst.into());
+                },
+                _ => Ok(AccountClassification::None),
             }
         },
         &STAKING_ID => {

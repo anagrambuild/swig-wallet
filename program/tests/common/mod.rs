@@ -436,8 +436,8 @@ pub fn sub_account_sign(
 ) -> anyhow::Result<TransactionMetadata> {
     // Create the instruction to sign with a sub-account
     let sub_account_sign_ix = SubAccountSignInstruction::new_with_ed25519_authority(
-        *sub_account,
         *swig_account,
+        *sub_account,
         authority.pubkey(),
         authority.pubkey(),
         role_id,
@@ -504,6 +504,54 @@ pub fn withdraw_from_sub_account(
         .send_transaction(tx)
         .map_err(|e| anyhow::anyhow!("Failed to withdraw from sub-account: {:?}", e))?;
 
+    Ok(bench)
+}
+
+pub fn withdraw_token_from_sub_account(
+    context: &mut SwigTestContext,
+    swig_account: &Pubkey,
+    sub_account: &Pubkey,
+    authority: &Keypair,
+    sub_account_ata: &Pubkey,
+    swig_ata: &Pubkey,
+    token_program: &Pubkey,
+    role_id: u32,
+    amount: u64,
+) -> anyhow::Result<TransactionMetadata> {
+    let withdraw_ix = WithdrawFromSubAccountInstruction::new_token_with_ed25519_authority(
+        *swig_account,
+        authority.pubkey(),
+        context.default_payer.pubkey(),
+        *sub_account,
+        *sub_account_ata,
+        *swig_ata,
+        *token_program,
+        role_id,
+        amount,
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to create withdraw instruction: {:?}", e))?;
+
+    let message = v0::Message::try_compile(
+        &authority.pubkey(),
+        &[withdraw_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(message),
+        &[
+            authority.insecure_clone(),
+            context.default_payer.insecure_clone(),
+        ],
+    )
+    .unwrap();
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to withdraw from sub-account: {:?}", e))?;
+    println!("bench: {:?}", bench);
     Ok(bench)
 }
 

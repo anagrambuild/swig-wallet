@@ -998,8 +998,8 @@ fn main_fn() -> Result<()> {
                 CliAuthorityType::Ed25519 => {
                     let auth_pubkey = Pubkey::from_str(&auth_context.authority_identifier).unwrap();
                     SubAccountSignInstruction::new_with_ed25519_authority(
-                        sub_account_pubkey,
                         swig_id,
+                        sub_account_pubkey,
                         auth_pubkey,
                         ctx.payer.pubkey(),
                         role_id,
@@ -1009,8 +1009,8 @@ fn main_fn() -> Result<()> {
                 CliAuthorityType::Secp256k1 => {
                     let current_slot = ctx.rpc_client.get_slot()?;
                     SubAccountSignInstruction::new_with_secp256k1_authority(
-                        sub_account_pubkey,
                         swig_id,
+                        sub_account_pubkey,
                         ctx.payer.pubkey(),
                         |data| {
                             let sig = auth_context.sign(data).unwrap();
