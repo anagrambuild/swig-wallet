@@ -8547,6 +8547,7 @@ dependencies = [
  "litesvm-token",
  "no-padding",
  "num_enum",
+ "once_cell",
  "pinocchio",
  "pinocchio-pubkey",
  "pinocchio-system",

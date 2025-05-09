@@ -1,12 +1,17 @@
-#![cfg(feature = "stake_tests")]
-// This feature flag ensures these tests are only run when the
-// "stake_tests" feature is not enabled.
-
 mod common;
-use std::str::FromStr;
+use std::{
+    process::{Child, Command},
+    str::FromStr,
+    sync::{Mutex, MutexGuard},
+    thread,
+    time::Duration,
+};
 
 use bincode;
-use solana_client::{rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig};
+use once_cell::sync::Lazy;
+use solana_client::{
+    rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig, rpc_response::RpcVoteAccountInfo,
+};
 use solana_program::{pubkey::Pubkey as SolanaPubkey, system_instruction};
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
@@ -38,8 +43,261 @@ use swig_state_x::{
 const LOCALHOST: &str = "http://localhost:8899";
 const STAKE_PROGRAM_ID: SolanaPubkey = solana_sdk::stake::program::id();
 const VOTE_PROGRAM_ID: SolanaPubkey = solana_sdk::vote::program::id();
-// Use the existing validator's vote account from the local test validator
-const VALIDATOR_VOTE_ACCOUNT: &str = "EQxnkufzY3pvy44fbvk2Ss1QxV5hr9JJoP3EBKvkmiYB";
+
+// Global static validator process that will be shared across all tests
+static GLOBAL_VALIDATOR: Lazy<Mutex<ValidatorProcess>> = Lazy::new(|| {
+    let mut validator = ValidatorProcess::new();
+    // Start the validator process when first accessed
+    if let Err(e) = validator.start() {
+        panic!("Failed to start validator process: {}", e);
+    }
+    Mutex::new(validator)
+});
+
+/// Struct to manage the validator process
+struct ValidatorProcess {
+    process: Option<Child>,
+    client: Option<RpcClient>,
+    initialized: bool,
+}
+
+impl ValidatorProcess {
+    fn new() -> Self {
+        Self {
+            process: None,
+            client: None,
+            initialized: false,
+        }
+    }
+
+    fn start(&mut self) -> anyhow::Result<()> {
+        // If already initialized, nothing to do
+        if self.initialized {
+            return Ok(());
+        }
+
+        println!("Starting validator process...");
+
+        // Find the project root and the swig.so path
+        // The workspace root should be the directory containing the top-level Cargo.toml
+        let project_root = find_project_root()?;
+        println!("Project root directory: {}", project_root.display());
+
+        // Use the top-level target/deploy directory, not program/target/deploy
+        let swig_so_path = project_root.join("target/deploy/swig.so");
+
+        // Check if we need to build the program first
+        if !swig_so_path.exists() {
+            println!(
+                "swig.so not found at {}, attempting build...",
+                swig_so_path.display()
+            );
+
+            // Run cargo build-sbf from the project root
+            let build_status = Command::new("cargo")
+                .current_dir(&project_root)
+                .arg("build-sbf")
+                .status()
+                .map_err(|e| anyhow::anyhow!("Failed to run cargo build-sbf: {}", e))?;
+
+            if !build_status.success() {
+                return Err(anyhow::anyhow!(
+                    "cargo build-sbf failed with status: {}",
+                    build_status
+                ));
+            }
+
+            // Check again if the file exists
+            if !swig_so_path.exists() {
+                return Err(anyhow::anyhow!(
+                    "swig.so still not found at {} after build",
+                    swig_so_path.display()
+                ));
+            }
+        }
+
+        println!("Using swig.so at: {}", swig_so_path.display());
+
+        // Start the validator with the correct program
+        let process = Command::new("solana-test-validator")
+            .current_dir(&project_root) // Run from project root
+            .arg("--limit-ledger-size")
+            .arg("0")
+            .arg("--bind-address")
+            .arg("0.0.0.0")
+            .arg("--bpf-program")
+            .arg("swigDk8JezhiAVde8k6NMwxpZfgGm2NNuMe1KYCmUjP")
+            .arg(swig_so_path)
+            .arg("-r")  // Reset the ledger
+            .arg("--ticks-per-slot")
+            .arg("3")
+            .arg("--slots-per-epoch")
+            .arg("64")
+            // Additional logging to diagnose issues
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("Failed to start validator: {}", e))?;
+
+        self.process = Some(process);
+        self.client = Some(RpcClient::new(LOCALHOST.to_string()));
+
+        println!("Validator process started, waiting for it to be ready...");
+
+        // Wait for the validator to start producing blocks
+        self.wait_for_validator_ready()?;
+
+        self.initialized = true;
+        println!("Validator is ready and producing blocks");
+        Ok(())
+    }
+
+    fn wait_for_validator_ready(&self) -> anyhow::Result<()> {
+        // Get the client, which should be initialized
+        let client = self.client.as_ref().expect("RPC client not initialized");
+
+        // Parameters for waiting
+        let timeout_secs = 30;
+        let poll_interval_ms = 200;
+        let max_attempts = (timeout_secs * 1000) / poll_interval_ms;
+
+        // First, wait for initial connection
+        let mut connected = false;
+        let mut current_attempt = 0;
+
+        println!("Waiting for initial connection to validator...");
+        while !connected && current_attempt < max_attempts {
+            match client.get_version() {
+                Ok(_) => {
+                    connected = true;
+                    println!("Successfully connected to validator");
+                },
+                Err(e) => {
+                    if current_attempt % 10 == 0 {
+                        println!(
+                            "Waiting for validator connection... ({}/{})",
+                            current_attempt, max_attempts
+                        );
+                    }
+                    thread::sleep(Duration::from_millis(poll_interval_ms));
+                    current_attempt += 1;
+                },
+            }
+        }
+
+        if !connected {
+            return Err(anyhow::anyhow!(
+                "Timed out waiting for validator connection"
+            ));
+        }
+
+        // Now wait for block progression
+        println!("Waiting for validator to produce blocks...");
+
+        // Get initial slot
+        let initial_slot = match client.get_slot() {
+            Ok(slot) => {
+                println!("Initial slot: {}", slot);
+                slot
+            },
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to get initial slot: {}", e));
+            },
+        };
+
+        // Wait for slot to advance
+        current_attempt = 0;
+        let mut slots_advanced = false;
+
+        while !slots_advanced && current_attempt < max_attempts {
+            match client.get_slot() {
+                Ok(current_slot) => {
+                    if current_slot > initial_slot {
+                        slots_advanced = true;
+                        println!("Slot advanced from {} to {}", initial_slot, current_slot);
+                    } else {
+                        if current_attempt % 10 == 0 {
+                            println!(
+                                "Waiting for slot to advance... (current: {}, initial: {})",
+                                current_slot, initial_slot
+                            );
+                        }
+                        thread::sleep(Duration::from_millis(poll_interval_ms));
+                        current_attempt += 1;
+                    }
+                },
+                Err(e) => {
+                    if current_attempt % 10 == 0 {
+                        println!("Error getting slot: {}, retrying...", e);
+                    }
+                    thread::sleep(Duration::from_millis(poll_interval_ms));
+                    current_attempt += 1;
+                },
+            }
+        }
+
+        if !slots_advanced {
+            return Err(anyhow::anyhow!(
+                "Timed out waiting for validator to advance slots"
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn get_client(&self) -> &RpcClient {
+        self.client.as_ref().expect("RPC client not initialized")
+    }
+}
+
+impl Drop for ValidatorProcess {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.process.take() {
+            println!("Stopping validator process...");
+            if let Err(e) = child.kill() {
+                println!("Error killing validator process: {}", e);
+            }
+
+            if let Err(e) = child.wait() {
+                println!("Error waiting for validator process to exit: {}", e);
+            } else {
+                println!("Validator process stopped successfully");
+            }
+        }
+    }
+}
+
+/// Find the project root directory by looking for Cargo.toml
+fn find_project_root() -> anyhow::Result<std::path::PathBuf> {
+    let mut current_dir = std::env::current_dir()
+        .map_err(|e| anyhow::anyhow!("Failed to get current directory: {}", e))?;
+
+    println!("Starting directory search from: {}", current_dir.display());
+
+    // Go up the directory tree until we find the workspace root Cargo.toml
+    // We want the top-level workspace, not the program directory
+    loop {
+        // Check if this directory contains a Cargo.toml file
+        let cargo_toml_path = current_dir.join("Cargo.toml");
+        if cargo_toml_path.exists() {
+            println!("Found Cargo.toml at: {}", cargo_toml_path.display());
+
+            // Check if this is the workspace root by looking for the target/deploy directory
+            let deploy_dir = current_dir.join("target/deploy");
+            if deploy_dir.exists() {
+                println!("Found target/deploy at: {}", deploy_dir.display());
+                return Ok(current_dir);
+            }
+        }
+
+        // If we can't go up any further, we've reached the filesystem root
+        if !current_dir.pop() {
+            return Err(anyhow::anyhow!(
+                "Could not find project root with Cargo.toml and target/deploy directory"
+            ));
+        }
+    }
+}
 
 /// Structure for test context using real Solana validator
 struct TestContext {
@@ -105,8 +363,26 @@ impl TestContext {
 
 /// Setup the test context with a connected client
 fn setup_test_context() -> anyhow::Result<TestContext> {
-    // Connect to the local Solana validator
+    // Get the global validator instance
+    let validator = GLOBAL_VALIDATOR.lock().unwrap();
+
+    // Create a clone of the validator's RPC client
     let client = RpcClient::new(LOCALHOST.to_string());
+
+    // Verify we can get vote accounts
+    let vote_accounts = client
+        .get_vote_accounts()
+        .map_err(|e| anyhow::anyhow!("Failed to get vote accounts: {}", e))?;
+
+    println!(
+        "Found {} current and {} delinquent vote accounts",
+        vote_accounts.current.len(),
+        vote_accounts.delinquent.len()
+    );
+
+    if vote_accounts.current.is_empty() && vote_accounts.delinquent.is_empty() {
+        println!("Warning: No vote accounts found. This might cause tests to fail.");
+    }
 
     // Create a new payer account
     let payer = Keypair::new();
@@ -115,6 +391,63 @@ fn setup_test_context() -> anyhow::Result<TestContext> {
     request_airdrop(&client, &payer.pubkey(), 10_000_000_000)?;
 
     Ok(TestContext { client, payer })
+}
+
+/// Helper function to get the validator's vote account
+fn get_validator_vote_account(client: &RpcClient) -> anyhow::Result<SolanaPubkey> {
+    let max_retries = 5;
+
+    for attempt in 1..=max_retries {
+        match client.get_vote_accounts() {
+            Ok(vote_accounts) => {
+                // Get the first current vote account
+                if let Some(account) = vote_accounts.current.first() {
+                    let vote_pubkey = SolanaPubkey::from_str(&account.vote_pubkey)?;
+                    println!("Using validator vote account: {}", vote_pubkey);
+                    return Ok(vote_pubkey);
+                }
+
+                // If no current accounts, try delinquent accounts
+                if let Some(account) = vote_accounts.delinquent.first() {
+                    let vote_pubkey = SolanaPubkey::from_str(&account.vote_pubkey)?;
+                    println!("Using delinquent validator vote account: {}", vote_pubkey);
+                    return Ok(vote_pubkey);
+                }
+
+                // If no accounts found but we haven't reached max retries
+                if attempt < max_retries {
+                    println!(
+                        "No vote accounts found yet, retrying in 3 seconds... (attempt {}/{})",
+                        attempt, max_retries
+                    );
+                    thread::sleep(Duration::from_secs(3));
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "No validator vote accounts found after {} attempts",
+                        max_retries
+                    ));
+                }
+            },
+            Err(e) => {
+                if attempt < max_retries {
+                    println!(
+                        "Error getting vote accounts: {}, retrying in 3 seconds... (attempt {}/{})",
+                        e, attempt, max_retries
+                    );
+                    thread::sleep(Duration::from_secs(3));
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Error getting vote accounts after {} attempts: {}",
+                        max_retries,
+                        e
+                    ));
+                }
+            },
+        }
+    }
+
+    // We should never reach here due to the error returns above, but just in case
+    Err(anyhow::anyhow!("Failed to get validator vote accounts"))
 }
 
 /// Helper function to create and initialize a stake account
@@ -180,14 +513,6 @@ fn create_stake_account(
     println!("Stake account pubkey: {}", stake_account_pubkey);
 
     Ok(stake_account_pubkey)
-}
-
-/// Helper function to get the validator's vote account
-fn get_validator_vote_account() -> anyhow::Result<SolanaPubkey> {
-    // Parse the validator vote account address from the constant
-    let vote_account = SolanaPubkey::from_str(VALIDATOR_VOTE_ACCOUNT)?;
-    println!("Using existing validator vote account: {}", vote_account);
-    Ok(vote_account)
 }
 
 /// Helper function to create a vote account
@@ -685,12 +1010,12 @@ fn test_stake_with_unlimited_permission() -> anyhow::Result<()> {
     // Create the swig wallet
     let swig = create_swig_ed25519(&context, &swig_authority, id)?;
 
-    println!("getting validator vote account");
+    println!("Getting validator vote account");
 
-    // Get the validator's vote account
-    let vote_account = get_validator_vote_account()?;
+    // Get the validator's vote account dynamically
+    let vote_account = get_validator_vote_account(&context.client)?;
 
-    println!("vote account obtained: {}", vote_account);
+    println!("Vote account obtained: {}", vote_account);
 
     // Create a secondary authority with StakeAll permission
     let secondary_authority = Keypair::new();
@@ -702,7 +1027,7 @@ fn test_stake_with_unlimited_permission() -> anyhow::Result<()> {
         10_000_000_000,
     )?;
 
-    println!("add second authority");
+    println!("Add second authority");
 
     // Add secondary authority with StakeAll permission
     add_authority_with_ed25519_root(
@@ -716,7 +1041,7 @@ fn test_stake_with_unlimited_permission() -> anyhow::Result<()> {
         vec![ClientAction::StakeAll(StakeAll {})],
     )?;
 
-    println!("added second authority");
+    println!("Added second authority");
 
     // Create a stake account with the swig as the authority
     let stake_account = create_stake_account(
@@ -859,8 +1184,8 @@ fn test_stake_with_fixed_limit() -> anyhow::Result<()> {
     let id = rand::random::<[u8; 32]>();
     let swig = create_swig_ed25519(&context, &swig_authority, id)?;
 
-    // Get the validator's vote account
-    let vote_account = get_validator_vote_account()?;
+    // Get the validator's vote account dynamically
+    let vote_account = get_validator_vote_account(&context.client)?;
 
     // Create a secondary authority with StakeLimit permission
     let secondary_authority = Keypair::new();
@@ -992,8 +1317,8 @@ fn test_stake_with_recurring_limit() -> anyhow::Result<()> {
     let id = rand::random::<[u8; 32]>();
     let swig = create_swig_ed25519(&context, &swig_authority, id)?;
 
-    // Get the validator's vote account
-    let vote_account = get_validator_vote_account()?;
+    // Get the validator's vote account dynamically
+    let vote_account = get_validator_vote_account(&context.client)?;
 
     // Create a secondary authority with StakeRecurringLimit permission
     let secondary_authority = Keypair::new();
@@ -1176,8 +1501,8 @@ fn test_both_stake_and_unstake_affect_limit() -> anyhow::Result<()> {
     let id = rand::random::<[u8; 32]>();
     let swig = create_swig_ed25519(&context, &swig_authority, id)?;
 
-    // Get the validator's vote account
-    let vote_account = get_validator_vote_account()?;
+    // Get the validator's vote account dynamically
+    let vote_account = get_validator_vote_account(&context.client)?;
 
     // Create a secondary authority with StakeLimit permission
     let secondary_authority = Keypair::new();
