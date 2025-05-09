@@ -179,9 +179,6 @@ unsafe fn classify_account(
                         3 => swig_state_x::StakeAccountState::RewardsPool,
                         _ => return Err(ProgramError::InvalidAccountData),
                     };
-
-                    msg!("state_value: {:?}", state_value);
-
                     // Extract the stake amount from the account
                     // The delegated stake amount is at offset 184 (36 + 8 + 32 + 32 + 8 + 8 + 32 +
                     // 4 + 8 + 16) for 8 bytes

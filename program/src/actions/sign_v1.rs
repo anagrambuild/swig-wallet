@@ -259,18 +259,6 @@ pub fn sign_v1(
                             .map_err(|_| ProgramError::InvalidAccountData)?
                     });
 
-                    msg!("state: {:?}", state);
-                    // Verify stake account state is valid for operations
-                    // TODO validate this check
-                    // if *state != swig_state_x::StakeAccountState::Stake
-                    //     && *state != swig_state_x::StakeAccountState::Initialized
-                    // {
-                    //     msg!("state is apparently not ::Stake or ::Initialized...");
-                    //     return Err(
-                    //         SwigAuthenticateError::PermissionDeniedStakeAccountInvalidState.
-                    // into(),     );
-                    // }
-
                     // Calculate the absolute difference in stake amount, regardless of direction
                     let diff = if balance > &current_stake_balance {
                         balance - current_stake_balance // Staking
