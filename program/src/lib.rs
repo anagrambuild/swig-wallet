@@ -12,6 +12,7 @@ use pinocchio::{
     account_info::AccountInfo,
     lazy_entrypoint::{InstructionContext, MaybeAccount},
     memory::sol_memcmp,
+    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
     ProgramResult,
@@ -23,7 +24,7 @@ use swig_state_x::{
         Action, Actionable, Permission,
     },
     swig::{Swig, SwigWithRoles},
-    AccountClassification, Discriminator, Transmutable,
+    AccountClassification, Discriminator, StakeAccountState, Transmutable,
 };
 use util::{read_program_scope_account_balance, ProgramScopeCache};
 
@@ -147,7 +148,55 @@ unsafe fn classify_account(
         },
         &STAKING_ID => {
             let data = account.borrow_data_unchecked();
-            // TODO add staking account
+            // Check if this is a stake account by checking the data
+            if data.len() >= 200 && index > 0 {
+                // Verify if this stake account belongs to the swig
+                // First get the authorized withdrawer from the stake account data
+                // In stake account data, the authorized withdrawer is at offset 44 (36 + 8) for
+                // 32 bytes
+                let authorized_withdrawer = unsafe { data.get_unchecked(44..76) };
+
+                // Check if the withdrawer is the swig account
+                if sol_memcmp(
+                    accounts.get_unchecked(0).assume_init_ref().key(),
+                    authorized_withdrawer,
+                    32,
+                ) == 0
+                {
+                    // Extract the stake state from the account
+                    // The state enum is at offset 196 (36 + 8 + 32 + 32 + 8 + 8 + 32 + 4 + 8 + 16 +
+                    // 8 + 4) for 4 bytes
+                    let state_value = u32::from_le_bytes(
+                        data.get_unchecked(196..200)
+                            .try_into()
+                            .map_err(|_| ProgramError::InvalidAccountData)?,
+                    );
+
+                    let state = match state_value {
+                        0 => swig_state_x::StakeAccountState::Uninitialized,
+                        1 => swig_state_x::StakeAccountState::Initialized,
+                        2 => swig_state_x::StakeAccountState::Stake,
+                        3 => swig_state_x::StakeAccountState::RewardsPool,
+                        _ => return Err(ProgramError::InvalidAccountData),
+                    };
+
+                    msg!("state_value: {:?}", state_value);
+
+                    // Extract the stake amount from the account
+                    // The delegated stake amount is at offset 184 (36 + 8 + 32 + 32 + 8 + 8 + 32 +
+                    // 4 + 8 + 16) for 8 bytes
+                    let stake_amount = u64::from_le_bytes(
+                        data.get_unchecked(184..192)
+                            .try_into()
+                            .map_err(|_| ProgramError::InvalidAccountData)?,
+                    );
+
+                    return Ok(AccountClassification::SwigStakeAccount {
+                        state,
+                        balance: stake_amount,
+                    });
+                }
+            }
             Ok(AccountClassification::None)
         },
         // This feature flag ensures that when program_scope_test feature is enabled,

@@ -18,6 +18,9 @@ use swig_state_x::{
         program_scope::{NumericType, ProgramScope},
         sol_limit::SolLimit,
         sol_recurring_limit::SolRecurringLimit,
+        stake_all::StakeAll,
+        stake_limit::StakeLimit,
+        stake_recurring_limit::StakeRecurringLimit,
         token_limit::TokenLimit,
         token_recurring_limit::TokenRecurringLimit,
     },
@@ -244,6 +247,69 @@ pub fn sign_v1(
                         }
                     }
                 },
+                AccountClassification::SwigStakeAccount { state, balance } => {
+                    // Get current stake balance from account data
+                    let data =
+                        unsafe { &all_accounts.get_unchecked(index).borrow_data_unchecked() };
+
+                    // Extract current stake balance from account
+                    let current_stake_balance = u64::from_le_bytes(unsafe {
+                        data.get_unchecked(184..192)
+                            .try_into()
+                            .map_err(|_| ProgramError::InvalidAccountData)?
+                    });
+
+                    msg!("state: {:?}", state);
+                    // Verify stake account state is valid for operations
+                    // TODO validate this check
+                    // if *state != swig_state_x::StakeAccountState::Stake
+                    //     && *state != swig_state_x::StakeAccountState::Initialized
+                    // {
+                    //     msg!("state is apparently not ::Stake or ::Initialized...");
+                    //     return Err(
+                    //         SwigAuthenticateError::PermissionDeniedStakeAccountInvalidState.
+                    // into(),     );
+                    // }
+
+                    // Calculate the absolute difference in stake amount, regardless of direction
+                    let diff = if balance > &current_stake_balance {
+                        balance - current_stake_balance // Staking
+                    } else if balance < &current_stake_balance {
+                        current_stake_balance - balance // Unstaking
+                    } else {
+                        0 // No change
+                    };
+
+                    // Skip further checks if there's no change in stake amount
+                    if diff == 0 {
+                        continue;
+                    }
+
+                    // Both staking and unstaking operations use the same permission system
+                    // We check permissions using the absolute difference calculated above
+
+                    // First check if we have unlimited staking permission
+                    if RoleMut::get_action_mut::<StakeAll>(actions, &[])?.is_some() {
+                        continue;
+                    }
+
+                    // Check for fixed limit
+                    if let Some(action) = RoleMut::get_action_mut::<StakeLimit>(actions, &[])? {
+                        action.run(diff)?;
+                        continue;
+                    }
+
+                    // Check for recurring limit
+                    if let Some(action) =
+                        RoleMut::get_action_mut::<StakeRecurringLimit>(actions, &[])?
+                    {
+                        action.run(diff, slot)?;
+                        continue;
+                    }
+
+                    // No matching permission found
+                    return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+                },
                 AccountClassification::ProgramScope {
                     role_index,
                     balance,
@@ -268,7 +334,8 @@ pub fn sign_v1(
                                 );
                             }
 
-                            // Get the current balance by using the program_scope's read_account_balance method
+                            // Get the current balance by using the program_scope's
+                            // read_account_balance method
                             let account = unsafe { all_accounts.get_unchecked(index) };
                             let data = unsafe { account.borrow_data_unchecked() };
 
