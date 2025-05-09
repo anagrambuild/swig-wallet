@@ -30,7 +30,7 @@ pub enum AccountClassification {
     SwigTokenAccount {
         balance: u64,
     },
-    SwigStakingAccount {
+    SwigStakeAccount {
         state: StakeAccountState,
         balance: u64,
     },
@@ -70,6 +70,7 @@ pub enum SwigAuthenticateError {
     PermissionDeniedSecp256k1InvalidSignatureAge,
     PermissionDeniedSecp256k1SignatureReused,
     PermissionDeniedSecp256k1InvalidHash,
+    PermissionDeniedStakeAccountInvalidState,
     InvalidSessionKeyCannotReuseSessionKey,
     InvalidSessionDuration,
 }

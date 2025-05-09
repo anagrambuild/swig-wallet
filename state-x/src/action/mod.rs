@@ -4,6 +4,9 @@ pub mod program;
 pub mod program_scope;
 pub mod sol_limit;
 pub mod sol_recurring_limit;
+pub mod stake_all;
+pub mod stake_limit;
+pub mod stake_recurring_limit;
 pub mod sub_account;
 pub mod token_limit;
 pub mod token_recurring_limit;
@@ -15,6 +18,9 @@ use program::Program;
 use program_scope::ProgramScope;
 use sol_limit::SolLimit;
 use sol_recurring_limit::SolRecurringLimit;
+use stake_all::StakeAll;
+use stake_limit::StakeLimit;
+use stake_recurring_limit::StakeRecurringLimit;
 use token_limit::TokenLimit;
 use token_recurring_limit::TokenRecurringLimit;
 
@@ -83,6 +89,9 @@ pub enum Permission {
     All,
     ManageAuthority,
     SubAccount,
+    StakeLimit,
+    StakeRecurringLimit,
+    StakeAll,
 }
 
 impl TryFrom<u16> for Permission {
@@ -92,7 +101,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=11 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=14 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -136,6 +145,9 @@ impl ActionLoader {
             Permission::TokenRecurringLimit => TokenRecurringLimit::valid_layout(data),
             Permission::All => All::valid_layout(data),
             Permission::ManageAuthority => ManageAuthority::valid_layout(data),
+            Permission::StakeLimit => StakeLimit::valid_layout(data),
+            Permission::StakeRecurringLimit => StakeRecurringLimit::valid_layout(data),
+            Permission::StakeAll => StakeAll::valid_layout(data),
             _ => Ok(false),
         }
     }
