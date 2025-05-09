@@ -2,6 +2,11 @@
 
 This directory contains GitHub Actions workflows for automating build, test, and quality assurance processes for the Swig Solana program.
 
+## ⚠️ SECURITY DISCLAIMER
+**Important: Swig is a work in progress and is not yet ready for production use. The workflows are provided for reference and testing purposes only.**
+
+**Swig is currently undergoing audit and should not be used in any production environment until audits are complete.**
+
 ## Workflows
 
 ### Build and Test (`build-and-test.yml`)
@@ -70,3 +75,16 @@ You can test these workflows locally using the `test_gh_actions.sh` script in th
 The script handles different event types correctly and provides detailed output about each workflow run. It also includes troubleshooting features to help identify issues.
 
 For more information on local testing, see the [LOCAL_TESTING.md](../LOCAL_TESTING.md) file. 
+
+## License
+
+Copyright (C) 2025 Anagram Ltd.
+
+This software, Swig, is licensed under the GNU Affero General Public License v3.0.
+
+You may obtain a copy of the License at:
+https://www.gnu.org/licenses/agpl-3.0.txt
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
