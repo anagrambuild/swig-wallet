@@ -8,8 +8,9 @@ members = [
   "assertions",
   "no-padding",
   "rust-sdk",
-  "cli"
-  ]
+  "cli",
+  "cli-x",
+]
 
 [workspace.lints.rust]
 unused_imports = "allow"
