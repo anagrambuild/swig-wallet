@@ -2,6 +2,7 @@
 use pinocchio::syscalls::{sol_curve_validate_point, sol_get_stack_height, sol_memcmp_};
 use pinocchio::{
     account_info::AccountInfo,
+    msg,
     program_error::ProgramError,
     pubkey::{create_program_address, find_program_address, Pubkey},
     ProgramResult,

@@ -98,8 +98,12 @@ pub fn program_id() -> Pubkey {
     swig::ID.into()
 }
 
-pub fn swig_key(id: String) -> Pubkey {
-    Pubkey::find_program_address(&swig_account_seeds(id.as_bytes()), &program_id()).0
+pub fn swig_key(id: String, signer_key: &[u8; 32]) -> Pubkey {
+    Pubkey::find_program_address(
+        &swig_account_seeds(id.as_bytes(), signer_key),
+        &program_id(),
+    )
+    .0
 }
 
 pub struct AuthorityConfig<'a> {

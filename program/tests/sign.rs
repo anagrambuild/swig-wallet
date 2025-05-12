@@ -38,7 +38,11 @@ fn test_transfer_sol_with_additional_authority() {
         .unwrap();
 
     let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let swig = Pubkey::find_program_address(
+        &swig_account_seeds(&id, &swig_authority.pubkey().to_bytes()),
+        &program_id(),
+    )
+    .0;
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
         &mut context.svm,
@@ -137,7 +141,11 @@ fn test_transfer_sol_all_with_authority() {
         .unwrap();
 
     let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let swig = Pubkey::find_program_address(
+        &swig_account_seeds(&id, &swig_authority.pubkey().to_bytes()),
+        &program_id(),
+    )
+    .0;
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
 
     let second_authority = Keypair::new();
@@ -215,7 +223,11 @@ fn test_transfer_sol_and_tokens_with_mixed_permissions() {
         .unwrap();
 
     let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let swig = Pubkey::find_program_address(
+        &swig_account_seeds(&id, &swig_authority.pubkey().to_bytes()),
+        &program_id(),
+    )
+    .0;
     context.svm.warp_to_slot(10);
     // Setup token infrastructure
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
@@ -356,7 +368,11 @@ fn test_fail_transfer_sol_with_additional_authority_not_enough() {
         .unwrap();
 
     let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let swig = Pubkey::find_program_address(
+        &swig_account_seeds(&id, &swig_authority.pubkey().to_bytes()),
+        &program_id(),
+    )
+    .0;
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
     let second_authority = Keypair::new();
     context
@@ -419,7 +435,11 @@ fn fail_not_correct_authority() {
         .unwrap();
 
     let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let swig = Pubkey::find_program_address(
+        &swig_account_seeds(&id, &swig_authority.pubkey().to_bytes()),
+        &program_id(),
+    )
+    .0;
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
     let second_authority = Keypair::new();
     context
@@ -487,7 +507,11 @@ fn fail_wrong_resource() {
         .unwrap();
 
     let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let swig = Pubkey::find_program_address(
+        &swig_account_seeds(&id, &swig_authority.pubkey().to_bytes()),
+        &program_id(),
+    )
+    .0;
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
         &mut context.svm,

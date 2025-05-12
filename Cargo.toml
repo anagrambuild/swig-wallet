@@ -1,15 +1,15 @@
 [workspace]
 resolver = "2"
 members = [
-  "program",
-  "interface",
-  "instructions",
-  "state-x",
-  "assertions",
-  "no-padding",
-  "rust-sdk",
-  "cli"
-  ]
+    "program",
+    "interface",
+    "instructions",
+    "state-x",
+    "assertions",
+    "no-padding",
+    "rust-sdk",
+    "cli",
+]
 
 [workspace.lints.rust]
 unused_imports = "allow"

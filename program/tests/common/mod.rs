@@ -5,6 +5,7 @@ use litesvm_token::{spl_token, CreateAssociatedTokenAccount, CreateMint, MintTo}
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
     instruction::Instruction,
+    keccak,
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
@@ -88,7 +89,6 @@ pub fn create_swig_secp256k1(
     id: [u8; 32],
 ) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
     let payer_pubkey = context.default_payer.pubkey();
-    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
 
     // Get the Ethereum public key
     let eth_pubkey = wallet
@@ -96,6 +96,13 @@ pub fn create_swig_secp256k1(
         .verifying_key()
         .to_encoded_point(false)
         .to_bytes();
+
+    // Use the X coordinate (first 32 bytes) for seed derivation
+    let pubkey_x_coord = &eth_pubkey[1..33]; // Skip the first byte (0x04 prefix) and take the next 32 bytes
+
+    // Find program address using the X coordinate
+    let (swig, bump) =
+        Pubkey::find_program_address(&swig_account_seeds(&id, pubkey_x_coord), &program_id());
 
     let create_ix = CreateInstruction::new(
         swig,
@@ -133,7 +140,11 @@ pub fn create_swig_ed25519(
     id: [u8; 32],
 ) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
     let payer_pubkey = context.default_payer.pubkey();
-    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+    let (swig, bump) = Pubkey::find_program_address(
+        &swig_account_seeds(&id, &authority.pubkey().to_bytes()),
+        &program_id(),
+    );
+    println!("swig: {:?}, bump: {:?}", swig, bump);
     let create_ix = CreateInstruction::new(
         swig,
         bump,
@@ -176,7 +187,10 @@ pub fn create_swig_ed25519_session(
     initial_session_key: [u8; 32],
 ) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
     let payer_pubkey = context.default_payer.pubkey();
-    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+    let (swig, bump) = Pubkey::find_program_address(
+        &swig_account_seeds(&id, &authority.pubkey().to_bytes()),
+        &program_id(),
+    );
 
     let authority_pubkey = authority.pubkey().to_bytes();
     let authority_data = CreateEd25519SessionAuthority::new(
@@ -228,7 +242,6 @@ pub fn create_swig_secp256k1_session(
     initial_session_key: [u8; 32],
 ) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
     let payer_pubkey = context.default_payer.pubkey();
-    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
 
     // Get the Ethereum public key
     let eth_pubkey = wallet
@@ -237,6 +250,12 @@ pub fn create_swig_secp256k1_session(
         .to_encoded_point(false)
         .to_bytes();
 
+    // Use the X coordinate (first 32 bytes) for seed derivation
+    let pubkey_x_coord = &eth_pubkey[1..33]; // Skip the first byte (0x04 prefix) and take the next 32 bytes
+
+    // Find program address using the X coordinate
+    let (swig, bump) =
+        Pubkey::find_program_address(&swig_account_seeds(&id, pubkey_x_coord), &program_id());
     // Create the session authority data
     let mut authority_data = CreateSecp256k1SessionAuthority {
         public_key: eth_pubkey[1..].try_into().unwrap(),

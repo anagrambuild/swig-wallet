@@ -704,7 +704,10 @@ fn create_swig_ed25519(
     let program_id = SolanaPubkey::from_str("swigDk8JezhiAVde8k6NMwxpZfgGm2NNuMe1KYCmUjP")?;
 
     // Calculate PDA for swig account
-    let (swig, bump) = SolanaPubkey::find_program_address(&swig_account_seeds(&id), &program_id);
+    let (swig, bump) = SolanaPubkey::find_program_address(
+        &swig_account_seeds(&id, &authority.pubkey().to_bytes()),
+        &program_id,
+    );
 
     // Create the instruction
     let create_ix = swig_interface::CreateInstruction::new(

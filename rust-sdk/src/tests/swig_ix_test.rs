@@ -70,7 +70,10 @@ fn test_create_swig_account_with_ed25519_authority() {
     );
 
     // Verify the account was created correctly
-    let (swig_key, _) = Pubkey::find_program_address(&swig_account_seeds(&swig_id), &program_id());
+    let (swig_key, _) = Pubkey::find_program_address(
+        &swig_account_seeds(&swig_id, &authority.pubkey().to_bytes()),
+        &program_id(),
+    );
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
     let root_role = swig_data.get_role(0).unwrap().unwrap();
@@ -116,7 +119,10 @@ fn test_create_swig_account_with_secp256k1_authority() {
     );
 
     // Verify the account was created correctly
-    let (swig_key, _) = Pubkey::find_program_address(&swig_account_seeds(&swig_id), &program_id());
+    let (swig_key, _) = Pubkey::find_program_address(
+        &swig_account_seeds(&swig_id, &payer.pubkey().to_bytes()),
+        &program_id(),
+    );
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
     let root_role = swig_data.get_role(0).unwrap().unwrap();

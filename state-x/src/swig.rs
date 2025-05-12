@@ -15,19 +15,28 @@ use crate::{
 };
 
 #[inline(always)]
-pub fn swig_account_seeds(id: &[u8]) -> [&[u8]; 2] {
-    [b"swig".as_ref(), id]
+pub fn swig_account_seeds<'a>(id: &'a [u8], signer_key: &'a [u8]) -> [&'a [u8]; 3] {
+    [b"swig".as_ref(), id, signer_key]
 }
 
 #[inline(always)]
-pub fn swig_account_seeds_with_bump<'a>(id: &'a [u8], bump: &'a [u8]) -> [&'a [u8]; 3] {
-    [b"swig".as_ref(), id, bump]
+pub fn swig_account_seeds_with_bump<'a>(
+    id: &'a [u8],
+    bump: &'a [u8],
+    signer_key: &'a [u8],
+) -> [&'a [u8]; 4] {
+    [b"swig".as_ref(), id, signer_key, bump]
 }
 
-pub fn swig_account_signer<'a>(id: &'a [u8], bump: &'a [u8; 1]) -> [Seed<'a>; 3] {
+pub fn swig_account_signer<'a>(
+    id: &'a [u8],
+    bump: &'a [u8; 1],
+    signer_key: &'a [u8],
+) -> [Seed<'a>; 4] {
     [
         b"swig".as_ref().into(),
         id.as_ref().into(),
+        signer_key.as_ref().into(),
         bump.as_ref().into(),
     ]
 }
@@ -623,26 +632,28 @@ mod tests {
     fn test_swig_account_seeds() {
         let id = [1; 32];
         let bump = [255];
+        let signer_key = [0; 32];
 
         // Test basic seeds
-        let seeds = swig_account_seeds(&id);
+        let seeds = swig_account_seeds(&id, &signer_key);
         assert_eq!(seeds.len(), 2);
         assert_eq!(seeds[0], b"swig");
         assert_eq!(seeds[1], &id);
 
         // Test seeds with bump
-        let seeds_with_bump = swig_account_seeds_with_bump(&id, &bump);
+        let seeds_with_bump = swig_account_seeds_with_bump(&id, &bump, &signer_key);
         assert_eq!(seeds_with_bump.len(), 3);
         assert_eq!(seeds_with_bump[0], b"swig");
         assert_eq!(seeds_with_bump[1], &id);
         assert_eq!(seeds_with_bump[2], &bump);
 
         // Test signer seeds
-        let signer_seeds = swig_account_signer(&id, &[255]);
+        let signer_seeds = swig_account_signer(&id, &[255], &[0; 32]);
         assert_eq!(signer_seeds.len(), 3);
         assert_eq!(signer_seeds[0].as_ref(), b"swig");
         assert_eq!(signer_seeds[1].as_ref(), &id);
         assert_eq!(signer_seeds[2].as_ref(), &[255]);
+        assert_eq!(signer_seeds[3].as_ref(), &[0; 32]);
     }
 
     #[test]

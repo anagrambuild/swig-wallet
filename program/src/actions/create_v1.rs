@@ -9,10 +9,15 @@ use pinocchio_system::instructions::CreateAccount;
 use swig_assertions::*;
 use swig_state_x::{
     action::{all::All, manage_authority::ManageAuthority, ActionLoader, Actionable},
-    authority::{authority_type_to_length, AuthorityType},
+    authority::{
+        authority_type_to_length,
+        ed25519::{CreateEd25519SessionAuthority, ED25519Authority},
+        secp256k1::{CreateSecp256k1SessionAuthority, Secp256k1Authority},
+        AuthorityType,
+    },
     role::Position,
     swig::{swig_account_seeds_with_bump, swig_account_signer, Swig, SwigBuilder},
-    IntoBytes, Transmutable,
+    IntoBytes, SwigStateError, Transmutable,
 };
 
 use crate::{
@@ -90,17 +95,85 @@ impl<'a> CreateV1<'a> {
     }
 }
 
+// Helper function to extract public key bytes from authority data based on
+// authority type
+fn extract_public_key_from_authority_data(
+    authority_type: AuthorityType,
+    authority_data: &[u8],
+) -> Result<&[u8], ProgramError> {
+    match authority_type {
+        AuthorityType::Ed25519 => {
+            // For Ed25519, the authority data is directly the public key
+            if authority_data.len() != 32 {
+                return Err(SwigStateError::InvalidRoleData.into());
+            }
+            Ok(authority_data)
+        },
+        AuthorityType::Secp256k1 => {
+            // For Secp256k1, the authority data is the uncompressed public key (64 bytes)
+            // We need to get a deterministic 32-byte value - take the first 32 bytes (X
+            // coordinate)
+            if authority_data.len() != 64 {
+                return Err(SwigStateError::InvalidRoleData.into());
+            }
+
+            // Just use the X coordinate (first 32 bytes) for the seed derivation
+            Ok(&authority_data[0..32])
+        },
+        AuthorityType::Ed25519Session => {
+            // For Ed25519Session, extract the public key from CreateEd25519SessionAuthority
+            if authority_data.len() < CreateEd25519SessionAuthority::LEN {
+                return Err(SwigStateError::InvalidRoleData.into());
+            }
+            let session_authority =
+                unsafe { CreateEd25519SessionAuthority::load_unchecked(authority_data)? };
+            Ok(&session_authority.public_key)
+        },
+        AuthorityType::Secp256k1Session => {
+            // For Secp256k1Session, extract the public key from
+            // CreateSecp256k1SessionAuthority
+            if authority_data.len() < CreateSecp256k1SessionAuthority::LEN {
+                return Err(SwigStateError::InvalidRoleData.into());
+            }
+            let session_authority =
+                unsafe { CreateSecp256k1SessionAuthority::load_unchecked(authority_data)? };
+
+            // Use the X coordinate (first 32 bytes) of the public key for seed derivation
+            Ok(&session_authority.public_key[0..32])
+        },
+        _ => Err(SwigError::InvalidAuthorityType.into()),
+    }
+}
+
 #[inline(always)]
 pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult {
+    msg!("checking if system owner");
     check_system_owner(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
+    msg!("checking zero balance");
     check_zero_balance(ctx.accounts.swig, SwigError::AccountNotEmptySwigAccount)?;
+    msg!("attempting to create swig");
 
     let create_v1 = CreateV1::from_instruction_bytes(create)?;
+    msg!(
+        "create_v1.authority_data.len(): {:?}",
+        create_v1.authority_data.len()
+    );
+
+    // Extract the public key from authority data
+    let authority_type = AuthorityType::try_from(create_v1.args.authority_type)?;
+    msg!("authority_type: {:?}", authority_type);
+    let pubkey_bytes =
+        extract_public_key_from_authority_data(authority_type, create_v1.authority_data)?;
+
+    msg!("pubkey_bytes: {:?}", pubkey_bytes);
+
+    msg!("check_self_pda");
     let bump = check_self_pda(
-        &swig_account_seeds_with_bump(&create_v1.args.id, &[create_v1.args.bump]),
+        &swig_account_seeds_with_bump(&create_v1.args.id, &[create_v1.args.bump], pubkey_bytes),
         ctx.accounts.swig.key(),
         SwigError::InvalidSeedSwigAccount,
     )?;
+    msg!("bump: {:?}", bump);
 
     let manage_authority_action = create_v1.get_action::<ManageAuthority>()?;
     let all_action = create_v1.get_action::<All>()?;
@@ -127,7 +200,7 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
         space: account_size as u64,
         owner: &crate::ID,
     }
-    .invoke_signed(&[swig_account_signer(&swig.id, &[swig.bump])
+    .invoke_signed(&[swig_account_signer(&swig.id, &[swig.bump], pubkey_bytes)
         .as_slice()
         .into()])?;
     let swig_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };

@@ -52,7 +52,10 @@ fn test_token_transfer_with_program_scope() {
 
     // Setup swig account
     let id = rand::random::<[u8; 32]>();
-    let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+    let (swig, _) = Pubkey::find_program_address(
+        &swig_account_seeds(&id, &swig_authority.pubkey().to_bytes()),
+        &program_id(),
+    );
     let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_result.is_ok());
 
@@ -465,7 +468,10 @@ fn test_recurring_limit_program_scope() {
 
     // Setup swig account
     let id = rand::random::<[u8; 32]>();
-    let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+    let (swig, _) = Pubkey::find_program_address(
+        &swig_account_seeds(&id, &swig_authority.pubkey().to_bytes()),
+        &program_id(),
+    );
     let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
     println!("sig_create_result: {:?}", swig_create_result);
     assert!(swig_create_result.is_ok());

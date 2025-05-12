@@ -132,6 +132,7 @@ pub fn sign_v1(
             slot,
         )?;
     }
+
     const UNINIT_KEY: MaybeUninit<&Pubkey> = MaybeUninit::uninit();
     let mut restricted_keys: [MaybeUninit<&Pubkey>; 2] = [UNINIT_KEY; 2];
     let rkeys: &[&Pubkey] = unsafe {
@@ -152,8 +153,9 @@ pub fn sign_v1(
         ctx.accounts.swig.key(),
         rkeys,
     )?;
+    let authority_identity = role.authority.identity()?;
     let b = [swig.bump];
-    let seeds = swig_account_signer(&swig.id, &b);
+    let seeds = swig_account_signer(&swig.id, &b, authority_identity);
     let signer = seeds.as_slice();
 
     for ix in ix_iter {

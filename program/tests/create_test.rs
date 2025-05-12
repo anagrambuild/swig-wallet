@@ -60,7 +60,11 @@ fn test_create_basic_token_transfer() {
         .unwrap();
 
     let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let swig = Pubkey::find_program_address(
+        &swig_account_seeds(&id, &swig_authority.pubkey().to_bytes()),
+        &program_id(),
+    )
+    .0;
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
         &mut context.svm,
