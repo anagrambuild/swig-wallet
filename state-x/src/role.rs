@@ -129,7 +129,7 @@ impl<'a> RoleMut<'a> {
                         break;
                     }
                 }
-                cursor = action.boundary() as usize;
+                cursor += action.boundary() as usize;
             }
         }
 
