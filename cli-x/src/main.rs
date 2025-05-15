@@ -1,4 +1,4 @@
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
 use std::{
@@ -221,21 +221,24 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
             )
         },
         AuthorityType::Secp256k1 => {
-            let fee_payer_kp_str = Password::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter Fee payer keypair")
-                .interact()?;
-
-            let fee_payer_keypair = Keypair::from_base58_string(&fee_payer_kp_str);
             let authority_keypair = Password::with_theme(&ColorfulTheme::default())
                 .with_prompt("Enter Secp256k1 authority keypair")
                 .interact()?;
 
             let wallet = LocalSigner::from_str(&authority_keypair)?;
-            let secp_pubkey = wallet
+
+            let eth_pubkey = wallet
                 .credential()
                 .verifying_key()
                 .to_encoded_point(false)
                 .to_bytes();
+
+            let eth_address = Address::from_raw_public_key(&eth_pubkey[1..]);
+
+            println!("Wallet: {:?}", wallet);
+            println!("Eth pubkey: {:?}", eth_pubkey);
+            println!("Eth address: {:?}", eth_address);
+            let secp_pubkey = wallet.address().to_checksum_buffer(None);
 
             let sign_fn = move |payload: &[u8]| -> [u8; 65] {
                 let mut hash = [0u8; 32];
@@ -251,8 +254,13 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                 sig
             };
 
+            let fee_payer_kp_str = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter Fee payer keypair")
+                .interact()?;
+            let fee_payer_keypair = Keypair::from_base58_string(&fee_payer_kp_str);
+
             (
-                AuthorityManager::Secp256k1(secp_pubkey, Box::new(sign_fn)),
+                AuthorityManager::Secp256k1(eth_pubkey, Box::new(sign_fn)),
                 fee_payer_keypair,
             )
         },

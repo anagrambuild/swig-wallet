@@ -1,3 +1,4 @@
+use alloy_primitives::{Address, B256};
 #[cfg(all(feature = "rust_sdk_test", test))]
 use litesvm::LiteSVM;
 use solana_client::{rpc_client::RpcClient, rpc_request::TokenAccountsFilter};
@@ -15,7 +16,9 @@ use solana_sdk::{
     system_instruction::{self, SystemInstruction},
     transaction::{Transaction, VersionedTransaction},
 };
+
 use swig_interface::{swig, swig_key};
+use swig_state_x::authority::secp256k1::Secp256k1Authority;
 use swig_state_x::{
     action::{
         all::All, manage_authority::ManageAuthority, sol_limit::SolLimit,
@@ -352,11 +355,17 @@ impl<'c> SwigWallet<'c> {
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let signature = self.rpc_client.send_and_confirm_transaction(&tx)?;
         #[cfg(all(feature = "rust_sdk_test", test))]
-        let signature = self
-            .litesvm
-            .send_transaction(tx)
-            .map_err(|e| SwigError::TransactionFailed(e.err.to_string()))?
-            .signature;
+        let signature = self.litesvm.send_transaction(tx).map_err(|e| {
+            SwigError::TransactionFailedWithLogs {
+                error: e.err.to_string(),
+                logs: e.meta.logs,
+            }
+        })?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        println!("signature: {:?}", signature);
+
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let signature = signature.signature;
 
         Ok(signature)
     }
@@ -507,7 +516,7 @@ impl<'c> SwigWallet<'c> {
                                 hex::encode([&[0x4].as_slice(), authority].concat());
                             //get eth address from public key
                             let mut hasher = solana_sdk::keccak::Hasher::default();
-                            hasher.hash(authority);
+                            hasher.hash(authority_hex.as_bytes());
                             let hash = hasher.result();
                             let address = format!("0x{}", hex::encode(&hash.0[12..32]));
                             address

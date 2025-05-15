@@ -242,12 +242,30 @@ mod authority_management_tests {
         let wallet = LocalSigner::random();
         println!("wallet: {:?}", wallet.address());
 
+        let wallet2 = wallet.clone();
         let secp_pubkey = wallet
             .credential()
             .verifying_key()
             .to_encoded_point(false)
             .to_bytes();
 
+        let sec1_bytes = wallet2.credential().verifying_key().to_sec1_bytes();
+        let secp1_pubkey = sec1_bytes.as_ref();
+
+        let authority_hex = hex::encode([&[0x4].as_slice(), secp1_pubkey].concat());
+        //get eth address from public key
+        let mut hasher = solana_sdk::keccak::Hasher::default();
+        hasher.hash(authority_hex.as_bytes());
+        let hash = hasher.result();
+        let address = format!("0x{}", hex::encode(&hash.0[12..32]));
+        println!("address: {:?}", address);
+
+        println!(
+            "\t\tAuthority Public Key: 0x{} address {}",
+            authority_hex, address
+        );
+        println!("secp_pubkey length: {:?}", secp_pubkey);
+        println!("secp1_pubkey length: {:?}", secp1_pubkey);
         // Add secondary authority with SOL permission
         swig_wallet
             .add_authority(
