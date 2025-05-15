@@ -13,7 +13,7 @@ pub mod token_recurring_limit;
 use all::All;
 use manage_authority::ManageAuthority;
 use no_padding::NoPadding;
-use pinocchio::{program_error::ProgramError};
+use pinocchio::program_error::ProgramError;
 use program::Program;
 use program_scope::ProgramScope;
 use sol_limit::SolLimit;

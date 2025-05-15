@@ -53,7 +53,10 @@ pub struct Secp256k1Authority {
 
 impl Secp256k1Authority {
     pub fn new(public_key: [u8; 33]) -> Self {
-        Self { public_key, _padding: [0; 7] }
+        Self {
+            public_key,
+            _padding: [0; 7],
+        }
     }
 }
 
