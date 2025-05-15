@@ -47,7 +47,7 @@ impl<'a> Role<'a> {
                 }
             }
 
-            cursor += action.boundary() as usize;
+            cursor = action.boundary() as usize;
         }
         Ok(None)
     }
@@ -100,7 +100,7 @@ impl<'a> RoleMut<'a> {
                 }
             }
 
-            cursor += action.boundary() as usize;
+            cursor = action.boundary() as usize;
         }
         Ok(None)
     }
