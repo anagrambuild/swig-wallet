@@ -79,7 +79,6 @@ pub fn add_authority_with_ed25519_root<'a>(
         .svm
         .send_transaction(tx)
         .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
-    println!("bench: {:?}", bench.logs);
     Ok(bench)
 }
 
@@ -166,7 +165,6 @@ pub fn create_swig_ed25519(
         .svm
         .send_transaction(tx)
         .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
-    println!("bench: {:?}", bench.logs);
     Ok((swig, bench))
 }
 
