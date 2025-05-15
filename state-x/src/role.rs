@@ -47,7 +47,7 @@ impl<'a> Role<'a> {
                 }
             }
 
-            cursor += action.boundary() as usize;
+            cursor = action.boundary() as usize;
         }
         Ok(None)
     }
@@ -99,8 +99,7 @@ impl<'a> RoleMut<'a> {
                     return Ok(Some(action_obj));
                 }
             }
-
-            cursor += action.boundary() as usize;
+            cursor = action.boundary() as usize;
         }
         Ok(None)
     }
@@ -132,7 +131,6 @@ impl<'a> RoleMut<'a> {
                 cursor = action.boundary() as usize;
             }
         }
-
         if let Some(offset) = found_offset {
             let action_obj =
                 unsafe { A::load_mut_unchecked(&mut actions_data[offset..offset + A::LEN])? };

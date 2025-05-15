@@ -182,7 +182,7 @@ fn test_token_transfer_with_program_scope() {
         swig_authority.pubkey(),
         swig_authority.pubkey(),
         swig_transfer_ix,
-        0, // authority role id
+        1, // authority role id
     )
     .unwrap();
 
@@ -265,7 +265,7 @@ fn perform_token_transfer(
         swig_authority.pubkey(),
         swig_authority.pubkey(),
         transfer_ix,
-        0, // authority role id
+        1, // authority role id
     )
     .unwrap();
 
