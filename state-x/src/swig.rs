@@ -1,7 +1,7 @@
 extern crate alloc;
 
 use no_padding::NoPadding;
-use pinocchio::{instruction::Seed, program_error::ProgramError};
+use pinocchio::{instruction::Seed, msg, program_error::ProgramError};
 
 use crate::{
     action::{program_scope::ProgramScope, Action, ActionLoader, Actionable},
@@ -353,8 +353,8 @@ impl Swig {
             let (position, remaning) =
                 unsafe { roles[offset..].split_at_mut_unchecked(Position::LEN) };
             let position = unsafe { Position::load_unchecked(position)? };
-            let (authority, actions) =
-                unsafe { remaning.split_at_mut_unchecked(position.authority_length() as usize) };
+            let authority_length = position.authority_length() as usize;
+            let (authority, actions) = unsafe { remaning.split_at_mut_unchecked(authority_length) };
 
             let auth: &mut dyn AuthorityInfo = match position.authority_type()? {
                 AuthorityType::Ed25519 => unsafe {
@@ -371,6 +371,9 @@ impl Swig {
                 },
                 _ => return Err(ProgramError::InvalidAccountData),
             };
+
+            let action_data_end = position.boundary() as usize - Position::LEN - authority_length;
+            let (actions, _rest) = unsafe { actions.split_at_mut_unchecked(action_data_end) };
             let role = RoleMut {
                 position,
                 authority: auth,
@@ -559,8 +562,8 @@ impl<'a> SwigWithRoles<'a> {
 mod tests {
     use super::*;
     use crate::{
-        action::{all::All, sol_limit::SolLimit, Actionable},
-        authority::ed25519::ED25519Authority,
+        action::{all::All, manage_authority::ManageAuthority, sol_limit::SolLimit, Actionable},
+        authority::{ed25519::ED25519Authority, secp256k1::CreateSecp256k1SessionAuthority},
     };
 
     // Calculate exact buffer size needed for a test with N roles
@@ -1451,7 +1454,7 @@ mod tests {
 
         // Use verbose calculations to ensure adequate space
         let one_role_size = Position::LEN + ED25519Authority::LEN + action_bytes;
-        let total_size = Swig::LEN + (2 * one_role_size) + 128; // Add extra padding
+        let total_size = Swig::LEN + (2 * one_role_size); // Add extra padding
 
         let mut account_buffer = vec![0u8; total_size];
         let id = [1; 32];
@@ -1577,7 +1580,8 @@ mod tests {
 
         // Use verbose calculations to ensure adequate space for 2 roles
         let one_role_size = Position::LEN + ED25519Authority::LEN + action_bytes;
-        let total_size = Swig::LEN + (2 * one_role_size) + 128; // Add extra padding
+        let two_role_size = Position::LEN + Secp256k1Authority::LEN + action_bytes;
+        let total_size = Swig::LEN + one_role_size + two_role_size; // Add extra padding
 
         let mut account_buffer = vec![0u8; total_size];
         let id = [1; 32];
@@ -1590,9 +1594,7 @@ mod tests {
         let authority1 = ED25519Authority {
             public_key: [2; 32],
         };
-        let authority2 = ED25519Authority {
-            public_key: [3; 32],
-        };
+        let authority2 = [3; 64];
 
         // Create action data
         let all_action = All {}.into_bytes().unwrap();
@@ -1603,6 +1605,14 @@ mod tests {
         );
         let all_bytes = all_header.into_bytes().unwrap();
         let all_actions = [all_bytes, all_action].concat();
+        let ma_action = ManageAuthority {}.into_bytes().unwrap();
+        let ma_header = Action::new(
+            ManageAuthority::TYPE,
+            ma_action.len() as u16,
+            Action::LEN as u32 + ma_action.len() as u32,
+        );
+        let ma_bytes = ma_header.into_bytes().unwrap();
+        let ma_actions = [ma_bytes, ma_action].concat();
 
         // Add two roles
         builder
@@ -1614,12 +1624,7 @@ mod tests {
             )
             .unwrap();
         builder
-            .add_role(
-                AuthorityType::Ed25519,
-                authority2.into_bytes().unwrap(),
-                1,
-                &all_actions,
-            )
+            .add_role(AuthorityType::Secp256k1, &authority2, 1, &ma_actions)
             .unwrap();
 
         // Scan for assigned role IDs
@@ -1692,6 +1697,127 @@ mod tests {
             first_role.is_none(),
             "First role should not exist after removal"
         );
+        assert!(
+            second_role.is_none(),
+            "Second role should not exist after removal"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_remove_secp_middle_role() -> Result<(), ProgramError> {
+        // Use the same 2-role approach as the working test
+        // For the All action, which is very small
+        let action_bytes = Action::LEN + 1; // All action is very small
+
+        // Use verbose calculations to ensure adequate space
+        let one_role_size = Position::LEN + ED25519Authority::LEN + action_bytes;
+        let two_role_size = Position::LEN + Secp256k1Authority::LEN + action_bytes;
+        let total_size = Swig::LEN + one_role_size + two_role_size; // Add extra padding
+
+        let mut account_buffer = vec![0u8; total_size];
+        let id = [1; 32];
+        let bump = 255;
+
+        let swig = Swig::new(id, bump, 0);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+
+        // Create two different authorities
+        let authority1 = ED25519Authority {
+            public_key: [2; 32],
+        };
+        let authority2 = [3; 64];
+
+        // Create action data
+        let all_action = All {}.into_bytes().unwrap();
+        let all_header = Action::new(
+            All::TYPE,
+            all_action.len() as u16,
+            Action::LEN as u32 + all_action.len() as u32,
+        );
+        let all_bytes = all_header.into_bytes().unwrap();
+        let all_actions = [all_bytes, all_action].concat();
+
+        // Add two roles
+        builder
+            .add_role(
+                AuthorityType::Ed25519,
+                authority1.into_bytes().unwrap(),
+                1,
+                &all_actions,
+            )
+            .unwrap();
+        builder
+            .add_role(AuthorityType::Secp256k1, &authority2, 1, &all_actions)
+            .unwrap();
+
+        // Verify two roles exist
+        assert_eq!(builder.swig.roles, 2);
+        println!(
+            "Role counter after adding 2 roles: {}",
+            builder.swig.role_counter
+        );
+
+        // Drop the builder to release mutable reference
+        drop(builder);
+
+        // Before removal: scan roles to see what IDs are assigned
+        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        println!("Before removal - scanning available roles:");
+        let mut assigned_ids = Vec::new();
+
+        // Find all assigned role IDs
+        for i in 0..4 {
+            match swig_with_roles.get_role(i)? {
+                Some(role) => {
+                    println!("Role ID {} exists with position: {:?}", i, role.position);
+                    assigned_ids.push(i);
+                },
+                None => println!("Role ID {} does not exist", i),
+            }
+        }
+
+        // Ensure we have exactly 2 roles as expected
+        assert_eq!(
+            assigned_ids.len(),
+            2,
+            "Should have exactly 2 roles before removal"
+        );
+
+        // Since we have exactly 2 roles, we can remove the second one (index 1)
+        let second_role_id = assigned_ids[1];
+        println!("Removing second role with ID: {}", second_role_id);
+
+        // Drop the immutable reference before creating a mutable one
+        drop(swig_with_roles);
+
+        // Recreate builder and remove the role
+        let mut builder = SwigBuilder::new_from_bytes(&mut account_buffer).unwrap();
+        builder.remove_role(second_role_id).unwrap();
+
+        // Verify one role was removed
+        assert_eq!(builder.swig.roles, 1);
+
+        // Drop the builder to release the mutable reference
+        drop(builder);
+
+        // After removal: check the state of all roles
+        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        println!(
+            "After removal - Swig account has {} roles",
+            swig_with_roles.state.roles
+        );
+
+        // Only first role should still exist
+        let first_role = swig_with_roles.get_role(assigned_ids[0])?;
+        assert!(
+            first_role.is_some(),
+            "First role should still exist after removal"
+        );
+
+        // Second role should not exist
+        let second_role = swig_with_roles.get_role(second_role_id)?;
         assert!(
             second_role.is_none(),
             "Second role should not exist after removal"

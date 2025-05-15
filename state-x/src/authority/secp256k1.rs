@@ -51,6 +51,15 @@ pub struct Secp256k1Authority {
     _padding: [u8; 7],
 }
 
+impl Secp256k1Authority {
+    pub fn new(public_key: [u8; 33]) -> Self {
+        Self {
+            public_key,
+            _padding: [0; 7],
+        }
+    }
+}
+
 impl Transmutable for Secp256k1Authority {
     const LEN: usize = core::mem::size_of::<Secp256k1Authority>();
 }
