@@ -32,6 +32,57 @@ pub fn swig_account_signer<'a>(id: &'a [u8], bump: &'a [u8; 1]) -> [Seed<'a>; 3]
     ]
 }
 
+#[inline(always)]
+pub fn sub_account_seeds<'a>(swig_id: &'a [u8], role_id: &'a [u8]) -> [&'a [u8]; 3] {
+    [b"sub-account".as_ref(), swig_id, role_id]
+}
+
+#[inline(always)]
+pub fn sub_account_seeds_with_bump<'a>(
+    swig_id: &'a [u8],
+    role_id: &'a [u8],
+    bump: &'a [u8],
+) -> [&'a [u8]; 4] {
+    [b"sub-account".as_ref(), swig_id, role_id, bump]
+}
+
+pub fn sub_account_signer<'a>(
+    swig_id: &'a [u8],
+    role_id: &'a [u8],
+    bump: &'a [u8; 1],
+) -> [Seed<'a>; 4] {
+    [
+        b"sub-account".as_ref().into(),
+        swig_id.into(),
+        role_id.into(),
+        bump.as_ref().into(),
+    ]
+}
+
+#[repr(C, align(8))]
+#[derive(Debug, PartialEq, NoPadding)]
+pub struct SwigSubAccount {
+    pub discriminator: u8,
+    pub bump: u8,
+    pub enabled: bool,
+    _padding: [u8; 1],
+    pub role_id: u32,
+    pub swig_id: [u8; 32],
+    pub reserved_lamports: u64,
+}
+
+impl Transmutable for SwigSubAccount {
+    const LEN: usize = core::mem::size_of::<Self>();
+}
+
+impl TransmutableMut for SwigSubAccount {}
+
+impl IntoBytes for SwigSubAccount {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
+        Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
+    }
+}
+
 pub struct SwigBuilder<'a> {
     pub role_buffer: &'a mut [u8],
     pub swig: &'a mut Swig,

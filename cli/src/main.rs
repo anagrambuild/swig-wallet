@@ -40,20 +40,21 @@ use spl_token::instruction::TokenInstruction;
 use swig_interface::{
     swig::{self},
     swig_key, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
-    CreateSessionInstruction, SignInstruction,
+    CreateSessionInstruction, CreateSubAccountInstruction, SignInstruction,
+    SubAccountSignInstruction, ToggleSubAccountInstruction, WithdrawFromSubAccountInstruction,
 };
-
 use swig_state_x::{
     action::{
-        all::All, manage_authority::ManageAuthority, sol_limit::SolLimit, token_limit::TokenLimit,
+        all::All, manage_authority::ManageAuthority, sol_limit::SolLimit, sub_account::SubAccount,
+        token_limit::TokenLimit,
     },
     authority::{
         ed25519::{CreateEd25519SessionAuthority, Ed25519SessionAuthority},
         secp256k1::{CreateSecp256k1SessionAuthority, Secp256k1SessionAuthority},
         AuthorityType,
     },
-    swig::{swig_account_seeds, SwigWithRoles},
-    IntoBytes,
+    swig::{sub_account_seeds, swig_account_seeds, SwigSubAccount, SwigWithRoles},
+    IntoBytes, Transmutable,
 };
 use tokio::runtime::Runtime;
 const TOKEN_PROGRAM_ID: Pubkey = pubkey_macro!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
@@ -287,6 +288,48 @@ pub enum Command {
         amount: u64,
         #[arg(short, long)]
         slippage: Option<u16>,
+    },
+    CreateSubAccount {
+        #[arg(short, long = "swig-id")]
+        id: String,
+        #[arg(short, long)]
+        role_id: u32,
+    },
+    WithdrawFromSubAccount {
+        #[arg(short, long = "swig-id")]
+        id: String,
+        #[arg(short, long)]
+        role_id: u32,
+        #[arg(short, long)]
+        sub_account: String,
+        #[arg(short, long)]
+        amount: u64,
+        #[arg(short, long)]
+        token: Option<String>,
+    },
+    SubAccountSign {
+        #[arg(short, long = "swig-id")]
+        id: String,
+        #[arg(short, long)]
+        role_id: u32,
+        #[arg(short, long)]
+        sub_account: String,
+        #[arg(short, long)]
+        recipient: String,
+        #[arg(short, long)]
+        amount: u64,
+        #[arg(short, long)]
+        token: Option<String>,
+    },
+    ToggleSubAccount {
+        #[arg(short, long = "swig-id")]
+        id: String,
+        #[arg(short, long)]
+        role_id: u32,
+        #[arg(short, long)]
+        sub_account: String,
+        #[arg(short, long)]
+        enabled: bool,
     },
 }
 
@@ -730,6 +773,378 @@ fn main_fn() -> Result<()> {
                 _ => todo!(),
             };
         },
+        Command::CreateSubAccount { id, role_id } => {
+            let auth_context = load_auth_context(&id)?;
+            let swig_id = swig_key(format!("{:0<13}", id));
+
+            // Derive the sub-account address
+            let role_id_bytes = role_id.to_le_bytes();
+            let swig_id_bytes = auth_context.swig_id.as_bytes();
+            let (sub_account, sub_account_bump) = Pubkey::find_program_address(
+                &sub_account_seeds(swig_id_bytes, &role_id_bytes),
+                &swig_interface::program_id(),
+            );
+
+            println!("Creating sub-account at address: {}", sub_account);
+
+            // Create the instruction
+            let ix = match auth_context.authority_type {
+                CliAuthorityType::Ed25519 => {
+                    let auth_pubkey = Pubkey::from_str(&auth_context.authority_identifier).unwrap();
+                    CreateSubAccountInstruction::new_with_ed25519_authority(
+                        swig_id,
+                        auth_pubkey,
+                        ctx.payer.pubkey(),
+                        sub_account,
+                        role_id,
+                        sub_account_bump,
+                    )
+                },
+                CliAuthorityType::Secp256k1 => {
+                    let current_slot = ctx.rpc_client.get_slot()?;
+                    CreateSubAccountInstruction::new_with_secp256k1_authority(
+                        swig_id,
+                        ctx.payer.pubkey(),
+                        |data| {
+                            let sig = auth_context.sign(data).unwrap();
+                            sig[0..65].try_into().unwrap()
+                        },
+                        current_slot,
+                        sub_account,
+                        role_id,
+                        sub_account_bump,
+                    )
+                },
+                CliAuthorityType::Ed25519Session => {
+                    // For Ed25519Session, similar to Ed25519 but with session handling
+                    anyhow::bail!("Ed25519Session is not yet implemented for CreateSubAccount");
+                },
+                CliAuthorityType::Secp256k1Session => {
+                    // For Secp256k1Session, similar to Secp256k1 but with session handling
+                    anyhow::bail!("Secp256k1Session is not yet implemented for CreateSubAccount");
+                },
+            }?;
+
+            // Send the transaction
+            let compute = prio_fees(&ctx, &[swig_id])?;
+            let me = v0::Message::try_compile(
+                &ctx.payer.pubkey(),
+                &[compute, ix],
+                &[],
+                ctx.rpc_client.get_latest_blockhash()?,
+            )?;
+
+            let signers: Vec<&dyn Signer> = vec![&ctx.payer, &auth_context];
+            let txn = VersionedTransaction::try_new(VersionedMessage::V0(me), signers.as_slice())?;
+
+            let result = ctx
+                .rpc_client
+                .send_and_confirm_transaction_with_spinner(&txn)?;
+            println!("Sub-account created successfully: {}", result);
+
+            // Display the sub-account details
+            if let Ok(sub_account_data) = ctx.rpc_client.get_account_data(&sub_account) {
+                if let Ok(sub_account_state) =
+                    unsafe { SwigSubAccount::load_unchecked(&sub_account_data) }
+                {
+                    println!("Sub-account details:");
+                    println!(
+                        "  Swig ID: {}",
+                        bs58::encode(sub_account_state.swig_id).into_string()
+                    );
+                    println!("  Role ID: {}", sub_account_state.role_id);
+                    println!("  Enabled: {}", sub_account_state.enabled);
+                    println!("  Bump: {}", sub_account_state.bump);
+                }
+            }
+        },
+        Command::WithdrawFromSubAccount {
+            id,
+            role_id,
+            sub_account,
+            amount,
+            token,
+        } => {
+            let auth_context = load_auth_context(&id)?;
+            let swig_id = swig_key(format!("{:0<13}", id));
+            let sub_account_pubkey = Pubkey::from_str(&sub_account)?;
+
+            println!(
+                "Withdrawing {} from sub-account {}",
+                amount, sub_account_pubkey
+            );
+
+            // Create the instruction
+            let ix = match auth_context.authority_type {
+                CliAuthorityType::Ed25519 => {
+                    let auth_pubkey = Pubkey::from_str(&auth_context.authority_identifier).unwrap();
+                    WithdrawFromSubAccountInstruction::new_with_ed25519_authority(
+                        swig_id,
+                        auth_pubkey,
+                        ctx.payer.pubkey(),
+                        sub_account_pubkey,
+                        role_id,
+                        amount,
+                    )
+                },
+                CliAuthorityType::Secp256k1 => {
+                    let current_slot = ctx.rpc_client.get_slot()?;
+                    WithdrawFromSubAccountInstruction::new_with_secp256k1_authority(
+                        swig_id,
+                        ctx.payer.pubkey(),
+                        |data| {
+                            let sig = auth_context.sign(data).unwrap();
+                            sig[0..65].try_into().unwrap()
+                        },
+                        current_slot,
+                        sub_account_pubkey,
+                        role_id,
+                        amount,
+                    )
+                },
+                CliAuthorityType::Ed25519Session => {
+                    anyhow::bail!(
+                        "Ed25519Session is not yet implemented for WithdrawFromSubAccount"
+                    );
+                },
+                CliAuthorityType::Secp256k1Session => {
+                    anyhow::bail!(
+                        "Secp256k1Session is not yet implemented for WithdrawFromSubAccount"
+                    );
+                },
+            }?;
+
+            // Send the transaction
+            let compute = prio_fees(&ctx, &[swig_id])?;
+            let me = v0::Message::try_compile(
+                &ctx.payer.pubkey(),
+                &[compute, ix],
+                &[],
+                ctx.rpc_client.get_latest_blockhash()?,
+            )?;
+
+            let signers: Vec<&dyn Signer> = vec![&ctx.payer, &auth_context];
+            let txn = VersionedTransaction::try_new(VersionedMessage::V0(me), signers.as_slice())?;
+
+            let result = ctx
+                .rpc_client
+                .send_and_confirm_transaction_with_spinner(&txn)?;
+            println!("Funds withdrawn successfully: {}", result);
+
+            // Show current balances
+            if token.is_none() {
+                if let Ok(recipient_account) = ctx.rpc_client.get_account(&sub_account_pubkey) {
+                    println!(
+                        "Sub-account balance: {} lamports",
+                        recipient_account.lamports
+                    );
+                }
+            } else {
+                println!("Token transfer completed. Check token balances separately.");
+            }
+        },
+        Command::SubAccountSign {
+            id,
+            role_id,
+            sub_account,
+            recipient,
+            amount,
+            token,
+        } => {
+            let auth_context = load_auth_context(&id)?;
+            let swig_id = swig_key(format!("{:0<13}", id));
+            let sub_account_pubkey = Pubkey::from_str(&sub_account)?;
+            let recipient_pubkey = Pubkey::from_str(&recipient)?;
+
+            println!(
+                "Creating a transaction from sub-account {} to {}",
+                sub_account_pubkey, recipient_pubkey
+            );
+
+            // Create the instruction to be executed by the sub-account
+            let transfer_ix = match &token {
+                Some(token_mint) => {
+                    // Token transfer
+                    let token_mint_pubkey = Pubkey::from_str(token_mint)?;
+                    let sub_account_ata =
+                        spl_associated_token_account::get_associated_token_address(
+                            &sub_account_pubkey,
+                            &token_mint_pubkey,
+                        );
+                    let recipient_ata = spl_associated_token_account::get_associated_token_address(
+                        &recipient_pubkey,
+                        &token_mint_pubkey,
+                    );
+
+                    Instruction {
+                        program_id: spl_token::id(),
+                        accounts: vec![
+                            AccountMeta::new(sub_account_ata, false),
+                            AccountMeta::new(recipient_ata, false),
+                            AccountMeta::new(sub_account_pubkey, false),
+                        ],
+                        data: spl_token::instruction::TokenInstruction::Transfer { amount }.pack(),
+                    }
+                },
+                None => {
+                    // SOL transfer
+                    system_instruction::transfer(&sub_account_pubkey, &recipient_pubkey, amount)
+                },
+            };
+
+            // Create the sub-account sign instruction
+            let ix = match auth_context.authority_type {
+                CliAuthorityType::Ed25519 => {
+                    let auth_pubkey = Pubkey::from_str(&auth_context.authority_identifier).unwrap();
+                    SubAccountSignInstruction::new_with_ed25519_authority(
+                        swig_id,
+                        sub_account_pubkey,
+                        auth_pubkey,
+                        ctx.payer.pubkey(),
+                        role_id,
+                        vec![transfer_ix],
+                    )
+                },
+                CliAuthorityType::Secp256k1 => {
+                    let current_slot = ctx.rpc_client.get_slot()?;
+                    SubAccountSignInstruction::new_with_secp256k1_authority(
+                        swig_id,
+                        sub_account_pubkey,
+                        ctx.payer.pubkey(),
+                        |data| {
+                            let sig = auth_context.sign(data).unwrap();
+                            sig[0..65].try_into().unwrap()
+                        },
+                        current_slot,
+                        role_id,
+                        vec![transfer_ix],
+                    )
+                },
+                CliAuthorityType::Ed25519Session => {
+                    anyhow::bail!("Ed25519Session is not yet implemented for SubAccountSign");
+                },
+                CliAuthorityType::Secp256k1Session => {
+                    anyhow::bail!("Secp256k1Session is not yet implemented for SubAccountSign");
+                },
+            }?;
+
+            // Send the transaction
+            let compute = prio_fees(&ctx, &[swig_id])?;
+            let me = v0::Message::try_compile(
+                &ctx.payer.pubkey(),
+                &[compute, ix],
+                &[],
+                ctx.rpc_client.get_latest_blockhash()?,
+            )?;
+
+            let signers: Vec<&dyn Signer> = vec![&ctx.payer, &auth_context];
+            let txn = VersionedTransaction::try_new(VersionedMessage::V0(me), signers.as_slice())?;
+
+            let result = ctx
+                .rpc_client
+                .send_and_confirm_transaction_with_spinner(&txn)?;
+            println!("Transaction executed successfully: {}", result);
+
+            // Show current balances
+            if token.is_none() {
+                if let Ok(recipient_account) = ctx.rpc_client.get_account(&recipient_pubkey) {
+                    println!("Recipient balance: {} lamports", recipient_account.lamports);
+                }
+
+                if let Ok(sub_account_info) = ctx.rpc_client.get_account(&sub_account_pubkey) {
+                    println!(
+                        "Sub-account balance: {} lamports",
+                        sub_account_info.lamports
+                    );
+                }
+            } else {
+                println!("Token transfer completed. Check token balances separately.");
+            }
+        },
+        Command::ToggleSubAccount {
+            id,
+            role_id,
+            sub_account,
+            enabled,
+        } => {
+            let auth_context = load_auth_context(&id)?;
+            let swig_id = swig_key(format!("{:0<13}", id));
+            let sub_account_pubkey = Pubkey::from_str(&sub_account)?;
+
+            println!(
+                "Toggling sub-account {} to enabled={}",
+                sub_account_pubkey, enabled
+            );
+
+            // Create the instruction
+            let ix = match auth_context.authority_type {
+                CliAuthorityType::Ed25519 => {
+                    let auth_pubkey = Pubkey::from_str(&auth_context.authority_identifier).unwrap();
+                    ToggleSubAccountInstruction::new_with_ed25519_authority(
+                        swig_id,
+                        auth_pubkey,
+                        ctx.payer.pubkey(),
+                        sub_account_pubkey,
+                        role_id,
+                        enabled,
+                    )
+                },
+                CliAuthorityType::Secp256k1 => {
+                    let current_slot = ctx.rpc_client.get_slot()?;
+                    ToggleSubAccountInstruction::new_with_secp256k1_authority(
+                        swig_id,
+                        ctx.payer.pubkey(),
+                        |data| {
+                            let sig = auth_context.sign(data).unwrap();
+                            sig[0..65].try_into().unwrap()
+                        },
+                        current_slot,
+                        sub_account_pubkey,
+                        role_id,
+                        enabled,
+                    )
+                },
+                CliAuthorityType::Ed25519Session => {
+                    anyhow::bail!("Ed25519Session is not yet implemented for ToggleSubAccount");
+                },
+                CliAuthorityType::Secp256k1Session => {
+                    anyhow::bail!("Secp256k1Session is not yet implemented for ToggleSubAccount");
+                },
+            }?;
+
+            // Send the transaction
+            let compute = prio_fees(&ctx, &[swig_id])?;
+            let me = v0::Message::try_compile(
+                &ctx.payer.pubkey(),
+                &[compute, ix],
+                &[],
+                ctx.rpc_client.get_latest_blockhash()?,
+            )?;
+
+            let signers: Vec<&dyn Signer> = vec![&ctx.payer, &auth_context];
+            let txn = VersionedTransaction::try_new(VersionedMessage::V0(me), signers.as_slice())?;
+
+            let result = ctx
+                .rpc_client
+                .send_and_confirm_transaction_with_spinner(&txn)?;
+            println!("Sub-account state toggled successfully: {}", result);
+
+            // Display the sub-account details
+            if let Ok(sub_account_data) = ctx.rpc_client.get_account_data(&sub_account_pubkey) {
+                if let Ok(sub_account_state) =
+                    unsafe { SwigSubAccount::load_unchecked(&sub_account_data) }
+                {
+                    println!("Sub-account details:");
+                    println!(
+                        "  Swig ID: {}",
+                        bs58::encode(sub_account_state.swig_id).into_string()
+                    );
+                    println!("  Role ID: {}", sub_account_state.role_id);
+                    println!("  Enabled: {}", sub_account_state.enabled);
+                    println!("  Bump: {}", sub_account_state.bump);
+                }
+            }
+        },
     }
     Ok(())
 }
@@ -812,7 +1227,7 @@ fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
                     .identity()
                     .map_err(|e| anyhow!("Failed to get authority identity: {:?}", e))?;
                 let authority_hex = hex::encode([&[0x4].as_slice(), authority].concat());
-                //get eth address from public key
+                // get eth address from public key
                 let mut hasher = solana_sdk::keccak::Hasher::default();
                 hasher.hash(authority);
                 let hash = hasher.result();

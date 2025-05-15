@@ -27,8 +27,9 @@ pub enum AuthorityManager {
 
 /// A builder for creating and managing Swig wallet instructions.
 ///
-/// This struct provides methods to create various instructions for managing a Swig wallet,
-/// including initialization, authority management, and transaction signing.
+/// This struct provides methods to create various instructions for managing a
+/// Swig wallet, including initialization, authority management, and transaction
+/// signing.
 pub struct SwigInstructionBuilder {
     /// The id of the Swig account
     swig_id: [u8; 32],
@@ -48,7 +49,8 @@ impl SwigInstructionBuilder {
     /// # Arguments
     ///
     /// * `swig_id` - The unique identifier for the Swig account
-    /// * `authority_manager` - The authority manager specifying the type of signing authority
+    /// * `authority_manager` - The authority manager specifying the type of
+    ///   signing authority
     /// * `payer` - The public key of the fee payer
     /// * `role_id` - The role identifier for this wallet
     ///
@@ -80,7 +82,8 @@ impl SwigInstructionBuilder {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the `Instruction` for creating a Swig account or a `SwigError`
+    /// Returns a `Result` containing the `Instruction` for creating a Swig
+    /// account or a `SwigError`
     pub fn build_swig_account(&self) -> Result<Instruction, SwigError> {
         let program_id = program_id();
         let (swig_account, swig_bump_seed) =
@@ -126,7 +129,8 @@ impl SwigInstructionBuilder {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing a vector of signed instructions or a `SwigError`
+    /// Returns a `Result` containing a vector of signed instructions or a
+    /// `SwigError`
     pub fn sign_instruction(
         &mut self,
         instructions: Vec<Instruction>,
@@ -197,7 +201,8 @@ impl SwigInstructionBuilder {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the add authority instruction or a `SwigError`
+    /// Returns a `Result` containing the add authority instruction or a
+    /// `SwigError`
     pub fn add_authority_instruction(
         &mut self,
         new_authority_type: AuthorityType,
@@ -276,7 +281,8 @@ impl SwigInstructionBuilder {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the remove authority instruction or a `SwigError`
+    /// Returns a `Result` containing the remove authority instruction or a
+    /// `SwigError`
     pub fn remove_authority(
         &mut self,
         authority_to_remove_id: u32,
@@ -405,7 +411,8 @@ impl SwigInstructionBuilder {
             },
             AuthorityManager::Secp256k1(authority, signing_fn) => {
                 todo!("Must manually remove and add authority due to Signing Function")
-                // let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                // let current_slot =
+                // current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
                 // Ok(vec![
                 //     RemoveAuthorityInstruction::new_with_secp256k1_authority(
                 //         self.swig_account,
@@ -443,7 +450,8 @@ impl SwigInstructionBuilder {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the create session instruction or a `SwigError`
+    /// Returns a `Result` containing the create session instruction or a
+    /// `SwigError`
     pub fn create_session_instruction(
         &self,
         session_key: Pubkey,
@@ -502,7 +510,8 @@ impl SwigInstructionBuilder {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the Swig account's public key or a `SwigError`
+    /// Returns a `Result` containing the Swig account's public key or a
+    /// `SwigError`
     pub fn get_swig_account(&self) -> Result<Pubkey, SwigError> {
         Ok(self.swig_account)
     }
@@ -567,7 +576,8 @@ impl SwigInstructionBuilder {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the authority's public key as bytes or a `SwigError`
+    /// Returns a `Result` containing the authority's public key as bytes or a
+    /// `SwigError`
     pub fn get_current_authority(&self) -> Result<Vec<u8>, SwigError> {
         match &self.authority_manager {
             AuthorityManager::Ed25519(authority) => Ok(authority.to_bytes().to_vec()),

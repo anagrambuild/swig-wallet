@@ -14,8 +14,14 @@ use swig_assertions::*;
 use swig_compact_instructions::InstructionIterator;
 use swig_state_x::{
     action::{
-        all::All, program_scope::ProgramScope, sol_limit::SolLimit,
-        sol_recurring_limit::SolRecurringLimit, token_limit::TokenLimit,
+        all::All,
+        program_scope::{NumericType, ProgramScope},
+        sol_limit::SolLimit,
+        sol_recurring_limit::SolRecurringLimit,
+        stake_all::StakeAll,
+        stake_limit::StakeLimit,
+        stake_recurring_limit::StakeRecurringLimit,
+        token_limit::TokenLimit,
         token_recurring_limit::TokenRecurringLimit,
     },
     authority::AuthorityType,
@@ -95,7 +101,8 @@ pub fn sign_v1(
     account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
-    check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
+    // KEEP remove since we enfoce swig is owned in lib.rs
+    // check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     let sign_v1 = SignV1::from_instruction_bytes(data)?;
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigAccount as u8 {
@@ -241,6 +248,57 @@ pub fn sign_v1(
                         }
                     }
                 },
+                AccountClassification::SwigStakeAccount { state, balance } => {
+                    // Get current stake balance from account data
+                    let data =
+                        unsafe { &all_accounts.get_unchecked(index).borrow_data_unchecked() };
+
+                    // Extract current stake balance from account
+                    let current_stake_balance = u64::from_le_bytes(unsafe {
+                        data.get_unchecked(184..192)
+                            .try_into()
+                            .map_err(|_| ProgramError::InvalidAccountData)?
+                    });
+
+                    // Calculate the absolute difference in stake amount, regardless of direction
+                    let diff = if balance > &current_stake_balance {
+                        balance - current_stake_balance // Staking
+                    } else if balance < &current_stake_balance {
+                        current_stake_balance - balance // Unstaking
+                    } else {
+                        0 // No change
+                    };
+
+                    // Skip further checks if there's no change in stake amount
+                    if diff == 0 {
+                        continue;
+                    }
+
+                    // Both staking and unstaking operations use the same permission system
+                    // We check permissions using the absolute difference calculated above
+
+                    // First check if we have unlimited staking permission
+                    if RoleMut::get_action_mut::<StakeAll>(actions, &[])?.is_some() {
+                        continue;
+                    }
+
+                    // Check for fixed limit
+                    if let Some(action) = RoleMut::get_action_mut::<StakeLimit>(actions, &[])? {
+                        action.run(diff)?;
+                        continue;
+                    }
+
+                    // Check for recurring limit
+                    if let Some(action) =
+                        RoleMut::get_action_mut::<StakeRecurringLimit>(actions, &[])?
+                    {
+                        action.run(diff, slot)?;
+                        continue;
+                    }
+
+                    // No matching permission found
+                    return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+                },
                 AccountClassification::ProgramScope {
                     role_index,
                     balance,
@@ -265,39 +323,33 @@ pub fn sign_v1(
                                 );
                             }
 
-                            match program_scope.scope_type {
-                                x if x == 0 => Ok::<(), ProgramError>(()), // Basic type always
-                                // passes
-                                x if x == 1 => {
-                                    // Limit type
-                                    if program_scope.current_amount == 0 {
-                                        return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
-                                    }
-                                    Ok::<(), ProgramError>(())
-                                },
-                                x if x == 2 => {
-                                    // RecurringLimit type
-                                    // Get current slot for window check
-                                    let clock = Clock::get()?;
-                                    let current_slot = clock.slot;
+                            // Get the current balance by using the program_scope's
+                            // read_account_balance method
+                            let account = unsafe { all_accounts.get_unchecked(index) };
+                            let data = unsafe { account.borrow_data_unchecked() };
 
-                                    if current_slot - program_scope.last_reset
-                                        > program_scope.window
-                                    {
-                                        program_scope.current_amount = program_scope.limit;
-                                        program_scope.last_reset = current_slot;
-                                    }
+                            let current_balance = if program_scope.balance_field_end
+                                - program_scope.balance_field_start
+                                > 0
+                            {
+                                // Use the defined balance field indices to read the balance
+                                match program_scope.read_account_balance(data) {
+                                    Ok(bal) => bal,
+                                    Err(err) => {
+                                        msg!("Error reading balance from account data: {:?}", err);
+                                        return Err(
+                                            SwigError::InvalidProgramScopeBalanceFields.into()
+                                        );
+                                    },
+                                }
+                            } else {
+                                return Err(SwigError::InvalidProgramScopeBalanceFields.into());
+                            };
 
-                                    if program_scope.current_amount == 0 {
-                                        return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
-                                    }
-                                    Ok::<(), ProgramError>(())
-                                },
-                                _ => {
-                                    Err(SwigAuthenticateError::PermissionDeniedMissingPermission
-                                        .into())
-                                },
-                            }?;
+                            let amount_spent = balance - current_balance;
+
+                            // Execute the program scope run with proper amount and slot
+                            program_scope.run(amount_spent, Some(slot))?;
                         },
                         None => {
                             return Err(

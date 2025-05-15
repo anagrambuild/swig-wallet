@@ -1,8 +1,3 @@
-use super::*;
-use crate::{
-    error::SwigError, instruction_builder::AuthorityManager, types::Permission, RecurringConfig,
-    SwigWallet,
-};
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
@@ -10,14 +5,20 @@ use litesvm::LiteSVM;
 use solana_program::pubkey::Pubkey;
 use solana_sdk::signature::{Keypair, Signer};
 use swig_interface::swig;
-use swig_state_x::authority::AuthorityType;
 use swig_state_x::{
     authority::{
         ed25519::{CreateEd25519SessionAuthority, Ed25519SessionAuthority},
         secp256k1::{CreateSecp256k1SessionAuthority, Secp256k1SessionAuthority},
+        AuthorityType,
     },
     swig::{swig_account_seeds, SwigWithRoles},
     IntoBytes,
+};
+
+use super::*;
+use crate::{
+    error::SwigError, instruction_builder::AuthorityManager, types::Permission, RecurringConfig,
+    SwigWallet,
 };
 
 // Test helper functions
@@ -397,8 +398,9 @@ mod authority_management_tests {
 }
 
 mod transfer_tests {
-    use super::*;
     use solana_program::system_instruction;
+
+    use super::*;
 
     #[test_log::test]
     fn should_transfer_within_limits() {

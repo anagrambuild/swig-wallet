@@ -40,6 +40,23 @@ pub enum SwigError {
     DuplicateAuthority,
     InvalidOperation,
     InvalidAlignment,
+
+    // Added for sub-account functionality
+    InvalidSeedSubAccount,
+    InsufficientFunds,
+    OwnerMismatchTokenAccount,
+    PermissionDenied,
+    InvalidSignature,
+    InvalidInstructionDataTooShort,
+    OwnerMismatchSubAccount,
+    SubAccountAlreadyExists,
+    AuthorityCannotCreateSubAccount,
+    InvalidSwigSubAccountDiscriminator,
+    InvalidSwigSubAccountDisabled,
+    InvalidSwigSubAccountSwigIdMismatch,
+    InvalidSwigSubAccountRoleIdMismatch,
+    InvalidSwigTokenAccountOwner,
+    InvalidProgramScopeBalanceFields,
 }
 
 impl From<SwigError> for ProgramError {

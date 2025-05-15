@@ -2,8 +2,7 @@ use alloy_primitives::{Address, B256};
 #[cfg(all(feature = "rust_sdk_test", test))]
 use litesvm::LiteSVM;
 use solana_client::{rpc_client::RpcClient, rpc_request::TokenAccountsFilter};
-use solana_program::hash::Hash;
-use solana_program::{instruction::Instruction, pubkey::Pubkey};
+use solana_program::{hash::Hash, instruction::Instruction, pubkey::Pubkey};
 use solana_sdk::{
     account::ReadableAccount,
     address_lookup_table::{state::AddressLookupTable, AddressLookupTableAccount},
@@ -59,7 +58,8 @@ impl<'c> SwigWallet<'c> {
     /// # Arguments
     ///
     /// * `swig_id` - The unique identifier for the Swig account
-    /// * `authority_manager` - The authority manager specifying the type of signing authority
+    /// * `authority_manager` - The authority manager specifying the type of
+    ///   signing authority
     /// * `fee_payer` - The keypair that will pay for transactions
     /// * `authority` - The wallet's authority keypair
     /// * `rpc_url` - The URL of the Solana RPC endpoint
@@ -67,7 +67,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the new `SwigWallet` instance or a `SwigError`
+    /// Returns a `Result` containing the new `SwigWallet` instance or a
+    /// `SwigError`
     pub fn new(
         swig_id: [u8; 32],
         authority_manager: AuthorityManager,
@@ -182,7 +183,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Arguments
     ///
-    /// * `new_authority_type` - The type of authority to add (Ed25519, Secp256k1, etc.)
+    /// * `new_authority_type` - The type of authority to add (Ed25519,
+    ///   Secp256k1, etc.)
     /// * `new_authority` - The new authority's credentials as bytes
     /// * `permissions` - Vector of permissions to grant to the new authority
     ///
@@ -263,7 +265,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Arguments
     ///
-    /// * `inner_instructions` - Vector of instructions to include in the transaction
+    /// * `inner_instructions` - Vector of instructions to include in the
+    ///   transaction
     /// * `alt` - Optional slice of Address Lookup Table accounts
     ///
     /// # Returns
@@ -374,7 +377,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the Swig account's public key or a `SwigError`
+    /// Returns a `Result` containing the Swig account's public key or a
+    /// `SwigError`
     pub fn get_swig_account(&self) -> Result<Pubkey, SwigError> {
         self.instruction_builder.get_swig_account()
     }
@@ -383,7 +387,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing a vector of the authority's permissions or a `SwigError`
+    /// Returns a `Result` containing a vector of the authority's permissions or
+    /// a `SwigError`
     pub fn get_current_authority_permissions(&self) -> Result<Vec<Permission>, SwigError> {
         let swig_pubkey = self.get_swig_account()?;
 
@@ -451,7 +456,8 @@ impl<'c> SwigWallet<'c> {
 
     /// Displays detailed information about the Swig wallet
     ///
-    /// This includes account details, roles, and permissions for all authorities.
+    /// This includes account details, roles, and permissions for all
+    /// authorities.
     ///
     /// # Returns
     ///
@@ -514,7 +520,7 @@ impl<'c> SwigWallet<'c> {
                             let authority = role.authority.identity().unwrap();
                             let authority_hex =
                                 hex::encode([&[0x4].as_slice(), authority].concat());
-                            //get eth address from public key
+                            // get eth address from public key
                             let mut hasher = solana_sdk::keccak::Hasher::default();
                             hasher.hash(authority_hex.as_bytes());
                             let hash = hasher.result();
@@ -621,7 +627,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing unit type or a `SwigError` if the authority is not found
+    /// Returns a `Result` containing unit type or a `SwigError` if the
+    /// authority is not found
     pub fn authenticate_authority(&self, authority: &[u8]) -> Result<(), SwigError> {
         let swig_pubkey = self.get_swig_account()?;
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
