@@ -1,5 +1,5 @@
 use no_padding::NoPadding;
-use pinocchio::{msg, program_error::ProgramError};
+use pinocchio::program_error::ProgramError;
 
 use crate::{
     action::{Action, Actionable},
