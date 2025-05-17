@@ -1,3 +1,10 @@
+//! Core Swig wallet functionality implementation.
+//!
+//! This module provides the core functionality for the Swig wallet system,
+//! including account management, role-based access control, and sub-account
+//! handling. It implements the main Swig account structure and associated
+//! helper functions.
+
 extern crate alloc;
 
 use no_padding::NoPadding;
@@ -14,16 +21,19 @@ use crate::{
     Discriminator, IntoBytes, SwigStateError, Transmutable, TransmutableMut,
 };
 
+/// Generates the seeds for a Swig account.
 #[inline(always)]
 pub fn swig_account_seeds(id: &[u8]) -> [&[u8]; 2] {
     [b"swig".as_ref(), id]
 }
 
+/// Generates the seeds for a Swig account with bump seed.
 #[inline(always)]
 pub fn swig_account_seeds_with_bump<'a>(id: &'a [u8], bump: &'a [u8]) -> [&'a [u8]; 3] {
     [b"swig".as_ref(), id, bump]
 }
 
+/// Creates a signer seeds array for a Swig account.
 pub fn swig_account_signer<'a>(id: &'a [u8], bump: &'a [u8; 1]) -> [Seed<'a>; 3] {
     [
         b"swig".as_ref().into(),
@@ -32,11 +42,13 @@ pub fn swig_account_signer<'a>(id: &'a [u8], bump: &'a [u8; 1]) -> [Seed<'a>; 3]
     ]
 }
 
+/// Generates the seeds for a sub-account.
 #[inline(always)]
 pub fn sub_account_seeds<'a>(swig_id: &'a [u8], role_id: &'a [u8]) -> [&'a [u8]; 3] {
     [b"sub-account".as_ref(), swig_id, role_id]
 }
 
+/// Generates the seeds for a sub-account with bump seed.
 #[inline(always)]
 pub fn sub_account_seeds_with_bump<'a>(
     swig_id: &'a [u8],
@@ -46,6 +58,7 @@ pub fn sub_account_seeds_with_bump<'a>(
     [b"sub-account".as_ref(), swig_id, role_id, bump]
 }
 
+/// Creates a signer seeds array for a sub-account.
 pub fn sub_account_signer<'a>(
     swig_id: &'a [u8],
     role_id: &'a [u8],
@@ -59,15 +72,22 @@ pub fn sub_account_signer<'a>(
     ]
 }
 
+/// Represents a Swig sub-account with its associated metadata.
 #[repr(C, align(8))]
 #[derive(Debug, PartialEq, NoPadding)]
 pub struct SwigSubAccount {
+    /// Account type discriminator
     pub discriminator: u8,
+    /// PDA bump seed
     pub bump: u8,
+    /// Whether the sub-account is enabled
     pub enabled: bool,
     _padding: [u8; 1],
+    /// ID of the role associated with this sub-account
     pub role_id: u32,
+    /// ID of the parent Swig account
     pub swig_id: [u8; 32],
+    /// Amount of lamports reserved for rent
     pub reserved_lamports: u64,
 }
 
@@ -83,12 +103,16 @@ impl IntoBytes for SwigSubAccount {
     }
 }
 
+/// Builder for constructing and modifying Swig accounts.
 pub struct SwigBuilder<'a> {
+    /// Buffer for role data
     pub role_buffer: &'a mut [u8],
+    /// Reference to the Swig account being built
     pub swig: &'a mut Swig,
 }
 
 impl<'a> SwigBuilder<'a> {
+    /// Creates a new SwigBuilder from account buffer and Swig data.
     pub fn create(account_buffer: &'a mut [u8], swig: Swig) -> Result<Self, ProgramError> {
         let (swig_bytes, roles_bytes) = account_buffer.split_at_mut(Swig::LEN);
         let bytes = swig.into_bytes()?;
@@ -100,6 +124,7 @@ impl<'a> SwigBuilder<'a> {
         Ok(builder)
     }
 
+    /// Creates a new SwigBuilder from raw account bytes.
     pub fn new_from_bytes(account_buffer: &'a mut [u8]) -> Result<Self, ProgramError> {
         let (swig_bytes, roles_bytes) = account_buffer.split_at_mut(Swig::LEN);
         let swig = unsafe { Swig::load_mut_unchecked(swig_bytes)? };
@@ -110,6 +135,9 @@ impl<'a> SwigBuilder<'a> {
         Ok(builder)
     }
 
+    /// Removes a role from the Swig account.
+    ///
+    /// Returns a tuple of (new_data_end, old_data_len) on success.
     pub fn remove_role(&mut self, id: u32) -> Result<(usize, usize), ProgramError> {
         // Find the role to remove
         let mut cursor = 0;
@@ -198,6 +226,7 @@ impl<'a> SwigBuilder<'a> {
         Err(SwigStateError::RoleNotFound.into())
     }
 
+    /// Adds a new role to the Swig account.
     pub fn add_role(
         &mut self,
         authority_type: AuthorityType,
@@ -293,18 +322,26 @@ impl<'a> SwigBuilder<'a> {
     }
 }
 
+/// Main Swig account structure.
 #[repr(C, align(8))]
 #[derive(Debug, PartialEq, NoPadding)]
 pub struct Swig {
+    /// Account type discriminator
     pub discriminator: u8,
+    /// PDA bump seed
     pub bump: u8,
+    /// Unique identifier for this Swig account
     pub id: [u8; 32],
+    /// Number of roles in this account
     pub roles: u16,
-    pub role_counter: u32, // ensure unique ids up to 2^32
+    /// Counter for generating unique role IDs
+    pub role_counter: u32,
+    /// Amount of lamports reserved for rent
     pub reserved_lamports: u64,
 }
 
 impl Swig {
+    /// Creates a new Swig account.
     pub fn new(id: [u8; 32], bump: u8, reserved_lamports: u64) -> Self {
         Self {
             discriminator: Discriminator::SwigAccount as u8,
@@ -315,23 +352,8 @@ impl Swig {
             reserved_lamports,
         }
     }
-}
 
-impl Transmutable for Swig {
-    const LEN: usize = core::mem::size_of::<Self>();
-}
-
-impl TransmutableMut for Swig {}
-
-impl IntoBytes for Swig {
-    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
-        let bytes =
-            unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
-        Ok(bytes)
-    }
-}
-
-impl Swig {
+    /// Gets a mutable reference to a role by ID.
     pub fn get_mut_role(id: u32, roles: &mut [u8]) -> Result<Option<RoleMut<'_>>, ProgramError> {
         let mut cursor = 0;
         let mut found_offset = None;
@@ -387,12 +409,30 @@ impl Swig {
     }
 }
 
+impl Transmutable for Swig {
+    const LEN: usize = core::mem::size_of::<Self>();
+}
+
+impl TransmutableMut for Swig {}
+
+impl IntoBytes for Swig {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
+        let bytes =
+            unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
+        Ok(bytes)
+    }
+}
+
+/// Wrapper structure for a Swig account with its roles.
 pub struct SwigWithRoles<'a> {
+    /// Reference to the Swig account state
     pub state: &'a Swig,
+    /// Raw bytes containing role data
     roles: &'a [u8],
 }
 
 impl<'a> SwigWithRoles<'a> {
+    /// Creates a new SwigWithRoles from raw bytes.
     pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, ProgramError> {
         if bytes.len() < Swig::LEN {
             return Err(ProgramError::InvalidAccountData);
@@ -404,6 +444,7 @@ impl<'a> SwigWithRoles<'a> {
         Ok(SwigWithRoles { state, roles })
     }
 
+    /// Looks up a role ID by authority data.
     pub fn lookup_role_id(&'a self, authority_data: &'a [u8]) -> Result<Option<u32>, ProgramError> {
         let mut cursor = 0;
 
@@ -454,6 +495,7 @@ impl<'a> SwigWithRoles<'a> {
         Ok(None)
     }
 
+    /// Gets a reference to a role by ID.
     pub fn get_role(&'a self, id: u32) -> Result<Option<Role<'a>>, ProgramError> {
         let mut cursor = 0;
         for _i in 0..self.state.roles {
@@ -502,7 +544,7 @@ impl<'a> SwigWithRoles<'a> {
         Ok(None)
     }
 
-    /// Find a program scope action by target account
+    /// Finds a program scope by target account.
     pub fn find_program_scope_by_target(
         &self,
         target_account: &[u8],

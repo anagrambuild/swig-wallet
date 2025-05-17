@@ -1,3 +1,6 @@
+/// Module for enabling and disabling sub-accounts in a Swig wallet.
+/// This module implements functionality to toggle the active state of
+/// sub-accounts, allowing authorized roles to control sub-account access.
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
@@ -23,7 +26,13 @@ use crate::{
     },
 };
 
-/// Arguments for the ToggleSubAccountV1 instruction
+/// Arguments for toggling a sub-account's enabled state.
+///
+/// # Fields
+/// * `discriminator` - The instruction type identifier
+/// * `_padding` - Padding byte for alignment
+/// * `enabled` - The desired enabled state (true/false)
+/// * `role_id` - ID of the role performing the toggle
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct ToggleSubAccountV1Args {
@@ -34,6 +43,11 @@ pub struct ToggleSubAccountV1Args {
 }
 
 impl ToggleSubAccountV1Args {
+    /// Creates a new instance of ToggleSubAccountV1Args.
+    ///
+    /// # Arguments
+    /// * `role_id` - ID of the role performing the toggle
+    /// * `enabled` - The desired enabled state
     pub fn new(role_id: u32, enabled: bool) -> Self {
         Self {
             discriminator: SwigInstruction::ToggleSubAccountV1,
@@ -54,7 +68,12 @@ impl IntoBytes for ToggleSubAccountV1Args {
     }
 }
 
-/// Struct for parsing the ToggleSubAccountV1 instruction data
+/// Struct representing the complete toggle sub-account instruction data.
+///
+/// # Fields
+/// * `args` - The toggle arguments
+/// * `authority_payload` - Authority-specific payload data
+/// * `data_payload` - Raw instruction data payload
 pub struct ToggleSubAccountV1<'a> {
     pub args: &'a ToggleSubAccountV1Args,
     pub authority_payload: &'a [u8],
@@ -62,6 +81,13 @@ pub struct ToggleSubAccountV1<'a> {
 }
 
 impl<'a> ToggleSubAccountV1<'a> {
+    /// Parses the instruction data bytes into a ToggleSubAccountV1 instance.
+    ///
+    /// # Arguments
+    /// * `data` - Raw instruction data bytes
+    ///
+    /// # Returns
+    /// * `Result<Self, ProgramError>` - Parsed instruction or error
     pub fn from_instruction_bytes(data: &'a [u8]) -> Result<Self, ProgramError> {
         if data.len() < ToggleSubAccountV1Args::LEN {
             return Err(SwigError::InvalidInstructionDataTooShort.into());
@@ -80,7 +106,21 @@ impl<'a> ToggleSubAccountV1<'a> {
     }
 }
 
-/// Implementation of the ToggleSubAccountV1 instruction handler
+/// Enables or disables a sub-account in a Swig wallet.
+///
+/// This function handles the complete flow of toggling a sub-account:
+/// 1. Validates the parent wallet and sub-account relationship
+/// 2. Authenticates the authority
+/// 3. Verifies proper permissions (All or ManageAuthority)
+/// 4. Updates the sub-account's enabled state
+///
+/// # Arguments
+/// * `ctx` - The account context for toggling
+/// * `data` - Raw toggle instruction data
+/// * `all_accounts` - All accounts involved in the operation
+///
+/// # Returns
+/// * `ProgramResult` - Success or error status
 #[inline(always)]
 pub fn toggle_sub_account_v1(
     ctx: Context<ToggleSubAccountV1Accounts>,

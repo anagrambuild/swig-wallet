@@ -1,3 +1,8 @@
+//! Utility functions and macros for the State-X crate.
+//!
+//! This module provides helper utilities for common operations like reading
+//! numeric fields from byte arrays in a safe and efficient manner.
+
 /// Macro for reading numeric fields from byte arrays with appropriate
 /// validation.
 ///

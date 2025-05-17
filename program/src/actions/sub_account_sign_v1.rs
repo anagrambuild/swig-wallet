@@ -1,3 +1,7 @@
+/// Module for handling transaction signing through sub-accounts in a Swig
+/// wallet. This module implements functionality to authenticate and execute
+/// transactions using sub-account authorities, with proper validation and
+/// permission checks.
 use core::mem::MaybeUninit;
 
 use no_padding::NoPadding;
@@ -27,7 +31,13 @@ use crate::{
     AccountClassification,
 };
 
-/// Arguments for the SubAccountSignV1 instruction
+/// Arguments for signing a transaction with a sub-account.
+///
+/// # Fields
+/// * `instruction` - The instruction type identifier
+/// * `instruction_payload_len` - Length of the instruction payload
+/// * `role_id` - ID of the role attempting to sign
+/// * `_padding` - Padding bytes for alignment
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct SubAccountSignV1Args {
@@ -38,6 +48,11 @@ pub struct SubAccountSignV1Args {
 }
 
 impl SubAccountSignV1Args {
+    /// Creates a new instance of SubAccountSignV1Args.
+    ///
+    /// # Arguments
+    /// * `role_id` - ID of the role attempting to sign
+    /// * `instruction_payload_len` - Length of the instruction payload
     pub fn new(role_id: u32, instruction_payload_len: u16) -> Self {
         Self {
             instruction: SwigInstruction::SubAccountSignV1,
@@ -58,7 +73,12 @@ impl IntoBytes for SubAccountSignV1Args {
     }
 }
 
-/// Struct for parsing the SubAccountSignV1 instruction data
+/// Struct representing the complete sub-account sign instruction data.
+///
+/// # Fields
+/// * `args` - The signing arguments
+/// * `authority_payload` - Authority-specific payload data
+/// * `instruction_payload` - Transaction instruction data
 pub struct SubAccountSignV1<'a> {
     pub args: &'a SubAccountSignV1Args,
     authority_payload: &'a [u8],
@@ -66,6 +86,13 @@ pub struct SubAccountSignV1<'a> {
 }
 
 impl<'a> SubAccountSignV1<'a> {
+    /// Parses the instruction data bytes into a SubAccountSignV1 instance.
+    ///
+    /// # Arguments
+    /// * `data` - Raw instruction data bytes
+    ///
+    /// # Returns
+    /// * `Result<Self, ProgramError>` - Parsed instruction or error
     pub fn from_instruction_bytes(data: &'a [u8]) -> Result<Self, ProgramError> {
         if data.len() < SubAccountSignV1Args::LEN {
             return Err(SwigError::InvalidSwigSignInstructionDataTooShort.into());
@@ -82,7 +109,23 @@ impl<'a> SubAccountSignV1<'a> {
     }
 }
 
-/// Implementation of the SubAccountSignV1 instruction handler
+/// Signs and executes a transaction using a sub-account authority.
+///
+/// This function handles the complete flow of sub-account transaction signing:
+/// 1. Validates the sub-account and parent wallet relationship
+/// 2. Verifies the sub-account is enabled
+/// 3. Authenticates the authority
+/// 4. Executes the transaction instructions
+/// 5. Ensures sufficient balance is maintained
+///
+/// # Arguments
+/// * `ctx` - The account context for signing
+/// * `all_accounts` - All accounts involved in the transaction
+/// * `data` - Raw signing instruction data
+/// * `account_classifiers` - Classifications for involved accounts
+///
+/// # Returns
+/// * `ProgramResult` - Success or error status
 #[inline(always)]
 pub fn sub_account_sign_v1(
     ctx: Context<SubAccountSignV1Accounts>,

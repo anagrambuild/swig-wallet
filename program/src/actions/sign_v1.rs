@@ -1,3 +1,7 @@
+/// Module for handling transaction signing and execution in the Swig wallet.
+/// This module implements the logic for authenticating and executing
+/// transactions using wallet authorities, including support for various
+/// permission types and transaction limits.
 use core::mem::MaybeUninit;
 
 use no_padding::NoPadding;
@@ -43,6 +47,12 @@ use crate::{
 pub const INSTRUCTION_SYSVAR_ACCOUNT: Pubkey =
     from_str("Sysvar1nstructions1111111111111111111111111");
 
+/// Arguments for signing a transaction with a Swig wallet.
+///
+/// # Fields
+/// * `instruction` - The instruction type identifier
+/// * `instruction_payload_len` - Length of the instruction payload
+/// * `role_id` - ID of the role attempting to sign
 #[derive(Debug, NoPadding)]
 #[repr(C, align(8))]
 pub struct SignV1Args {
@@ -52,6 +62,11 @@ pub struct SignV1Args {
 }
 
 impl SignV1Args {
+    /// Creates a new instance of SignV1Args.
+    ///
+    /// # Arguments
+    /// * `role_id` - ID of the signing role
+    /// * `instruction_payload_len` - Length of the instruction payload
     pub fn new(role_id: u32, instruction_payload_len: u16) -> Self {
         Self {
             instruction: SwigInstruction::SignV1,
@@ -70,6 +85,13 @@ impl IntoBytes for SignV1Args {
         Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
     }
 }
+
+/// Struct representing the complete sign transaction instruction data.
+///
+/// # Fields
+/// * `args` - The signing arguments
+/// * `authority_payload` - Authority-specific payload data
+/// * `instruction_payload` - Transaction instruction data
 pub struct SignV1<'a> {
     pub args: &'a SignV1Args,
     authority_payload: &'a [u8],
@@ -77,6 +99,13 @@ pub struct SignV1<'a> {
 }
 
 impl<'a> SignV1<'a> {
+    /// Parses the instruction data bytes into a SignV1 instance.
+    ///
+    /// # Arguments
+    /// * `data` - Raw instruction data bytes
+    ///
+    /// # Returns
+    /// * `Result<Self, ProgramError>` - Parsed instruction or error
     pub fn from_instruction_bytes(data: &'a [u8]) -> Result<Self, ProgramError> {
         if data.len() < SignV1Args::LEN {
             return Err(SwigError::InvalidSwigSignInstructionDataTooShort.into());
@@ -93,6 +122,22 @@ impl<'a> SignV1<'a> {
     }
 }
 
+/// Signs and executes a transaction using a Swig wallet authority.
+///
+/// This function handles the complete flow of transaction signing:
+/// 1. Validates the authority and role
+/// 2. Authenticates the transaction
+/// 3. Checks all relevant permissions and limits
+/// 4. Executes the transaction instructions
+///
+/// # Arguments
+/// * `ctx` - The account context for signing
+/// * `all_accounts` - All accounts involved in the transaction
+/// * `data` - Raw signing instruction data
+/// * `account_classifiers` - Classifications for involved accounts
+///
+/// # Returns
+/// * `ProgramResult` - Success or error status
 #[inline(always)]
 pub fn sign_v1(
     ctx: Context<SignV1Accounts>,

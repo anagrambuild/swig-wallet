@@ -1,64 +1,116 @@
+//! Error types for the Swig wallet program.
+//!
+//! This module defines all possible error conditions that can occur during
+//! program execution. The errors are categorized into several groups:
+//! - Account validation errors
+//! - Authority-related errors
+//! - Instruction processing errors
+//! - Sub-account management errors
+//! - Permission and security errors
+
 use pinocchio::program_error::ProgramError;
 
+/// Custom error types for the Swig wallet program.
+///
+/// Each error variant represents a specific failure condition that can occur
+/// during program execution. The errors are assigned unique numeric codes
+/// starting from 0.
 #[derive(Debug)]
 #[repr(u32)]
 pub enum SwigError {
-    // InvalidSwigAccount,
+    /// Invalid discriminator in Swig account data
     InvalidSwigAccountDiscriminator = 0,
-    // OwnerMismatch,
+    /// Swig account owner does not match expected value
     OwnerMismatchSwigAccount,
-    // AccountNotEmpty,
+    /// Swig account is not empty when it should be
     AccountNotEmptySwigAccount,
-    // NotOnCurve,
+    /// Public key in Swig account is not on the curve
     NotOnCurveSwigAccount,
-    // ExpectedSigner,
+    /// Expected Swig account to be a signer but it isn't
     ExpectedSignerSwigAccount,
+    /// General state error in program execution
     StateError,
+    /// Failed to borrow account data
     AccountBorrowFailed,
+    /// Invalid authority type specified
     InvalidAuthorityType,
+    /// Error during cross-program invocation
     Cpi,
-    // InvalidSeed,
+    /// Invalid seed used for Swig account derivation
     InvalidSeedSwigAccount,
+    /// Required instructions are missing
     MissingInstructions,
+    /// Invalid authority payload format
     InvalidAuthorityPayload,
-    // InvalidAuthority,
+    /// Authority not found for given role ID
     InvalidAuthorityNotFoundByRoleId,
+    /// Authority must have at least one action
     InvalidAuthorityMustHaveAtLeastOneAction,
-    // InstructionError,
+    /// Error during instruction execution
     InstructionExecutionError,
+    /// Error during data serialization
     SerializationError,
+    /// Sign instruction data is too short
     InvalidSwigSignInstructionDataTooShort,
+    /// Remove authority instruction data is too short
     InvalidSwigRemoveAuthorityInstructionDataTooShort,
+    /// Add authority instruction data is too short
     InvalidSwigAddAuthorityInstructionDataTooShort,
+    /// Create instruction data is too short
     InvalidSwigCreateInstructionDataTooShort,
+    /// Create session instruction data is too short
     InvalidSwigCreateSessionInstructionDataTooShort,
-    // InvalidAccounts,
+    /// Invalid number of accounts provided
     InvalidAccountsLength,
+    /// Swig account must be the first account in the list
     InvalidAccountsSwigMustBeFirst,
 
+    /// Invalid system program account
     InvalidSystemProgram,
+    /// Authority already exists
     DuplicateAuthority,
+    /// Invalid operation attempted
     InvalidOperation,
+    /// Data alignment error
     InvalidAlignment,
 
-    // Added for sub-account functionality
+    // Sub-account related errors
+    /// Invalid seed used for sub-account derivation
     InvalidSeedSubAccount,
+    /// Insufficient funds for operation
     InsufficientFunds,
+    /// Token account owner mismatch
     OwnerMismatchTokenAccount,
+    /// Permission denied for operation
     PermissionDenied,
+    /// Invalid signature provided
     InvalidSignature,
+    /// Instruction data is too short
     InvalidInstructionDataTooShort,
+    /// Sub-account owner mismatch
     OwnerMismatchSubAccount,
+    /// Sub-account already exists
     SubAccountAlreadyExists,
+    /// Authority cannot create sub-account
     AuthorityCannotCreateSubAccount,
+    /// Invalid discriminator in sub-account data
     InvalidSwigSubAccountDiscriminator,
+    /// Sub-account is disabled
     InvalidSwigSubAccountDisabled,
+    /// Sub-account Swig ID mismatch
     InvalidSwigSubAccountSwigIdMismatch,
+    /// Sub-account role ID mismatch
     InvalidSwigSubAccountRoleIdMismatch,
+    /// Invalid token account owner
     InvalidSwigTokenAccountOwner,
+    /// Invalid program scope balance field configuration
     InvalidProgramScopeBalanceFields,
 }
 
+/// Implements conversion from SwigError to ProgramError.
+///
+/// This allows SwigError variants to be used with the `?` operator in
+/// functions that return `Result<T, ProgramError>`.
 impl From<SwigError> for ProgramError {
     fn from(e: SwigError) -> Self {
         ProgramError::Custom(e as u32)

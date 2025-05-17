@@ -1,3 +1,11 @@
+//! Swig Wallet Program Implementation
+//!
+//! This module provides the core program implementation for the Swig wallet
+//! system. It handles account classification, instruction processing, and
+//! program state management. The program supports various account types
+//! including Swig accounts, stake accounts, token accounts, and program-scoped
+//! accounts.
+
 pub mod actions;
 mod error;
 pub mod instruction;
@@ -28,9 +36,13 @@ use swig_state_x::{
 };
 use util::{read_program_scope_account_balance, ProgramScopeCache};
 
+/// Program ID for the Swig wallet program
 declare_id!("swigDk8JezhiAVde8k6NMwxpZfgGm2NNuMe1KYCmUjP");
+/// Program ID for the SPL Token program
 const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+/// Program ID for the SPL Token 2022 program
 const SPL_TOKEN_2022_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+/// Program ID for the Solana Staking program
 const STAKING_ID: Pubkey = pubkey!("Stake11111111111111111111111111111111111111");
 
 pinocchio::default_allocator!();
@@ -38,6 +50,18 @@ pinocchio::default_panic_handler!();
 
 #[cfg(not(feature = "no-entrypoint"))]
 lazy_entrypoint!(process_instruction);
+
+/// Main program entry point.
+///
+/// This function is called by the Solana runtime to process instructions sent
+/// to the Swig wallet program. It sets up the execution context and delegates
+/// to the `execute` function for actual instruction processing.
+///
+/// # Arguments
+/// * `ctx` - The instruction context containing accounts and instruction data
+///
+/// # Returns
+/// * `ProgramResult` - The result of processing the instruction
 pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
     const AI: MaybeUninit<AccountInfo> = MaybeUninit::<AccountInfo>::uninit();
     const AC: MaybeUninit<AccountClassification> = MaybeUninit::<AccountClassification>::uninit();
@@ -49,10 +73,27 @@ pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
     Ok(())
 }
 
-/// classify_accountstest_token_transfer_performance_comparison
-/// This functions classifies all accounts as either the swig account (assumed
-/// in all instructions to be the first account) or an asset account owned by
-/// the swig.
+/// Core instruction execution function.
+///
+/// This function processes all accounts in the instruction context, classifies
+/// them according to their type and ownership, and then processes the
+/// instruction action. It handles special cases for Swig accounts, stake
+/// accounts, token accounts, and program-scoped accounts.
+///
+/// # Safety
+/// This function uses unsafe code for performance optimization. Callers must
+/// ensure that:
+/// - The account arrays have sufficient capacity
+/// - The instruction context is valid
+/// - All memory accesses are properly bounds-checked
+///
+/// # Arguments
+/// * `ctx` - The instruction context
+/// * `accounts` - Array to store processed account information
+/// * `account_classification` - Array to store account classifications
+///
+/// # Returns
+/// * `Result<(), ProgramError>` - Success or error status
 #[inline(always)]
 unsafe fn execute(
     ctx: &mut InstructionContext,
@@ -124,6 +165,31 @@ unsafe fn execute(
     Ok(())
 }
 
+/// Classifies an account based on its owner and data.
+///
+/// This function determines the type and role of an account in the Swig wallet
+/// system. It handles several special cases:
+/// - Swig accounts (must be first in the account list)
+/// - Stake accounts (with validation of withdrawer authority)
+/// - Token accounts (SPL Token and Token-2022)
+/// - Program-scoped accounts (using the program scope cache)
+///
+/// # Safety
+/// This function uses unsafe code for performance optimization. Callers must
+/// ensure that:
+/// - The account data is valid and properly aligned
+/// - The account index is within bounds
+/// - All memory accesses are properly bounds-checked
+///
+/// # Arguments
+/// * `index` - Index of the account in the account list
+/// * `account` - The account to classify
+/// * `accounts` - Array of all accounts in the instruction
+/// * `program_scope_cache` - Optional cache of program scope information
+///
+/// # Returns
+/// * `Result<AccountClassification, ProgramError>` - The account classification
+///   or error
 #[inline(always)]
 unsafe fn classify_account(
     index: usize,

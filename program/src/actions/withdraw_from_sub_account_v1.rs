@@ -1,3 +1,7 @@
+/// Module for withdrawing funds from sub-accounts to their parent Swig wallet.
+/// This module implements functionality to transfer both SOL and SPL tokens
+/// from sub-accounts back to their parent wallet, with proper authentication
+/// and permission checks.
 use core::mem::MaybeUninit;
 
 use no_padding::NoPadding;
@@ -31,7 +35,13 @@ use crate::{
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID,
 };
 
-/// Arguments for the WithdrawFromSubAccountV1 instruction
+/// Arguments for withdrawing funds from a sub-account.
+///
+/// # Fields
+/// * `discriminator` - The instruction type identifier
+/// * `_padding` - Padding bytes for alignment
+/// * `role_id` - ID of the role performing the withdrawal
+/// * `amount` - Amount of tokens/SOL to withdraw
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct WithdrawFromSubAccountV1Args {
@@ -42,6 +52,11 @@ pub struct WithdrawFromSubAccountV1Args {
 }
 
 impl WithdrawFromSubAccountV1Args {
+    /// Creates a new instance of WithdrawFromSubAccountV1Args.
+    ///
+    /// # Arguments
+    /// * `role_id` - ID of the role performing the withdrawal
+    /// * `amount` - Amount of tokens/SOL to withdraw
     pub fn new(role_id: u32, amount: u64) -> Self {
         Self {
             discriminator: SwigInstruction::WithdrawFromSubAccountV1,

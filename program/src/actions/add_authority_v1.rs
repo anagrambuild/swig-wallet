@@ -1,3 +1,6 @@
+/// Module for adding new authorities to an existing Swig wallet.
+/// This module implements the functionality to add additional authorities with
+/// specific permissions and action sets to a wallet.
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
@@ -24,6 +27,14 @@ use crate::{
     },
 };
 
+/// Struct representing the complete add authority instruction data.
+///
+/// # Fields
+/// * `args` - The add authority arguments
+/// * `data_payload` - Raw data payload
+/// * `authority_payload` - Authority-specific payload data
+/// * `actions` - Actions data for the new authority
+/// * `authority_data` - Raw authority data
 pub struct AddAuthorityV1<'a> {
     pub args: &'a AddAuthorityV1Args,
     data_payload: &'a [u8],
@@ -32,6 +43,16 @@ pub struct AddAuthorityV1<'a> {
     authority_data: &'a [u8],
 }
 
+/// Arguments for adding a new authority to a Swig wallet.
+///
+/// # Fields
+/// * `instruction` - The instruction type identifier
+/// * `new_authority_data_len` - Length of the new authority's data
+/// * `actions_data_len` - Length of the actions data
+/// * `new_authority_type` - Type of the new authority
+/// * `num_actions` - Number of actions for the new authority
+/// * `_padding` - Padding bytes for alignment
+/// * `acting_role_id` - ID of the role performing the addition
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct AddAuthorityV1Args {
@@ -49,6 +70,14 @@ impl Transmutable for AddAuthorityV1Args {
 }
 
 impl AddAuthorityV1Args {
+    /// Creates a new instance of AddAuthorityV1Args.
+    ///
+    /// # Arguments
+    /// * `acting_role_id` - ID of the role performing the addition
+    /// * `authority_type` - Type of the new authority
+    /// * `new_authority_data_len` - Length of the new authority's data
+    /// * `actions_data_len` - Length of the actions data
+    /// * `num_actions` - Number of actions for the new authority
     pub fn new(
         acting_role_id: u32,
         authority_type: AuthorityType,
@@ -75,6 +104,13 @@ impl IntoBytes for AddAuthorityV1Args {
 }
 
 impl<'a> AddAuthorityV1<'a> {
+    /// Parses the instruction data bytes into an AddAuthorityV1 instance.
+    ///
+    /// # Arguments
+    /// * `data` - Raw instruction data bytes
+    ///
+    /// # Returns
+    /// * `Result<Self, ProgramError>` - Parsed instruction or error
     pub fn from_instruction_bytes(data: &'a [u8]) -> Result<Self, ProgramError> {
         if data.len() < AddAuthorityV1Args::LEN {
             return Err(SwigError::InvalidSwigAddAuthorityInstructionDataTooShort.into());
@@ -96,6 +132,21 @@ impl<'a> AddAuthorityV1<'a> {
     }
 }
 
+/// Adds a new authority to an existing Swig wallet.
+///
+/// This function handles the complete flow of adding a new authority:
+/// 1. Validates the acting role's permissions
+/// 2. Authenticates the request
+/// 3. Allocates space for the new authority
+/// 4. Adds the authority with specified actions
+///
+/// # Arguments
+/// * `ctx` - The account context for adding authority
+/// * `add` - Raw add authority instruction data
+/// * `all_accounts` - All accounts involved in the operation
+///
+/// # Returns
+/// * `ProgramResult` - Success or error status
 pub fn add_authority_v1(
     ctx: Context<AddAuthorityV1Accounts>,
     add: &[u8],

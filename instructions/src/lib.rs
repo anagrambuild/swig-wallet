@@ -1,3 +1,12 @@
+/// Instruction processing and execution module for the Swig wallet program.
+///
+/// This crate provides functionality for parsing, validating, and executing
+/// instructions in a compact format. It includes support for:
+/// - Instruction iteration and parsing
+/// - Account validation and lookup
+/// - Cross-program invocation (CPI)
+/// - Restricted key handling
+/// - Memory-efficient instruction processing
 mod compact_instructions;
 use core::{marker::PhantomData, mem::MaybeUninit};
 
@@ -11,10 +20,14 @@ use pinocchio::{
     ProgramResult,
 };
 
+/// Errors that can occur during instruction processing.
 #[repr(u32)]
 pub enum InstructionError {
+    /// No instructions found in the instruction data
     MissingInstructions = 2000,
+    /// Required account info not found at specified index
     MissingAccountInfo,
+    /// Instruction data is incomplete or invalid
     MissingData,
 }
 
@@ -24,6 +37,14 @@ impl From<InstructionError> for ProgramError {
     }
 }
 
+/// Holds parsed instruction data and associated accounts.
+///
+/// # Fields
+/// * `program_id` - The program that will execute this instruction
+/// * `cpi_accounts` - Accounts required for cross-program invocation
+/// * `indexes` - Original indexes of accounts in the instruction
+/// * `accounts` - Account metadata for the instruction
+/// * `data` - Raw instruction data
 pub struct InstructionHolder<'a> {
     pub program_id: &'a Pubkey,
     pub cpi_accounts: Vec<Account<'a>>,
@@ -66,21 +87,42 @@ impl<'a> InstructionHolder<'a> {
         Ok(())
     }
 }
+
+/// Interface for accessing account information.
+///
+/// This trait provides methods to query basic account properties
+/// and convert account types into a common format.
 pub trait AccountProxy<'a> {
+    /// Returns whether the account is a signer
     fn signer(&self) -> bool;
+    /// Returns whether the account is writable
     fn writable(&self) -> bool;
+    /// Returns the account's public key
     fn pubkey(&self) -> &'a Pubkey;
+    /// Converts the account into a common Account format
     fn into_account(self) -> Account<'a>;
 }
+
+/// Interface for looking up accounts by index.
+///
+/// This trait provides methods to safely access accounts from
+/// a collection or storage structure.
 pub trait AccountLookup<'a, T>
 where
     T: AccountProxy<'a>,
 {
+    /// Retrieves an account at the specified index
     fn get_account(&self, index: usize) -> Result<T, InstructionError>;
+    /// Returns the total number of accounts available
     fn size(&self) -> usize;
 }
 
+/// Interface for checking restricted keys.
+///
+/// This trait provides functionality to determine if a public key
+/// is in a restricted set, which affects signing capabilities.
 pub trait RestrictedKeys {
+    /// Returns true if the public key is restricted
     fn is_restricted(&self, pubkey: &Pubkey) -> bool;
 }
 
@@ -94,6 +136,16 @@ impl<'a> InstructionHolder<'a> {
     }
 }
 
+/// Iterator for processing compact instructions.
+///
+/// This struct provides functionality to iterate over a series of
+/// compact instructions, parsing each one into a full instruction
+/// with resolved accounts and program IDs.
+///
+/// # Type Parameters
+/// * `AL` - Account lookup implementation
+/// * `RK` - Restricted keys implementation
+/// * `P` - Account proxy implementation
 pub struct InstructionIterator<'a, AL, RK, P>
 where
     AL: AccountLookup<'a, P>,
@@ -189,6 +241,16 @@ where
     RK: RestrictedKeys,
     P: AccountProxy<'a>,
 {
+    /// Parses the next instruction from the compact format.
+    ///
+    /// This method handles the parsing of:
+    /// 1. Program ID
+    /// 2. Account metadata
+    /// 3. Instruction data
+    ///
+    /// # Returns
+    /// * `Result<InstructionHolder<'a>, InstructionError>` - Parsed instruction
+    ///   or error
     fn parse_next_instruction(&mut self) -> Result<InstructionHolder<'a>, InstructionError> {
         // Parse program_id
         let (program_id_index, cursor) = self.read_u8()?;
@@ -236,6 +298,11 @@ where
         })
     }
 
+    /// Reads a u8 value from the current cursor position.
+    ///
+    /// # Returns
+    /// * `Result<(u8, usize), InstructionError>` - Value and new cursor
+    ///   position
     #[inline(always)]
     fn read_u8(&self) -> Result<(u8, usize), InstructionError> {
         if self.cursor >= self.data.len() {
@@ -245,6 +312,11 @@ where
         Ok((*value, self.cursor + 1))
     }
 
+    /// Reads a u16 value from the current cursor position.
+    ///
+    /// # Returns
+    /// * `Result<(u16, usize), InstructionError>` - Value and new cursor
+    ///   position
     #[inline(always)]
     fn read_u16(&self) -> Result<(u16, usize), InstructionError> {
         let end = self.cursor + 2;
@@ -256,6 +328,14 @@ where
         Ok((value, end))
     }
 
+    /// Reads a slice of bytes from the current cursor position.
+    ///
+    /// # Arguments
+    /// * `len` - Number of bytes to read
+    ///
+    /// # Returns
+    /// * `Result<(&'a [u8], usize), InstructionError>` - Byte slice and new
+    ///   cursor position
     #[inline(always)]
     fn read_slice(&self, len: usize) -> Result<(&'a [u8], usize), InstructionError> {
         let end = self.cursor + len;

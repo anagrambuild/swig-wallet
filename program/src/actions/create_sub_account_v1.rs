@@ -1,3 +1,7 @@
+/// Module for creating sub-accounts within a Swig wallet.
+/// This module implements functionality to create and initialize sub-accounts
+/// that operate under the authority of a main wallet account with specific
+/// permissions and constraints.
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
@@ -32,7 +36,14 @@ use crate::{
     },
 };
 
-/// Arguments for the CreateSubAccountV1 instruction
+/// Arguments for creating a new sub-account in a Swig wallet.
+///
+/// # Fields
+/// * `discriminator` - The instruction type identifier
+/// * `_padding1` - Padding bytes for alignment
+/// * `role_id` - ID of the role creating the sub-account
+/// * `sub_account_bump` - Bump seed for sub-account PDA derivation
+/// * `_padding2` - Additional padding bytes for alignment
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct CreateSubAccountV1Args {
@@ -44,6 +55,11 @@ pub struct CreateSubAccountV1Args {
 }
 
 impl CreateSubAccountV1Args {
+    /// Creates a new instance of CreateSubAccountV1Args.
+    ///
+    /// # Arguments
+    /// * `role_id` - ID of the role creating the sub-account
+    /// * `sub_account_bump` - Bump seed for sub-account PDA derivation
     pub fn new(role_id: u32, sub_account_bump: u8) -> Self {
         Self {
             discriminator: SwigInstruction::CreateSubAccountV1,
@@ -65,7 +81,12 @@ impl IntoBytes for CreateSubAccountV1Args {
     }
 }
 
-/// Struct for parsing the CreateSubAccountV1 instruction data
+/// Struct representing the complete create sub-account instruction data.
+///
+/// # Fields
+/// * `args` - The sub-account creation arguments
+/// * `authority_payload` - Authority-specific payload data
+/// * `data_payload` - Raw instruction data payload
 pub struct CreateSubAccountV1<'a> {
     pub args: &'a CreateSubAccountV1Args,
     pub authority_payload: &'a [u8],
@@ -73,6 +94,13 @@ pub struct CreateSubAccountV1<'a> {
 }
 
 impl<'a> CreateSubAccountV1<'a> {
+    /// Parses the instruction data bytes into a CreateSubAccountV1 instance.
+    ///
+    /// # Arguments
+    /// * `data` - Raw instruction data bytes
+    ///
+    /// # Returns
+    /// * `Result<Self, ProgramError>` - Parsed instruction or error
     pub fn from_instruction_bytes(data: &'a [u8]) -> Result<Self, ProgramError> {
         if data.len() < CreateSubAccountV1Args::LEN {
             return Err(SwigError::InvalidSwigCreateInstructionDataTooShort.into());
@@ -91,7 +119,21 @@ impl<'a> CreateSubAccountV1<'a> {
     }
 }
 
-/// Implementation of the CreateSubAccountV1 instruction handler
+/// Creates a new sub-account under a Swig wallet.
+///
+/// This function handles the complete flow of sub-account creation:
+/// 1. Validates the parent wallet and authority
+/// 2. Verifies the role has sub-account creation permission
+/// 3. Derives and validates the sub-account address
+/// 4. Creates and initializes the sub-account with proper settings
+///
+/// # Arguments
+/// * `ctx` - The account context for sub-account creation
+/// * `data` - Raw sub-account creation instruction data
+/// * `all_accounts` - All accounts involved in the operation
+///
+/// # Returns
+/// * `ProgramResult` - Success or error status
 #[inline(always)]
 pub fn create_sub_account_v1(
     ctx: Context<CreateSubAccountV1Accounts>,
