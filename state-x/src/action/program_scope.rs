@@ -1,3 +1,10 @@
+//! Program scope action type.
+//!
+//! This module defines the ProgramScope action type which manages
+//! program-specific permissions and limits within the Swig wallet system. It
+//! provides functionality for reading and validating program account data,
+//! enforcing limits, and managing recurring limits with automatic resets.
+
 use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 
@@ -7,23 +14,43 @@ use crate::{
     Transmutable, TransmutableMut,
 };
 
+/// Represents different types of program scope permissions.
 #[repr(u8)]
 pub enum ProgramScopeType {
+    /// Basic program interaction without limits
     Basic = 0,
+    /// Program interaction with fixed limits
     Limit = 1,
+    /// Program interaction with recurring limits that reset
     RecurringLimit = 2,
 }
 
+/// Represents different numeric types that can be read from program data.
+///
+/// This enum is used to specify the size and type of numeric fields when
+/// reading values from program account data.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NumericType {
+    /// 8-bit unsigned integer
     U8 = 0,
+    /// 32-bit unsigned integer
     U32 = 1,
+    /// 64-bit unsigned integer
     U64 = 2,
+    /// 128-bit unsigned integer
     U128 = 3,
 }
 
 impl NumericType {
+    /// Creates a NumericType from a u8 value.
+    ///
+    /// # Arguments
+    /// * `value` - The u8 value to convert
+    ///
+    /// # Returns
+    /// * `Some(NumericType)` - If the value maps to a valid numeric type
+    /// * `None` - If the value is invalid
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::U8),
@@ -34,6 +61,7 @@ impl NumericType {
         }
     }
 
+    /// Returns the maximum value for this numeric type.
     pub fn max_value(&self) -> u128 {
         match self {
             Self::U8 => u8::MAX as u128,
@@ -50,22 +78,42 @@ impl From<NumericType> for u8 {
     }
 }
 
+/// Represents program-specific permissions and limits.
+///
+/// This struct manages permissions and limits for interacting with specific
+/// programs. It supports different types of limits (basic, fixed, recurring)
+/// and can read and validate numeric values from program account data.
 #[repr(C, align(8))]
 #[derive(NoPadding)]
 pub struct ProgramScope {
-    pub current_amount: u128,     // 16 bytes
-    pub limit: u128,              // 16 bytes
-    pub window: u64,              // 8 bytes
-    pub last_reset: u64,          // 8 bytes
-    pub program_id: [u8; 32],     // 32 bytes
+    /// Current amount used in limit tracking
+    pub current_amount: u128, // 16 bytes
+    /// Maximum limit allowed
+    pub limit: u128, // 16 bytes
+    /// Time window for recurring limits (in slots)
+    pub window: u64, // 8 bytes
+    /// Last slot when the limit was reset
+    pub last_reset: u64, // 8 bytes
+    /// Program ID this scope applies to
+    pub program_id: [u8; 32], // 32 bytes
+    /// Target account within the program
     pub target_account: [u8; 32], // 32 bytes
-    pub scope_type: u64,          // 8 bytes
-    pub numeric_type: u64,        // 8 bytes
+    /// Type of program scope (basic, limit, recurring)
+    pub scope_type: u64, // 8 bytes
+    /// Type of numeric values to read from account data
+    pub numeric_type: u64, // 8 bytes
+    /// Start index for reading balance field
     pub balance_field_start: u64, // 8 bytes - start index for reading balance
-    pub balance_field_end: u64,   // 8 bytes - end index for reading balance
+    /// End index for reading balance field
+    pub balance_field_end: u64, // 8 bytes - end index for reading balance
 }
 
 impl ProgramScope {
+    /// Creates a new basic program scope.
+    ///
+    /// # Arguments
+    /// * `program_id` - The program ID this scope applies to
+    /// * `target_account` - The target account within the program
     pub fn new_basic(program_id: [u8; 32], target_account: [u8; 32]) -> Self {
         Self {
             program_id,
@@ -81,6 +129,13 @@ impl ProgramScope {
         }
     }
 
+    /// Creates a new program scope with fixed limits.
+    ///
+    /// # Arguments
+    /// * `program_id` - The program ID this scope applies to
+    /// * `target_account` - The target account within the program
+    /// * `limit` - The maximum limit allowed
+    /// * `numeric_type` - The type of numeric values to read
     pub fn new_limit<T: Into<u128>>(
         program_id: [u8; 32],
         target_account: [u8; 32],
@@ -102,6 +157,14 @@ impl ProgramScope {
         }
     }
 
+    /// Creates a new program scope with recurring limits.
+    ///
+    /// # Arguments
+    /// * `program_id` - The program ID this scope applies to
+    /// * `target_account` - The target account within the program
+    /// * `limit` - The maximum limit allowed per window
+    /// * `window` - The time window in slots
+    /// * `numeric_type` - The type of numeric values to read
     pub fn new_recurring_limit<T: Into<u128>>(
         program_id: [u8; 32],
         target_account: [u8; 32],
@@ -124,6 +187,15 @@ impl ProgramScope {
         }
     }
 
+    /// Sets the indices for reading balance fields from account data.
+    ///
+    /// # Arguments
+    /// * `start` - Starting index in the account data
+    /// * `end` - Ending index in the account data
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the indices are valid
+    /// * `Err(ProgramError)` - If the indices are invalid
     pub fn set_balance_field_indices(&mut self, start: u64, end: u64) -> Result<(), ProgramError> {
         if end <= start || end > 1024 {
             return Err(ProgramError::InvalidArgument);
@@ -212,6 +284,16 @@ impl ProgramScope {
         }
     }
 
+    /// Processes an operation and updates limits if applicable.
+    ///
+    /// # Arguments
+    /// * `amount` - The amount to be used in the operation
+    /// * `current_slot` - The current slot number (required for recurring
+    ///   limits)
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the operation is allowed
+    /// * `Err(ProgramError)` - If the operation would exceed limits
     pub fn run(&mut self, amount: u128, current_slot: Option<u64>) -> Result<(), ProgramError> {
         match self.scope_type as u8 {
             x if x == ProgramScopeType::Basic as u8 => Ok(()),
@@ -248,6 +330,14 @@ impl ProgramScope {
         }
     }
 
+    /// Gets the current amount as a specific numeric type.
+    ///
+    /// # Type Parameters
+    /// * `T` - The target numeric type to convert to
+    ///
+    /// # Returns
+    /// * `Ok(T)` - The current amount converted to type T
+    /// * `Err(ProgramError)` - If the conversion fails
     pub fn get_current_amount<T>(&self) -> Result<T, ProgramError>
     where
         T: TryFrom<u128>,
@@ -258,6 +348,14 @@ impl ProgramScope {
             .map_err(|_| ProgramError::InvalidArgument)
     }
 
+    /// Sets the current amount from a numeric value.
+    ///
+    /// # Arguments
+    /// * `amount` - The new amount to set
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the amount was set successfully
+    /// * `Err(ProgramError)` - If the amount is invalid for the numeric type
     pub fn set_current_amount<T: Into<u128>>(&mut self, amount: T) -> Result<(), ProgramError> {
         let amount_u128 = amount.into();
         // Validate the amount based on the numeric type
@@ -277,6 +375,15 @@ impl ProgramScope {
         Ok(())
     }
 
+    /// Validates that an amount is within the bounds of the configured numeric
+    /// type.
+    ///
+    /// # Arguments
+    /// * `amount` - The amount to validate
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the amount is valid
+    /// * `Err(ProgramError)` - If the amount exceeds the numeric type's bounds
     pub fn validate_amount<T>(&self, amount: T) -> Result<(), ProgramError>
     where
         T: Into<u128>,
@@ -298,6 +405,7 @@ impl ProgramScope {
 }
 
 impl Transmutable for ProgramScope {
+    /// Size of the ProgramScope struct in bytes
     const LEN: usize = PROGRAM_SCOPE_BYTE_SIZE;
 }
 
@@ -310,9 +418,15 @@ impl IntoBytes for ProgramScope {
 }
 
 impl<'a> Actionable<'a> for ProgramScope {
+    /// This action represents the ProgramScope permission type
     const TYPE: Permission = Permission::ProgramScope;
+    /// Multiple program scopes can exist per role
     const REPEATABLE: bool = true;
 
+    /// Checks if this program scope matches the provided program ID.
+    ///
+    /// # Arguments
+    /// * `data` - The program ID to check against (first 32 bytes)
     fn match_data(&self, data: &[u8]) -> bool {
         data[0..32] == self.program_id
     }

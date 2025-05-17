@@ -1,3 +1,6 @@
+/// Module for creating a new Swig wallet account with initial settings and
+/// authorities. This module handles the creation of new wallet accounts with
+/// specified authority types and associated actions.
 use no_padding::NoPadding;
 use pinocchio::{
     msg,
@@ -23,6 +26,15 @@ use crate::{
     },
 };
 
+/// Arguments for creating a new Swig wallet account.
+///
+/// # Fields
+/// * `discriminator` - The instruction type identifier
+/// * `authority_type` - Type of authority to be created
+/// * `authority_data_len` - Length of the authority data
+/// * `bump` - Bump seed for PDA derivation
+/// * `num_actions` - Number of actions associated with the authority
+/// * `id` - Unique identifier for the wallet
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct CreateV1Args {
@@ -35,6 +47,14 @@ pub struct CreateV1Args {
 }
 
 impl CreateV1Args {
+    /// Creates a new instance of CreateV1Args.
+    ///
+    /// # Arguments
+    /// * `id` - Unique identifier for the wallet
+    /// * `bump` - Bump seed for PDA derivation
+    /// * `authority_type` - Type of authority to create
+    /// * `authority_data_len` - Length of the authority data
+    /// * `num_actions` - Number of actions to associate
     pub fn new(
         id: [u8; 32],
         bump: u8,
@@ -63,6 +83,12 @@ impl IntoBytes for CreateV1Args {
     }
 }
 
+/// Struct representing the complete create wallet instruction data.
+///
+/// # Fields
+/// * `args` - The creation arguments
+/// * `authority_data` - Raw authority data
+/// * `actions` - Raw actions data
 pub struct CreateV1<'a> {
     pub args: &'a CreateV1Args,
     pub authority_data: &'a [u8],
@@ -70,6 +96,13 @@ pub struct CreateV1<'a> {
 }
 
 impl<'a> CreateV1<'a> {
+    /// Parses the instruction data bytes into a CreateV1 instance.
+    ///
+    /// # Arguments
+    /// * `bytes` - Raw instruction data bytes
+    ///
+    /// # Returns
+    /// * `Result<Self, ProgramError>` - Parsed instruction or error
     pub fn from_instruction_bytes(bytes: &'a [u8]) -> Result<Self, ProgramError> {
         if bytes.len() < CreateV1Args::LEN {
             return Err(SwigError::InvalidSwigCreateInstructionDataTooShort.into());
@@ -85,11 +118,26 @@ impl<'a> CreateV1<'a> {
         })
     }
 
+    /// Retrieves a specific action from the actions data.
+    ///
+    /// # Type Parameters
+    /// * `T` - The action type to retrieve
+    ///
+    /// # Returns
+    /// * `Result<Option<&'a T>, ProgramError>` - The action if found
     pub fn get_action<T: Actionable<'a>>(&'a self) -> Result<Option<&'a T>, ProgramError> {
         ActionLoader::find_action::<T>(self.actions)
     }
 }
 
+/// Creates a new Swig wallet account with the specified configuration.
+///
+/// # Arguments
+/// * `ctx` - The account context for the creation
+/// * `create` - Raw creation instruction data
+///
+/// # Returns
+/// * `ProgramResult` - Success or error status
 #[inline(always)]
 pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult {
     check_system_owner(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;

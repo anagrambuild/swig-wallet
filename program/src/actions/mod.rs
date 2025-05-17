@@ -1,3 +1,10 @@
+//! Action processing module for the Swig wallet program.
+//!
+//! This module contains the implementation of all instruction processing logic
+//! for the Swig wallet program. Each action corresponds to a specific
+//! instruction type and handles the validation and execution of that
+//! instruction's business logic.
+
 pub mod add_authority_v1;
 pub mod create_session_v1;
 pub mod create_sub_account_v1;
@@ -28,6 +35,19 @@ use crate::{
     AccountClassification,
 };
 
+/// Main entry point for processing Swig wallet instructions.
+///
+/// This function dispatches the instruction to the appropriate handler based
+/// on its discriminator. It validates the instruction data format and ensures
+/// all required accounts are present.
+///
+/// # Arguments
+/// * `accounts` - List of accounts involved in the instruction
+/// * `account_classification` - Classification of each account's type and role
+/// * `data` - Raw instruction data
+///
+/// # Returns
+/// * `ProgramResult` - Success or error status
 #[inline(always)]
 pub fn process_action(
     accounts: &[AccountInfo],
@@ -56,11 +76,17 @@ pub fn process_action(
     }
 }
 
+/// Processes a CreateV1 instruction.
+///
+/// Creates a new Swig wallet account with initial settings.
 fn process_create_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = CreateV1Accounts::context(accounts)?;
     create_v1(account_ctx, data)
 }
 
+/// Processes a SignV1 instruction.
+///
+/// Signs and executes a transaction using the wallet's authority.
 fn process_sign_v1(
     accounts: &[AccountInfo],
     account_classification: &[AccountClassification],
@@ -70,26 +96,41 @@ fn process_sign_v1(
     sign_v1(account_ctx, accounts, data, account_classification)
 }
 
+/// Processes an AddAuthorityV1 instruction.
+///
+/// Adds a new authority to the wallet with specified permissions.
 fn process_add_authority_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = AddAuthorityV1Accounts::context(accounts)?;
     add_authority_v1(account_ctx, data, accounts)
 }
 
+/// Processes a RemoveAuthorityV1 instruction.
+///
+/// Removes an existing authority from the wallet.
 fn process_remove_authority_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = RemoveAuthorityV1Accounts::context(accounts)?;
     remove_authority_v1(account_ctx, data, accounts)
 }
 
+/// Processes a CreateSessionV1 instruction.
+///
+/// Creates a new temporary session for an authority.
 fn process_create_session_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = CreateSessionV1Accounts::context(accounts)?;
     create_session_v1(account_ctx, data, accounts)
 }
 
+/// Processes a CreateSubAccountV1 instruction.
+///
+/// Creates a new sub-account under the wallet.
 fn process_create_sub_account_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = CreateSubAccountV1Accounts::context(accounts)?;
     create_sub_account_v1(account_ctx, data, accounts)
 }
 
+/// Processes a WithdrawFromSubAccountV1 instruction.
+///
+/// Withdraws funds from a sub-account to the main wallet.
 fn process_withdraw_from_sub_account_v1(
     accounts: &[AccountInfo],
     account_classification: &[AccountClassification],
@@ -99,6 +140,9 @@ fn process_withdraw_from_sub_account_v1(
     withdraw_from_sub_account_v1(account_ctx, accounts, data, account_classification)
 }
 
+/// Processes a SubAccountSignV1 instruction.
+///
+/// Signs and executes a transaction from a sub-account.
 fn process_sub_account_sign_v1(
     accounts: &[AccountInfo],
     account_classification: &[AccountClassification],
@@ -108,6 +152,9 @@ fn process_sub_account_sign_v1(
     sub_account_sign_v1(account_ctx, accounts, data, account_classification)
 }
 
+/// Processes a ToggleSubAccountV1 instruction.
+///
+/// Enables or disables a sub-account.
 fn process_toggle_sub_account_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = ToggleSubAccountV1Accounts::context(accounts)?;
     toggle_sub_account_v1(account_ctx, data, accounts)

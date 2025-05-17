@@ -1,19 +1,46 @@
+//! Recurring SOL token limit action type.
+//!
+//! This module defines the SolRecurringLimit action type which enforces
+//! recurring limits on SOL token operations within the Swig wallet system.
+//! The limit resets after a specified time window.
+
 use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 
 use super::{Actionable, Permission};
 use crate::{IntoBytes, Transmutable, TransmutableMut};
 
+/// Represents a recurring limit on SOL token operations.
+///
+/// This struct tracks and enforces a maximum amount of SOL that can be
+/// used in operations within a specified time window. The limit resets
+/// automatically after the window expires.
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct SolRecurringLimit {
+    /// The amount that resets each window (in lamports)
     pub recurring_amount: u64,
+    /// The time window in slots after which the limit resets
     pub window: u64,
+    /// The last slot when the limit was reset
     pub last_reset: u64,
+    /// The current remaining amount that can be used (in lamports)
     pub current_amount: u64,
 }
 
 impl SolRecurringLimit {
+    /// Processes a SOL operation and updates the remaining limit.
+    ///
+    /// If the time window has expired, the limit is reset before processing
+    /// the operation.
+    ///
+    /// # Arguments
+    /// * `lamport_diff` - The amount of lamports to be used in the operation
+    /// * `current_slot` - The current slot number
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the operation is within limits
+    /// * `Err(ProgramError)` - If the operation would exceed the limit
     pub fn run(&mut self, lamport_diff: u64, current_slot: u64) -> Result<(), ProgramError> {
         if current_slot - self.last_reset > self.window && lamport_diff <= self.recurring_amount {
             self.current_amount = self.recurring_amount;
@@ -26,7 +53,9 @@ impl SolRecurringLimit {
         Ok(())
     }
 }
+
 impl Transmutable for SolRecurringLimit {
+    /// Size of the SolRecurringLimit struct in bytes
     const LEN: usize = core::mem::size_of::<SolRecurringLimit>();
 }
 
@@ -39,6 +68,8 @@ impl IntoBytes for SolRecurringLimit {
 impl TransmutableMut for SolRecurringLimit {}
 
 impl<'a> Actionable<'a> for SolRecurringLimit {
+    /// This action represents the SolRecurringLimit permission type
     const TYPE: Permission = Permission::SolRecurringLimit;
+    /// Only one recurring SOL limit can exist per role
     const REPEATABLE: bool = false;
 }

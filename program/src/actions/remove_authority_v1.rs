@@ -1,3 +1,6 @@
+/// Module for removing authorities from a Swig wallet.
+/// This module implements functionality to safely remove existing authorities
+/// while maintaining proper permissions and account state.
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
@@ -21,12 +24,26 @@ use crate::{
     },
 };
 
+/// Struct representing the complete remove authority instruction data.
+///
+/// # Fields
+/// * `args` - The remove authority arguments
+/// * `data_payload` - Raw instruction data payload
+/// * `authority_payload` - Authority-specific payload data
 pub struct RemoveAuthorityV1<'a> {
     pub args: &'a RemoveAuthorityV1Args,
     data_payload: &'a [u8],
     authority_payload: &'a [u8],
 }
 
+/// Arguments for removing an authority from a Swig wallet.
+///
+/// # Fields
+/// * `instruction` - The instruction type identifier
+/// * `authority_payload_len` - Length of the authority payload
+/// * `_padding` - Padding bytes for alignment
+/// * `acting_role_id` - ID of the role performing the removal
+/// * `authority_to_remove_id` - ID of the authority to remove
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct RemoveAuthorityV1Args {
@@ -42,6 +59,12 @@ impl Transmutable for RemoveAuthorityV1Args {
 }
 
 impl RemoveAuthorityV1Args {
+    /// Creates a new instance of RemoveAuthorityV1Args.
+    ///
+    /// # Arguments
+    /// * `acting_role_id` - ID of the role performing the removal
+    /// * `authority_to_remove_id` - ID of the authority to remove
+    /// * `authority_payload_len` - Length of the authority payload
     pub fn new(
         acting_role_id: u32,
         authority_to_remove_id: u32,
@@ -64,6 +87,13 @@ impl IntoBytes for RemoveAuthorityV1Args {
 }
 
 impl<'a> RemoveAuthorityV1<'a> {
+    /// Parses the instruction data bytes into a RemoveAuthorityV1 instance.
+    ///
+    /// # Arguments
+    /// * `data` - Raw instruction data bytes
+    ///
+    /// # Returns
+    /// * `Result<Self, ProgramError>` - Parsed instruction or error
     pub fn from_instruction_bytes(data: &'a [u8]) -> Result<Self, ProgramError> {
         if data.len() < RemoveAuthorityV1Args::LEN {
             return Err(SwigError::InvalidSwigRemoveAuthorityInstructionDataTooShort.into());
@@ -78,6 +108,26 @@ impl<'a> RemoveAuthorityV1<'a> {
     }
 }
 
+/// Removes an authority from a Swig wallet.
+///
+/// This function handles the complete flow of authority removal:
+/// 1. Validates the acting role's permissions
+/// 2. Authenticates the request
+/// 3. Verifies the authority can be removed
+/// 4. Removes the authority and reclaims rent
+///
+/// Special cases:
+/// - Cannot remove root authority (ID 0)
+/// - Authority can remove itself without ManageAuthority permission
+/// - Only roles with All or ManageAuthority can remove other authorities
+///
+/// # Arguments
+/// * `ctx` - The account context for authority removal
+/// * `remove` - Raw remove authority instruction data
+/// * `all_accounts` - All accounts involved in the operation
+///
+/// # Returns
+/// * `ProgramResult` - Success or error status
 pub fn remove_authority_v1(
     ctx: Context<RemoveAuthorityV1Accounts>,
     remove: &[u8],

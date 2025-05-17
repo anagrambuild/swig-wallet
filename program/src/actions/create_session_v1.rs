@@ -1,3 +1,7 @@
+/// Module for creating temporary authentication sessions in a Swig wallet.
+/// This module implements functionality to create time-limited sessions that
+/// allow authorities to authenticate without providing full credentials each
+/// time.
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
@@ -17,6 +21,14 @@ use crate::{
     },
 };
 
+/// Arguments for creating a new session in a Swig wallet.
+///
+/// # Fields
+/// * `instruction` - The instruction type identifier
+/// * `authority_payload_len` - Length of the authority payload
+/// * `role_id` - ID of the role creating the session
+/// * `session_duration` - Duration of the session in slots
+/// * `session_key` - Unique key for the session
 #[derive(Debug, NoPadding)]
 #[repr(C, align(8))]
 pub struct CreateSessionV1Args {
@@ -38,6 +50,13 @@ impl IntoBytes for CreateSessionV1Args {
 }
 
 impl CreateSessionV1Args {
+    /// Creates a new instance of CreateSessionV1Args.
+    ///
+    /// # Arguments
+    /// * `role_id` - ID of the role creating the session
+    /// * `authority_payload_len` - Length of the authority payload
+    /// * `session_duration` - Duration of the session in slots
+    /// * `session_key` - Unique key for the session
     pub fn new(
         role_id: u32,
         authority_payload_len: u16,
@@ -54,6 +73,12 @@ impl CreateSessionV1Args {
     }
 }
 
+/// Struct representing the complete create session instruction data.
+///
+/// # Fields
+/// * `args` - The session creation arguments
+/// * `authority_payload` - Authority-specific payload data
+/// * `data_payload` - Raw instruction data payload
 pub struct CreateSessionV1<'a> {
     pub args: &'a CreateSessionV1Args,
     pub authority_payload: &'a [u8],
@@ -61,6 +86,13 @@ pub struct CreateSessionV1<'a> {
 }
 
 impl<'a> CreateSessionV1<'a> {
+    /// Parses the instruction data bytes into a CreateSessionV1 instance.
+    ///
+    /// # Arguments
+    /// * `data` - Raw instruction data bytes
+    ///
+    /// # Returns
+    /// * `Result<Self, ProgramError>` - Parsed instruction or error
     pub fn load(data: &'a [u8]) -> Result<Self, ProgramError> {
         if data.len() < CreateSessionV1Args::LEN {
             return Err(SwigError::InvalidSwigCreateSessionInstructionDataTooShort.into());
@@ -82,6 +114,21 @@ impl<'a> CreateSessionV1<'a> {
     }
 }
 
+/// Creates a new authentication session for a wallet authority.
+///
+/// This function handles the complete flow of session creation:
+/// 1. Validates the authority and role
+/// 2. Verifies session support
+/// 3. Authenticates the request
+/// 4. Creates and initializes the session
+///
+/// # Arguments
+/// * `ctx` - The account context for session creation
+/// * `data` - Raw session creation instruction data
+/// * `account_infos` - All accounts involved in the operation
+///
+/// # Returns
+/// * `ProgramResult` - Success or error status
 pub fn create_session_v1(
     ctx: Context<CreateSessionV1Accounts>,
     data: &[u8],

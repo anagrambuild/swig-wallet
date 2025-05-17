@@ -1,3 +1,9 @@
+//! Role management module for the Swig wallet system.
+//!
+//! This module provides functionality for managing roles and their associated
+//! permissions through positions, actions, and authorities. It implements the
+//! core role-based access control (RBAC) system.
+
 use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 
@@ -7,24 +13,44 @@ use crate::{
     IntoBytes, Transmutable, TransmutableMut,
 };
 
+/// Represents a position in the role system with associated metadata.
+///
+/// A position defines the structure of a role by specifying its authority type,
+/// size information, and boundaries for actions.
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct Position {
+    /// The type of authority associated with this position
     pub authority_type: u16,
+    /// Length of the authority data
     pub authority_length: u16,
+    /// Number of actions associated with this position
     pub num_actions: u16,
     padding: u16,
+    /// Unique identifier for this position
     pub id: u32,
+    /// Boundary marker for position data
     pub boundary: u32,
 }
 
+/// Represents a role with immutable access to its components.
+///
+/// A role combines a position with its authority information and associated
+/// actions.
 pub struct Role<'a> {
+    /// The position defining this role's structure
     pub position: &'a Position,
+    /// The authority information for this role
     pub authority: &'a dyn AuthorityInfo,
+    /// Raw bytes containing the role's actions
     pub actions: &'a [u8],
 }
 
 impl<'a> Role<'a> {
+    /// Retrieves a specific action from the role's action list.
+    ///
+    /// Searches through the role's actions to find one matching the given type
+    /// and data.
     pub fn get_action<A: Actionable<'a>>(
         &'a self,
         match_data: &[u8],
@@ -52,6 +78,7 @@ impl<'a> Role<'a> {
         Ok(None)
     }
 
+    /// Retrieves all actions associated with this role.
     pub fn get_all_actions(&'a self) -> Result<Vec<&Action>, ProgramError> {
         let mut actions = Vec::new();
         let mut cursor = 0;
@@ -65,19 +92,30 @@ impl<'a> Role<'a> {
         Ok(actions)
     }
 
+    /// Returns the authority type associated with this role.
     pub fn authority_type(&self) -> Result<AuthorityType, ProgramError> {
         self.position.authority_type()
     }
 }
 
+/// Represents a role with mutable access to its components.
+///
+/// Similar to `Role`, but provides mutable access to the authority and actions.
 pub struct RoleMut<'a> {
+    /// The position defining this role's structure
     pub position: &'a Position,
+    /// Mutable reference to the authority information
     pub authority: &'a mut dyn AuthorityInfo,
+    /// Number of actions in this role
     pub num_actions: u8,
+    /// Mutable reference to the raw action bytes
     pub actions: &'a mut [u8],
 }
 
 impl<'a> RoleMut<'a> {
+    /// Retrieves a specific action from the role's action list.
+    ///
+    /// Similar to `Role::get_action` but for mutable roles.
     pub fn get_action<A: Actionable<'a>>(
         &'a self,
         match_data: &[u8],
@@ -104,6 +142,9 @@ impl<'a> RoleMut<'a> {
         Ok(None)
     }
 
+    /// Retrieves a mutable reference to a specific action.
+    ///
+    /// This is a static method that works directly with action data.
     pub fn get_action_mut<A: Actionable<'a>>(
         actions_data: &'a mut [u8],
         match_data: &[u8],
@@ -156,6 +197,7 @@ impl Transmutable for Position {
 impl TransmutableMut for Position {}
 
 impl Position {
+    /// Creates a new Position with the specified parameters.
     pub fn new(
         authority_type: AuthorityType,
         id: u32,
@@ -173,22 +215,27 @@ impl Position {
         }
     }
 
+    /// Returns the authority type of this position.
     pub fn authority_type(&self) -> Result<AuthorityType, ProgramError> {
         AuthorityType::try_from(self.authority_type)
     }
 
+    /// Returns the unique identifier of this position.
     pub fn id(&self) -> u32 {
         self.id
     }
 
+    /// Returns the length of the authority data.
     pub fn authority_length(&self) -> u16 {
         self.authority_length
     }
 
+    /// Returns the number of actions associated with this position.
     pub fn num_actions(&self) -> u16 {
         self.num_actions
     }
 
+    /// Returns the boundary marker for this position.
     pub fn boundary(&self) -> u32 {
         self.boundary
     }

@@ -1,3 +1,11 @@
+//! Utility functions and types for the Swig wallet program.
+//!
+//! This module provides helper functionality for common operations such as:
+//! - Program scope caching and lookup
+//! - Account balance reading
+//! - Token transfer operations
+//! The utilities are optimized for performance and safety.
+
 use std::mem::MaybeUninit;
 
 use pinocchio::{
@@ -21,18 +29,37 @@ use swig_state_x::{
 
 use crate::error::SwigError;
 
+/// Cache for program scope information to optimize lookups.
+///
+/// This struct maintains a mapping of target account public keys to their
+/// associated role IDs and program scope data. It helps avoid repeated
+/// parsing of program scope data from the Swig account.
 pub(crate) struct ProgramScopeCache {
-    // Maps target account pubkey to (role_id, raw program scope bytes)
+    /// Maps target account pubkey to (role_id, raw program scope bytes)
     scopes: Vec<([u8; 32], (u8, [u8; PROGRAM_SCOPE_BYTE_SIZE]))>,
 }
 
 impl ProgramScopeCache {
+    /// Creates a new empty program scope cache.
+    ///
+    /// Initializes with a reasonable capacity to avoid frequent reallocations.
     pub(crate) fn new() -> Self {
         Self {
             scopes: Vec::with_capacity(16), // Reasonable initial capacity
         }
     }
 
+    /// Loads program scope information from a Swig account's data.
+    ///
+    /// This function parses the Swig account data to extract all program
+    /// scope actions and builds a cache for efficient lookup.
+    ///
+    /// # Arguments
+    /// * `data` - Raw Swig account data
+    ///
+    /// # Returns
+    /// * `Option<Self>` - The populated cache if successful, None if data is
+    ///   invalid
     pub(crate) fn load_from_swig(data: &[u8]) -> Option<Self> {
         if data.len() < Swig::LEN {
             return None;
@@ -107,6 +134,13 @@ impl ProgramScopeCache {
         Some(cache)
     }
 
+    /// Finds program scope information for a target account.
+    ///
+    /// # Arguments
+    /// * `target_account` - Public key of the target account to look up
+    ///
+    /// # Returns
+    /// * `Option<(u8, ProgramScope)>` - Role ID and program scope if found
     pub(crate) fn find_program_scope(&self, target_account: &[u8]) -> Option<(u8, ProgramScope)> {
         self.scopes
             .iter()
@@ -186,26 +220,41 @@ pub unsafe fn read_program_scope_account_balance(
     }
 }
 
-// Adapted from pinocchio-token
+/// Uninitialized byte constant for token transfer operations
 const UNINIT_BYTE: MaybeUninit<u8> = MaybeUninit::<u8>::uninit();
+
+/// Helper struct for token transfer operations.
+///
+/// This struct encapsulates all the information needed to perform a token
+/// transfer, including the accounts involved and the transfer amount. It
+/// provides methods to execute the transfer with or without additional signers.
 pub struct TokenTransfer<'a> {
+    /// Token program ID (SPL Token or Token-2022)
     pub token_program: &'a Pubkey,
-    /// Sender account.
+    /// Sender account
     pub from: &'a AccountInfo,
-    /// Recipient account.
+    /// Recipient account
     pub to: &'a AccountInfo,
-    /// Authority account.
+    /// Authority account
     pub authority: &'a AccountInfo,
-    /// Amount of microtokens to transfer.
+    /// Amount of microtokens to transfer
     pub amount: u64,
 }
 
 impl<'a> TokenTransfer<'a> {
+    /// Executes the token transfer without additional signers.
     #[inline(always)]
     pub fn invoke(&self) -> ProgramResult {
         self.invoke_signed(&[])
     }
 
+    /// Executes the token transfer with additional signers.
+    ///
+    /// # Arguments
+    /// * `signers` - Additional signers for the transfer
+    ///
+    /// # Returns
+    /// * `ProgramResult` - Success or error status
     pub fn invoke_signed(&self, signers: &[Signer]) -> ProgramResult {
         // account metadata
         let account_metas: [AccountMeta; 3] = [

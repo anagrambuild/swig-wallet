@@ -1,3 +1,11 @@
+//! Secp256k1 authority implementation.
+//!
+//! This module provides implementations for Secp256k1-based authority types in
+//! the Swig wallet system. It includes both standard Secp256k1 authority and
+//! session-based Secp256k1 authority with expiration support. The
+//! implementation handles key compression, signature recovery, and Keccak256
+//! hashing.
+
 #![warn(unexpected_cfgs)]
 
 use core::mem::MaybeUninit;
@@ -10,17 +18,28 @@ use swig_assertions::sol_assert_bytes_eq;
 use super::{ed25519::ed25519_authenticate, Authority, AuthorityInfo, AuthorityType};
 use crate::{IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut};
 
+/// Maximum age (in slots) for a Secp256k1 signature to be considered valid
 const MAX_SIGNATURE_AGE_IN_SLOTS: u64 = 60;
 
+/// Creation parameters for a session-based Secp256k1 authority.
 #[derive(Debug, no_padding::NoPadding)]
 #[repr(C, align(8))]
 pub struct CreateSecp256k1SessionAuthority {
+    /// The uncompressed Secp256k1 public key (64 bytes)
     pub public_key: [u8; 64],
+    /// The session key for temporary authentication
     pub session_key: [u8; 32],
+    /// Maximum duration a session can be valid for
     pub max_session_length: u64,
 }
 
 impl CreateSecp256k1SessionAuthority {
+    /// Creates a new set of session authority parameters.
+    ///
+    /// # Arguments
+    /// * `public_key` - The uncompressed Secp256k1 public key
+    /// * `session_key` - The initial session key
+    /// * `max_session_length` - Maximum allowed session duration
     pub fn new(public_key: [u8; 64], session_key: [u8; 32], max_session_length: u64) -> Self {
         Self {
             public_key,
@@ -44,14 +63,20 @@ impl IntoBytes for CreateSecp256k1SessionAuthority {
     }
 }
 
+/// Standard Secp256k1 authority implementation.
+///
+/// This struct represents a Secp256k1 authority with a compressed public key
+/// for signature verification.
 #[derive(Debug, no_padding::NoPadding)]
 #[repr(C, align(8))]
 pub struct Secp256k1Authority {
+    /// The compressed Secp256k1 public key (33 bytes)
     pub public_key: [u8; 33],
     _padding: [u8; 7],
 }
 
 impl Secp256k1Authority {
+    /// Creates a new Secp256k1Authority with a compressed public key.
     pub fn new(public_key: [u8; 33]) -> Self {
         Self {
             public_key,
@@ -135,13 +160,22 @@ impl IntoBytes for Secp256k1Authority {
     }
 }
 
+/// Session-based Secp256k1 authority implementation.
+///
+/// This struct represents a Secp256k1 authority that supports temporary session
+/// keys with expiration times. It maintains both a root public key and a
+/// session key.
 #[derive(Debug, no_padding::NoPadding)]
 #[repr(C, align(8))]
 pub struct Secp256k1SessionAuthority {
+    /// The compressed Secp256k1 public key (33 bytes)
     pub public_key: [u8; 33],
     _padding: [u8; 7],
+    /// The current session key
     pub session_key: [u8; 32],
+    /// Maximum allowed session duration
     pub max_session_age: u64,
+    /// Slot when the current session expires
     pub current_session_expiration: u64,
 }
 
@@ -254,6 +288,14 @@ impl IntoBytes for Secp256k1SessionAuthority {
     }
 }
 
+/// Authenticates a Secp256k1 authority with additional payload data.
+///
+/// # Arguments
+/// * `expected_key` - The expected compressed public key
+/// * `authority_payload` - The authority payload including slot and signature
+/// * `data_payload` - Additional data to be included in signature verification
+/// * `current_slot` - The current slot number
+/// * `account_infos` - List of accounts involved in the transaction
 fn secp_authority_authenticate(
     expected_key: &[u8; 33],
     authority_payload: &[u8],
@@ -278,6 +320,13 @@ fn secp_authority_authenticate(
     Ok(())
 }
 
+/// Core Secp256k1 signature verification function.
+///
+/// This function performs the actual signature verification, including:
+/// - Signature age validation
+/// - Message hash computation
+/// - Public key recovery
+/// - Key comparison
 fn secp256k1_authenticate(
     expected_key: &[u8; 33],
     authority_payload: &[u8],
@@ -352,9 +401,17 @@ fn secp256k1_authenticate(
     Ok(())
 }
 
-/// Compress a 64 byte public key to a 33 byte compressed public key
-/// the first byte is the prefix (0x02 if Y is even, 0x03 if Y is odd)
-/// the next 32 bytes are the X coordinate
+/// Compresses a 64-byte uncompressed public key to a 33-byte compressed format.
+///
+/// The compressed format uses:
+/// - First byte: 0x02 if Y is even, 0x03 if Y is odd
+/// - Remaining 32 bytes: The X coordinate
+///
+/// # Arguments
+/// * `key` - The 64-byte uncompressed public key (X,Y coordinates)
+///
+/// # Returns
+/// * `[u8; 33]` - The compressed public key
 fn compress(key: &[u8; 64]) -> [u8; 33] {
     let mut compressed = [0u8; 33];
     compressed[0] = if key[63] & 1 == 0 { 0x02 } else { 0x03 };
@@ -362,16 +419,27 @@ fn compress(key: &[u8; 64]) -> [u8; 33] {
     compressed
 }
 
+/// Represents account information in a format suitable for payload
+/// construction.
 #[repr(C, align(8))]
 #[derive(Copy, Clone, no_padding::NoPadding)]
 pub struct AccountsPayload {
+    /// The account's public key
     pub pubkey: Pubkey,
+    /// Whether the account is writable
     pub is_writable: bool,
+    /// Whether the account is a signer
     pub is_signer: bool,
     _padding: [u8; 6],
 }
 
 impl AccountsPayload {
+    /// Creates a new AccountsPayload.
+    ///
+    /// # Arguments
+    /// * `pubkey` - The account's public key
+    /// * `is_writable` - Whether the account is writable
+    /// * `is_signer` - Whether the account is a signer
     pub fn new(pubkey: Pubkey, is_writable: bool, is_signer: bool) -> Self {
         Self {
             pubkey,
