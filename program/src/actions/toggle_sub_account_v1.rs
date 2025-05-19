@@ -100,7 +100,8 @@ impl<'a> ToggleSubAccountV1<'a> {
         let args = unsafe { ToggleSubAccountV1Args::load_unchecked(args_data)? };
 
         let (additional_payload_len, rest) = rest.split_at(1);
-        let (additional_payload, authority_payload) = rest.split_at(additional_payload_len[0] as usize);
+        let (additional_payload, authority_payload) =
+            rest.split_at(additional_payload_len[0] as usize);
 
         Ok(Self {
             args,
@@ -167,7 +168,7 @@ pub fn toggle_sub_account_v1(
             toggle_sub_account.authority_payload,
             toggle_sub_account.data_payload,
             slot,
-            toggle_sub_account.additional_payload
+            toggle_sub_account.additional_payload,
         )?;
     } else {
         role.authority.authenticate(
@@ -175,7 +176,7 @@ pub fn toggle_sub_account_v1(
             toggle_sub_account.authority_payload,
             toggle_sub_account.data_payload,
             slot,
-            toggle_sub_account.additional_payload
+            toggle_sub_account.additional_payload,
         )?;
     }
 

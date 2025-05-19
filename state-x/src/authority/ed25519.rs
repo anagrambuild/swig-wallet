@@ -89,7 +89,7 @@ impl AuthorityInfo for ED25519Authority {
         authority_payload: &[u8],
         _data_payload: &[u8],
         _slot: u64,
-        _addtional_payload: &[u8]
+        _addtional_payload: &[u8],
     ) -> Result<(), ProgramError> {
         if authority_payload.len() != 1 {
             return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
@@ -267,7 +267,7 @@ impl AuthorityInfo for Ed25519SessionAuthority {
         authority_payload: &[u8],
         _data_payload: &[u8],
         slot: u64,
-        _addtional_payload: &[u8]
+        _addtional_payload: &[u8],
     ) -> Result<(), ProgramError> {
         if authority_payload.len() != 1 {
             return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
@@ -288,7 +288,7 @@ impl AuthorityInfo for Ed25519SessionAuthority {
         authority_payload: &[u8],
         _data_payload: &[u8],
         _slot: u64,
-        _addtional_payload: &[u8]
+        _addtional_payload: &[u8],
     ) -> Result<(), ProgramError> {
         if authority_payload.len() != 1 {
             return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());

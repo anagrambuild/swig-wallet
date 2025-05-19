@@ -163,7 +163,7 @@ pub fn create_session_v1(
         create_session_v1.authority_payload,
         create_session_v1.data_payload,
         slot,
-        create_session_v1.additional_payload
+        create_session_v1.additional_payload,
     )?;
 
     role.authority.start_session(

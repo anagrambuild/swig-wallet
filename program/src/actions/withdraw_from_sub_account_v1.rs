@@ -97,7 +97,8 @@ impl<'a> WithdrawFromSubAccountV1<'a> {
         let args = unsafe { WithdrawFromSubAccountV1Args::load_unchecked(args_data)? };
 
         let (additional_payload_len, rest) = rest.split_at(1);
-        let (additional_payload, authority_payload) = rest.split_at(additional_payload_len[0] as usize);
+        let (additional_payload, authority_payload) =
+            rest.split_at(additional_payload_len[0] as usize);
 
         Ok(Self {
             args,
@@ -146,7 +147,7 @@ pub fn withdraw_from_sub_account_v1(
             withdraw.authority_payload,
             withdraw.data_payload,
             slot,
-            withdraw.additional_payload
+            withdraw.additional_payload,
         )?;
     } else {
         role.authority.authenticate(
@@ -154,7 +155,7 @@ pub fn withdraw_from_sub_account_v1(
             withdraw.authority_payload,
             withdraw.data_payload,
             slot,
-            withdraw.additional_payload
+            withdraw.additional_payload,
         )?;
     }
     let (action_accounts_index, action_accounts_len) =

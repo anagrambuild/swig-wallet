@@ -113,7 +113,8 @@ impl<'a> CreateSubAccountV1<'a> {
         let args = unsafe { CreateSubAccountV1Args::load_unchecked(args_data)? };
 
         let (additional_payload_len, rest) = rest.split_at(1);
-        let (additional_payload, authority_payload) = rest.split_at(additional_payload_len[0] as usize);
+        let (additional_payload, authority_payload) =
+            rest.split_at(additional_payload_len[0] as usize);
 
         Ok(Self {
             args,

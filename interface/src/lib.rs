@@ -385,7 +385,7 @@ impl SignInstruction {
             );
         }
 
-        let prefix = &[7,5,6,3,6,7,2,1];
+        let prefix = &[7, 5, 6, 3, 6, 7, 2, 1];
 
         let mut signature_bytes = Vec::new();
         signature_bytes.extend_from_slice(&ix_bytes);

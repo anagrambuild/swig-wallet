@@ -141,7 +141,7 @@ impl AuthorityInfo for Secp256k1Authority {
         authority_payload: &[u8],
         data_payload: &[u8],
         slot: u64,
-        addtional_payload: &[u8]
+        addtional_payload: &[u8],
     ) -> Result<(), ProgramError> {
         secp_authority_authenticate(
             &self.public_key,
@@ -237,7 +237,7 @@ impl AuthorityInfo for Secp256k1SessionAuthority {
         authority_payload: &[u8],
         data_payload: &[u8],
         slot: u64,
-        addtional_payload: &[u8]
+        addtional_payload: &[u8],
     ) -> Result<(), ProgramError> {
         secp_authority_authenticate(
             &self.public_key,
@@ -245,7 +245,7 @@ impl AuthorityInfo for Secp256k1SessionAuthority {
             data_payload,
             slot,
             account_infos,
-            addtional_payload
+            addtional_payload,
         )
     }
 
@@ -255,7 +255,7 @@ impl AuthorityInfo for Secp256k1SessionAuthority {
         authority_payload: &[u8],
         _data_payload: &[u8],
         slot: u64,
-        _addtional_payload: &[u8]
+        _addtional_payload: &[u8],
     ) -> Result<(), ProgramError> {
         if slot > self.current_session_expiration {
             return Err(SwigAuthenticateError::PermissionDeniedSessionExpired.into());
@@ -307,7 +307,7 @@ fn secp_authority_authenticate(
     data_payload: &[u8],
     current_slot: u64,
     account_infos: &[AccountInfo],
-    prefix: &[u8]
+    prefix: &[u8],
 ) -> Result<(), ProgramError> {
     if authority_payload.len() < 73 {
         return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
@@ -322,7 +322,7 @@ fn secp_authority_authenticate(
         authority_slot,
         current_slot,
         account_infos,
-        prefix
+        prefix,
     )?;
     Ok(())
 }
@@ -341,7 +341,7 @@ fn secp256k1_authenticate(
     authority_slot: u64,
     current_slot: u64,
     account_infos: &[AccountInfo],
-    prefix: &[u8]
+    prefix: &[u8],
 ) -> Result<(), ProgramError> {
     if authority_payload.len() != 65 {
         return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
@@ -395,10 +395,7 @@ fn secp256k1_authenticate(
         hex_encode(&data_payload_hash, &mut data_payload_hash_hex);
 
         #[allow(unused)]
-        let keccak_data: &[&[u8]] = &[
-            prefix,
-            &data_payload_hash_hex,
-        ];
+        let keccak_data: &[&[u8]] = &[prefix, &data_payload_hash_hex];
 
         // do not remove this line we must hash the instruction payload
         #[cfg(target_os = "solana")]

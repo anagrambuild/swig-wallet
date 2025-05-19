@@ -179,7 +179,7 @@ pub fn sub_account_sign_v1(
             sign_v1.authority_payload,
             sign_v1.instruction_payload,
             slot,
-            sign_v1.additional_payload
+            sign_v1.additional_payload,
         )?;
     } else {
         role.authority.authenticate(
@@ -187,7 +187,7 @@ pub fn sub_account_sign_v1(
             sign_v1.authority_payload,
             sign_v1.instruction_payload,
             slot,
-            sign_v1.additional_payload
+            sign_v1.additional_payload,
         )?;
     }
     const UNINIT_KEY: MaybeUninit<&Pubkey> = MaybeUninit::uninit();

@@ -102,7 +102,8 @@ impl<'a> RemoveAuthorityV1<'a> {
         let (inst, rest) = data.split_at(RemoveAuthorityV1Args::LEN);
         let args = unsafe { RemoveAuthorityV1Args::load_unchecked(inst)? };
         let (additional_payload_len, rest) = rest.split_at(1);
-        let (additional_payload, authority_payload) = rest.split_at(additional_payload_len[0] as usize);
+        let (additional_payload, authority_payload) =
+            rest.split_at(additional_payload_len[0] as usize);
         Ok(Self {
             args,
             authority_payload,
@@ -182,7 +183,7 @@ pub fn remove_authority_v1(
                     remove_authority_v1.authority_payload,
                     remove_authority_v1.data_payload,
                     slot,
-                    remove_authority_v1.additional_payload
+                    remove_authority_v1.additional_payload,
                 )?;
             } else {
                 acting_role.authority.authenticate(
@@ -190,7 +191,7 @@ pub fn remove_authority_v1(
                     remove_authority_v1.authority_payload,
                     remove_authority_v1.data_payload,
                     slot,
-                    remove_authority_v1.additional_payload
+                    remove_authority_v1.additional_payload,
                 )?;
             }
             let all = acting_role.get_action::<All>(&[])?;
