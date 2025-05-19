@@ -78,7 +78,6 @@ pub struct ToggleSubAccountV1<'a> {
     pub args: &'a ToggleSubAccountV1Args,
     pub authority_payload: &'a [u8],
     pub data_payload: &'a [u8],
-    pub additional_payload: &'a [u8],
 }
 
 impl<'a> ToggleSubAccountV1<'a> {
@@ -95,17 +94,12 @@ impl<'a> ToggleSubAccountV1<'a> {
         }
 
         // Split the data into args and the rest (authority payload)
-        let (args_data, rest) = data.split_at(ToggleSubAccountV1Args::LEN);
+        let (args_data, authority_payload) = data.split_at(ToggleSubAccountV1Args::LEN);
 
         let args = unsafe { ToggleSubAccountV1Args::load_unchecked(args_data)? };
 
-        let (additional_payload_len, rest) = rest.split_at(1);
-        let (additional_payload, authority_payload) =
-            rest.split_at(additional_payload_len[0] as usize);
-
         Ok(Self {
             args,
-            additional_payload,
             authority_payload,
             data_payload: args_data,
         })
@@ -168,7 +162,6 @@ pub fn toggle_sub_account_v1(
             toggle_sub_account.authority_payload,
             toggle_sub_account.data_payload,
             slot,
-            toggle_sub_account.additional_payload,
         )?;
     } else {
         role.authority.authenticate(
@@ -176,7 +169,6 @@ pub fn toggle_sub_account_v1(
             toggle_sub_account.authority_payload,
             toggle_sub_account.data_payload,
             slot,
-            toggle_sub_account.additional_payload,
         )?;
     }
 

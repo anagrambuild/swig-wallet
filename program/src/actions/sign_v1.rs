@@ -96,7 +96,6 @@ pub struct SignV1<'a> {
     pub args: &'a SignV1Args,
     authority_payload: &'a [u8],
     instruction_payload: &'a [u8],
-    additional_payload: &'a [u8],
 }
 
 impl<'a> SignV1<'a> {
@@ -114,16 +113,11 @@ impl<'a> SignV1<'a> {
         let (inst, rest) = unsafe { data.split_at_unchecked(SignV1Args::LEN) };
         let args = unsafe { SignV1Args::load_unchecked(inst)? };
 
-        let (additional_payload_len, rest) = rest.split_at(1);
-
-        let (additional_payload, rest) = rest.split_at(additional_payload_len[0] as usize);
-
         let (instruction_payload, authority_payload) =
             unsafe { rest.split_at_unchecked(args.instruction_payload_len as usize) };
 
         Ok(Self {
             args,
-            additional_payload,
             authority_payload,
             instruction_payload,
         })
@@ -176,7 +170,6 @@ pub fn sign_v1(
             sign_v1.authority_payload,
             sign_v1.instruction_payload,
             slot,
-            sign_v1.additional_payload,
         )?;
     } else {
         role.authority.authenticate(
@@ -184,7 +177,6 @@ pub fn sign_v1(
             sign_v1.authority_payload,
             sign_v1.instruction_payload,
             slot,
-            sign_v1.additional_payload,
         )?;
     }
     const UNINIT_KEY: MaybeUninit<&Pubkey> = MaybeUninit::uninit();

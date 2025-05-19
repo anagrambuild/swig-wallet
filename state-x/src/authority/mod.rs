@@ -72,7 +72,6 @@ pub trait AuthorityInfo: IntoBytes {
         _authority_payload: &[u8],
         _data_payload: &[u8],
         _slot: u64,
-        _additional_payload: &[u8],
     ) -> Result<(), ProgramError> {
         Err(SwigAuthenticateError::AuthorityDoesNotSupportSessionBasedAuth.into())
     }
@@ -106,7 +105,6 @@ pub trait AuthorityInfo: IntoBytes {
         authority_payload: &[u8],
         data_payload: &[u8],
         slot: u64,
-        additional_payload: &[u8],
     ) -> Result<(), ProgramError>;
 }
 

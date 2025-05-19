@@ -82,7 +82,6 @@ pub struct WithdrawFromSubAccountV1<'a> {
     pub args: &'a WithdrawFromSubAccountV1Args,
     pub authority_payload: &'a [u8],
     pub data_payload: &'a [u8],
-    pub additional_payload: &'a [u8],
 }
 
 impl<'a> WithdrawFromSubAccountV1<'a> {
@@ -92,17 +91,12 @@ impl<'a> WithdrawFromSubAccountV1<'a> {
         }
 
         // Split the data into args and the rest (authority payload)
-        let (args_data, rest) = data.split_at(WithdrawFromSubAccountV1Args::LEN);
+        let (args_data, authority_payload) = data.split_at(WithdrawFromSubAccountV1Args::LEN);
 
         let args = unsafe { WithdrawFromSubAccountV1Args::load_unchecked(args_data)? };
 
-        let (additional_payload_len, rest) = rest.split_at(1);
-        let (additional_payload, authority_payload) =
-            rest.split_at(additional_payload_len[0] as usize);
-
         Ok(Self {
             args,
-            additional_payload,
             authority_payload,
             data_payload: args_data,
         })
@@ -147,7 +141,6 @@ pub fn withdraw_from_sub_account_v1(
             withdraw.authority_payload,
             withdraw.data_payload,
             slot,
-            withdraw.additional_payload,
         )?;
     } else {
         role.authority.authenticate(
@@ -155,7 +148,6 @@ pub fn withdraw_from_sub_account_v1(
             withdraw.authority_payload,
             withdraw.data_payload,
             slot,
-            withdraw.additional_payload,
         )?;
     }
     let (action_accounts_index, action_accounts_len) =

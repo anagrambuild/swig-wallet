@@ -12,7 +12,7 @@ use core::mem::MaybeUninit;
 
 #[allow(unused_imports)]
 use pinocchio::syscalls::{sol_keccak256, sol_secp256k1_recover, sol_sha256};
-use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, pubkey::Pubkey};
+use pinocchio::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey};
 use swig_assertions::sol_assert_bytes_eq;
 
 use super::{ed25519::ed25519_authenticate, Authority, AuthorityInfo, AuthorityType};
@@ -141,7 +141,6 @@ impl AuthorityInfo for Secp256k1Authority {
         authority_payload: &[u8],
         data_payload: &[u8],
         slot: u64,
-        addtional_payload: &[u8],
     ) -> Result<(), ProgramError> {
         secp_authority_authenticate(
             &self.public_key,
@@ -149,7 +148,6 @@ impl AuthorityInfo for Secp256k1Authority {
             data_payload,
             slot,
             account_infos,
-            addtional_payload,
         )
     }
 }
@@ -237,7 +235,6 @@ impl AuthorityInfo for Secp256k1SessionAuthority {
         authority_payload: &[u8],
         data_payload: &[u8],
         slot: u64,
-        addtional_payload: &[u8],
     ) -> Result<(), ProgramError> {
         secp_authority_authenticate(
             &self.public_key,
@@ -245,7 +242,6 @@ impl AuthorityInfo for Secp256k1SessionAuthority {
             data_payload,
             slot,
             account_infos,
-            addtional_payload,
         )
     }
 
@@ -255,7 +251,6 @@ impl AuthorityInfo for Secp256k1SessionAuthority {
         authority_payload: &[u8],
         _data_payload: &[u8],
         slot: u64,
-        _addtional_payload: &[u8],
     ) -> Result<(), ProgramError> {
         if slot > self.current_session_expiration {
             return Err(SwigAuthenticateError::PermissionDeniedSessionExpired.into());
@@ -307,7 +302,6 @@ fn secp_authority_authenticate(
     data_payload: &[u8],
     current_slot: u64,
     account_infos: &[AccountInfo],
-    prefix: &[u8],
 ) -> Result<(), ProgramError> {
     if authority_payload.len() < 73 {
         return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
@@ -317,12 +311,12 @@ fn secp_authority_authenticate(
 
     secp256k1_authenticate(
         expected_key,
-        authority_payload[8..].try_into().unwrap(),
+        authority_payload[8..73].try_into().unwrap(),
         data_payload,
         authority_slot,
         current_slot,
         account_infos,
-        prefix,
+        authority_payload[73..].try_into().unwrap(),
     )?;
     Ok(())
 }
