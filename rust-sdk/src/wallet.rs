@@ -155,12 +155,6 @@ impl<'c> SwigWallet<'c> {
                 .get_role(role_id)
                 .map_err(|_| SwigError::AuthorityNotFound)?;
 
-            if let Some(role) = role {
-                println!("Role found: {:?}", role.actions);
-            } else {
-                println!("Role not found");
-            }
-
             let instruction_builder = SwigInstructionBuilder::new(
                 swig_id,
                 authority_manager,
@@ -582,6 +576,33 @@ impl<'c> SwigWallet<'c> {
         println!("╚══════════════════════════════════════════════════════════════════");
 
         Ok(())
+    }
+
+    /// Get role id
+    ///
+    /// # Arguments
+    ///
+    /// * `authority` - The authority's public key as bytes to lookup
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the role id or a `SwigError` if the authority is not found
+    pub fn get_role_id(&self, authority: &[u8]) -> Result<u32, SwigError> {
+        let swig_pubkey = self.get_swig_account()?;
+
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let swig_data = self.litesvm.get_account(&swig_pubkey).unwrap().data;
+        let swig_with_roles =
+            SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
+
+        let role_id = swig_with_roles.lookup_role_id(authority.as_ref()).unwrap();
+        if role_id.is_some() {
+            Ok(role_id.unwrap())
+        } else {
+            Err(SwigError::AuthorityNotFound)
+        }
     }
 
     /// Switches to a different authority for the Swig wallet

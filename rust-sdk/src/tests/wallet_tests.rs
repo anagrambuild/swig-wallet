@@ -483,4 +483,42 @@ mod transfer_tests {
 
         assert!(swig_wallet.sign(vec![transfer_ix], None).is_err());
     }
+
+    #[test_log::test]
+    fn should_get_role_id() {
+        let (mut litesvm, main_authority) = setup_test_environment();
+        let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+
+        let authority_2 = Keypair::new();
+        let authority_3 = Keypair::new();
+
+        swig_wallet
+            .add_authority(
+                AuthorityType::Ed25519,
+                &authority_2.pubkey().to_bytes(),
+                vec![Permission::Sol {
+                    amount: 10_000_000_000,
+                    recurring: None,
+                }],
+            )
+            .unwrap();
+
+        swig_wallet
+            .add_authority(
+                AuthorityType::Ed25519,
+                &authority_3.pubkey().to_bytes(),
+                vec![Permission::Sol {
+                    amount: 10_000_000_000,
+                    recurring: None,
+                }],
+            )
+            .unwrap();
+
+        swig_wallet.display_swig().unwrap();
+        let role_id = swig_wallet
+            .get_role_id(&authority_3.pubkey().to_bytes())
+            .unwrap();
+        println!("role_id: {:?}", role_id);
+        assert_eq!(role_id, 2);
+    }
 }
