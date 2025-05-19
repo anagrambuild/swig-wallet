@@ -65,7 +65,6 @@ pub trait AuthorityInfo: IntoBytes {
     /// * `authority_payload` - Authority-specific payload data
     /// * `data_payload` - Operation-specific payload data
     /// * `slot` - Current slot number
-    /// * `additional_payload` - Any extra payload required to authenticate
     fn authenticate_session(
         &mut self,
         _account_infos: &[AccountInfo],
@@ -98,7 +97,6 @@ pub trait AuthorityInfo: IntoBytes {
     /// * `authority_payload` - Authority-specific payload data
     /// * `data_payload` - Operation-specific payload data
     /// * `slot` - Current slot number
-    /// * `addtional_paylaod` - Any extra payload required to authenticate
     fn authenticate(
         &mut self,
         account_infos: &[AccountInfo],
