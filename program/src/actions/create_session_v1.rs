@@ -83,6 +83,7 @@ pub struct CreateSessionV1<'a> {
     pub args: &'a CreateSessionV1Args,
     pub authority_payload: &'a [u8],
     pub data_payload: &'a [u8],
+    pub additional_payload: &'a [u8],
 }
 
 impl<'a> CreateSessionV1<'a> {
@@ -97,17 +98,20 @@ impl<'a> CreateSessionV1<'a> {
         if data.len() < CreateSessionV1Args::LEN {
             return Err(SwigError::InvalidSwigCreateSessionInstructionDataTooShort.into());
         }
-        let (inst, authority_payload) =
-            unsafe { data.split_at_unchecked(CreateSessionV1Args::LEN) };
+        let (inst, rest) = unsafe { data.split_at_unchecked(CreateSessionV1Args::LEN) };
         let args = unsafe {
             CreateSessionV1Args::load_unchecked(inst).map_err(|e| {
                 msg!("CreateSessionV1Args Args Error: {:?}", e);
                 ProgramError::InvalidInstructionData
             })?
         };
+        let (additional_payload_len, rest) = rest.split_at(1);
+        let (additional_payload, authority_payload) =
+            rest.split_at(additional_payload_len[0] as usize);
 
         Ok(Self {
             args,
+            additional_payload,
             authority_payload,
             data_payload: &data[..CreateSessionV1Args::LEN],
         })
@@ -159,6 +163,7 @@ pub fn create_session_v1(
         create_session_v1.authority_payload,
         create_session_v1.data_payload,
         slot,
+        create_session_v1.additional_payload
     )?;
 
     role.authority.start_session(

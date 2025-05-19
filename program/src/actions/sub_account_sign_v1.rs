@@ -83,6 +83,7 @@ pub struct SubAccountSignV1<'a> {
     pub args: &'a SubAccountSignV1Args,
     authority_payload: &'a [u8],
     instruction_payload: &'a [u8],
+    additional_payload: &'a [u8],
 }
 
 impl<'a> SubAccountSignV1<'a> {
@@ -99,12 +100,15 @@ impl<'a> SubAccountSignV1<'a> {
         }
         let (inst, rest) = unsafe { data.split_at_unchecked(SubAccountSignV1Args::LEN) };
         let args = unsafe { SubAccountSignV1Args::load_unchecked(inst)? };
+        let (additional_payload_len, rest) = rest.split_at(1);
+        let (additional_payload, rest) = rest.split_at(additional_payload_len[0] as usize);
         let (instruction_payload, authority_payload) =
             unsafe { rest.split_at_unchecked(args.instruction_payload_len as usize) };
         Ok(Self {
             args,
             authority_payload,
             instruction_payload,
+            additional_payload,
         })
     }
 }
@@ -175,6 +179,7 @@ pub fn sub_account_sign_v1(
             sign_v1.authority_payload,
             sign_v1.instruction_payload,
             slot,
+            sign_v1.additional_payload
         )?;
     } else {
         role.authority.authenticate(
@@ -182,6 +187,7 @@ pub fn sub_account_sign_v1(
             sign_v1.authority_payload,
             sign_v1.instruction_payload,
             slot,
+            sign_v1.additional_payload
         )?;
     }
     const UNINIT_KEY: MaybeUninit<&Pubkey> = MaybeUninit::uninit();

@@ -41,6 +41,7 @@ pub struct AddAuthorityV1<'a> {
     authority_payload: &'a [u8],
     actions: &'a [u8],
     authority_data: &'a [u8],
+    additional_payload: &'a [u8],
 }
 
 /// Arguments for adding a new authority to a Swig wallet.
@@ -119,9 +120,13 @@ impl<'a> AddAuthorityV1<'a> {
         let (inst, rest) = data.split_at(AddAuthorityV1Args::LEN);
         let args = unsafe { AddAuthorityV1Args::load_unchecked(inst)? };
         let (authority_data, rest) = rest.split_at(args.new_authority_data_len as usize);
-        let (actions_payload, authority_payload) = rest.split_at(args.actions_data_len as usize);
+        let (actions_payload, rest) = rest.split_at(args.actions_data_len as usize);
+        let (additional_payload_len, rest) = rest.split_at(1);
+        let (additional_payload, authority_payload) =
+            rest.split_at(additional_payload_len[0] as usize);
         Ok(Self {
             args,
+            additional_payload,
             authority_data,
             authority_payload,
             actions: actions_payload,
@@ -195,6 +200,7 @@ pub fn add_authority_v1(
                 add_authority_v1.authority_payload,
                 add_authority_v1.data_payload,
                 slot,
+                add_authority_v1.additional_payload,
             )?;
         } else {
             acting_role.authority.authenticate(
@@ -202,6 +208,7 @@ pub fn add_authority_v1(
                 add_authority_v1.authority_payload,
                 add_authority_v1.data_payload,
                 slot,
+                add_authority_v1.additional_payload,
             )?;
         }
         let all = acting_role.get_action::<All>(&[])?;

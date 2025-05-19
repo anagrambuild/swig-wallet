@@ -1,6 +1,7 @@
 use solana_sdk::{
+    hash as sha256,
     instruction::{AccountMeta, Instruction},
-    keccak::hash,
+    keccak,
     pubkey::Pubkey,
     system_program,
 };
@@ -21,7 +22,10 @@ use swig_state_x::{
         sub_account::SubAccount, token_limit::TokenLimit,
         token_recurring_limit::TokenRecurringLimit, Action, Permission,
     },
-    authority::{secp256k1::AccountsPayload, AuthorityType},
+    authority::{
+        secp256k1::{hex_encode, AccountsPayload},
+        AuthorityType,
+    },
     swig::swig_account_seeds,
     IntoBytes, Transmutable,
 };
@@ -107,12 +111,42 @@ pub struct AuthorityConfig<'a> {
     pub authority: &'a [u8],
 }
 
+pub struct AdditionalPayload {
+    _data: Vec<u8>,
+    pub data: Vec<u8>,
+}
+
+impl<'a> AdditionalPayload {
+    pub fn init() -> Self {
+        Self {
+            data: Vec::new(),
+            _data: Vec::new(),
+        }
+    }
+
+    pub fn extend_from_slice(&mut self, data: &[u8]) {
+        self.data.extend_from_slice(data);
+    }
+
+    pub fn to_bytes(&'a mut self) -> &'a [u8] {
+        self._data.push(self.data.len() as u8);
+        self._data.extend_from_slice(&self.data);
+        self._data.as_slice()
+    }
+}
+
 fn prepare_secp_payload(
     current_slot: u64,
     data_payload: &[u8],
     accounts_payload: &[u8],
+    prefix: &[u8],
 ) -> [u8; 32] {
-    hash(&[data_payload, accounts_payload, &current_slot.to_le_bytes()].concat()).to_bytes()
+    let compressed_payload =
+        sha256::hash(&[data_payload, accounts_payload, &current_slot.to_le_bytes()].concat())
+            .to_bytes();
+    let mut compressed_payload_hex = [0u8; 64];
+    hex_encode(&compressed_payload, &mut compressed_payload_hex);
+    keccak::hash(&[prefix, &compressed_payload_hex].concat()).to_bytes()
 }
 
 fn accounts_payload_from_meta(meta: &AccountMeta) -> AccountsPayload {
@@ -194,9 +228,13 @@ impl AddAuthorityInstruction {
             action_bytes.len() as u16,
             num_actions,
         );
+
+        let mut additional_payload = AdditionalPayload::init();
+
         write.extend_from_slice(args.into_bytes().unwrap());
         write.extend_from_slice(new_authority_config.authority);
         write.extend_from_slice(&action_bytes);
+        write.extend_from_slice(additional_payload.to_bytes());
         write.extend_from_slice(&[3]);
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
@@ -246,16 +284,26 @@ impl AddAuthorityInstruction {
                 .extend_from_slice(accounts_payload_from_meta(account).into_bytes().unwrap());
         }
 
+        let prefix = &[];
+
         let mut signature_bytes = Vec::new();
         signature_bytes.extend_from_slice(arg_bytes);
         signature_bytes.extend_from_slice(new_authority_config.authority);
         signature_bytes.extend_from_slice(&action_bytes);
-        let nonced_payload =
-            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes);
+        let nonced_payload = prepare_secp_payload(
+            current_slot,
+            &signature_bytes,
+            &account_payload_bytes,
+            prefix,
+        );
         let signature = authority_payload_fn(&nonced_payload);
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
+
+        let mut additional_payload = AdditionalPayload::init();
+        additional_payload.extend_from_slice(prefix);
+
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
@@ -263,6 +311,7 @@ impl AddAuthorityInstruction {
                 arg_bytes,
                 new_authority_config.authority,
                 &action_bytes,
+                additional_payload.to_bytes(),
                 &authority_payload,
             ]
             .concat(),
@@ -293,7 +342,13 @@ impl SignInstruction {
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [arg_bytes, &ix_bytes, &[2]].concat(),
+            data: [
+                arg_bytes,
+                AdditionalPayload::init().to_bytes(),
+                &ix_bytes,
+                &[2],
+            ]
+            .concat(),
         })
     }
 
@@ -330,18 +385,35 @@ impl SignInstruction {
             );
         }
 
+        let prefix = &[7,5,6,3,6,7,2,1];
+
         let mut signature_bytes = Vec::new();
         signature_bytes.extend_from_slice(&ix_bytes);
-        let nonced_payload =
-            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes);
+
+        let nonced_payload = prepare_secp_payload(
+            current_slot,
+            &signature_bytes,
+            &account_payload_bytes,
+            prefix,
+        );
         let signature = authority_payload_fn(&nonced_payload);
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
+
+        let mut additional_payload = AdditionalPayload::init();
+        additional_payload.extend_from_slice(prefix);
+
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [arg_bytes, &ix_bytes, &authority_payload].concat(),
+            data: [
+                arg_bytes,
+                additional_payload.to_bytes(),
+                &ix_bytes,
+                &authority_payload,
+            ]
+            .concat(),
         })
     }
 }
@@ -369,7 +441,7 @@ impl RemoveAuthorityInstruction {
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [arg_bytes, &[3]].concat(),
+            data: [arg_bytes, AdditionalPayload::init().to_bytes(), &[3]].concat(),
         })
     }
 
@@ -403,18 +475,28 @@ impl RemoveAuthorityInstruction {
             );
         }
 
+        let prefix = &[];
+
         let mut signature_bytes = Vec::new();
         signature_bytes.extend_from_slice(arg_bytes);
-        let nonced_payload =
-            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes);
+        let nonced_payload = prepare_secp_payload(
+            current_slot,
+            &signature_bytes,
+            &account_payload_bytes,
+            prefix,
+        );
         let signature = authority_payload_fn(&nonced_payload);
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
+
+        let mut additional_payload = AdditionalPayload::init();
+        additional_payload.extend_from_slice(prefix);
+
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [arg_bytes, &authority_payload].concat(),
+            data: [arg_bytes, additional_payload.to_bytes(), &authority_payload].concat(),
         })
     }
 }
@@ -443,7 +525,7 @@ impl CreateSessionInstruction {
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [args_bytes, &[2]].concat(),
+            data: [args_bytes, AdditionalPayload::init().to_bytes(), &[2]].concat(),
         })
     }
 
@@ -479,18 +561,33 @@ impl CreateSessionInstruction {
             );
         }
 
+        let prefix = &[];
+
         let mut signature_bytes = Vec::new();
         signature_bytes.extend_from_slice(args_bytes);
-        let nonced_payload =
-            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes);
+        let nonced_payload = prepare_secp_payload(
+            current_slot,
+            &signature_bytes,
+            &account_payload_bytes,
+            prefix,
+        );
         let signature = authority_payload_fn(&nonced_payload);
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
+
+        let mut additional_payload = AdditionalPayload::init();
+        additional_payload.extend_from_slice(prefix);
+
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [args_bytes, &authority_payload].concat(),
+            data: [
+                args_bytes,
+                additional_payload.to_bytes(),
+                &authority_payload,
+            ]
+            .concat(),
         })
     }
 }
@@ -523,7 +620,7 @@ impl CreateSubAccountInstruction {
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: [args_bytes, &[4]].concat(),
+            data: [args_bytes, AdditionalPayload::init().to_bytes(), &[4]].concat(),
         })
     }
 
@@ -561,9 +658,11 @@ impl CreateSubAccountInstruction {
             );
         }
 
+        let prefix = &[];
+
         // Sign the payload
         let nonced_payload =
-            prepare_secp_payload(current_slot, &args_bytes, &account_payload_bytes);
+            prepare_secp_payload(current_slot, args_bytes, &account_payload_bytes, prefix);
         let signature = authority_payload_fn(&nonced_payload);
 
         // Add authority payload
@@ -571,10 +670,18 @@ impl CreateSubAccountInstruction {
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
 
+        let mut additional_payload = AdditionalPayload::init();
+        additional_payload.extend_from_slice(prefix);
+
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: [args_bytes, &authority_payload].concat(),
+            data: [
+                args_bytes,
+                additional_payload.to_bytes(),
+                &authority_payload,
+            ]
+            .concat(),
         })
     }
 }
@@ -605,7 +712,7 @@ impl WithdrawFromSubAccountInstruction {
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: [args_bytes, &[3]].concat(),
+            data: [args_bytes, AdditionalPayload::init().to_bytes(), &[3]].concat(),
         })
     }
 
@@ -642,9 +749,11 @@ impl WithdrawFromSubAccountInstruction {
             );
         }
 
+        let prefix = &[];
+
         // Sign the payload
         let nonced_payload =
-            prepare_secp_payload(current_slot, &args_bytes, &account_payload_bytes);
+            prepare_secp_payload(current_slot, args_bytes, &account_payload_bytes, prefix);
         let signature = authority_payload_fn(&nonced_payload);
 
         // Add authority payload
@@ -652,10 +761,18 @@ impl WithdrawFromSubAccountInstruction {
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
 
+        let mut additional_payload = AdditionalPayload::init();
+        additional_payload.extend_from_slice(prefix);
+
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: [args_bytes, &authority_payload].concat(),
+            data: [
+                args_bytes,
+                additional_payload.to_bytes(),
+                &authority_payload,
+            ]
+            .concat(),
         })
     }
 
@@ -688,7 +805,7 @@ impl WithdrawFromSubAccountInstruction {
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: [args_bytes, &[3]].concat(),
+            data: [args_bytes, AdditionalPayload::init().to_bytes(), &[3]].concat(),
         })
     }
 
@@ -731,9 +848,11 @@ impl WithdrawFromSubAccountInstruction {
             );
         }
 
+        let prefix = &[];
+
         // Sign the payload
         let nonced_payload =
-            prepare_secp_payload(current_slot, &args_bytes, &account_payload_bytes);
+            prepare_secp_payload(current_slot, args_bytes, &account_payload_bytes, prefix);
         let signature = authority_payload_fn(&nonced_payload);
 
         // Add authority payload
@@ -741,10 +860,18 @@ impl WithdrawFromSubAccountInstruction {
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
 
+        let mut additional_payload = AdditionalPayload::init();
+        additional_payload.extend_from_slice(prefix);
+
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: [args_bytes, &authority_payload].concat(),
+            data: [
+                args_bytes,
+                additional_payload.to_bytes(),
+                &authority_payload,
+            ]
+            .concat(),
         })
     }
 }
@@ -777,7 +904,13 @@ impl SubAccountSignInstruction {
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: [args_bytes, &ix_bytes, &[4]].concat(),
+            data: [
+                args_bytes,
+                AdditionalPayload::init().to_bytes(),
+                &ix_bytes,
+                &[4],
+            ]
+            .concat(),
         })
     }
 
@@ -816,8 +949,11 @@ impl SubAccountSignInstruction {
             );
         }
 
+        let prefix = &[];
+
         // Sign the payload
-        let nonced_payload = prepare_secp_payload(current_slot, &ix_bytes, &account_payload_bytes);
+        let nonced_payload =
+            prepare_secp_payload(current_slot, &ix_bytes, &account_payload_bytes, prefix);
         let signature = authority_payload_fn(&nonced_payload);
 
         // Add authority payload
@@ -825,10 +961,19 @@ impl SubAccountSignInstruction {
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
 
+        let mut additional_payload = AdditionalPayload::init();
+        additional_payload.extend_from_slice(prefix);
+
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: [args_bytes, &ix_bytes, &authority_payload].concat(),
+            data: [
+                args_bytes,
+                additional_payload.to_bytes(),
+                &ix_bytes,
+                &authority_payload,
+            ]
+            .concat(),
         })
     }
 }
@@ -859,7 +1004,7 @@ impl ToggleSubAccountInstruction {
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: [args_bytes, &[3]].concat(),
+            data: [args_bytes, AdditionalPayload::init().to_bytes(), &[3]].concat(),
         })
     }
 
@@ -896,9 +1041,11 @@ impl ToggleSubAccountInstruction {
             );
         }
 
+        let prefix = &[];
+
         // Sign the payload
         let nonced_payload =
-            prepare_secp_payload(current_slot, &args_bytes, &account_payload_bytes);
+            prepare_secp_payload(current_slot, args_bytes, &account_payload_bytes, prefix);
         let signature = authority_payload_fn(&nonced_payload);
 
         // Add authority payload
@@ -906,10 +1053,18 @@ impl ToggleSubAccountInstruction {
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
 
+        let mut additional_payload = AdditionalPayload::init();
+        additional_payload.extend_from_slice(prefix);
+
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: [args_bytes, &authority_payload].concat(),
+            data: [
+                args_bytes,
+                additional_payload.to_bytes(),
+                &authority_payload,
+            ]
+            .concat(),
         })
     }
 }
