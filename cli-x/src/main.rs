@@ -28,13 +28,27 @@ use swig_sdk::{
     AuthorityManager, Permission, RecurringConfig, SwigError, SwigWallet,
 };
 
+mod commands;
+mod config;
+mod interactive;
+
+use commands::run_command_mode;
+use config::SwigConfig;
+use interactive::run_interactive_mode;
+
 const LOGO: &str = r#"
-   _____ _    _ _____ ______    _____ _      _____ 
-  / ____| |  | |_   _|  ____|  / ____| |    |_   _|
- | (___ | |  | | | | | |   __ | |    | |      | |  
-  \___ \| |  | | | | |  __ __ | |    | |      | |  
-  ____) | |__| |_| |_| |  |   | |____| |____ _| |_ 
- |_____/ \____/|_____|_|_____  \_____|______|_____|
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@@@@@@@@P!.       :!P@@@@@@@@@@@@@@@@@@B5YYPB@@@@@@@BGGG#@@@@@@@@@@GG#@@@#GGB@@@@@@@BP5JYPG@@@@@@@@@
+@@@@@#^   ~YGGPY7:    ~@@@@@@@@@@@@@@?        ?@@@P      Y@@@@@@@B    5@@?  :@@@@P~.        :Y@@@@@@
+@@@@7    .@@@@@@@@@B^   Y@@@@@@@@@@@5   P@@B\ 7#@J P@    B@#  !@@7   .@@?   :@@@^   ?G#@#BY: ^G@@@@@
+@@@?        ..:7P@@@@P   P@@@@@@@@@@#.   7PB@@@@#  @?  :#@P     G@@G: .@@?  :@@~  .#@@@@@@@@@@@@@@@@
+@@@               7@@@~  .@@@@@@@@@@@@5^     ^P@@PB@. ?@@!   7#. @@@@  @@?  :@@.  7@@@@G     :.?@@@@
+@@@                 ~~   .@@@@@@@@@@@B@@@#G7   Y@@@Y G@G.  .G@:  G@@@ 5@@?  :@@~  .#@@@#???7   J@@@@
+@@@7                     5@@@@@@@@@#:  Y#@@B   ?@@@  P7   7@@^   .YJ J@@@?  :@@@^   ?B#@@#P:  !@@@@@
+@@@@!                   J@@@@@@@@@@@B~       .7@@@@7    :B@@@:      G@@@@?  :@@@@5^         ^P@@@@@@
+@@@@@G:               ^#@@@@@@@@@@@@@@@G   .:@@@@@@@B  B@@@@@@    #@@@@@@?  :@@@@@@@G.....G#@@@@@@@@
+@@@@@@@#J^.       .~5@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 "#;
 
 #[derive(Parser, Debug)]
@@ -56,6 +70,9 @@ pub struct SwigCli {
     #[arg(short = 'i', long, help = "Use interactive mode")]
     pub interactive: bool,
 
+    #[arg(short = 's', long, help = "Save current authority settings as default")]
+    pub save_config: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -65,46 +82,93 @@ pub enum Command {
     /// Create a new SWIG wallet
     Create {
         #[arg(short, long)]
-        authority_type: String,
+        authority_type: Option<String>,
         #[arg(short, long)]
-        authority: String,
+        authority: Option<String>,
         #[arg(short, long)]
-        authority_kp: String,
+        authority_kp: Option<String>,
+        #[arg(short, long)]
+        fee_payer: Option<String>,
         #[arg(short, long = "swig-id")]
         id: Option<String>,
     },
     /// Add a new authority to a wallet
     AddAuthority {
-        #[arg(short = 't', long)]
-        authority_type: String,
+        // Signing authority
         #[arg(short, long)]
-        authority: String,
+        authority_type: Option<String>,
+        #[arg(short, long)]
+        authority: Option<String>,
+        #[arg(short, long)]
+        authority_kp: Option<String>,
+        #[arg(short, long)]
+        fee_payer: Option<String>,
         #[arg(short, long = "swig-id")]
         id: String,
+        // New authority
+        #[arg(short, long)]
+        new_authority: Option<String>,
+        #[arg(short, long)]
+        new_authority_type: Option<String>,
         #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ',')]
         permissions: Vec<String>,
     },
     /// Remove an authority from a wallet
     RemoveAuthority {
+        // Signing authority
+        #[arg(short, long)]
+        authority_type: Option<String>,
+        #[arg(short, long)]
+        authority: Option<String>,
+        #[arg(short, long)]
+        authority_kp: Option<String>,
+        #[arg(short, long)]
+        fee_payer: Option<String>,
         #[arg(short, long = "swig-id")]
         id: String,
+        // Remove authority
         #[arg(short, long)]
-        authority: String,
+        remove_authority: Option<String>,
     },
     /// View wallet details
     View {
-        #[arg(short, long = "swig-id")]
-        id: String,
-    },
-    /// List all authorities in a wallet
-    ListAuthorities {
+        // Signing authority
+        #[arg(short, long)]
+        authority_type: Option<String>,
+        #[arg(short, long)]
+        authority: Option<String>,
+        #[arg(short, long)]
+        authority_kp: Option<String>,
         #[arg(short, long = "swig-id")]
         id: String,
     },
     /// Check wallet balance
     Balance {
+        // Signing authority
+        #[arg(short, long)]
+        authority_type: Option<String>,
+        #[arg(short, long)]
+        authority: Option<String>,
+        #[arg(short, long)]
+        authority_kp: Option<String>,
         #[arg(short, long = "swig-id")]
         id: String,
+    },
+    /// Get role id
+    GetRoleId {
+        // Signing authority
+        #[arg(short, long)]
+        authority_type: Option<String>,
+        #[arg(short, long)]
+        authority: Option<String>,
+        #[arg(short, long)]
+        authority_kp: Option<String>,
+        #[arg(short, long = "swig-id")]
+        id: String,
+        #[arg(short, long)]
+        authority_to_fetch: String,
+        #[arg(short, long)]
+        authority_type_to_fetch: String,
     },
 }
 
@@ -115,16 +179,16 @@ pub struct SwigCliContext {
     pub authority: Option<Keypair>,
     pub wallet: Option<Box<SwigWallet<'static>>>,
     pub swig_id: Option<String>,
+    pub config: SwigConfig,
 }
 
 fn main() -> Result<()> {
-    // Print the logo
-    println!("{}", LOGO.bright_cyan());
-
     let cli = SwigCli::parse();
     let mut ctx = setup(&cli)?;
 
     if cli.interactive {
+        // Print the logo
+        println!("{}", LOGO.bright_cyan());
         run_interactive_mode(&mut ctx)
     } else if let Some(ref cmd) = cli.command {
         run_command_mode(&mut ctx, cmd.clone())
@@ -134,588 +198,38 @@ fn main() -> Result<()> {
     }
 }
 
-fn run_interactive_mode(ctx: &mut SwigCliContext) -> Result<()> {
-    println!(
-        "\n{}",
-        "Welcome to SWIG CLI Interactive Mode".bright_blue().bold()
-    );
+fn setup(cli: &SwigCli) -> Result<SwigCliContext> {
+    let config_dir = ensure_config_dir()?;
 
-    loop {
-        let mut actions = if ctx.wallet.is_none() {
-            vec!["Create New Wallet", "Exit"]
-        } else {
-            vec![
-                "Add Authority",
-                "Remove Authority",
-                "View Wallet",
-                "Transfer",
-                "Switch Authority",
-                "Exit",
-            ]
-        };
+    // Load config
+    let mut config = SwigConfig::load(&config_dir)?;
 
-        let selection = Select::with_theme(&ColorfulTheme::default())
-            .with_prompt("Choose an action")
-            .items(&actions)
-            .default(0)
-            .interact()?;
-
-        if ctx.wallet.is_none() {
-            match selection {
-                0 => create_wallet_interactive(ctx)?,
-                1 => break,
-                _ => unreachable!(),
-            }
-        } else {
-            match selection {
-                0 => add_authority_interactive(ctx)?,
-                1 => remove_authority_interactive(ctx)?,
-                2 => view_wallet_interactive(ctx)?,
-                3 => transfer_interactive(ctx)?,
-                4 => switch_authority_interactive(ctx)?,
-                5 => break,
-                _ => unreachable!(),
-            }
+    // Update config from CLI args if provided
+    if let Some(ref cmd) = cli.command {
+        match cmd {
+            Command::Create {
+                authority_type,
+                authority,
+                authority_kp,
+                fee_payer,
+                ..
+            } => {
+                config.update_from_cli_args(
+                    authority_type.clone(),
+                    authority.clone(),
+                    authority_kp.clone(),
+                    fee_payer.clone(),
+                    cli.rpc_url.clone(),
+                );
+            },
+            _ => {},
         }
     }
 
-    Ok(())
-}
-
-fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
-    println!("\n{}", "Creating new SWIG wallet...".bright_blue().bold());
-
-    let use_random_id = Confirm::with_theme(&ColorfulTheme::default())
-        .with_prompt("Use random SWIG ID?")
-        .default(true)
-        .interact()?;
-
-    let swig_id = if use_random_id {
-        None
-    } else {
-        Some(
-            Input::<String>::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter SWIG ID")
-                .interact_text()?,
-        )
+    // Save config if requested
+    if cli.save_config {
+        config.save(&config_dir)?;
     }
-    .map(|i| format!("{:0<32}", i).as_bytes()[..32].try_into().unwrap())
-    .unwrap_or_else(rand::random);
-
-    println!("SWIG ID: {}", bs58::encode(swig_id).into_string());
-
-    let authority_type = get_authority_type()?;
-
-    let (authority_manager, fee_payer) = match authority_type {
-        AuthorityType::Ed25519 => {
-            let authority_keypair = Password::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter authority keypair")
-                .interact()?;
-
-            let authority = Keypair::from_base58_string(&authority_keypair);
-            let authority_pubkey = authority.pubkey();
-            println!("Authority public key: {}", authority_pubkey);
-            (
-                AuthorityManager::Ed25519(authority_pubkey),
-                authority.insecure_clone(),
-            )
-        },
-        AuthorityType::Secp256k1 => {
-            let authority_keypair = Password::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter Secp256k1 authority keypair")
-                .interact()?;
-
-            let wallet = LocalSigner::from_str(&authority_keypair)?;
-
-            let eth_pubkey = wallet
-                .credential()
-                .verifying_key()
-                .to_encoded_point(false)
-                .to_bytes();
-
-            let eth_address = Address::from_raw_public_key(&eth_pubkey[1..]);
-
-            println!("Wallet: {:?}", wallet);
-            println!("Eth pubkey: {:?}", eth_pubkey);
-            println!("Eth address: {:?}", eth_address);
-            let secp_pubkey = wallet.address().to_checksum_buffer(None);
-
-            let sign_fn = move |payload: &[u8]| -> [u8; 65] {
-                let mut hash = [0u8; 32];
-                hash.copy_from_slice(&payload[..32]);
-                let hash = B256::from(hash);
-                let tsig = wallet
-                    .sign_hash_sync(&hash)
-                    .map_err(|_| SwigError::InvalidSecp256k1)
-                    .unwrap()
-                    .as_bytes();
-                let mut sig = [0u8; 65];
-                sig.copy_from_slice(&tsig);
-                sig
-            };
-
-            let fee_payer_kp_str = Password::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter Fee payer keypair")
-                .interact()?;
-            let fee_payer_keypair = Keypair::from_base58_string(&fee_payer_kp_str);
-
-            (
-                AuthorityManager::Secp256k1(eth_pubkey, Box::new(sign_fn)),
-                fee_payer_keypair,
-            )
-        },
-        _ => todo!(),
-    };
-
-    let fee_payer = Box::leak(Box::new(fee_payer));
-    let wallet = SwigWallet::new(
-        swig_id,
-        authority_manager,
-        fee_payer,
-        fee_payer,
-        "http://localhost:8899".to_string(),
-    )
-    .unwrap();
-
-    wallet.display_swig()?;
-
-    ctx.wallet = Some(Box::new(wallet));
-    ctx.payer = fee_payer.insecure_clone();
-
-    Ok(())
-}
-
-fn add_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
-    println!("\n{}", "Adding new authority...".bright_blue().bold());
-
-    if ctx.wallet.is_none() {
-        return Err(anyhow!(
-            "No wallet loaded. Please create or load a wallet first."
-        ));
-    }
-
-    let authority_type = get_authority_type()?;
-
-    let authority = Input::<String>::with_theme(&ColorfulTheme::default())
-        .with_prompt("Enter authority public key")
-        .interact_text()?;
-
-    let authority = format_authority(&authority, &authority_type)?;
-
-    let permissions = get_permissions_interactive()?;
-
-    // Use the existing wallet instance to add the authority
-    let signature =
-        ctx.wallet
-            .as_mut()
-            .unwrap()
-            .add_authority(authority_type, &authority, permissions);
-
-    if let Ok(signature) = signature {
-        println!("\n{}", "Authority added successfully!".bright_green());
-        println!("Signature: {}", signature);
-    } else {
-        println!("\n{}", "Failed to add authority".bright_red());
-        println!("Error: {}", signature.err().unwrap());
-    }
-
-    Ok(())
-}
-
-fn remove_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
-    println!("\n{}", "Removing authority...".bright_blue().bold());
-
-    if ctx.wallet.is_none() {
-        return Err(anyhow!(
-            "No wallet loaded. Please create or load a wallet first."
-        ));
-    }
-
-    let authorities = get_authorities(ctx)?;
-    println!("\nAvailable authorities:");
-
-    let authority_keys: Vec<String> = authorities.keys().cloned().collect();
-    if authority_keys.is_empty() {
-        return Err(anyhow!("No authorities found to remove"));
-    }
-
-    let selection = Select::with_theme(&ColorfulTheme::default())
-        .with_prompt("Choose authority to remove")
-        .items(&authority_keys)
-        .default(0)
-        .interact()?;
-
-    let authority = &authority_keys[selection];
-
-    println!("Removing authority: {:?}", authority);
-
-    ctx.wallet
-        .as_mut()
-        .unwrap()
-        .remove_authority(authorities.get(authority).unwrap())?;
-
-    println!("\n{}", "Authority removed successfully!".bright_green());
-    Ok(())
-}
-
-fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
-    println!("\n{}", "Switching authority...".bright_blue().bold());
-
-    let role_id = Input::<String>::with_theme(&ColorfulTheme::default())
-        .with_prompt("Enter authority role ID")
-        .interact_text()?;
-
-    let authority_keypair = Password::with_theme(&ColorfulTheme::default())
-        .with_prompt("Enter authority keypair")
-        .interact()?;
-
-    let authority_types = vec![
-        "Ed25519 (Recommended for standard usage)",
-        "Secp256k1 (For Ethereum/Bitcoin compatibility)",
-        "Ed25519Session (For temporary session-based auth)",
-        "Secp256k1Session (For temporary session-based auth with Ethereum/Bitcoin)",
-    ];
-
-    let authority_type_idx = Select::with_theme(&ColorfulTheme::default())
-        .with_prompt("Choose authority type")
-        .items(&authority_types)
-        .default(0)
-        .interact()?;
-
-    let authority_type = match authority_type_idx {
-        0 => AuthorityType::Ed25519,
-        1 => AuthorityType::Secp256k1,
-        2 => AuthorityType::Ed25519Session,
-        3 => AuthorityType::Secp256k1Session,
-        _ => unreachable!(),
-    };
-
-    let role_id = u32::from_str(&role_id)?;
-
-    let authority = Keypair::from_base58_string(&authority_keypair);
-    let authority_pubkey = authority.pubkey();
-
-    let authority_manager = match authority_type {
-        AuthorityType::Ed25519 => {
-            let pubkey = authority_pubkey;
-            println!("Authority: {}", authority_pubkey);
-            println!("Authority type: {:?}", authority_type);
-            println!("Authority pubkey: {}", pubkey);
-            AuthorityManager::Ed25519(pubkey)
-        },
-        AuthorityType::Ed25519Session => {
-            let create_session_authority = CreateEd25519SessionAuthority::new(
-                authority_pubkey.to_bytes(),
-                authority_pubkey.to_bytes(),
-                100,
-            );
-            AuthorityManager::Ed25519Session(create_session_authority)
-        },
-        _ => {
-            return Err(anyhow!("Session-based authorities not supported for root"));
-        },
-    };
-
-    // Store the authority keypair in the context
-    ctx.authority = Some(authority.insecure_clone());
-
-    ctx.wallet
-        .as_mut()
-        .unwrap()
-        .switch_authority(role_id, authority_manager)?;
-    Ok(())
-}
-
-fn view_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
-    println!("\n{}", "Viewing wallet details...".bright_blue().bold());
-
-    if ctx.wallet.is_none() {
-        return Err(anyhow!("Wallet not found"));
-    }
-
-    ctx.wallet.as_ref().unwrap().display_swig()?;
-
-    Ok(())
-}
-
-fn transfer_interactive(ctx: &mut SwigCliContext) -> Result<()> {
-    println!("\n{}", "Transferring...".bright_blue().bold());
-
-    let recipient = Input::<String>::with_theme(&ColorfulTheme::default())
-        .with_prompt("Enter recipient address")
-        .interact_text()?;
-
-    let amount = Input::<u64>::with_theme(&ColorfulTheme::default())
-        .with_prompt("Enter amount")
-        .interact_text()?;
-
-    let transfer_instruction = transfer(
-        &ctx.wallet.as_ref().unwrap().get_swig_account()?,
-        &Pubkey::from_str(&recipient)?,
-        amount,
-    );
-
-    let signature = ctx
-        .wallet
-        .as_mut()
-        .unwrap()
-        .sign(vec![transfer_instruction], None)?;
-
-    println!("Signature: {}", signature);
-
-    Ok(())
-}
-
-fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
-    match cmd {
-        Command::Create {
-            authority_type,
-            authority,
-            id,
-            authority_kp,
-        } => {
-            let authority_kp = Keypair::from_base58_string(&authority_kp);
-            let wallet = execute_create(
-                ctx,
-                parse_authority_type(authority_type)?,
-                authority,
-                authority_kp,
-                id,
-            )?;
-
-            // Store the wallet in the context
-            Ok(())
-        },
-        Command::AddAuthority {
-            authority_type,
-            authority,
-            id,
-            permissions,
-        } => execute_add_authority(
-            ctx,
-            parse_authority_type(authority_type)?,
-            authority,
-            id,
-            permissions,
-        ),
-        Command::RemoveAuthority { id, authority } => execute_remove_authority(ctx, id, authority),
-        Command::View { id } => execute_view(ctx, id),
-        Command::ListAuthorities { id } => execute_list_authorities(ctx, id),
-        Command::Balance { id } => execute_balance(ctx, id),
-    }
-}
-
-fn parse_authority_type(authority_type: String) -> Result<AuthorityType> {
-    match authority_type.as_str() {
-        "Ed25519" => Ok(AuthorityType::Ed25519),
-        "Secp256k1" => Ok(AuthorityType::Secp256k1),
-        _ => Err(anyhow!("Invalid authority type: {}", authority_type)),
-    }
-}
-
-fn execute_create(
-    ctx: &mut SwigCliContext,
-    authority_type: AuthorityType,
-    authority: String,
-    authority_kp: Keypair,
-    id: Option<String>,
-) -> Result<()> {
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_message("Creating SWIG wallet...");
-    spinner.enable_steady_tick(Duration::from_millis(100));
-
-    ctx.swig_id = id.clone();
-
-    let swig_id = id
-        .map(|i| format!("{:0<32}", i).as_bytes()[..32].try_into().unwrap())
-        .unwrap_or_else(rand::random);
-
-    let authority_manager = match authority_type {
-        AuthorityType::Ed25519 => {
-            let pubkey = Pubkey::from_str(&authority)?;
-            AuthorityManager::Ed25519(pubkey)
-        },
-        AuthorityType::Ed25519Session => {
-            let create_session_authority = CreateEd25519SessionAuthority::new(
-                Pubkey::from_str(&authority)?.to_bytes(),
-                Pubkey::from_str(&authority)?.to_bytes(),
-                100,
-            );
-            AuthorityManager::Ed25519Session(create_session_authority)
-        },
-        _ => {
-            spinner.finish_with_message("Error: Session-based authorities not supported for root");
-            return Err(anyhow!("Session-based authorities not supported for root"));
-        },
-    };
-
-    // Store the authority keypair in the context
-    ctx.authority = Some(authority_kp.insecure_clone());
-
-    // Create a static copy of the authority for the wallet
-    let auth_for_wallet = Box::leak(Box::new(authority_kp));
-
-    let wallet = SwigWallet::new(
-        swig_id,
-        authority_manager,
-        auth_for_wallet,
-        auth_for_wallet,
-        ctx.rpc_url.clone(),
-    )?;
-
-    wallet.display_swig()?;
-    ctx.wallet = Some(Box::new(wallet));
-    ctx.payer = auth_for_wallet.insecure_clone();
-    spinner.finish_with_message("SWIG wallet loaded/created successfully!");
-
-    Ok(())
-}
-
-fn execute_add_authority(
-    ctx: &mut SwigCliContext,
-    authority_type: AuthorityType,
-    authority: String,
-    id: String,
-    permissions: Vec<String>,
-) -> Result<()> {
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_message("Adding authority...");
-    spinner.enable_steady_tick(Duration::from_millis(100));
-
-    let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
-    let authority_manager = match authority_type {
-        AuthorityType::Ed25519 => {
-            let pubkey = Pubkey::from_str(&authority)?;
-            AuthorityManager::Ed25519(pubkey)
-        },
-        AuthorityType::Ed25519Session => {
-            let create_session_authority = CreateEd25519SessionAuthority::new(
-                Pubkey::from_str(&authority)?.to_bytes(),
-                Pubkey::from_str(&authority)?.to_bytes(),
-                100,
-            );
-            AuthorityManager::Ed25519Session(create_session_authority)
-        },
-        _ => {
-            spinner.finish_with_message("Error: Session-based authorities not implemented yet");
-            return Err(anyhow!("Session-based authorities not implemented yet"));
-        },
-    };
-
-    let mut wallet = SwigWallet::new(
-        swig_id,
-        authority_manager,
-        &ctx.payer,
-        &ctx.payer,
-        ctx.rpc_url.clone(),
-    )?;
-
-    // Convert string permissions to Permission enum
-    let parsed_permissions = permissions
-        .iter()
-        .map(|p| match p.to_lowercase().as_str() {
-            "all" => Ok(Permission::All),
-            "sol" => Ok(Permission::Sol {
-                amount: 1_000_000_000, // 1 SOL default
-                recurring: None,
-            }),
-            _ => Err(anyhow!("Invalid permission: {}", p)),
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    wallet.add_authority(
-        authority_type.into(),
-        authority.as_bytes(),
-        parsed_permissions,
-    )?;
-
-    spinner.finish_with_message("Authority added successfully!");
-    Ok(())
-}
-
-fn execute_remove_authority(ctx: &mut SwigCliContext, id: String, authority: String) -> Result<()> {
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_message("Removing authority...");
-    spinner.enable_steady_tick(Duration::from_millis(100));
-
-    let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
-    let authority_pubkey = Pubkey::from_str(&authority)?;
-    let authority_manager = AuthorityManager::Ed25519(authority_pubkey);
-
-    let mut wallet = SwigWallet::new(
-        swig_id,
-        authority_manager,
-        &ctx.payer,
-        &ctx.payer,
-        ctx.rpc_url.clone(),
-    )?;
-
-    wallet.remove_authority(authority.as_bytes())?;
-
-    spinner.finish_with_message("Authority removed successfully!");
-    Ok(())
-}
-
-fn execute_view(ctx: &mut SwigCliContext, id: String) -> Result<()> {
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_message("Loading wallet details...");
-    spinner.enable_steady_tick(Duration::from_millis(100));
-
-    if ctx.wallet.is_none() {
-        return Err(anyhow!("Wallet not found"));
-    }
-
-    spinner.finish_and_clear();
-
-    ctx.wallet.as_ref().unwrap().display_swig()?;
-
-    Ok(())
-}
-
-fn execute_list_authorities(ctx: &mut SwigCliContext, id: String) -> Result<()> {
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_message("Loading authorities...");
-    spinner.enable_steady_tick(Duration::from_millis(100));
-
-    let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
-    let authority_manager = AuthorityManager::Ed25519(ctx.payer.pubkey());
-
-    let wallet = SwigWallet::new(
-        swig_id,
-        authority_manager,
-        &ctx.payer,
-        &ctx.payer,
-        ctx.rpc_url.clone(),
-    )?;
-
-    spinner.finish_and_clear();
-    wallet.display_swig()?;
-    Ok(())
-}
-
-fn execute_balance(ctx: &mut SwigCliContext, id: String) -> Result<()> {
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_message("Fetching balance...");
-    spinner.enable_steady_tick(Duration::from_millis(100));
-
-    let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
-    let authority_manager = AuthorityManager::Ed25519(ctx.payer.pubkey());
-
-    let wallet = SwigWallet::new(
-        swig_id,
-        authority_manager,
-        &ctx.payer,
-        &ctx.payer,
-        ctx.rpc_url.clone(),
-    )?;
-
-    let balance = wallet.get_balance()?;
-    spinner.finish_with_message(format!("Balance: {} SOL", balance as f64 / 1_000_000_000.0));
-    Ok(())
-}
-
-fn setup(cli: &SwigCli) -> Result<SwigCliContext> {
-    let config_dir = ensure_config_dir()?;
 
     // Default values
     let default_rpc_url = "http://localhost:8899".to_string();
@@ -731,8 +245,14 @@ fn setup(cli: &SwigCli) -> Result<SwigCliContext> {
     let (rpc_url, keypair_path) = match (&cli.rpc_url, &cli.keypair, &cli.config) {
         (Some(rpc), Some(kp), None) => (rpc.clone(), kp.clone()),
         (Some(rpc), None, None) => (rpc.clone(), default_keypair_path),
-        (None, Some(kp), None) => (default_rpc_url, kp.clone()),
-        (None, None, None) => (default_rpc_url, default_keypair_path),
+        (None, Some(kp), None) => (
+            config.rpc_url.clone().unwrap_or(default_rpc_url),
+            kp.clone(),
+        ),
+        (None, None, None) => (
+            config.rpc_url.clone().unwrap_or(default_rpc_url),
+            default_keypair_path,
+        ),
         _ => {
             return Err(anyhow!(
                 "Please provide either:\n\
@@ -747,11 +267,12 @@ fn setup(cli: &SwigCli) -> Result<SwigCliContext> {
 
     Ok(SwigCliContext {
         payer,
-        rpc_url,
         config_dir,
+        rpc_url,
         authority: None,
         wallet: None,
         swig_id: None,
+        config,
     })
 }
 
@@ -913,13 +434,21 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
 
 fn format_authority(authority: &str, authority_type: &AuthorityType) -> Result<Vec<u8>> {
     match authority_type {
-        AuthorityType::Ed25519 => {
+        AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
             let authority = Pubkey::from_str(authority)?;
             Ok(authority.to_bytes().to_vec())
         },
-        AuthorityType::Ed25519Session => {
-            let authority = Pubkey::from_str(authority)?;
-            Ok(authority.to_bytes().to_vec())
+        AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
+            let wallet = LocalSigner::random();
+
+            let secp_pubkey = wallet
+                .credential()
+                .verifying_key()
+                .to_encoded_point(false)
+                .to_bytes();
+
+            println!("Secp256k1 public key: {:?}", wallet.address());
+            Ok(secp_pubkey.as_ref()[1..].to_vec())
         },
         _ => Err(anyhow!("Unsupported authority type")),
     }
