@@ -112,8 +112,10 @@ impl<'a> SignV1<'a> {
         }
         let (inst, rest) = unsafe { data.split_at_unchecked(SignV1Args::LEN) };
         let args = unsafe { SignV1Args::load_unchecked(inst)? };
+
         let (instruction_payload, authority_payload) =
             unsafe { rest.split_at_unchecked(args.instruction_payload_len as usize) };
+
         Ok(Self {
             args,
             authority_payload,

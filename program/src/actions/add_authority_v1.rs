@@ -120,6 +120,7 @@ impl<'a> AddAuthorityV1<'a> {
         let args = unsafe { AddAuthorityV1Args::load_unchecked(inst)? };
         let (authority_data, rest) = rest.split_at(args.new_authority_data_len as usize);
         let (actions_payload, authority_payload) = rest.split_at(args.actions_data_len as usize);
+
         Ok(Self {
             args,
             authority_data,

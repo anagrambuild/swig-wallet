@@ -11,7 +11,7 @@
 use core::mem::MaybeUninit;
 
 #[allow(unused_imports)]
-use pinocchio::syscalls::{sol_keccak256, sol_secp256k1_recover};
+use pinocchio::syscalls::{sol_keccak256, sol_secp256k1_recover, sol_sha256};
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey};
 use swig_assertions::sol_assert_bytes_eq;
 
@@ -311,11 +311,12 @@ fn secp_authority_authenticate(
 
     secp256k1_authenticate(
         expected_key,
-        authority_payload[8..].try_into().unwrap(),
+        authority_payload[8..73].try_into().unwrap(),
         data_payload,
         authority_slot,
         current_slot,
         account_infos,
+        authority_payload[73..].try_into().unwrap(),
     )?;
     Ok(())
 }
@@ -334,6 +335,7 @@ fn secp256k1_authenticate(
     authority_slot: u64,
     current_slot: u64,
     account_infos: &[AccountInfo],
+    prefix: &[u8],
 ) -> Result<(), ProgramError> {
     if authority_payload.len() != 65 {
         return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
@@ -354,19 +356,48 @@ fn secp256k1_authenticate(
     }
 
     #[allow(unused)]
+    let mut data_payload_hash = [0; 32];
+    #[allow(unused)]
+    let mut data_payload_hash_hex = [0; 64];
+
+    #[allow(unused)]
     let mut recovered_key = MaybeUninit::<[u8; 64]>::uninit();
     #[allow(unused)]
     let mut hash = MaybeUninit::<[u8; 32]>::uninit();
+
     #[allow(unused)]
     let data: &[&[u8]] = &[
         data_payload,
         &accounts_payload[..cursor],
         &authority_slot.to_le_bytes(),
     ];
+
     let matches = unsafe {
+        // get the sha256 hash of our instruction payload
+        #[cfg(target_os = "solana")]
+        let res = sol_sha256(
+            data.as_ptr() as *const u8,
+            3,
+            data_payload_hash.as_mut_ptr() as *mut u8,
+        );
+        #[cfg(not(target_os = "solana"))]
+        let res = 0;
+        if res != 0 {
+            return Err(SwigAuthenticateError::PermissionDeniedSecp256k1InvalidHash.into());
+        }
+
+        hex_encode(&data_payload_hash, &mut data_payload_hash_hex);
+
+        #[allow(unused)]
+        let keccak_data: &[&[u8]] = &[prefix, &data_payload_hash_hex];
+
         // do not remove this line we must hash the instruction payload
         #[cfg(target_os = "solana")]
-        let res = sol_keccak256(data.as_ptr() as *const u8, 3, hash.as_mut_ptr() as *mut u8);
+        let res = sol_keccak256(
+            keccak_data.as_ptr() as *const u8,
+            2,
+            hash.as_mut_ptr() as *mut u8,
+        );
         #[cfg(not(target_os = "solana"))]
         let res = 0;
         if res != 0 {
@@ -465,5 +496,14 @@ impl IntoBytes for AccountsPayload {
 impl From<&AccountInfo> for AccountsPayload {
     fn from(info: &AccountInfo) -> Self {
         Self::new(*info.key(), info.is_writable(), info.is_signer())
+    }
+}
+
+pub fn hex_encode(input: &[u8], output: &mut [u8]) {
+    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+
+    for (i, &byte) in input.iter().enumerate() {
+        output[i * 2] = HEX_CHARS[(byte >> 4) as usize];
+        output[i * 2 + 1] = HEX_CHARS[(byte & 0x0F) as usize];
     }
 }

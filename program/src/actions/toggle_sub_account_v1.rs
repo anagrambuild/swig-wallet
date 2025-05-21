@@ -94,13 +94,13 @@ impl<'a> ToggleSubAccountV1<'a> {
         }
 
         // Split the data into args and the rest (authority payload)
-        let (args_data, rest) = data.split_at(ToggleSubAccountV1Args::LEN);
+        let (args_data, authority_payload) = data.split_at(ToggleSubAccountV1Args::LEN);
 
         let args = unsafe { ToggleSubAccountV1Args::load_unchecked(args_data)? };
 
         Ok(Self {
             args,
-            authority_payload: rest,
+            authority_payload,
             data_payload: args_data,
         })
     }

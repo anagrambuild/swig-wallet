@@ -100,6 +100,7 @@ impl<'a> RemoveAuthorityV1<'a> {
         }
         let (inst, authority_payload) = data.split_at(RemoveAuthorityV1Args::LEN);
         let args = unsafe { RemoveAuthorityV1Args::load_unchecked(inst)? };
+
         Ok(Self {
             args,
             authority_payload,
