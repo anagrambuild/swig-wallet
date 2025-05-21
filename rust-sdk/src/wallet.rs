@@ -1,3 +1,4 @@
+use alloy_primitives::{Address, B256};
 #[cfg(all(feature = "rust_sdk_test", test))]
 use litesvm::LiteSVM;
 use solana_client::{rpc_client::RpcClient, rpc_request::TokenAccountsFilter};
@@ -14,7 +15,9 @@ use solana_sdk::{
     system_instruction::{self, SystemInstruction},
     transaction::{Transaction, VersionedTransaction},
 };
+
 use swig_interface::{swig, swig_key};
+use swig_state_x::authority::secp256k1::Secp256k1Authority;
 use swig_state_x::{
     action::{
         all::All, manage_authority::ManageAuthority, sol_limit::SolLimit,
@@ -152,12 +155,6 @@ impl<'c> SwigWallet<'c> {
                 .get_role(role_id)
                 .map_err(|_| SwigError::AuthorityNotFound)?;
 
-            if let Some(role) = role {
-                println!("Role found: {:?}", role.actions);
-            } else {
-                println!("Role not found");
-            }
-
             let instruction_builder = SwigInstructionBuilder::new(
                 swig_id,
                 authority_manager,
@@ -198,7 +195,7 @@ impl<'c> SwigWallet<'c> {
             new_authority_type,
             new_authority,
             permissions,
-            None,
+            Some(self.get_current_slot()?),
         )?;
         let msg = v0::Message::try_compile(
             &self.fee_payer.pubkey(),
@@ -238,7 +235,7 @@ impl<'c> SwigWallet<'c> {
         if let Some(authority_id) = authority_id {
             let instruction = self
                 .instruction_builder
-                .remove_authority(authority_id, None)?;
+                .remove_authority(authority_id, Some(self.get_current_slot()?))?;
 
             let msg = v0::Message::try_compile(
                 &self.fee_payer.pubkey(),
@@ -355,11 +352,17 @@ impl<'c> SwigWallet<'c> {
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let signature = self.rpc_client.send_and_confirm_transaction(&tx)?;
         #[cfg(all(feature = "rust_sdk_test", test))]
-        let signature = self
-            .litesvm
-            .send_transaction(tx)
-            .map_err(|e| SwigError::TransactionFailed(e.err.to_string()))?
-            .signature;
+        let signature = self.litesvm.send_transaction(tx).map_err(|e| {
+            SwigError::TransactionFailedWithLogs {
+                error: e.err.to_string(),
+                logs: e.meta.logs,
+            }
+        })?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        println!("signature: {:?}", signature);
+
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let signature = signature.signature;
 
         Ok(signature)
     }
@@ -513,7 +516,7 @@ impl<'c> SwigWallet<'c> {
                                 hex::encode([&[0x4].as_slice(), authority].concat());
                             // get eth address from public key
                             let mut hasher = solana_sdk::keccak::Hasher::default();
-                            hasher.hash(authority);
+                            hasher.hash(authority_hex.as_bytes());
                             let hash = hasher.result();
                             let address = format!("0x{}", hex::encode(&hash.0[12..32]));
                             address
@@ -573,6 +576,33 @@ impl<'c> SwigWallet<'c> {
         println!("╚══════════════════════════════════════════════════════════════════");
 
         Ok(())
+    }
+
+    /// Get role id
+    ///
+    /// # Arguments
+    ///
+    /// * `authority` - The authority's public key as bytes to lookup
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the role id or a `SwigError` if the authority is not found
+    pub fn get_role_id(&self, authority: &[u8]) -> Result<u32, SwigError> {
+        let swig_pubkey = self.get_swig_account()?;
+
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let swig_data = self.litesvm.get_account(&swig_pubkey).unwrap().data;
+        let swig_with_roles =
+            SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
+
+        let role_id = swig_with_roles.lookup_role_id(authority.as_ref()).unwrap();
+        if role_id.is_some() {
+            Ok(role_id.unwrap())
+        } else {
+            Err(SwigError::AuthorityNotFound)
+        }
     }
 
     /// Switches to a different authority for the Swig wallet

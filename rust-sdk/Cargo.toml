@@ -14,14 +14,16 @@ bs58 = "0.5.1"
 hex = "0.4.3"
 thiserror = "2.0.12"
 anyhow = "1.0.75"
+alloy-primitives = { version = "1.0.0", features = ["k256"] }
+alloy-signer = { version = "0.14.0" }
+alloy-signer-local = { version = "0.14.0" }
+secp256k1 = "0.21"
 
 [dev-dependencies]
 test-log = "0.2"
 rand = "0.8"
 litesvm = { git = "https://github.com/litesvm/litesvm" }
-alloy-primitives = { version = "1.0.0", features = ["k256"] }
-alloy-signer = { version = "0.14.0" }
-alloy-signer-local = { version = "0.14.0" }
+
 
 [features]
 rust_sdk_test = []

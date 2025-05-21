@@ -65,6 +65,10 @@ pub enum SwigError {
     /// Transaction compilation failed
     #[error("Transaction compilation failed")]
     TransactionCompilationFailed,
+
+    /// Transaction failed with logs
+    #[error("Transaction failed: {error}\nLogs:\n{}", logs.join("\n"))]
+    TransactionFailedWithLogs { error: String, logs: Vec<String> },
 }
 
 impl From<anyhow::Error> for SwigError {

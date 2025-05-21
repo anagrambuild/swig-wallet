@@ -1,0 +1,33 @@
+[package]
+name = "cli-x"
+version = "0.1.0"
+edition = "2021"
+description = "SWIG CLI - A command-line interface for the SWIG wallet"
+authors = ["SWIG Team"]
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.4", features = ["derive"] }
+colored = "2.1"
+console = "0.15"
+dialoguer = "0.11"
+indicatif = "0.17"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+directories = "5.0"
+dirs = "5.0"
+rand = "0.8"
+tokio = { version = "1.0", features = ["full"] }
+bs58 = "0.5.1"
+hex = "0.4.3"
+swig-sdk = { path = "../rust-sdk" }
+secp256k1 = "0.30.0"
+solana-sdk = "2.0"
+
+alloy-primitives = { version = "1.0.0", features = ["k256"] }
+alloy-signer = { version = "0.14.0" }
+alloy-signer-local = { version = "0.14.0" }
+
+[lints]
+workspace = true

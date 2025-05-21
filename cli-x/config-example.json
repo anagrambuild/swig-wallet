@@ -1,0 +1,10 @@
+{
+  "default_authority": {
+    "authority_type": "<authority_type>",
+    "authority": "<authority>",
+    "authority_kp": "<authority_keypair>",
+    "fee_payer": "<fee_payer_keypair>"
+  },
+  "rpc_url": "<rpc_url>"
+}
+
