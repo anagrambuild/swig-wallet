@@ -97,7 +97,8 @@ impl<'a> CreateSessionV1<'a> {
         if data.len() < CreateSessionV1Args::LEN {
             return Err(SwigError::InvalidSwigCreateSessionInstructionDataTooShort.into());
         }
-        let (inst, rest) = unsafe { data.split_at_unchecked(CreateSessionV1Args::LEN) };
+        let (inst, authority_payload) =
+            unsafe { data.split_at_unchecked(CreateSessionV1Args::LEN) };
         let args = unsafe {
             CreateSessionV1Args::load_unchecked(inst).map_err(|e| {
                 msg!("CreateSessionV1Args Args Error: {:?}", e);
@@ -107,7 +108,7 @@ impl<'a> CreateSessionV1<'a> {
 
         Ok(Self {
             args,
-            authority_payload: rest,
+            authority_payload,
             data_payload: &data[..CreateSessionV1Args::LEN],
         })
     }
