@@ -1,6 +1,8 @@
 use alloy_primitives::{Address, B256};
 #[cfg(all(feature = "rust_sdk_test", test))]
 use litesvm::LiteSVM;
+#[cfg(all(feature = "rust_sdk_test", test))]
+use litesvm_token::CreateAssociatedTokenAccount;
 use solana_client::{rpc_client::RpcClient, rpc_request::TokenAccountsFilter};
 use solana_program::{hash::Hash, instruction::Instruction, pubkey::Pubkey};
 use solana_sdk::{
@@ -15,9 +17,13 @@ use solana_sdk::{
     system_instruction::{self, SystemInstruction},
     transaction::{Transaction, VersionedTransaction},
 };
+use spl_associated_token_account::{
+    get_associated_token_address, instruction::create_associated_token_account,
+};
+use spl_token::ID as TOKEN_PROGRAM_ID;
 
 use swig_interface::{swig, swig_key};
-use swig_state_x::authority::secp256k1::Secp256k1Authority;
+use swig_state_x::{action::program_scope::ProgramScope, authority::secp256k1::Secp256k1Authority};
 use swig_state_x::{
     action::{
         all::All, manage_authority::ManageAuthority, sol_limit::SolLimit,
@@ -286,7 +292,10 @@ impl<'c> SwigWallet<'c> {
 
         let tx = VersionedTransaction::try_new(
             VersionedMessage::V0(msg),
-            &[&self.fee_payer.insecure_clone()],
+            &[
+                &self.fee_payer.insecure_clone(),
+                &self.authority.insecure_clone(),
+            ],
         )?;
 
         self.send_and_confirm_transaction(tx)
@@ -569,6 +578,46 @@ impl<'c> SwigWallet<'c> {
                     );
                     println!("║ │  │  └─ Last Reset: Slot {}", action.last_reset);
                 }
+
+                // Check Program Scope
+                if let Some(action) =
+                    Role::get_action::<ProgramScope>(&role, &spl_token::ID.to_bytes())
+                        .map_err(|_| SwigError::AuthorityNotFound)?
+                {
+                    let program_id = Pubkey::from(action.program_id);
+                    let target_account = Pubkey::from(action.target_account);
+                    println!("║ │  ├─ Program Scope");
+                    println!("║ │  │  ├─ Program ID: {}", program_id);
+                    println!("║ │  │  ├─ Target Account: {}", target_account);
+                    println!(
+                        "║ │  │  ├─ Scope Type: {}",
+                        match action.scope_type {
+                            0 => "Basic",
+                            1 => "Limit",
+                            2 => "Recurring Limit",
+                            _ => "Unknown",
+                        }
+                    );
+                    println!(
+                        "║ │  │  ├─ Numeric Type: {}",
+                        match action.numeric_type {
+                            0 => "U64",
+                            1 => "U128",
+                            2 => "F64",
+                            _ => "Unknown",
+                        }
+                    );
+                    if action.scope_type > 0 {
+                        println!("║ │  │  ├─ Limit: {} ", action.limit);
+                        println!("║ │  │  ├─ Current Usage: {} ", action.current_amount);
+                    }
+                    if action.scope_type == 2 {
+                        println!("║ │  │  ├─ Window: {} slots", action.window);
+                        println!("║ │  │  ├─ Last Reset: Slot {}", action.last_reset);
+                    }
+                    println!("║ │  │  ");
+                }
+
                 println!("║ │  ");
             }
         }
@@ -619,9 +668,13 @@ impl<'c> SwigWallet<'c> {
         &mut self,
         role_id: u32,
         authority_manager: AuthorityManager,
+        authority_kp: Option<&'c Keypair>,
     ) -> Result<(), SwigError> {
         self.instruction_builder
             .switch_authority(role_id, authority_manager)?;
+        if let Some(authority_kp) = authority_kp {
+            self.authority = authority_kp;
+        }
         Ok(())
     }
 
@@ -743,6 +796,81 @@ impl<'c> SwigWallet<'c> {
         Ok(balance)
     }
 
+    /// Creates an associated token account for the Swig wallet
+    ///
+    /// # Arguments
+    ///
+    /// * `mint` - The mint address of the token to create an ATA for
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the associated token address or a `SwigError`
+    pub fn create_ata(&mut self, mint: &Pubkey) -> Result<Pubkey, SwigError> {
+        let associated_token_address =
+            get_associated_token_address(&self.instruction_builder.get_swig_account()?, &mint);
+
+        println!("Associated Token Address: {}", associated_token_address);
+
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        {
+            // Check if the ATA already exists
+            let account_exists = self
+                .rpc_client
+                .get_account(&associated_token_address)
+                .is_ok();
+
+            if !account_exists {
+                println!("Creating associated token account...");
+
+                // Create the instruction to create the ATA
+                let create_ata_instruction = create_associated_token_account(
+                    &self.fee_payer.pubkey(),                      // payer
+                    &self.instruction_builder.get_swig_account()?, // owner
+                    &mint,                                         // mint
+                    &TOKEN_PROGRAM_ID,
+                );
+
+                // Get recent blockhash
+                let recent_blockhash = self.rpc_client.get_latest_blockhash()?;
+
+                // Create and sign the transaction
+                let transaction = Transaction::new_signed_with_payer(
+                    &[create_ata_instruction],
+                    Some(&self.fee_payer.pubkey()),
+                    &[&self.fee_payer.insecure_clone()],
+                    recent_blockhash,
+                );
+
+                // Send the transaction
+                let signature = self.rpc_client.send_and_confirm_transaction(&transaction)?;
+
+                println!(
+                    "Success! Associated Token Account created. Transaction Signature: {}",
+                    signature
+                );
+            } else {
+                println!("Associated Token Account already exists.");
+            }
+        }
+
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        CreateAssociatedTokenAccount::new(&mut self.litesvm, self.fee_payer, &mint)
+            .owner(&self.instruction_builder.get_swig_account()?)
+            .send()
+            .map_err(|_| anyhow::anyhow!("Failed to create associated token account"))?;
+
+        Ok(associated_token_address)
+    }
+
+    /// Returns the fee payer's public key
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the fee payer's public key
+    pub fn get_fee_payer(&self) -> Pubkey {
+        self.fee_payer.pubkey()
+    }
+
     /// Returns a mutable reference to the LiteSVM instance (test only)
     ///
     /// # Returns
@@ -757,5 +885,5 @@ impl<'c> SwigWallet<'c> {
 #[cfg(all(feature = "rust_sdk_test", test))]
 mod tests {
     use super::*;
-    use crate::tests::wallet_tests;
+    use crate::tests::wallet::*;
 }

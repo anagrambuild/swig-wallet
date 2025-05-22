@@ -303,7 +303,7 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
     ctx.wallet
         .as_mut()
         .unwrap()
-        .switch_authority(role_id, authority_manager)?;
+        .switch_authority(role_id, authority_manager, None)?;
     Ok(())
 }
 
