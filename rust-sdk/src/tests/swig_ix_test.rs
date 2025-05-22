@@ -3,6 +3,7 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
 use common::*;
 use litesvm::{types::TransactionMetadata, LiteSVM};
+use litesvm_token::spl_token;
 use solana_program::{pubkey::Pubkey, system_program};
 use solana_sdk::{
     account::ReadableAccount,
@@ -19,8 +20,8 @@ use swig_interface::{
 };
 use swig_state_x::{
     action::{
-        all::All, manage_authority::ManageAuthority, sol_limit::SolLimit,
-        sol_recurring_limit::SolRecurringLimit,
+        all::All, manage_authority::ManageAuthority, program_scope::ProgramScope,
+        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
     },
     authority::{
         ed25519::{CreateEd25519SessionAuthority, ED25519Authority, Ed25519SessionAuthority},
@@ -958,6 +959,7 @@ fn test_add_authority_with_secp256k1_root() {
     }];
 
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
+
     let add_auth_ix = builder
         .add_authority_instruction(
             AuthorityType::Secp256k1,
@@ -1094,4 +1096,446 @@ fn test_switch_authority_and_payer() {
     builder.switch_payer(new_payer.pubkey()).unwrap();
     let ix = builder.build_swig_account().unwrap();
     assert_eq!(ix.accounts[1].pubkey, new_payer.pubkey());
+}
+
+fn test_token_transfer_with_program_scope() {
+    let mut context = setup_test_context().unwrap();
+
+    // Setup payers and recipients
+    let swig_authority = Keypair::new();
+    let regular_sender = Keypair::new();
+    let recipient = Keypair::new();
+
+    // Airdrop to participants
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&regular_sender.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Setup token mint
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+
+    // Setup swig account
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+    let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
+    assert!(swig_create_result.is_ok());
+
+    // Setup token accounts
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig,
+        &context.default_payer,
+    )
+    .unwrap();
+
+    let new_authority = Keypair::new();
+
+    let program_scope = Permission::ProgramScope {
+        program_id: spl_token::ID,
+        target_account: swig_ata,
+        numeric_type: 1,
+        limit: Some(1_000_000),
+        window: Some(0),
+        balance_field_start: Some(64),
+        balance_field_end: Some(72),
+    };
+
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+
+    let mut builder = SwigInstructionBuilder::new(
+        id,
+        AuthorityManager::Ed25519(swig_authority.pubkey()),
+        context.default_payer.pubkey(),
+        0,
+    );
+
+    let add_auth_ix = builder
+        .add_authority_instruction(
+            AuthorityType::Ed25519,
+            &new_authority.pubkey().to_bytes(),
+            vec![program_scope],
+            Some(current_slot),
+        )
+        .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[add_auth_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &new_authority],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_ok(),
+        "Failed to add authority: {:?}",
+        result.err()
+    );
+
+    println!("Added ProgramScope action for token program");
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
+
+    let regular_sender_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &regular_sender.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+
+    let recipient_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &recipient.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+
+    // Mint tokens to both sending accounts
+    let initial_token_amount = 1000;
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &swig_ata,
+        initial_token_amount,
+    )
+    .unwrap();
+
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &regular_sender_ata,
+        initial_token_amount,
+    )
+    .unwrap();
+
+    // Test regular token transfer
+    let transfer_amount = 100;
+    let token_program_id = spl_token::ID;
+
+    let regular_transfer_ix = spl_token::instruction::transfer(
+        &token_program_id,
+        &regular_sender_ata,
+        &recipient_ata,
+        &regular_sender.pubkey(),
+        &[],
+        transfer_amount,
+    )
+    .unwrap();
+
+    let regular_transfer_message = v0::Message::try_compile(
+        &regular_sender.pubkey(),
+        &[regular_transfer_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let regular_transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(regular_transfer_message),
+        &[regular_sender],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(regular_transfer_tx);
+    assert!(
+        result.is_ok(),
+        "Regular transfer failed: {:?}",
+        result.err()
+    );
+
+    // Test swig token transfer
+    let swig_transfer_ix = spl_token::instruction::transfer(
+        &token_program_id,
+        &swig_ata,
+        &recipient_ata,
+        &swig,
+        &[],
+        transfer_amount,
+    )
+    .unwrap();
+
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        swig_authority.pubkey(),
+        swig_authority.pubkey(),
+        swig_transfer_ix,
+        1, // authority role id
+    )
+    .unwrap();
+
+    let swig_transfer_message = v0::Message::try_compile(
+        &swig_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let swig_transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(swig_transfer_message),
+        &[swig_authority],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(swig_transfer_tx);
+    assert!(result.is_ok(), "Swig transfer failed: {:?}", result.err());
+}
+
+/// Helper function to perform token transfers through the swig
+fn perform_token_transfer(
+    context: &mut SwigTestContext,
+    swig: Pubkey,
+    swig_authority: &Keypair,
+    swig_ata: Pubkey,
+    recipient_ata: Pubkey,
+    amount: u64,
+    expected_success: bool,
+) -> Vec<String> {
+    // Expire the blockhash to ensure we don't get AlreadyProcessed errors
+    context.svm.expire_blockhash();
+
+    // Get the current token balance before the transfer
+    let before_token_account = context.svm.get_account(&swig_ata).unwrap();
+    let before_balance = if before_token_account.data.len() >= 72 {
+        // SPL token accounts have their balance at offset 64-72
+        u64::from_le_bytes(before_token_account.data[64..72].try_into().unwrap())
+    } else {
+        0
+    };
+    println!("Before transfer, token balance: {}", before_balance);
+
+    let token_program_id = spl_token::ID;
+
+    let transfer_ix = spl_token::instruction::transfer(
+        &token_program_id,
+        &swig_ata,
+        &recipient_ata,
+        &swig,
+        &[],
+        amount,
+    )
+    .unwrap();
+
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        swig_authority.pubkey(),
+        swig_authority.pubkey(),
+        transfer_ix,
+        1, // authority role id
+    )
+    .unwrap();
+
+    let transfer_message = v0::Message::try_compile(
+        &swig_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(transfer_message), &[swig_authority])
+            .unwrap();
+
+    let result = context.svm.send_transaction(transfer_tx);
+
+    // Get the current token balance after the transfer
+    let after_token_account = context.svm.get_account(&swig_ata).unwrap();
+    let after_balance = if after_token_account.data.len() >= 72 {
+        // SPL token accounts have their balance at offset 64-72
+        u64::from_le_bytes(after_token_account.data[64..72].try_into().unwrap())
+    } else {
+        0
+    };
+    println!("After transfer, token balance: {}", after_balance);
+
+    if expected_success {
+        assert!(
+            result.is_ok(),
+            "Expected successful transfer, but got error: {:?}",
+            result.err()
+        );
+        // Verify the token balance actually decreased by the expected amount
+        assert_eq!(
+            before_balance - after_balance,
+            amount,
+            "Token balance did not decrease by the expected amount"
+        );
+        println!("Successfully transferred {} tokens", amount);
+        println!(
+            "Token balance decreased from {} to {}",
+            before_balance, after_balance
+        );
+        result.unwrap().logs
+    } else {
+        println!("result: {:?}", result);
+        assert!(
+            result.is_err(),
+            "Expected transfer to fail, but it succeeded"
+        );
+        // Verify the balance didn't change
+        assert_eq!(
+            before_balance, after_balance,
+            "Token balance should not have changed for a failed transfer"
+        );
+        println!("Transfer of {} tokens was correctly rejected", amount);
+        Vec::new()
+    }
+}
+
+use solana_sdk::account::Account;
+
+pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), SwigError> {
+    let swig_with_roles =
+        SwigWithRoles::from_bytes(&swig_account.data).map_err(|e| SwigError::InvalidSwigData)?;
+
+    println!("╔══════════════════════════════════════════════════════════════════");
+    println!("║ SWIG WALLET DETAILS");
+    println!("╠══════════════════════════════════════════════════════════════════");
+    println!("║ Account Address: {}", swig_pubkey);
+    println!("║ Total Roles: {}", swig_with_roles.state.role_counter);
+    println!(
+        "║ Balance: {} SOL",
+        swig_account.lamports() as f64 / 1_000_000_000.0
+    );
+
+    println!("╠══════════════════════════════════════════════════════════════════");
+    println!("║ ROLES & PERMISSIONS");
+    println!("╠══════════════════════════════════════════════════════════════════");
+
+    for i in 0..swig_with_roles.state.role_counter {
+        let role = swig_with_roles
+            .get_role(i)
+            .map_err(|e| SwigError::AuthorityNotFound)?;
+
+        if let Some(role) = role {
+            println!("║");
+            println!("║ Role ID: {}", i);
+            println!(
+                "║ ├─ Type: {}",
+                if role.authority.session_based() {
+                    "Session-based Authority"
+                } else {
+                    "Permanent Authority"
+                }
+            );
+            println!("║ ├─ Authority Type: {:?}", role.authority.authority_type());
+            println!(
+                "║ ├─ Authority: {}",
+                match role.authority.authority_type() {
+                    AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
+                        let authority = role.authority.identity().unwrap();
+                        let authority = bs58::encode(authority).into_string();
+                        authority
+                    },
+                    AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
+                        let authority = role.authority.identity().unwrap();
+                        let authority_hex = hex::encode([&[0x4].as_slice(), authority].concat());
+                        // get eth address from public key
+                        let mut hasher = solana_sdk::keccak::Hasher::default();
+                        hasher.hash(authority_hex.as_bytes());
+                        let hash = hasher.result();
+                        let address = format!("0x{}", hex::encode(&hash.0[12..32]));
+                        address
+                    },
+                    _ => todo!(),
+                }
+            );
+
+            println!("║ ├─ Permissions:");
+
+            // Check All permission
+            if (Role::get_action::<All>(&role, &[]).map_err(|_| SwigError::AuthorityNotFound)?)
+                .is_some()
+            {
+                println!("║ │  ├─ Full Access (All Permissions)");
+            }
+
+            // Check Manage Authority permission
+            if (Role::get_action::<ManageAuthority>(&role, &[])
+                .map_err(|_| SwigError::AuthorityNotFound)?)
+            .is_some()
+            {
+                println!("║ │  ├─ Manage Authority");
+            }
+
+            // Check Sol Limit
+            if let Some(action) = Role::get_action::<SolLimit>(&role, &[])
+                .map_err(|_| SwigError::AuthorityNotFound)?
+            {
+                println!(
+                    "║ │  ├─ SOL Limit: {} SOL",
+                    action.amount as f64 / 1_000_000_000.0
+                );
+            }
+
+            // Check Sol Recurring Limit
+            if let Some(action) = Role::get_action::<SolRecurringLimit>(&role, &[])
+                .map_err(|_| SwigError::AuthorityNotFound)?
+            {
+                println!("║ │  ├─ Recurring SOL Limit:");
+                println!(
+                    "║ │  │  ├─ Amount: {} SOL",
+                    action.recurring_amount as f64 / 1_000_000_000.0
+                );
+                println!("║ │  │  ├─ Window: {} slots", action.window);
+                println!(
+                    "║ │  │  ├─ Current Usage: {} SOL",
+                    action.current_amount as f64 / 1_000_000_000.0
+                );
+                println!("║ │  │  └─ Last Reset: Slot {}", action.last_reset);
+            }
+
+            // Check Program Scope
+            if let Some(action) = Role::get_action::<ProgramScope>(
+                &role,
+                &[
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0,
+                ],
+            )
+            .map_err(|_| SwigError::AuthorityNotFound)?
+            {
+                let program_id = Pubkey::from(action.program_id);
+                let target_account = Pubkey::from(action.target_account);
+                println!("║ │  ├─ Program Scope:");
+                println!("║ │  │  ├─ Program ID: {:?}", program_id);
+                println!("║ │  │  ├─ Target Account: {:?}", target_account);
+                println!("║ │  │  ├─ Numeric Type: {}", action.numeric_type);
+                println!("║ │  │  ├─ Window: {}", action.window);
+                println!("║ │  │  ├─ Limit: {}", action.limit);
+                println!(
+                    "║ │  │  ├─ Balance Field Start: {}",
+                    action.balance_field_start
+                );
+                println!("║ │  │  └─ Balance Field End: {}", action.balance_field_end);
+            }
+            println!("║ │  ");
+        }
+    }
+
+    println!("╚══════════════════════════════════════════════════════════════════");
+
+    Ok(())
 }

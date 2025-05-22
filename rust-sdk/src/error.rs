@@ -69,6 +69,10 @@ pub enum SwigError {
     /// Transaction failed with logs
     #[error("Transaction failed: {error}\nLogs:\n{}", logs.join("\n"))]
     TransactionFailedWithLogs { error: String, logs: Vec<String> },
+
+    /// Invalid program scope
+    #[error("Invalid program scope")]
+    InvalidProgramScope,
 }
 
 impl From<anyhow::Error> for SwigError {
