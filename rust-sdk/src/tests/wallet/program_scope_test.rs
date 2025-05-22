@@ -32,15 +32,17 @@ fn should_token_transfer_with_program_scope() {
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
     let swig_ata = swig_wallet.create_ata(&mint_pubkey).unwrap();
 
-    let recipient = Keypair::new();
+    // Setup a RecurringLimit program scope
+    // Set a limit of 500 tokens per 100 slots
+    let window_size = 100;
+    let transfer_limit = 500_u64;
 
-    // Add authority with program scope
     let new_authority = Keypair::new();
 
     let permissions = vec![Permission::ProgramScope {
         program_id: spl_token::ID,
         target_account: swig_ata,
-        numeric_type: 2,
+        numeric_type: 2, // U64
         limit: None,
         window: None,
         balance_field_start: Some(64),
@@ -61,7 +63,13 @@ fn should_token_transfer_with_program_scope() {
 
     assert_eq!(swig_with_roles.state.roles, 2);
 
-    // Mint tokens to swig wallet
+    // Switch to the new authority
+    let authority_manager = AuthorityManager::Ed25519(new_authority.pubkey());
+    swig_wallet
+        .switch_authority(1, authority_manager, Some(&new_authority))
+        .unwrap();
+
+    // Mint initial tokens to swig wallet
     let initial_token_amount = 2000;
     mint_to(
         &mut swig_wallet.litesvm(),
@@ -72,7 +80,6 @@ fn should_token_transfer_with_program_scope() {
     )
     .unwrap();
 
-    // Transfer tokens
     let swig_transfer_ix = spl_token::instruction::transfer(
         &spl_token::ID,
         &swig_ata,
