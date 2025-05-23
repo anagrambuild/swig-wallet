@@ -379,6 +379,7 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
         "Token (Token-specific permissions)",
         "SOL (SOL transfer permissions)",
         "Program (Program interaction permissions)",
+        "Program Scope (Token program scope permissions)",
         "Sub Account (Sub-account management)",
     ];
 
@@ -460,6 +461,57 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
                 Permission::Program { program_id }
             },
             5 => {
+                // Program Scope for Token Programs
+                let token_programs = vec!["SPL Token", "Token2022"];
+                let program_idx = Select::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Choose token program")
+                    .items(&token_programs)
+                    .default(0)
+                    .interact()?;
+
+                let program_id = match program_idx {
+                    0 => spl_token::ID,
+                    1 => todo!("Token2022 program ID"), // Add Token2022 program ID when available
+                    _ => unreachable!(),
+                };
+
+                // Get target account (ATA)
+                let target_account_str: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter target token account address (ATA)")
+                    .interact_text()?;
+                let target_account = Pubkey::from_str(&target_account_str)?;
+
+                // Check if recurring limit should be set
+                let has_limit = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Set a recurring transfer limit?")
+                    .default(false)
+                    .interact()?;
+
+                let (limit, window) = if has_limit {
+                    let limit: u64 = Input::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Enter transfer limit amount")
+                        .interact_text()?;
+
+                    let window: u64 = Input::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Enter time window in slots")
+                        .interact_text()?;
+
+                    (Some(limit), Some(window))
+                } else {
+                    (None, None)
+                };
+
+                Permission::ProgramScope {
+                    program_id,
+                    target_account,
+                    numeric_type: 2, // U64 for token amounts
+                    limit,
+                    window,
+                    balance_field_start: Some(64), // Fixed for SPL token accounts
+                    balance_field_end: Some(72),   // Fixed for SPL token accounts
+                }
+            },
+            6 => {
                 // Get sub-account address
                 let sub_account_str: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter sub-account address")

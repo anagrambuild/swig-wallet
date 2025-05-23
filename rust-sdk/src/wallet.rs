@@ -3,15 +3,19 @@ use alloy_primitives::{Address, B256};
 use litesvm::LiteSVM;
 #[cfg(all(feature = "rust_sdk_test", test))]
 use litesvm_token::CreateAssociatedTokenAccount;
-use solana_client::{rpc_client::RpcClient, rpc_request::TokenAccountsFilter};
+use solana_account_decoder_client_types::{ParsedAccount, UiAccountData};
+use solana_client::{
+    rpc_client::RpcClient, rpc_request::TokenAccountsFilter, rpc_response::RpcKeyedAccount,
+};
+
 use solana_program::{hash::Hash, instruction::Instruction, pubkey::Pubkey};
+use solana_sdk::pubkey;
 use solana_sdk::{
     account::ReadableAccount,
     address_lookup_table::{state::AddressLookupTable, AddressLookupTableAccount},
     clock::Clock,
     commitment_config::CommitmentConfig,
     message::{v0, VersionedMessage},
-    pubkey::{self, ParsePubkeyError},
     rent::Rent,
     signature::{Keypair, Signature, Signer},
     system_instruction::{self, SystemInstruction},
@@ -21,7 +25,6 @@ use spl_associated_token_account::{
     get_associated_token_address, instruction::create_associated_token_account,
 };
 use spl_token::ID as TOKEN_PROGRAM_ID;
-
 use swig_interface::{swig, swig_key};
 use swig_state_x::{action::program_scope::ProgramScope, authority::secp256k1::Secp256k1Authority};
 use swig_state_x::{
@@ -33,6 +36,7 @@ use swig_state_x::{
     role::Role,
     swig::SwigWithRoles,
 };
+const TOKEN_22_PROGRAM_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 
 use crate::{
     error::SwigError,
@@ -478,6 +482,22 @@ impl<'c> SwigWallet<'c> {
         #[cfg(all(feature = "rust_sdk_test", test))]
         let swig_data = self.litesvm.get_account(&swig_pubkey).unwrap().data;
 
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let token_accounts = self.rpc_client.get_token_accounts_by_owner(
+            &swig_pubkey,
+            TokenAccountsFilter::ProgramId(TOKEN_PROGRAM_ID),
+        )?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let token_accounts: Vec<solana_client::rpc_response::RpcKeyedAccount> = Vec::new(); // TODO: add token accounts
+
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let token_accounts_22 = self.rpc_client.get_token_accounts_by_owner(
+            &swig_pubkey,
+            TokenAccountsFilter::ProgramId(TOKEN_22_PROGRAM_ID),
+        )?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let token_accounts_22: Vec<solana_client::rpc_response::RpcKeyedAccount> = Vec::new(); // TODO: add token accounts
+
         let swig_with_roles =
             SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
 
@@ -490,6 +510,44 @@ impl<'c> SwigWallet<'c> {
             "║ Balance: {} SOL",
             swig_account.lamports() as f64 / 1_000_000_000.0
         );
+        if !token_accounts.is_empty() || !token_accounts_22.is_empty() {
+            println!("║ Token Balances:");
+            for token_account in token_accounts.iter() {
+                if let UiAccountData::Json(parsed) = &token_account.account.data {
+                    if let Some(token_info) = parsed.parsed.get("info") {
+                        println!("║ ├─ Token: {}", token_account.pubkey);
+                        println!(
+                            "║ │  ├─ Mint: {}",
+                            token_info["mint"].as_str().unwrap_or("Unknown")
+                        );
+                        println!(
+                            "║ │  └─ Balance: {}",
+                            token_info["tokenAmount"]["uiAmount"]
+                                .as_f64()
+                                .unwrap_or(0.0)
+                        );
+                    }
+                }
+            }
+            for token_account in token_accounts_22.iter() {
+                if let UiAccountData::Json(parsed) = &token_account.account.data {
+                    if let Some(token_info) = parsed.parsed.get("info") {
+                        println!("║ ├─ Token v2: {}", token_account.pubkey);
+                        println!(
+                            "║ │  ├─ Mint: {}",
+                            token_info["mint"].as_str().unwrap_or("Unknown")
+                        );
+                        println!(
+                            "║ │  └─ Balance: {}",
+                            token_info["tokenAmount"]["uiAmount"]
+                                .as_f64()
+                                .unwrap_or(0.0)
+                        );
+                    }
+                }
+            }
+        }
+
         println!("╠══════════════════════════════════════════════════════════════════");
         println!("║ ROLES & PERMISSIONS");
         println!("╠══════════════════════════════════════════════════════════════════");

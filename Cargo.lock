@@ -1392,6 +1392,8 @@ dependencies = [
  "serde",
  "serde_json",
  "solana-sdk",
+ "spl-associated-token-account 7.0.0",
+ "spl-token 8.0.0",
  "swig-sdk",
  "tokio",
 ]
@@ -8979,6 +8981,7 @@ dependencies = [
  "litesvm-token",
  "rand 0.8.5",
  "secp256k1 0.21.3",
+ "solana-account-decoder-client-types",
  "solana-client",
  "solana-program",
  "solana-sdk",

@@ -32,7 +32,6 @@ fn should_transfer_within_limits() {
             Some(&secondary_authority),
         )
         .unwrap();
-    swig_wallet.switch_payer(&secondary_authority).unwrap();
 
     let swig_account = swig_wallet.get_swig_account().unwrap();
     let recipient = Keypair::new();
