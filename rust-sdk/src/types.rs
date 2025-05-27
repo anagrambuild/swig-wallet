@@ -95,10 +95,7 @@ pub enum Permission {
 
     /// Permission to manage sub-accounts. This allows creating and managing
     /// hierarchical wallet structures through sub-accounts.
-    SubAccount {
-        /// The public key of the sub-account
-        sub_account: Pubkey,
-    },
+    SubAccount { sub_account: [u8; 32] },
 
     /// Permission to manage stake accounts with a fixed limit
     Stake {
@@ -198,9 +195,7 @@ impl Permission {
                     }));
                 },
                 Permission::SubAccount { sub_account } => {
-                    actions.push(ClientAction::SubAccount(SubAccount {
-                        sub_account: sub_account.to_bytes(),
-                    }));
+                    actions.push(ClientAction::SubAccount(SubAccount { sub_account }));
                 },
                 Permission::Stake { amount, recurring } => match recurring {
                     Some(config) => {

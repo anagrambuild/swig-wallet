@@ -127,7 +127,7 @@ pub fn parse_permission_from_json(permission_json: &Value) -> Result<Permission>
                 .as_str()
                 .ok_or_else(|| anyhow!("Sub-account is required for sub-account permission"))?;
             Ok(Permission::SubAccount {
-                sub_account: Pubkey::from_str(sub_account)?,
+                sub_account: sub_account.as_bytes().try_into().unwrap(),
             })
         },
         Some(unknown) => Err(anyhow!("Invalid permission type: {}", unknown)),

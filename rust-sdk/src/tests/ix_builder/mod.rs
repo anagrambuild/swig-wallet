@@ -46,5 +46,6 @@ use crate::{
 pub mod authority_tests;
 pub mod program_scope_tests;
 pub mod session_tests;
+pub mod sub_account_test;
 pub mod swig_account_tests;
 pub mod transfer_tests;

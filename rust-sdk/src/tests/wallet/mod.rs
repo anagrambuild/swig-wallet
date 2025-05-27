@@ -2,7 +2,9 @@ pub mod authority_tests;
 pub mod creation_tests;
 pub mod program_scope_test;
 pub mod session_tests;
+pub mod sub_accounts_test;
 pub mod transfer_tests;
+
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;

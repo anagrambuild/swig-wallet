@@ -30,7 +30,7 @@ use swig_state_x::{action::program_scope::ProgramScope, authority::secp256k1::Se
 use swig_state_x::{
     action::{
         all::All, manage_authority::ManageAuthority, sol_limit::SolLimit,
-        sol_recurring_limit::SolRecurringLimit,
+        sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
     },
     authority::{self, AuthorityType},
     role::Role,
@@ -294,13 +294,7 @@ impl<'c> SwigWallet<'c> {
             self.get_current_blockhash()?,
         )?;
 
-        let tx = VersionedTransaction::try_new(
-            VersionedMessage::V0(msg),
-            &[
-                &self.fee_payer.insecure_clone(),
-                &self.authority.insecure_clone(),
-            ],
-        )?;
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
         self.send_and_confirm_transaction(tx)
     }
@@ -341,10 +335,180 @@ impl<'c> SwigWallet<'c> {
             self.get_current_blockhash()?,
         )?;
 
-        let tx = VersionedTransaction::try_new(
-            VersionedMessage::V0(msg),
-            &[self.fee_payer.insecure_clone()],
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+
+        self.send_and_confirm_transaction(tx)
+    }
+
+    /// Creates a new sub-account for the Swig wallet
+    ///
+    /// # Arguments
+    ///
+    /// * `role_id` - The ID of the role to create the sub-account for
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the transaction signature or a `SwigError`
+    pub fn create_sub_account(&mut self) -> Result<Signature, SwigError> {
+        let instruction = self
+            .instruction_builder
+            .create_sub_account(Some(self.get_current_slot()?))?;
+
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &[instruction],
+            &[],
+            self.get_current_blockhash()?,
         )?;
+
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+
+        self.send_and_confirm_transaction(tx)
+    }
+
+    /// Signs instructions with a sub-account
+    ///
+    /// # Arguments
+    ///
+    /// * `instructions` - Vector of instructions to sign with the sub-account
+    /// * `sub_account` - The public key of the sub-account
+    /// * `alt` - Optional slice of Address Lookup Table accounts
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the transaction signature or a `SwigError`
+    pub fn sign_with_sub_account(
+        &mut self,
+        instructions: Vec<Instruction>,
+        alt: Option<&[AddressLookupTableAccount]>,
+    ) -> Result<Signature, SwigError> {
+        let current_slot = self.get_current_slot()?;
+        let sign_ix = self
+            .instruction_builder
+            .sign_instruction_with_sub_account(instructions, Some(current_slot))?;
+
+        let alt = if alt.is_some() { alt.unwrap() } else { &[] };
+
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &[sign_ix],
+            alt,
+            self.get_current_blockhash()?,
+        )?;
+
+        // We need both the fee payer and the authority to sign
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+
+        self.send_and_confirm_transaction(tx)
+    }
+
+    /// Withdraws native SOL from a sub-account
+    ///
+    /// # Arguments
+    ///
+    /// * `sub_account` - The public key of the sub-account
+    /// * `amount` - The amount of SOL to withdraw in lamports
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the transaction signature or a `SwigError`
+    pub fn withdraw_from_sub_account(
+        &mut self,
+        sub_account: Pubkey,
+        amount: u64,
+    ) -> Result<Signature, SwigError> {
+        let current_slot = self.get_current_slot()?;
+        let withdraw_ix = self.instruction_builder.withdraw_from_sub_account(
+            sub_account,
+            amount,
+            Some(current_slot),
+        )?;
+
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &[withdraw_ix],
+            &[],
+            self.get_current_blockhash()?,
+        )?;
+
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+
+        self.send_and_confirm_transaction(tx)
+    }
+
+    /// Withdraws SPL tokens from a sub-account
+    ///
+    /// # Arguments
+    ///
+    /// * `sub_account` - The public key of the sub-account
+    /// * `sub_account_token` - The token account of the sub-account
+    /// * `swig_token` - The token account of the Swig account
+    /// * `token_program` - The token program ID
+    /// * `amount` - The amount of tokens to withdraw
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the transaction signature or a `SwigError`
+    pub fn withdraw_token_from_sub_account(
+        &mut self,
+        sub_account: Pubkey,
+        sub_account_token: Pubkey,
+        swig_token: Pubkey,
+        token_program: Pubkey,
+        amount: u64,
+    ) -> Result<Signature, SwigError> {
+        let current_slot = self.get_current_slot()?;
+        let withdraw_ix = self.instruction_builder.withdraw_token_from_sub_account(
+            sub_account,
+            sub_account_token,
+            swig_token,
+            token_program,
+            amount,
+            Some(current_slot),
+        )?;
+
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &[withdraw_ix],
+            &[],
+            self.get_current_blockhash()?,
+        )?;
+
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+
+        self.send_and_confirm_transaction(tx)
+    }
+
+    /// Toggles a sub-account's enabled state
+    ///
+    /// # Arguments
+    ///
+    /// * `sub_account` - The public key of the sub-account
+    /// * `enabled` - Whether to enable or disable the sub-account
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the transaction signature or a `SwigError`
+    pub fn toggle_sub_account(
+        &mut self,
+        sub_account: Pubkey,
+        enabled: bool,
+    ) -> Result<Signature, SwigError> {
+        let current_slot = self.get_current_slot()?;
+        let toggle_ix = self.instruction_builder.toggle_sub_account(
+            sub_account,
+            enabled,
+            Some(current_slot),
+        )?;
+
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &[toggle_ix],
+            &[],
+            self.get_current_blockhash()?,
+        )?;
+
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
         self.send_and_confirm_transaction(tx)
     }
@@ -365,17 +529,14 @@ impl<'c> SwigWallet<'c> {
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let signature = self.rpc_client.send_and_confirm_transaction(&tx)?;
         #[cfg(all(feature = "rust_sdk_test", test))]
-        let signature = self.litesvm.send_transaction(tx).map_err(|e| {
-            SwigError::TransactionFailedWithLogs {
+        let signature = self
+            .litesvm
+            .send_transaction(tx)
+            .map_err(|e| SwigError::TransactionFailedWithLogs {
                 error: e.err.to_string(),
                 logs: e.meta.logs,
-            }
-        })?;
-        #[cfg(all(feature = "rust_sdk_test", test))]
-        println!("signature: {:?}", signature);
-
-        #[cfg(all(feature = "rust_sdk_test", test))]
-        let signature = signature.signature;
+            })?
+            .signature;
 
         Ok(signature)
     }
@@ -676,6 +837,14 @@ impl<'c> SwigWallet<'c> {
                     println!("║ │  │  ");
                 }
 
+                // Check Sub Account
+                if let Some(action) = Role::get_action::<SubAccount>(&role, &[])
+                    .map_err(|_| SwigError::AuthorityNotFound)?
+                {
+                    println!("║ │  ├─ Sub Account");
+                    println!("║ │  │  ├─ Sub Account: {:?}", action.sub_account);
+                }
+
                 println!("║ │  ");
             }
         }
@@ -712,12 +881,24 @@ impl<'c> SwigWallet<'c> {
         }
     }
 
+    /// Returns the role id of the Swig account
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the role id of the Swig account or a
+    /// `SwigError`
+    pub fn get_current_role_id(&self) -> Result<u32, SwigError> {
+        Ok(self.instruction_builder.get_role_id())
+    }
+
     /// Switches to a different authority for the Swig wallet
     ///
     /// # Arguments
     ///
     /// * `role_id` - The new role ID to switch to
-    /// * `authority` - The public key of the new authority
+    /// * `authority_manager` - The authority manager specifying the type of
+    ///   signing authority
+    /// * `authority_kp` - The public key of the new authority
     ///
     /// # Returns
     ///
@@ -728,11 +909,15 @@ impl<'c> SwigWallet<'c> {
         authority_manager: AuthorityManager,
         authority_kp: Option<&'c Keypair>,
     ) -> Result<(), SwigError> {
+        // Ensure authority keypair is provided when switching authorities
+        let authority_kp = authority_kp.ok_or(SwigError::AuthorityNotFound)?;
+
+        // Update the instruction builder's authority
         self.instruction_builder
             .switch_authority(role_id, authority_manager)?;
-        if let Some(authority_kp) = authority_kp {
-            self.authority = authority_kp;
-        }
+
+        // Update the authority keypair that will be used for signing
+        self.authority = authority_kp;
         Ok(())
     }
 
@@ -852,6 +1037,20 @@ impl<'c> SwigWallet<'c> {
         #[cfg(all(feature = "rust_sdk_test", test))]
         let balance = self.litesvm.get_balance(&swig_pubkey).unwrap();
         Ok(balance)
+    }
+
+    /// Returns the keypairs for signing transactions
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the keypairs for signing transactions or a `SwigError`
+    fn get_keypairs(&self) -> Result<Vec<&Keypair>, SwigError> {
+        // Check if the authority and fee payer are the same
+        if self.fee_payer.pubkey() == self.authority.pubkey() {
+            Ok(vec![&self.fee_payer])
+        } else {
+            Ok(vec![&self.fee_payer, &self.authority])
+        }
     }
 
     /// Creates an associated token account for the Swig wallet
