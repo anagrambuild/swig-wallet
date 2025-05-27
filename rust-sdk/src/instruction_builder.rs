@@ -518,6 +518,15 @@ impl SwigInstructionBuilder {
         Ok(self.swig_account)
     }
 
+    /// Returns the swig id
+    ///
+    /// # Returns
+    ///
+    /// Returns the swig id as a `[u8; 32]`
+    pub fn get_swig_id(&self) -> &[u8; 32] {
+        &self.swig_id
+    }
+
     /// Derives the Swig account public key from an ID
     ///
     /// # Arguments

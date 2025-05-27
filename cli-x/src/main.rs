@@ -412,7 +412,7 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
                 let sub_account = Pubkey::from_str(&sub_account_str)?;
 
                 Permission::SubAccount {
-                    sub_account: sub_account.to_bytes(),
+                    sub_account: [0; 32],
                 }
             },
             _ => unreachable!(),

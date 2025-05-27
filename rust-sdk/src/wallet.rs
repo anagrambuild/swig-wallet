@@ -26,6 +26,7 @@ use spl_associated_token_account::{
 };
 use spl_token::ID as TOKEN_PROGRAM_ID;
 use swig_interface::{swig, swig_key};
+use swig_state_x::swig::sub_account_seeds;
 use swig_state_x::{action::program_scope::ProgramScope, authority::secp256k1::Secp256k1Authority};
 use swig_state_x::{
     action::{
@@ -841,8 +842,15 @@ impl<'c> SwigWallet<'c> {
                 if let Some(action) = Role::get_action::<SubAccount>(&role, &[])
                     .map_err(|_| SwigError::AuthorityNotFound)?
                 {
+                    let (sub_account, _) = Pubkey::find_program_address(
+                        &sub_account_seeds(
+                            self.instruction_builder.get_swig_id(),
+                            &i.to_le_bytes(),
+                        ),
+                        &swig_interface::program_id(),
+                    );
                     println!("║ │  ├─ Sub Account");
-                    println!("║ │  │  ├─ Sub Account: {:?}", action.sub_account);
+                    println!("║ │  │  ├─ Sub Account: {:?}", sub_account);
                 }
 
                 println!("║ │  ");
@@ -999,6 +1007,33 @@ impl<'c> SwigWallet<'c> {
         Ok(())
     }
 
+    /// Get the sub account if it exists
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the sub account or a `SwigError`
+    pub fn get_sub_account(&self) -> Result<Option<Pubkey>, SwigError> {
+        let (sub_account, sub_account_bump) = Pubkey::find_program_address(
+            &sub_account_seeds(
+                self.instruction_builder.get_swig_id(),
+                &self.get_current_role_id()?.to_le_bytes(),
+            ),
+            &swig_interface::program_id(),
+        );
+
+        // Check if the sub account exists
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let account_exists = self.rpc_client.get_account(&sub_account).is_ok();
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let account_exists = self.litesvm.get_balance(&sub_account).unwrap() > 0;
+
+        if account_exists {
+            Ok(Some(sub_account))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Retrieves the current slot number from the Solana network
     ///
     /// # Returns
@@ -1051,6 +1086,15 @@ impl<'c> SwigWallet<'c> {
         } else {
             Ok(vec![&self.fee_payer, &self.authority])
         }
+    }
+
+    /// Returns the swig id
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the swig id or a `SwigError`
+    pub fn get_swig_id(&self) -> &[u8; 32] {
+        &self.instruction_builder.get_swig_id()
     }
 
     /// Creates an associated token account for the Swig wallet
