@@ -4,7 +4,7 @@ use alloy_signer_local::LocalSigner;
 use anyhow::{anyhow, Result};
 use colored::*;
 use serde_json::Value;
-use solana_sdk::{pubkey::Pubkey, signature::Keypair};
+use solana_sdk::{pubkey::Pubkey, signature::Keypair, system_instruction};
 use std::str::FromStr;
 use swig_sdk::{
     authority::AuthorityType, AuthorityManager, Permission, RecurringConfig, SwigError, SwigWallet,
@@ -335,6 +335,121 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
 
             let balance = wallet.get_balance()?;
             println!("Balance: {} SOL", balance as f64 / 1_000_000_000.0);
+            Ok(())
+        },
+        Command::CreateSubAccount {
+            authority_type,
+            authority,
+            authority_kp,
+            id,
+        } => {
+            let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
+
+            let mut wallet = create_swig_instance(
+                ctx,
+                swig_id,
+                parse_authority_type(
+                    authority_type
+                        .unwrap_or_else(|| ctx.config.default_authority.authority_type.clone()),
+                )?,
+                authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
+                authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+            )?;
+
+            let signature = wallet.create_sub_account()?;
+            println!("Sub-account created successfully!");
+            println!("Signature: {}", signature);
+            Ok(())
+        },
+        Command::TransferFromSubAccount {
+            authority_type,
+            authority,
+            authority_kp,
+            id,
+            recipient,
+            amount,
+        } => {
+            let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
+
+            let mut wallet = create_swig_instance(
+                ctx,
+                swig_id,
+                parse_authority_type(
+                    authority_type
+                        .unwrap_or_else(|| ctx.config.default_authority.authority_type.clone()),
+                )?,
+                authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
+                authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+            )?;
+
+            let sub_account = wallet.get_sub_account()?;
+            if let Some(sub_account) = sub_account {
+                let recipient = Pubkey::from_str(&recipient)?;
+                let transfer_ix = system_instruction::transfer(&sub_account, &recipient, amount);
+                let signature = wallet.sign_with_sub_account(vec![transfer_ix], None)?;
+                println!("Transfer successful!");
+                println!("Signature: {}", signature);
+            } else {
+                println!("Sub-account does not exist!");
+            }
+            Ok(())
+        },
+        Command::ToggleSubAccount {
+            authority_type,
+            authority,
+            authority_kp,
+            id,
+            enabled,
+        } => {
+            let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
+
+            let mut wallet = create_swig_instance(
+                ctx,
+                swig_id,
+                parse_authority_type(
+                    authority_type
+                        .unwrap_or_else(|| ctx.config.default_authority.authority_type.clone()),
+                )?,
+                authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
+                authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+            )?;
+
+            let sub_account = wallet.get_sub_account()?;
+            if let Some(sub_account) = sub_account {
+                wallet.toggle_sub_account(sub_account, enabled)?;
+                println!(
+                    "Sub-account {} successfully!",
+                    if enabled { "enabled" } else { "disabled" }
+                );
+            } else {
+                println!("Sub-account does not exist!");
+            }
+            Ok(())
+        },
+        Command::WithdrawFromSubAccount {
+            authority_type,
+            authority,
+            authority_kp,
+            id,
+            sub_account,
+            amount,
+        } => {
+            let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
+
+            let mut wallet = create_swig_instance(
+                ctx,
+                swig_id,
+                parse_authority_type(
+                    authority_type
+                        .unwrap_or_else(|| ctx.config.default_authority.authority_type.clone()),
+                )?,
+                authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
+                authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+            )?;
+
+            let sub_account = Pubkey::from_str(&sub_account)?;
+            wallet.withdraw_from_sub_account(sub_account, amount)?;
+            println!("Successfully withdrew {} lamports from sub-account", amount);
             Ok(())
         },
     }

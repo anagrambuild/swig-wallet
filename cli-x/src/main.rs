@@ -170,6 +170,60 @@ pub enum Command {
         #[arg(short, long)]
         authority_type_to_fetch: String,
     },
+    /// Create a sub-account for the wallet
+    CreateSubAccount {
+        #[arg(short, long)]
+        authority_type: Option<String>,
+        #[arg(short, long)]
+        authority: Option<String>,
+        #[arg(short, long)]
+        authority_kp: Option<String>,
+        #[arg(short, long = "swig-id")]
+        id: String,
+    },
+    /// Transfer from a sub-account
+    TransferFromSubAccount {
+        #[arg(short, long)]
+        authority_type: Option<String>,
+        #[arg(short, long)]
+        authority: Option<String>,
+        #[arg(short, long)]
+        authority_kp: Option<String>,
+        #[arg(short, long = "swig-id")]
+        id: String,
+        #[arg(short, long)]
+        recipient: String,
+        #[arg(short, long)]
+        amount: u64,
+    },
+    /// Toggle a sub-account
+    ToggleSubAccount {
+        #[arg(short, long)]
+        authority_type: Option<String>,
+        #[arg(short, long)]
+        authority: Option<String>,
+        #[arg(short, long)]
+        authority_kp: Option<String>,
+        #[arg(short, long = "swig-id")]
+        id: String,
+        #[arg(short, long)]
+        enabled: bool,
+    },
+    /// Withdraw from a sub-account to the SWIG wallet
+    WithdrawFromSubAccount {
+        #[arg(short, long)]
+        authority_type: Option<String>,
+        #[arg(short, long)]
+        authority: Option<String>,
+        #[arg(short, long)]
+        authority_kp: Option<String>,
+        #[arg(short, long = "swig-id")]
+        id: String,
+        #[arg(short, long)]
+        sub_account: String,
+        #[arg(short, long)]
+        amount: u64,
+    },
 }
 
 pub struct SwigCliContext {
