@@ -5,7 +5,10 @@ use anyhow::{anyhow, Result};
 use colored::*;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
 use solana_sdk::{
-    pubkey::Pubkey, signature::Keypair, signer::Signer, system_instruction::transfer,
+    pubkey::Pubkey,
+    signature::Keypair,
+    signer::Signer,
+    system_instruction::{self, transfer},
 };
 use std::{collections::HashMap, str::FromStr};
 use swig_sdk::{
@@ -32,6 +35,7 @@ pub fn run_interactive_mode(ctx: &mut SwigCliContext) -> Result<()> {
                 "View Wallet",
                 "Transfer",
                 "Switch Authority",
+                "Sub Accounts",
                 "Exit",
             ]
         };
@@ -55,7 +59,8 @@ pub fn run_interactive_mode(ctx: &mut SwigCliContext) -> Result<()> {
                 2 => view_wallet_interactive(ctx)?,
                 3 => transfer_interactive(ctx)?,
                 4 => switch_authority_interactive(ctx)?,
-                5 => break,
+                5 => sub_accounts_interactive(ctx)?,
+                6 => break,
                 _ => unreachable!(),
             }
         }
@@ -246,10 +251,6 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
         .with_prompt("Enter authority role ID")
         .interact_text()?;
 
-    let authority_keypair = Password::with_theme(&ColorfulTheme::default())
-        .with_prompt("Enter authority keypair")
-        .interact()?;
-
     let authority_types = vec![
         "Ed25519 (Recommended for standard usage)",
         "Secp256k1 (For Ethereum/Bitcoin compatibility)",
@@ -270,6 +271,10 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
         3 => AuthorityType::Secp256k1Session,
         _ => unreachable!(),
     };
+
+    let authority_keypair = Password::with_theme(&ColorfulTheme::default())
+        .with_prompt("Enter authority keypair")
+        .interact()?;
 
     let role_id = u32::from_str(&role_id)?;
 
@@ -303,7 +308,7 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
     ctx.wallet
         .as_mut()
         .unwrap()
-        .switch_authority(role_id, authority_manager)?;
+        .switch_authority(role_id, authority_manager, None)?;
     Ok(())
 }
 
@@ -379,6 +384,7 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
         "Token (Token-specific permissions)",
         "SOL (SOL transfer permissions)",
         "Program (Program interaction permissions)",
+        "Program Scope (Token program scope permissions)",
         "Sub Account (Sub-account management)",
     ];
 
@@ -460,13 +466,58 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
                 Permission::Program { program_id }
             },
             5 => {
-                // Get sub-account address
-                let sub_account_str: String = Input::with_theme(&ColorfulTheme::default())
-                    .with_prompt("Enter sub-account address")
-                    .interact_text()?;
-                let sub_account = Pubkey::from_str(&sub_account_str)?;
+                // Program Scope for Token Programs
+                let token_programs = vec!["SPL Token", "Token2022"];
+                let program_idx = Select::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Choose token program")
+                    .items(&token_programs)
+                    .default(0)
+                    .interact()?;
 
-                Permission::SubAccount { sub_account }
+                let program_id = match program_idx {
+                    0 => spl_token::ID,
+                    1 => todo!("Token2022 program ID"), // Add Token2022 program ID when available
+                    _ => unreachable!(),
+                };
+
+                // Get target account (ATA)
+                let target_account_str: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter target token account address (ATA)")
+                    .interact_text()?;
+                let target_account = Pubkey::from_str(&target_account_str)?;
+
+                // Check if recurring limit should be set
+                let has_limit = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Set a recurring transfer limit?")
+                    .default(false)
+                    .interact()?;
+
+                let (limit, window) = if has_limit {
+                    let limit: u64 = Input::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Enter transfer limit amount")
+                        .interact_text()?;
+
+                    let window: u64 = Input::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Enter time window in slots")
+                        .interact_text()?;
+
+                    (Some(limit), Some(window))
+                } else {
+                    (None, None)
+                };
+
+                Permission::ProgramScope {
+                    program_id,
+                    target_account,
+                    numeric_type: 2, // U64 for token amounts
+                    limit,
+                    window,
+                    balance_field_start: Some(64), // Fixed for SPL token accounts
+                    balance_field_end: Some(72),   // Fixed for SPL token accounts
+                }
+            },
+            6 => Permission::SubAccount {
+                sub_account: [0; 32],
             },
             _ => unreachable!(),
         };
@@ -485,6 +536,116 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
     }
 
     Ok(permissions)
+}
+
+pub fn sub_accounts_interactive(ctx: &mut SwigCliContext) -> Result<()> {
+    println!("\n{}", "Sub Accounts...".bright_blue().bold());
+
+    let actions = vec![
+        "Create sub-account",
+        "Transfer from sub-account",
+        "Toggle sub-account",
+        "Withdraw from sub-account to Swig wallet",
+        "Exit",
+    ];
+
+    let selection = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("Choose an action")
+        .items(&actions)
+        .default(0)
+        .interact()?;
+
+    match selection {
+        0 => create_sub_account_interactive(ctx)?,
+        1 => transfer_from_sub_account_interactive(ctx)?,
+        2 => toggle_sub_account_interactive(ctx)?,
+        3 => withdraw_from_sub_account_interactive(ctx)?,
+        _ => unreachable!(),
+    }
+    Ok(())
+}
+
+fn create_sub_account_interactive(ctx: &mut SwigCliContext) -> Result<()> {
+    println!("\n{}", "Checking for sub-account...".bright_blue().bold());
+
+    let sub_account = ctx.wallet.as_mut().unwrap().get_sub_account()?;
+    if let Some(sub_account) = sub_account {
+        println!("Sub-account already exists: {}", sub_account);
+    } else {
+        println!("Sub-account does not exist, creating...");
+        let signature = ctx.wallet.as_mut().unwrap().create_sub_account()?;
+        println!("Sub-account created: {}", signature);
+    }
+
+    Ok(())
+}
+
+fn transfer_from_sub_account_interactive(ctx: &mut SwigCliContext) -> Result<()> {
+    println!(
+        "\n{}",
+        "Transferring from sub-account...".bright_blue().bold()
+    );
+    let recipient = Input::<String>::with_theme(&ColorfulTheme::default())
+        .with_prompt("Enter recipient address")
+        .interact_text()?;
+    let recipient = Pubkey::from_str(&recipient)?;
+    let amount = Input::<u64>::with_theme(&ColorfulTheme::default())
+        .with_prompt("Enter amount")
+        .interact_text()?;
+    let sub_account = ctx.wallet.as_mut().unwrap().get_sub_account()?;
+    if let Some(sub_account) = sub_account {
+        let transfer_ix = system_instruction::transfer(&sub_account, &recipient, amount);
+
+        let signature = ctx
+            .wallet
+            .as_mut()
+            .unwrap()
+            .sign_with_sub_account(vec![transfer_ix], None)
+            .unwrap();
+
+        println!("Signature: {}", signature);
+    } else {
+        println!("Sub-account does not exist!");
+    }
+
+    Ok(())
+}
+
+pub fn withdraw_from_sub_account_interactive(ctx: &mut SwigCliContext) -> Result<()> {
+    println!(
+        "\n{}",
+        "Withdrawing from sub-account...".bright_blue().bold()
+    );
+
+    let sub_account = Input::<String>::with_theme(&ColorfulTheme::default())
+        .with_prompt("Enter Sub account address")
+        .interact_text()?;
+    let sub_account = Pubkey::from_str(&sub_account)?;
+
+    let amount = Input::<u64>::with_theme(&ColorfulTheme::default())
+        .with_prompt("Enter amount")
+        .interact_text()?;
+
+    ctx.wallet
+        .as_mut()
+        .unwrap()
+        .withdraw_from_sub_account(sub_account, amount)?;
+
+    Ok(())
+}
+
+fn toggle_sub_account_interactive(ctx: &mut SwigCliContext) -> Result<()> {
+    println!("\n{}", "Toggling sub-account...".bright_blue().bold());
+
+    let sub_account = ctx.wallet.as_mut().unwrap().get_sub_account()?;
+    if let Some(sub_account) = sub_account {
+        ctx.wallet
+            .as_mut()
+            .unwrap()
+            .toggle_sub_account(sub_account, true)?;
+    }
+
+    Ok(())
 }
 
 pub fn format_authority(authority: &str, authority_type: &AuthorityType) -> Result<Vec<u8>> {

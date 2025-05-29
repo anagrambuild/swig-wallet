@@ -43,8 +43,8 @@ pub enum SwigError {
     InvalidSecp256k1,
 
     /// Transaction error
-    #[error("Transaction error")]
-    TransactionError,
+    #[error("Transaction error: {0}")]
+    TransactionError(String),
 
     /// Current slot not set
     #[error("Current slot not set")]
@@ -69,6 +69,10 @@ pub enum SwigError {
     /// Transaction failed with logs
     #[error("Transaction failed: {error}\nLogs:\n{}", logs.join("\n"))]
     TransactionFailedWithLogs { error: String, logs: Vec<String> },
+
+    /// Invalid program scope
+    #[error("Invalid program scope")]
+    InvalidProgramScope,
 }
 
 impl From<anyhow::Error> for SwigError {
@@ -85,7 +89,7 @@ impl From<solana_sdk::message::CompileError> for SwigError {
 
 impl From<solana_sdk::signature::SignerError> for SwigError {
     fn from(error: solana_sdk::signature::SignerError) -> Self {
-        SwigError::TransactionError
+        SwigError::TransactionError(error.to_string())
     }
 }
 

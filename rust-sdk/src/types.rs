@@ -1,10 +1,21 @@
 use solana_program::pubkey::Pubkey;
 use swig_interface::ClientAction;
 use swig_state_x::action::{
-    all::All, manage_authority::ManageAuthority, program::Program, sol_limit::SolLimit,
-    sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount, token_limit::TokenLimit,
+    all::All,
+    manage_authority::ManageAuthority,
+    program::Program,
+    program_scope::{NumericType, ProgramScope, ProgramScopeType},
+    sol_limit::SolLimit,
+    sol_recurring_limit::SolRecurringLimit,
+    stake_all::StakeAll,
+    stake_limit::StakeLimit,
+    stake_recurring_limit::StakeRecurringLimit,
+    sub_account::SubAccount,
+    token_limit::TokenLimit,
     token_recurring_limit::TokenRecurringLimit,
 };
+
+use crate::SwigError;
 
 /// Configuration for recurring limits that reset after a specified time window
 #[derive(Debug, Clone)]
@@ -70,12 +81,34 @@ pub enum Permission {
         program_id: Pubkey,
     },
 
+    /// Permission to interact with specific programs. This allows the wallet
+    /// to execute instructions for the specified program.
+    ProgramScope {
+        program_id: Pubkey,
+        target_account: Pubkey,
+        numeric_type: u64,
+        limit: Option<u64>,
+        window: Option<u64>,
+        balance_field_start: Option<u64>,
+        balance_field_end: Option<u64>,
+    },
+
     /// Permission to manage sub-accounts. This allows creating and managing
     /// hierarchical wallet structures through sub-accounts.
-    SubAccount {
-        /// The public key of the sub-account
-        sub_account: Pubkey,
+    SubAccount { sub_account: [u8; 32] },
+
+    /// Permission to manage stake accounts with a fixed limit
+    Stake {
+        /// The maximum amount of stake (in lamports) that can be managed
+        amount: u64,
+        /// Optional recurring configuration. If provided, the amount becomes a
+        /// recurring limit that resets after the specified window
+        /// period. If None, amount is treated as a fixed limit.
+        recurring: Option<RecurringConfig>,
     },
+
+    /// Permission to manage all stake-related operations without limits
+    StakeAll,
 }
 
 impl Permission {
@@ -130,10 +163,55 @@ impl Permission {
                         program_id: program_id.to_bytes(),
                     }));
                 },
-                Permission::SubAccount { sub_account } => {
-                    actions.push(ClientAction::SubAccount(SubAccount {
-                        sub_account: sub_account.to_bytes(),
+                Permission::ProgramScope {
+                    program_id,
+                    target_account,
+                    numeric_type,
+                    window,
+                    limit,
+                    balance_field_start,
+                    balance_field_end,
+                } => {
+                    let (scope_type, window, limit) = match (window, limit) {
+                        (Some(window), Some(limit)) => {
+                            (ProgramScopeType::RecurringLimit as u64, window, limit)
+                        },
+                        (None, Some(limit)) => (ProgramScopeType::Limit as u64, 0, limit),
+                        (None, None) => (ProgramScopeType::Basic as u64, 0, 0),
+                        (Some(_), None) => (ProgramScopeType::Basic as u64, 0, 0),
+                    };
+
+                    actions.push(ClientAction::ProgramScope(ProgramScope {
+                        program_id: program_id.to_bytes(),
+                        target_account: target_account.to_bytes(),
+                        scope_type: scope_type as u64,
+                        numeric_type: numeric_type as u64,
+                        current_amount: 0 as u128,
+                        limit: limit as u128,
+                        window: window as u64,
+                        last_reset: 0,
+                        balance_field_start: balance_field_start.unwrap_or(0) as u64,
+                        balance_field_end: balance_field_end.unwrap_or(0) as u64,
                     }));
+                },
+                Permission::SubAccount { sub_account } => {
+                    actions.push(ClientAction::SubAccount(SubAccount { sub_account }));
+                },
+                Permission::Stake { amount, recurring } => match recurring {
+                    Some(config) => {
+                        actions.push(ClientAction::StakeRecurringLimit(StakeRecurringLimit {
+                            recurring_amount: amount,
+                            window: config.window,
+                            last_reset: 0,
+                            current_amount: 0,
+                        }));
+                    },
+                    None => {
+                        actions.push(ClientAction::StakeLimit(StakeLimit { amount }));
+                    },
+                },
+                Permission::StakeAll => {
+                    actions.push(ClientAction::StakeAll(StakeAll {}));
                 },
             }
         }

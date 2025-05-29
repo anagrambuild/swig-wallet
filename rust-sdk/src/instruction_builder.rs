@@ -1,14 +1,16 @@
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
     program_id, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
-    CreateSessionInstruction, RemoveAuthorityInstruction, SignInstruction,
+    CreateSessionInstruction, CreateSubAccountInstruction, RemoveAuthorityInstruction,
+    SignInstruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
+    WithdrawFromSubAccountInstruction,
 };
 use swig_state_x::{
     authority::{
         ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
         AuthorityType,
     },
-    swig::swig_account_seeds,
+    swig::{sub_account_seeds, swig_account_seeds},
     IntoBytes,
 };
 
@@ -516,6 +518,15 @@ impl SwigInstructionBuilder {
         Ok(self.swig_account)
     }
 
+    /// Returns the swig id
+    ///
+    /// # Returns
+    ///
+    /// Returns the swig id as a `[u8; 32]`
+    pub fn get_swig_id(&self) -> &[u8; 32] {
+        &self.swig_id
+    }
+
     /// Derives the Swig account public key from an ID
     ///
     /// # Arguments
@@ -570,6 +581,266 @@ impl SwigInstructionBuilder {
     pub fn switch_payer(&mut self, payer: Pubkey) -> Result<(), SwigError> {
         self.payer = payer;
         Ok(())
+    }
+
+    /// Creates a Subaccount for the Swig account
+    ///
+    /// # Arguments
+    ///
+    /// * `subaccount_id` - The ID of the subaccount to create
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the subaccount's public key or a `SwigError`
+    pub fn create_sub_account(&self, current_slot: Option<u64>) -> Result<Instruction, SwigError> {
+        let role_id_bytes = self.role_id.to_le_bytes();
+        let swig_id_bytes = self.swig_id;
+        let (sub_account, sub_account_bump) = Pubkey::find_program_address(
+            &sub_account_seeds(&swig_id_bytes, &role_id_bytes),
+            &swig_interface::program_id(),
+        );
+
+        match &self.authority_manager {
+            AuthorityManager::Ed25519(authority) => {
+                Ok(CreateSubAccountInstruction::new_with_ed25519_authority(
+                    self.swig_account,
+                    *authority,
+                    self.payer,
+                    sub_account,
+                    self.role_id,
+                    sub_account_bump,
+                )?)
+            },
+            AuthorityManager::Secp256k1(authority, signing_fn) => {
+                let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                Ok(CreateSubAccountInstruction::new_with_secp256k1_authority(
+                    self.swig_account,
+                    self.payer,
+                    signing_fn,
+                    current_slot,
+                    sub_account,
+                    self.role_id,
+                    sub_account_bump,
+                )?)
+            },
+            _ => todo!(),
+        }
+    }
+
+    /// Signs a instruction with sub-account
+    ///
+    /// # Arguments
+    ///
+    /// * `instructions` - The instructions to sign
+    /// * `current_slot` - Optional current slot number (required for Secp256k1)
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the signed instruction or a `SwigError`
+    pub fn sign_instruction_with_sub_account(
+        &self,
+        instructions: Vec<Instruction>,
+        current_slot: Option<u64>,
+    ) -> Result<Instruction, SwigError> {
+        println!("Signing instruction with sub-account");
+        println!("Swig account: {}", self.swig_account);
+        println!("Payer: {}", self.payer);
+        println!("Role ID: {}", self.role_id);
+        println!("Swig ID: {:?}", self.swig_id);
+        println!("Program ID: {:?}", program_id());
+        let role_id_bytes = self.role_id.to_le_bytes();
+        let swig_id_bytes = self.swig_id;
+        let (sub_account, sub_account_bump) = Pubkey::find_program_address(
+            &sub_account_seeds(&swig_id_bytes, &role_id_bytes),
+            &swig_interface::program_id(),
+        );
+        println!("Sub-account: {}", sub_account);
+
+        match &self.authority_manager {
+            AuthorityManager::Ed25519(authority) => {
+                println!("authority: {:?}", &authority);
+
+                Ok(SubAccountSignInstruction::new_with_ed25519_authority(
+                    self.swig_account,
+                    sub_account,
+                    *authority,
+                    self.payer,
+                    self.role_id,
+                    instructions,
+                )?)
+            },
+            AuthorityManager::Secp256k1(authority, signing_fn) => {
+                let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                Ok(SubAccountSignInstruction::new_with_secp256k1_authority(
+                    self.swig_account,
+                    sub_account,
+                    self.payer,
+                    signing_fn,
+                    current_slot,
+                    self.role_id,
+                    instructions,
+                )?)
+            },
+            _ => todo!(),
+        }
+    }
+
+    /// Withdraws funds from a sub-account
+    ///
+    /// # Arguments
+    ///
+    /// * `sub_account` - The public key of the sub-account
+    /// * `amount` - The amount to withdraw
+    /// * `current_slot` - Optional current slot number (required for Secp256k1)
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the withdraw instruction or a `SwigError`
+    pub fn withdraw_from_sub_account(
+        &self,
+        sub_account: Pubkey,
+        amount: u64,
+        current_slot: Option<u64>,
+    ) -> Result<Instruction, SwigError> {
+        match &self.authority_manager {
+            AuthorityManager::Ed25519(authority) => {
+                WithdrawFromSubAccountInstruction::new_with_ed25519_authority(
+                    self.swig_account,
+                    *authority,
+                    self.payer,
+                    sub_account,
+                    self.role_id,
+                    amount,
+                )
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to create withdraw instruction: {:?}", e).into()
+                })
+            },
+            AuthorityManager::Secp256k1(authority, signing_fn) => {
+                let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                WithdrawFromSubAccountInstruction::new_with_secp256k1_authority(
+                    self.swig_account,
+                    self.payer,
+                    signing_fn,
+                    current_slot,
+                    sub_account,
+                    self.role_id,
+                    amount,
+                )
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to create withdraw instruction: {:?}", e).into()
+                })
+            },
+            _ => todo!(),
+        }
+    }
+
+    /// Withdraws tokens from a sub-account
+    ///
+    /// # Arguments
+    ///
+    /// * `sub_account` - The public key of the sub-account
+    /// * `sub_account_token` - The token account of the sub-account
+    /// * `swig_token` - The token account of the Swig account
+    /// * `token_program` - The token program ID
+    /// * `amount` - The amount of tokens to withdraw
+    /// * `current_slot` - Optional current slot number (required for Secp256k1)
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the withdraw token instruction or a `SwigError`
+    pub fn withdraw_token_from_sub_account(
+        &self,
+        sub_account: Pubkey,
+        sub_account_token: Pubkey,
+        swig_token: Pubkey,
+        token_program: Pubkey,
+        amount: u64,
+        current_slot: Option<u64>,
+    ) -> Result<Instruction, SwigError> {
+        match &self.authority_manager {
+            AuthorityManager::Ed25519(authority) => {
+                WithdrawFromSubAccountInstruction::new_token_with_ed25519_authority(
+                    self.swig_account,
+                    *authority,
+                    self.payer,
+                    sub_account,
+                    sub_account_token,
+                    swig_token,
+                    token_program,
+                    self.role_id,
+                    amount,
+                )
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to create withdraw token instruction: {:?}", e).into()
+                })
+            },
+            AuthorityManager::Secp256k1(authority, signing_fn) => {
+                let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                WithdrawFromSubAccountInstruction::new_token_with_secp256k1_authority(
+                    self.swig_account,
+                    self.payer,
+                    signing_fn,
+                    current_slot,
+                    sub_account,
+                    sub_account_token,
+                    swig_token,
+                    token_program,
+                    self.role_id,
+                    amount,
+                )
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to create withdraw token instruction: {:?}", e).into()
+                })
+            },
+            _ => todo!(),
+        }
+    }
+
+    /// Toggles a sub-account's enabled state
+    ///
+    /// # Arguments
+    ///
+    /// * `sub_account` - The public key of the sub-account
+    /// * `enabled` - Whether to enable or disable the sub-account
+    /// * `current_slot` - Optional current slot number (required for Secp256k1)
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the toggle instruction or a `SwigError`
+    pub fn toggle_sub_account(
+        &self,
+        sub_account: Pubkey,
+        enabled: bool,
+        current_slot: Option<u64>,
+    ) -> Result<Instruction, SwigError> {
+        match &self.authority_manager {
+            AuthorityManager::Ed25519(authority) => {
+                ToggleSubAccountInstruction::new_with_ed25519_authority(
+                    self.swig_account,
+                    *authority,
+                    self.payer,
+                    sub_account,
+                    self.role_id,
+                    enabled,
+                )
+                .map_err(|e| anyhow::anyhow!("Failed to create toggle instruction: {:?}", e).into())
+            },
+            AuthorityManager::Secp256k1(authority, signing_fn) => {
+                let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                ToggleSubAccountInstruction::new_with_secp256k1_authority(
+                    self.swig_account,
+                    self.payer,
+                    signing_fn,
+                    current_slot,
+                    sub_account,
+                    self.role_id,
+                    enabled,
+                )
+                .map_err(|e| anyhow::anyhow!("Failed to create toggle instruction: {:?}", e).into())
+            },
+            _ => todo!(),
+        }
     }
 
     /// Returns the current authority's public key as bytes

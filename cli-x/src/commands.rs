@@ -3,9 +3,12 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
 use anyhow::{anyhow, Result};
 use colored::*;
-use solana_sdk::{pubkey::Pubkey, signature::Keypair};
+use serde_json::Value;
+use solana_sdk::{pubkey::Pubkey, signature::Keypair, system_instruction};
 use std::str::FromStr;
-use swig_sdk::{authority::AuthorityType, AuthorityManager, Permission, SwigError, SwigWallet};
+use swig_sdk::{
+    authority::AuthorityType, AuthorityManager, Permission, RecurringConfig, SwigError, SwigWallet,
+};
 
 use crate::{format_authority, Command, SwigCliContext};
 
@@ -74,6 +77,64 @@ pub fn create_swig_instance(
     .map_err(|e| anyhow!("Failed to create SWIG wallet: {}", e))
 }
 
+pub fn parse_permission_from_json(permission_json: &Value) -> Result<Permission> {
+    match permission_json["type"].as_str() {
+        Some("all") => Ok(Permission::All),
+        Some("sol") => {
+            let amount = permission_json["amount"].as_u64().unwrap_or(1_000_000_000);
+            let recurring = if let Some(recurring) = permission_json.get("recurring") {
+                let window = recurring["window"].as_u64().unwrap_or(86400);
+                Some(swig_sdk::RecurringConfig::new(window))
+            } else {
+                None
+            };
+            Ok(Permission::Sol { amount, recurring })
+        },
+        Some("manageAuthority") => Ok(Permission::ManageAuthority),
+        Some("program") => {
+            let program_id = permission_json["programId"]
+                .as_str()
+                .ok_or_else(|| anyhow!("Program ID is required for program permission"))?;
+            Ok(Permission::Program {
+                program_id: Pubkey::from_str(program_id)?,
+            })
+        },
+        Some("programScope") => {
+            let program_id = permission_json["programId"]
+                .as_str()
+                .ok_or_else(|| anyhow!("Program ID is required for program scope permission"))?;
+            let target_account = permission_json["targetAccount"].as_str().ok_or_else(|| {
+                anyhow!("Target account is required for program scope permission")
+            })?;
+            let numeric_type = permission_json["numericType"].as_u64().unwrap_or(0);
+            let limit = permission_json["limit"].as_u64();
+            let window = permission_json["window"].as_u64();
+            let balance_field_start = permission_json["balanceFieldStart"].as_u64();
+            let balance_field_end = permission_json["balanceFieldEnd"].as_u64();
+
+            Ok(Permission::ProgramScope {
+                program_id: Pubkey::from_str(program_id)?,
+                target_account: Pubkey::from_str(target_account)?,
+                numeric_type,
+                limit,
+                window,
+                balance_field_start,
+                balance_field_end,
+            })
+        },
+        Some("subAccount") => {
+            let sub_account = permission_json["subAccount"]
+                .as_str()
+                .ok_or_else(|| anyhow!("Sub-account is required for sub-account permission"))?;
+            Ok(Permission::SubAccount {
+                sub_account: sub_account.as_bytes().try_into().unwrap(),
+            })
+        },
+        Some(unknown) => Err(anyhow!("Invalid permission type: {}", unknown)),
+        None => Err(anyhow!("Permission type is required")),
+    }
+}
+
 pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
     match cmd {
         Command::Create {
@@ -132,19 +193,17 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 fee_payer.unwrap_or_else(|| ctx.config.default_authority.fee_payer.clone());
             ctx.payer = Keypair::from_base58_string(&fee_payer_str);
 
-            // Parse permissions
+            // Parse permissions from JSON
             if permissions.is_empty() {
                 return Err(anyhow!("Permissions are required"));
             }
+
             let parsed_permissions = permissions
                 .iter()
-                .map(|p| match p.to_lowercase().as_str() {
-                    "all" => Ok(Permission::All),
-                    "sol" => Ok(Permission::Sol {
-                        amount: 1_000_000_000,
-                        recurring: None,
-                    }),
-                    _ => Err(anyhow!("Invalid permission: {}", p)),
+                .map(|p| {
+                    let permission_value: Value = serde_json::from_str(p)
+                        .map_err(|e| anyhow!("Invalid permission JSON: {}", e))?;
+                    parse_permission_from_json(&permission_value)
                 })
                 .collect::<Result<Vec<_>>>()?;
 
@@ -276,6 +335,121 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
 
             let balance = wallet.get_balance()?;
             println!("Balance: {} SOL", balance as f64 / 1_000_000_000.0);
+            Ok(())
+        },
+        Command::CreateSubAccount {
+            authority_type,
+            authority,
+            authority_kp,
+            id,
+        } => {
+            let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
+
+            let mut wallet = create_swig_instance(
+                ctx,
+                swig_id,
+                parse_authority_type(
+                    authority_type
+                        .unwrap_or_else(|| ctx.config.default_authority.authority_type.clone()),
+                )?,
+                authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
+                authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+            )?;
+
+            let signature = wallet.create_sub_account()?;
+            println!("Sub-account created successfully!");
+            println!("Signature: {}", signature);
+            Ok(())
+        },
+        Command::TransferFromSubAccount {
+            authority_type,
+            authority,
+            authority_kp,
+            id,
+            recipient,
+            amount,
+        } => {
+            let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
+
+            let mut wallet = create_swig_instance(
+                ctx,
+                swig_id,
+                parse_authority_type(
+                    authority_type
+                        .unwrap_or_else(|| ctx.config.default_authority.authority_type.clone()),
+                )?,
+                authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
+                authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+            )?;
+
+            let sub_account = wallet.get_sub_account()?;
+            if let Some(sub_account) = sub_account {
+                let recipient = Pubkey::from_str(&recipient)?;
+                let transfer_ix = system_instruction::transfer(&sub_account, &recipient, amount);
+                let signature = wallet.sign_with_sub_account(vec![transfer_ix], None)?;
+                println!("Transfer successful!");
+                println!("Signature: {}", signature);
+            } else {
+                println!("Sub-account does not exist!");
+            }
+            Ok(())
+        },
+        Command::ToggleSubAccount {
+            authority_type,
+            authority,
+            authority_kp,
+            id,
+            enabled,
+        } => {
+            let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
+
+            let mut wallet = create_swig_instance(
+                ctx,
+                swig_id,
+                parse_authority_type(
+                    authority_type
+                        .unwrap_or_else(|| ctx.config.default_authority.authority_type.clone()),
+                )?,
+                authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
+                authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+            )?;
+
+            let sub_account = wallet.get_sub_account()?;
+            if let Some(sub_account) = sub_account {
+                wallet.toggle_sub_account(sub_account, enabled)?;
+                println!(
+                    "Sub-account {} successfully!",
+                    if enabled { "enabled" } else { "disabled" }
+                );
+            } else {
+                println!("Sub-account does not exist!");
+            }
+            Ok(())
+        },
+        Command::WithdrawFromSubAccount {
+            authority_type,
+            authority,
+            authority_kp,
+            id,
+            sub_account,
+            amount,
+        } => {
+            let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
+
+            let mut wallet = create_swig_instance(
+                ctx,
+                swig_id,
+                parse_authority_type(
+                    authority_type
+                        .unwrap_or_else(|| ctx.config.default_authority.authority_type.clone()),
+                )?,
+                authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
+                authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+            )?;
+
+            let sub_account = Pubkey::from_str(&sub_account)?;
+            wallet.withdraw_from_sub_account(sub_account, amount)?;
+            println!("Successfully withdrew {} lamports from sub-account", amount);
             Ok(())
         },
     }

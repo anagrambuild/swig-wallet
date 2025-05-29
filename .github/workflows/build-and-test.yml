@@ -76,6 +76,12 @@ jobs:
           cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=program_scope_test
           mkdir -p target/nextest/reports
           cp target/nextest/ci/output.xml target/nextest/reports/program-scope-tests.xml
+      
+      - name: Run Rust SDK Tests with nextest
+        run: |
+          cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=rust_sdk_test,program_scope_test
+          mkdir -p target/nextest/reports
+          cp target/nextest/ci/output.xml target/nextest/reports/rust-sdk-tests.xml
 
       - name: Upload Test Results
         uses: actions/upload-artifact@v4
