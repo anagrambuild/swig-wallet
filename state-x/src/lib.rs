@@ -143,6 +143,8 @@ pub enum SwigAuthenticateError {
     InvalidSessionKeyCannotReuseSessionKey,
     /// Invalid session duration
     InvalidSessionDuration,
+    /// Authorization lock violation - transfer would reduce balance below locked amount
+    PermissionDeniedAuthorizationLockViolation,
 }
 
 impl From<SwigStateError> for ProgramError {

@@ -34,7 +34,7 @@ use swig_state_x::{
     swig::{Swig, SwigWithRoles},
     AccountClassification, Discriminator, StakeAccountState, Transmutable,
 };
-use util::{read_program_scope_account_balance, ProgramScopeCache};
+use util::{read_program_scope_account_balance, AuthorizationLockCache, ProgramScopeCache};
 
 /// Program ID for the Swig wallet program
 declare_id!("swigDk8JezhiAVde8k6NMwxpZfgGm2NNuMe1KYCmUjP");
@@ -117,22 +117,25 @@ unsafe fn execute(
         index = 1;
     }
 
-    // Create program scope cache if first account is a valid Swig account
-    let program_scope_cache = if index > 0 {
+    // Create program scope cache and authorization lock cache if first account is a valid Swig account
+    let (program_scope_cache, authorization_lock_cache) = if index > 0 {
         let first_account = accounts[0].assume_init_ref();
         if first_account.owner() == &crate::ID {
             let data = first_account.borrow_data_unchecked();
             if data.len() >= Swig::LEN && *data.get_unchecked(0) == Discriminator::SwigAccount as u8
             {
-                ProgramScopeCache::load_from_swig(data)
+                (
+                    ProgramScopeCache::load_from_swig(data),
+                    AuthorizationLockCache::new(data).ok(),
+                )
             } else {
-                None
+                (None, None)
             }
         } else {
-            None
+            (None, None)
         }
     } else {
-        None
+        (None, None)
     };
 
     // Process remaining accounts using the cache
@@ -161,6 +164,7 @@ unsafe fn execute(
         core::slice::from_raw_parts(accounts.as_ptr() as _, index),
         core::slice::from_raw_parts(account_classification.as_ptr() as _, index),
         instruction,
+        authorization_lock_cache.as_ref(),
     )?;
     Ok(())
 }

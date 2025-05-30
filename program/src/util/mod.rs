@@ -6,25 +6,30 @@
 //! - Token transfer operations
 //! The utilities are optimized for performance and safety.
 
-use std::mem::MaybeUninit;
+use std::{collections::HashMap, mem::MaybeUninit};
 
 use pinocchio::{
     account_info::AccountInfo,
     cpi::invoke_signed,
     instruction::{AccountMeta, Instruction, Signer},
+    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
+    sysvars::{clock::Clock, Sysvar},
     ProgramResult,
 };
 use swig_state_x::{
     action::{
+        authorization_lock::AuthorizationLock,
         program_scope::{NumericType, ProgramScope},
         Action, Permission,
     },
     constants::PROGRAM_SCOPE_BYTE_SIZE,
     read_numeric_field,
+    role::Position,
+    role::RoleMut,
     swig::{Swig, SwigWithRoles},
-    Transmutable,
+    Transmutable, TransmutableMut,
 };
 
 use crate::error::SwigError;
@@ -155,6 +160,258 @@ impl ProgramScopeCache {
                 };
                 (*role_id, program_scope)
             })
+    }
+}
+
+/// Cache for authorization lock information to optimize lookups.
+///
+/// This struct maintains a mapping of token mints to their authorization locks
+/// across all roles in the Swig wallet. Authorization locks apply to the entire
+/// wallet regardless of which authority is signing.
+pub struct AuthorizationLockCache {
+    /// Maps token mint to authorization lock data from any role
+    locks: Vec<([u8; 32], AuthorizationLock)>,
+    /// Expired locks with their location information (role_id, cursor_start, cursor_end)
+    expired_locks: Vec<(u32, usize, usize)>,
+}
+
+impl AuthorizationLockCache {
+    /// Creates a new authorization lock cache by scanning all roles for authorization locks
+    /// Filters out any locks that have expired before the current slot
+    pub fn new(swig_roles: &[u8]) -> Result<Self, ProgramError> {
+        let clock = Clock::get()?;
+        let current_slot = clock.slot;
+        let mut lock_map: HashMap<[u8; 32], (u64, u64)> = HashMap::new(); // mint -> (total_locked_amount, latest_expiry_slot)
+        let mut expired_locks = Vec::new();
+
+        if swig_roles.len() < Swig::LEN {
+            return Ok(Self {
+                locks: Vec::new(),
+                expired_locks: Vec::new(),
+            });
+        }
+
+        let swig_with_roles = SwigWithRoles::from_bytes(swig_roles)
+            .map_err(|_| SwigError::InvalidSwigAccountDiscriminator)?;
+
+        // Iterate through all roles and their authorization locks
+        for role_id in 0..swig_with_roles.state.role_counter {
+            if let Ok(Some(role)) = swig_with_roles.get_role(role_id) {
+                let mut cursor = 0;
+                while cursor < role.actions.len() {
+                    if cursor + Action::LEN > role.actions.len() {
+                        break;
+                    }
+
+                    // Load the action header
+                    if let Ok(action_header) = unsafe {
+                        Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN])
+                    } {
+                        let action_start = cursor;
+                        cursor += Action::LEN;
+
+                        let action_len = action_header.length() as usize;
+                        if cursor + action_len > role.actions.len() {
+                            break;
+                        }
+
+                        // Try to load as AuthorizationLock
+                        if action_header.permission().ok() == Some(Permission::AuthorizationLock) {
+                            let action_data = &role.actions[cursor..cursor + action_len];
+                            if action_data.len() == AuthorizationLock::LEN {
+                                if let Ok(auth_lock) =
+                                    unsafe { AuthorizationLock::load_unchecked(action_data) }
+                                {
+                                    if auth_lock.is_expired(current_slot) {
+                                        // Cache expired lock location
+                                        expired_locks.push((
+                                            role_id,
+                                            action_start,
+                                            cursor + action_len,
+                                        ));
+                                    } else {
+                                        // Only include locks that haven't expired
+                                        // Combine locks for the same token mint
+                                        lock_map
+                                            .entry(auth_lock.token_mint)
+                                            .and_modify(|(amount, expiry)| {
+                                                *amount += auth_lock.locked_amount;
+                                                *expiry = (*expiry).max(auth_lock.expiry_slot);
+                                            })
+                                            .or_insert((
+                                                auth_lock.locked_amount,
+                                                auth_lock.expiry_slot,
+                                            ));
+                                    }
+                                }
+                            }
+                        }
+
+                        cursor += action_len;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Convert HashMap to Vec of combined locks
+        let locks = lock_map
+            .into_iter()
+            .map(|(mint, (total_amount, latest_expiry))| {
+                let combined_lock = AuthorizationLock::new(mint, total_amount, latest_expiry);
+                (mint, combined_lock)
+            })
+            .collect();
+
+        Ok(Self {
+            locks,
+            expired_locks,
+        })
+    }
+
+    /// Checks if any authorization locks would prevent the given transfer
+    pub fn check_authorization_locks(
+        &self,
+        mint: &[u8],
+        current_balance: &u64,
+        transfer_amount: u64,
+        current_slot: u64,
+    ) -> Result<(), ProgramError> {
+        for lock in &self.locks {
+            // Skip expired locks (should already be filtered out during cache creation)
+            if lock.1.is_expired(current_slot) {
+                continue;
+            }
+
+            // Check if this lock applies to the mint being transferred
+            if lock.0 == mint {
+                // Check if the transfer would violate the authorization lock
+                if let Err(e) =
+                    lock.1
+                        .check_authorization(current_balance, transfer_amount, current_slot)
+                {
+                    return Err(e);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes expired authorization locks from the Swig account data
+    ///
+    /// This method uses the cached expired lock locations to efficiently remove
+    /// expired authorization locks from the role data. It processes removals in
+    /// reverse order to maintain cursor validity.
+    ///
+    /// # Arguments
+    /// * `swig_roles` - Mutable reference to the roles data portion of the Swig account
+    ///
+    /// # Returns
+    /// * `ProgramResult` - Success or error status
+    pub fn remove_expired_locks(&self, swig_roles: &mut [u8]) -> ProgramResult {
+        use swig_state_x::{role::Position, swig::Swig, TransmutableMut};
+
+        if self.expired_locks.is_empty() {
+            return Ok(());
+        }
+
+        // Group expired locks by role_id
+        let mut locks_by_role: HashMap<u32, Vec<(usize, usize)>> = HashMap::new();
+        for &(role_id, start, end) in &self.expired_locks {
+            locks_by_role.entry(role_id).or_default().push((start, end));
+        }
+
+        // First pass: collect role information
+        let mut role_info: Vec<(u32, usize, usize, usize, usize, Vec<(usize, usize)>)> = Vec::new();
+
+        for (role_id, mut lock_positions) in locks_by_role {
+            // Sort positions in reverse order (largest start position first)
+            lock_positions.sort_by(|a, b| b.0.cmp(&a.0));
+
+            // Find the role's position in the buffer
+            let mut cursor = 0;
+
+            for _ in 0..100 {
+                // Reasonable upper bound to prevent infinite loops
+                if cursor + Position::LEN > swig_roles.len() {
+                    break;
+                }
+
+                let position = unsafe {
+                    Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])?
+                };
+
+                if position.id() == role_id {
+                    let auth_length = position.authority_length() as usize;
+                    let actions_start = cursor + Position::LEN + auth_length;
+                    let actions_end = position.boundary() as usize;
+
+                    if actions_start < actions_end && actions_end <= swig_roles.len() {
+                        role_info.push((
+                            role_id,
+                            cursor,
+                            actions_start,
+                            actions_end,
+                            auth_length,
+                            lock_positions,
+                        ));
+                    }
+                    break;
+                }
+
+                cursor = position.boundary() as usize;
+            }
+        }
+
+        // Second pass: perform the actual removals
+        for (role_id, offset, actions_start, actions_end, auth_length, lock_positions) in role_info
+        {
+            // Calculate total bytes to remove and count
+            let mut total_removed_bytes = 0;
+            let mut removed_count = 0u16;
+
+            for (lock_start, lock_end) in &lock_positions {
+                let relative_start = actions_start + lock_start;
+                let relative_end = actions_start + lock_end;
+                let lock_size = relative_end - relative_start;
+
+                if relative_end <= actions_end {
+                    // Shift remaining data to fill the gap
+                    let copy_start = relative_end;
+                    let copy_end = actions_end - total_removed_bytes;
+                    let copy_dest = relative_start;
+
+                    if copy_start < copy_end {
+                        // Use a temporary buffer to avoid overlapping copy issues
+                        let remaining_data = swig_roles[copy_start..copy_end].to_vec();
+                        swig_roles[copy_dest..copy_dest + remaining_data.len()]
+                            .copy_from_slice(&remaining_data);
+                    }
+
+                    total_removed_bytes += lock_size;
+                    removed_count += 1;
+                }
+            }
+
+            if removed_count > 0 {
+                // Update the position metadata
+                let position = unsafe {
+                    Position::load_mut_unchecked(&mut swig_roles[offset..offset + Position::LEN])?
+                };
+
+                position.num_actions = position.num_actions.saturating_sub(removed_count);
+                position.boundary = (position.boundary() as usize - total_removed_bytes) as u32;
+
+                // Clear the now-unused space at the end
+                let new_actions_end = actions_end - total_removed_bytes;
+                if new_actions_end < actions_end {
+                    swig_roles[new_actions_end..actions_end].fill(0);
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 

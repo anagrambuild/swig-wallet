@@ -137,6 +137,7 @@ impl<'a> SignV1<'a> {
 /// * `all_accounts` - All accounts involved in the transaction
 /// * `data` - Raw signing instruction data
 /// * `account_classifiers` - Classifications for involved accounts
+/// * `authorization_lock_cache` - Optional cache of authorization locks
 ///
 /// # Returns
 /// * `ProgramResult` - Success or error status
@@ -146,6 +147,7 @@ pub fn sign_v1(
     all_accounts: &[AccountInfo],
     data: &[u8],
     account_classifiers: &[AccountClassification],
+    authorization_lock_cache: Option<&crate::util::AuthorizationLockCache>,
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
     // KEEP remove since we enfoce swig is owned in lib.rs
@@ -210,10 +212,44 @@ pub fn sign_v1(
             return Err(SwigError::InstructionExecutionError.into());
         }
     }
+    // msg!("in sign_v1 about to get actions");
     let actions = role.actions;
+    // msg!("got actions");
+
     if RoleMut::get_action_mut::<All>(actions, &[])?.is_some() {
+        // Even with All permission, authorization locks must be enforced
+        if let Some(auth_cache) = authorization_lock_cache {
+            for (index, account) in account_classifiers.iter().enumerate() {
+                if let AccountClassification::SwigTokenAccount { balance } = account {
+                    let data =
+                        unsafe { &all_accounts.get_unchecked(index).borrow_data_unchecked() };
+                    let mint = unsafe { data.get_unchecked(0..32) };
+                    let current_token_balance = u64::from_le_bytes(unsafe {
+                        data.get_unchecked(64..72)
+                            .try_into()
+                            .map_err(|_| ProgramError::InvalidAccountData)?
+                    });
+
+                    // Check for outgoing transfers
+                    if balance > &current_token_balance {
+                        let transfer_amount = balance - current_token_balance;
+                        auth_cache.check_authorization_locks(
+                            mint,
+                            balance,
+                            transfer_amount,
+                            slot,
+                        )?;
+                    }
+                }
+            }
+        }
+        // Clean up expired authorization locks after successful execution
+        if let Some(auth_cache) = authorization_lock_cache {
+            auth_cache.remove_expired_locks(swig_roles)?;
+        }
         return Ok(());
     } else {
+        // msg!("not all role");
         for (index, account) in account_classifiers.iter().enumerate() {
             match account {
                 AccountClassification::ThisSwig { lamports } => {
@@ -267,7 +303,21 @@ pub fn sign_v1(
                                 .into(),
                         );
                     }
+
+                    // Check authorization locks for outgoing token transfers
                     if balance > &current_token_balance {
+                        let transfer_amount = balance - current_token_balance;
+
+                        // Check authorization locks if cache is available
+                        if let Some(auth_cache) = authorization_lock_cache {
+                            auth_cache.check_authorization_locks(
+                                mint,
+                                balance,
+                                transfer_amount,
+                                slot,
+                            )?;
+                        }
+
                         let mut matched = false;
                         let diff = balance - current_token_balance;
 
@@ -410,6 +460,11 @@ pub fn sign_v1(
                 _ => {},
             }
         }
+    }
+
+    // Clean up expired authorization locks after successful execution
+    if let Some(auth_cache) = authorization_lock_cache {
+        auth_cache.remove_expired_locks(swig_roles)?;
     }
 
     Ok(())

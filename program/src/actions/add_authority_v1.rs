@@ -208,6 +208,9 @@ pub fn add_authority_v1(
         let all = acting_role.get_action::<All>(&[])?;
         let manage_authority = acting_role.get_action::<ManageAuthority>(&[])?;
 
+        // TODO: Need to check if the authority also has an All action and if so,
+        // then they can get the AuthorizationLock action as well since this is
+        // supposed to apply to the entire swig wallet.
         if all.is_none() && manage_authority.is_none() {
             return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
         }

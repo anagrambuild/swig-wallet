@@ -32,6 +32,7 @@ use crate::{
         },
         SwigInstruction,
     },
+    util::AuthorizationLockCache,
     AccountClassification,
 };
 
@@ -45,6 +46,7 @@ use crate::{
 /// * `accounts` - List of accounts involved in the instruction
 /// * `account_classification` - Classification of each account's type and role
 /// * `data` - Raw instruction data
+/// * `authorization_lock_cache` - Optional cache of authorization locks
 ///
 /// # Returns
 /// * `ProgramResult` - Success or error status
@@ -53,6 +55,7 @@ pub fn process_action(
     accounts: &[AccountInfo],
     account_classification: &[AccountClassification],
     data: &[u8],
+    authorization_lock_cache: Option<&AuthorizationLockCache>,
 ) -> ProgramResult {
     if data.len() < 2 {
         return Err(ProgramError::InvalidInstructionData);
@@ -61,7 +64,12 @@ pub fn process_action(
     let ix = SwigInstruction::from_primitive(discriminator);
     match ix {
         SwigInstruction::CreateV1 => process_create_v1(accounts, data),
-        SwigInstruction::SignV1 => process_sign_v1(accounts, account_classification, data),
+        SwigInstruction::SignV1 => process_sign_v1(
+            accounts,
+            account_classification,
+            data,
+            authorization_lock_cache,
+        ),
         SwigInstruction::AddAuthorityV1 => process_add_authority_v1(accounts, data),
         SwigInstruction::RemoveAuthorityV1 => process_remove_authority_v1(accounts, data),
         SwigInstruction::CreateSessionV1 => process_create_session_v1(accounts, data),
@@ -91,9 +99,16 @@ fn process_sign_v1(
     accounts: &[AccountInfo],
     account_classification: &[AccountClassification],
     data: &[u8],
+    authorization_lock_cache: Option<&AuthorizationLockCache>,
 ) -> ProgramResult {
     let account_ctx = SignV1Accounts::context(accounts)?;
-    sign_v1(account_ctx, accounts, data, account_classification)
+    sign_v1(
+        account_ctx,
+        accounts,
+        data,
+        account_classification,
+        authorization_lock_cache,
+    )
 }
 
 /// Processes an AddAuthorityV1 instruction.
