@@ -24,6 +24,10 @@ pub struct AuthorizationLock {
     pub locked_amount: u64,
     /// The slot when this lock expires
     pub expiry_slot: u64,
+    /// The role ID of the authority that created this lock
+    pub creator_role_id: u32,
+    /// Padding to maintain 8-byte alignment
+    _padding: u32,
 }
 
 impl AuthorizationLock {
@@ -33,11 +37,19 @@ impl AuthorizationLock {
     /// * `token_mint` - The mint address of the token
     /// * `locked_amount` - The amount to lock
     /// * `expiry_slot` - When the lock expires
-    pub fn new(token_mint: [u8; 32], locked_amount: u64, expiry_slot: u64) -> Self {
+    /// * `creator_role_id` - The role ID of the authority creating this lock
+    pub fn new(
+        token_mint: [u8; 32],
+        locked_amount: u64,
+        expiry_slot: u64,
+        creator_role_id: u32,
+    ) -> Self {
         Self {
             token_mint,
             locked_amount,
             expiry_slot,
+            creator_role_id,
+            _padding: 0,
         }
     }
 
@@ -108,9 +120,10 @@ impl AuthorizationLock {
 }
 
 impl Transmutable for AuthorizationLock {
-    /// Size of the AuthorizationLock struct in bytes (32 bytes for mint + 8 bytes for
-    /// amount + 8 bytes for expiry)
-    const LEN: usize = 48;
+    /// Size of the AuthorizationLock struct in bytes (32 bytes for mint + 8
+    /// bytes for amount + 8 bytes for expiry + 4 bytes for creator_role_id
+    /// + 4 bytes padding)
+    const LEN: usize = 56;
 }
 
 impl TransmutableMut for AuthorizationLock {}

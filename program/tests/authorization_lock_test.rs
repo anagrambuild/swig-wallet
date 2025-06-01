@@ -80,11 +80,11 @@ fn test_authorization_lock_prevents_transfer_below_locked_amount() {
         .airdrop(&second_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Create multiple authorization locks for the same token mint that should be combined
-    // First lock: 300 tokens until slot 200
-    let auth_lock_1 = AuthorizationLock::new(mint_pubkey.to_bytes(), 300, 200);
+    // Create multiple authorization locks for the same token mint that should be
+    // combined First lock: 300 tokens until slot 200
+    let auth_lock_1 = AuthorizationLock::new(mint_pubkey.to_bytes(), 300, 200, 1);
     // Second lock: 200 tokens until slot 150
-    let auth_lock_2 = AuthorizationLock::new(mint_pubkey.to_bytes(), 200, 150);
+    let auth_lock_2 = AuthorizationLock::new(mint_pubkey.to_bytes(), 200, 150, 1);
     // Combined they should lock 500 tokens total until slot 200 (latest expiry)
 
     add_authority_with_ed25519_root(
@@ -112,8 +112,9 @@ fn test_authorization_lock_prevents_transfer_below_locked_amount() {
 
     context.svm.warp_to_slot(100); // Before expiry
 
-    // Try to transfer 600 tokens (would leave 400, below combined locked amount of 500)
-    // This should fail because the combined authorization locks require 500 tokens minimum
+    // Try to transfer 600 tokens (would leave 400, below combined locked amount of
+    // 500) This should fail because the combined authorization locks require
+    // 500 tokens minimum
     let token_ix = Instruction {
         program_id: spl_token::id(),
         accounts: vec![
@@ -226,8 +227,9 @@ fn test_authorization_lock_allows_transfer_above_locked_amount() {
         .airdrop(&second_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Create authorization lock that requires minimum 500 tokens, expires at slot 200
-    let auth_lock = AuthorizationLock::new(mint_pubkey.to_bytes(), 500, 200);
+    // Create authorization lock that requires minimum 500 tokens, expires at slot
+    // 200
+    let auth_lock = AuthorizationLock::new(mint_pubkey.to_bytes(), 500, 200, 1);
 
     add_authority_with_ed25519_root(
         &mut context,
@@ -351,8 +353,9 @@ fn test_authorization_lock_expires_allows_all_transfers() {
         .airdrop(&second_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Create authorization lock that requires minimum 500 tokens, expires at slot 200
-    let auth_lock = AuthorizationLock::new(mint_pubkey.to_bytes(), 500, 200);
+    // Create authorization lock that requires minimum 500 tokens, expires at slot
+    // 200
+    let auth_lock = AuthorizationLock::new(mint_pubkey.to_bytes(), 500, 200, 1);
 
     add_authority_with_ed25519_root(
         &mut context,
@@ -485,7 +488,7 @@ fn test_authorization_lock_with_all_permission_cant_bypass_lock() {
         .airdrop(&third_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    let auth_lock = AuthorizationLock::new(mint_pubkey.to_bytes(), 500, 200);
+    let auth_lock = AuthorizationLock::new(mint_pubkey.to_bytes(), 500, 200, 1);
     add_authority_with_ed25519_root(
         &mut context,
         &swig,
@@ -506,7 +509,8 @@ fn test_authorization_lock_with_all_permission_cant_bypass_lock() {
             authority: third_authority.pubkey().as_ref(),
         },
         vec![
-            ClientAction::AuthorizationLock(auth_lock), // Only authorization lock, no transfer permissions
+            ClientAction::AuthorizationLock(auth_lock), /* Only authorization lock, no transfer
+                                                         * permissions */
         ],
     )
     .unwrap();
@@ -622,9 +626,9 @@ fn test_multiple_authorization_locks_combine_for_same_token() {
     // Lock 2: 200 tokens until slot 200
     // Lock 3: 50 tokens until slot 300 (expires last)
     // Total combined: 350 tokens until slot 300
-    let auth_lock_1 = AuthorizationLock::new(mint_pubkey.to_bytes(), 100, 150);
-    let auth_lock_2 = AuthorizationLock::new(mint_pubkey.to_bytes(), 200, 150);
-    let auth_lock_3 = AuthorizationLock::new(mint_pubkey.to_bytes(), 50, 150);
+    let auth_lock_1 = AuthorizationLock::new(mint_pubkey.to_bytes(), 100, 150, 1);
+    let auth_lock_2 = AuthorizationLock::new(mint_pubkey.to_bytes(), 200, 150, 1);
+    let auth_lock_3 = AuthorizationLock::new(mint_pubkey.to_bytes(), 50, 150, 1);
 
     add_authority_with_ed25519_root(
         &mut context,
@@ -648,7 +652,8 @@ fn test_multiple_authorization_locks_combine_for_same_token() {
 
     context.svm.warp_to_slot(100); // Before any expiry
 
-    // Try to transfer 700 tokens (would leave 300, below combined locked amount of 350)
+    // Try to transfer 700 tokens (would leave 300, below combined locked amount of
+    // 350)
     let token_ix = Instruction {
         program_id: spl_token::id(),
         accounts: vec![
@@ -684,7 +689,8 @@ fn test_multiple_authorization_locks_combine_for_same_token() {
     assert!(res.is_err());
     // println!("{}", res.clone().unwrap().pretty_logs());
 
-    // Should fail with authorization lock violation - combined locks require 350 tokens minimum
+    // Should fail with authorization lock violation - combined locks require 350
+    // tokens minimum
     let full_res = res.unwrap_err();
 
     println!("{}", full_res.meta.pretty_logs());
@@ -794,8 +800,9 @@ fn test_expired_authorization_locks_automatically_removed() {
         .airdrop(&second_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Create authorization lock that requires minimum 500 tokens, expires at slot 200
-    let auth_lock = AuthorizationLock::new(mint_pubkey.to_bytes(), 500, 200);
+    // Create authorization lock that requires minimum 500 tokens, expires at slot
+    // 200
+    let auth_lock = AuthorizationLock::new(mint_pubkey.to_bytes(), 500, 200, 1);
 
     add_authority_with_ed25519_root(
         &mut context,
@@ -872,7 +879,8 @@ fn test_expired_authorization_locks_automatically_removed() {
     let swig_account_data = context.svm.get_account(&swig).unwrap();
     let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data.data).unwrap();
 
-    // Count authorization lock actions in role 1 (the second authority that had the lock)
+    // Count authorization lock actions in role 1 (the second authority that had the
+    // lock)
     let mut auth_lock_count = 0;
     if let Ok(Some(role)) = swig_with_roles.get_role(1) {
         let mut cursor = 0;
@@ -946,11 +954,13 @@ fn test_expired_authorization_locks_automatically_removed() {
         "Transfer should succeed after lock expiry - expired lock should be automatically removed"
     );
 
-    // CRITICAL: Verify that the authorization lock was actually removed from the swig account data after expiry
+    // CRITICAL: Verify that the authorization lock was actually removed from the
+    // swig account data after expiry
     let swig_account_data = context.svm.get_account(&swig).unwrap();
     let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data.data).unwrap();
 
-    // Count authorization lock actions in role 1 (the second authority that had the lock)
+    // Count authorization lock actions in role 1 (the second authority that had the
+    // lock)
     let mut auth_lock_count = 0;
     if let Ok(Some(role)) = swig_with_roles.get_role(1) {
         let mut cursor = 0;
@@ -993,7 +1003,8 @@ fn test_expired_authorization_locks_automatically_removed() {
 
     // Also verify that the role's action count decreased
     if let Ok(Some(role)) = swig_with_roles.get_role(1) {
-        // Role should now have only 1 action (TokenLimit), the AuthorizationLock should be gone
+        // Role should now have only 1 action (TokenLimit), the AuthorizationLock should
+        // be gone
         assert_eq!(
             role.position.num_actions(),
             1,
@@ -1005,7 +1016,8 @@ fn test_expired_authorization_locks_automatically_removed() {
         "✅ Verified that expired authorization lock was physically removed from swig account data"
     );
 
-    // Additional verification: Test a second transfer that would have failed with the lock
+    // Additional verification: Test a second transfer that would have failed with
+    // the lock
     let token_ix_2 = Instruction {
         program_id: spl_token::id(),
         accounts: vec![

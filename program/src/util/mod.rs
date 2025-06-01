@@ -26,8 +26,7 @@ use swig_state_x::{
     },
     constants::PROGRAM_SCOPE_BYTE_SIZE,
     read_numeric_field,
-    role::Position,
-    role::RoleMut,
+    role::{Position, RoleMut},
     swig::{Swig, SwigWithRoles},
     Transmutable, TransmutableMut,
 };
@@ -171,13 +170,15 @@ impl ProgramScopeCache {
 pub struct AuthorizationLockCache {
     /// Maps token mint to authorization lock data from any role
     locks: Vec<([u8; 32], AuthorizationLock)>,
-    /// Expired locks with their location information (role_id, cursor_start, cursor_end)
+    /// Expired locks with their location information (role_id, cursor_start,
+    /// cursor_end)
     expired_locks: Vec<(u32, usize, usize)>,
 }
 
 impl AuthorizationLockCache {
-    /// Creates a new authorization lock cache by scanning all roles for authorization locks
-    /// Filters out any locks that have expired before the current slot
+    /// Creates a new authorization lock cache by scanning all roles for
+    /// authorization locks Filters out any locks that have expired before
+    /// the current slot
     pub fn new(swig_roles: &[u8]) -> Result<Self, ProgramError> {
         let clock = Clock::get()?;
         let current_slot = clock.slot;
@@ -259,7 +260,7 @@ impl AuthorizationLockCache {
         let locks = lock_map
             .into_iter()
             .map(|(mint, (total_amount, latest_expiry))| {
-                let combined_lock = AuthorizationLock::new(mint, total_amount, latest_expiry);
+                let combined_lock = AuthorizationLock::new(mint, total_amount, latest_expiry, 0);
                 (mint, combined_lock)
             })
             .collect();
@@ -305,7 +306,8 @@ impl AuthorizationLockCache {
     /// reverse order to maintain cursor validity.
     ///
     /// # Arguments
-    /// * `swig_roles` - Mutable reference to the roles data portion of the Swig account
+    /// * `swig_roles` - Mutable reference to the roles data portion of the Swig
+    ///   account
     ///
     /// # Returns
     /// * `ProgramResult` - Success or error status
