@@ -17,7 +17,7 @@ pub use swig_compact_instructions::*;
 use swig_state_x::{
     action::{
         all::All, authorization_lock::AuthorizationLock, manage_authority::ManageAuthority,
-        manage_authorization_lock::ManageAuthorizationLock, program::Program,
+        program::Program,
         program_scope::ProgramScope, sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
         stake_all::StakeAll, stake_limit::StakeLimit, stake_recurring_limit::StakeRecurringLimit,
         sub_account::SubAccount, token_limit::TokenLimit,
@@ -45,7 +45,6 @@ pub enum ClientAction {
     StakeRecurringLimit(StakeRecurringLimit),
     StakeAll(StakeAll),
     AuthorizationLock(AuthorizationLock),
-    ManageAuthorizationLock(ManageAuthorizationLock),
 }
 
 impl ClientAction {
@@ -72,10 +71,6 @@ impl ClientAction {
             ClientAction::AuthorizationLock(_) => {
                 (Permission::AuthorizationLock, AuthorizationLock::LEN)
             },
-            ClientAction::ManageAuthorizationLock(_) => (
-                Permission::ManageAuthorizationLock,
-                ManageAuthorizationLock::LEN,
-            ),
         };
         let offset = data.len() as u32;
         let header = Action::new(
@@ -101,7 +96,6 @@ impl ClientAction {
             ClientAction::StakeRecurringLimit(action) => action.into_bytes(),
             ClientAction::StakeAll(action) => action.into_bytes(),
             ClientAction::AuthorizationLock(action) => action.into_bytes(),
-            ClientAction::ManageAuthorizationLock(action) => action.into_bytes(),
         };
         data.extend_from_slice(
             bytes_res.map_err(|e| anyhow::anyhow!("Failed to serialize action {:?}", e))?,
