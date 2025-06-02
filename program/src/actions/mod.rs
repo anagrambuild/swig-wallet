@@ -21,16 +21,16 @@ use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
 
 use self::{
-    add_actions_to_role_v1::*, add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*, 
-    create_v1::*, remove_actions_from_role_v1::*, remove_authority_v1::*, sign_v1::*, 
+    add_actions_to_role_v1::*, add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*,
+    create_v1::*, remove_actions_from_role_v1::*, remove_authority_v1::*, sign_v1::*,
     sub_account_sign_v1::*, toggle_sub_account_v1::*, withdraw_from_sub_account_v1::*,
 };
 use crate::{
     instruction::{
         accounts::{
-            AddActionsToRoleV1Accounts, AddAuthorityV1Accounts, CreateSessionV1Accounts, 
+            AddActionsToRoleV1Accounts, AddAuthorityV1Accounts, CreateSessionV1Accounts,
             CreateSubAccountV1Accounts, CreateV1Accounts, RemoveActionsFromRoleV1Accounts,
-            RemoveAuthorityV1Accounts, SignV1Accounts, SubAccountSignV1Accounts, 
+            RemoveAuthorityV1Accounts, SignV1Accounts, SubAccountSignV1Accounts,
             ToggleSubAccountV1Accounts, WithdrawFromSubAccountV1Accounts,
         },
         SwigInstruction,
@@ -85,7 +85,9 @@ pub fn process_action(
         },
         SwigInstruction::ToggleSubAccountV1 => process_toggle_sub_account_v1(accounts, data),
         SwigInstruction::AddActionsToRoleV1 => process_add_actions_to_role_v1(accounts, data),
-        SwigInstruction::RemoveActionsFromRoleV1 => process_remove_actions_from_role_v1(accounts, data),
+        SwigInstruction::RemoveActionsFromRoleV1 => {
+            process_remove_actions_from_role_v1(accounts, data)
+        },
     }
 }
 

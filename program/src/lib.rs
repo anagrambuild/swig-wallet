@@ -117,7 +117,8 @@ unsafe fn execute(
         index = 1;
     }
 
-    // Create program scope cache and authorization lock cache if first account is a valid Swig account
+    // Create program scope cache and authorization lock cache if first account is a
+    // valid Swig account
     let (program_scope_cache, authorization_lock_cache) = if index > 0 {
         let first_account = accounts[0].assume_init_ref();
         if first_account.owner() == &crate::ID {

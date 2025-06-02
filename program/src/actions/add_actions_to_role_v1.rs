@@ -12,7 +12,10 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state_x::{
-    action::{all::All, manage_authority::ManageAuthority, manage_authorization_lock::ManageAuthorizationLock, Action, ActionLoader, Permission},
+    action::{
+        all::All, manage_authority::ManageAuthority,
+        manage_authorization_lock::ManageAuthorizationLock, Action, ActionLoader, Permission,
+    },
     role::Position,
     swig::{Swig, SwigBuilder},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
@@ -149,7 +152,7 @@ pub fn add_actions_to_role_v1(
         32,
         SwigError::InvalidSystemProgram,
     )?;
-    
+
     let add_actions_to_role_v1 = AddActionsToRoleV1::from_instruction_bytes(add).map_err(|e| {
         msg!("AddActionsToRoleV1 Args Error: {:?}", e);
         ProgramError::InvalidInstructionData
@@ -161,19 +164,20 @@ pub fn add_actions_to_role_v1(
 
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let swig_data_len = swig_account_data.len();
-    
+
     // Find and validate the target role, calculate space needed
     let (new_reserved_lamports, target_role_boundary, target_role_offset) = {
         if swig_account_data[0] != Discriminator::SwigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
-        
+
         let (swig_header, swig_roles) =
             unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
         let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
-        
+
         // Find the acting role
-        let acting_role = Swig::get_mut_role(add_actions_to_role_v1.args.acting_role_id, swig_roles)?;
+        let acting_role =
+            Swig::get_mut_role(add_actions_to_role_v1.args.acting_role_id, swig_roles)?;
         if acting_role.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
@@ -198,7 +202,7 @@ pub fn add_actions_to_role_v1(
                 slot,
             )?;
         }
-        
+
         // Check permissions
         let all = acting_role.get_action::<All>(&[])?;
         let manage_authority = acting_role.get_action::<ManageAuthority>(&[])?;
@@ -206,48 +210,48 @@ pub fn add_actions_to_role_v1(
         if all.is_none() && manage_authority.is_none() {
             return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
         }
-        
+
         // Check if any actions being added are AuthorizationLock and verify permission
         let mut action_cursor = 0;
         for _i in 0..add_actions_to_role_v1.args.num_actions {
-            let header = &add_actions_to_role_v1.actions[action_cursor..action_cursor + Action::LEN];
+            let header =
+                &add_actions_to_role_v1.actions[action_cursor..action_cursor + Action::LEN];
             let action_header = unsafe { Action::load_unchecked(header)? };
-            
+
             if action_header.permission()? == Permission::AuthorizationLock {
                 let manage_auth_lock = acting_role.get_action::<ManageAuthorizationLock>(&[])?;
                 if all.is_none() && manage_auth_lock.is_none() {
                     return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
                 }
             }
-            
+
             action_cursor += Action::LEN + action_header.length() as usize;
         }
-        
+
         // Find the target role
         let mut cursor = 0;
         let mut target_found = false;
         let mut target_role_offset = 0;
         let mut target_role_boundary = 0;
-        
+
         for _i in 0..swig.roles {
-            let position = unsafe {
-                Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])?
-            };
-            
+            let position =
+                unsafe { Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])? };
+
             if position.id() == add_actions_to_role_v1.args.target_role_id {
                 target_found = true;
                 target_role_offset = cursor;
                 target_role_boundary = position.boundary() as usize;
                 break;
             }
-            
+
             cursor = position.boundary() as usize;
         }
-        
+
         if !target_found {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
-        
+
         // Calculate new account size
         let additional_size = add_actions_to_role_v1.actions.len();
         let account_size = core::alloc::Layout::from_size_align(
@@ -257,14 +261,14 @@ pub fn add_actions_to_role_v1(
         .map_err(|_| SwigError::InvalidAlignment)?
         .pad_to_align()
         .size();
-        
+
         ctx.accounts.swig.realloc(account_size, false)?;
-        
+
         let cost = Rent::get()?
             .minimum_balance(account_size)
             .checked_sub(swig.reserved_lamports)
             .unwrap_or_default();
-        
+
         if cost > 0 {
             Transfer {
                 from: ctx.accounts.payer,
@@ -273,38 +277,46 @@ pub fn add_actions_to_role_v1(
             }
             .invoke()?;
         }
-        
-        (swig.reserved_lamports + cost, target_role_boundary, target_role_offset)
+
+        (
+            swig.reserved_lamports + cost,
+            target_role_boundary,
+            target_role_offset,
+        )
     };
-    
+
     // Now modify the account data
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let mut swig_builder = SwigBuilder::new_from_bytes(swig_account_data)?;
     swig_builder.swig.reserved_lamports = new_reserved_lamports;
-    
+
     // Calculate the new data size and shift existing data
     let additional_size = add_actions_to_role_v1.actions.len();
     let shift_from = target_role_boundary;
     let shift_to = target_role_boundary + additional_size;
-    
+
     // Calculate how much data we have after the target role
     let old_role_buffer_len = swig_data_len - Swig::LEN;
     let data_to_shift = old_role_buffer_len.saturating_sub(shift_from);
-    
+
     if data_to_shift > 0 && shift_from < old_role_buffer_len {
         // Shift data to make room for new actions
-        swig_builder.role_buffer.copy_within(shift_from..shift_from + data_to_shift, shift_to);
+        swig_builder
+            .role_buffer
+            .copy_within(shift_from..shift_from + data_to_shift, shift_to);
     }
-    
+
     // Update all role boundaries that come after the target role
     let mut cursor = 0;
     for i in 0..swig_builder.swig.roles {
         let position = unsafe {
-            Position::load_mut_unchecked(&mut swig_builder.role_buffer[cursor..cursor + Position::LEN])?
+            Position::load_mut_unchecked(
+                &mut swig_builder.role_buffer[cursor..cursor + Position::LEN],
+            )?
         };
-        
+
         let old_boundary = position.boundary as usize;
-        
+
         if cursor == target_role_offset {
             // This is the target role, update its num_actions and boundary
             position.num_actions += add_actions_to_role_v1.args.num_actions as u16;
@@ -313,7 +325,7 @@ pub fn add_actions_to_role_v1(
             // This role comes after the target, update its boundary
             position.boundary += additional_size as u32;
         }
-        
+
         // Move to next role using the original boundary
         cursor = if old_boundary <= target_role_boundary {
             old_boundary
@@ -321,42 +333,53 @@ pub fn add_actions_to_role_v1(
             old_boundary + additional_size
         };
     }
-    
+
     // Add the new actions to the target role
     let mut action_cursor = 0;
     let mut insert_cursor = target_role_boundary;
-    
+
     for _i in 0..add_actions_to_role_v1.args.num_actions {
         let header = &add_actions_to_role_v1.actions[action_cursor..action_cursor + Action::LEN];
         let action_header = unsafe { Action::load_unchecked(header)? };
         action_cursor += Action::LEN;
-        
-        let action_slice = &add_actions_to_role_v1.actions[action_cursor..action_cursor + action_header.length() as usize];
+
+        let action_slice = &add_actions_to_role_v1.actions
+            [action_cursor..action_cursor + action_header.length() as usize];
         action_cursor += action_header.length() as usize;
-        
+
         if ActionLoader::validate_layout(action_header.permission()?, action_slice)? {
             // Copy action header
-            swig_builder.role_buffer[insert_cursor..insert_cursor + Action::LEN].copy_from_slice(header);
-            
+            swig_builder.role_buffer[insert_cursor..insert_cursor + Action::LEN]
+                .copy_from_slice(header);
+
             // Fix boundary: position where next action starts within actions buffer
             // This should match the pattern used in add_role method
-            let actions_start = target_role_offset + Position::LEN + 
-                unsafe { Position::load_unchecked(&swig_builder.role_buffer[target_role_offset..target_role_offset + Position::LEN])?.authority_length() as usize };
+            let actions_start = target_role_offset
+                + Position::LEN
+                + unsafe {
+                    Position::load_unchecked(
+                        &swig_builder.role_buffer
+                            [target_role_offset..target_role_offset + Position::LEN],
+                    )?
+                    .authority_length() as usize
+                };
             let current_action_pos_in_actions = insert_cursor - actions_start;
-            let next_action_pos_in_actions = current_action_pos_in_actions + Action::LEN + action_header.length() as usize;
+            let next_action_pos_in_actions =
+                current_action_pos_in_actions + Action::LEN + action_header.length() as usize;
             swig_builder.role_buffer[insert_cursor + 4..insert_cursor + 8]
                 .copy_from_slice(&(next_action_pos_in_actions as u32).to_le_bytes());
-            
+
             insert_cursor += Action::LEN;
-            
+
             // Copy action data
-            swig_builder.role_buffer[insert_cursor..insert_cursor + action_header.length() as usize]
+            swig_builder.role_buffer
+                [insert_cursor..insert_cursor + action_header.length() as usize]
                 .copy_from_slice(action_slice);
             insert_cursor += action_header.length() as usize;
         } else {
             return Err(ProgramError::InvalidAccountData);
         }
     }
-    
+
     Ok(())
 }
