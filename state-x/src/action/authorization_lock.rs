@@ -16,7 +16,7 @@ use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
 /// out of the wallet until the expiry slot is reached. This is useful for
 /// implementing authorization holds like those used by card companies.
 #[repr(C, align(8))]
-#[derive(Debug, Copy, Clone, NoPadding)]
+#[derive(Debug, NoPadding)]
 pub struct AuthorizationLock {
     /// The mint address of the token this lock applies to
     pub token_mint: [u8; 32],
