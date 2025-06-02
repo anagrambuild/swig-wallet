@@ -148,7 +148,7 @@ fn test_authorization_lock_prevents_transfer_below_locked_amount() {
 
     let res = context.svm.send_transaction(transfer_tx);
 
-    if (!res.is_err()) {
+    if !res.is_err() {
         println!("{}", res.clone().unwrap().pretty_logs());
     }
     assert!(res.is_err());
@@ -284,7 +284,7 @@ fn test_authorization_lock_allows_transfer_above_locked_amount() {
             .unwrap();
 
     let res = context.svm.send_transaction(transfer_tx);
-    if (res.is_err()) {
+    if res.is_err() {
         println!("{}", res.clone().unwrap().pretty_logs());
     }
     assert!(res.is_ok());
@@ -412,7 +412,7 @@ fn test_authorization_lock_expires_allows_all_transfers() {
 
     let res = context.svm.send_transaction(transfer_tx);
 
-    if (res.is_err()) {
+    if res.is_err() {
         println!("{}", res.clone().unwrap().pretty_logs());
     }
     assert!(res.is_ok());

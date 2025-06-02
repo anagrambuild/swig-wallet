@@ -12,7 +12,7 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state_x::{
-    action::{all::All, manage_authority::ManageAuthority},
+    action::{all::All, manage_authority::ManageAuthority, manage_authorization_lock::ManageAuthorizationLock, Action, Permission},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::{Swig, SwigBuilder},
@@ -207,12 +207,28 @@ pub fn add_authority_v1(
         }
         let all = acting_role.get_action::<All>(&[])?;
         let manage_authority = acting_role.get_action::<ManageAuthority>(&[])?;
+        let manage_auth_lock = acting_role.get_action::<ManageAuthorizationLock>(&[])?;
 
-        // TODO: Need to check if the authority also has an All action and if so,
-        // then they can get the AuthorizationLock action as well since this is
-        // supposed to apply to the entire swig wallet.
         if all.is_none() && manage_authority.is_none() {
             return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
+        }
+        
+        // Check if any actions being added are AuthorizationLock and verify permission
+        let has_all = all.is_some();
+        let has_manage_auth_lock = manage_auth_lock.is_some();
+        
+        let mut action_cursor = 0;
+        for _i in 0..add_authority_v1.args.num_actions {
+            let header = &add_authority_v1.actions[action_cursor..action_cursor + Action::LEN];
+            let action_header = unsafe { Action::load_unchecked(header)? };
+            
+            if action_header.permission()? == Permission::AuthorizationLock {
+                if !has_all && !has_manage_auth_lock {
+                    return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
+                }
+            }
+            
+            action_cursor += Action::LEN + action_header.length() as usize;
         }
         let new_authority_length = authority_type_to_length(&new_authority_type)?;
         let role_size = Position::LEN + new_authority_length + add_authority_v1.actions.len();
