@@ -12,7 +12,7 @@ use pinocchio::{
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state_x::{
     action::{
-        all::All, manage_authority::ManageAuthority,
+        all::All, authorization_lock::AuthorizationLock, manage_authority::ManageAuthority,
         manage_authorization_lock::ManageAuthorizationLock, Action, Permission,
     },
     role::Position,
@@ -296,6 +296,24 @@ pub fn remove_actions_from_role_v1(
                 if action.permission()? == Permission::AuthorizationLock {
                     if !has_all && !has_manage_auth_lock {
                         return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
+                    }
+
+                    // Additional validation: check that the acting role ID matches the creator role ID
+                    let action_data_start = action_cursor + Action::LEN;
+                    let action_data = &actions_data[action_data_start..action.boundary() as usize];
+
+                    if action_data.len() >= AuthorizationLock::LEN {
+                        let authorization_lock =
+                            unsafe { AuthorizationLock::load_unchecked(action_data)? };
+
+                        // Verify that the acting role ID matches the creator role ID
+                        if authorization_lock.creator_role_id
+                            != remove_actions_from_role_v1.args.acting_role_id
+                        {
+                            return Err(
+                                SwigAuthenticateError::PermissionDeniedToManageAuthority.into()
+                            );
+                        }
                     }
                 }
 
