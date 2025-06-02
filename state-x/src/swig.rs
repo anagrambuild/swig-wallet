@@ -397,19 +397,11 @@ impl Swig {
                 _ => return Err(ProgramError::InvalidAccountData),
             };
 
-            // msg!("get_mut_role");
-            // msg!("position.boundary(): {:?}", position.boundary() as usize);
-            // msg!("Position::LEN: {:?}", Position::LEN);
-            // msg!("authority_length: {:?}", authority_length);
-            // msg!("actions: {:?}", actions);
-            // msg!("num_actions: {:?}", position.num_actions());
-
             let action_data_end =
                 position.boundary() as usize - (offset + Position::LEN + authority_length);
 
             let (actions, _rest) = unsafe { actions.split_at_mut_unchecked(action_data_end) };
 
-            // msg!("actions.len(): {:?}", actions.len());
             let role = RoleMut {
                 position,
                 authority: auth,

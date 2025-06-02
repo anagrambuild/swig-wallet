@@ -129,12 +129,6 @@ impl<'a> RoleMut<'a> {
                 Action::load_unchecked(self.actions.get_unchecked(cursor..cursor + Action::LEN))?
             };
             cursor += Action::LEN;
-            // msg!(
-            //     "action permission: {:?}, length: {:?}, boundary: {:?}",
-            //     action.permission(),
-            //     action.length(),
-            //     action.boundary()
-            // );
             if action.permission()? == A::TYPE {
                 let action_obj = unsafe {
                     A::load_unchecked(self.actions.get_unchecked(cursor..cursor + A::LEN))?
@@ -155,34 +149,22 @@ impl<'a> RoleMut<'a> {
         actions_data: &'a mut [u8],
         match_data: &[u8],
     ) -> Result<Option<&'a mut A>, ProgramError> {
-        // msg!("trying to get action mut");
         let mut cursor = 0;
         let end_pos = actions_data.len();
         let mut found_offset = None;
         {
             while cursor < end_pos {
-                // msg!("cursor: {:?}", cursor);
-                // msg!("end_pos: {:?}", end_pos);
-
                 let action = unsafe {
                     Action::load_unchecked(
                         actions_data.get_unchecked(cursor..cursor + Action::LEN),
                     )?
                 };
                 cursor += Action::LEN;
-                // msg!("cursor: {:?}", cursor);
-                // msg!(
-                //     "action permission: {:?}, length: {:?}, boundary: {:?}",
-                //     action.permission(),
-                //     action.length(),
-                //     action.boundary()
-                // );
                 if action.permission()? == A::TYPE {
                     let action_obj = unsafe {
                         A::load_unchecked(actions_data.get_unchecked(cursor..cursor + A::LEN))?
                     };
                     if !A::REPEATABLE || action_obj.match_data(match_data) {
-                        // msg!("found offset, breaking");
                         found_offset = Some(cursor);
                         break;
                     }

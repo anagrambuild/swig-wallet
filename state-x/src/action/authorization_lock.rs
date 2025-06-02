@@ -80,7 +80,6 @@ impl AuthorizationLock {
         transfer_amount: u64,
         current_slot: u64,
     ) -> Result<(), ProgramError> {
-        msg!("lock.is_expired: {:?}", self.is_expired(current_slot));
         // If the lock has expired, allow the transfer
         if self.is_expired(current_slot) {
             return Ok(());
@@ -88,10 +87,6 @@ impl AuthorizationLock {
 
         // Check if the transfer would reduce balance below locked amount
         let remaining_balance = current_balance.saturating_sub(transfer_amount);
-        msg!("transfer_amount: {:?}", remaining_balance);
-        msg!("current_balance: {:?}", current_balance);
-        msg!("transfer_amount: {:?}", transfer_amount);
-        msg!("locked_amount: {:?}", self.locked_amount);
         if remaining_balance < self.locked_amount {
             msg!("PermissionDeniedAuthorizationLockViolation");
             return Err(SwigAuthenticateError::PermissionDeniedAuthorizationLockViolation.into());

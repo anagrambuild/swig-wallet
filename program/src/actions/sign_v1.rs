@@ -212,9 +212,8 @@ pub fn sign_v1(
             return Err(SwigError::InstructionExecutionError.into());
         }
     }
-    // msg!("in sign_v1 about to get actions");
+
     let actions = role.actions;
-    // msg!("got actions");
 
     if RoleMut::get_action_mut::<All>(actions, &[])?.is_some() {
         // Even with All permission, authorization locks must be enforced
@@ -249,7 +248,6 @@ pub fn sign_v1(
         }
         return Ok(());
     } else {
-        // msg!("not all role");
         for (index, account) in account_classifiers.iter().enumerate() {
             match account {
                 AccountClassification::ThisSwig { lamports } => {

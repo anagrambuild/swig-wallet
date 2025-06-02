@@ -191,7 +191,6 @@ pub fn withdraw_from_sub_account_v1(
             amount,
             token_program: token_account_program_owner,
         };
-        msg!("amount: {}", amount);
         let role_id_bytes = sub_account.role_id.to_le_bytes();
         let bump_byte = [sub_account.bump];
         let seeds = sub_account_signer(&swig.id, &role_id_bytes, &bump_byte);
