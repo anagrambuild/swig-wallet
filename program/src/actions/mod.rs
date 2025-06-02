@@ -5,10 +5,12 @@
 //! instruction type and handles the validation and execution of that
 //! instruction's business logic.
 
+pub mod add_actions_to_role_v1;
 pub mod add_authority_v1;
 pub mod create_session_v1;
 pub mod create_sub_account_v1;
 pub mod create_v1;
+pub mod remove_actions_from_role_v1;
 pub mod remove_authority_v1;
 pub mod sign_v1;
 pub mod sub_account_sign_v1;
@@ -19,15 +21,16 @@ use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
 
 use self::{
-    add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*, create_v1::*,
-    remove_authority_v1::*, sign_v1::*, sub_account_sign_v1::*, toggle_sub_account_v1::*,
-    withdraw_from_sub_account_v1::*,
+    add_actions_to_role_v1::*, add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*, 
+    create_v1::*, remove_actions_from_role_v1::*, remove_authority_v1::*, sign_v1::*, 
+    sub_account_sign_v1::*, toggle_sub_account_v1::*, withdraw_from_sub_account_v1::*,
 };
 use crate::{
     instruction::{
         accounts::{
-            AddAuthorityV1Accounts, CreateSessionV1Accounts, CreateSubAccountV1Accounts,
-            CreateV1Accounts, RemoveAuthorityV1Accounts, SignV1Accounts, SubAccountSignV1Accounts,
+            AddActionsToRoleV1Accounts, AddAuthorityV1Accounts, CreateSessionV1Accounts, 
+            CreateSubAccountV1Accounts, CreateV1Accounts, RemoveActionsFromRoleV1Accounts,
+            RemoveAuthorityV1Accounts, SignV1Accounts, SubAccountSignV1Accounts, 
             ToggleSubAccountV1Accounts, WithdrawFromSubAccountV1Accounts,
         },
         SwigInstruction,
@@ -81,6 +84,8 @@ pub fn process_action(
             process_sub_account_sign_v1(accounts, account_classification, data)
         },
         SwigInstruction::ToggleSubAccountV1 => process_toggle_sub_account_v1(accounts, data),
+        SwigInstruction::AddActionsToRoleV1 => process_add_actions_to_role_v1(accounts, data),
+        SwigInstruction::RemoveActionsFromRoleV1 => process_remove_actions_from_role_v1(accounts, data),
     }
 }
 
@@ -173,4 +178,20 @@ fn process_sub_account_sign_v1(
 fn process_toggle_sub_account_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = ToggleSubAccountV1Accounts::context(accounts)?;
     toggle_sub_account_v1(account_ctx, data, accounts)
+}
+
+/// Processes an AddActionsToRoleV1 instruction.
+///
+/// Adds actions to an existing role with specified permissions.
+fn process_add_actions_to_role_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = AddActionsToRoleV1Accounts::context(accounts)?;
+    add_actions_to_role_v1(account_ctx, data, accounts)
+}
+
+/// Processes a RemoveActionsFromRoleV1 instruction.
+///
+/// Removes actions from an existing role by their indices.
+fn process_remove_actions_from_role_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = RemoveActionsFromRoleV1Accounts::context(accounts)?;
+    remove_actions_from_role_v1(account_ctx, data, accounts)
 }

@@ -128,4 +128,26 @@ pub enum SwigInstruction {
     #[account(1, signer, name="payer", desc="the payer")]
     #[account(2, writable, name="sub_account", desc="the sub account to toggle enabled state")]
     ToggleSubAccountV1 = 10,
+
+    /// Adds actions to an existing role.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. System program account
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, name="system_program", desc="the system program")]
+    AddActionsToRoleV1 = 11,
+
+    /// Removes actions from an existing role.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. System program account
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, name="system_program", desc="the system program")]
+    RemoveActionsFromRoleV1 = 12,
 }

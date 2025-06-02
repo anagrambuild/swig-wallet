@@ -105,6 +105,16 @@ pub enum SwigError {
     InvalidSwigTokenAccountOwner,
     /// Invalid program scope balance field configuration
     InvalidProgramScopeBalanceFields,
+    /// Add actions to role instruction data is too short
+    InvalidSwigAddActionsToRoleInstructionDataTooShort,
+    /// Remove actions from role instruction data is too short
+    InvalidSwigRemoveActionsFromRoleInstructionDataTooShort,
+    /// Action indices list is empty
+    InvalidActionIndicesEmpty,
+    /// Duplicate action indices provided
+    InvalidActionIndicesDuplicate,
+    /// Action index is out of bounds
+    InvalidActionIndexOutOfBounds,
 }
 
 /// Implements conversion from SwigError to ProgramError.
