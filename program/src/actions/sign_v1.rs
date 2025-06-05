@@ -30,7 +30,7 @@ use swig_state_x::{
     },
     authority::AuthorityType,
     role::RoleMut,
-    swig::{swig_account_signer, Swig},
+    swig::{swig_account_signer, Swig, SwigWithRoles},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -271,21 +271,52 @@ pub fn sign_v1(
                         let mut matched = false;
                         let diff = balance - current_token_balance;
 
-                        {
-                            if let Some(action) =
-                                RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?
-                            {
-                                action.run(diff, slot)?;
-                                continue;
-                            };
+                        // Check authorization locks first
+                        // Re-borrow the swig account data to check authorization locks
+                        let swig_account_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
+                        let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data)?;
+                        
+                        // Convert mint slice to array for comparison
+                        let mint_array: [u8; 32] = mint.try_into()
+                            .map_err(|_| ProgramError::InvalidAccountData)?;
+                        
+                        let auth_locks = swig_with_roles.find_authorization_locks_by_mint(&mint_array)?;
+                        
+                        // Check if spending is allowed by authorization locks
+                        for auth_lock in &auth_locks {
+                            // Only check non-expired locks
+                            if auth_lock.expiry_slot > slot {
+                                // If spending amount exceeds the authorized amount, deny
+                                if diff > auth_lock.amount {
+                                    return Err(
+                                        SwigAuthenticateError::PermissionDeniedMissingPermission.into()
+                                    );
+                                } else {
+                                    // This spending is within the authorization lock limit
+                                    matched = true;
+                                    break;
+                                }
+                            }
                         }
-                        {
-                            if let Some(action) =
-                                RoleMut::get_action_mut::<TokenLimit>(actions, mint)?
+
+                        // If not covered by authorization locks, check regular token permissions
+                        if !matched {
                             {
-                                action.run(diff)?;
-                                matched = true;
-                            };
+                                if let Some(action) =
+                                    RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?
+                                {
+                                    action.run(diff, slot)?;
+                                    continue;
+                                };
+                            }
+                            {
+                                if let Some(action) =
+                                    RoleMut::get_action_mut::<TokenLimit>(actions, mint)?
+                                {
+                                    action.run(diff)?;
+                                    matched = true;
+                                };
+                            }
                         }
 
                         if !matched {

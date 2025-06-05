@@ -128,4 +128,15 @@ pub enum SwigInstruction {
     #[account(1, signer, name="payer", desc="the payer")]
     #[account(2, writable, name="sub_account", desc="the sub account to toggle enabled state")]
     ToggleSubAccountV1 = 10,
+
+    /// Adds an authorization lock to the wallet.
+    ///
+    /// Required accounts:
+    /// 1. `[writable, signer]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. System program account
+    #[account(0, writable, signer, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, name="system_program", desc="the system program")]
+    AddAuthorizationLockV1 = 11,
 }
