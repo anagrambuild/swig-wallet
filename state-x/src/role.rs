@@ -72,8 +72,7 @@ impl<'a> Role<'a> {
                     return Ok(Some(action_obj));
                 }
             }
-
-            cursor = action.boundary() as usize;
+            cursor += action.length() as usize;
         }
         Ok(None)
     }
@@ -87,7 +86,8 @@ impl<'a> Role<'a> {
                 Action::load_unchecked(self.actions.get_unchecked(cursor..cursor + Action::LEN))?
             };
             actions.push(action);
-            cursor = action.boundary() as usize;
+            // Move cursor to the next action (header + data)
+            cursor += Action::LEN + action.length() as usize;
         }
         Ok(actions)
     }
@@ -137,7 +137,7 @@ impl<'a> RoleMut<'a> {
                     return Ok(Some(action_obj));
                 }
             }
-            cursor = action.boundary() as usize;
+            cursor += action.length() as usize;
         }
         Ok(None)
     }
@@ -169,7 +169,7 @@ impl<'a> RoleMut<'a> {
                         break;
                     }
                 }
-                cursor = action.boundary() as usize;
+                cursor += action.length() as usize;
             }
         }
         if let Some(offset) = found_offset {
