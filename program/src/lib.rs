@@ -266,7 +266,7 @@ unsafe fn classify_account(
         // this branch is excluded, allowing program_scope_test to provide a custom implementation
         // to test program scope functionality in isolation.
         #[cfg(not(feature = "program_scope_test"))]
-        &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if account.data_len() == 165 && index > 0 => unsafe {
+        &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if account.data_len() >= 165 && index > 0 => unsafe {
             let data = account.borrow_data_unchecked();
             if sol_memcmp(
                 accounts.get_unchecked(0).assume_init_ref().key(),

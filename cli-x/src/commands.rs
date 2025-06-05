@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use alloy_primitives::{Address, B256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
@@ -5,7 +7,6 @@ use anyhow::{anyhow, Result};
 use colored::*;
 use serde_json::Value;
 use solana_sdk::{pubkey::Pubkey, signature::Keypair, system_instruction};
-use std::str::FromStr;
 use swig_sdk::{
     authority::AuthorityType, AuthorityManager, Permission, RecurringConfig, SwigError, SwigWallet,
 };

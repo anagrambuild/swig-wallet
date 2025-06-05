@@ -11,7 +11,6 @@ use solana_sdk::{
 use swig_interface::{
     swig, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
 };
-
 use swig_state_x::{
     action::all::All,
     authority::AuthorityType,

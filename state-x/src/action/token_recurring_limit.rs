@@ -84,4 +84,13 @@ impl<'a> Actionable<'a> for TokenRecurringLimit {
     fn match_data(&self, data: &[u8]) -> bool {
         data[0..32] == self.token_mint
     }
+
+    fn valid_layout(data: &'a [u8]) -> Result<bool, ProgramError> {
+        // current amount needs to be equal to limit
+        let current = &data[48..56];
+        let limit = &data[40..48];
+        // last reset needs to be 0
+        let last_reset = &data[56..64];
+        Ok(current == limit && last_reset == &[0u8; 8] && data.len() == Self::LEN)
+    }
 }

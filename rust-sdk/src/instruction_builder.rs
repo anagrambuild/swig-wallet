@@ -591,7 +591,8 @@ impl SwigInstructionBuilder {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the subaccount's public key or a `SwigError`
+    /// Returns a `Result` containing the subaccount's public key or a
+    /// `SwigError`
     pub fn create_sub_account(&self, current_slot: Option<u64>) -> Result<Instruction, SwigError> {
         let role_id_bytes = self.role_id.to_le_bytes();
         let swig_id_bytes = self.swig_id;
@@ -748,7 +749,8 @@ impl SwigInstructionBuilder {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the withdraw token instruction or a `SwigError`
+    /// Returns a `Result` containing the withdraw token instruction or a
+    /// `SwigError`
     pub fn withdraw_token_from_sub_account(
         &self,
         sub_account: Pubkey,

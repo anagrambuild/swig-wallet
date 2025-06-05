@@ -117,7 +117,7 @@ pub enum SwigAuthenticateError {
     PermissionDeniedMissingPermission,
     /// Token account permission check failed
     PermissionDeniedTokenAccountPermissionFailure,
-    /// Token account has an active delegate
+    /// Token account has an active delegate or close authority
     PermissionDeniedTokenAccountDelegatePresent,
     /// Token account is not initialized
     PermissionDeniedTokenAccountNotInitialized,
@@ -143,6 +143,8 @@ pub enum SwigAuthenticateError {
     InvalidSessionKeyCannotReuseSessionKey,
     /// Invalid session duration
     InvalidSessionDuration,
+    /// Token account authority is not the Swig account
+    PermissionDeniedTokenAccountAuthorityNotSwig,
 }
 
 impl From<SwigStateError> for ProgramError {

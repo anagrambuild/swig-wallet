@@ -218,6 +218,7 @@ pub fn sign_v1(
             match account {
                 AccountClassification::ThisSwig { lamports } => {
                     let current_lamports = all_accounts[index].lamports();
+                    let mut matched = false;
                     if current_lamports < swig.reserved_lamports {
                         return Err(
                             SwigAuthenticateError::PermissionDeniedInsufficientBalance.into()
@@ -238,6 +239,7 @@ pub fn sign_v1(
                                 RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])?
                             {
                                 action.run(amount_diff, slot)?;
+                                continue;
                             };
                         }
                         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
@@ -249,15 +251,23 @@ pub fn sign_v1(
                     let mint = unsafe { data.get_unchecked(0..32) };
                     let delegate = unsafe { data.get_unchecked(72..76) };
                     let state = unsafe { *data.get_unchecked(108) };
+                    let authority = unsafe { data.get_unchecked(32..64) };
+                    let close_authority = unsafe { data.get_unchecked(128..132) };
                     let current_token_balance = u64::from_le_bytes(unsafe {
                         data.get_unchecked(64..72)
                             .try_into()
                             .map_err(|_| ProgramError::InvalidAccountData)?
                     });
 
-                    if delegate != [0u8; 4] {
+                    if delegate != [0u8; 4] || close_authority != [0u8; 4] {
                         return Err(
                             SwigAuthenticateError::PermissionDeniedTokenAccountDelegatePresent
+                                .into(),
+                        );
+                    }
+                    if authority != ctx.accounts.swig.key() {
+                        return Err(
+                            SwigAuthenticateError::PermissionDeniedTokenAccountAuthorityNotSwig
                                 .into(),
                         );
                     }
@@ -267,10 +277,9 @@ pub fn sign_v1(
                                 .into(),
                         );
                     }
-                    if balance > &current_token_balance {
-                        let mut matched = false;
-                        let diff = balance - current_token_balance;
 
+                    if balance > &current_token_balance {
+                        let diff = balance - current_token_balance;
                         {
                             if let Some(action) =
                                 RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?
@@ -284,15 +293,10 @@ pub fn sign_v1(
                                 RoleMut::get_action_mut::<TokenLimit>(actions, mint)?
                             {
                                 action.run(diff)?;
-                                matched = true;
+                                continue;
                             };
                         }
-
-                        if !matched {
-                            return Err(
-                                SwigAuthenticateError::PermissionDeniedMissingPermission.into()
-                            );
-                        }
+                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                     }
                 },
                 AccountClassification::SwigStakeAccount { state, balance } => {
