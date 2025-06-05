@@ -293,6 +293,7 @@ impl<'a> SwigBuilder<'a> {
         cursor += authority_length;
         // todo check actions for duplicates
         let mut action_cursor = 0;
+        let actions_start_cursor_pos = cursor;
         for _i in 0..num_actions {
             let header = &actions_data[action_cursor..action_cursor + Action::LEN];
             let action_header = unsafe { Action::load_unchecked(header)? };
@@ -303,11 +304,12 @@ impl<'a> SwigBuilder<'a> {
 
             if ActionLoader::validate_layout(action_header.permission()?, action_slice)? {
                 self.role_buffer[cursor..cursor + Action::LEN].copy_from_slice(header);
-                // change boundary to the new boundary
-                self.role_buffer[cursor + 4..cursor + 8].copy_from_slice(
-                    &((cursor + Action::LEN + action_header.length() as usize) as u32)
-                        .to_le_bytes(),
-                );
+                // Position where next action starts within actions buffer
+                let current_action_pos_in_actions = cursor - actions_start_cursor_pos;
+                let next_action_pos_in_actions =
+                    current_action_pos_in_actions + Action::LEN + action_header.length() as usize;
+                self.role_buffer[cursor + 4..cursor + 8]
+                    .copy_from_slice(&(next_action_pos_in_actions as u32).to_le_bytes());
                 cursor += Action::LEN;
                 self.role_buffer[cursor..cursor + action_header.length() as usize]
                     .copy_from_slice(action_slice);
@@ -394,7 +396,8 @@ impl Swig {
                 _ => return Err(ProgramError::InvalidAccountData),
             };
 
-            let action_data_end = position.boundary() as usize - Position::LEN - authority_length;
+            let action_data_end =
+                position.boundary() as usize - (offset + Position::LEN + authority_length);
             let (actions, _rest) = unsafe { actions.split_at_mut_unchecked(action_data_end) };
             let role = RoleMut {
                 position,
