@@ -1,5 +1,6 @@
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
+use litesvm_token::spl_token;
 use solana_program::pubkey::Pubkey;
 use solana_sdk::{
     message::{v0, VersionedMessage},
@@ -15,7 +16,6 @@ use swig_state_x::{
 
 use super::*;
 use crate::tests::common::*;
-use litesvm_token::spl_token;
 
 #[test_log::test]
 fn test_sub_account_functionality() {
@@ -275,7 +275,8 @@ fn test_sub_account_functionality() {
         result.err()
     );
 
-    // Verify the sub-account is disabled by attempting another transfer (should fail)
+    // Verify the sub-account is disabled by attempting another transfer (should
+    // fail)
     let transfer_ix =
         system_instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
     let sub_account_sign_ix = sub_account_builder

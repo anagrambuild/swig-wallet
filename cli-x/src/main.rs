@@ -1,6 +1,3 @@
-use alloy_primitives::{Address, B256};
-use alloy_signer::SignerSync;
-use alloy_signer_local::LocalSigner;
 use std::{
     collections::HashMap,
     fs,
@@ -9,6 +6,9 @@ use std::{
     time::Duration,
 };
 
+use alloy_primitives::{Address, B256};
+use alloy_signer::SignerSync;
+use alloy_signer_local::LocalSigner;
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use colored::*;
@@ -309,9 +309,8 @@ fn setup(cli: &SwigCli) -> Result<SwigCliContext> {
         ),
         _ => {
             return Err(anyhow!(
-                "Please provide either:\n\
-                 1. --rpc-url and/or --keypair\n\
-                 2. --config <path-to-solana-config>"
+                "Please provide either:\n1. --rpc-url and/or --keypair\n2. --config \
+                 <path-to-solana-config>"
             ));
         },
     };
@@ -541,13 +540,16 @@ fn get_authorities(ctx: &mut SwigCliContext) -> Result<HashMap<String, Vec<u8>>>
                 },
                 AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
                     // let authority = role.authority.identity().unwrap();
-                    // let authority_hex = hex::encode([&[0x4].as_slice(), authority].concat());
-                    // //get eth address from public key
-                    // let mut hasher = solana_sdk::keccak::Hasher::default();
+                    // let authority_hex = hex::encode([&[0x4].as_slice(),
+                    // authority].concat()); //get eth address
+                    // from public key let mut hasher =
+                    // solana_sdk::keccak::Hasher::default();
                     // hasher.hash(authority);
                     // let hash = hasher.result();
-                    // let address = format!("0x{}", hex::encode(&hash.0[12..32]));
-                    // let authority_pubkey = Secp256k1PublicKey::from_str(&address)?;
+                    // let address = format!("0x{}",
+                    // hex::encode(&hash.0[12..32]));
+                    // let authority_pubkey =
+                    // Secp256k1PublicKey::from_str(&address)?;
                     // authorities.insert(address, authority_pubkey);
                 },
                 _ => todo!(),

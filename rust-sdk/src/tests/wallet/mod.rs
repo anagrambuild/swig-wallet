@@ -22,12 +22,11 @@ use swig_state_x::{
     IntoBytes,
 };
 
+use super::*;
 use crate::{
     error::SwigError, instruction_builder::AuthorityManager, types::Permission, RecurringConfig,
     SwigWallet,
 };
-
-use super::*;
 
 // Test helper functions
 fn setup_test_environment() -> (LiteSVM, Keypair) {

@@ -7,15 +7,14 @@ use solana_account_decoder_client_types::{ParsedAccount, UiAccountData};
 use solana_client::{
     rpc_client::RpcClient, rpc_request::TokenAccountsFilter, rpc_response::RpcKeyedAccount,
 };
-
 use solana_program::{hash::Hash, instruction::Instruction, pubkey::Pubkey};
-use solana_sdk::pubkey;
 use solana_sdk::{
     account::ReadableAccount,
     address_lookup_table::{state::AddressLookupTable, AddressLookupTableAccount},
     clock::Clock,
     commitment_config::CommitmentConfig,
     message::{v0, VersionedMessage},
+    pubkey,
     rent::Rent,
     signature::{Keypair, Signature, Signer},
     system_instruction::{self, SystemInstruction},
@@ -26,16 +25,14 @@ use spl_associated_token_account::{
 };
 use spl_token::ID as TOKEN_PROGRAM_ID;
 use swig_interface::{swig, swig_key};
-use swig_state_x::swig::sub_account_seeds;
-use swig_state_x::{action::program_scope::ProgramScope, authority::secp256k1::Secp256k1Authority};
 use swig_state_x::{
     action::{
-        all::All, manage_authority::ManageAuthority, sol_limit::SolLimit,
-        sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
+        all::All, manage_authority::ManageAuthority, program_scope::ProgramScope,
+        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
     },
-    authority::{self, AuthorityType},
+    authority::{self, secp256k1::Secp256k1Authority, AuthorityType},
     role::Role,
-    swig::SwigWithRoles,
+    swig::{sub_account_seeds, SwigWithRoles},
 };
 const TOKEN_22_PROGRAM_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 
@@ -870,7 +867,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the role id or a `SwigError` if the authority is not found
+    /// Returns a `Result` containing the role id or a `SwigError` if the
+    /// authority is not found
     pub fn get_role_id(&self, authority: &[u8]) -> Result<u32, SwigError> {
         let swig_pubkey = self.get_swig_account()?;
 
@@ -1078,7 +1076,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the keypairs for signing transactions or a `SwigError`
+    /// Returns a `Result` containing the keypairs for signing transactions or a
+    /// `SwigError`
     fn get_keypairs(&self) -> Result<Vec<&Keypair>, SwigError> {
         // Check if the authority and fee payer are the same
         if self.fee_payer.pubkey() == self.authority.pubkey() {
@@ -1105,7 +1104,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the associated token address or a `SwigError`
+    /// Returns a `Result` containing the associated token address or a
+    /// `SwigError`
     pub fn create_ata(&mut self, mint: &Pubkey) -> Result<Pubkey, SwigError> {
         let associated_token_address =
             get_associated_token_address(&self.instruction_builder.get_swig_account()?, &mint);
