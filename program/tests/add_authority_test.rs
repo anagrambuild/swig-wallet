@@ -9,7 +9,9 @@ use common::*;
 use solana_sdk::{signature::Keypair, signer::Signer};
 use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state_x::{
-    action::manage_authority::ManageAuthority, authority::AuthorityType, swig::SwigWithRoles,
+    action::{manage_authority::ManageAuthority, sol_limit::SolLimit},
+    authority::AuthorityType,
+    swig::SwigWithRoles,
 };
 
 #[test_log::test]
@@ -235,4 +237,64 @@ fn test_multiple_authorities_with_different_actions() {
         1,
         "Authority3 should have 1 action"
     );
+}
+
+#[test_log::test]
+fn test_add_authority_with_multiple_actions() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+
+    let amount = 1_000_000_000;
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), amount)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let secondary_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&secondary_authority.pubkey(), amount)
+        .unwrap();
+    let bench = add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: secondary_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ManageAuthority(ManageAuthority {}),
+            ClientAction::SolLimit(SolLimit { amount: amount / 2 }),
+        ],
+    )
+    .unwrap();
+
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 2);
+    assert_eq!(swig.state.role_counter, 2);
+    let role_id = swig
+        .lookup_role_id(secondary_authority.pubkey().as_ref())
+        .unwrap()
+        .unwrap();
+
+    let role = swig.get_role(role_id).unwrap().unwrap();
+    assert_eq!(role.position.num_actions(), 2);
+
+    use swig_state_x::role::Role;
+    if (Role::get_action::<ManageAuthority>(&role, &[]).unwrap()).is_some() {
+        println!("Manage Authority action found");
+    }
+    if (Role::get_action::<SolLimit>(&role, &[]).unwrap()).is_some() {
+        println!("Sol Limit action found");
+    }
+
+    let actions = role.get_all_actions().unwrap();
+
+    println!("actions: {:?}", actions);
+    assert!(actions.len() == 2);
 }
