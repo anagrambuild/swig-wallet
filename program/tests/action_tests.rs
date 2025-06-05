@@ -21,11 +21,12 @@ use solana_sdk::{
     system_instruction,
     transaction::VersionedTransaction,
 };
-use swig_interface::{AuthorityConfig, ClientAction};
+use swig_interface::{AuthorityConfig, ClientAction, RemoveAuthorityInstruction};
 use swig_state_x::{
-    action::{all::All, manage_authority::ManageAuthority, sol_limit::SolLimit},
+    action::{all::All, manage_authority::ManageAuthority, sol_limit::SolLimit, Actionable},
     authority::AuthorityType,
     swig::{swig_account_seeds, SwigWithRoles},
+    IntoBytes, Transmutable,
 };
 
 #[test_log::test]
@@ -194,4 +195,176 @@ fn test_multiple_actions_with_transfer_and_manage_authority() {
     let swig_state = SwigWithRoles::from_bytes(&swig_account_after.data).unwrap();
     let role = swig_state.get_role(2).unwrap().unwrap();
     assert!(role.get_action::<SolLimit>(&[]).unwrap().is_some());
+}
+
+#[test_log::test]
+fn test_action_boundaries_after_role_removal() {
+    use solana_sdk::{
+        message::{v0, VersionedMessage},
+        signature::Keypair,
+        signer::Signer,
+        transaction::VersionedTransaction,
+    };
+    use swig_interface::RemoveAuthorityInstruction;
+    use swig_state_x::action::token_limit::TokenLimit;
+
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+    let second_authority = Keypair::new();
+    let third_authority = Keypair::new();
+
+    // Airdrop to all authorities
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&third_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+
+    // Create a swig wallet with the root authority (role 0)
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    // Add second authority (role 1) with TokenLimit and SolLimit actions
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: [2; 32],
+                current_amount: 1000,
+            }),
+            ClientAction::SolLimit(SolLimit { amount: 2000 }),
+        ],
+    )
+    .unwrap();
+
+    // Add third authority (role 2) with TokenLimit and SolLimit actions
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: third_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: [3; 32],
+                current_amount: 3000,
+            }),
+            ClientAction::SolLimit(SolLimit { amount: 4000 }),
+        ],
+    )
+    .unwrap();
+
+    // Verify we have three authorities
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 3);
+
+    println!("swig: {:?}", swig.state.roles);
+
+    // Look up the actual role IDs for each authority
+    let root_role_id = swig
+        .lookup_role_id(root_authority.pubkey().as_ref())
+        .unwrap()
+        .expect("Root authority should exist");
+    let second_role_id = swig
+        .lookup_role_id(second_authority.pubkey().as_ref())
+        .unwrap()
+        .expect("Second authority should exist");
+    let third_role_id = swig
+        .lookup_role_id(third_authority.pubkey().as_ref())
+        .unwrap()
+        .expect("Third authority should exist");
+
+    println!(
+        "Role IDs: root={}, second={}, third={}",
+        root_role_id, second_role_id, third_role_id
+    );
+
+    // Verify the third authority's actions are accessible before removal
+    let third_role = swig.get_role(third_role_id).unwrap().unwrap();
+    println!("third_role: {:?}", third_role.get_all_actions());
+    assert!(third_role
+        .get_action::<TokenLimit>(&[3; 32])
+        .unwrap()
+        .is_some());
+    assert!(third_role.get_action::<SolLimit>(&[]).unwrap().is_some());
+
+    // Remove the second authority (the middle one) using RemoveAuthorityInstruction
+    let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        root_role_id,   // Acting role ID (root authority)
+        second_role_id, // Authority to remove (second authority)
+    )
+    .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[remove_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )
+    .unwrap();
+
+    context.svm.send_transaction(tx).unwrap();
+
+    // Verify that only two authorities remain
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 2);
+
+    // Verify the second authority no longer exists
+    let second_role = swig.get_role(second_role_id);
+    assert!(second_role.is_ok());
+    assert!(second_role.unwrap().is_none());
+
+    // Verify root authority and third authority still exist
+    let root_role = swig.get_role(root_role_id).unwrap();
+    let third_role = swig.get_role(third_role_id).unwrap();
+    assert!(root_role.is_some());
+    assert!(third_role.is_some());
+
+    // CRITICAL TEST: Verify the third authority's actions are still accessible and correct
+    // This is the key test - after removing the middle role, the third role's actions
+    // should still be accessible with correct boundaries
+    let third_role = third_role.unwrap();
+
+    // Check TokenLimit action
+    let token_limit = third_role
+        .get_action::<TokenLimit>(&[3; 32])
+        .unwrap()
+        .unwrap();
+    assert_eq!(token_limit.token_mint, [3; 32]);
+    assert_eq!(token_limit.current_amount, 3000);
+
+    // Check SolLimit action
+    let sol_limit = third_role.get_action::<SolLimit>(&[]).unwrap().unwrap();
+    assert_eq!(sol_limit.amount, 4000);
+
+    println!(
+        "SUCCESS: Third authority's actions are still accessible after middle authority removal!"
+    );
 }
