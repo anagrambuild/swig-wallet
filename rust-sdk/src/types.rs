@@ -114,6 +114,9 @@ pub enum Permission {
 impl Permission {
     /// Converts a vector of high-level Permission enums into the internal
     /// ClientAction representation
+    ///
+    /// For recurring limits, current_amount/current is set to the recurring
+    /// amount/limit, and last_reset is always set to 0 upon initialization.
     pub fn to_client_actions(permissions: Vec<Permission>) -> Vec<ClientAction> {
         let mut actions = Vec::new();
         for permission in permissions {
@@ -134,7 +137,7 @@ impl Permission {
                             token_mint: mint.to_bytes(),
                             window: config.window,
                             limit: amount,
-                            current: 0,
+                            current: amount,
                             last_reset: 0,
                         }));
                     },
@@ -151,7 +154,7 @@ impl Permission {
                             recurring_amount: amount,
                             window: config.window,
                             last_reset: 0,
-                            current_amount: 0,
+                            current_amount: amount,
                         }));
                     },
                     None => {
@@ -203,7 +206,7 @@ impl Permission {
                             recurring_amount: amount,
                             window: config.window,
                             last_reset: 0,
-                            current_amount: 0,
+                            current_amount: amount,
                         }));
                     },
                     None => {
