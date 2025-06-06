@@ -213,7 +213,7 @@ impl ActionLoader {
                     T::load_unchecked(&bytes[cursor..cursor + action.length() as usize])?
                 }));
             }
-            cursor += action.boundary() as usize;
+            cursor = action.boundary() as usize;
         }
         Ok(None)
     }
