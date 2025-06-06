@@ -517,6 +517,20 @@ fn main_fn() -> Result<()> {
                 },
                 CliAuthorityType::Secp256k1 => {
                     let current_slot = ctx.rpc_client.get_slot()?;
+
+                    // Get the current counter for this secp256k1 authority
+                    // Need to extract the uncompressed public key from the secret key
+                    let secret_key =
+                        secp256k1::SecretKey::from_slice(&auth_context.authority_payload)
+                            .map_err(|e| anyhow!("Failed to load secret key: {:?}", e))?;
+                    let secp = secp256k1::Secp256k1::new();
+                    let public_key = secp256k1::PublicKey::from_secret_key(&secp, &secret_key);
+                    let uncompressed = public_key.serialize_uncompressed();
+                    let wallet_pubkey = &uncompressed[1..]; // Remove 0x04 prefix to get 64 bytes
+
+                    let current_counter = get_secp256k1_counter(&ctx, swig_id, wallet_pubkey)?;
+                    let next_counter = current_counter.wrapping_add(1);
+
                     SignInstruction::new_secp256k1(
                         swig_id,
                         ctx.payer.pubkey(),
@@ -525,7 +539,7 @@ fn main_fn() -> Result<()> {
                             sig[0..65].try_into().unwrap()
                         },
                         current_slot,
-                        1u32, // TODO: Need to read current counter from account data and increment
+                        next_counter,
                         transfer_ix,
                         auth_context.role_id,
                     )?
