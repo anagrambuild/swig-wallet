@@ -109,6 +109,8 @@ pub enum SwigError {
     InvalidAuthorizationLockExpiry,
     /// Authorization lock insufficient balance
     AuthorizationLockInsufficientBalance,
+    /// Invalid authorization lock index
+    InvalidAuthorizationLockIndex,
 }
 
 /// Implements conversion from SwigError to ProgramError.

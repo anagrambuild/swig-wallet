@@ -6,6 +6,7 @@
 //! instruction's business logic.
 
 pub mod add_authorization_lock_v1;
+pub mod remove_authorization_lock_v1;
 pub mod add_authority_v1;
 pub mod create_session_v1;
 pub mod create_sub_account_v1;
@@ -20,14 +21,14 @@ use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
 
 use self::{
-    add_authorization_lock_v1::*, add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*, create_v1::*,
+    add_authorization_lock_v1::*, remove_authorization_lock_v1::*, add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*, create_v1::*,
     remove_authority_v1::*, sign_v1::*, sub_account_sign_v1::*, toggle_sub_account_v1::*,
     withdraw_from_sub_account_v1::*,
 };
 use crate::{
     instruction::{
         accounts::{
-            AddAuthorizationLockV1Accounts, AddAuthorityV1Accounts, CreateSessionV1Accounts, CreateSubAccountV1Accounts,
+            AddAuthorizationLockV1Accounts, RemoveAuthorizationLockV1Accounts, AddAuthorityV1Accounts, CreateSessionV1Accounts, CreateSubAccountV1Accounts,
             CreateV1Accounts, RemoveAuthorityV1Accounts, SignV1Accounts, SubAccountSignV1Accounts,
             ToggleSubAccountV1Accounts, WithdrawFromSubAccountV1Accounts,
         },
@@ -75,6 +76,7 @@ pub fn process_action(
         },
         SwigInstruction::ToggleSubAccountV1 => process_toggle_sub_account_v1(accounts, data),
         SwigInstruction::AddAuthorizationLockV1 => process_add_authorization_lock_v1(accounts, data),
+        SwigInstruction::RemoveAuthorizationLockV1 => process_remove_authorization_lock_v1(accounts, data),
     }
 }
 
@@ -168,4 +170,12 @@ fn process_toggle_sub_account_v1(accounts: &[AccountInfo], data: &[u8]) -> Progr
 fn process_add_authorization_lock_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = AddAuthorizationLockV1Accounts::context(accounts)?;
     add_authorization_lock_v1(account_ctx, data, accounts)
+}
+
+/// Processes a RemoveAuthorizationLockV1 instruction.
+///
+/// Removes an authorization lock from the wallet.
+fn process_remove_authorization_lock_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = RemoveAuthorizationLockV1Accounts::context(accounts)?;
+    remove_authorization_lock_v1(account_ctx, data, accounts)
 }
