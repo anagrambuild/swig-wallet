@@ -196,6 +196,7 @@ fn test_create_and_sign_secp256k1() {
         context.default_payer.pubkey(),
         signing_fn,
         current_slot,
+        1, // counter = 1 (first transaction)
         transfer_ix,
         0, // Role ID 0
     )

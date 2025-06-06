@@ -6,7 +6,7 @@
 mod common;
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
-use alloy_signer_local::LocalSigner;
+use alloy_signer_local::{LocalSigner, PrivateKeySigner};
 use common::*;
 use solana_sdk::{
     clock::Clock,
@@ -18,7 +18,66 @@ use solana_sdk::{
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{AuthorityConfig, ClientAction};
-use swig_state_x::{action::all::All, authority::AuthorityType, swig::SwigWithRoles};
+use swig_state_x::{
+    action::all::All,
+    authority::{secp256k1::Secp256k1Authority, AuthorityType},
+    swig::SwigWithRoles,
+};
+
+/// Helper function to get the current signature counter for a secp256k1
+/// authority
+fn get_secp256k1_counter(
+    context: &SwigTestContext,
+    swig_key: &solana_sdk::pubkey::Pubkey,
+    wallet: &PrivateKeySigner,
+) -> Result<u32, String> {
+    // Get the swig account data
+    let swig_account = context
+        .svm
+        .get_account(swig_key)
+        .ok_or("Swig account not found")?;
+    let swig = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| format!("Failed to parse swig data: {:?}", e))?;
+
+    // Get the wallet's public key in the format expected by swig
+    let eth_pubkey = wallet
+        .credential()
+        .verifying_key()
+        .to_encoded_point(false)
+        .to_bytes();
+    let authority_bytes = &eth_pubkey[1..]; // Remove the first byte (0x04 prefix)
+
+    // Look up the role ID for this authority
+    let role_id = swig
+        .lookup_role_id(authority_bytes)
+        .map_err(|e| format!("Failed to lookup role: {:?}", e))?
+        .ok_or("Authority not found in swig account")?;
+
+    // Get the role
+    let role = swig
+        .get_role(role_id)
+        .map_err(|e| format!("Failed to get role: {:?}", e))?
+        .ok_or("Role not found")?;
+
+    // The authority should be a Secp256k1Authority, so we can access it directly
+    // Since we know this is a Secp256k1 authority from our test setup
+    if matches!(role.authority.authority_type(), AuthorityType::Secp256k1) {
+        // We need to cast the authority to get access to the signature_odometer
+        // The authority identity gives us the public key, but we need the full
+        // authority object We'll need to access the raw authority data
+
+        // Get the authority from the any() interface
+        let secp_authority = role
+            .authority
+            .as_any()
+            .downcast_ref::<Secp256k1Authority>()
+            .ok_or("Failed to downcast to Secp256k1Authority")?;
+
+        Ok(secp_authority.signature_odometer)
+    } else {
+        Err("Authority is not a Secp256k1Authority".to_string())
+    }
+}
 
 #[test_log::test]
 fn test_secp256k1_basic_signing() {
@@ -47,12 +106,22 @@ fn test_secp256k1_basic_signing() {
         wallet.sign_hash_sync(&hash).unwrap().as_bytes()
     };
 
+    // Read the current counter value and calculate next counter
+    let current_counter = get_secp256k1_counter(&context, &swig_key, &wallet).unwrap();
+    let next_counter = current_counter + 1;
+
+    println!(
+        "Current counter: {}, using next counter: {}",
+        current_counter, next_counter
+    );
+
     // Create and submit the transaction
     let sign_ix = swig_interface::SignInstruction::new_secp256k1(
         swig_key,
         context.default_payer.pubkey(),
         signing_fn,
         current_slot,
+        next_counter, // Use dynamic counter value
         transfer_ix,
         0, // Role ID 0
     )
@@ -113,12 +182,17 @@ fn test_secp256k1_direct_signature_reuse() {
     // Current slot for all transactions
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
 
+    // Read the current counter and calculate next counter
+    let current_counter = get_secp256k1_counter(&context, &swig_key, &wallet).unwrap();
+    let next_counter = current_counter + 1;
+
     // TRANSACTION 1: Initial transaction that should succeed
     let sign_ix = swig_interface::SignInstruction::new_secp256k1(
         swig_key,
         context.default_payer.pubkey(),
         sign_fn,
         current_slot,
+        next_counter, // Use dynamic counter value
         transfer_ix.clone(),
         0, // Role ID
     )
@@ -162,6 +236,7 @@ fn test_secp256k1_direct_signature_reuse() {
         payer2.pubkey(),
         reuse_signature_fn,
         current_slot,
+        next_counter, // Trying to reuse the same counter (should fail)
         transfer_ix2,
         0,
     )
@@ -197,11 +272,17 @@ fn test_secp256k1_direct_signature_reuse() {
 
     let transfer_ix3 =
         system_instruction::transfer(&swig_key, &recipient.pubkey(), transfer_amount);
+
+    // Get current counter after the failed transaction and calculate next
+    let updated_counter = get_secp256k1_counter(&context, &swig_key, &wallet).unwrap();
+    let next_counter_fresh = updated_counter + 1;
+
     let sign_ix3 = swig_interface::SignInstruction::new_secp256k1(
         swig_key,
         context.default_payer.pubkey(),
         fresh_signing_fn,
         current_slot_value, // Use current slot from simulator
+        next_counter_fresh, // Use dynamic counter value
         transfer_ix3,
         0,
     )
@@ -267,12 +348,17 @@ fn test_secp256k1_old_signature() {
     // Advance the slot by more than MAX_SIGNATURE_AGE_IN_SLOTS (60)
     context.svm.warp_to_slot(100);
 
+    // Get current counter and calculate next
+    let current_counter = get_secp256k1_counter(&context, &swig_key, &wallet).unwrap();
+    let next_counter = current_counter + 1;
+
     // Create and submit the transaction with the old signature
     let sign_ix = swig_interface::SignInstruction::new_secp256k1(
         swig_key,
         context.default_payer.pubkey(),
         signing_fn,
-        old_slot, // Using old slot
+        old_slot,     // Using old slot
+        next_counter, // Use dynamic counter value
         transfer_ix,
         0,
     )
@@ -426,6 +512,7 @@ fn test_secp256k1_add_authority() {
         context.default_payer.pubkey(),
         signing_fn,
         current_slot,
+        1, // counter = 1 (first transaction)
         transfer_ix,
         1, // role_id of the secp256k1 authority
     )
@@ -485,6 +572,7 @@ fn test_secp256k1_add_ed25519_authority() {
         context.default_payer.pubkey(),
         signing_fn,
         0, // current slot
+        1, // counter = 1 (first transaction)
         0, // role_id of the primary wallet
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
@@ -559,4 +647,308 @@ fn test_secp256k1_add_ed25519_authority() {
         .get_account(&context.default_payer.pubkey())
         .unwrap()
         .lamports;
+}
+
+#[test_log::test]
+fn test_secp256k1_replay_scenario_1() {
+    let mut context = setup_test_context().unwrap();
+
+    // Generate a random Ethereum wallet
+    let wallet = LocalSigner::random();
+
+    // Create a new swig with the secp256k1 authority
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_secp256k1(&mut context, &wallet, id).unwrap();
+    context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
+
+    // Set up a recipient and transaction
+    let recipient = Keypair::new();
+    context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
+    let transfer_amount = 5_000_000;
+    let transfer_ix = system_instruction::transfer(&swig_key, &recipient.pubkey(), transfer_amount);
+
+    let signing_fn = |payload: &[u8]| -> [u8; 65] {
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&payload[..32]);
+        let hash = B256::from(hash);
+        wallet.sign_hash_sync(&hash).unwrap().as_bytes()
+    };
+
+    // Get current slot for first transaction
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+
+    // Read the current counter value and assert it's 0 (initial state)
+    let current_counter = get_secp256k1_counter(&context, &swig_key, &wallet).unwrap();
+    assert_eq!(current_counter, 0, "Initial counter should be 0");
+
+    // Calculate the next expected counter
+    let next_counter = current_counter + 1;
+
+    // TRANSACTION 1: Initial transaction that should succeed
+    let sign_ix = swig_interface::SignInstruction::new_secp256k1(
+        swig_key,
+        context.default_payer.pubkey(),
+        signing_fn,
+        current_slot,
+        next_counter, // Use dynamic counter value instead of hardcoded 1
+        transfer_ix.clone(),
+        0, // Role ID
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[sign_ix.clone()],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
+
+    // First transaction should succeed
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_ok(),
+        "First transaction failed: {:?}",
+        result.err()
+    );
+
+    // Verify transfer was successful
+    let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
+    assert_eq!(recipient_account.lamports, 1_000_000 + transfer_amount);
+
+    // Verify that the counter was incremented after the successful transaction
+    let updated_counter = get_secp256k1_counter(&context, &swig_key, &wallet).unwrap();
+    assert_eq!(
+        updated_counter, next_counter,
+        "Counter should be incremented after successful transaction"
+    );
+
+    // TRANSACTION 2: Attempt replay with additional instructions
+    // Try to reuse the same signature instruction with additional manipulated
+    // instructions
+    let message2 = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[
+            sign_ix, // Reusing the same instruction with the old counter value (should fail)
+            solana_sdk::instruction::Instruction {
+                program_id: spl_memo::ID,
+                accounts: vec![solana_sdk::instruction::AccountMeta::new(
+                    context.default_payer.pubkey(),
+                    true,
+                )],
+                data: b"replay".to_vec(),
+            },
+        ],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx2 =
+        VersionedTransaction::try_new(VersionedMessage::V0(message2), &[&context.default_payer])
+            .unwrap();
+
+    // Second transaction should fail due to counter validation
+    let result2 = context.svm.send_transaction(tx2);
+    assert!(
+        result2.is_err(),
+        "Expected second transaction to fail due to replay protection"
+    );
+
+    // Verify the specific error is related to signature reuse
+    match result2.unwrap_err().err {
+        TransactionError::InstructionError(_, InstructionError::Custom(code)) => {
+            // This should match the error code for PermissionDeniedSecp256k1SignatureReused
+            println!("Error code: {}", code);
+            assert!(code > 0, "Expected a custom error code for signature reuse");
+        },
+        err => panic!("Expected InstructionError::Custom, got {:?}", err),
+    }
+
+    // TRANSACTION 3: Fresh transaction with correct counter (should succeed)
+    let transfer_ix3 =
+        system_instruction::transfer(&swig_key, &recipient.pubkey(), transfer_amount);
+
+    let fresh_signing_fn = |payload: &[u8]| -> [u8; 65] {
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&payload[..32]);
+        let hash = B256::from(hash);
+        wallet.sign_hash_sync(&hash).unwrap().as_bytes()
+    };
+
+    // Get the current counter after the failed replay attempt
+    let current_counter_after_replay = get_secp256k1_counter(&context, &swig_key, &wallet).unwrap();
+    assert_eq!(
+        current_counter_after_replay, updated_counter,
+        "Counter should remain unchanged after failed transaction"
+    );
+
+    // Calculate the next counter for the fresh transaction
+    let next_counter_fresh = current_counter_after_replay + 1;
+
+    let sign_ix3 = swig_interface::SignInstruction::new_secp256k1(
+        swig_key,
+        context.default_payer.pubkey(),
+        fresh_signing_fn,
+        current_slot,
+        next_counter_fresh, // Use dynamic counter value
+        transfer_ix3,
+        0,
+    )
+    .unwrap();
+
+    let message3 = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[sign_ix3],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx3 =
+        VersionedTransaction::try_new(VersionedMessage::V0(message3), &[&context.default_payer])
+            .unwrap();
+
+    // Third transaction should succeed with correct counter
+    let result3 = context.svm.send_transaction(tx3);
+    println!("result3: {:?}", result3);
+    assert!(
+        result3.is_ok(),
+        "Third transaction failed: {:?}",
+        result3.err()
+    );
+
+    // Verify second transfer was successful
+    let recipient_account_final = context.svm.get_account(&recipient.pubkey()).unwrap();
+    assert_eq!(
+        recipient_account_final.lamports,
+        1_000_000 + 2 * transfer_amount
+    );
+
+    // Verify the counter was incremented after the final successful transaction
+    let final_counter = get_secp256k1_counter(&context, &swig_key, &wallet).unwrap();
+    assert_eq!(
+        final_counter, next_counter_fresh,
+        "Final counter should be incremented after successful transaction"
+    );
+
+    println!(
+        "Test completed successfully! Counter progression: 0 -> {} -> {} (failed replay) -> {}",
+        next_counter, updated_counter, final_counter
+    );
+}
+
+#[test_log::test]
+fn test_secp256k1_replay_scenario_2() {
+    let mut context = setup_test_context().unwrap();
+
+    // Generate a random Ethereum wallet
+    let wallet = LocalSigner::random();
+
+    // Create a new swig with the secp256k1 authority
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_secp256k1(&mut context, &wallet, id).unwrap();
+    context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
+
+    // Set up a recipient and transaction
+    let recipient = Keypair::new();
+    context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
+    let transfer_amount = 5_000_000;
+    let transfer_ix = system_instruction::transfer(&swig_key, &recipient.pubkey(), transfer_amount);
+
+    let signing_fn = |payload: &[u8]| -> [u8; 65] {
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&payload[..32]);
+        let hash = B256::from(hash);
+        wallet.sign_hash_sync(&hash).unwrap().as_bytes()
+    };
+
+    // Get current slot for first transaction
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+
+    // Read the current counter and calculate next counter
+    let current_counter = get_secp256k1_counter(&context, &swig_key, &wallet).unwrap();
+    let next_counter = current_counter + 1;
+
+    // TRANSACTION 1: Initial transaction that should succeed
+    let sign_ix = swig_interface::SignInstruction::new_secp256k1(
+        swig_key,
+        context.default_payer.pubkey(),
+        signing_fn,
+        current_slot,
+        next_counter, // Use dynamic counter value
+        transfer_ix.clone(),
+        0, // Role ID
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[sign_ix.clone()],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
+
+    // First transaction should succeed
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_ok(),
+        "First transaction failed: {:?}",
+        result.err()
+    );
+
+    // Verify transfer was successful
+    let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
+    assert_eq!(recipient_account.lamports, 1_000_000 + transfer_amount);
+
+    // Send with manipulated instructions
+    let message2 = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[
+            sign_ix, // sending the same instruction again
+            solana_sdk::instruction::Instruction {
+                program_id: spl_memo::ID,
+                accounts: vec![solana_sdk::instruction::AccountMeta::new(
+                    context.default_payer.pubkey(),
+                    true,
+                )],
+                data: b"replayed".to_vec(),
+            },
+        ],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx2 =
+        VersionedTransaction::try_new(VersionedMessage::V0(message2), &[&context.default_payer])
+            .unwrap();
+
+    let result2 = context.svm.send_transaction(tx2);
+    // assert!(
+    //     result2.is_ok(),
+    //     "Expected second transaction to succeed (demonstrating vulnerability):
+    // {:?}",     result2.err()
+    // );
+    assert!(
+        result2.is_err(),
+        "Expected second transaction to succeed (demonstrating vulnerability): {:?}",
+        result2.ok()
+    );
+
+    // Verify second transfer was not successful
+    let recipient_account_final = context.svm.get_account(&recipient.pubkey()).unwrap();
+    assert_ne!(
+        recipient_account_final.lamports,
+        1_000_000 + 2 * transfer_amount
+    );
 }

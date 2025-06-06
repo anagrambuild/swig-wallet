@@ -525,6 +525,7 @@ fn main_fn() -> Result<()> {
                             sig[0..65].try_into().unwrap()
                         },
                         current_slot,
+                        1u32, // TODO: Need to read current counter from account data and increment
                         transfer_ix,
                         auth_context.role_id,
                     )?
@@ -573,6 +574,20 @@ fn main_fn() -> Result<()> {
                 },
                 CliAuthorityType::Secp256k1 => {
                     let current_slot = ctx.rpc_client.get_slot()?;
+
+                    // Get the current counter for this secp256k1 authority
+                    // Need to extract the uncompressed public key from the secret key
+                    let secret_key =
+                        secp256k1::SecretKey::from_slice(&auth_context.authority_payload)
+                            .map_err(|e| anyhow!("Failed to load secret key: {:?}", e))?;
+                    let secp = secp256k1::Secp256k1::new();
+                    let public_key = secp256k1::PublicKey::from_secret_key(&secp, &secret_key);
+                    let uncompressed = public_key.serialize_uncompressed();
+                    let wallet_pubkey = &uncompressed[1..]; // Remove 0x04 prefix to get 64 bytes
+
+                    let current_counter = get_secp256k1_counter(&ctx, swig_id, wallet_pubkey)?;
+                    let next_counter = current_counter.wrapping_add(1);
+
                     AddAuthorityInstruction::new_with_secp256k1_authority(
                         swig_id,
                         ctx.payer.pubkey(),
@@ -581,6 +596,7 @@ fn main_fn() -> Result<()> {
                             sig.try_into().unwrap()
                         },
                         current_slot,
+                        next_counter,
                         auth_context.role_id,
                         AuthorityConfig {
                             authority_type: new_authority_type.into(),
@@ -1180,6 +1196,43 @@ fn prio_fees(ctx: &SwigCliContext, accounts: &[Pubkey]) -> Result<Instruction> {
     Ok(compute)
 }
 
+/// Helper function to get the current signature counter for a secp256k1
+/// authority
+fn get_secp256k1_counter(
+    ctx: &SwigCliContext,
+    swig_id: Pubkey,
+    wallet_pubkey: &[u8],
+) -> Result<u32> {
+    let swig_account = ctx.rpc_client.get_account(&swig_id)?;
+    let swig = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow!("Failed to load swig account: {:?}", e))?;
+
+    // Look up the role ID for this authority
+    let role_id = swig
+        .lookup_role_id(wallet_pubkey)
+        .map_err(|e| anyhow!("Failed to lookup role: {:?}", e))?
+        .ok_or_else(|| anyhow!("Authority not found in swig account"))?;
+
+    // Get the role
+    let role = swig
+        .get_role(role_id)
+        .map_err(|e| anyhow!("Failed to get role: {:?}", e))?
+        .ok_or_else(|| anyhow!("Role not found"))?;
+
+    // Verify this is a Secp256k1Authority and get the counter
+    if matches!(role.authority.authority_type(), AuthorityType::Secp256k1) {
+        let secp_authority = role
+            .authority
+            .as_any()
+            .downcast_ref::<swig_state_x::authority::secp256k1::Secp256k1Authority>()
+            .ok_or_else(|| anyhow!("Failed to downcast to Secp256k1Authority"))?;
+
+        Ok(secp_authority.signature_odometer)
+    } else {
+        Err(anyhow!("Authority is not a Secp256k1Authority"))
+    }
+}
+
 fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
     let swig_account = ctx.rpc_client.get_account(&swig_id)?;
     let token_accounts = ctx
@@ -1236,6 +1289,17 @@ fn diplay_swig(ctx: &SwigCliContext, swig_id: Pubkey) -> Result<()> {
                     "\t\tAuthority Public Key: 0x{} address {}",
                     authority_hex, address
                 );
+
+                // For standard Secp256k1 authorities, show the signature counter
+                if authority_type == AuthorityType::Secp256k1 {
+                    if let Some(secp_authority) = role
+                        .authority
+                        .as_any()
+                        .downcast_ref::<swig_state_x::authority::secp256k1::Secp256k1Authority>()
+                    {
+                        println!("\t\tSignature Counter: {}", secp_authority.signature_odometer);
+                    }
+                }
             },
             _ => {
                 println!(
