@@ -224,6 +224,8 @@ pub fn add_authorization_lock_v1(
         token_mint: add_lock.args.token_mint,
         amount: add_lock.args.amount,
         expiry_slot: add_lock.args.expiry_slot,
+        role_id: add_lock.args.acting_role_id,
+        _padding: [0; 4],
     };
 
     // Write the new lock at the end of the authorization locks section

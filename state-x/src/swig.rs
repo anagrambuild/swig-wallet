@@ -113,6 +113,10 @@ pub struct AuthorizationLock {
     pub amount: u64,
     /// Slot number when this lock expires
     pub expiry_slot: u64,
+    /// Role ID that created this authorization lock
+    pub role_id: u32,
+    /// Padding to ensure struct has no padding
+    pub _padding: [u8; 4],
 }
 
 impl Transmutable for AuthorizationLock {
@@ -715,6 +719,39 @@ impl<'a> SwigWithRoles<'a> {
         })?;
         
         Ok((locks, count))
+    }
+
+    /// Gets authorization locks created by a specific role ID.
+    /// Returns a tuple of (locks array, count) where count is the number of locks found.
+    pub fn get_authorization_locks_by_role<const MAX_LOCKS: usize>(&self, role_id: u32) -> Result<([Option<AuthorizationLock>; MAX_LOCKS], usize), ProgramError> {
+        let mut locks = [None; MAX_LOCKS];
+        let mut count = 0;
+        
+        self.for_each_authorization_lock::<_, ProgramError>(|lock| {
+            if lock.role_id == role_id && count < MAX_LOCKS {
+                locks[count] = Some(*lock);
+                count += 1;
+            }
+            Ok(())
+        })?;
+        
+        Ok((locks, count))
+    }
+
+    /// Iterates over authorization locks for a specific role ID and applies a function to each.
+    /// This is useful for operations that need to process locks without collecting them into an array.
+    pub fn for_each_authorization_lock_by_role<F, E>(&self, role_id: u32, mut f: F) -> Result<(), E>
+    where
+        F: FnMut(&AuthorizationLock) -> Result<(), E>,
+        E: From<ProgramError>,
+    {
+        self.for_each_authorization_lock::<_, E>(|lock| {
+            if lock.role_id == role_id {
+                f(lock)
+            } else {
+                Ok(())
+            }
+        })
     }
 
     /// Removes expired authorization locks from the account.
