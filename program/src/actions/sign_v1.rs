@@ -30,7 +30,7 @@ use swig_state_x::{
     },
     authority::AuthorityType,
     role::RoleMut,
-    swig::{swig_account_signer, Swig, SwigWithRoles},
+    swig::{swig_account_signer, AuthorizationLock, Swig, SwigWithRoles},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -280,22 +280,27 @@ pub fn sign_v1(
                         let mint_array: [u8; 32] = mint.try_into()
                             .map_err(|_| ProgramError::InvalidAccountData)?;
                         
-                        let auth_locks = swig_with_roles.find_authorization_locks_by_mint(&mint_array)?;
-                        
                         // Check if spending is allowed by authorization locks
-                        for auth_lock in &auth_locks {
+                        // Sum up all non-expired authorization locks for this mint
+                        let mut total_authorized_amount = 0u64;
+                        let mut has_active_locks = false;
+                        
+                        let _: Result<(), ProgramError> = swig_with_roles.for_each_authorization_lock_by_mint(&mint_array, |auth_lock| {
                             // Only check non-expired locks
                             if auth_lock.expiry_slot > slot {
-                                // If spending amount exceeds the authorized amount, deny
-                                if diff > auth_lock.amount {
-                                    return Err(
-                                        SwigAuthenticateError::PermissionDeniedMissingPermission.into()
-                                    );
-                                } else {
-                                    // This spending is within the authorization lock limit
-                                    matched = true;
-                                    break;
-                                }
+                                has_active_locks = true;
+                                total_authorized_amount = total_authorized_amount.saturating_add(auth_lock.amount);
+                            }
+                            Ok(())
+                        });
+                        
+                        // If there are active authorization locks, check against the total
+                        if has_active_locks {
+                            if diff > total_authorized_amount {
+                                return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+                            } else {
+                                // This spending is within the combined authorization lock limits
+                                matched = true;
                             }
                         }
 
@@ -440,6 +445,19 @@ pub fn sign_v1(
                 },
                 _ => {},
             }
+        }
+    }
+
+    // Clean up expired authorization locks at the end of the transaction
+    // Note: We don't reallocate the account to keep it simple and avoid potential issues.
+    // The unused space at the end of the account is acceptable.
+    {
+        let mut swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        if unsafe { *swig_account_data.get_unchecked(0) } == Discriminator::SwigAccount as u8 {
+            let (swig_header, rest) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+            let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+            let _removed_count = SwigWithRoles::remove_expired_authorization_locks_mut(swig, rest, slot)?;
+            // Account size remains the same - unused space at the end is acceptable
         }
     }
 

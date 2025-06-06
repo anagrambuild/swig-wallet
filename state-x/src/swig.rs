@@ -105,7 +105,7 @@ impl IntoBytes for SwigSubAccount {
 
 /// Represents an authorization lock for pre-authorizing token spending limits.
 #[repr(C, align(8))]
-#[derive(Debug, PartialEq, NoPadding)]
+#[derive(Debug, PartialEq, Copy, Clone, NoPadding)]
 pub struct AuthorizationLock {
     /// Token mint public key that this lock applies to
     pub token_mint: [u8; 32],
@@ -656,14 +656,17 @@ impl<'a> SwigWithRoles<'a> {
         None
     }
 
-    /// Gets all authorization locks from the account.
-    pub fn get_authorization_locks(&self) -> Result<Vec<&AuthorizationLock>, ProgramError> {
+    /// Iterates over all authorization locks from the account, calling the provided function for each lock.
+    pub fn for_each_authorization_lock<F, E>(&self, mut f: F) -> Result<(), E>
+    where
+        F: FnMut(&AuthorizationLock) -> Result<(), E>,
+        E: From<ProgramError>,
+    {
         let auth_locks_data = self.authorization_locks_data();
-        let mut locks = Vec::new();
         
         let expected_size = self.state.authorization_locks as usize * AuthorizationLock::LEN;
         if auth_locks_data.len() < expected_size {
-            return Err(ProgramError::InvalidAccountData);
+            return Err(ProgramError::InvalidAccountData.into());
         }
 
         let mut cursor = 0;
@@ -672,22 +675,106 @@ impl<'a> SwigWithRoles<'a> {
                 break;
             }
             let lock = unsafe {
-                AuthorizationLock::load_unchecked(&auth_locks_data[cursor..cursor + AuthorizationLock::LEN])?
+                AuthorizationLock::load_unchecked(&auth_locks_data[cursor..cursor + AuthorizationLock::LEN])
+                    .map_err(|e| E::from(e))?
             };
-            locks.push(lock);
+            f(lock)?;
             cursor += AuthorizationLock::LEN;
         }
 
-        Ok(locks)
+        Ok(())
     }
 
-    /// Finds authorization locks by token mint.
-    pub fn find_authorization_locks_by_mint(&self, mint: &[u8; 32]) -> Result<Vec<&AuthorizationLock>, ProgramError> {
-        let all_locks = self.get_authorization_locks()?;
-        Ok(all_locks.into_iter()
-            .filter(|lock| &lock.token_mint == mint)
-            .collect())
+    /// Iterates over authorization locks for a specific token mint, calling the provided function for each matching lock.
+    pub fn for_each_authorization_lock_by_mint<F, E>(&self, mint: &[u8; 32], mut f: F) -> Result<(), E>
+    where
+        F: FnMut(&AuthorizationLock) -> Result<(), E>,
+        E: From<ProgramError>,
+    {
+        self.for_each_authorization_lock(|lock| {
+            if &lock.token_mint == mint {
+                f(lock)
+            } else {
+                Ok(())
+            }
+        })
     }
+
+    /// Helper method for tests to get authorization locks in a fixed-size array.
+    /// Only collects up to MAX_LOCKS authorization locks for testing purposes.
+    pub fn get_authorization_locks_for_test<const MAX_LOCKS: usize>(&self) -> Result<([Option<AuthorizationLock>; MAX_LOCKS], usize), ProgramError> {
+        let mut locks = [None; MAX_LOCKS];
+        let mut count = 0;
+        
+        self.for_each_authorization_lock::<_, ProgramError>(|lock| {
+            if count < MAX_LOCKS {
+                locks[count] = Some(*lock);
+                count += 1;
+            }
+            Ok(())
+        })?;
+        
+        Ok((locks, count))
+    }
+
+    /// Removes expired authorization locks from the account.
+    /// Takes mutable references to state and data to allow modification.
+    /// Returns the number of locks removed.
+    pub fn remove_expired_authorization_locks_mut(
+        state: &mut Swig, 
+        data: &mut [u8], 
+        current_slot: u64
+    ) -> Result<u16, ProgramError> {
+        let auth_locks_count = state.authorization_locks;
+        
+        // Calculate where authorization locks start (after roles data)
+        let mut roles_cursor = 0;
+        for _i in 0..state.roles {
+            if roles_cursor + Position::LEN > data.len() {
+                break;
+            }
+            let position = unsafe { Position::load_unchecked(&data[roles_cursor..roles_cursor + Position::LEN])? };
+            roles_cursor = position.boundary() as usize;
+        }
+        
+        let auth_locks_data = &mut data[roles_cursor..];
+        let mut removed_count = 0u16;
+        let mut write_cursor = 0;
+        let mut read_cursor = 0;
+
+        // Iterate through all authorization locks
+        for _i in 0..auth_locks_count {
+            if read_cursor + AuthorizationLock::LEN > auth_locks_data.len() {
+                break;
+            }
+
+            let lock = unsafe {
+                AuthorizationLock::load_unchecked(&auth_locks_data[read_cursor..read_cursor + AuthorizationLock::LEN])?
+            };
+
+            // If lock is not expired, copy it to the write position
+            if lock.expiry_slot > current_slot {
+                if write_cursor != read_cursor {
+                    auth_locks_data.copy_within(
+                        read_cursor..read_cursor + AuthorizationLock::LEN,
+                        write_cursor
+                    );
+                }
+                write_cursor += AuthorizationLock::LEN;
+            } else {
+                // Lock is expired, don't copy it (effectively removing it)
+                removed_count += 1;
+            }
+
+            read_cursor += AuthorizationLock::LEN;
+        }
+
+        // Update the authorization locks count
+        state.authorization_locks -= removed_count;
+
+        Ok(removed_count)
+    }
+
 }
 
 #[cfg(test)]
