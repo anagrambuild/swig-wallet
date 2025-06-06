@@ -37,6 +37,7 @@ pub fn add_authority_with_ed25519_root<'a>(
     new_authority: AuthorityConfig,
     actions: Vec<ClientAction>,
 ) -> anyhow::Result<TransactionMetadata> {
+    context.svm.expire_blockhash();
     let payer_pubkey = context.default_payer.pubkey();
     let swig_account = context
         .svm

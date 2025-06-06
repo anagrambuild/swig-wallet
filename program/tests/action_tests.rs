@@ -212,6 +212,7 @@ fn test_action_boundaries_after_role_removal() {
     let root_authority = Keypair::new();
     let second_authority = Keypair::new();
     let third_authority = Keypair::new();
+    let fourth_authority = Keypair::new();
 
     // Airdrop to all authorities
     context
@@ -225,6 +226,10 @@ fn test_action_boundaries_after_role_removal() {
     context
         .svm
         .airdrop(&third_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&fourth_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
     let id = rand::random::<[u8; 32]>();
@@ -366,5 +371,54 @@ fn test_action_boundaries_after_role_removal() {
 
     println!(
         "SUCCESS: Third authority's actions are still accessible after middle authority removal!"
+    );
+
+    // Sanity check, we want to ensure boundaries are correct after adding another new authority after removing the original one.
+    println!("Now runnig a sanity check to ensure we can add a new role");
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: fourth_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: [4; 32],
+                current_amount: 4000,
+            }),
+            ClientAction::SolLimit(SolLimit { amount: 5000 }),
+        ],
+    )
+    .unwrap();
+
+    // Verify we have three authorities
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 3);
+
+    let fourth_role_id = swig
+        .lookup_role_id(fourth_authority.pubkey().as_ref())
+        .unwrap()
+        .expect("Fouth authority should exist");
+
+    assert_eq!(fourth_role_id, 3);
+
+    println!(
+        "Role IDs: root={}, third={}, fourth={}",
+        root_role_id, third_role_id, fourth_role_id
+    );
+
+    // Verify the fourth authority's actions are accessible before removal
+    let fourth_role = swig.get_role(fourth_role_id).unwrap().unwrap();
+    println!("fourth_role: {:?}", fourth_role.get_all_actions());
+    assert!(fourth_role
+        .get_action::<TokenLimit>(&[4; 32])
+        .unwrap()
+        .is_some());
+    assert!(third_role.get_action::<SolLimit>(&[]).unwrap().is_some());
+    println!(
+        "SUCCESS: Fourth authority is assigned properly and has the correct boundaries for its actions!"
     );
 }
