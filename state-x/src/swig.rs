@@ -308,6 +308,7 @@ impl<'a> SwigBuilder<'a> {
                 let current_action_pos_in_actions = cursor - actions_start_cursor_pos;
                 let next_action_pos_in_actions =
                     current_action_pos_in_actions + Action::LEN + action_header.length() as usize;
+                // Change boundary to the new boundary position which is next_action_pos_in_actions
                 self.role_buffer[cursor + 4..cursor + 8]
                     .copy_from_slice(&(next_action_pos_in_actions as u32).to_le_bytes());
                 cursor += Action::LEN;
