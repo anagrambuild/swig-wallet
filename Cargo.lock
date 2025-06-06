@@ -8999,6 +8999,7 @@ name = "swig-state-x"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "libsecp256k1 0.7.2",
  "murmur3",
  "no-padding",
  "pinocchio 0.8.1",

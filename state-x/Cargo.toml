@@ -9,7 +9,7 @@ pinocchio = { version = "=0.8.1", features = ["std"] }
 swig-assertions = { path = "../assertions" }
 no-padding = { path = "../no-padding" }
 murmur3 = { version = "0.5.2", optional = true }
-
+libsecp256k1 = { version = "0.7.2", default-features = false}
 
 [target.'cfg(not(feature = "static_syscalls"))'.dependencies]
 murmur3 = "0.5.2"
