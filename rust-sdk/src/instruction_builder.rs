@@ -137,6 +137,7 @@ impl SwigInstructionBuilder {
         &mut self,
         instructions: Vec<Instruction>,
         current_slot: Option<u64>,
+        signature_counter: Option<u32>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let mut signed_instructions = Vec::new();
         for instruction in instructions {
@@ -153,11 +154,13 @@ impl SwigInstructionBuilder {
                 },
                 AuthorityManager::Secp256k1(authority, signing_fn) => {
                     let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                    let counter = signature_counter.unwrap_or(1u32); // Default to 1 if not provided
                     let swig_signed_instruction = SignInstruction::new_secp256k1(
                         self.swig_account,
                         self.payer,
                         signing_fn,
                         current_slot,
+                        counter,
                         instruction,
                         self.role_id,
                     )?;
@@ -177,11 +180,13 @@ impl SwigInstructionBuilder {
                 },
                 AuthorityManager::Secp256k1Session(session_authority, signing_fn) => {
                     let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                    // Session authorities always use 0 for counter
                     let swig_signed_instruction = SignInstruction::new_secp256k1(
                         self.swig_account,
                         self.payer,
                         signing_fn,
                         current_slot,
+                        0u32,
                         instruction,
                         self.role_id,
                     )?;
@@ -211,6 +216,7 @@ impl SwigInstructionBuilder {
         new_authority: &[u8],
         permissions: Vec<ClientPermission>,
         current_slot: Option<u64>,
+        signature_counter: Option<u32>,
     ) -> Result<Instruction, SwigError> {
         let actions = ClientPermission::to_client_actions(permissions);
 
@@ -230,11 +236,13 @@ impl SwigInstructionBuilder {
             },
             AuthorityManager::Secp256k1(authority, signing_fn) => {
                 let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                let counter = signature_counter.unwrap_or(1u32); // Default to 1 if not provided
                 Ok(AddAuthorityInstruction::new_with_secp256k1_authority(
                     self.swig_account,
                     self.payer,
                     signing_fn,
                     current_slot,
+                    counter,
                     self.role_id,
                     AuthorityConfig {
                         authority_type: new_authority_type,
@@ -258,11 +266,14 @@ impl SwigInstructionBuilder {
             },
             AuthorityManager::Secp256k1Session(session_authority, signing_fn) => {
                 let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                // Session authorities always use 0 for counter (no replay protection based on
+                // counter)
                 Ok(AddAuthorityInstruction::new_with_secp256k1_authority(
                     self.swig_account,
                     self.payer,
                     signing_fn,
                     current_slot,
+                    0u32, // Session authorities don't use counter-based replay protection
                     self.role_id,
                     AuthorityConfig {
                         authority_type: new_authority_type,

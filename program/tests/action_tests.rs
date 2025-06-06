@@ -352,9 +352,9 @@ fn test_action_boundaries_after_role_removal() {
     assert!(root_role.is_some());
     assert!(third_role.is_some());
 
-    // CRITICAL TEST: Verify the third authority's actions are still accessible and correct
-    // This is the key test - after removing the middle role, the third role's actions
-    // should still be accessible with correct boundaries
+    // CRITICAL TEST: Verify the third authority's actions are still accessible and
+    // correct This is the key test - after removing the middle role, the third
+    // role's actions should still be accessible with correct boundaries
     let third_role = third_role.unwrap();
 
     // Check TokenLimit action
@@ -373,7 +373,8 @@ fn test_action_boundaries_after_role_removal() {
         "SUCCESS: Third authority's actions are still accessible after middle authority removal!"
     );
 
-    // Sanity check, we want to ensure boundaries are correct after adding another new authority after removing the original one.
+    // Sanity check, we want to ensure boundaries are correct after adding another
+    // new authority after removing the original one.
     println!("Now runnig a sanity check to ensure we can add a new role");
     add_authority_with_ed25519_root(
         &mut context,
@@ -419,6 +420,7 @@ fn test_action_boundaries_after_role_removal() {
         .is_some());
     assert!(third_role.get_action::<SolLimit>(&[]).unwrap().is_some());
     println!(
-        "SUCCESS: Fourth authority is assigned properly and has the correct boundaries for its actions!"
+        "SUCCESS: Fourth authority is assigned properly and has the correct boundaries for its \
+         actions!"
     );
 }

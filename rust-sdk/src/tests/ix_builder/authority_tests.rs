@@ -47,6 +47,7 @@ fn test_add_authority_with_ed25519_root() {
             &new_authority_bytes,
             permissions,
             Some(current_slot),
+            None,
         )
         .unwrap();
 
@@ -91,12 +92,12 @@ fn test_add_authority_with_secp256k1_root() {
         .to_encoded_point(false)
         .to_bytes();
 
-    let wallet = wallet.clone();
+    let wallet_clone = wallet.clone();
     let signing_fn = move |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&payload[..32]);
         let hash = B256::from(hash);
-        wallet.sign_hash_sync(&hash).unwrap().as_bytes()
+        wallet_clone.sign_hash_sync(&hash).unwrap().as_bytes()
     };
 
     let mut builder = SwigInstructionBuilder::new(
@@ -135,12 +136,18 @@ fn test_add_authority_with_secp256k1_root() {
 
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
 
+    // Get current counter for the signing wallet (not the new authority being
+    // added)
+    let current_counter = get_secp256k1_counter_from_wallet(&context, &swig_key, &wallet).unwrap();
+    let next_counter = current_counter + 1;
+
     let add_auth_ix = builder
         .add_authority_instruction(
             AuthorityType::Secp256k1,
             &secp_pubkey_bytes,
             permissions,
             Some(current_slot),
+            Some(next_counter),
         )
         .unwrap();
 
@@ -197,6 +204,7 @@ fn test_remove_authority_with_ed25519_root() {
             AuthorityType::Ed25519,
             &authority_pubkey.to_bytes(),
             permissions,
+            None,
             None,
         )
         .unwrap();

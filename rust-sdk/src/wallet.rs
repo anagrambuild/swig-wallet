@@ -204,6 +204,7 @@ impl<'c> SwigWallet<'c> {
             new_authority,
             permissions,
             Some(self.get_current_slot()?),
+            None,
         )?;
         let msg = v0::Message::try_compile(
             &self.fee_payer.pubkey(),
@@ -279,9 +280,11 @@ impl<'c> SwigWallet<'c> {
         inner_instructions: Vec<Instruction>,
         alt: Option<&[AddressLookupTableAccount]>,
     ) -> Result<Signature, SwigError> {
-        let sign_ix = self
-            .instruction_builder
-            .sign_instruction(inner_instructions, Some(self.get_current_slot()?))?;
+        let sign_ix = self.instruction_builder.sign_instruction(
+            inner_instructions,
+            Some(self.get_current_slot()?),
+            None,
+        )?;
 
         let alt = if alt.is_some() { alt.unwrap() } else { &[] };
 

@@ -68,7 +68,7 @@ fn test_sign_instruction_with_ed25519_authority() {
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
 
     let sign_ix = builder
-        .sign_instruction(vec![transfer_ix], Some(current_slot))
+        .sign_instruction(vec![transfer_ix], Some(current_slot), None)
         .unwrap();
 
     let msg = v0::Message::try_compile(
@@ -112,12 +112,12 @@ fn test_sign_instruction_with_secp256k1_authority() {
         .to_encoded_point(false)
         .to_bytes();
 
-    let wallet = wallet.clone();
+    let wallet_clone = wallet.clone();
     let signing_fn = move |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&payload[..32]);
         let hash = B256::from(hash);
-        wallet.sign_hash_sync(&hash).unwrap().as_bytes()
+        wallet_clone.sign_hash_sync(&hash).unwrap().as_bytes()
     };
 
     let mut builder = SwigInstructionBuilder::new(
@@ -152,8 +152,13 @@ fn test_sign_instruction_with_secp256k1_authority() {
     );
 
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
+
+    // Get current counter and calculate next counter
+    let current_counter = get_secp256k1_counter_from_wallet(&context, &swig_key, &wallet).unwrap();
+    let next_counter = current_counter + 1;
+
     let sign_ix = builder
-        .sign_instruction(vec![transfer_ix], Some(current_slot))
+        .sign_instruction(vec![transfer_ix], Some(current_slot), Some(next_counter))
         .unwrap();
 
     let msg = v0::Message::try_compile(

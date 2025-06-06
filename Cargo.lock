@@ -8898,6 +8898,7 @@ dependencies = [
  "solana-program",
  "solana-sdk",
  "solana-stake-interface",
+ "spl-memo",
  "static_assertions",
  "swig-assertions",
  "swig-compact-instructions",
