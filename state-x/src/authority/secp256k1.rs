@@ -344,6 +344,13 @@ fn secp256k1_authenticate(
         return Err(SwigAuthenticateError::PermissionDeniedSecp256k1InvalidSignature.into());
     }
 
+    let signature = libsecp256k1::Signature::parse_standard_slice(&authority_payload[..64])
+        .map_err(|_| SwigAuthenticateError::PermissionDeniedSecp256k1InvalidSignature)?;
+
+    if signature.s.is_high() {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256k1InvalidSignature.into());
+    }
+
     let mut accounts_payload = [0u8; 64 * AccountsPayload::LEN];
 
     let mut cursor = 0;
