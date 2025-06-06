@@ -167,5 +167,5 @@ fn process_toggle_sub_account_v1(accounts: &[AccountInfo], data: &[u8]) -> Progr
 /// Adds an authorization lock to the wallet.
 fn process_add_authorization_lock_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = AddAuthorizationLockV1Accounts::context(accounts)?;
-    add_authorization_lock_v1(account_ctx, data)
+    add_authorization_lock_v1(account_ctx, data, accounts)
 }

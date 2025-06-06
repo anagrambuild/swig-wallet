@@ -125,13 +125,15 @@ fn test_authorization_lock_enforcement() {
     let add_lock_ix = swig_interface::AddAuthorizationLockInstruction::new(
         swig,
         swig_authority.pubkey(),
+        context.default_payer.pubkey(),
+        0, // acting_role_id: swig_authority has All permissions (role 0)
         mint_pubkey.to_bytes(),
         lock_amount,
         expiry_slot,
     ).unwrap();
 
     let add_lock_message = v0::Message::try_compile(
-        &swig_authority.pubkey(),
+        &context.default_payer.pubkey(),
         &[add_lock_ix],
         &[],
         context.svm.latest_blockhash(),
@@ -140,7 +142,7 @@ fn test_authorization_lock_enforcement() {
 
     let add_lock_tx = VersionedTransaction::try_new(
         VersionedMessage::V0(add_lock_message),
-        &[&swig_authority],
+        &[&context.default_payer, &swig_authority],
     )
     .unwrap();
 
@@ -384,13 +386,15 @@ fn test_authorization_lock_expiry() {
     let add_expired_lock_ix = swig_interface::AddAuthorizationLockInstruction::new(
         swig,
         swig_authority.pubkey(),
+        context.default_payer.pubkey(),
+        0, // acting_role_id: swig_authority has All permissions
         mint_pubkey.to_bytes(),
         500,
         expired_slot,
     ).unwrap();
 
     let add_expired_lock_message = v0::Message::try_compile(
-        &swig_authority.pubkey(),
+        &context.default_payer.pubkey(),
         &[add_expired_lock_ix],
         &[],
         context.svm.latest_blockhash(),
@@ -399,7 +403,7 @@ fn test_authorization_lock_expiry() {
 
     let add_expired_lock_tx = VersionedTransaction::try_new(
         VersionedMessage::V0(add_expired_lock_message),
-        &[&swig_authority],
+        &[&context.default_payer, &swig_authority],
     )
     .unwrap();
 
@@ -511,13 +515,15 @@ fn test_expired_authorization_lock_cleanup() {
     let add_lock_ix = swig_interface::AddAuthorizationLockInstruction::new(
         swig,
         swig_authority.pubkey(),
+        context.default_payer.pubkey(),
+        0, // acting_role_id: swig_authority has All permissions
         mint_pubkey.to_bytes(),
         500,
         short_expiry_slot,
     ).unwrap();
 
     let add_lock_message = v0::Message::try_compile(
-        &swig_authority.pubkey(),
+        &context.default_payer.pubkey(),
         &[add_lock_ix],
         &[],
         context.svm.latest_blockhash(),
@@ -526,7 +532,7 @@ fn test_expired_authorization_lock_cleanup() {
 
     let add_lock_tx = VersionedTransaction::try_new(
         VersionedMessage::V0(add_lock_message),
-        &[&swig_authority],
+        &[&context.default_payer, &swig_authority],
     )
     .unwrap();
 
@@ -745,6 +751,8 @@ fn test_multiple_authorization_locks() {
     let add_lock1_ix = swig_interface::AddAuthorizationLockInstruction::new(
         swig,
         swig_authority.pubkey(),
+        context.default_payer.pubkey(),
+        0, // acting_role_id: swig_authority has All permissions
         mint1_pubkey.to_bytes(),
         300,
         expiry_slot,
@@ -755,6 +763,8 @@ fn test_multiple_authorization_locks() {
     let add_lock2_ix = swig_interface::AddAuthorizationLockInstruction::new(
         swig,
         swig_authority.pubkey(),
+        context.default_payer.pubkey(),
+        0, // acting_role_id: swig_authority has All permissions
         mint2_pubkey.to_bytes(),
         400,
         expiry_slot,
@@ -763,7 +773,7 @@ fn test_multiple_authorization_locks() {
     // Add both locks
     for lock_ix in [add_lock1_ix, add_lock2_ix] {
         let message = v0::Message::try_compile(
-            &swig_authority.pubkey(),
+            &context.default_payer.pubkey(),
             &[lock_ix],
             &[],
             context.svm.latest_blockhash(),
@@ -772,7 +782,7 @@ fn test_multiple_authorization_locks() {
 
         let tx = VersionedTransaction::try_new(
             VersionedMessage::V0(message),
-            &[&swig_authority],
+            &[&context.default_payer, &swig_authority],
         )
         .unwrap();
 
@@ -1116,6 +1126,8 @@ fn test_combined_authorization_locks_same_mint() {
     let add_lock1_ix = swig_interface::AddAuthorizationLockInstruction::new(
         swig,
         swig_authority.pubkey(),
+        context.default_payer.pubkey(),
+        0, // acting_role_id: swig_authority has All permissions
         mint_pubkey.to_bytes(),
         100,
         expiry_slot,
@@ -1126,6 +1138,8 @@ fn test_combined_authorization_locks_same_mint() {
     let add_lock2_ix = swig_interface::AddAuthorizationLockInstruction::new(
         swig,
         swig_authority.pubkey(),
+        context.default_payer.pubkey(),
+        0, // acting_role_id: swig_authority has All permissions
         mint_pubkey.to_bytes(),
         120,
         expiry_slot,
@@ -1134,7 +1148,7 @@ fn test_combined_authorization_locks_same_mint() {
     // Add both locks
     for (i, lock_ix) in [add_lock1_ix, add_lock2_ix].iter().enumerate() {
         let message = v0::Message::try_compile(
-            &swig_authority.pubkey(),
+            &context.default_payer.pubkey(),
             &[lock_ix.clone()],
             &[],
             context.svm.latest_blockhash(),
@@ -1143,7 +1157,7 @@ fn test_combined_authorization_locks_same_mint() {
 
         let tx = VersionedTransaction::try_new(
             VersionedMessage::V0(message),
-            &[&swig_authority],
+            &[&context.default_payer, &swig_authority],
         )
         .unwrap();
 

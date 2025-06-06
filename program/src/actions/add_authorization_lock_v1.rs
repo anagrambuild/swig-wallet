@@ -13,9 +13,10 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::*;
 use swig_state_x::{
+    action::{all::All, manage_authorization_locks::ManageAuthorizationLocks},
     role::Position,
     swig::{AuthorizationLock, Swig, SwigBuilder},
-    Discriminator, IntoBytes, SwigStateError, Transmutable, TransmutableMut,
+    Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut,
 };
 
 use crate::{
@@ -33,11 +34,13 @@ use crate::{
 /// * `token_mint` - The mint of the token to lock
 /// * `amount` - The maximum amount that can be spent
 /// * `expiry_slot` - The slot when this lock expires
+/// * `acting_role_id` - ID of the role performing the operation
 #[derive(Debug, NoPadding)]
 #[repr(C, align(8))]
 pub struct AddAuthorizationLockV1Args {
     instruction: SwigInstruction,
-    _padding: [u8; 6], // Add padding to align to 8 bytes
+    _padding: [u8; 2], // Reduced padding for new field
+    pub acting_role_id: u32,
     pub token_mint: [u8; 32],
     pub amount: u64,
     pub expiry_slot: u64,
@@ -47,13 +50,15 @@ impl AddAuthorizationLockV1Args {
     /// Creates a new instance of AddAuthorizationLockV1Args.
     ///
     /// # Arguments
+    /// * `acting_role_id` - ID of the role performing the operation
     /// * `token_mint` - The mint of the token to lock
     /// * `amount` - The maximum amount that can be spent
     /// * `expiry_slot` - The slot when this lock expires
-    pub fn new(token_mint: [u8; 32], amount: u64, expiry_slot: u64) -> Self {
+    pub fn new(acting_role_id: u32, token_mint: [u8; 32], amount: u64, expiry_slot: u64) -> Self {
         Self {
             instruction: SwigInstruction::AddAuthorizationLockV1,
-            _padding: [0; 6],
+            _padding: [0; 2],
+            acting_role_id,
             token_mint,
             amount,
             expiry_slot,
@@ -71,17 +76,44 @@ impl IntoBytes for AddAuthorizationLockV1Args {
     }
 }
 
+/// Structured data for the add authorization lock instruction.
+pub struct AddAuthorizationLockV1<'a> {
+    pub args: &'a AddAuthorizationLockV1Args,
+    data_payload: &'a [u8],
+    authority_payload: &'a [u8],
+}
+
+impl<'a> AddAuthorizationLockV1<'a> {
+    /// Parses the instruction data bytes into an AddAuthorizationLockV1 instance.
+    pub fn from_instruction_bytes(data: &'a [u8]) -> Result<Self, ProgramError> {
+        if data.len() < AddAuthorizationLockV1Args::LEN {
+            return Err(SwigError::InvalidSwigSignInstructionDataTooShort.into());
+        }
+
+        let (inst, authority_payload) = data.split_at(AddAuthorizationLockV1Args::LEN);
+        let args = unsafe { AddAuthorizationLockV1Args::load_unchecked(inst)? };
+
+        Ok(Self {
+            args,
+            data_payload: inst,
+            authority_payload,
+        })
+    }
+}
+
 /// Adds an authorization lock to a Swig wallet.
 ///
 /// This function:
-/// 1. Validates the Swig account
-/// 2. Checks that the lock hasn't already expired
-/// 3. Reallocates the account to accommodate the new lock
-/// 4. Adds the authorization lock to the end of the account data
+/// 1. Validates the acting role's permissions (All or ManageAuthorizationLocks)
+/// 2. Authenticates the request
+/// 3. Validates the Swig account and lock parameters
+/// 4. Reallocates the account to accommodate the new lock
+/// 5. Adds the authorization lock to the end of the account data
 ///
 /// # Arguments
 /// * `ctx` - The account context for the operation
 /// * `data` - Raw instruction data bytes
+/// * `all_accounts` - All accounts involved in the operation
 ///
 /// # Returns
 /// * `ProgramResult` - Success or error status
@@ -89,18 +121,15 @@ impl IntoBytes for AddAuthorizationLockV1Args {
 pub fn add_authorization_lock_v1(
     ctx: Context<AddAuthorizationLockV1Accounts>,
     data: &[u8],
+    all_accounts: &[AccountInfo],
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
     
-    if data.len() < AddAuthorizationLockV1Args::LEN {
-        return Err(SwigError::InvalidSwigSignInstructionDataTooShort.into());
-    }
-
-    let args = unsafe { AddAuthorizationLockV1Args::load_unchecked(data)? };
+    let add_lock = AddAuthorizationLockV1::from_instruction_bytes(data)?;
 
     // Get current slot to validate expiry
     let clock = Clock::get()?;
-    if args.expiry_slot <= clock.slot {
+    if add_lock.args.expiry_slot <= clock.slot {
         return Err(SwigError::InvalidAuthorizationLockExpiry.into());
     }
 
@@ -109,7 +138,43 @@ pub fn add_authorization_lock_v1(
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 
-    // Calculate current data layout sizes
+    // Authentication and permission checking
+    let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+    let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+    let acting_role = Swig::get_mut_role(add_lock.args.acting_role_id, swig_roles)?;
+    if acting_role.is_none() {
+        return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+    }
+    let acting_role = acting_role.unwrap();
+
+    // Authenticate the caller
+    let slot = clock.slot;
+    if acting_role.authority.session_based() {
+        acting_role.authority.authenticate_session(
+            all_accounts,
+            add_lock.authority_payload,
+            add_lock.data_payload,
+            slot,
+        )?;
+    } else {
+        acting_role.authority.authenticate(
+            all_accounts,
+            add_lock.authority_payload,
+            add_lock.data_payload,
+            slot,
+        )?;
+    }
+
+    // Check permissions: must have All or ManageAuthorizationLocks
+    let all = acting_role.get_action::<All>(&[])?;
+    let manage_auth_locks = acting_role.get_action::<ManageAuthorizationLocks>(&[])?;
+
+    if all.is_none() && manage_auth_locks.is_none() {
+        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+    }
+
+    // Re-borrow data after authentication
+    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let (swig_header, remaining_data) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
 
@@ -156,9 +221,9 @@ pub fn add_authorization_lock_v1(
     
     // Create the new authorization lock
     let new_lock = AuthorizationLock {
-        token_mint: args.token_mint,
-        amount: args.amount,
-        expiry_slot: args.expiry_slot,
+        token_mint: add_lock.args.token_mint,
+        amount: add_lock.args.amount,
+        expiry_slot: add_lock.args.expiry_slot,
     };
 
     // Write the new lock at the end of the authorization locks section
@@ -176,9 +241,9 @@ pub fn add_authorization_lock_v1(
 
     msg!(
         "Added authorization lock for mint {:?}, amount: {}, expiry_slot: {}",
-        args.token_mint,
-        args.amount,
-        args.expiry_slot
+        add_lock.args.token_mint,
+        add_lock.args.amount,
+        add_lock.args.expiry_slot
     );
 
     Ok(())
