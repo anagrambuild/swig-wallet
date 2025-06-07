@@ -255,16 +255,15 @@ pub fn add_authorization_lock_v1(
     // Re-borrow data after potential reallocation
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
 
-    // Write the new lock at the end of the authorization locks section using zero-copy
+    // Write the new lock at the end of the authorization locks section using
+    // zero-copy
     let auth_locks_start = Swig::LEN + roles_end;
     let new_lock_offset = auth_locks_start + current_auth_locks_size;
 
     // Zero-copy: write directly to the account data buffer
     let lock_slice = &mut swig_account_data[new_lock_offset..new_lock_offset + new_lock_size];
-    let new_lock = unsafe {
-        &mut *(lock_slice.as_mut_ptr() as *mut AuthorizationLock)
-    };
-    
+    let new_lock = unsafe { &mut *(lock_slice.as_mut_ptr() as *mut AuthorizationLock) };
+
     // Initialize the lock fields directly in memory
     new_lock.token_mint = add_lock.args.token_mint;
     new_lock.amount = add_lock.args.amount;
@@ -313,8 +312,9 @@ fn validate_authorization_lock_against_limits<'a>(
 ) -> ProgramResult {
     // Wrapped SOL mint address
     const WRAPPED_SOL_MINT: [u8; 32] = [
-        0x06, 0x9b, 0x88, 0x57, 0xfe, 0xab, 0x89, 0x84, 0xfb, 0x98, 0x21, 0x9e, 0xed, 0xb0, 0x64, 0x52,
-        0x48, 0x1c, 0x28, 0x5e, 0x68, 0x5e, 0xa4, 0xfd, 0x83, 0x91, 0x35, 0x52, 0x2b, 0x70, 0x54, 0x2c,
+        0x06, 0x9b, 0x88, 0x57, 0xfe, 0xab, 0x89, 0x84, 0xfb, 0x98, 0x21, 0x9e, 0xed, 0xb0, 0x64,
+        0x52, 0x48, 0x1c, 0x28, 0x5e, 0x68, 0x5e, 0xa4, 0xfd, 0x83, 0x91, 0x35, 0x52, 0x2b, 0x70,
+        0x54, 0x2c,
     ];
 
     // Calculate total existing authorization lock amount for this token

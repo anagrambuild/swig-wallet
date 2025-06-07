@@ -1,7 +1,6 @@
 /// Module for removing authorization locks from Swig accounts.
 /// Authorization locks can be removed by authorities with proper permissions,
 /// which helps manage payment preauthorizations by revoking them when needed.
-
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
@@ -21,7 +20,7 @@ use swig_state_x::{
 use crate::{
     error::SwigError,
     instruction::{
-        accounts::{RemoveAuthorizationLockV1Accounts, Context},
+        accounts::{Context, RemoveAuthorizationLockV1Accounts},
         SwigInstruction,
     },
 };
@@ -75,7 +74,8 @@ pub struct RemoveAuthorizationLockV1<'a> {
 }
 
 impl<'a> RemoveAuthorizationLockV1<'a> {
-    /// Parses the instruction data bytes into a RemoveAuthorizationLockV1 instance.
+    /// Parses the instruction data bytes into a RemoveAuthorizationLockV1
+    /// instance.
     pub fn from_instruction_bytes(data: &'a [u8]) -> Result<Self, ProgramError> {
         if data.len() < RemoveAuthorizationLockV1Args::LEN {
             return Err(SwigError::InvalidSwigSignInstructionDataTooShort.into());
@@ -97,7 +97,8 @@ impl<'a> RemoveAuthorizationLockV1<'a> {
 /// This function:
 /// 1. Validates the acting role's permissions (All or ManageAuthorizationLocks)
 /// 2. Authenticates the request
-/// 3. Validates role ownership (both All and ManageAuthorizationLocks can only remove own locks)
+/// 3. Validates role ownership (both All and ManageAuthorizationLocks can only
+///    remove own locks)
 /// 4. Validates the Swig account and lock index
 /// 5. Removes the authorization lock by shifting remaining locks down
 /// 6. Updates the authorization lock count
@@ -116,7 +117,7 @@ pub fn remove_authorization_lock_v1(
     all_accounts: &[AccountInfo],
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
-    
+
     let remove_lock = RemoveAuthorizationLockV1::from_instruction_bytes(data)?;
 
     // Get current slot for authentication
@@ -156,7 +157,9 @@ pub fn remove_authorization_lock_v1(
 
     // Check permissions: must have All or ManageAuthorizationLocks
     let has_all_permission = acting_role.get_action::<All>(&[])?.is_some();
-    let has_manage_auth_locks_permission = acting_role.get_action::<ManageAuthorizationLocks>(&[])?.is_some();
+    let has_manage_auth_locks_permission = acting_role
+        .get_action::<ManageAuthorizationLocks>(&[])?
+        .is_some();
 
     if !has_all_permission && !has_manage_auth_locks_permission {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
@@ -164,7 +167,8 @@ pub fn remove_authorization_lock_v1(
 
     // Re-borrow data after authentication
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    let (swig_header, remaining_data) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+    let (swig_header, remaining_data) =
+        unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
 
     // Validate that we have authorization locks to remove
@@ -184,9 +188,8 @@ pub fn remove_authorization_lock_v1(
         if cursor + Position::LEN > remaining_data.len() {
             return Err(SwigStateError::InvalidRoleData.into());
         }
-        let position = unsafe {
-            Position::load_unchecked(&remaining_data[cursor..cursor + Position::LEN])?
-        };
+        let position =
+            unsafe { Position::load_unchecked(&remaining_data[cursor..cursor + Position::LEN])? };
         cursor = position.boundary() as usize;
         roles_end = cursor;
     }
@@ -202,12 +205,13 @@ pub fn remove_authorization_lock_v1(
     let locks_after_start = lock_to_remove_end;
     let locks_after_end = auth_locks_start + (total_locks * lock_size);
 
-    // Validate role ownership - both All and ManageAuthorizationLocks permissions 
+    // Validate role ownership - both All and ManageAuthorizationLocks permissions
     // can only remove locks created by their own role
     if lock_to_remove_start + lock_size <= remaining_data.len() {
         // Zero-copy: cast the raw bytes directly to a reference
         let lock = unsafe {
-            &*(remaining_data[lock_to_remove_start..lock_to_remove_end].as_ptr() as *const AuthorizationLock)
+            &*(remaining_data[lock_to_remove_start..lock_to_remove_end].as_ptr()
+                as *const AuthorizationLock)
         };
         if lock.role_id != remove_lock.args.acting_role_id {
             msg!(
@@ -223,10 +227,12 @@ pub fn remove_authorization_lock_v1(
     if lock_to_remove_start + lock_size <= remaining_data.len() {
         // Zero-copy: cast the raw bytes directly to a reference
         let lock = unsafe {
-            &*(remaining_data[lock_to_remove_start..lock_to_remove_end].as_ptr() as *const AuthorizationLock)
+            &*(remaining_data[lock_to_remove_start..lock_to_remove_end].as_ptr()
+                as *const AuthorizationLock)
         };
         msg!(
-            "Removing authorization lock {} for mint {:?}, amount: {}, expiry_slot: {}, created by role: {}",
+            "Removing authorization lock {} for mint {:?}, amount: {}, expiry_slot: {}, created \
+             by role: {}",
             lock_index,
             lock.token_mint,
             lock.amount,
@@ -239,15 +245,16 @@ pub fn remove_authorization_lock_v1(
     if lock_index < total_locks - 1 {
         let locks_after_count = total_locks - lock_index - 1;
         let move_size = locks_after_count * lock_size;
-        
+
         // Safety check: ensure we don't go out of bounds
-        if locks_after_end <= remaining_data.len() && 
-           lock_to_remove_start + move_size <= remaining_data.len() {
+        if locks_after_end <= remaining_data.len()
+            && lock_to_remove_start + move_size <= remaining_data.len()
+        {
             // Use copy_within to safely move the data
             let source_start = locks_after_start;
             let source_end = locks_after_end;
             let dest_start = lock_to_remove_start;
-            
+
             remaining_data.copy_within(source_start..source_end, dest_start);
         } else {
             return Err(SwigError::InvalidAuthorizationLockIndex.into());

@@ -9,14 +9,18 @@ use solana_sdk::{
     signer::Signer,
     transaction::VersionedTransaction,
 };
-use swig_interface::{AddAuthorizationLockInstruction, RemoveAuthorizationLockInstruction, AuthorityConfig, ClientAction};
+use swig_interface::{
+    AddAuthorizationLockInstruction, AuthorityConfig, ClientAction,
+    RemoveAuthorizationLockInstruction,
+};
 use swig_state_x::{
     action::{manage_authorization_locks::ManageAuthorizationLocks, token_limit::TokenLimit},
-    swig::{SwigWithRoles},
+    swig::SwigWithRoles,
     IntoBytes, Transmutable,
 };
 
-/// Test that validates only the role that created an authorization lock can remove it.
+/// Test that validates only the role that created an authorization lock can
+/// remove it.
 ///
 /// This test:
 /// 1. Creates two roles with ManageAuthorizationLocks permission
@@ -98,12 +102,12 @@ fn test_remove_authorization_lock_role_ownership() {
     // Get role IDs
     let swig_account = context.svm.get_account(&swig_pubkey).unwrap();
     let swig_with_roles = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    
+
     let role_a_id = swig_with_roles
         .lookup_role_id(role_a_authority.pubkey().as_ref())
         .unwrap()
         .unwrap();
-    
+
     let role_b_id = swig_with_roles
         .lookup_role_id(role_b_authority.pubkey().as_ref())
         .unwrap()
@@ -155,7 +159,10 @@ fn test_remove_authorization_lock_role_ownership() {
     let (auth_locks, count) = swig_with_roles
         .get_authorization_locks_by_role::<10>(role_a_id)
         .unwrap();
-    assert_eq!(count, 1, "Should have exactly 1 authorization lock for Role A");
+    assert_eq!(
+        count, 1,
+        "Should have exactly 1 authorization lock for Role A"
+    );
 
     // Role B tries to remove Role A's authorization lock (should fail)
     let remove_auth_lock_ix_b = RemoveAuthorizationLockInstruction::new(
@@ -196,7 +203,10 @@ fn test_remove_authorization_lock_role_ownership() {
     let (auth_locks, count) = swig_with_roles
         .get_authorization_locks_by_role::<10>(role_a_id)
         .unwrap();
-    assert_eq!(count, 1, "Authorization lock should still exist after failed removal");
+    assert_eq!(
+        count, 1,
+        "Authorization lock should still exist after failed removal"
+    );
 
     // Role A removes its own authorization lock (should succeed)
     let remove_auth_lock_ix_a = RemoveAuthorizationLockInstruction::new(
@@ -241,10 +251,12 @@ fn test_remove_authorization_lock_role_ownership() {
     assert_eq!(final_count, 0, "Authorization lock should be removed");
 }
 
-/// Test that validates a role with All permissions can only remove authorization locks they created.
+/// Test that validates a role with All permissions can only remove
+/// authorization locks they created.
 ///
 /// This test:
-/// 1. Creates a role A with limited permissions that creates an authorization lock
+/// 1. Creates a role A with limited permissions that creates an authorization
+///    lock
 /// 2. Creates a role B with All permissions
 /// 3. Role B fails to remove Role A's lock (can only remove own locks)
 #[test_log::test]
@@ -299,9 +311,7 @@ fn test_remove_authorization_lock_all_permission_override() {
     .unwrap();
 
     // Add Role B with All permissions
-    let role_b_actions = vec![
-        ClientAction::All(swig_state_x::action::all::All {}),
-    ];
+    let role_b_actions = vec![ClientAction::All(swig_state_x::action::all::All {})];
 
     add_authority_with_ed25519_root(
         &mut context,
@@ -318,12 +328,12 @@ fn test_remove_authorization_lock_all_permission_override() {
     // Get role IDs
     let swig_account = context.svm.get_account(&swig_pubkey).unwrap();
     let swig_with_roles = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    
+
     let role_a_id = swig_with_roles
         .lookup_role_id(role_a_authority.pubkey().as_ref())
         .unwrap()
         .unwrap();
-    
+
     let role_b_id = swig_with_roles
         .lookup_role_id(role_b_authority.pubkey().as_ref())
         .unwrap()
@@ -369,7 +379,8 @@ fn test_remove_authorization_lock_all_permission_override() {
         result
     );
 
-    // Role B (with All permissions) tries to remove Role A's authorization lock (should fail)
+    // Role B (with All permissions) tries to remove Role A's authorization lock
+    // (should fail)
     let remove_auth_lock_ix_b = RemoveAuthorizationLockInstruction::new(
         swig_pubkey,
         role_b_authority.pubkey(),
@@ -408,5 +419,8 @@ fn test_remove_authorization_lock_all_permission_override() {
     let (final_locks, final_count) = final_swig_with_roles
         .get_authorization_locks_by_role::<10>(role_a_id)
         .unwrap();
-    assert_eq!(final_count, 1, "Authorization lock should still exist after failed removal attempt");
+    assert_eq!(
+        final_count, 1,
+        "Authorization lock should still exist after failed removal attempt"
+    );
 }

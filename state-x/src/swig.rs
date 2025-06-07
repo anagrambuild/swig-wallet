@@ -490,9 +490,8 @@ impl<'a> SwigWithRoles<'a> {
             if cursor + Position::LEN > self.data.len() {
                 return &[];
             }
-            let position = unsafe {
-                Position::load_unchecked(&self.data[cursor..cursor + Position::LEN])
-            };
+            let position =
+                unsafe { Position::load_unchecked(&self.data[cursor..cursor + Position::LEN]) };
             if let Ok(pos) = position {
                 cursor = pos.boundary() as usize;
             } else {
@@ -665,15 +664,16 @@ impl<'a> SwigWithRoles<'a> {
         None
     }
 
-    /// Iterates over all authorization locks from the account, calling the provided function for each lock.
-    /// This is zero-copy - passes direct references to the raw lock data.
+    /// Iterates over all authorization locks from the account, calling the
+    /// provided function for each lock. This is zero-copy - passes direct
+    /// references to the raw lock data.
     pub fn for_each_authorization_lock<F, E>(&self, mut f: F) -> Result<(), E>
     where
         F: FnMut(&AuthorizationLock) -> Result<(), E>,
         E: From<ProgramError>,
     {
         let auth_locks_data = self.authorization_locks_data();
-        
+
         let expected_size = self.state.authorization_locks as usize * AuthorizationLock::LEN;
         if auth_locks_data.len() < expected_size {
             return Err(ProgramError::InvalidAccountData.into());
@@ -686,7 +686,8 @@ impl<'a> SwigWithRoles<'a> {
             }
             // Zero-copy: cast the raw bytes directly to a reference
             let lock = unsafe {
-                &*(auth_locks_data[cursor..cursor + AuthorizationLock::LEN].as_ptr() as *const AuthorizationLock)
+                &*(auth_locks_data[cursor..cursor + AuthorizationLock::LEN].as_ptr()
+                    as *const AuthorizationLock)
             };
             f(lock)?;
             cursor += AuthorizationLock::LEN;
@@ -695,8 +696,13 @@ impl<'a> SwigWithRoles<'a> {
         Ok(())
     }
 
-    /// Iterates over authorization locks for a specific token mint, calling the provided function for each matching lock.
-    pub fn for_each_authorization_lock_by_mint<F, E>(&self, mint: &[u8; 32], mut f: F) -> Result<(), E>
+    /// Iterates over authorization locks for a specific token mint, calling the
+    /// provided function for each matching lock.
+    pub fn for_each_authorization_lock_by_mint<F, E>(
+        &self,
+        mint: &[u8; 32],
+        mut f: F,
+    ) -> Result<(), E>
     where
         F: FnMut(&AuthorizationLock) -> Result<(), E>,
         E: From<ProgramError>,
@@ -710,12 +716,15 @@ impl<'a> SwigWithRoles<'a> {
         })
     }
 
-    /// Helper method for tests to get authorization locks in a fixed-size array.
-    /// Only collects up to MAX_LOCKS authorization locks for testing purposes.
-    pub fn get_authorization_locks_for_test<const MAX_LOCKS: usize>(&self) -> Result<([Option<AuthorizationLock>; MAX_LOCKS], usize), ProgramError> {
+    /// Helper method for tests to get authorization locks in a fixed-size
+    /// array. Only collects up to MAX_LOCKS authorization locks for testing
+    /// purposes.
+    pub fn get_authorization_locks_for_test<const MAX_LOCKS: usize>(
+        &self,
+    ) -> Result<([Option<AuthorizationLock>; MAX_LOCKS], usize), ProgramError> {
         let mut locks = [None; MAX_LOCKS];
         let mut count = 0;
-        
+
         self.for_each_authorization_lock::<_, ProgramError>(|lock| {
             if count < MAX_LOCKS {
                 locks[count] = Some(*lock);
@@ -723,16 +732,20 @@ impl<'a> SwigWithRoles<'a> {
             }
             Ok(())
         })?;
-        
+
         Ok((locks, count))
     }
 
     /// Gets authorization locks created by a specific role ID.
-    /// Returns a tuple of (locks array, count) where count is the number of locks found.
-    pub fn get_authorization_locks_by_role<const MAX_LOCKS: usize>(&self, role_id: u32) -> Result<([Option<AuthorizationLock>; MAX_LOCKS], usize), ProgramError> {
+    /// Returns a tuple of (locks array, count) where count is the number of
+    /// locks found.
+    pub fn get_authorization_locks_by_role<const MAX_LOCKS: usize>(
+        &self,
+        role_id: u32,
+    ) -> Result<([Option<AuthorizationLock>; MAX_LOCKS], usize), ProgramError> {
         let mut locks = [None; MAX_LOCKS];
         let mut count = 0;
-        
+
         self.for_each_authorization_lock::<_, ProgramError>(|lock| {
             if lock.role_id == role_id && count < MAX_LOCKS {
                 locks[count] = Some(*lock);
@@ -740,12 +753,13 @@ impl<'a> SwigWithRoles<'a> {
             }
             Ok(())
         })?;
-        
+
         Ok((locks, count))
     }
 
-    /// Iterates over authorization locks for a specific role ID and applies a function to each.
-    /// This is useful for operations that need to process locks without collecting them into an array.
+    /// Iterates over authorization locks for a specific role ID and applies a
+    /// function to each. This is useful for operations that need to process
+    /// locks without collecting them into an array.
     pub fn for_each_authorization_lock_by_role<F, E>(&self, role_id: u32, mut f: F) -> Result<(), E>
     where
         F: FnMut(&AuthorizationLock) -> Result<(), E>,
@@ -769,19 +783,23 @@ impl<'a> SwigWithRoles<'a> {
 
         let auth_locks_data = self.authorization_locks_data();
         let lock_offset = index * AuthorizationLock::LEN;
-        
+
         if lock_offset + AuthorizationLock::LEN > auth_locks_data.len() {
             return None;
         }
 
         // Zero-copy: cast the raw bytes directly to a reference
         unsafe {
-            Some(&*(auth_locks_data[lock_offset..lock_offset + AuthorizationLock::LEN].as_ptr() as *const AuthorizationLock))
+            Some(
+                &*(auth_locks_data[lock_offset..lock_offset + AuthorizationLock::LEN].as_ptr()
+                    as *const AuthorizationLock),
+            )
         }
     }
 
     /// Zero-copy iterator over authorization locks.
-    /// Returns an iterator that yields direct references to authorization locks in memory.
+    /// Returns an iterator that yields direct references to authorization locks
+    /// in memory.
     pub fn authorization_locks_iter(&self) -> AuthorizationLockIterator {
         AuthorizationLockIterator {
             data: self.authorization_locks_data(),
@@ -794,22 +812,24 @@ impl<'a> SwigWithRoles<'a> {
     /// Takes mutable references to state and data to allow modification.
     /// Returns the number of locks removed.
     pub fn remove_expired_authorization_locks_mut(
-        state: &mut Swig, 
-        data: &mut [u8], 
-        current_slot: u64
+        state: &mut Swig,
+        data: &mut [u8],
+        current_slot: u64,
     ) -> Result<u16, ProgramError> {
         let auth_locks_count = state.authorization_locks;
-        
+
         // Calculate where authorization locks start (after roles data)
         let mut roles_cursor = 0;
         for _i in 0..state.roles {
             if roles_cursor + Position::LEN > data.len() {
                 break;
             }
-            let position = unsafe { Position::load_unchecked(&data[roles_cursor..roles_cursor + Position::LEN])? };
+            let position = unsafe {
+                Position::load_unchecked(&data[roles_cursor..roles_cursor + Position::LEN])?
+            };
             roles_cursor = position.boundary() as usize;
         }
-        
+
         let auth_locks_data = &mut data[roles_cursor..];
         let mut removed_count = 0u16;
         let mut write_cursor = 0;
@@ -823,7 +843,8 @@ impl<'a> SwigWithRoles<'a> {
 
             // Zero-copy: cast the raw bytes directly to a reference
             let lock = unsafe {
-                &*(auth_locks_data[read_cursor..read_cursor + AuthorizationLock::LEN].as_ptr() as *const AuthorizationLock)
+                &*(auth_locks_data[read_cursor..read_cursor + AuthorizationLock::LEN].as_ptr()
+                    as *const AuthorizationLock)
             };
 
             // If lock is not expired, copy it to the write position
@@ -831,7 +852,7 @@ impl<'a> SwigWithRoles<'a> {
                 if write_cursor != read_cursor {
                     auth_locks_data.copy_within(
                         read_cursor..read_cursor + AuthorizationLock::LEN,
-                        write_cursor
+                        write_cursor,
                     );
                 }
                 write_cursor += AuthorizationLock::LEN;
@@ -848,7 +869,6 @@ impl<'a> SwigWithRoles<'a> {
 
         Ok(removed_count)
     }
-
 }
 
 /// Zero-copy iterator over authorization locks.
@@ -868,14 +888,15 @@ impl<'a> Iterator for AuthorizationLockIterator<'a> {
         }
 
         let lock_offset = self.current * AuthorizationLock::LEN;
-        
+
         if lock_offset + AuthorizationLock::LEN > self.data.len() {
             return None;
         }
 
         // Zero-copy: cast the raw bytes directly to a reference
         let lock = unsafe {
-            &*(self.data[lock_offset..lock_offset + AuthorizationLock::LEN].as_ptr() as *const AuthorizationLock)
+            &*(self.data[lock_offset..lock_offset + AuthorizationLock::LEN].as_ptr()
+                as *const AuthorizationLock)
         };
 
         self.current += 1;

@@ -1,7 +1,8 @@
 //! Manage authorization locks action type.
 //!
 //! This module defines the ManageAuthorizationLocks action type which grants
-//! permission to add and remove authorization locks within the Swig wallet system.
+//! permission to add and remove authorization locks within the Swig wallet
+//! system.
 
 use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;

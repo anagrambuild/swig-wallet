@@ -4,19 +4,21 @@ mod common;
 use common::*;
 use litesvm_token::spl_token;
 use solana_sdk::{
+    clock::Clock,
     message::{v0, VersionedMessage},
+    program_pack::Pack,
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
     transaction::VersionedTransaction,
-    program_pack::Pack,
-    clock::Clock,
 };
 use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state_x::{
-    action::{all::All, manage_authorization_locks::ManageAuthorizationLocks, token_limit::TokenLimit},
-    swig::{swig_account_seeds, AuthorizationLock, SwigWithRoles, Swig},
-    Transmutable, IntoBytes,
+    action::{
+        all::All, manage_authorization_locks::ManageAuthorizationLocks, token_limit::TokenLimit,
+    },
+    swig::{swig_account_seeds, AuthorizationLock, Swig, SwigWithRoles},
+    IntoBytes, Transmutable,
 };
 
 /// Test that validates authorization locks track the role ID that created them
@@ -49,22 +51,27 @@ fn test_authorization_lock_role_tracking() {
     assert!(swig_create_result.is_ok());
 
     println!("=== AUTHORIZATION LOCK ROLE TRACKING TEST ===");
-    println!("Testing that authorization locks track creator role IDs and can be retrieved by role");
+    println!(
+        "Testing that authorization locks track creator role IDs and can be retrieved by role"
+    );
     println!();
 
     // Add authority with ManageAuthorizationLocks permission
-    let manage_auth_locks_action = ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {});
-    let add_manage_auth_locks_authority_ix = swig_interface::AddAuthorityInstruction::new_with_ed25519_authority(
-        swig,
-        context.default_payer.pubkey(),
-        swig_authority.pubkey(),
-        0, // Acting role ID (swig_authority has All permissions)
-        swig_interface::AuthorityConfig {
-            authority_type: swig_state_x::authority::AuthorityType::Ed25519,
-            authority: &manage_auth_locks_authority.pubkey().to_bytes(),
-        },
-        vec![manage_auth_locks_action],
-    ).unwrap();
+    let manage_auth_locks_action =
+        ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {});
+    let add_manage_auth_locks_authority_ix =
+        swig_interface::AddAuthorityInstruction::new_with_ed25519_authority(
+            swig,
+            context.default_payer.pubkey(),
+            swig_authority.pubkey(),
+            0, // Acting role ID (swig_authority has All permissions)
+            swig_interface::AuthorityConfig {
+                authority_type: swig_state_x::authority::AuthorityType::Ed25519,
+                authority: &manage_auth_locks_authority.pubkey().to_bytes(),
+            },
+            vec![manage_auth_locks_action],
+        )
+        .unwrap();
 
     let add_manage_auth_locks_authority_message = v0::Message::try_compile(
         &context.default_payer.pubkey(),
@@ -80,8 +87,13 @@ fn test_authorization_lock_role_tracking() {
     )
     .unwrap();
 
-    let add_manage_auth_locks_authority_result = context.svm.send_transaction(add_manage_auth_locks_authority_tx);
-    assert!(add_manage_auth_locks_authority_result.is_ok(), "Adding ManageAuthorizationLocks authority should succeed");
+    let add_manage_auth_locks_authority_result = context
+        .svm
+        .send_transaction(add_manage_auth_locks_authority_tx);
+    assert!(
+        add_manage_auth_locks_authority_result.is_ok(),
+        "Adding ManageAuthorizationLocks authority should succeed"
+    );
     println!("✅ Added authority with ManageAuthorizationLocks permission (role ID: 1)");
     println!();
 
@@ -105,7 +117,8 @@ fn test_authorization_lock_role_tracking() {
         mint_pubkey.to_bytes(),
         500,
         expiry_slot,
-    ).unwrap();
+    )
+    .unwrap();
 
     let add_lock1_message = v0::Message::try_compile(
         &context.default_payer.pubkey(),
@@ -122,7 +135,10 @@ fn test_authorization_lock_role_tracking() {
     .unwrap();
 
     let add_lock1_result = context.svm.send_transaction(add_lock1_tx);
-    assert!(add_lock1_result.is_ok(), "Adding lock from role 0 should succeed");
+    assert!(
+        add_lock1_result.is_ok(),
+        "Adding lock from role 0 should succeed"
+    );
 
     // Expire blockhash
     context.svm.expire_blockhash();
@@ -137,7 +153,8 @@ fn test_authorization_lock_role_tracking() {
         mint_pubkey.to_bytes(),
         300,
         expiry_slot,
-    ).unwrap();
+    )
+    .unwrap();
 
     let add_lock2_message = v0::Message::try_compile(
         &context.default_payer.pubkey(),
@@ -154,7 +171,10 @@ fn test_authorization_lock_role_tracking() {
     .unwrap();
 
     let add_lock2_result = context.svm.send_transaction(add_lock2_tx);
-    assert!(add_lock2_result.is_ok(), "Adding lock from role 1 should succeed");
+    assert!(
+        add_lock2_result.is_ok(),
+        "Adding lock from role 1 should succeed"
+    );
 
     // Expire blockhash
     context.svm.expire_blockhash();
@@ -169,7 +189,8 @@ fn test_authorization_lock_role_tracking() {
         mint_pubkey.to_bytes(),
         100,
         expiry_slot,
-    ).unwrap();
+    )
+    .unwrap();
 
     let add_lock3_message = v0::Message::try_compile(
         &context.default_payer.pubkey(),
@@ -186,11 +207,14 @@ fn test_authorization_lock_role_tracking() {
     .unwrap();
 
     let add_lock3_result = context.svm.send_transaction(add_lock3_tx);
-    assert!(add_lock3_result.is_ok(), "Adding third lock from role 0 should succeed");
+    assert!(
+        add_lock3_result.is_ok(),
+        "Adding third lock from role 0 should succeed"
+    );
 
     // Lock 4: Another lock from role 1
     println!("Adding lock 4 from role 1 (ManageAuthorizationLocks permission): 200 tokens");
-    
+
     // Expire blockhash
     context.svm.expire_blockhash();
 
@@ -202,7 +226,8 @@ fn test_authorization_lock_role_tracking() {
         mint_pubkey.to_bytes(),
         200,
         expiry_slot,
-    ).unwrap();
+    )
+    .unwrap();
 
     let add_lock4_message = v0::Message::try_compile(
         &context.default_payer.pubkey(),
@@ -219,7 +244,10 @@ fn test_authorization_lock_role_tracking() {
     .unwrap();
 
     let add_lock4_result = context.svm.send_transaction(add_lock4_tx);
-    assert!(add_lock4_result.is_ok(), "Adding second lock from role 1 should succeed");
+    assert!(
+        add_lock4_result.is_ok(),
+        "Adding second lock from role 1 should succeed"
+    );
 
     println!("✅ Added 4 authorization locks from different roles");
     println!();
@@ -230,12 +258,16 @@ fn test_authorization_lock_role_tracking() {
     assert_eq!(swig_with_roles.state.authorization_locks, 4);
 
     println!("VERIFICATION - All authorization locks in account:");
-    let (all_locks, total_count) = swig_with_roles.get_authorization_locks_for_test::<10>().unwrap();
+    let (all_locks, total_count) = swig_with_roles
+        .get_authorization_locks_for_test::<10>()
+        .unwrap();
     println!("Total authorization locks: {}", total_count);
     for i in 0..total_count {
         if let Some(lock) = all_locks[i] {
-            println!("Lock {}: role_id={}, amount={}, mint={:?}", 
-                     i, lock.role_id, lock.amount, lock.token_mint);
+            println!(
+                "Lock {}: role_id={}, amount={}, mint={:?}",
+                i, lock.role_id, lock.amount, lock.token_mint
+            );
         }
     }
     println!();
@@ -245,10 +277,12 @@ fn test_authorization_lock_role_tracking() {
 
     // Get locks for role 0 (should have 2 locks: 500 and 100 tokens)
     println!("Getting locks for role 0:");
-    let (role0_locks, role0_count) = swig_with_roles.get_authorization_locks_by_role::<10>(0).unwrap();
+    let (role0_locks, role0_count) = swig_with_roles
+        .get_authorization_locks_by_role::<10>(0)
+        .unwrap();
     println!("Found {} locks for role 0", role0_count);
     assert_eq!(role0_count, 2, "Role 0 should have 2 locks");
-    
+
     let mut role0_amounts = Vec::new();
     for i in 0..role0_count {
         if let Some(lock) = role0_locks[i] {
@@ -259,14 +293,20 @@ fn test_authorization_lock_role_tracking() {
     }
     // Should have 500 and 100 token locks
     role0_amounts.sort();
-    assert_eq!(role0_amounts, vec![100, 500], "Role 0 should have 100 and 500 token locks");
+    assert_eq!(
+        role0_amounts,
+        vec![100, 500],
+        "Role 0 should have 100 and 500 token locks"
+    );
 
     // Get locks for role 1 (should have 2 locks: 300 and 200 tokens)
     println!("Getting locks for role 1:");
-    let (role1_locks, role1_count) = swig_with_roles.get_authorization_locks_by_role::<10>(1).unwrap();
+    let (role1_locks, role1_count) = swig_with_roles
+        .get_authorization_locks_by_role::<10>(1)
+        .unwrap();
     println!("Found {} locks for role 1", role1_count);
     assert_eq!(role1_count, 2, "Role 1 should have 2 locks");
-    
+
     let mut role1_amounts = Vec::new();
     for i in 0..role1_count {
         if let Some(lock) = role1_locks[i] {
@@ -277,11 +317,17 @@ fn test_authorization_lock_role_tracking() {
     }
     // Should have 300 and 200 token locks
     role1_amounts.sort();
-    assert_eq!(role1_amounts, vec![200, 300], "Role 1 should have 200 and 300 token locks");
+    assert_eq!(
+        role1_amounts,
+        vec![200, 300],
+        "Role 1 should have 200 and 300 token locks"
+    );
 
     // Get locks for role 999 (should have 0 locks)
     println!("Getting locks for role 999 (non-existent):");
-    let (role999_locks, role999_count) = swig_with_roles.get_authorization_locks_by_role::<10>(999).unwrap();
+    let (role999_locks, role999_count) = swig_with_roles
+        .get_authorization_locks_by_role::<10>(999)
+        .unwrap();
     println!("Found {} locks for role 999", role999_count);
     assert_eq!(role999_count, 0, "Role 999 should have no locks");
 
@@ -290,7 +336,7 @@ fn test_authorization_lock_role_tracking() {
     println!("✅ Authorization locks correctly track creator role IDs");
     println!("✅ get_authorization_locks_by_role function works correctly");
     println!("✅ Role 0: 2 locks (500, 100 tokens)");
-    println!("✅ Role 1: 2 locks (300, 200 tokens)"); 
+    println!("✅ Role 1: 2 locks (300, 200 tokens)");
     println!("✅ Non-existent roles return 0 locks");
     println!("================================================================");
 }

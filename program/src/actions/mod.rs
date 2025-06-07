@@ -5,13 +5,13 @@
 //! instruction type and handles the validation and execution of that
 //! instruction's business logic.
 
-pub mod add_authorization_lock_v1;
-pub mod remove_authorization_lock_v1;
 pub mod add_authority_v1;
+pub mod add_authorization_lock_v1;
 pub mod create_session_v1;
 pub mod create_sub_account_v1;
 pub mod create_v1;
 pub mod remove_authority_v1;
+pub mod remove_authorization_lock_v1;
 pub mod sign_v1;
 pub mod sub_account_sign_v1;
 pub mod toggle_sub_account_v1;
@@ -21,15 +21,17 @@ use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
 
 use self::{
-    add_authorization_lock_v1::*, remove_authorization_lock_v1::*, add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*, create_v1::*,
-    remove_authority_v1::*, sign_v1::*, sub_account_sign_v1::*, toggle_sub_account_v1::*,
+    add_authority_v1::*, add_authorization_lock_v1::*, create_session_v1::*,
+    create_sub_account_v1::*, create_v1::*, remove_authority_v1::*,
+    remove_authorization_lock_v1::*, sign_v1::*, sub_account_sign_v1::*, toggle_sub_account_v1::*,
     withdraw_from_sub_account_v1::*,
 };
 use crate::{
     instruction::{
         accounts::{
-            AddAuthorizationLockV1Accounts, RemoveAuthorizationLockV1Accounts, AddAuthorityV1Accounts, CreateSessionV1Accounts, CreateSubAccountV1Accounts,
-            CreateV1Accounts, RemoveAuthorityV1Accounts, SignV1Accounts, SubAccountSignV1Accounts,
+            AddAuthorityV1Accounts, AddAuthorizationLockV1Accounts, CreateSessionV1Accounts,
+            CreateSubAccountV1Accounts, CreateV1Accounts, RemoveAuthorityV1Accounts,
+            RemoveAuthorizationLockV1Accounts, SignV1Accounts, SubAccountSignV1Accounts,
             ToggleSubAccountV1Accounts, WithdrawFromSubAccountV1Accounts,
         },
         SwigInstruction,
@@ -47,7 +49,8 @@ use crate::{
 /// * `accounts` - List of accounts involved in the instruction
 /// * `account_classification` - Classification of each account's type and role
 /// * `data` - Raw instruction data
-/// * `authorization_lock_cache` - Optional cache of authorization locks for performance
+/// * `authorization_lock_cache` - Optional cache of authorization locks for
+///   performance
 ///
 /// # Returns
 /// * `ProgramResult` - Success or error status
@@ -65,7 +68,12 @@ pub fn process_action(
     let ix = SwigInstruction::from_primitive(discriminator);
     match ix {
         SwigInstruction::CreateV1 => process_create_v1(accounts, data),
-        SwigInstruction::SignV1 => process_sign_v1(accounts, account_classification, data, authorization_lock_cache),
+        SwigInstruction::SignV1 => process_sign_v1(
+            accounts,
+            account_classification,
+            data,
+            authorization_lock_cache,
+        ),
         SwigInstruction::AddAuthorityV1 => process_add_authority_v1(accounts, data),
         SwigInstruction::RemoveAuthorityV1 => process_remove_authority_v1(accounts, data),
         SwigInstruction::CreateSessionV1 => process_create_session_v1(accounts, data),
@@ -77,8 +85,12 @@ pub fn process_action(
             process_sub_account_sign_v1(accounts, account_classification, data)
         },
         SwigInstruction::ToggleSubAccountV1 => process_toggle_sub_account_v1(accounts, data),
-        SwigInstruction::AddAuthorizationLockV1 => process_add_authorization_lock_v1(accounts, data),
-        SwigInstruction::RemoveAuthorizationLockV1 => process_remove_authorization_lock_v1(accounts, data),
+        SwigInstruction::AddAuthorizationLockV1 => {
+            process_add_authorization_lock_v1(accounts, data)
+        },
+        SwigInstruction::RemoveAuthorizationLockV1 => {
+            process_remove_authorization_lock_v1(accounts, data)
+        },
     }
 }
 
@@ -100,7 +112,13 @@ fn process_sign_v1(
     authorization_lock_cache: Option<&crate::util::AuthorizationLockCache>,
 ) -> ProgramResult {
     let account_ctx = SignV1Accounts::context(accounts)?;
-    sign_v1(account_ctx, accounts, data, account_classification, authorization_lock_cache)
+    sign_v1(
+        account_ctx,
+        accounts,
+        data,
+        account_classification,
+        authorization_lock_cache,
+    )
 }
 
 /// Processes an AddAuthorityV1 instruction.

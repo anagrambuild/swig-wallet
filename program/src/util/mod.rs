@@ -161,8 +161,8 @@ impl ProgramScopeCache {
 /// Cache for authorization lock information to optimize lookups.
 ///
 /// This struct maintains a mapping of role IDs to their authorization locks.
-/// It helps avoid repeated parsing of authorization lock data from the Swig account
-/// during transaction processing.
+/// It helps avoid repeated parsing of authorization lock data from the Swig
+/// account during transaction processing.
 pub(crate) struct AuthorizationLockCache {
     /// Maps role_id to Vec<(mint, AuthorizationLock)> for efficient lookups
     locks_by_role: Vec<(u32, Vec<([u8; 32], AuthorizationLock)>)>,
@@ -187,7 +187,8 @@ impl AuthorizationLockCache {
     /// * `data` - Raw Swig account data
     ///
     /// # Returns
-    /// * `Option<Self>` - The populated cache if successful, None if data is invalid
+    /// * `Option<Self>` - The populated cache if successful, None if data is
+    ///   invalid
     pub(crate) fn load_from_swig(data: &[u8]) -> Option<Self> {
         if data.len() < Swig::LEN {
             return None;
@@ -197,19 +198,26 @@ impl AuthorizationLockCache {
         let mut cache = Self::new();
 
         // Iterate through all authorization locks using the zero-copy iterator
-        let _: Result<(), ProgramError> = swig_with_roles.for_each_authorization_lock(|auth_lock| {
-            let role_id = auth_lock.role_id;
-            let mint = auth_lock.token_mint;
-            
-            // Find existing role entry or create new one
-            if let Some((_, locks)) = cache.locks_by_role.iter_mut().find(|(id, _)| *id == role_id) {
-                locks.push((mint, *auth_lock));
-            } else {
-                cache.locks_by_role.push((role_id, vec![(mint, *auth_lock)]));
-            }
-            
-            Ok(())
-        });
+        let _: Result<(), ProgramError> =
+            swig_with_roles.for_each_authorization_lock(|auth_lock| {
+                let role_id = auth_lock.role_id;
+                let mint = auth_lock.token_mint;
+
+                // Find existing role entry or create new one
+                if let Some((_, locks)) = cache
+                    .locks_by_role
+                    .iter_mut()
+                    .find(|(id, _)| *id == role_id)
+                {
+                    locks.push((mint, *auth_lock));
+                } else {
+                    cache
+                        .locks_by_role
+                        .push((role_id, vec![(mint, *auth_lock)]));
+                }
+
+                Ok(())
+            });
 
         Some(cache)
     }
@@ -261,7 +269,8 @@ impl AuthorizationLockCache {
     /// * `mint` - The token mint to filter by
     ///
     /// # Returns
-    /// * `Vec<&AuthorizationLock>` - All matching authorization locks from all roles
+    /// * `Vec<&AuthorizationLock>` - All matching authorization locks from all
+    ///   roles
     pub(crate) fn get_all_locks_for_mint(&self, mint: &[u8; 32]) -> Vec<&AuthorizationLock> {
         let mut result = Vec::new();
         for (_, role_locks) in &self.locks_by_role {

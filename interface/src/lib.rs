@@ -7,19 +7,20 @@ use solana_sdk::{
 };
 pub use swig;
 use swig::actions::{
-    add_authorization_lock_v1::AddAuthorizationLockV1Args, remove_authorization_lock_v1::RemoveAuthorizationLockV1Args, add_authority_v1::AddAuthorityV1Args, create_session_v1::CreateSessionV1Args,
-    create_sub_account_v1::CreateSubAccountV1Args, create_v1::CreateV1Args,
-    remove_authority_v1::RemoveAuthorityV1Args, sub_account_sign_v1::SubAccountSignV1Args,
-    toggle_sub_account_v1::ToggleSubAccountV1Args,
+    add_authority_v1::AddAuthorityV1Args, add_authorization_lock_v1::AddAuthorizationLockV1Args,
+    create_session_v1::CreateSessionV1Args, create_sub_account_v1::CreateSubAccountV1Args,
+    create_v1::CreateV1Args, remove_authority_v1::RemoveAuthorityV1Args,
+    remove_authorization_lock_v1::RemoveAuthorizationLockV1Args,
+    sub_account_sign_v1::SubAccountSignV1Args, toggle_sub_account_v1::ToggleSubAccountV1Args,
     withdraw_from_sub_account_v1::WithdrawFromSubAccountV1Args,
 };
 pub use swig_compact_instructions::*;
 use swig_state_x::{
     action::{
-        all::All, manage_authority::ManageAuthority, manage_authorization_locks::ManageAuthorizationLocks,
-        program::Program, program_scope::ProgramScope,
-        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll,
-        stake_limit::StakeLimit, stake_recurring_limit::StakeRecurringLimit,
+        all::All, manage_authority::ManageAuthority,
+        manage_authorization_locks::ManageAuthorizationLocks, program::Program,
+        program_scope::ProgramScope, sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
+        stake_all::StakeAll, stake_limit::StakeLimit, stake_recurring_limit::StakeRecurringLimit,
         sub_account::SubAccount, token_limit::TokenLimit,
         token_recurring_limit::TokenRecurringLimit, Action, Permission,
     },
@@ -62,7 +63,10 @@ impl ClientAction {
             ClientAction::ProgramScope(_) => (Permission::ProgramScope, ProgramScope::LEN),
             ClientAction::All(_) => (Permission::All, All::LEN),
             ClientAction::ManageAuthority(_) => (Permission::ManageAuthority, ManageAuthority::LEN),
-            ClientAction::ManageAuthorizationLocks(_) => (Permission::ManageAuthorizationLocks, ManageAuthorizationLocks::LEN),
+            ClientAction::ManageAuthorizationLocks(_) => (
+                Permission::ManageAuthorizationLocks,
+                ManageAuthorizationLocks::LEN,
+            ),
             ClientAction::SubAccount(_) => (Permission::SubAccount, SubAccount::LEN),
             ClientAction::StakeLimit(_) => (Permission::StakeLimit, StakeLimit::LEN),
             ClientAction::StakeRecurringLimit(_) => {

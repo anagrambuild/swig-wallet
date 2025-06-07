@@ -8,6 +8,6 @@
 pub const PROGRAM_SCOPE_BYTE_SIZE: usize = 144;
 
 /// Size in bytes of an authorization lock data structure.
-/// This is used for memory allocation and validation when handling authorization
-/// lock actions.
+/// This is used for memory allocation and validation when handling
+/// authorization lock actions.
 pub const AUTHORIZATION_LOCK_BYTE_SIZE: usize = 56;
