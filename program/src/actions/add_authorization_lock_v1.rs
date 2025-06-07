@@ -1,7 +1,6 @@
 /// Module for adding authorization locks to Swig accounts.
 /// Authorization locks pre-authorize token spending up to a specific amount
 /// and expiry slot, providing a mechanism for payment preauthorizations.
-
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
@@ -13,9 +12,13 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::*;
 use swig_state_x::{
-    action::{all::All, manage_authorization_locks::ManageAuthorizationLocks},
+    action::{
+        all::All, manage_authorization_locks::ManageAuthorizationLocks, sol_limit::SolLimit,
+        sol_recurring_limit::SolRecurringLimit, token_limit::TokenLimit,
+        token_recurring_limit::TokenRecurringLimit,
+    },
     role::Position,
-    swig::{AuthorizationLock, Swig, SwigBuilder},
+    swig::{AuthorizationLock, Swig, SwigBuilder, SwigWithRoles},
     Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut,
 };
 
@@ -84,7 +87,8 @@ pub struct AddAuthorizationLockV1<'a> {
 }
 
 impl<'a> AddAuthorizationLockV1<'a> {
-    /// Parses the instruction data bytes into an AddAuthorizationLockV1 instance.
+    /// Parses the instruction data bytes into an AddAuthorizationLockV1
+    /// instance.
     pub fn from_instruction_bytes(data: &'a [u8]) -> Result<Self, ProgramError> {
         if data.len() < AddAuthorizationLockV1Args::LEN {
             return Err(SwigError::InvalidSwigSignInstructionDataTooShort.into());
@@ -124,7 +128,7 @@ pub fn add_authorization_lock_v1(
     all_accounts: &[AccountInfo],
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
-    
+
     let add_lock = AddAuthorizationLockV1::from_instruction_bytes(data)?;
 
     // Get current slot to validate expiry
@@ -139,6 +143,11 @@ pub fn add_authorization_lock_v1(
     }
 
     // Authentication and permission checking
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data).unwrap();
+    let role = swig_with_roles.get_role(add_lock.args.acting_role_id)?;
+    // TODO need to merge in fix for getting all roles because of action boundary
+    // cursor positions
+    msg!("role: {:?}", role.unwrap().get_all_actions());
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
     let acting_role = Swig::get_mut_role(add_lock.args.acting_role_id, swig_roles)?;
@@ -168,14 +177,42 @@ pub fn add_authorization_lock_v1(
     // Check permissions: must have All or ManageAuthorizationLocks
     let all = acting_role.get_action::<All>(&[])?;
     let manage_auth_locks = acting_role.get_action::<ManageAuthorizationLocks>(&[])?;
+    msg!("acting_role all actions: {:?}", acting_role.actions);
 
     if all.is_none() && manage_auth_locks.is_none() {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
 
+    // Validate against existing token limits for this role
+    // First, get current account data to check existing authorization locks
+    let swig_account_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
+    let swig_with_roles = swig_state_x::swig::SwigWithRoles::from_bytes(&swig_account_data)
+        .map_err(|_| SwigError::InvalidSwigAccountDiscriminator)?;
+
+    // Get existing authorization locks for this role using a smaller array to avoid
+    // stack overflow
+    const MAX_LOCKS: usize = 10; // Smaller bound to prevent stack overflow
+    let (existing_locks, _count) = swig_with_roles
+        .get_authorization_locks_by_role::<MAX_LOCKS>(add_lock.args.acting_role_id)?;
+
+    // Convert Option array to Vec of actual locks
+    let existing_locks_vec: Vec<swig_state_x::swig::AuthorizationLock> = existing_locks
+        .iter()
+        .filter_map(|opt_lock| *opt_lock)
+        .collect();
+
+    // Validate the new lock against existing token limits
+    validate_authorization_lock_against_limits(
+        &acting_role,
+        add_lock.args.token_mint,
+        add_lock.args.amount,
+        &existing_locks_vec,
+    )?;
+
     // Re-borrow data after authentication
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    let (swig_header, remaining_data) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+    let (swig_header, remaining_data) =
+        unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
 
     // Find the end of roles data to determine where authorization locks start
@@ -185,9 +222,8 @@ pub fn add_authorization_lock_v1(
         if cursor + Position::LEN > remaining_data.len() {
             return Err(SwigStateError::InvalidRoleData.into());
         }
-        let position = unsafe {
-            Position::load_unchecked(&remaining_data[cursor..cursor + Position::LEN])?
-        };
+        let position =
+            unsafe { Position::load_unchecked(&remaining_data[cursor..cursor + Position::LEN])? };
         cursor = position.boundary() as usize;
         roles_end = cursor;
     }
@@ -218,7 +254,7 @@ pub fn add_authorization_lock_v1(
 
     // Re-borrow data after potential reallocation
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    
+
     // Create the new authorization lock
     let new_lock = AuthorizationLock {
         token_mint: add_lock.args.token_mint,
@@ -231,10 +267,9 @@ pub fn add_authorization_lock_v1(
     // Write the new lock at the end of the authorization locks section
     let auth_locks_start = Swig::LEN + roles_end;
     let new_lock_offset = auth_locks_start + current_auth_locks_size;
-    
+
     let lock_bytes = new_lock.into_bytes()?;
-    swig_account_data[new_lock_offset..new_lock_offset + new_lock_size]
-        .copy_from_slice(lock_bytes);
+    swig_account_data[new_lock_offset..new_lock_offset + new_lock_size].copy_from_slice(lock_bytes);
 
     // Update the authorization locks count in the header
     let (swig_header, _) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
@@ -247,6 +282,61 @@ pub fn add_authorization_lock_v1(
         add_lock.args.amount,
         add_lock.args.expiry_slot
     );
+
+    Ok(())
+}
+
+/// Validates that the new authorization lock doesn't exceed existing token
+/// limits for the role.
+///
+/// This function checks if adding the new authorization lock would cause the
+/// total authorization locks for the token to exceed any existing token limits
+/// (simple or recurring) that the acting role has for that specific token.
+///
+/// # Arguments
+/// * `acting_role` - The role that is creating the authorization lock
+/// * `token_mint` - The mint of the token
+/// * `new_lock_amount` - The amount of the new authorization lock
+/// * `existing_locks` - All existing authorization locks for this role and
+///   token
+///
+/// # Returns
+/// * `Ok(())` - If the new lock is within limits
+/// * `Err(ProgramError)` - If the new lock would exceed limits
+fn validate_authorization_lock_against_limits<'a>(
+    acting_role: &'a swig_state_x::role::RoleMut<'a>,
+    token_mint: [u8; 32],
+    new_lock_amount: u64,
+    existing_locks: &[AuthorizationLock],
+) -> ProgramResult {
+    msg!("validate authorization lock");
+    // Calculate total existing authorization lock amount for this token
+    let existing_total = existing_locks
+        .iter()
+        .filter(|lock| lock.token_mint == token_mint)
+        .map(|lock| lock.amount)
+        .sum::<u64>();
+
+    let total_with_new_lock = existing_total.saturating_add(new_lock_amount);
+
+    // Check token limits for this specific mint
+    let mint_data = &token_mint[..];
+
+    // Check against simple token limit
+    if let Ok(Some(token_limit)) = acting_role.get_action::<TokenLimit>(mint_data) {
+        if total_with_new_lock > token_limit.current_amount {
+            return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
+        }
+    }
+
+    // Check against recurring token limit
+    if let Ok(Some(token_recurring_limit)) =
+        acting_role.get_action::<TokenRecurringLimit>(mint_data)
+    {
+        if total_with_new_lock > token_recurring_limit.limit {
+            return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
+        }
+    }
 
     Ok(())
 }
