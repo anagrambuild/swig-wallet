@@ -97,9 +97,10 @@ impl<'a> RemoveAuthorizationLockV1<'a> {
 /// This function:
 /// 1. Validates the acting role's permissions (All or ManageAuthorizationLocks)
 /// 2. Authenticates the request
-/// 3. Validates the Swig account and lock index
-/// 4. Removes the authorization lock by shifting remaining locks down
-/// 5. Updates the authorization lock count
+/// 3. Validates role ownership (both All and ManageAuthorizationLocks can only remove own locks)
+/// 4. Validates the Swig account and lock index
+/// 5. Removes the authorization lock by shifting remaining locks down
+/// 6. Updates the authorization lock count
 ///
 /// # Arguments
 /// * `ctx` - The account context for the operation
@@ -154,10 +155,10 @@ pub fn remove_authorization_lock_v1(
     }
 
     // Check permissions: must have All or ManageAuthorizationLocks
-    let all = acting_role.get_action::<All>(&[])?;
-    let manage_auth_locks = acting_role.get_action::<ManageAuthorizationLocks>(&[])?;
+    let has_all_permission = acting_role.get_action::<All>(&[])?.is_some();
+    let has_manage_auth_locks_permission = acting_role.get_action::<ManageAuthorizationLocks>(&[])?.is_some();
 
-    if all.is_none() && manage_auth_locks.is_none() {
+    if !has_all_permission && !has_manage_auth_locks_permission {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
 
@@ -201,16 +202,33 @@ pub fn remove_authorization_lock_v1(
     let locks_after_start = lock_to_remove_end;
     let locks_after_end = auth_locks_start + (total_locks * lock_size);
 
+    // Validate role ownership - both All and ManageAuthorizationLocks permissions 
+    // can only remove locks created by their own role
+    if lock_to_remove_start + lock_size <= remaining_data.len() {
+        let lock_data = &remaining_data[lock_to_remove_start..lock_to_remove_end];
+        if let Ok(lock) = unsafe { AuthorizationLock::load_unchecked(lock_data) } {
+            if lock.role_id != remove_lock.args.acting_role_id {
+                msg!(
+                    "Permission denied: Role {} cannot remove authorization lock created by role {}",
+                    remove_lock.args.acting_role_id,
+                    lock.role_id
+                );
+                return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+            }
+        }
+    }
+
     // Log the lock being removed for debugging
     if lock_to_remove_start + lock_size <= remaining_data.len() {
         let lock_data = &remaining_data[lock_to_remove_start..lock_to_remove_end];
         if let Ok(lock) = unsafe { AuthorizationLock::load_unchecked(lock_data) } {
             msg!(
-                "Removing authorization lock {} for mint {:?}, amount: {}, expiry_slot: {}",
+                "Removing authorization lock {} for mint {:?}, amount: {}, expiry_slot: {}, created by role: {}",
                 lock_index,
                 lock.token_mint,
                 lock.amount,
-                lock.expiry_slot
+                lock.expiry_slot,
+                lock.role_id
             );
         }
     }
