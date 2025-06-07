@@ -227,22 +227,67 @@ pub fn sign_v1(
                     if lamports > &current_lamports {
                         let amount_diff = lamports - current_lamports;
 
-                        {
-                            if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])?
-                            {
-                                action.run(amount_diff)?;
-                                continue;
-                            };
+                        // Wrapped SOL mint address
+                        const WRAPPED_SOL_MINT: [u8; 32] = [
+                            0x06, 0x9b, 0x88, 0x57, 0xfe, 0xab, 0x89, 0x84, 0xfb, 0x98, 0x21, 0x9e, 0xed, 0xb0, 0x64, 0x52,
+                            0x48, 0x1c, 0x28, 0x5e, 0x68, 0x5e, 0xa4, 0xfd, 0x83, 0x91, 0x35, 0x52, 0x2b, 0x70, 0x54, 0x2c,
+                        ];
+
+                        // Check authorization locks first for SOL spending
+                        // Re-borrow the swig account data to check authorization locks
+                        let swig_account_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
+                        let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data)?;
+
+                        // Check if spending is allowed by SOL authorization locks
+                        // Sum up all non-expired authorization locks for wrapped SOL mint
+                        let mut total_authorized_amount = 0u64;
+                        let mut has_active_locks = false;
+
+                        let _: Result<(), ProgramError> = swig_with_roles
+                            .for_each_authorization_lock_by_mint(&WRAPPED_SOL_MINT, |auth_lock| {
+                                // Only check non-expired locks for this role
+                                if auth_lock.expiry_slot > slot && auth_lock.role_id == sign_v1.args.role_id {
+                                    has_active_locks = true;
+                                    total_authorized_amount =
+                                        total_authorized_amount.saturating_add(auth_lock.amount);
+                                }
+                                Ok(())
+                            });
+
+                        msg!("SOL has_active_locks: {:?}", has_active_locks);
+                        // If there are active authorization locks, check against the total
+                        if has_active_locks {
+                            msg!("SOL amount_diff: {}", amount_diff);
+                            msg!("SOL total_authorized_amount: {}", total_authorized_amount);
+                            if amount_diff > total_authorized_amount {
+                                return Err(
+                                    SwigAuthenticateError::PermissionDeniedMissingPermission.into()
+                                );
+                            } else {
+                                // This spending is within the combined authorization lock limits
+                                matched = true;
+                            }
                         }
-                        {
-                            if let Some(action) =
-                                RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])?
+
+                        // If not covered by authorization locks, check regular SOL permissions
+                        if !matched {
                             {
-                                action.run(amount_diff, slot)?;
-                                continue;
-                            };
+                                if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])?
+                                {
+                                    action.run(amount_diff)?;
+                                    continue;
+                                };
+                            }
+                            {
+                                if let Some(action) =
+                                    RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])?
+                                {
+                                    action.run(amount_diff, slot)?;
+                                    continue;
+                                };
+                            }
+                            return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                         }
-                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                     }
                 },
                 AccountClassification::SwigTokenAccount { balance } => {

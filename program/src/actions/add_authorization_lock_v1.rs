@@ -292,6 +292,7 @@ pub fn add_authorization_lock_v1(
 /// This function checks if adding the new authorization lock would cause the
 /// total authorization locks for the token to exceed any existing token limits
 /// (simple or recurring) that the acting role has for that specific token.
+/// For SOL (wrapped SOL mint), it also checks against SOL limits.
 ///
 /// # Arguments
 /// * `acting_role` - The role that is creating the authorization lock
@@ -309,6 +310,12 @@ fn validate_authorization_lock_against_limits<'a>(
     new_lock_amount: u64,
     existing_locks: &[AuthorizationLock],
 ) -> ProgramResult {
+    // Wrapped SOL mint address
+    const WRAPPED_SOL_MINT: [u8; 32] = [
+        0x06, 0x9b, 0x88, 0x57, 0xfe, 0xab, 0x89, 0x84, 0xfb, 0x98, 0x21, 0x9e, 0xed, 0xb0, 0x64, 0x52,
+        0x48, 0x1c, 0x28, 0x5e, 0x68, 0x5e, 0xa4, 0xfd, 0x83, 0x91, 0x35, 0x52, 0x2b, 0x70, 0x54, 0x2c,
+    ];
+
     // Calculate total existing authorization lock amount for this token
     let existing_total = existing_locks
         .iter()
@@ -318,22 +325,39 @@ fn validate_authorization_lock_against_limits<'a>(
 
     let total_with_new_lock = existing_total.saturating_add(new_lock_amount);
 
-    // Check token limits for this specific mint
-    let mint_data = &token_mint[..];
-
-    // Check against simple token limit
-    if let Ok(Some(token_limit)) = acting_role.get_action::<TokenLimit>(mint_data) {
-        if total_with_new_lock > token_limit.current_amount {
-            return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
+    // Check if this is the wrapped SOL mint
+    if token_mint == WRAPPED_SOL_MINT {
+        // Check against SOL limits first
+        if let Ok(Some(sol_limit)) = acting_role.get_action::<SolLimit>(&[]) {
+            if total_with_new_lock > sol_limit.amount {
+                return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
+            }
         }
-    }
 
-    // Check against recurring token limit
-    if let Ok(Some(token_recurring_limit)) =
-        acting_role.get_action::<TokenRecurringLimit>(mint_data)
-    {
-        if total_with_new_lock > token_recurring_limit.limit {
-            return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
+        // Check against recurring SOL limit
+        if let Ok(Some(sol_recurring_limit)) = acting_role.get_action::<SolRecurringLimit>(&[]) {
+            if total_with_new_lock > sol_recurring_limit.current_amount {
+                return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
+            }
+        }
+    } else {
+        // Check token limits for non-SOL tokens
+        let mint_data = &token_mint[..];
+
+        // Check against simple token limit
+        if let Ok(Some(token_limit)) = acting_role.get_action::<TokenLimit>(mint_data) {
+            if total_with_new_lock > token_limit.current_amount {
+                return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
+            }
+        }
+
+        // Check against recurring token limit
+        if let Ok(Some(token_recurring_limit)) =
+            acting_role.get_action::<TokenRecurringLimit>(mint_data)
+        {
+            if total_with_new_lock > token_recurring_limit.limit {
+                return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
+            }
         }
     }
 
