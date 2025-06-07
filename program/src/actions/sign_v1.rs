@@ -137,6 +137,7 @@ impl<'a> SignV1<'a> {
 /// * `all_accounts` - All accounts involved in the transaction
 /// * `data` - Raw signing instruction data
 /// * `account_classifiers` - Classifications for involved accounts
+/// * `authorization_lock_cache` - Optional cache of authorization locks for performance
 ///
 /// # Returns
 /// * `ProgramResult` - Success or error status
@@ -146,6 +147,7 @@ pub fn sign_v1(
     all_accounts: &[AccountInfo],
     data: &[u8],
     account_classifiers: &[AccountClassification],
+    authorization_lock_cache: Option<&crate::util::AuthorizationLockCache>,
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
     // KEEP remove since we enfoce swig is owned in lib.rs
@@ -233,26 +235,37 @@ pub fn sign_v1(
                             0x48, 0x1c, 0x28, 0x5e, 0x68, 0x5e, 0xa4, 0xfd, 0x83, 0x91, 0x35, 0x52, 0x2b, 0x70, 0x54, 0x2c,
                         ];
 
-                        // Check authorization locks first for SOL spending
-                        // Re-borrow the swig account data to check authorization locks
-                        let swig_account_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
-                        let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data)?;
-
-                        // Check if spending is allowed by SOL authorization locks
-                        // Sum up all non-expired authorization locks for wrapped SOL mint
+                        // Check authorization locks first for SOL spending using the cache
                         let mut total_authorized_amount = 0u64;
                         let mut has_active_locks = false;
 
-                        let _: Result<(), ProgramError> = swig_with_roles
-                            .for_each_authorization_lock_by_mint(&WRAPPED_SOL_MINT, |auth_lock| {
+                        if let Some(cache) = authorization_lock_cache {
+                            // Use the cached authorization locks for better performance
+                            let locks = cache.get_locks_for_role_and_mint(sign_v1.args.role_id, &WRAPPED_SOL_MINT);
+                            for auth_lock in locks {
                                 // Only check non-expired locks for this role
-                                if auth_lock.expiry_slot > slot && auth_lock.role_id == sign_v1.args.role_id {
+                                if auth_lock.expiry_slot > slot {
                                     has_active_locks = true;
                                     total_authorized_amount =
                                         total_authorized_amount.saturating_add(auth_lock.amount);
                                 }
-                                Ok(())
-                            });
+                            }
+                        } else {
+                            // Fallback to the original method if cache is not available
+                            let swig_account_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
+                            let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data)?;
+
+                            let _: Result<(), ProgramError> = swig_with_roles
+                                .for_each_authorization_lock_by_mint(&WRAPPED_SOL_MINT, |auth_lock| {
+                                    // Only check non-expired locks for this role
+                                    if auth_lock.expiry_slot > slot && auth_lock.role_id == sign_v1.args.role_id {
+                                        has_active_locks = true;
+                                        total_authorized_amount =
+                                            total_authorized_amount.saturating_add(auth_lock.amount);
+                                    }
+                                    Ok(())
+                                });
+                        }
 
                         msg!("SOL has_active_locks: {:?}", has_active_locks);
                         // If there are active authorization locks, check against the total
@@ -326,31 +339,43 @@ pub fn sign_v1(
                         );
                     }
 
-                    // Check authorization locks first
-                    // Re-borrow the swig account data to check authorization locks
-                    let swig_account_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
-                    let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data)?;
-
                     // Convert mint slice to array for comparison
                     let mint_array: [u8; 32] = mint
                         .try_into()
                         .map_err(|_| ProgramError::InvalidAccountData)?;
 
-                    // Check if spending is allowed by authorization locks
-                    // Sum up all non-expired authorization locks for this mint
+                    // Check authorization locks first using the cache
                     let mut total_authorized_amount = 0u64;
                     let mut has_active_locks = false;
 
-                    let _: Result<(), ProgramError> = swig_with_roles
-                        .for_each_authorization_lock_by_mint(&mint_array, |auth_lock| {
+                    if let Some(cache) = authorization_lock_cache {
+                        // Use the cached authorization locks for better performance
+                        // For tokens, we check ALL authorization locks across all roles (different from SOL)
+                        let locks = cache.get_all_locks_for_mint(&mint_array);
+                        for auth_lock in locks {
                             // Only check non-expired locks
                             if auth_lock.expiry_slot > slot {
                                 has_active_locks = true;
                                 total_authorized_amount =
                                     total_authorized_amount.saturating_add(auth_lock.amount);
                             }
-                            Ok(())
-                        });
+                        }
+                    } else {
+                        // Fallback to the original method if cache is not available
+                        let swig_account_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
+                        let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data)?;
+
+                        let _: Result<(), ProgramError> = swig_with_roles
+                            .for_each_authorization_lock_by_mint(&mint_array, |auth_lock| {
+                                // Only check non-expired locks
+                                if auth_lock.expiry_slot > slot {
+                                    has_active_locks = true;
+                                    total_authorized_amount =
+                                        total_authorized_amount.saturating_add(auth_lock.amount);
+                                }
+                                Ok(())
+                            });
+                    }
 
                     msg!("has_active_locks: {:?}", has_active_locks);
                     // If there are active authorization locks, check against the total
