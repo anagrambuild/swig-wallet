@@ -5,7 +5,7 @@
 //! to a particular token mint.
 
 use no_padding::NoPadding;
-use pinocchio::program_error::ProgramError;
+use pinocchio::{msg, program_error::ProgramError};
 
 use super::{Actionable, Permission};
 use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};

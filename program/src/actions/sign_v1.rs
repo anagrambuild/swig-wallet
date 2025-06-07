@@ -30,7 +30,7 @@ use swig_state_x::{
     },
     authority::AuthorityType,
     role::RoleMut,
-    swig::{swig_account_signer, Swig},
+    swig::{swig_account_signer, AuthorizationLock, Swig, SwigWithRoles},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -137,6 +137,8 @@ impl<'a> SignV1<'a> {
 /// * `all_accounts` - All accounts involved in the transaction
 /// * `data` - Raw signing instruction data
 /// * `account_classifiers` - Classifications for involved accounts
+/// * `authorization_lock_cache` - Optional cache of authorization locks for
+///   performance
 ///
 /// # Returns
 /// * `ProgramResult` - Success or error status
@@ -146,6 +148,7 @@ pub fn sign_v1(
     all_accounts: &[AccountInfo],
     data: &[u8],
     account_classifiers: &[AccountClassification],
+    authorization_lock_cache: Option<&crate::util::AuthorizationLockCache>,
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
     // KEEP remove since we enfoce swig is owned in lib.rs
@@ -227,25 +230,95 @@ pub fn sign_v1(
                     if lamports > &current_lamports {
                         let amount_diff = lamports - current_lamports;
 
-                        {
-                            if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])?
-                            {
-                                action.run(amount_diff)?;
-                                continue;
-                            };
+                        // Wrapped SOL mint address
+                        const WRAPPED_SOL_MINT: [u8; 32] = [
+                            0x06, 0x9b, 0x88, 0x57, 0xfe, 0xab, 0x89, 0x84, 0xfb, 0x98, 0x21, 0x9e,
+                            0xed, 0xb0, 0x64, 0x52, 0x48, 0x1c, 0x28, 0x5e, 0x68, 0x5e, 0xa4, 0xfd,
+                            0x83, 0x91, 0x35, 0x52, 0x2b, 0x70, 0x54, 0x2c,
+                        ];
+
+                        // Check authorization locks first for SOL spending using the cache
+                        let mut total_authorized_amount = 0u64;
+                        let mut has_active_locks = false;
+
+                        if let Some(cache) = authorization_lock_cache {
+                            // Use the cached authorization locks for better performance
+                            let locks = cache.get_locks_for_role_and_mint(
+                                sign_v1.args.role_id,
+                                &WRAPPED_SOL_MINT,
+                            );
+                            for auth_lock in locks {
+                                // Only check non-expired locks for this role
+                                if auth_lock.expiry_slot > slot {
+                                    has_active_locks = true;
+                                    total_authorized_amount =
+                                        total_authorized_amount.saturating_add(auth_lock.amount);
+                                }
+                            }
+                        } else {
+                            // Fallback to the original method if cache is not available
+                            let swig_account_data =
+                                unsafe { ctx.accounts.swig.borrow_data_unchecked() };
+                            let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data)?;
+
+                            let _: Result<(), ProgramError> = swig_with_roles
+                                .for_each_authorization_lock_by_mint(
+                                    &WRAPPED_SOL_MINT,
+                                    |auth_lock| {
+                                        // Only check non-expired locks for this role
+                                        if auth_lock.expiry_slot > slot
+                                            && auth_lock.role_id == sign_v1.args.role_id
+                                        {
+                                            has_active_locks = true;
+                                            total_authorized_amount = total_authorized_amount
+                                                .saturating_add(auth_lock.amount);
+                                        }
+                                        Ok(())
+                                    },
+                                );
                         }
-                        {
-                            if let Some(action) =
-                                RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])?
-                            {
-                                action.run(amount_diff, slot)?;
-                                continue;
-                            };
+
+                        msg!("SOL has_active_locks: {:?}", has_active_locks);
+                        // If there are active authorization locks, check against the total
+                        if has_active_locks {
+                            msg!("SOL amount_diff: {}", amount_diff);
+                            msg!("SOL total_authorized_amount: {}", total_authorized_amount);
+                            if amount_diff > total_authorized_amount {
+                                return Err(
+                                    SwigAuthenticateError::PermissionDeniedMissingPermission.into(),
+                                );
+                            } else {
+                                // This spending is within the combined authorization lock limits
+                                matched = true;
+                            }
                         }
-                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+
+                        // If not covered by authorization locks, check regular SOL permissions
+                        if !matched {
+                            {
+                                if let Some(action) =
+                                    RoleMut::get_action_mut::<SolLimit>(actions, &[])?
+                                {
+                                    action.run(amount_diff)?;
+                                    continue;
+                                };
+                            }
+                            {
+                                if let Some(action) =
+                                    RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])?
+                                {
+                                    action.run(amount_diff, slot)?;
+                                    continue;
+                                };
+                            }
+                            return Err(
+                                SwigAuthenticateError::PermissionDeniedMissingPermission.into()
+                            );
+                        }
                     }
                 },
                 AccountClassification::SwigTokenAccount { balance } => {
+                    let mut matched = false;
                     let data =
                         unsafe { &all_accounts.get_unchecked(index).borrow_data_unchecked() };
                     let mint = unsafe { data.get_unchecked(0..32) };
@@ -258,6 +331,8 @@ pub fn sign_v1(
                             .try_into()
                             .map_err(|_| ProgramError::InvalidAccountData)?
                     });
+
+                    let diff = balance - current_token_balance;
 
                     if delegate != [0u8; 4] || close_authority != [0u8; 4] {
                         return Err(
@@ -278,8 +353,63 @@ pub fn sign_v1(
                         );
                     }
 
-                    if balance > &current_token_balance {
-                        let diff = balance - current_token_balance;
+                    // Convert mint slice to array for comparison
+                    let mint_array: [u8; 32] = mint
+                        .try_into()
+                        .map_err(|_| ProgramError::InvalidAccountData)?;
+
+                    // Check authorization locks first using the cache
+                    let mut total_authorized_amount = 0u64;
+                    let mut has_active_locks = false;
+
+                    if let Some(cache) = authorization_lock_cache {
+                        // Use the cached authorization locks for better performance
+                        // For tokens, we check ALL authorization locks across all roles (different
+                        // from SOL)
+                        let locks = cache.get_all_locks_for_mint(&mint_array);
+                        for auth_lock in locks {
+                            // Only check non-expired locks
+                            if auth_lock.expiry_slot > slot {
+                                has_active_locks = true;
+                                total_authorized_amount =
+                                    total_authorized_amount.saturating_add(auth_lock.amount);
+                            }
+                        }
+                    } else {
+                        // Fallback to the original method if cache is not available
+                        let swig_account_data =
+                            unsafe { ctx.accounts.swig.borrow_data_unchecked() };
+                        let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data)?;
+
+                        let _: Result<(), ProgramError> = swig_with_roles
+                            .for_each_authorization_lock_by_mint(&mint_array, |auth_lock| {
+                                // Only check non-expired locks
+                                if auth_lock.expiry_slot > slot {
+                                    has_active_locks = true;
+                                    total_authorized_amount =
+                                        total_authorized_amount.saturating_add(auth_lock.amount);
+                                }
+                                Ok(())
+                            });
+                    }
+
+                    msg!("has_active_locks: {:?}", has_active_locks);
+                    // If there are active authorization locks, check against the total
+                    if has_active_locks {
+                        msg!("diff: {}", diff);
+                        msg!("total_authorized_amount: {}", total_authorized_amount);
+                        if diff > total_authorized_amount {
+                            return Err(
+                                SwigAuthenticateError::PermissionDeniedMissingPermission.into()
+                            );
+                        } else {
+                            // This spending is within the combined authorization lock limits
+                            matched = true;
+                        }
+                    }
+
+                    // If not covered by authorization locks, check regular token permissions
+                    if !matched || balance > &current_token_balance {
                         {
                             if let Some(action) =
                                 RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?
@@ -293,11 +423,12 @@ pub fn sign_v1(
                                 RoleMut::get_action_mut::<TokenLimit>(actions, mint)?
                             {
                                 action.run(diff)?;
+                                // matched = true;
                                 continue;
                             };
                         }
-                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                     }
+                    return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                 },
                 AccountClassification::SwigStakeAccount { state, balance } => {
                     // Get current stake balance from account data
@@ -413,6 +544,22 @@ pub fn sign_v1(
                 },
                 _ => {},
             }
+        }
+    }
+
+    // Clean up expired authorization locks at the end of the transaction
+    // Note: We don't reallocate the account to keep it simple and avoid potential
+    // issues. The unused space at the end of the account is acceptable.
+    {
+        let mut swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        if unsafe { *swig_account_data.get_unchecked(0) } == Discriminator::SwigAccount as u8 {
+            let (swig_header, rest) =
+                unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+            let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+            let _removed_count =
+                SwigWithRoles::remove_expired_authorization_locks_mut(swig, rest, slot)?;
+            // Account size remains the same - unused space at the end is
+            // acceptable
         }
     }
 

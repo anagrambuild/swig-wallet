@@ -7,6 +7,7 @@
 
 pub mod all;
 pub mod manage_authority;
+pub mod manage_authorization_locks;
 pub mod program;
 pub mod program_scope;
 pub mod sol_limit;
@@ -19,6 +20,7 @@ pub mod token_limit;
 pub mod token_recurring_limit;
 use all::All;
 use manage_authority::ManageAuthority;
+use manage_authorization_locks::ManageAuthorizationLocks;
 use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 use program::Program;
@@ -130,6 +132,8 @@ pub enum Permission {
     StakeRecurringLimit = 11,
     /// Permission to perform all stake operations
     StakeAll = 12,
+    /// Permission to manage authorization locks
+    ManageAuthorizationLocks = 13,
 }
 
 impl TryFrom<u16> for Permission {
@@ -139,7 +143,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=12 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=13 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -196,6 +200,7 @@ impl ActionLoader {
             Permission::StakeLimit => StakeLimit::valid_layout(data),
             Permission::StakeRecurringLimit => StakeRecurringLimit::valid_layout(data),
             Permission::StakeAll => StakeAll::valid_layout(data),
+            Permission::ManageAuthorizationLocks => ManageAuthorizationLocks::valid_layout(data),
             _ => Ok(false),
         }
     }
