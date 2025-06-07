@@ -1,3 +1,4 @@
+use alloy_signer_local::{LocalSigner, PrivateKeySigner};
 use anyhow::Result;
 use litesvm::{types::TransactionMetadata, LiteSVM};
 use litesvm_token::{spl_token, CreateAssociatedTokenAccount, CreateMint, MintTo};
@@ -11,7 +12,6 @@ use solana_sdk::{
 use swig_interface::{
     swig, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
 };
-
 use swig_state_x::{
     action::all::All,
     authority::AuthorityType,
@@ -165,4 +165,85 @@ pub fn mint_to(
         .send()
         .map_err(|e| anyhow::anyhow!("Failed to mint {:?}", e))?;
     Ok(())
+}
+
+/// Helper function to get the current signature counter for a secp256k1
+/// authority
+pub fn get_secp256k1_counter(
+    context: &SwigTestContext,
+    swig_key: &Pubkey,
+    wallet_pubkey: &[u8], // The uncompressed public key bytes (64 bytes)
+) -> Result<u32, String> {
+    // Get the swig account data
+    let swig_account = context
+        .svm
+        .get_account(swig_key)
+        .ok_or("Swig account not found")?;
+
+    // Use the public utility function from the SDK
+    crate::utils::get_secp256k1_signature_counter(&swig_account.data, wallet_pubkey)
+        .map_err(|e| format!("Failed to get signature counter: {:?}", e))
+}
+
+/// Helper function to get the current signature counter for a secp256k1
+/// authority using LocalSigner
+pub fn get_secp256k1_counter_from_wallet(
+    context: &SwigTestContext,
+    swig_key: &Pubkey,
+    wallet: &PrivateKeySigner,
+) -> Result<u32, String> {
+    let eth_pubkey = wallet
+        .credential()
+        .verifying_key()
+        .to_encoded_point(false)
+        .to_bytes();
+    let authority_bytes = &eth_pubkey[1..]; // Remove the first byte (0x04 prefix) - this gives us 64 bytes
+
+    get_secp256k1_counter(context, swig_key, authority_bytes)
+}
+
+pub fn create_swig_secp256k1(
+    context: &mut SwigTestContext,
+    wallet: &PrivateKeySigner,
+    id: [u8; 32],
+) -> Result<(Pubkey, TransactionMetadata)> {
+    let (swig, bump) =
+        Pubkey::find_program_address(&swig_account_seeds(&id), &Pubkey::new_from_array(swig::ID));
+
+    // Get the uncompressed public key and remove the 0x04 prefix
+    let eth_pubkey = wallet
+        .credential()
+        .verifying_key()
+        .to_encoded_point(false)
+        .to_bytes();
+    let authority_bytes = &eth_pubkey[1..]; // Remove the first byte (0x04 prefix)
+
+    let create_ix = CreateInstruction::new(
+        swig,
+        bump,
+        context.default_payer.pubkey(),
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256k1,
+            authority: authority_bytes,
+        },
+        vec![ClientAction::All(All {})],
+        id,
+    )?;
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[create_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&context.default_payer])
+        .unwrap();
+
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction: {:?}", e))?;
+    Ok((swig, bench))
 }

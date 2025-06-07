@@ -87,7 +87,7 @@ impl<'a> Role<'a> {
                 Action::load_unchecked(self.actions.get_unchecked(cursor..cursor + Action::LEN))?
             };
             actions.push(action);
-            cursor += action.boundary() as usize;
+            cursor = action.boundary() as usize;
         }
         Ok(actions)
     }

@@ -309,7 +309,6 @@ fn validate_authorization_lock_against_limits<'a>(
     new_lock_amount: u64,
     existing_locks: &[AuthorizationLock],
 ) -> ProgramResult {
-    msg!("validate authorization lock");
     // Calculate total existing authorization lock amount for this token
     let existing_total = existing_locks
         .iter()

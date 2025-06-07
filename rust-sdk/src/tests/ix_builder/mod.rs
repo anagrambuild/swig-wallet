@@ -1,5 +1,3 @@
-use super::*;
-
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;

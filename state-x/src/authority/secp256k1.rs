@@ -72,7 +72,10 @@ impl IntoBytes for CreateSecp256k1SessionAuthority {
 pub struct Secp256k1Authority {
     /// The compressed Secp256k1 public key (33 bytes)
     pub public_key: [u8; 33],
-    _padding: [u8; 7],
+    /// Padding for u32 alignment
+    _padding: [u8; 3],
+    /// Signature counter to prevent signature replay attacks
+    pub signature_odometer: u32,
 }
 
 impl Secp256k1Authority {
@@ -80,7 +83,8 @@ impl Secp256k1Authority {
     pub fn new(public_key: [u8; 33]) -> Self {
         Self {
             public_key,
-            _padding: [0; 7],
+            _padding: [0; 3],
+            signature_odometer: 0,
         }
     }
 }
@@ -102,6 +106,7 @@ impl Authority for Secp256k1Authority {
         let authority = unsafe { Secp256k1Authority::load_mut_unchecked(bytes)? };
         let compressed = compress(create_data.try_into().unwrap());
         authority.public_key = compressed;
+        authority.signature_odometer = 0;
         Ok(())
     }
 }
@@ -142,13 +147,7 @@ impl AuthorityInfo for Secp256k1Authority {
         data_payload: &[u8],
         slot: u64,
     ) -> Result<(), ProgramError> {
-        secp_authority_authenticate(
-            &self.public_key,
-            authority_payload,
-            data_payload,
-            slot,
-            account_infos,
-        )
+        secp_authority_authenticate(self, authority_payload, data_payload, slot, account_infos)
     }
 }
 
@@ -236,7 +235,7 @@ impl AuthorityInfo for Secp256k1SessionAuthority {
         data_payload: &[u8],
         slot: u64,
     ) -> Result<(), ProgramError> {
-        secp_authority_authenticate(
+        secp_session_authority_authenticate(
             &self.public_key,
             authority_payload,
             data_payload,
@@ -291,12 +290,57 @@ impl IntoBytes for Secp256k1SessionAuthority {
 /// Authenticates a Secp256k1 authority with additional payload data.
 ///
 /// # Arguments
+/// * `authority` - The mutable authority reference for counter updates
+/// * `authority_payload` - The authority payload including slot, counter, and
+///   signature
+/// * `data_payload` - Additional data to be included in signature verification
+/// * `current_slot` - The current slot number
+/// * `account_infos` - List of accounts involved in the transaction
+fn secp_authority_authenticate(
+    authority: &mut Secp256k1Authority,
+    authority_payload: &[u8],
+    data_payload: &[u8],
+    current_slot: u64,
+    account_infos: &[AccountInfo],
+) -> Result<(), ProgramError> {
+    if authority_payload.len() < 77 {
+        return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
+    }
+    let authority_slot =
+        u64::from_le_bytes(unsafe { authority_payload.get_unchecked(..8).try_into().unwrap() });
+
+    let counter =
+        u32::from_le_bytes(unsafe { authority_payload.get_unchecked(8..12).try_into().unwrap() });
+
+    let expected_counter = authority.signature_odometer.wrapping_add(1);
+    if counter != expected_counter {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256k1SignatureReused.into());
+    }
+
+    secp256k1_authenticate(
+        &authority.public_key,
+        authority_payload[12..77].try_into().unwrap(),
+        data_payload,
+        authority_slot,
+        current_slot,
+        account_infos,
+        authority_payload[77..].try_into().unwrap(),
+        counter,
+    )?;
+
+    authority.signature_odometer = counter;
+    Ok(())
+}
+
+/// Authenticates a Secp256k1 session authority with additional payload data.
+///
+/// # Arguments
 /// * `expected_key` - The expected compressed public key
 /// * `authority_payload` - The authority payload including slot and signature
 /// * `data_payload` - Additional data to be included in signature verification
 /// * `current_slot` - The current slot number
 /// * `account_infos` - List of accounts involved in the transaction
-fn secp_authority_authenticate(
+fn secp_session_authority_authenticate(
     expected_key: &[u8; 33],
     authority_payload: &[u8],
     data_payload: &[u8],
@@ -317,6 +361,7 @@ fn secp_authority_authenticate(
         current_slot,
         account_infos,
         authority_payload[73..].try_into().unwrap(),
+        0u32, // Session authorities don't use counter-based replay protection
     )?;
     Ok(())
 }
@@ -325,7 +370,7 @@ fn secp_authority_authenticate(
 ///
 /// This function performs the actual signature verification, including:
 /// - Signature age validation
-/// - Message hash computation
+/// - Message hash computation (including counter for replay protection)
 /// - Public key recovery
 /// - Key comparison
 fn secp256k1_authenticate(
@@ -336,11 +381,19 @@ fn secp256k1_authenticate(
     current_slot: u64,
     account_infos: &[AccountInfo],
     prefix: &[u8],
+    counter: u32,
 ) -> Result<(), ProgramError> {
     if authority_payload.len() != 65 {
         return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
     }
     if current_slot < authority_slot || current_slot - authority_slot > MAX_SIGNATURE_AGE_IN_SLOTS {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256k1InvalidSignature.into());
+    }
+
+    let signature = libsecp256k1::Signature::parse_standard_slice(&authority_payload[..64])
+        .map_err(|_| SwigAuthenticateError::PermissionDeniedSecp256k1InvalidSignature)?;
+
+    if signature.s.is_high() {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256k1InvalidSignature.into());
     }
 
@@ -370,6 +423,7 @@ fn secp256k1_authenticate(
         data_payload,
         &accounts_payload[..cursor],
         &authority_slot.to_le_bytes(),
+        &counter.to_le_bytes(), // Include counter in the hash
     ];
 
     let matches = unsafe {
@@ -377,7 +431,7 @@ fn secp256k1_authenticate(
         #[cfg(target_os = "solana")]
         let res = sol_sha256(
             data.as_ptr() as *const u8,
-            3,
+            4, // Updated count to include counter
             data_payload_hash.as_mut_ptr() as *mut u8,
         );
         #[cfg(not(target_os = "solana"))]

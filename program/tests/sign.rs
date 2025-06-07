@@ -14,11 +14,15 @@ use solana_sdk::{
     signature::Keypair,
     signer::Signer,
     system_instruction,
+    sysvar::clock::Clock,
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state_x::{
-    action::{all::All, sol_limit::SolLimit},
+    action::{
+        all::All, sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
+        token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit,
+    },
     authority::AuthorityType,
     swig::{swig_account_seeds, SwigWithRoles},
 };
@@ -569,4 +573,371 @@ fn fail_wrong_resource() {
     let account = context.svm.get_account(&swig_ata).unwrap();
     let token_account = spl_token::state::Account::unpack(&account.data).unwrap();
     assert_eq!(token_account.amount, 1000);
+}
+
+#[test_log::test]
+fn test_transfer_sol_with_recurring_limit() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    let recipient = Keypair::new();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Set up recurring limit: 1000 lamports per 100 slots
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::SolRecurringLimit(SolRecurringLimit {
+            recurring_amount: 500,
+            window: 100,
+            last_reset: 0,
+            current_amount: 500,
+        })],
+    )
+    .unwrap();
+
+    context.svm.airdrop(&swig, 10_000_000_000).unwrap();
+
+    // First transfer within limit should succeed
+    let amount = 500;
+    let ixd = system_instruction::transfer(&swig, &recipient.pubkey(), amount);
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        second_authority.pubkey(),
+        second_authority.pubkey(),
+        ixd,
+        1,
+    )
+    .unwrap();
+
+    let transfer_message = v0::Message::try_compile(
+        &second_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(transfer_message), &[&second_authority])
+            .unwrap();
+
+    let res = context.svm.send_transaction(transfer_tx);
+    assert!(res.is_ok());
+
+    // Second transfer exceeding the limit should fail
+    let amount2 = 500; // This would exceed the 1000 lamport limit
+    let ixd2 = system_instruction::transfer(&swig, &recipient.pubkey(), amount2);
+    let sign_ix2 = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        second_authority.pubkey(),
+        second_authority.pubkey(),
+        ixd2,
+        1,
+    )
+    .unwrap();
+    context
+        .svm
+        .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + 10);
+    context.svm.expire_blockhash();
+    let transfer_message2 = v0::Message::try_compile(
+        &second_authority.pubkey(),
+        &[sign_ix2],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx2 = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message2),
+        &[&second_authority],
+    )
+    .unwrap();
+
+    let res2 = context.svm.send_transaction(transfer_tx2);
+    assert!(res2.is_err());
+
+    // Warp time forward past the window
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    context.svm.warp_to_slot(current_slot + 110);
+    context.svm.expire_blockhash();
+
+    // Third transfer should succeed after window reset
+    let amount3 = 500;
+    let ixd3 = system_instruction::transfer(&swig, &recipient.pubkey(), amount3);
+    let sign_ix3 = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        second_authority.pubkey(),
+        second_authority.pubkey(),
+        ixd3,
+        1,
+    )
+    .unwrap();
+
+    let transfer_message3 = v0::Message::try_compile(
+        &second_authority.pubkey(),
+        &[sign_ix3],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx3 = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message3),
+        &[&second_authority],
+    )
+    .unwrap();
+
+    let res3 = context.svm.send_transaction(transfer_tx3);
+
+    println!("res3 {:?}", res3);
+    assert!(res3.is_ok());
+
+    // Verify final balances
+    let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
+    assert_eq!(
+        recipient_account.lamports,
+        10_000_000_000 + amount + amount3
+    );
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let role = swig_state.get_role(1).unwrap().unwrap();
+    let action = role.get_action::<SolRecurringLimit>(&[]).unwrap().unwrap();
+    assert_eq!(action.current_amount, action.recurring_amount - amount3);
+}
+
+#[test_log::test]
+fn test_transfer_token_with_recurring_limit() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    let recipient = Keypair::new();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+
+    // Setup token infrastructure
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig,
+        &context.default_payer,
+    )
+    .unwrap();
+    let recipient_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &recipient.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+
+    // Mint initial tokens to the SWIG's token account
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &swig_ata,
+        1000,
+    )
+    .unwrap();
+
+    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Set up recurring token limit: 500 tokens per 100 slots
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::TokenRecurringLimit(TokenRecurringLimit {
+            token_mint: mint_pubkey.to_bytes().try_into().unwrap(),
+            window: 100,
+            limit: 500,
+            current: 500,
+            last_reset: 0,
+        })],
+    )
+    .unwrap();
+
+    // First transfer within limit should succeed
+    let amount = 300;
+    let token_ix = Instruction {
+        program_id: spl_token::id(),
+        accounts: vec![
+            AccountMeta::new(swig_ata, false),
+            AccountMeta::new(recipient_ata, false),
+            AccountMeta::new(swig, false),
+        ],
+        data: TokenInstruction::Transfer { amount }.pack(),
+    };
+
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        second_authority.pubkey(),
+        second_authority.pubkey(),
+        token_ix,
+        1,
+    )
+    .unwrap();
+
+    let transfer_message = v0::Message::try_compile(
+        &second_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(transfer_message), &[&second_authority])
+            .unwrap();
+
+    let res = context.svm.send_transaction(transfer_tx);
+    println!("res {:?}", res);
+    assert!(res.is_ok());
+
+    // Second transfer exceeding the limit should fail
+    let amount2 = 300; // This would exceed the 500 token limit
+    let token_ix2 = Instruction {
+        program_id: spl_token::id(),
+        accounts: vec![
+            AccountMeta::new(swig_ata, false),
+            AccountMeta::new(recipient_ata, false),
+            AccountMeta::new(swig, false),
+        ],
+        data: TokenInstruction::Transfer { amount: amount2 }.pack(),
+    };
+
+    let sign_ix2 = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        second_authority.pubkey(),
+        second_authority.pubkey(),
+        token_ix2,
+        1,
+    )
+    .unwrap();
+
+    context
+        .svm
+        .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + 10);
+    context.svm.expire_blockhash();
+    let transfer_message2 = v0::Message::try_compile(
+        &second_authority.pubkey(),
+        &[sign_ix2],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx2 = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message2),
+        &[&second_authority],
+    )
+    .unwrap();
+
+    let res2 = context.svm.send_transaction(transfer_tx2);
+    assert!(res2.is_err());
+
+    // Warp time forward past the window
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    context.svm.warp_to_slot(current_slot + 110);
+    context.svm.expire_blockhash();
+
+    // Third transfer should succeed after window reset
+    let amount3 = 300;
+    let token_ix3 = Instruction {
+        program_id: spl_token::id(),
+        accounts: vec![
+            AccountMeta::new(swig_ata, false),
+            AccountMeta::new(recipient_ata, false),
+            AccountMeta::new(swig, false),
+        ],
+        data: TokenInstruction::Transfer { amount: amount3 }.pack(),
+    };
+
+    let sign_ix3 = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        second_authority.pubkey(),
+        second_authority.pubkey(),
+        token_ix3,
+        1,
+    )
+    .unwrap();
+
+    let transfer_message3 = v0::Message::try_compile(
+        &second_authority.pubkey(),
+        &[sign_ix3],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx3 = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message3),
+        &[&second_authority],
+    )
+    .unwrap();
+
+    let res3 = context.svm.send_transaction(transfer_tx3);
+    assert!(res3.is_ok());
+
+    // Verify final token balances
+    let recipient_token_account = context.svm.get_account(&recipient_ata).unwrap();
+    let recipient_token_balance =
+        spl_token::state::Account::unpack(&recipient_token_account.data).unwrap();
+    assert_eq!(recipient_token_balance.amount, amount + amount3);
+
+    let swig_token_account = context.svm.get_account(&swig_ata).unwrap();
+    let swig_token_balance = spl_token::state::Account::unpack(&swig_token_account.data).unwrap();
+    assert_eq!(swig_token_balance.amount, 1000 - amount - amount3);
+
+    // Verify the token recurring limit state
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let role = swig_state.get_role(1).unwrap().unwrap();
+    let action = role
+        .get_action::<TokenRecurringLimit>(&mint_pubkey.to_bytes())
+        .unwrap()
+        .unwrap();
+    assert_eq!(action.current, action.limit - amount3);
 }

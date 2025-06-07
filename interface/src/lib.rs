@@ -117,13 +117,21 @@ pub struct AuthorityConfig<'a> {
 
 fn prepare_secp_payload(
     current_slot: u64,
+    counter: u32,
     data_payload: &[u8],
     accounts_payload: &[u8],
     prefix: &[u8],
 ) -> [u8; 32] {
-    let compressed_payload =
-        sha256::hash(&[data_payload, accounts_payload, &current_slot.to_le_bytes()].concat())
-            .to_bytes();
+    let compressed_payload = sha256::hash(
+        &[
+            data_payload,
+            accounts_payload,
+            &current_slot.to_le_bytes(),
+            &counter.to_le_bytes(),
+        ]
+        .concat(),
+    )
+    .to_bytes();
     let mut compressed_payload_hex = [0u8; 64];
     hex_encode(&compressed_payload, &mut compressed_payload_hex);
     keccak::hash(&[prefix, &compressed_payload_hex].concat()).to_bytes()
@@ -225,6 +233,7 @@ impl AddAuthorityInstruction {
         payer: Pubkey,
         mut authority_payload_fn: F,
         current_slot: u64,
+        counter: u32,
         acting_role_id: u32,
         new_authority_config: AuthorityConfig,
         actions: Vec<ClientAction>,
@@ -265,11 +274,17 @@ impl AddAuthorityInstruction {
         signature_bytes.extend_from_slice(arg_bytes);
         signature_bytes.extend_from_slice(new_authority_config.authority);
         signature_bytes.extend_from_slice(&action_bytes);
-        let nonced_payload =
-            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes, &[]);
+        let nonced_payload = prepare_secp_payload(
+            current_slot,
+            counter,
+            &signature_bytes,
+            &account_payload_bytes,
+            &[],
+        );
         let signature = authority_payload_fn(&nonced_payload);
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&counter.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
 
         Ok(Instruction {
@@ -318,6 +333,7 @@ impl SignInstruction {
         payer: Pubkey,
         mut authority_payload_fn: F,
         current_slot: u64,
+        counter: u32,
         inner_instruction: Instruction,
         role_id: u32,
     ) -> anyhow::Result<Instruction>
@@ -349,11 +365,17 @@ impl SignInstruction {
         let mut signature_bytes = Vec::new();
         signature_bytes.extend_from_slice(&ix_bytes);
 
-        let nonced_payload =
-            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes, &[]);
+        let nonced_payload = prepare_secp_payload(
+            current_slot,
+            counter,
+            &signature_bytes,
+            &account_payload_bytes,
+            &[],
+        );
         let signature = authority_payload_fn(&nonced_payload);
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&counter.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
 
         Ok(Instruction {
@@ -423,8 +445,13 @@ impl RemoveAuthorityInstruction {
 
         let mut signature_bytes = Vec::new();
         signature_bytes.extend_from_slice(arg_bytes);
-        let nonced_payload =
-            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes, &[]);
+        let nonced_payload = prepare_secp_payload(
+            current_slot,
+            0u32,
+            &signature_bytes,
+            &account_payload_bytes,
+            &[],
+        );
         let signature = authority_payload_fn(&nonced_payload);
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
@@ -500,8 +527,13 @@ impl CreateSessionInstruction {
 
         let mut signature_bytes = Vec::new();
         signature_bytes.extend_from_slice(args_bytes);
-        let nonced_payload =
-            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes, &[]);
+        let nonced_payload = prepare_secp_payload(
+            current_slot,
+            0u32,
+            &signature_bytes,
+            &account_payload_bytes,
+            &[],
+        );
         let signature = authority_payload_fn(&nonced_payload);
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
@@ -583,7 +615,7 @@ impl CreateSubAccountInstruction {
 
         // Sign the payload
         let nonced_payload =
-            prepare_secp_payload(current_slot, args_bytes, &account_payload_bytes, &[]);
+            prepare_secp_payload(current_slot, 0u32, args_bytes, &account_payload_bytes, &[]);
         let signature = authority_payload_fn(&nonced_payload);
 
         // Add authority payload
@@ -664,7 +696,7 @@ impl WithdrawFromSubAccountInstruction {
 
         // Sign the payload
         let nonced_payload =
-            prepare_secp_payload(current_slot, args_bytes, &account_payload_bytes, &[]);
+            prepare_secp_payload(current_slot, 0u32, args_bytes, &account_payload_bytes, &[]);
         let signature = authority_payload_fn(&nonced_payload);
 
         // Add authority payload
@@ -753,7 +785,7 @@ impl WithdrawFromSubAccountInstruction {
 
         // Sign the payload
         let nonced_payload =
-            prepare_secp_payload(current_slot, args_bytes, &account_payload_bytes, &[]);
+            prepare_secp_payload(current_slot, 0u32, args_bytes, &account_payload_bytes, &[]);
         let signature = authority_payload_fn(&nonced_payload);
 
         // Add authority payload
@@ -838,7 +870,7 @@ impl SubAccountSignInstruction {
 
         // Sign the payload
         let nonced_payload =
-            prepare_secp_payload(current_slot, &ix_bytes, &account_payload_bytes, &[]);
+            prepare_secp_payload(current_slot, 0u32, &ix_bytes, &account_payload_bytes, &[]);
         let signature = authority_payload_fn(&nonced_payload);
 
         // Add authority payload
@@ -920,8 +952,13 @@ impl ToggleSubAccountInstruction {
         let prefix = &[];
 
         // Sign the payload
-        let nonced_payload =
-            prepare_secp_payload(current_slot, args_bytes, &account_payload_bytes, prefix);
+        let nonced_payload = prepare_secp_payload(
+            current_slot,
+            0u32,
+            args_bytes,
+            &account_payload_bytes,
+            prefix,
+        );
         let signature = authority_payload_fn(&nonced_payload);
 
         // Add authority payload
