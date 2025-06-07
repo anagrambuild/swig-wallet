@@ -255,21 +255,18 @@ pub fn add_authorization_lock_v1(
     // Re-borrow data after potential reallocation
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
 
-    // Create the new authorization lock
-    let new_lock = AuthorizationLock {
-        token_mint: add_lock.args.token_mint,
-        amount: add_lock.args.amount,
-        expiry_slot: add_lock.args.expiry_slot,
-        role_id: add_lock.args.acting_role_id,
-        _padding: [0; 4],
-    };
-
     // Write the new lock at the end of the authorization locks section
     let auth_locks_start = Swig::LEN + roles_end;
     let new_lock_offset = auth_locks_start + current_auth_locks_size;
+    let lock_slice = &mut swig_account_data[new_lock_offset..new_lock_offset + new_lock_size];
+    let new_lock = unsafe { &mut *(lock_slice.as_mut_ptr() as *mut AuthorizationLock) };
 
-    let lock_bytes = new_lock.into_bytes()?;
-    swig_account_data[new_lock_offset..new_lock_offset + new_lock_size].copy_from_slice(lock_bytes);
+    // Initialize the lock fields directly in memory
+    new_lock.token_mint = add_lock.args.token_mint;
+    new_lock.amount = add_lock.args.amount;
+    new_lock.expiry_slot = add_lock.args.expiry_slot;
+    new_lock.role_id = add_lock.args.acting_role_id;
+    new_lock._padding = [0; 4];
 
     // Update the authorization locks count in the header
     let (swig_header, _) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
@@ -312,8 +309,9 @@ fn validate_authorization_lock_against_limits<'a>(
 ) -> ProgramResult {
     // Wrapped SOL mint address
     const WRAPPED_SOL_MINT: [u8; 32] = [
-        0x06, 0x9b, 0x88, 0x57, 0xfe, 0xab, 0x89, 0x84, 0xfb, 0x98, 0x21, 0x9e, 0xed, 0xb0, 0x64, 0x52,
-        0x48, 0x1c, 0x28, 0x5e, 0x68, 0x5e, 0xa4, 0xfd, 0x83, 0x91, 0x35, 0x52, 0x2b, 0x70, 0x54, 0x2c,
+        0x06, 0x9b, 0x88, 0x57, 0xfe, 0xab, 0x89, 0x84, 0xfb, 0x98, 0x21, 0x9e, 0xed, 0xb0, 0x64,
+        0x52, 0x48, 0x1c, 0x28, 0x5e, 0x68, 0x5e, 0xa4, 0xfd, 0x83, 0x91, 0x35, 0x52, 0x2b, 0x70,
+        0x54, 0x2c,
     ];
 
     // Calculate total existing authorization lock amount for this token
