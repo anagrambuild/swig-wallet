@@ -142,7 +142,7 @@ fn test_oracle_limit_sol_transfer() {
     .unwrap();
 
     // Fund swig wallet
-    context.svm.airdrop(&swig_key, 2_000_000_000).unwrap();
+    context.svm.airdrop(&swig_key, 20_000_000_000).unwrap();
 
     // Test 1: Transfer below limit (1 SOL ≈ 150 USDC at mock price)
     let transfer_ix =
@@ -169,9 +169,12 @@ fn test_oracle_limit_sol_transfer() {
 
     let result = context.svm.send_transaction(tx);
     if result.is_ok() {
-        println!("result: {:?}", &result.clone().unwrap().logs);
+        println!(
+            "result for success case: {:?}",
+            &result.clone().unwrap().logs
+        );
     } else {
-        println!("result: {:?}", &result.clone().err());
+        println!("result for success case: {:?}", &result.clone().err());
     }
     assert!(result.is_ok(), "Transfer below limit should succeed");
 
@@ -200,9 +203,12 @@ fn test_oracle_limit_sol_transfer() {
 
     let result = context.svm.send_transaction(tx);
     if result.is_ok() {
-        println!("result: {:?}", &result.clone().unwrap().logs);
+        println!(
+            "result for failure case: {:?}",
+            &result.clone().unwrap().logs
+        );
     } else {
-        println!("result: {:?}", &result.clone().err());
+        println!("result for failure case: {:?}", &result.clone().err());
     }
     assert!(result.is_err(), "Transfer above limit should fail");
 }
@@ -307,13 +313,15 @@ fn test_oracle_limit_token_transfer() {
 
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&secondary_authority])
         .unwrap();
+    let swig_data = context.svm.get_account(&swig_key).unwrap();
+    display_swig(swig_key, &swig_data);
 
     let result = context.svm.send_transaction(tx);
-    // if result.is_ok() {
-    //     println!("result: {:?}", &result.clone().unwrap().logs);
-    // } else {
-    //     println!("result: {:?}", &result.clone().err());
-    // }
+    if result.is_ok() {
+        println!("result: {:?}", &result.clone().unwrap().logs);
+    } else {
+        println!("result: {:?}", &result.clone().err());
+    }
     assert!(result.is_ok(), "Transfer below limit should succeed");
 
     // Test 2: Transfer above limit (2.5 tokens ≈ 3.75 USDC at mock price)
@@ -348,11 +356,11 @@ fn test_oracle_limit_token_transfer() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
-    // if result.is_ok() {
-    //     println!("result: {:?}", &result.clone().unwrap().logs);
-    // } else {
-    //     println!("result: {:?}", &result.clone().err());
-    // }
+    if result.is_ok() {
+        println!("result: {:?}", &result.clone().unwrap().logs);
+    } else {
+        println!("result: {:?}", &result.clone().err());
+    }
     assert!(result.is_err(), "Transfer above limit should fail");
 }
 
@@ -496,6 +504,32 @@ pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), a
                     println!("║ │  │  ├─ Last Reset: Slot {}", action.last_reset);
                 }
                 println!("║ │  │  ");
+            }
+
+            // Oracle limits
+            if let Some(action) = Role::get_action::<OracleTokenLimit>(&role, &[0u8]).unwrap() {
+                println!("║ │  ├─ Oracle Token Limit:");
+                println!(
+                    "║ │  │  ├─ Base Asset: {}",
+                    match action.base_asset_type {
+                        0 => "USDC",
+                        1 => "EURC",
+                        _ => "Unknown",
+                    }
+                );
+                println!(
+                    "║ │  │  ├─ Value Limit: {} {}",
+                    action.value_limit as f64 / 1_000_000.0, // Divide by 10^6 since USDC/EURC have 6 decimals
+                    match action.base_asset_type {
+                        0 => "USDC",
+                        1 => "EURC",
+                        _ => "Unknown",
+                    }
+                );
+                println!(
+                    "║ │  │  └─ Oracle Program: {}",
+                    bs58::encode(&action.oracle_program_id).into_string()
+                );
             }
             println!("║ │  ");
         }
