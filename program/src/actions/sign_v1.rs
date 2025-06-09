@@ -19,6 +19,7 @@ use swig_compact_instructions::InstructionIterator;
 use swig_state_x::{
     action::{
         all::All,
+        oracle_limits::OracleTokenLimit,
         program_scope::{NumericType, ProgramScope},
         sol_limit::SolLimit,
         sol_recurring_limit::SolRecurringLimit,
@@ -228,6 +229,14 @@ pub fn sign_v1(
                         let amount_diff = lamports - current_lamports;
 
                         {
+                            if let Some(action) =
+                                RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
+                            {
+                                action.run_for_sol(amount_diff)?;
+                                continue;
+                            };
+                        }
+                        {
                             if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])?
                             {
                                 action.run(amount_diff)?;
@@ -278,8 +287,19 @@ pub fn sign_v1(
                         );
                     }
 
+                    msg!("balance: {:?}", balance);
+                    msg!("current_token_balance: {:?}", current_token_balance);
                     if balance > &current_token_balance {
                         let diff = balance - current_token_balance;
+                        // Check oracle token limit
+                        {
+                            if let Some(action) =
+                                RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
+                            {
+                                action.run_for_token(mint.try_into().unwrap(), diff)?;
+                                continue;
+                            };
+                        }
                         {
                             if let Some(action) =
                                 RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?

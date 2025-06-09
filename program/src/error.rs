@@ -105,6 +105,10 @@ pub enum SwigError {
     InvalidSwigTokenAccountOwner,
     /// Invalid program scope balance field configuration
     InvalidProgramScopeBalanceFields,
+    /// Oracle account required for token limit check was not found
+    PermissionDeniedMissingOracleAccount,
+    /// Failed to read oracle price data
+    InvalidOraclePriceData,
 }
 
 /// Implements conversion from SwigError to ProgramError.
