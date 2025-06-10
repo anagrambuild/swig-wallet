@@ -69,8 +69,11 @@ pub struct OracleTokenLimit {
     pub value_limit: u64,
     /// The base asset type used to denominate the limit (e.g. USDC)
     pub base_asset_type: u8,
+    /// The passthrough flag, it will check the remaining actions
+    /// and not just stop with oracle limit check
+    pub passthrough_check: bool,
     /// Padding bytes to ensure proper struct alignment
-    _padding: [u8; 7],
+    _padding: [u8; 6],
 }
 
 impl OracleTokenLimit {
@@ -83,12 +86,18 @@ impl OracleTokenLimit {
     ///
     /// # Returns
     /// A new OracleTokenLimit instance configured with the specified parameters
-    pub fn new(base_asset: BaseAsset, value_limit: u64, oracle_program_id: [u8; 32]) -> Self {
+    pub fn new(
+        base_asset: BaseAsset,
+        value_limit: u64,
+        oracle_program_id: [u8; 32],
+        passthrough_check: bool,
+    ) -> Self {
         Self {
             base_asset_type: base_asset as u8,
             value_limit,
             oracle_program_id,
-            _padding: [0; 7],
+            passthrough_check,
+            _padding: [0; 6],
         }
     }
 
@@ -237,7 +246,7 @@ impl OracleTokenLimit {
 
         // Check if we have enough limit
         if value > self.value_limit {
-            return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
+            return Err(SwigAuthenticateError::PermissionDeniedOracleLimitReached.into());
         }
 
         // Safe to subtract since we verified value <= value_limit

@@ -56,6 +56,7 @@ fn test_oracle_limit_permission_add() {
         BaseAsset::USDC,
         200_000_000, // 200 USDC
         oracle_program.pubkey().to_bytes(),
+        false,
     );
 
     let sol_limit = SolLimit {
@@ -127,6 +128,7 @@ fn test_oracle_limit_sol_transfer() {
         BaseAsset::USDC,
         200_000_000, // 1 USDC limit
         oracle_program.pubkey().to_bytes(),
+        false,
     );
 
     add_authority_with_ed25519_root(
@@ -168,14 +170,7 @@ fn test_oracle_limit_sol_transfer() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
-    if result.is_ok() {
-        println!(
-            "result for success case: {:?}",
-            &result.clone().unwrap().logs
-        );
-    } else {
-        println!("result for success case: {:?}", &result.clone().err());
-    }
+
     assert!(result.is_ok(), "Transfer below limit should succeed");
 
     // Test 2: Transfer above limit (2 SOL ≈ 300 USDC at mock price)
@@ -202,15 +197,16 @@ fn test_oracle_limit_sol_transfer() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
-    if result.is_ok() {
-        println!(
-            "result for failure case: {:?}",
-            &result.clone().unwrap().logs
-        );
-    } else {
-        println!("result for failure case: {:?}", &result.clone().err());
-    }
+
     assert!(result.is_err(), "Transfer above limit should fail");
+    assert_eq!(
+        result.unwrap_err().err,
+        solana_sdk::transaction::TransactionError::InstructionError(
+            0,
+            solana_sdk::instruction::InstructionError::Custom(3022)
+        ),
+        "Expected error code 3022"
+    );
 }
 
 /// Test 3: Test token transfers with oracle limits
@@ -239,6 +235,7 @@ fn test_oracle_limit_token_transfer() {
         BaseAsset::USDC,
         3_000_000, // 3 USDC with 6 decimals (native USDC decimals)
         oracle_program.pubkey().to_bytes(),
+        false,
     );
 
     add_authority_with_ed25519_root(
@@ -291,8 +288,8 @@ fn test_oracle_limit_token_transfer() {
     )
     .unwrap();
 
-    println!("Mint {:?}", mint_pubkey);
-    println!("transfer_ix: {:?}", &transfer_ix);
+    // println!("Mint {:?}", mint_pubkey);
+    // println!("transfer_ix: {:?}", &transfer_ix);
 
     let sign_ix = swig_interface::SignInstruction::new_ed25519(
         swig_key,
@@ -317,12 +314,11 @@ fn test_oracle_limit_token_transfer() {
     display_swig(swig_key, &swig_data);
 
     let result = context.svm.send_transaction(tx);
-    if result.is_ok() {
-        println!("result: {:?}", &result.clone().unwrap().logs);
-    } else {
-        println!("result: {:?}", &result.clone().err());
-    }
+
     assert!(result.is_ok(), "Transfer below limit should succeed");
+
+    let swig_data = context.svm.get_account(&swig_key).unwrap();
+    display_swig(swig_key, &swig_data);
 
     // Test 2: Transfer above limit (2.5 tokens ≈ 3.75 USDC at mock price)
     let transfer_ix = spl_token::instruction::transfer(
@@ -356,12 +352,307 @@ fn test_oracle_limit_token_transfer() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
-    if result.is_ok() {
-        println!("result: {:?}", &result.clone().unwrap().logs);
-    } else {
-        println!("result: {:?}", &result.clone().err());
-    }
+
     assert!(result.is_err(), "Transfer above limit should fail");
+    assert_eq!(
+        result.unwrap_err().err,
+        solana_sdk::transaction::TransactionError::InstructionError(
+            0,
+            solana_sdk::instruction::InstructionError::Custom(3022)
+        ),
+        "Expected error code 3022"
+    );
+}
+
+/// Test 2: Test SOL transfers with oracle limits
+#[test_log::test]
+fn test_oracle_limit_sol_passthrough() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Create wallet and setup
+    let id = rand::random::<[u8; 32]>();
+    let oracle_program = Keypair::new();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let secondary_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Add oracle limit permission (1 USDC limit)
+    let oracle_limit = OracleTokenLimit::new(
+        BaseAsset::USDC,
+        200_000_000, // 1 USDC limit
+        oracle_program.pubkey().to_bytes(),
+        true,
+    );
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: secondary_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::OracleTokenLimit(oracle_limit),
+            ClientAction::SolLimit(SolLimit {
+                amount: 100_000_000_000,
+            }),
+        ],
+    )
+    .unwrap();
+
+    // Fund swig wallet
+    context.svm.airdrop(&swig_key, 20_000_000_000).unwrap();
+
+    let swig_data = context.svm.get_account(&swig_key).unwrap();
+    display_swig(swig_key, &swig_data);
+
+    // Test 1: Transfer below limit (1 SOL ≈ 150 USDC at mock price)
+    let transfer_ix =
+        system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 1_000_000_000);
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig_key,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        transfer_ix,
+        1,
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &secondary_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&secondary_authority])
+        .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+
+    assert!(result.is_ok(), "Transfer below limit should succeed");
+
+    let swig_data = context.svm.get_account(&swig_key).unwrap();
+    display_swig(swig_key, &swig_data);
+
+    // Test 2: Transfer above limit (2 SOL ≈ 300 USDC at mock price)
+    let transfer_ix =
+        system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 2_000_000_000);
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig_key,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        transfer_ix,
+        1,
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &secondary_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&secondary_authority])
+        .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+
+    assert!(result.is_err(), "Transfer above limit should fail");
+    assert_eq!(
+        result.unwrap_err().err,
+        solana_sdk::transaction::TransactionError::InstructionError(
+            0,
+            solana_sdk::instruction::InstructionError::Custom(3022)
+        ),
+        "Expected error code 3022"
+    );
+}
+
+/// Test 3: Test token transfers with oracle limits
+#[test_log::test]
+fn test_oracle_limit_passthrough() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Create wallet and setup
+    let id = rand::random::<[u8; 32]>();
+    let oracle_program = Keypair::new();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let secondary_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Add oracle limit permission (3 USDC limit)
+    let oracle_limit = OracleTokenLimit::new(
+        BaseAsset::USDC,
+        3_000_000, // 3 USDC with 6 decimals (native USDC decimals)
+        oracle_program.pubkey().to_bytes(),
+        true,
+    );
+
+    // Setup token accounts
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig_key,
+        &context.default_payer,
+    )
+    .unwrap();
+    let recipient_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &secondary_authority.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+
+    let mint_bytes = mint_pubkey.to_bytes();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: secondary_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::OracleTokenLimit(oracle_limit),
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: mint_bytes,
+                current_amount: 600_000_000,
+            }),
+        ],
+    )
+    .unwrap();
+
+    // Fund swig's token account with 10 tokens
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &swig_ata,
+        10_000_000_000, // 10 tokens with 9 decimals
+    )
+    .unwrap();
+
+    // Test 1: Transfer below limit (0.5 tokens ≈ 0.75 USDC at mock price of 1.5 USDC per token)
+    let transfer_ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        &swig_ata,
+        &recipient_ata,
+        &swig_key,
+        &[],
+        500_000_000, // 0.5 tokens with 9 decimals
+    )
+    .unwrap();
+
+    // println!("Mint {:?}", mint_pubkey);
+    // println!("transfer_ix: {:?}", &transfer_ix);
+
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig_key,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        transfer_ix,
+        1,
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &secondary_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&secondary_authority])
+        .unwrap();
+    let swig_data = context.svm.get_account(&swig_key).unwrap();
+    display_swig(swig_key, &swig_data);
+
+    let result = context.svm.send_transaction(tx);
+
+    print!("mint: {:?}", &mint_bytes);
+    if result.is_ok() {
+        println!(
+            "result for failure case: {:?}",
+            &result.clone().unwrap().logs
+        );
+    } else {
+        println!("result for failure case: {:?}", &result.clone().err());
+    }
+
+    assert!(result.is_ok(), "Transfer below limit should succeed");
+
+    let swig_data = context.svm.get_account(&swig_key).unwrap();
+    display_swig(swig_key, &swig_data);
+
+    // Test 2: Transfer above limit (2.5 tokens ≈ 3.75 USDC at mock price)
+    let transfer_ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        &swig_ata,
+        &recipient_ata,
+        &swig_key,
+        &[],
+        2_500_000_000, // 2.5 tokens with 9 decimals
+    )
+    .unwrap();
+
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig_key,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        transfer_ix,
+        1,
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &secondary_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&secondary_authority])
+        .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+
+    assert!(result.is_err(), "Transfer above limit should fail");
+    assert_eq!(
+        result.unwrap_err().err,
+        solana_sdk::transaction::TransactionError::InstructionError(
+            0,
+            solana_sdk::instruction::InstructionError::Custom(3022)
+        ),
+        "Expected error code 3022"
+    );
 }
 
 use alloy_primitives::hex;

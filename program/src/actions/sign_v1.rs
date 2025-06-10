@@ -233,7 +233,9 @@ pub fn sign_v1(
                                 RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
                             {
                                 action.run_for_sol(amount_diff)?;
-                                continue;
+                                if !action.passthrough_check {
+                                    continue;
+                                }
                             };
                         }
                         {
@@ -297,7 +299,9 @@ pub fn sign_v1(
                                 RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
                             {
                                 action.run_for_token(mint.try_into().unwrap(), diff)?;
-                                continue;
+                                if !action.passthrough_check {
+                                    continue;
+                                }
                             };
                         }
                         {
