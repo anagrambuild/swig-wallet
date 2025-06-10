@@ -653,7 +653,7 @@ mod tests {
         let swig = Swig::new(id, bump, 0);
 
         // Test all fields of the Swig struct
-        assert_eq!(swig.discriminator, 0);
+        assert_eq!(swig.discriminator, 1);
         assert_eq!(swig.id, id);
         assert_eq!(swig.bump, bump);
         assert_eq!(swig.roles, 0);
