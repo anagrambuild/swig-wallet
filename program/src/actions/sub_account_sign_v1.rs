@@ -134,6 +134,7 @@ pub fn sub_account_sign_v1(
     account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
+    check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSubAccount)?;
     check_self_owned(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
     let sign_v1 = SubAccountSignV1::from_instruction_bytes(data)?;
     let sub_account_data = unsafe { ctx.accounts.sub_account.borrow_data_unchecked() };
