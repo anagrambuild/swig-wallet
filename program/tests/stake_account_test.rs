@@ -23,7 +23,7 @@ use solana_sdk::{
     message::{v0, Message, VersionedMessage},
     signature::{Keypair, Signature, Signer},
     stake::{
-        instruction::{deactivate_stake, delegate_stake, initialize as stake_initialize, withdraw},
+        instruction::{deactivate_stake, delegate_stake, initialize as stake_initialize, withdraw, LockupArgs},
         state::{Authorized, Lockup, StakeState},
     },
     transaction::{Transaction, VersionedTransaction},
@@ -1339,7 +1339,6 @@ fn test_stake_with_recurring_limit() -> anyhow::Result<()> {
     // Set recurring stake limit to 3 SOL per 100 slots
     let recurring_amount = 3_000_000_000;
     let window = 100;
-    let current_slot = context.client.get_slot()?;
 
     // Add secondary authority with StakeRecurringLimit permission
     add_authority_with_ed25519_root(
@@ -1353,7 +1352,7 @@ fn test_stake_with_recurring_limit() -> anyhow::Result<()> {
         vec![ClientAction::StakeRecurringLimit(StakeRecurringLimit {
             recurring_amount,
             window,
-            last_reset: current_slot,
+            last_reset: 0,  // Must be 0 when creating the authority
             current_amount: recurring_amount,
         })],
     )?;
@@ -1494,6 +1493,311 @@ fn test_stake_with_recurring_limit() -> anyhow::Result<()> {
     // Print third stake account after delegation attempt
     println!("\n=== THIRD STAKE ACCOUNT AFTER DELEGATION ATTEMPT ===");
     print_stake_account_info(&context.client, &third_stake_account)?;
+
+    Ok(())
+}
+
+#[test]
+fn test_stake_authority_change_prevented() -> anyhow::Result<()> {
+    let context = setup_test_context()?;
+
+    // Create the swig wallet with authority
+    let swig_authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let swig = create_swig_ed25519(&context, &swig_authority, id)?;
+
+    // Get the validator's vote account dynamically
+    let vote_account = get_validator_vote_account(&context.client)?;
+
+    // Create a secondary authority with StakeAll permission
+    let secondary_authority = Keypair::new();
+
+    // Fund the secondary authority
+    request_airdrop(
+        &context.client,
+        &secondary_authority.pubkey(),
+        10_000_000_000,
+    )?;
+
+    // Add secondary authority with StakeAll permission (unlimited staking)
+    add_authority_with_ed25519_root(
+        &context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: secondary_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::StakeAll(StakeAll {})],
+    )?;
+
+    // Create a stake account with the swig as the authority
+    let stake_account = create_stake_account(
+        &context,
+        5_000_000_000, // 5 SOL
+        &swig,         // Swig is the stake authority
+        &swig,         // Swig is the withdraw authority
+    )?;
+
+    // Print stake account before any operations
+    println!("\n=== STAKE ACCOUNT INITIAL STATE ===");
+    print_stake_account_info(&context.client, &stake_account)?;
+
+    // Create a malicious authority to try to take control
+    let malicious_authority = Keypair::new();
+    
+    // Create an instruction that attempts to change the stake authority
+    // This is the authorize instruction from the stake program
+    let change_authority_ix = Instruction {
+        program_id: STAKE_PROGRAM_ID,
+        accounts: vec![
+            AccountMeta::new(stake_account, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::clock::id(), false),
+            AccountMeta::new_readonly(swig, true), // Current authority (swig)
+            AccountMeta::new_readonly(malicious_authority.pubkey(), false), // New authority to set
+        ],
+        data: solana_sdk::stake::instruction::authorize(
+            &stake_account,
+            &swig,
+            &malicious_authority.pubkey(),
+            solana_sdk::stake::state::StakeAuthorize::Staker,
+            None,
+        ).data.clone(),
+    };
+
+    // Try to sign this malicious instruction with the swig
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        change_authority_ix,
+        1, // role_id for the secondary authority
+    )?;
+
+    // Set higher compute budget
+    let compute_budget_ix = ComputeBudgetInstruction::set_compute_unit_limit(1_000_000);
+
+    // Create and sign transaction
+    let transaction = Transaction::new_signed_with_payer(
+        &[compute_budget_ix.clone(), sign_ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &secondary_authority],
+        context.client.get_latest_blockhash()?,
+    );
+
+    // Send and confirm transaction - this should fail
+    println!("Attempting to change stake authority (should fail)...");
+    let result = context.send_and_confirm_with_preflight_disabled(&transaction);
+    
+    match result {
+        Ok(_) => {
+            println!("ERROR: Transaction succeeded when it should have failed!");
+            return Err(anyhow::anyhow!("Stake authority change was not prevented"));
+        },
+        Err(e) => {
+            println!("Good: Transaction failed as expected: {:?}", e);
+        }
+    }
+
+    // Wait a moment
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    // Verify the stake account authorities haven't changed
+    println!("\n=== STAKE ACCOUNT AFTER FAILED AUTHORITY CHANGE ===");
+    print_stake_account_info(&context.client, &stake_account)?;
+
+    // Now try to change the withdraw authority
+    let change_withdrawer_ix = Instruction {
+        program_id: STAKE_PROGRAM_ID,
+        accounts: vec![
+            AccountMeta::new(stake_account, false),
+            AccountMeta::new_readonly(swig, true), // Current withdrawer (swig)
+            AccountMeta::new_readonly(malicious_authority.pubkey(), false), // New withdrawer to set
+        ],
+        data: solana_sdk::stake::instruction::authorize(
+            &stake_account,
+            &swig,
+            &malicious_authority.pubkey(),
+            solana_sdk::stake::state::StakeAuthorize::Withdrawer,
+            None,
+        ).data.clone(),
+    };
+
+    // Try to sign this malicious instruction with the swig
+    let sign_withdrawer_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        change_withdrawer_ix,
+        1, // role_id for the secondary authority
+    )?;
+
+    // Create and sign transaction
+    let withdrawer_transaction = Transaction::new_signed_with_payer(
+        &[compute_budget_ix.clone(), sign_withdrawer_ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &secondary_authority],
+        context.client.get_latest_blockhash()?,
+    );
+
+    // Send and confirm transaction - this should also fail
+    println!("\nAttempting to change withdraw authority (should fail)...");
+    let withdrawer_result = context.send_and_confirm_with_preflight_disabled(&withdrawer_transaction);
+    
+    match withdrawer_result {
+        Ok(_) => {
+            println!("ERROR: Transaction succeeded when it should have failed!");
+            return Err(anyhow::anyhow!("Withdraw authority change was not prevented"));
+        },
+        Err(e) => {
+            println!("Good: Transaction failed as expected: {:?}", e);
+        }
+    }
+
+    // Wait a moment
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    // Verify the stake account authorities still haven't changed
+    println!("\n=== STAKE ACCOUNT AFTER FAILED WITHDRAWER CHANGE ===");
+    print_stake_account_info(&context.client, &stake_account)?;
+
+    // Now test that normal operations still work - delegate stake
+    let delegate_ix = delegate_stake(&stake_account, &swig, &vote_account);
+    let delegate_sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        delegate_ix,
+        1, // role_id for the secondary authority
+    )?;
+
+    // Create and sign delegation transaction
+    let delegate_transaction = Transaction::new_signed_with_payer(
+        &[compute_budget_ix.clone(), delegate_sign_ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &secondary_authority],
+        context.client.get_latest_blockhash()?,
+    );
+
+    // This should succeed
+    println!("\nPerforming normal delegation (should succeed)...");
+    let delegate_result = context.send_and_confirm_with_preflight_disabled(&delegate_transaction)?;
+    println!("Delegation succeeded: {}", delegate_result);
+
+    // Wait a moment
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    // Print final state
+    println!("\n=== STAKE ACCOUNT FINAL STATE (After Successful Delegation) ===");
+    print_stake_account_info(&context.client, &stake_account)?;
+
+    Ok(())
+}
+
+#[test]
+fn test_stake_lockup_change_prevented() -> anyhow::Result<()> {
+    let context = setup_test_context()?;
+
+    // Create the swig wallet with authority
+    let swig_authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let swig = create_swig_ed25519(&context, &swig_authority, id)?;
+
+    // Create a secondary authority with StakeAll permission
+    let secondary_authority = Keypair::new();
+
+    // Fund the secondary authority
+    request_airdrop(
+        &context.client,
+        &secondary_authority.pubkey(),
+        10_000_000_000,
+    )?;
+
+    // Add secondary authority with StakeAll permission (unlimited staking)
+    add_authority_with_ed25519_root(
+        &context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: secondary_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::StakeAll(StakeAll {})],
+    )?;
+
+    // Create a stake account with the swig as the authority
+    let stake_account = create_stake_account(
+        &context,
+        5_000_000_000, // 5 SOL
+        &swig,         // Swig is the stake authority
+        &swig,         // Swig is the withdraw authority
+    )?;
+
+    // Print stake account before any operations
+    println!("\n=== STAKE ACCOUNT INITIAL STATE ===");
+    print_stake_account_info(&context.client, &stake_account)?;
+
+    // Create a new lockup to try to set
+    let new_lockup_args = LockupArgs {
+        unix_timestamp: Some(1234567890),
+        epoch: Some(100),
+        custodian: Some(Keypair::new().pubkey()),
+    };
+    
+    // Create an instruction that attempts to change the lockup
+    let change_lockup_ix = Instruction {
+        program_id: STAKE_PROGRAM_ID,
+        accounts: vec![
+            AccountMeta::new(stake_account, false),
+            AccountMeta::new_readonly(swig, true), // Current custodian/authority (swig)
+        ],
+        data: solana_sdk::stake::instruction::set_lockup(
+            &stake_account,
+            &new_lockup_args,
+            &swig,
+        ).data.clone(),
+    };
+
+    // Try to sign this malicious instruction with the swig
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        change_lockup_ix,
+        1, // role_id for the secondary authority
+    )?;
+
+    // Set higher compute budget
+    let compute_budget_ix = ComputeBudgetInstruction::set_compute_unit_limit(1_000_000);
+
+    // Create and sign transaction
+    let transaction = Transaction::new_signed_with_payer(
+        &[compute_budget_ix.clone(), sign_ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &secondary_authority],
+        context.client.get_latest_blockhash()?,
+    );
+
+    // Send and confirm transaction - this should fail
+    println!("Attempting to change stake lockup (should fail)...");
+    let result = context.send_and_confirm_with_preflight_disabled(&transaction);
+    
+    match result {
+        Ok(_) => {
+            println!("ERROR: Transaction succeeded when it should have failed!");
+            return Err(anyhow::anyhow!("Stake lockup change was not prevented"));
+        },
+        Err(e) => {
+            println!("Good: Transaction failed as expected: {:?}", e);
+        }
+    }
+
+    // Wait a moment
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    // Verify the stake account lockup hasn't changed
+    println!("\n=== STAKE ACCOUNT AFTER FAILED LOCKUP CHANGE ===");
+    print_stake_account_info(&context.client, &stake_account)?;
 
     Ok(())
 }

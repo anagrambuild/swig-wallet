@@ -105,6 +105,10 @@ pub enum SwigError {
     InvalidSwigTokenAccountOwner,
     /// Invalid program scope balance field configuration
     InvalidProgramScopeBalanceFields,
+    /// Stake account authority was modified during transaction
+    StakeAccountAuthorityChanged,
+    /// Stake account lockup was modified during transaction
+    StakeAccountLockupChanged,
 }
 
 /// Implements conversion from SwigError to ProgramError.

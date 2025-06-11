@@ -199,6 +199,28 @@ pub fn sign_v1(
         ctx.accounts.swig.key(),
         rkeys,
     )?;
+    // Capture initial state of stake accounts before execution for validation
+    let mut stake_account_initial_states: Vec<Option<([u8; 32], [u8; 32], [u8; 32])>> = Vec::new();
+    
+    for (index, account) in account_classifiers.iter().enumerate() {
+        if let AccountClassification::SwigStakeAccount { .. } = account {
+            let data = unsafe { &all_accounts.get_unchecked(index).borrow_data_unchecked() };
+            
+            // Capture initial state: (staker, withdrawer, lockup)
+            let mut staker = [0u8; 32];
+            let mut withdrawer = [0u8; 32]; 
+            let mut lockup = [0u8; 32];
+            
+            staker.copy_from_slice(unsafe { data.get_unchecked(12..44) });
+            withdrawer.copy_from_slice(unsafe { data.get_unchecked(44..76) });
+            lockup.copy_from_slice(unsafe { data.get_unchecked(76..108) });
+            
+            stake_account_initial_states.push(Some((staker, withdrawer, lockup)));
+        } else {
+            stake_account_initial_states.push(None);
+        }
+    }
+
     let b = [swig.bump];
     let seeds = swig_account_signer(&swig.id, &b);
     let signer = seeds.as_slice();
@@ -210,6 +232,34 @@ pub fn sign_v1(
             return Err(SwigError::InstructionExecutionError.into());
         }
     }
+    
+    // Validate that stake accounts have not been modified beyond balance transfers
+    for (index, account) in account_classifiers.iter().enumerate() {
+        if let (AccountClassification::SwigStakeAccount { .. }, Some((initial_staker, initial_withdrawer, initial_lockup))) 
+            = (account, &stake_account_initial_states[index]) {
+            
+            let data = unsafe { &all_accounts.get_unchecked(index).borrow_data_unchecked() };
+            
+            // Verify authorized staker hasn't changed (offset 12-44)
+            let current_staker = unsafe { data.get_unchecked(12..44) };
+            if current_staker != initial_staker {
+                return Err(SwigError::StakeAccountAuthorityChanged.into());
+            }
+            
+            // Verify authorized withdrawer hasn't changed (offset 44-76)
+            let current_withdrawer = unsafe { data.get_unchecked(44..76) };
+            if current_withdrawer != initial_withdrawer {
+                return Err(SwigError::StakeAccountAuthorityChanged.into());
+            }
+            
+            // Verify lockup hasn't changed (offset 76-108)
+            let current_lockup = unsafe { data.get_unchecked(76..108) };
+            if current_lockup != initial_lockup {
+                return Err(SwigError::StakeAccountLockupChanged.into());
+            }
+        }
+    }
+    
     let actions = role.actions;
     if RoleMut::get_action_mut::<All>(actions, &[])?.is_some() {
         return Ok(());
