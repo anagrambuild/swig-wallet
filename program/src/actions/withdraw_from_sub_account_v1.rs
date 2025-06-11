@@ -111,11 +111,18 @@ pub fn withdraw_from_sub_account_v1(
     data: &[u8],
     account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
+    // Verify that both the swig account and sub_account are owned by the current program
+    check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     check_self_owned(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
     let withdraw = WithdrawFromSubAccountV1::from_instruction_bytes(data)?;
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_unchecked(&swig_header)? };
+
+    // Verify the swig account has the correct discriminator
+    if unsafe { *swig_header.get_unchecked(0) } != Discriminator::SwigAccount as u8 {
+        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+    }
     let sub_account_data = unsafe { ctx.accounts.sub_account.borrow_data_unchecked() };
     if unsafe { *sub_account_data.get_unchecked(0) } != Discriminator::SwigSubAccount as u8 {
         return Err(SwigError::InvalidSwigSubAccountDiscriminator.into());
