@@ -228,17 +228,19 @@ impl OracleTokenLimit {
         &mut self,
         amount: u64,
         oracle_price: u64,
-        confidence: u64,
-        exponent: u32,
+        _confidence: u64,
+        exponent: i32,
     ) -> Result<(), ProgramError> {
         // First check if amount * oracle_price would overflow u64
-        if amount != 0 && oracle_price > u64::MAX / amount {
+        if amount != 0 && oracle_price as u128 > u128::MAX / amount as u128 {
             return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
         }
 
-        // Safe to multiply now since we checked for overflow
-        // Solana decimal = 9 and usdc decimal = 6, so divide by 10 ** (9-6)
-        let value = amount * oracle_price / 1_000;
+        let value = if exponent >= 0 {
+            amount * oracle_price * 10u64.pow(exponent as u32) / 1000
+        } else {
+            amount * oracle_price / (1000 * 10u64.pow((-exponent) as u32))
+        };
 
         // Check if we have enough limit
         if value > self.value_limit {

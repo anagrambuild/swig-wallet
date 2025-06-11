@@ -234,9 +234,10 @@ pub fn sign_v1(
                             {
                                 let data = unsafe {
                                     &all_accounts
-                                        .get_unchecked(all_accounts.len() - 2)
+                                        .get_unchecked(all_accounts.len() - 1)
                                         .borrow_data_unchecked()
                                 };
+                                msg!("data: {:?}", &data);
 
                                 let current_timestamp = Clock::get()?.unix_timestamp;
                                 let feed_id: [u8; 32] = [
@@ -251,9 +252,12 @@ pub fn sign_v1(
                                     &feed_id,
                                 )?;
 
-                                let price = 150;
-                                let confidence = 1;
-                                let exponent = 8;
+                                msg!(
+                                    "price {:?}, expo: {:?} confidence {:?}",
+                                    price,
+                                    exponent,
+                                    confidence
+                                );
 
                                 action.run_for_sol(amount_diff, price, confidence, exponent)?;
 

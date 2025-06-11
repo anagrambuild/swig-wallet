@@ -161,16 +161,10 @@ fn test_oracle_limit_sol_transfer() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("AxaxyeDT8JnWERSaTKvFXvPKkEdxnamKSqpWbsSjYg1g").unwrap(),
-            false,
-        ),
-    ]);
+    sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
+        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
+        false,
+    )]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -212,16 +206,10 @@ fn test_oracle_limit_sol_transfer() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("AxaxyeDT8JnWERSaTKvFXvPKkEdxnamKSqpWbsSjYg1g").unwrap(),
-            false,
-        ),
-    ]);
+    sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
+        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
+        false,
+    )]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -350,7 +338,6 @@ fn test_oracle_limit_token_transfer() {
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&secondary_authority])
         .unwrap();
     let swig_data = context.svm.get_account(&swig_key).unwrap();
-    display_swig(swig_key, &swig_data);
 
     let result = context.svm.send_transaction(tx);
 
@@ -370,7 +357,6 @@ fn test_oracle_limit_token_transfer() {
     assert!(result.is_ok(), "Transfer below limit should succeed");
 
     let swig_data = context.svm.get_account(&swig_key).unwrap();
-    display_swig(swig_key, &swig_data);
 
     // Test 2: Transfer above limit (2.5 tokens ≈ 3.75 USDC at mock price)
     let transfer_ix = spl_token::instruction::transfer(
@@ -491,16 +477,10 @@ fn test_oracle_limit_sol_passthrough() {
     .unwrap();
 
     // Add the addresses that were in lookup table to remaining accounts
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("AxaxyeDT8JnWERSaTKvFXvPKkEdxnamKSqpWbsSjYg1g").unwrap(),
-            false,
-        ),
-    ]);
+    sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
+        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
+        false,
+    )]);
 
     println!("sign_ix {:?}", &sign_ix);
 
@@ -571,16 +551,10 @@ fn test_oracle_limit_sol_passthrough() {
     .unwrap();
 
     // Add the addresses that were in lookup table to remaining accounts
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("AxaxyeDT8JnWERSaTKvFXvPKkEdxnamKSqpWbsSjYg1g").unwrap(),
-            false,
-        ),
-    ]);
+    sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
+        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
+        false,
+    )]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -594,7 +568,13 @@ fn test_oracle_limit_sol_passthrough() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
-
+    if (result.is_ok()) {
+        for log in &result.clone().unwrap().logs {
+            println!("TX logs: {:?}", log);
+        }
+    } else {
+        println!("result {:?}", &result);
+    }
     assert!(result.is_err(), "Transfer above limit should fail");
     assert_eq!(
         result.unwrap_err().err,

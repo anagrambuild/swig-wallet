@@ -289,7 +289,7 @@ pub fn get_price_data_from_bytes(
     current_timestamp: i64,
     maximum_age: u64,
     feed_id: &[u8],
-) -> Result<(u64, u64, u32), SwigError> {
+) -> Result<(u64, u64, i32), SwigError> {
     let verification_level = price_update_data[40];
     if verification_level != 1 {
         return Err(SwigError::OracleVerficationLevelFailed);
@@ -327,5 +327,5 @@ pub fn get_price_data_from_bytes(
         return Err(SwigError::OraclePriceTooOld);
     }
 
-    Ok((price as u64, confidence, exponent as u32))
+    Ok((price as u64, confidence, exponent))
 }
