@@ -4,6 +4,7 @@
 //! - Program scope caching and lookup
 //! - Account balance reading
 //! - Token transfer operations
+//! - Oracle Program for token price fetch
 //! The utilities are optimized for performance and safety.
 
 use std::mem::MaybeUninit;
@@ -281,4 +282,41 @@ impl<'a> TokenTransfer<'a> {
 
         invoke_signed(&instruction, &[self.from, self.to, self.authority], signers)
     }
+}
+
+pub fn get_price_data_from_bytes(
+    price_update_data: &[u8],
+    current_timestamp: i64,
+    maximum_age: u64,
+) -> Result<(u64, u64, u32), SwigError> {
+    let verification_level = price_update_data[40];
+    if verification_level != 1 {
+        return Err(SwigError::OracleVerficationLevelFailed);
+    }
+
+    // price (8 bytes) [73..81]
+    let mut price_bytes = [0u8; 8];
+    price_bytes.copy_from_slice(&price_update_data[73..81]);
+    let price = i64::from_le_bytes(price_bytes);
+
+    // conf (8 bytes) [81..89]
+    let mut conf_bytes = [0u8; 8];
+    conf_bytes.copy_from_slice(&price_update_data[81..89]);
+    let confidence = u64::from_le_bytes(conf_bytes);
+
+    // exponent (4 bytes) [89..93]
+    let mut exp_bytes = [0u8; 4];
+    exp_bytes.copy_from_slice(&price_update_data[89..93]);
+    let exponent = i32::from_le_bytes(exp_bytes);
+
+    // publish_time (8 bytes) [93..101]
+    let mut pub_time_bytes = [0u8; 8];
+    pub_time_bytes.copy_from_slice(&price_update_data[93..101]);
+    let publish_time = i64::from_le_bytes(pub_time_bytes);
+
+    if publish_time.saturating_add(maximum_age.try_into().unwrap()) < current_timestamp {
+        return Err(SwigError::OraclePriceTooOld);
+    }
+
+    Ok((price as u64, confidence, exponent as u32))
 }

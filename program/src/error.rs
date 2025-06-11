@@ -109,6 +109,10 @@ pub enum SwigError {
     PermissionDeniedMissingOracleAccount,
     /// Failed to read oracle price data
     InvalidOraclePriceData,
+    /// Failed to verify the oracle level to FULL
+    OracleVerficationLevelFailed,
+    /// Failed to fetch latest oracle price
+    OraclePriceTooOld,
 }
 
 /// Implements conversion from SwigError to ProgramError.

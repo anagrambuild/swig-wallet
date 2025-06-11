@@ -41,6 +41,7 @@ use crate::{
         accounts::{Context, SignV1Accounts},
         SwigInstruction,
     },
+    util::get_price_data_from_bytes,
     AccountClassification,
 };
 // use swig_instructions::InstructionIterator;
@@ -232,7 +233,20 @@ pub fn sign_v1(
                             if let Some(action) =
                                 RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
                             {
-                                action.run_for_sol(amount_diff)?;
+                                // let data = unsafe {
+                                //     &all_accounts.get_unchecked(index).borrow_data_unchecked()
+                                // };
+
+                                // let current_timestamp = Clock::get()?.unix_timestamp;
+                                // let (price, confidence, exponent) =
+                                //     get_price_data_from_bytes(data, current_timestamp, 100)?;
+
+                                let price = 150;
+                                let confidence = 1;
+                                let exponent = 8;
+
+                                action.run_for_sol(amount_diff, price, confidence, exponent)?;
+
                                 if !action.passthrough_check {
                                     continue;
                                 }
@@ -298,6 +312,16 @@ pub fn sign_v1(
                             if let Some(action) =
                                 RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
                             {
+                                // Get oracle account based on mint
+                                // let data = unsafe {
+                                //     &all_accounts.get_unchecked(index).borrow_data_unchecked()
+                                // };
+
+                                // let current_timestamp = Clock::get()?.unix_timestamp;
+                                // let (price, confidence, exponent) =
+                                //     get_price_data_from_bytes(data, current_timestamp, 100)?;
+
+                                let price: i32 = 150;
                                 action.run_for_token(mint.try_into().unwrap(), diff)?;
                                 if !action.passthrough_check {
                                     continue;

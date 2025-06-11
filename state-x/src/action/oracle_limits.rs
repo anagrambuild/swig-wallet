@@ -232,10 +232,14 @@ impl OracleTokenLimit {
     /// # Returns
     /// * `Ok(())` - If the operation is within limits
     /// * `Err(ProgramError)` - If the operation would exceed the limit
-    pub fn run_for_sol(&mut self, amount: u64) -> Result<(), ProgramError> {
+    pub fn run_for_sol(
+        &mut self,
+        amount: u64,
+        oracle_price: u64,
+        confidence: u64,
+        exponent: u32,
+    ) -> Result<(), ProgramError> {
         // First check if amount * oracle_price would overflow u64
-        let oracle_price = 150;
-
         if amount != 0 && oracle_price > u64::MAX / amount {
             return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
         }

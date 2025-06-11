@@ -5,13 +5,17 @@
 
 mod common;
 
+use std::str::FromStr;
+
 use common::*;
+use litesvm::LiteSVM;
 use litesvm_token::spl_token;
 use solana_program::{pubkey::Pubkey, system_instruction};
+use solana_sdk::address_lookup_table::state::AddressLookupTable;
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
     instruction::{AccountMeta, Instruction},
-    message::{v0, VersionedMessage},
+    message::{v0, AddressLookupTableAccount, VersionedMessage},
     signature::{Keypair, Signer},
     transaction::{Transaction, VersionedTransaction},
 };
@@ -428,16 +432,34 @@ fn test_oracle_limit_sol_passthrough() {
     )
     .unwrap();
 
+    let address_lookup_table_key = create_alt_and_add(&mut context).unwrap();
+
+    let raw_account = context.svm.get_account(&address_lookup_table_key).unwrap();
+    let address_lookup_table = AddressLookupTable::deserialize(&raw_account.data).unwrap();
+    let address_lookup_table_account = AddressLookupTableAccount {
+        key: address_lookup_table_key,
+        addresses: address_lookup_table.addresses.to_vec(),
+    };
+
+    println!(
+        "address_lookup_table_account: {:?}",
+        &address_lookup_table_account
+    );
+
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
         &[sign_ix],
-        &[],
+        &[address_lookup_table_account],
         context.svm.latest_blockhash(),
     )
     .unwrap();
 
+    println!("Message: {:?}", &message);
+
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&secondary_authority])
         .unwrap();
+
+    println!("tx: {:?}", &tx);
 
     let result = context.svm.send_transaction(tx);
 
@@ -584,19 +606,25 @@ fn test_oracle_limit_passthrough() {
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
         &[sign_ix],
+        // &[address_lookup_table_account],
         &[],
         context.svm.latest_blockhash(),
     )
     .unwrap();
 
-    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&secondary_authority])
-        .unwrap();
+    println!("msg {:?}", &message);
+
+    let tx: VersionedTransaction =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&secondary_authority])
+            .unwrap();
+
+    println!("tx {:?}", &tx);
     let swig_data = context.svm.get_account(&swig_key).unwrap();
     display_swig(swig_key, &swig_data);
 
     let result = context.svm.send_transaction(tx);
 
-    print!("mint: {:?}", &mint_bytes);
+    println!("mint: {:?}", &mint_bytes);
     if result.is_ok() {
         println!(
             "result for failure case: {:?}",
@@ -829,4 +857,48 @@ pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), a
     println!("╚══════════════════════════════════════════════════════════════════");
 
     Ok(())
+}
+
+fn create_alt_and_add(context: &mut SwigTestContext) -> Result<Pubkey, anyhow::Error> {
+    // Create the lookup table
+    let (create_lookup_table_ix, lookup_table_address) =
+        solana_sdk::address_lookup_table::instruction::create_lookup_table(
+            context.default_payer.pubkey(),
+            context.default_payer.pubkey(),
+            0,
+        );
+
+    let tx = Transaction::new_signed_with_payer(
+        &[create_lookup_table_ix],
+        Some(&context.default_payer.pubkey()),
+        &[&context.default_payer],
+        context.svm.latest_blockhash(),
+    );
+
+    context.svm.send_transaction(tx).unwrap();
+
+    // Add addresses to the lookup table
+    let addresses_to_add = vec![
+        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
+        Pubkey::from_str("AxaxyeDT8JnWERSaTKvFXvPKkEdxnamKSqpWbsSjYg1g").unwrap(),
+    ];
+
+    let extend_lookup_table_ix = solana_sdk::address_lookup_table::instruction::extend_lookup_table(
+        lookup_table_address,
+        context.default_payer.pubkey(),
+        Some(context.default_payer.pubkey()),
+        addresses_to_add,
+    );
+
+    let tx = Transaction::new_signed_with_payer(
+        &[extend_lookup_table_ix],
+        Some(&context.default_payer.pubkey()),
+        &[&context.default_payer],
+        context.svm.latest_blockhash(),
+    );
+
+    context.svm.send_transaction(tx).unwrap();
+
+    println!("ALT address: {:?}", lookup_table_address);
+    Ok(lookup_table_address)
 }
