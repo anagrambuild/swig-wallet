@@ -23,7 +23,9 @@ use solana_sdk::{
     message::{v0, Message, VersionedMessage},
     signature::{Keypair, Signature, Signer},
     stake::{
-        instruction::{deactivate_stake, delegate_stake, initialize as stake_initialize, withdraw, LockupArgs},
+        instruction::{
+            deactivate_stake, delegate_stake, initialize as stake_initialize, withdraw, LockupArgs,
+        },
         state::{Authorized, Lockup, StakeState},
     },
     transaction::{Transaction, VersionedTransaction},
@@ -1352,7 +1354,7 @@ fn test_stake_with_recurring_limit() -> anyhow::Result<()> {
         vec![ClientAction::StakeRecurringLimit(StakeRecurringLimit {
             recurring_amount,
             window,
-            last_reset: 0,  // Must be 0 when creating the authority
+            last_reset: 0, // Must be 0 when creating the authority
             current_amount: recurring_amount,
         })],
     )?;
@@ -1545,7 +1547,7 @@ fn test_stake_authority_change_prevented() -> anyhow::Result<()> {
 
     // Create a malicious authority to try to take control
     let malicious_authority = Keypair::new();
-    
+
     // Create an instruction that attempts to change the stake authority
     // This is the authorize instruction from the stake program
     let change_authority_ix = Instruction {
@@ -1562,7 +1564,9 @@ fn test_stake_authority_change_prevented() -> anyhow::Result<()> {
             &malicious_authority.pubkey(),
             solana_sdk::stake::state::StakeAuthorize::Staker,
             None,
-        ).data.clone(),
+        )
+        .data
+        .clone(),
     };
 
     // Try to sign this malicious instruction with the swig
@@ -1588,7 +1592,7 @@ fn test_stake_authority_change_prevented() -> anyhow::Result<()> {
     // Send and confirm transaction - this should fail
     println!("Attempting to change stake authority (should fail)...");
     let result = context.send_and_confirm_with_preflight_disabled(&transaction);
-    
+
     match result {
         Ok(_) => {
             println!("ERROR: Transaction succeeded when it should have failed!");
@@ -1596,7 +1600,7 @@ fn test_stake_authority_change_prevented() -> anyhow::Result<()> {
         },
         Err(e) => {
             println!("Good: Transaction failed as expected: {:?}", e);
-        }
+        },
     }
 
     // Wait a moment
@@ -1620,7 +1624,9 @@ fn test_stake_authority_change_prevented() -> anyhow::Result<()> {
             &malicious_authority.pubkey(),
             solana_sdk::stake::state::StakeAuthorize::Withdrawer,
             None,
-        ).data.clone(),
+        )
+        .data
+        .clone(),
     };
 
     // Try to sign this malicious instruction with the swig
@@ -1642,16 +1648,19 @@ fn test_stake_authority_change_prevented() -> anyhow::Result<()> {
 
     // Send and confirm transaction - this should also fail
     println!("\nAttempting to change withdraw authority (should fail)...");
-    let withdrawer_result = context.send_and_confirm_with_preflight_disabled(&withdrawer_transaction);
-    
+    let withdrawer_result =
+        context.send_and_confirm_with_preflight_disabled(&withdrawer_transaction);
+
     match withdrawer_result {
         Ok(_) => {
             println!("ERROR: Transaction succeeded when it should have failed!");
-            return Err(anyhow::anyhow!("Withdraw authority change was not prevented"));
+            return Err(anyhow::anyhow!(
+                "Withdraw authority change was not prevented"
+            ));
         },
         Err(e) => {
             println!("Good: Transaction failed as expected: {:?}", e);
-        }
+        },
     }
 
     // Wait a moment
@@ -1681,7 +1690,8 @@ fn test_stake_authority_change_prevented() -> anyhow::Result<()> {
 
     // This should succeed
     println!("\nPerforming normal delegation (should succeed)...");
-    let delegate_result = context.send_and_confirm_with_preflight_disabled(&delegate_transaction)?;
+    let delegate_result =
+        context.send_and_confirm_with_preflight_disabled(&delegate_transaction)?;
     println!("Delegation succeeded: {}", delegate_result);
 
     // Wait a moment
@@ -1743,7 +1753,7 @@ fn test_stake_lockup_change_prevented() -> anyhow::Result<()> {
         epoch: Some(100),
         custodian: Some(Keypair::new().pubkey()),
     };
-    
+
     // Create an instruction that attempts to change the lockup
     let change_lockup_ix = Instruction {
         program_id: STAKE_PROGRAM_ID,
@@ -1751,11 +1761,9 @@ fn test_stake_lockup_change_prevented() -> anyhow::Result<()> {
             AccountMeta::new(stake_account, false),
             AccountMeta::new_readonly(swig, true), // Current custodian/authority (swig)
         ],
-        data: solana_sdk::stake::instruction::set_lockup(
-            &stake_account,
-            &new_lockup_args,
-            &swig,
-        ).data.clone(),
+        data: solana_sdk::stake::instruction::set_lockup(&stake_account, &new_lockup_args, &swig)
+            .data
+            .clone(),
     };
 
     // Try to sign this malicious instruction with the swig
@@ -1781,7 +1789,7 @@ fn test_stake_lockup_change_prevented() -> anyhow::Result<()> {
     // Send and confirm transaction - this should fail
     println!("Attempting to change stake lockup (should fail)...");
     let result = context.send_and_confirm_with_preflight_disabled(&transaction);
-    
+
     match result {
         Ok(_) => {
             println!("ERROR: Transaction succeeded when it should have failed!");
@@ -1789,7 +1797,7 @@ fn test_stake_lockup_change_prevented() -> anyhow::Result<()> {
         },
         Err(e) => {
             println!("Good: Transaction failed as expected: {:?}", e);
-        }
+        },
     }
 
     // Wait a moment
