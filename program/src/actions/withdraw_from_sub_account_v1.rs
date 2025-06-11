@@ -111,7 +111,8 @@ pub fn withdraw_from_sub_account_v1(
     data: &[u8],
     account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
-    // Verify that both the swig account and sub_account are owned by the current program
+    // Verify that both the swig account and sub_account are owned by the current
+    // program
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     check_self_owned(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
     let withdraw = WithdrawFromSubAccountV1::from_instruction_bytes(data)?;
