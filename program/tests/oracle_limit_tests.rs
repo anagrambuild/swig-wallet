@@ -59,7 +59,6 @@ fn test_oracle_limit_permission_add() {
     let oracle_limit = OracleTokenLimit::new(
         BaseAsset::USDC,
         200_000_000, // 200 USDC
-        oracle_program.pubkey().to_bytes(),
         false,
     );
 
@@ -110,6 +109,7 @@ fn test_oracle_limit_permission_add() {
 #[test_log::test]
 fn test_oracle_limit_sol_transfer() {
     let mut context = setup_test_context().unwrap();
+    load_sample_pyth_accounts(&mut context.svm);
     let swig_authority = Keypair::new();
     context
         .svm
@@ -131,7 +131,6 @@ fn test_oracle_limit_sol_transfer() {
     let oracle_limit = OracleTokenLimit::new(
         BaseAsset::USDC,
         200_000_000, // 1 USDC limit
-        oracle_program.pubkey().to_bytes(),
         false,
     );
 
@@ -153,7 +152,7 @@ fn test_oracle_limit_sol_transfer() {
     // Test 1: Transfer below limit (1 SOL ≈ 150 USDC at mock price)
     let transfer_ix =
         system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 1_000_000_000);
-    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
         swig_key,
         secondary_authority.pubkey(),
         secondary_authority.pubkey(),
@@ -161,6 +160,17 @@ fn test_oracle_limit_sol_transfer() {
         1,
     )
     .unwrap();
+
+    sign_ix.accounts.extend(vec![
+        AccountMeta::new_readonly(
+            Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
+            false,
+        ),
+        AccountMeta::new_readonly(
+            Pubkey::from_str("AxaxyeDT8JnWERSaTKvFXvPKkEdxnamKSqpWbsSjYg1g").unwrap(),
+            false,
+        ),
+    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -175,12 +185,25 @@ fn test_oracle_limit_sol_transfer() {
 
     let result = context.svm.send_transaction(tx);
 
+    // Print logs for debugging
+    match &result {
+        Ok(tx_result) => {
+            println!("Transaction logs:");
+            for log in &tx_result.logs {
+                println!("  {:?}", log);
+            }
+        },
+        Err(err) => {
+            println!("Transaction failed: {:?}", err);
+        },
+    }
+
     assert!(result.is_ok(), "Transfer below limit should succeed");
 
     // Test 2: Transfer above limit (2 SOL ≈ 300 USDC at mock price)
     let transfer_ix =
         system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 2_000_000_000);
-    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
         swig_key,
         secondary_authority.pubkey(),
         secondary_authority.pubkey(),
@@ -188,6 +211,17 @@ fn test_oracle_limit_sol_transfer() {
         1,
     )
     .unwrap();
+
+    sign_ix.accounts.extend(vec![
+        AccountMeta::new_readonly(
+            Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
+            false,
+        ),
+        AccountMeta::new_readonly(
+            Pubkey::from_str("AxaxyeDT8JnWERSaTKvFXvPKkEdxnamKSqpWbsSjYg1g").unwrap(),
+            false,
+        ),
+    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -223,6 +257,8 @@ fn test_oracle_limit_token_transfer() {
         .airdrop(&swig_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
+    load_sample_pyth_accounts(&mut context.svm);
+
     // Create wallet and setup
     let id = rand::random::<[u8; 32]>();
     let oracle_program = Keypair::new();
@@ -238,7 +274,6 @@ fn test_oracle_limit_token_transfer() {
     let oracle_limit = OracleTokenLimit::new(
         BaseAsset::USDC,
         3_000_000, // 3 USDC with 6 decimals (native USDC decimals)
-        oracle_program.pubkey().to_bytes(),
         false,
     );
 
@@ -319,6 +354,19 @@ fn test_oracle_limit_token_transfer() {
 
     let result = context.svm.send_transaction(tx);
 
+    // Print logs for debugging
+    match &result {
+        Ok(tx_result) => {
+            println!("Transaction logs:");
+            for log in &tx_result.logs {
+                println!("  {:?}", log);
+            }
+        },
+        Err(err) => {
+            println!("Transaction failed: {:?}", err);
+        },
+    }
+
     assert!(result.is_ok(), "Transfer below limit should succeed");
 
     let swig_data = context.svm.get_account(&swig_key).unwrap();
@@ -372,6 +420,8 @@ fn test_oracle_limit_token_transfer() {
 #[test_log::test]
 fn test_oracle_limit_sol_passthrough() {
     let mut context = setup_test_context().unwrap();
+    load_sample_pyth_accounts(&mut context.svm);
+
     let swig_authority = Keypair::new();
     context
         .svm
@@ -393,7 +443,6 @@ fn test_oracle_limit_sol_passthrough() {
     let oracle_limit = OracleTokenLimit::new(
         BaseAsset::USDC,
         200_000_000, // 1 USDC limit
-        oracle_program.pubkey().to_bytes(),
         true,
     );
 
@@ -420,10 +469,19 @@ fn test_oracle_limit_sol_passthrough() {
     let swig_data = context.svm.get_account(&swig_key).unwrap();
     display_swig(swig_key, &swig_data);
 
+    let address_lookup_table_key = create_alt_and_add(&mut context).unwrap();
+
+    let raw_account = context.svm.get_account(&address_lookup_table_key).unwrap();
+    let address_lookup_table = AddressLookupTable::deserialize(&raw_account.data).unwrap();
+
+    for address in address_lookup_table.addresses.to_vec() {
+        println!("address: {:?}", &address.to_bytes());
+    }
+
     // Test 1: Transfer below limit (1 SOL ≈ 150 USDC at mock price)
     let transfer_ix =
         system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 1_000_000_000);
-    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
         swig_key,
         secondary_authority.pubkey(),
         secondary_authority.pubkey(),
@@ -432,10 +490,20 @@ fn test_oracle_limit_sol_passthrough() {
     )
     .unwrap();
 
-    let address_lookup_table_key = create_alt_and_add(&mut context).unwrap();
+    // Add the addresses that were in lookup table to remaining accounts
+    sign_ix.accounts.extend(vec![
+        AccountMeta::new_readonly(
+            Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
+            false,
+        ),
+        AccountMeta::new_readonly(
+            Pubkey::from_str("AxaxyeDT8JnWERSaTKvFXvPKkEdxnamKSqpWbsSjYg1g").unwrap(),
+            false,
+        ),
+    ]);
 
-    let raw_account = context.svm.get_account(&address_lookup_table_key).unwrap();
-    let address_lookup_table = AddressLookupTable::deserialize(&raw_account.data).unwrap();
+    println!("sign_ix {:?}", &sign_ix);
+
     let address_lookup_table_account = AddressLookupTableAccount {
         key: address_lookup_table_key,
         addresses: address_lookup_table.addresses.to_vec(),
@@ -449,7 +517,7 @@ fn test_oracle_limit_sol_passthrough() {
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
         &[sign_ix],
-        &[address_lookup_table_account],
+        &[],
         context.svm.latest_blockhash(),
     )
     .unwrap();
@@ -461,9 +529,31 @@ fn test_oracle_limit_sol_passthrough() {
 
     println!("tx: {:?}", &tx);
 
-    let result = context.svm.send_transaction(tx);
+    // read from json
 
-    assert!(result.is_ok(), "Transfer below limit should succeed");
+    let pubkey = Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap();
+    let owner = Pubkey::from_str("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ").unwrap();
+
+    use base64;
+    let mut data = Account {
+        lamports: 1825020,
+        data: base64::decode("IvEjY51+9M1gMUcENA3t3zcf1CRyFI8kjp0abRpesqw6zYt/1dayQwHvDYtv2izrpB2hXUCV0do5Kg0vjtDGx7wPTPrIwoC1bbLod+YDAAAA6QJ4AAAAAAD4////lZpJaAAAAACVmkloAAAAAMC2EeIDAAAALL2AAAAAAADcSaEUAAAAAAA=").unwrap(),
+        owner,
+        executable: false,
+        rent_epoch: 18446744073709551615,
+    };
+
+    context.svm.set_account(pubkey, data);
+
+    let result = context.svm.send_transaction(tx);
+    if (result.is_ok()) {
+        for log in &result.clone().unwrap().logs {
+            println!("TX logs: {:?}", log);
+        }
+    } else {
+        println!("result {:?}", &result);
+    }
+    assert!(&result.is_ok(), "Transfer below limit should succeed");
 
     let swig_data = context.svm.get_account(&swig_key).unwrap();
     display_swig(swig_key, &swig_data);
@@ -471,7 +561,7 @@ fn test_oracle_limit_sol_passthrough() {
     // Test 2: Transfer above limit (2 SOL ≈ 300 USDC at mock price)
     let transfer_ix =
         system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 2_000_000_000);
-    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
         swig_key,
         secondary_authority.pubkey(),
         secondary_authority.pubkey(),
@@ -479,6 +569,18 @@ fn test_oracle_limit_sol_passthrough() {
         1,
     )
     .unwrap();
+
+    // Add the addresses that were in lookup table to remaining accounts
+    sign_ix.accounts.extend(vec![
+        AccountMeta::new_readonly(
+            Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
+            false,
+        ),
+        AccountMeta::new_readonly(
+            Pubkey::from_str("AxaxyeDT8JnWERSaTKvFXvPKkEdxnamKSqpWbsSjYg1g").unwrap(),
+            false,
+        ),
+    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -516,7 +618,6 @@ fn test_oracle_limit_passthrough() {
 
     // Create wallet and setup
     let id = rand::random::<[u8; 32]>();
-    let oracle_program = Keypair::new();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
 
     let secondary_authority = Keypair::new();
@@ -529,7 +630,6 @@ fn test_oracle_limit_passthrough() {
     let oracle_limit = OracleTokenLimit::new(
         BaseAsset::USDC,
         3_000_000, // 3 USDC with 6 decimals (native USDC decimals)
-        oracle_program.pubkey().to_bytes(),
         true,
     );
 
@@ -624,16 +724,20 @@ fn test_oracle_limit_passthrough() {
 
     let result = context.svm.send_transaction(tx);
 
-    println!("mint: {:?}", &mint_bytes);
-    if result.is_ok() {
-        println!(
-            "result for failure case: {:?}",
-            &result.clone().unwrap().logs
-        );
-    } else {
-        println!("result for failure case: {:?}", &result.clone().err());
+    // Print logs for debugging
+    match &result {
+        Ok(tx_result) => {
+            println!("Transaction logs:");
+            for log in &tx_result.logs {
+                println!("  {:?}", log);
+            }
+        },
+        Err(err) => {
+            println!("Transaction failed: {:?}", err);
+        },
     }
 
+    println!("mint: {:?}", &mint_bytes);
     assert!(result.is_ok(), "Transfer below limit should succeed");
 
     let swig_data = context.svm.get_account(&swig_key).unwrap();
@@ -844,10 +948,6 @@ pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), a
                         1 => "EURC",
                         _ => "Unknown",
                     }
-                );
-                println!(
-                    "║ │  │  └─ Oracle Program: {}",
-                    bs58::encode(&action.oracle_program_id).into_string()
                 );
             }
             println!("║ │  ");

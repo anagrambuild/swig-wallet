@@ -288,10 +288,19 @@ pub fn get_price_data_from_bytes(
     price_update_data: &[u8],
     current_timestamp: i64,
     maximum_age: u64,
+    feed_id: &[u8],
 ) -> Result<(u64, u64, u32), SwigError> {
     let verification_level = price_update_data[40];
     if verification_level != 1 {
         return Err(SwigError::OracleVerficationLevelFailed);
+    }
+
+    // Feed id
+    let mut feed_id_array = [0u8; 32];
+    feed_id_array.copy_from_slice(&price_update_data[41..73]);
+
+    if feed_id_array != *feed_id {
+        return Err(SwigError::InvalidOraclePriceData);
     }
 
     // price (8 bytes) [73..81]

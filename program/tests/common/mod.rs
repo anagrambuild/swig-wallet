@@ -306,6 +306,28 @@ pub fn load_program(svm: &mut LiteSVM) -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("Failed to load program"))
 }
 
+pub fn load_sample_pyth_accounts(svm: &mut LiteSVM) -> anyhow::Result<()> {
+    use base64;
+    use solana_program::pubkey::Pubkey;
+    use solana_sdk::account::Account;
+    use std::str::FromStr;
+
+    let pubkey = Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap();
+    let owner = Pubkey::from_str("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ").unwrap();
+
+    let mut data = Account {
+        lamports: 1825020,
+        data: base64::decode("IvEjY51+9M1gMUcENA3t3zcf1CRyFI8kjp0abRpesqw6zYt/1dayQwHvDYtv2izrpB2hXUCV0do5Kg0vjtDGx7wPTPrIwoC1bbLod+YDAAAA6QJ4AAAAAAD4////lZpJaAAAAACVmkloAAAAAMC2EeIDAAAALL2AAAAAAADcSaEUAAAAAAA=").unwrap(),
+        owner,
+        executable: false,
+        rent_epoch: 18446744073709551615,
+    };
+
+    svm.set_account(pubkey, data);
+
+    Ok(())
+}
+
 pub fn setup_mint(svm: &mut LiteSVM, payer: &Keypair) -> anyhow::Result<Pubkey> {
     let mint = CreateMint::new(svm, payer)
         .decimals(9)

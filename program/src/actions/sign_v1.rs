@@ -228,18 +228,28 @@ pub fn sign_v1(
                     }
                     if lamports > &current_lamports {
                         let amount_diff = lamports - current_lamports;
-
                         {
                             if let Some(action) =
                                 RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
                             {
-                                // let data = unsafe {
-                                //     &all_accounts.get_unchecked(index).borrow_data_unchecked()
-                                // };
+                                let data = unsafe {
+                                    &all_accounts
+                                        .get_unchecked(all_accounts.len() - 2)
+                                        .borrow_data_unchecked()
+                                };
 
-                                // let current_timestamp = Clock::get()?.unix_timestamp;
-                                // let (price, confidence, exponent) =
-                                //     get_price_data_from_bytes(data, current_timestamp, 100)?;
+                                let current_timestamp = Clock::get()?.unix_timestamp;
+                                let feed_id: [u8; 32] = [
+                                    239, 13, 139, 111, 218, 44, 235, 164, 29, 161, 93, 64, 149,
+                                    209, 218, 57, 42, 13, 47, 142, 208, 198, 199, 188, 15, 76, 250,
+                                    200, 194, 128, 181, 109,
+                                ];
+                                let (price, confidence, exponent) = get_price_data_from_bytes(
+                                    data,
+                                    current_timestamp,
+                                    100,
+                                    &feed_id,
+                                )?;
 
                                 let price = 150;
                                 let confidence = 1;

@@ -63,8 +63,6 @@ impl TryFrom<u8> for BaseAsset {
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct OracleTokenLimit {
-    /// The oracle program ID to use for price feed lookups
-    pub oracle_program_id: [u8; 32],
     /// The current remaining amount that can be used (in base asset lamports)
     pub value_limit: u64,
     /// The base asset type used to denominate the limit (e.g. USDC)
@@ -86,16 +84,10 @@ impl OracleTokenLimit {
     ///
     /// # Returns
     /// A new OracleTokenLimit instance configured with the specified parameters
-    pub fn new(
-        base_asset: BaseAsset,
-        value_limit: u64,
-        oracle_program_id: [u8; 32],
-        passthrough_check: bool,
-    ) -> Self {
+    pub fn new(base_asset: BaseAsset, value_limit: u64, passthrough_check: bool) -> Self {
         Self {
             base_asset_type: base_asset as u8,
             value_limit,
-            oracle_program_id,
             passthrough_check,
             _padding: [0; 6],
         }

@@ -8878,6 +8878,7 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "anyhow",
+ "base64 0.22.1",
  "bincode",
  "bs58",
  "bytemuck",
