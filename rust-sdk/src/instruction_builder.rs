@@ -19,10 +19,11 @@ use crate::{error::SwigError, types::Permission as ClientPermission};
 /// Represents the type of authority used for signing transactions
 pub enum AuthorityManager {
     Ed25519(Pubkey),
-    Secp256k1(Box<[u8]>, Box<dyn Fn(&[u8]) -> [u8; 65]>),
+    Secp256k1(Box<[u8]>, u32, Box<dyn Fn(&[u8]) -> [u8; 65]>),
     Ed25519Session(CreateEd25519SessionAuthority),
     Secp256k1Session(
         CreateSecp256k1SessionAuthority,
+        u32,
         Box<dyn Fn(&[u8]) -> [u8; 65]>,
     ),
 }
@@ -300,6 +301,7 @@ impl SwigInstructionBuilder {
         &mut self,
         authority_to_remove_id: u32,
         current_slot: Option<u64>,
+        counter: Option<u32>,
     ) -> Result<Instruction, SwigError> {
         match &mut self.authority_manager {
             AuthorityManager::Ed25519(authority) => {
@@ -313,6 +315,7 @@ impl SwigInstructionBuilder {
             },
             AuthorityManager::Secp256k1(authority, signing_fn) => {
                 let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                let counter = counter.ok_or(SwigError::CounterNotSet)?;
                 Ok(RemoveAuthorityInstruction::new_with_secp256k1_authority(
                     self.swig_account,
                     self.payer,
@@ -320,6 +323,7 @@ impl SwigInstructionBuilder {
                     self.role_id,
                     authority_to_remove_id,
                     current_slot,
+                    counter,
                 )?)
             },
             AuthorityManager::Ed25519Session(session_authority) => {
@@ -333,6 +337,7 @@ impl SwigInstructionBuilder {
             },
             AuthorityManager::Secp256k1Session(session_authority, signing_fn) => {
                 let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                let counter = counter.ok_or(SwigError::CounterNotSet)?;
                 Ok(RemoveAuthorityInstruction::new_with_secp256k1_authority(
                     self.swig_account,
                     self.payer,
@@ -340,6 +345,7 @@ impl SwigInstructionBuilder {
                     self.role_id,
                     authority_to_remove_id,
                     current_slot,
+                    counter,
                 )?)
             },
         }
@@ -365,6 +371,7 @@ impl SwigInstructionBuilder {
         new_authority: &[u8],
         permissions: Vec<ClientPermission>,
         current_slot: Option<u64>,
+        counter: Option<u32>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let actions = ClientPermission::to_client_actions(permissions);
 
@@ -484,11 +491,13 @@ impl SwigInstructionBuilder {
             },
             AuthorityManager::Secp256k1Session(session_authority, signing_fn) => {
                 let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                let counter = counter.ok_or(SwigError::CounterNotSet)?;
                 Ok(CreateSessionInstruction::new_with_secp256k1_authority(
                     self.swig_account,
                     self.payer,
                     signing_fn,
                     current_slot,
+                    counter,
                     self.role_id,
                     session_key,
                     session_duration,
@@ -506,11 +515,13 @@ impl SwigInstructionBuilder {
             },
             AuthorityManager::Secp256k1(authority, signing_fn) => {
                 let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+                let counter = counter.ok_or(SwigError::CounterNotSet)?;
                 Ok(CreateSessionInstruction::new_with_secp256k1_authority(
                     self.swig_account,
                     self.payer,
                     signing_fn,
                     current_slot,
+                    counter,
                     self.role_id,
                     session_key,
                     session_duration,

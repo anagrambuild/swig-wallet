@@ -17,10 +17,13 @@ use solana_sdk::{
     system_instruction,
     transaction::{TransactionError, VersionedTransaction},
 };
-use swig_interface::{AuthorityConfig, ClientAction};
+use swig_interface::{AuthorityConfig, ClientAction, CreateSessionInstruction};
 use swig_state_x::{
     action::all::All,
-    authority::{secp256k1::Secp256k1Authority, AuthorityType},
+    authority::{
+        secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority},
+        AuthorityType,
+    },
     swig::SwigWithRoles,
 };
 
@@ -951,4 +954,76 @@ fn test_secp256k1_replay_scenario_2() {
         recipient_account_final.lamports,
         1_000_000 + 2 * transfer_amount
     );
+}
+
+#[test_log::test]
+fn test_secp256k1_session_authority_odometer() {
+    let mut context = setup_test_context().unwrap();
+
+    // Generate a random Ethereum wallet
+    let wallet = LocalSigner::random();
+
+    let id = rand::random::<[u8; 32]>();
+
+    // Create a swig with secp256k1 session authority type
+    let (swig_key, _) =
+        create_swig_secp256k1_session(&mut context, &wallet, id, 100, [0; 32]).unwrap();
+
+    // Helper function to read the current counter for session authorities
+    let get_session_counter = |ctx: &SwigTestContext| -> Result<u32, String> {
+        let swig_account = ctx
+            .svm
+            .get_account(&swig_key)
+            .ok_or("Swig account not found")?;
+        let swig = SwigWithRoles::from_bytes(&swig_account.data)
+            .map_err(|e| format!("Failed to parse swig data: {:?}", e))?;
+
+        let role = swig
+            .get_role(0)
+            .map_err(|e| format!("Failed to get role: {:?}", e))?
+            .ok_or("Role not found")?;
+
+        if let Some(auth) = role
+            .authority
+            .as_any()
+            .downcast_ref::<Secp256k1SessionAuthority>()
+        {
+            Ok(auth.signature_odometer)
+        } else {
+            Err("Authority is not a Secp256k1SessionAuthority".to_string())
+        }
+    };
+
+    // Initial counter should be 0
+    let initial_counter = get_session_counter(&context).unwrap();
+    assert_eq!(initial_counter, 0, "Initial session counter should be 0");
+
+    // Verify the session authority structure is correctly initialized
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 1);
+    let role = swig.get_role(0).unwrap().unwrap();
+
+    assert_eq!(
+        role.authority.authority_type(),
+        AuthorityType::Secp256k1Session
+    );
+    assert!(role.authority.session_based());
+
+    let auth: &Secp256k1SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
+    assert_eq!(auth.max_session_age, 100);
+    let compressed_eth_pubkey = wallet
+        .credential()
+        .verifying_key()
+        .to_encoded_point(true)
+        .to_bytes();
+    assert_eq!(auth.public_key, compressed_eth_pubkey.as_ref());
+    assert_eq!(auth.current_session_expiration, 0);
+    assert_eq!(auth.session_key, [0; 32]);
+    assert_eq!(auth.signature_odometer, 0, "Initial odometer should be 0");
+
+    println!("✓ Secp256k1 session authority structure correctly initialized");
+    println!("✓ Signature odometer field present and initialized to 0");
+    println!("✓ Session authority has proper session-based behavior");
+    println!("✓ All other fields remain intact after adding odometer");
 }

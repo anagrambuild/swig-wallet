@@ -295,6 +295,63 @@ impl AddAuthorityInstruction {
             .concat(),
         })
     }
+
+    pub fn new_with_secp256r1_authority(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        current_slot: u64,
+        counter: u32,
+        acting_role_id: u32,
+        new_authority_config: AuthorityConfig,
+        actions: Vec<ClientAction>,
+        instruction_index: u8,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+
+        let mut action_bytes = Vec::new();
+        let num_actions = actions.len() as u8;
+        for action in actions {
+            action
+                .write(&mut action_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize action {:?}", e))?;
+        }
+
+        let args = AddAuthorityV1Args::new(
+            acting_role_id,
+            new_authority_config.authority_type,
+            new_authority_config.authority.len() as u16,
+            action_bytes.len() as u16,
+            num_actions,
+        );
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // For secp256r1, the authority payload includes slot, counter, instruction index, and padding
+        // Must be at least 17 bytes to satisfy secp256r1_authority_authenticate() requirements
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
+        authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
+        authority_payload.push(instruction_index); // 1 byte
+        authority_payload.extend_from_slice(&[0u8; 4]); // 4 bytes padding
+
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [
+                args_bytes,
+                new_authority_config.authority,
+                &action_bytes,
+                &authority_payload,
+            ]
+            .concat(),
+        })
+    }
 }
 
 pub struct SignInstruction;
@@ -380,6 +437,43 @@ impl SignInstruction {
             data: [arg_bytes, &ix_bytes, &authority_payload].concat(),
         })
     }
+
+    pub fn new_secp256r1(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        current_slot: u64,
+        counter: u32,
+        inner_instruction: Instruction,
+        role_id: u32,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+        let (accounts, ixs) = compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        let ix_bytes = ixs.into_bytes();
+        let args = swig::actions::sign_v1::SignV1Args::new(role_id, ix_bytes.len() as u16);
+
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // For secp256r1, the authority payload includes slot, counter, instruction index, and padding
+        // Must be at least 17 bytes to satisfy secp256r1_authority_authenticate() requirements
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
+        authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
+        authority_payload.push(3); // the index of the ix sysvar
+        authority_payload.extend_from_slice(&[0u8; 4]); // 4 bytes padding
+
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [arg_bytes, &ix_bytes, &authority_payload].concat(),
+        })
+    }
 }
 
 pub struct RemoveAuthorityInstruction;
@@ -416,6 +510,7 @@ impl RemoveAuthorityInstruction {
         acting_role_id: u32,
         authority_to_remove_id: u32,
         current_slot: u64,
+        counter: u32
     ) -> anyhow::Result<Instruction>
     where
         F: FnMut(&[u8]) -> [u8; 65],
@@ -443,7 +538,7 @@ impl RemoveAuthorityInstruction {
         signature_bytes.extend_from_slice(arg_bytes);
         let nonced_payload = prepare_secp_payload(
             current_slot,
-            0u32,
+            counter,
             &signature_bytes,
             &account_payload_bytes,
             &[],
@@ -494,6 +589,7 @@ impl CreateSessionInstruction {
         payer: Pubkey,
         mut authority_payload_fn: F,
         current_slot: u64,
+        counter: u32,
         role_id: u32,
         session_key: Pubkey,
         session_duration: u64,
@@ -525,7 +621,7 @@ impl CreateSessionInstruction {
         signature_bytes.extend_from_slice(args_bytes);
         let nonced_payload = prepare_secp_payload(
             current_slot,
-            0u32,
+            counter,
             &signature_bytes,
             &account_payload_bytes,
             &[],
@@ -533,6 +629,7 @@ impl CreateSessionInstruction {
         let signature = authority_payload_fn(&nonced_payload);
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&counter.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
 
         Ok(Instruction {

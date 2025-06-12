@@ -64,6 +64,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-feature-set"
+version = "2.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf37e04221e454874cc9cebf92482ee40e4f1fb5412f701cd712835725582190"
+dependencies = [
+ "ahash 0.8.11",
+ "solana-epoch-schedule",
+ "solana-hash",
+ "solana-pubkey",
+ "solana-sha256-hasher",
+]
+
+[[package]]
+name = "agave-precompiles"
+version = "2.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4d3dd7591df608931ace909f1948fa14a8850d4919250ca6977f26a135b8665"
+dependencies = [
+ "agave-feature-set",
+ "bincode",
+ "digest 0.10.7",
+ "ed25519-dalek",
+ "lazy_static",
+ "libsecp256k1 0.6.0",
+ "openssl",
+ "sha3",
+ "solana-ed25519-program",
+ "solana-message",
+ "solana-precompile-error",
+ "solana-pubkey",
+ "solana-sdk-ids",
+ "solana-secp256k1-program",
+ "solana-secp256r1-program",
+]
+
+[[package]]
 name = "ahash"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3946,6 +3982,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
 
 [[package]]
+name = "openssl-src"
+version = "300.5.0+3.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8ce546f549326b0e6052b649198487d91320875da901e7bd11a06d1ee3f9c2f"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "openssl-sys"
 version = "0.9.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3953,6 +3998,7 @@ checksum = "8288979acd84749c744a9014b4382d42b8f7b2592847b5afb2ed29e5d16ede07"
 dependencies = [
  "cc",
  "libc",
+ "openssl-src",
  "pkg-config",
  "vcpkg",
 ]
@@ -6134,9 +6180,9 @@ dependencies = [
 
 [[package]]
 name = "solana-ed25519-program"
-version = "2.2.1"
+version = "2.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c0c4dfce08d71d8f1e9b7d1b4e2c7101a8109903ad481acbbc1119a73d459f2"
+checksum = "a1feafa1691ea3ae588f99056f4bdd1293212c7ece28243d7da257c443e84753"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
@@ -7362,9 +7408,9 @@ dependencies = [
 
 [[package]]
 name = "solana-secp256r1-program"
-version = "2.2.1"
+version = "2.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9ea9282950921611bd9e0200da7236fbb1d4f8388942f8451bd55e9f3cb228f"
+checksum = "cf903cbdc36a161533812f90acfccdb434ed48982bd5dd71f3217930572c4a80"
 dependencies = [
  "bytemuck",
  "openssl",
@@ -8882,11 +8928,13 @@ dependencies = [
  "bs58",
  "bytemuck",
  "ecdsa",
+ "hex",
  "litesvm",
  "litesvm-token",
  "no-padding",
  "num_enum",
  "once_cell",
+ "openssl",
  "pinocchio 0.8.1",
  "pinocchio-pubkey",
  "pinocchio-system",
@@ -8897,6 +8945,7 @@ dependencies = [
  "solana-clock",
  "solana-program",
  "solana-sdk",
+ "solana-secp256r1-program",
  "solana-stake-interface",
  "spl-memo",
  "static_assertions",
@@ -8998,12 +9047,16 @@ dependencies = [
 name = "swig-state-x"
 version = "0.1.0"
 dependencies = [
+ "agave-precompiles",
  "hex",
  "libsecp256k1 0.7.2",
  "murmur3",
  "no-padding",
+ "openssl",
  "pinocchio 0.8.1",
+ "pinocchio-pubkey",
  "rand 0.9.0",
+ "solana-secp256r1-program",
  "swig-assertions",
 ]
 

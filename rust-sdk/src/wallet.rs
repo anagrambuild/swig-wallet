@@ -53,8 +53,6 @@ pub struct SwigWallet<'a> {
     pub rpc_client: RpcClient,
     /// The wallet's fee payer keypair
     fee_payer: &'a Keypair,
-    /// The authority keypair for signing transactions
-    authority: &'a Keypair,
     /// The LiteSVM instance for testing
     #[cfg(all(feature = "rust_sdk_test", test))]
     litesvm: LiteSVM,
@@ -81,7 +79,6 @@ impl<'c> SwigWallet<'c> {
         swig_id: [u8; 32],
         authority_manager: AuthorityManager,
         fee_payer: &'c Keypair,
-        authority: &'c Keypair,
         rpc_url: String,
         #[cfg(all(feature = "rust_sdk_test", test))] mut litesvm: LiteSVM,
     ) -> Result<Self, SwigError> {
@@ -128,7 +125,6 @@ impl<'c> SwigWallet<'c> {
                 instruction_builder,
                 rpc_client,
                 fee_payer,
-                authority,
                 #[cfg(all(feature = "rust_sdk_test", test))]
                 litesvm,
             })
@@ -174,7 +170,6 @@ impl<'c> SwigWallet<'c> {
                 instruction_builder,
                 rpc_client,
                 fee_payer: &fee_payer,
-                authority: &authority,
                 #[cfg(all(feature = "rust_sdk_test", test))]
                 litesvm,
             })
