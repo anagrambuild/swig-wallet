@@ -40,6 +40,7 @@ use crate::{
         accounts::{Context, SignV1Accounts},
         SwigInstruction,
     },
+    util::{hash_except, AccountSnapshot, ExcludeRange},
     AccountClassification,
 };
 // use swig_instructions::InstructionIterator;
@@ -203,6 +204,73 @@ pub fn sign_v1(
     let seeds = swig_account_signer(&swig.id, &b);
     let signer = seeds.as_slice();
 
+    // Capture account snapshots before instruction execution
+    const UNINIT_SNAPSHOT: MaybeUninit<AccountSnapshot> = MaybeUninit::uninit();
+    let mut account_snapshots: [MaybeUninit<AccountSnapshot>; 100] = [UNINIT_SNAPSHOT; 100];
+
+    // Build exclusion ranges for each account type for snapshots
+    for (index, account_classifier) in account_classifiers.iter().enumerate() {
+        let account = unsafe { all_accounts.get_unchecked(index) };
+
+        // Only check writable accounts as read-only accounts won't modify data
+        if !account.is_writable() {
+            continue;
+        }
+
+        let (hash, should_verify) = match account_classifier {
+            AccountClassification::ThisSwig { .. } => {
+                let data = unsafe { account.borrow_data_unchecked() };
+                // For ThisSwig accounts, hash the entire account data to ensure no unexpected modifications
+                // Lamports are handled separately in the permission check, but we still need to verify
+                // that the account data itself hasn't been tampered with
+                let hash = hash_except(&data, &[]);
+                (hash, true)
+            },
+            AccountClassification::SwigTokenAccount { .. } => {
+                let data = unsafe { account.borrow_data_unchecked() };
+                // Exclude token balance field (bytes 64-72)
+                let exclude_ranges = [ExcludeRange { start: 64, end: 72 }];
+                let hash = hash_except(&data, &exclude_ranges);
+                (hash, true)
+            },
+            AccountClassification::SwigStakeAccount { .. } => {
+                let data = unsafe { account.borrow_data_unchecked() };
+                // Exclude stake balance field (bytes 184-192)
+                let exclude_ranges = [ExcludeRange {
+                    start: 184,
+                    end: 192,
+                }];
+                let hash = hash_except(&data, &exclude_ranges);
+                (hash, true)
+            },
+            AccountClassification::ProgramScope { .. } => {
+                let data = unsafe { account.borrow_data_unchecked() };
+                // For program scope, we need to get the actual program scope to know what to exclude
+                let owner = unsafe { all_accounts.get_unchecked(index).owner() };
+                if let Some(program_scope) =
+                    RoleMut::get_action_mut::<ProgramScope>(role.actions, owner.as_ref())?
+                {
+                    let start = program_scope.balance_field_start as usize;
+                    let end = program_scope.balance_field_end as usize;
+                    if start < end && end <= data.len() {
+                        let exclude_ranges = [ExcludeRange { start, end }];
+                        let hash = hash_except(&data, &exclude_ranges);
+                        (hash, true)
+                    } else {
+                        (0, false)
+                    }
+                } else {
+                    (0, false)
+                }
+            },
+            _ => (0, false),
+        };
+
+        if should_verify && index < 100 {
+            account_snapshots[index].write(AccountSnapshot::new(index as u32, hash));
+        }
+    }
+
     for ix in ix_iter {
         if let Ok(instruction) = ix {
             instruction.execute(all_accounts, ctx.accounts.swig.key(), &[signer.into()])?;
@@ -210,6 +278,7 @@ pub fn sign_v1(
             return Err(SwigError::InstructionExecutionError.into());
         }
     }
+
     let actions = role.actions;
     if RoleMut::get_action_mut::<All>(actions, &[])?.is_some() {
         return Ok(());
@@ -217,6 +286,15 @@ pub fn sign_v1(
         for (index, account) in account_classifiers.iter().enumerate() {
             match account {
                 AccountClassification::ThisSwig { lamports } => {
+                    let data =
+                        unsafe { &all_accounts.get_unchecked(index).borrow_data_unchecked() };
+                    let current_hash = hash_except(&data, &[]);
+                    let snapshot = unsafe { account_snapshots[index].assume_init_ref() };
+                    if snapshot.account_index == index as u32 {
+                        if snapshot.hash != current_hash {
+                            return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+                        }
+                    }
                     let current_lamports = all_accounts[index].lamports();
                     let mut matched = false;
                     if current_lamports < swig.reserved_lamports {
@@ -248,23 +326,24 @@ pub fn sign_v1(
                 AccountClassification::SwigTokenAccount { balance } => {
                     let data =
                         unsafe { &all_accounts.get_unchecked(index).borrow_data_unchecked() };
+
+                    let exclude_ranges = [ExcludeRange { start: 64, end: 72 }];
+                    let current_hash = hash_except(&data, &exclude_ranges);
+                    let snapshot = unsafe { account_snapshots[index].assume_init_ref() };
+                    if snapshot.account_index == index as u32 {
+                        if snapshot.hash != current_hash {
+                            return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+                        }
+                    }
                     let mint = unsafe { data.get_unchecked(0..32) };
-                    let delegate = unsafe { data.get_unchecked(72..76) };
                     let state = unsafe { *data.get_unchecked(108) };
                     let authority = unsafe { data.get_unchecked(32..64) };
-                    let close_authority = unsafe { data.get_unchecked(128..132) };
                     let current_token_balance = u64::from_le_bytes(unsafe {
                         data.get_unchecked(64..72)
                             .try_into()
                             .map_err(|_| ProgramError::InvalidAccountData)?
                     });
 
-                    if delegate != [0u8; 4] || close_authority != [0u8; 4] {
-                        return Err(
-                            SwigAuthenticateError::PermissionDeniedTokenAccountDelegatePresent
-                                .into(),
-                        );
-                    }
                     if authority != ctx.accounts.swig.key() {
                         return Err(
                             SwigAuthenticateError::PermissionDeniedTokenAccountAuthorityNotSwig
@@ -303,6 +382,17 @@ pub fn sign_v1(
                     // Get current stake balance from account data
                     let data =
                         unsafe { &all_accounts.get_unchecked(index).borrow_data_unchecked() };
+                    let exclude_ranges = [ExcludeRange {
+                        start: 184,
+                        end: 192,
+                    }];
+                    let current_hash = hash_except(&data, &exclude_ranges);
+                    let snapshot = unsafe { account_snapshots[index].assume_init_ref() };
+                    if snapshot.hash != current_hash {
+                        if snapshot.hash != current_hash {
+                            return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+                        }
+                    }
 
                     // Extract current stake balance from account
                     let current_stake_balance = u64::from_le_bytes(unsafe {
@@ -378,6 +468,26 @@ pub fn sign_v1(
                             // read_account_balance method
                             let account = unsafe { all_accounts.get_unchecked(index) };
                             let data = unsafe { account.borrow_data_unchecked() };
+
+                            if program_scope.balance_field_end - program_scope.balance_field_start
+                                > 0
+                                && program_scope.balance_field_end as usize <= data.len()
+                            {
+                                let exclude_ranges = [ExcludeRange {
+                                    start: program_scope.balance_field_start as usize,
+                                    end: program_scope.balance_field_end as usize,
+                                }];
+                                let current_hash = hash_except(&data, &exclude_ranges);
+                                let snapshot =
+                                    unsafe { account_snapshots[index].assume_init_ref() };
+                                if snapshot.hash != current_hash {
+                                    if snapshot.hash != current_hash {
+                                        return Err(
+                                            SwigError::AccountDataModifiedUnexpectedly.into()
+                                        );
+                                    }
+                                }
+                            }
 
                             let current_balance = if program_scope.balance_field_end
                                 - program_scope.balance_field_start

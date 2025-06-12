@@ -107,7 +107,7 @@ fn test_transfer_sol_with_additional_authority() {
         assert!(false);
     } else {
         let txn = res.unwrap();
-        println!("logs {:?}", txn.logs);
+        println!("logs {}", txn.pretty_logs());
         println!("Sign Transfer CU {:?}", txn.compute_units_consumed);
     }
 

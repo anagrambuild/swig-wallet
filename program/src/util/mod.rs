@@ -12,8 +12,10 @@ use pinocchio::{
     account_info::AccountInfo,
     cpi::invoke_signed,
     instruction::{AccountMeta, Instruction, Signer},
+    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
+    syscalls::sol_sha256,
     ProgramResult,
 };
 use swig_state_x::{
@@ -280,5 +282,92 @@ impl<'a> TokenTransfer<'a> {
         };
 
         invoke_signed(&instruction, &[self.from, self.to, self.authority], signers)
+    }
+}
+
+/// Represents a range of bytes to exclude from hashing
+pub struct ExcludeRange {
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Computes a hash of data while excluding specified byte ranges.
+///
+/// This function uses the SHA256 hash algorithm which is optimized
+/// for low compute units on Solana. It hashes all bytes in the
+/// account's data except those in the specified exclusion ranges.
+///
+/// # Arguments
+/// * `data` - The data to hash
+/// * `exclude_ranges` - Sorted list of byte ranges to exclude from hashing
+///
+/// # Returns
+/// * `u64` - The computed hash value
+///
+/// # Safety
+/// This function assumes that:
+/// - The exclude_ranges are non-overlapping and sorted by start position
+/// - All ranges are within the bounds of the data
+#[inline(always)]
+pub fn hash_except(data: &[u8], exclude_ranges: &[ExcludeRange]) -> u64 {
+    let mut segments = Vec::new();
+    let mut position = 0;
+
+    for range in exclude_ranges {
+        // Add bytes before this exclusion range
+        if position < range.start {
+            segments.push(&data[position..range.start]);
+        }
+        // Skip to end of exclusion range
+        position = range.end;
+    }
+
+    // Add any remaining bytes after the last exclusion range
+    if position < data.len() {
+        segments.push(&data[position..]);
+    }
+
+    #[allow(unused)]
+    let mut data_payload_hash = [0; 32];
+
+    unsafe {
+        #[cfg(target_os = "solana")]
+        let res = sol_sha256(
+            segments.as_ptr() as *const u8,
+            segments.len() as u64,
+            data_payload_hash.as_mut_ptr() as *mut u8,
+        );
+
+        #[cfg(not(target_os = "solana"))]
+        let res = 0;
+    };
+
+    // Convert first 8 bytes of SHA256 hash to u64
+    u64::from_le_bytes([
+        data_payload_hash[0],
+        data_payload_hash[1],
+        data_payload_hash[2],
+        data_payload_hash[3],
+        data_payload_hash[4],
+        data_payload_hash[5],
+        data_payload_hash[6],
+        data_payload_hash[7],
+    ])
+}
+
+/// Structure to hold account snapshot data for verification
+#[derive(Copy, Clone)]
+pub struct AccountSnapshot {
+    pub account_index: u32,
+    pub hash: u64,
+}
+
+impl AccountSnapshot {
+    /// Creates a new account snapshot
+    pub fn new(account_index: u32, hash: u64) -> Self {
+        Self {
+            account_index,
+            hash,
+        }
     }
 }

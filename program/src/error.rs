@@ -105,6 +105,8 @@ pub enum SwigError {
     InvalidSwigTokenAccountOwner,
     /// Invalid program scope balance field configuration
     InvalidProgramScopeBalanceFields,
+    /// Account data was modified in unexpected ways during instruction execution
+    AccountDataModifiedUnexpectedly,
 }
 
 /// Implements conversion from SwigError to ProgramError.
