@@ -143,7 +143,7 @@ pub fn create_sub_account_v1(
     // Check that the swig account is owned by our program
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     check_system_owner(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
-    check_zero_balance(ctx.accounts.sub_account, SwigError::SubAccountAlreadyExists)?;
+    check_zero_data(ctx.accounts.sub_account, SwigError::SubAccountAlreadyExists)?;
 
     // Parse the instruction data
     let create_sub_account = CreateSubAccountV1::from_instruction_bytes(data)?;
@@ -202,11 +202,22 @@ pub fn create_sub_account_v1(
     // Create the sub-account
     let account_size = SwigSubAccount::LEN;
     let lamports_needed = Rent::get()?.minimum_balance(account_size);
-    // Create account
+
+    // Get current lamports in the account
+    let current_lamports = unsafe { *ctx.accounts.sub_account.borrow_lamports_unchecked() };
+
+    // Only transfer additional lamports if needed for rent exemption
+    let lamports_to_transfer = if current_lamports >= lamports_needed {
+        0
+    } else {
+        lamports_needed - current_lamports
+    };
+
+    // Create account with proper space allocation and ownership assignment
     let create_account_ix = CreateAccount {
         from: ctx.accounts.payer,
         to: ctx.accounts.sub_account,
-        lamports: lamports_needed,
+        lamports: lamports_to_transfer,
         space: account_size as u64,
         owner: &crate::ID,
     };
