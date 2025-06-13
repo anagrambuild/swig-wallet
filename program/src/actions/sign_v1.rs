@@ -220,8 +220,9 @@ pub fn sign_v1(
         let (hash, should_verify) = match account_classifier {
             AccountClassification::ThisSwig { .. } => {
                 let data = unsafe { account.borrow_data_unchecked() };
-                // For ThisSwig accounts, hash the entire account data to ensure no unexpected modifications
-                // Lamports are handled separately in the permission check, but we still need to verify
+                // For ThisSwig accounts, hash the entire account data to ensure no unexpected
+                // modifications Lamports are handled separately in the
+                // permission check, but we still need to verify
                 // that the account data itself hasn't been tampered with
                 let hash = hash_except(&data, &[]);
                 (hash, true)
@@ -245,7 +246,8 @@ pub fn sign_v1(
             },
             AccountClassification::ProgramScope { .. } => {
                 let data = unsafe { account.borrow_data_unchecked() };
-                // For program scope, we need to get the actual program scope to know what to exclude
+                // For program scope, we need to get the actual program scope to know what to
+                // exclude
                 let owner = unsafe { all_accounts.get_unchecked(index).owner() };
                 if let Some(program_scope) =
                     RoleMut::get_action_mut::<ProgramScope>(role.actions, owner.as_ref())?
