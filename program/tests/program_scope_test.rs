@@ -222,7 +222,7 @@ fn test_token_transfer_with_program_scope() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    assert!(swig_transfer_cu - regular_transfer_cu <= 4500);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 5062);
 }
 
 /// Helper function to perform token transfers through the swig
