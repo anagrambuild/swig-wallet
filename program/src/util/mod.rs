@@ -13,6 +13,7 @@ use pinocchio::{
     account_info::AccountInfo,
     cpi::invoke_signed,
     instruction::{AccountMeta, Instruction, Signer},
+    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
     ProgramResult,
@@ -299,6 +300,7 @@ pub fn get_price_data_from_bytes(
     let mut feed_id_array = [0u8; 32];
     feed_id_array.copy_from_slice(&price_update_data[41..73]);
 
+    msg!("feed_id_array {:?}, ", feed_id_array);
     if feed_id_array != *feed_id {
         return Err(SwigError::InvalidOraclePriceData);
     }
