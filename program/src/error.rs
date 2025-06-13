@@ -105,6 +105,12 @@ pub enum SwigError {
     InvalidSwigTokenAccountOwner,
     /// Invalid program scope balance field configuration
     InvalidProgramScopeBalanceFields,
+    /// Authorization lock expiry slot is invalid
+    InvalidAuthorizationLockExpiry,
+    /// Authorization lock insufficient balance
+    AuthorizationLockInsufficientBalance,
+    /// Invalid authorization lock index
+    InvalidAuthorizationLockIndex,
 }
 
 /// Implements conversion from SwigError to ProgramError.
