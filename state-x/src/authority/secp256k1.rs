@@ -12,7 +12,7 @@ use core::mem::MaybeUninit;
 
 #[allow(unused_imports)]
 use pinocchio::syscalls::{sol_keccak256, sol_secp256k1_recover, sol_sha256};
-use pinocchio::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey};
+use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, pubkey::Pubkey};
 use swig_assertions::sol_assert_bytes_eq;
 
 use super::{ed25519::ed25519_authenticate, Authority, AuthorityInfo, AuthorityType};
@@ -309,17 +309,25 @@ fn secp_authority_authenticate(
     if authority_payload.len() < 77 {
         return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
     }
-    let authority_slot =
-        u64::from_le_bytes(unsafe { authority_payload.get_unchecked(..8).try_into().unwrap() });
 
-    let counter =
-        u32::from_le_bytes(unsafe { authority_payload.get_unchecked(8..12).try_into().unwrap() });
+    let authority_slot = u64::from_le_bytes(unsafe {
+        authority_payload
+            .get_unchecked(..8)
+            .try_into()
+            .map_err(|_| SwigAuthenticateError::InvalidAuthorityPayload)?
+    });
+
+    let counter = u32::from_le_bytes(unsafe {
+        authority_payload
+            .get_unchecked(8..12)
+            .try_into()
+            .map_err(|_| SwigAuthenticateError::InvalidAuthorityPayload)?
+    });
 
     let expected_counter = authority.signature_odometer.wrapping_add(1);
     if counter != expected_counter {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256k1SignatureReused.into());
     }
-
     secp256k1_authenticate(
         &authority.public_key,
         authority_payload[12..77].try_into().unwrap(),

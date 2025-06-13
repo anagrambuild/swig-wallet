@@ -7,9 +7,9 @@ members = [
   "state-x",
   "assertions",
   "no-padding",
-  "rust-sdk",
-  "cli",
-  "cli-x",
+  # "rust-sdk",
+  # "cli",
+  # "cli-x",
 ]
 
 [workspace.lints.rust]

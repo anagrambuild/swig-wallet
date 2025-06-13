@@ -37,6 +37,10 @@ const SIGNATURE_SERIALIZED_SIZE: usize = 64;
 const SIGNATURE_OFFSETS_SERIALIZED_SIZE: usize = 14;
 const SIGNATURE_OFFSETS_START: usize = 2;
 const DATA_START: usize = SIGNATURE_OFFSETS_SERIALIZED_SIZE + SIGNATURE_OFFSETS_START;
+const PUBKEY_DATA_OFFSET: usize = DATA_START;
+const SIGNATURE_DATA_OFFSET: usize = DATA_START + COMPRESSED_PUBKEY_SERIALIZED_SIZE;
+const MESSAGE_DATA_OFFSET: usize = SIGNATURE_DATA_OFFSET + SIGNATURE_SERIALIZED_SIZE;
+const MESSAGE_DATA_SIZE: usize = 32;
 
 /// Secp256r1 signature offsets structure (matches solana-secp256r1-program)
 #[derive(Debug, Copy, Clone)]
@@ -348,11 +352,19 @@ fn secp256r1_authority_authenticate(
         return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
     }
 
-    let authority_slot =
-        u64::from_le_bytes(unsafe { authority_payload.get_unchecked(..8).try_into().unwrap() });
+    let authority_slot = u64::from_le_bytes(unsafe {
+        authority_payload
+            .get_unchecked(..8)
+            .try_into()
+            .map_err(|_| SwigAuthenticateError::InvalidAuthorityPayload)?
+    });
 
-    let counter =
-        u32::from_le_bytes(unsafe { authority_payload.get_unchecked(8..12).try_into().unwrap() });
+    let counter = u32::from_le_bytes(unsafe {
+        authority_payload
+            .get_unchecked(8..12)
+            .try_into()
+            .map_err(|_| SwigAuthenticateError::InvalidAuthorityPayload)?
+    });
 
     let instruction_account_index = authority_payload[12] as usize;
 
@@ -484,16 +496,17 @@ fn compute_message_hash(
 ) -> Result<[u8; 32], ProgramError> {
     use super::secp256k1::AccountsPayload;
 
-    let mut accounts_payload = [0u8; 64 * AccountsPayload::LEN];
+    let mut accounts_payload = [0u8; 100 * AccountsPayload::LEN];
     let mut cursor = 0;
-
+    msg!("account_infos len: {:?}", account_infos.len());
     for account in account_infos {
         let offset = cursor + AccountsPayload::LEN;
         accounts_payload[cursor..offset]
             .copy_from_slice(AccountsPayload::from(account).into_bytes()?);
         cursor = offset;
     }
-
+    msg!("data payload len: {:?}", data_payload.len());
+    msg!("data payload: {:?}", data_payload);
     let mut hash = MaybeUninit::<[u8; 32]>::uninit();
     let data: &[&[u8]] = &[
         data_payload,
@@ -529,65 +542,31 @@ fn verify_secp256r1_instruction_data(
     if instruction_data.len() < DATA_START {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
     }
+    if expected_message.len() != 32 {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessageHash.into());
+    }
     let num_signatures = instruction_data[0] as usize;
     if num_signatures == 0 || num_signatures > 1 {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
     }
 
-    // Parse signature offsets to ensure no cross-instruction references
-    let offsets_start = SIGNATURE_OFFSETS_START;
-    let signature_instruction_index = u16::from_le_bytes([
-        instruction_data[offsets_start + 2],
-        instruction_data[offsets_start + 3],
-    ]);
-    let public_key_instruction_index = u16::from_le_bytes([
-        instruction_data[offsets_start + 6],
-        instruction_data[offsets_start + 7],
-    ]);
-    let message_instruction_index = u16::from_le_bytes([
-        instruction_data[offsets_start + 12],
-        instruction_data[offsets_start + 13],
-    ]);
-
-    // All data must come from the same instruction
-    // Official Solana uses 0xFFFF to indicate "same instruction"
-    if signature_instruction_index != public_key_instruction_index
-        || signature_instruction_index != message_instruction_index
-        || public_key_instruction_index != message_instruction_index
-    {
+    if instruction_data.len() < MESSAGE_DATA_OFFSET + MESSAGE_DATA_SIZE {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
     }
-
-    // Extract the message size from the signature offsets
-    let message_data_size = u16::from_le_bytes([
-        instruction_data[offsets_start + 10],
-        instruction_data[offsets_start + 11],
-    ]) as usize;
-
-    // Check that we have enough data for the complete instruction
-    if instruction_data.len()
-        < DATA_START
-            + SIGNATURE_SERIALIZED_SIZE
-            + COMPRESSED_PUBKEY_SERIALIZED_SIZE
-            + message_data_size
-    {
-        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
-    }
-
-    let pubkey_data = &instruction_data[DATA_START..DATA_START + COMPRESSED_PUBKEY_SERIALIZED_SIZE];
-    let message_data = &instruction_data[DATA_START
-        + COMPRESSED_PUBKEY_SERIALIZED_SIZE
-        + SIGNATURE_SERIALIZED_SIZE
-        ..DATA_START
-            + COMPRESSED_PUBKEY_SERIALIZED_SIZE
-            + SIGNATURE_SERIALIZED_SIZE
-            + message_data_size];
+    let pubkey_data = &instruction_data
+        [PUBKEY_DATA_OFFSET..PUBKEY_DATA_OFFSET + COMPRESSED_PUBKEY_SERIALIZED_SIZE];
+    let message_data =
+        &instruction_data[MESSAGE_DATA_OFFSET..MESSAGE_DATA_OFFSET + MESSAGE_DATA_SIZE];
 
     if pubkey_data != expected_pubkey {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidPubkey.into());
     }
+
     msg!("message_data: {:?}", message_data);
     msg!("expected_message: {:?}", expected_message);
+    //lens
+    msg!("message_data.len(): {:?}", message_data.len());
+    msg!("expected_message.len(): {:?}", expected_message.len());
     if message_data != expected_message {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessageHash.into());
     }
