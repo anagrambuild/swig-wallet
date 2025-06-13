@@ -97,6 +97,8 @@ pub enum SwigStateError {
     RoleNotFound,
     /// Error loading permissions
     PermissionLoadError,
+    /// Oracle not available for mint
+    InvalidOracleTokenMint,
 }
 
 /// Error types related to authentication operations.

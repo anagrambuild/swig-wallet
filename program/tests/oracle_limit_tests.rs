@@ -12,6 +12,7 @@ use litesvm::LiteSVM;
 use litesvm_token::spl_token;
 use solana_program::{pubkey::Pubkey, system_instruction};
 use solana_sdk::address_lookup_table::state::AddressLookupTable;
+use solana_sdk::program_pack::Pack;
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
     instruction::{AccountMeta, Instruction},
@@ -179,19 +180,6 @@ fn test_oracle_limit_sol_transfer() {
 
     let result = context.svm.send_transaction(tx);
 
-    // Print logs for debugging
-    match &result {
-        Ok(tx_result) => {
-            println!("Transaction logs:");
-            for log in &tx_result.logs {
-                println!("  {:?}", log);
-            }
-        },
-        Err(err) => {
-            println!("Transaction failed: {:?}", err);
-        },
-    }
-
     assert!(result.is_ok(), "Transfer below limit should succeed");
 
     // Test 2: Transfer above limit (2 SOL ≈ 300 USDC at mock price)
@@ -245,8 +233,6 @@ fn test_oracle_limit_token_transfer() {
         .airdrop(&swig_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    load_sample_pyth_accounts(&mut context.svm);
-
     // Create wallet and setup
     let id = rand::random::<[u8; 32]>();
     let oracle_program = Keypair::new();
@@ -261,7 +247,7 @@ fn test_oracle_limit_token_transfer() {
     // Add oracle limit permission (3 USDC limit)
     let oracle_limit = OracleTokenLimit::new(
         BaseAsset::USDC,
-        3_000_000, // 3 USDC with 6 decimals (native USDC decimals)
+        300_000_000, // 3 USDC with 6 decimals (native USDC decimals)
         false,
     );
 
@@ -277,8 +263,9 @@ fn test_oracle_limit_token_transfer() {
     )
     .unwrap();
 
-    // Setup token accounts
-    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let mint_pubkey = setup_oracle_mint(&mut context).unwrap();
+
+    // let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
         &mut context.svm,
         &mint_pubkey,
@@ -300,7 +287,7 @@ fn test_oracle_limit_token_transfer() {
         &mint_pubkey,
         &context.default_payer,
         &swig_ata,
-        10_000_000_000, // 10 tokens with 9 decimals
+        100_000_000_000, // 10 tokens with 9 decimals
     )
     .unwrap();
 
@@ -315,10 +302,7 @@ fn test_oracle_limit_token_transfer() {
     )
     .unwrap();
 
-    // println!("Mint {:?}", mint_pubkey);
-    // println!("transfer_ix: {:?}", &transfer_ix);
-
-    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
         swig_key,
         secondary_authority.pubkey(),
         secondary_authority.pubkey(),
@@ -326,6 +310,11 @@ fn test_oracle_limit_token_transfer() {
         1,
     )
     .unwrap();
+
+    sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
+        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
+        false,
+    )]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -340,19 +329,6 @@ fn test_oracle_limit_token_transfer() {
     let swig_data = context.svm.get_account(&swig_key).unwrap();
 
     let result = context.svm.send_transaction(tx);
-
-    // Print logs for debugging
-    match &result {
-        Ok(tx_result) => {
-            println!("Transaction logs:");
-            for log in &tx_result.logs {
-                println!("  {:?}", log);
-            }
-        },
-        Err(err) => {
-            println!("Transaction failed: {:?}", err);
-        },
-    }
 
     assert!(result.is_ok(), "Transfer below limit should succeed");
 
@@ -369,7 +345,7 @@ fn test_oracle_limit_token_transfer() {
     )
     .unwrap();
 
-    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
         swig_key,
         secondary_authority.pubkey(),
         secondary_authority.pubkey(),
@@ -377,6 +353,10 @@ fn test_oracle_limit_token_transfer() {
         1,
     )
     .unwrap();
+    sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
+        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
+        false,
+    )]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -453,16 +433,15 @@ fn test_oracle_limit_sol_passthrough() {
     context.svm.airdrop(&swig_key, 20_000_000_000).unwrap();
 
     let swig_data = context.svm.get_account(&swig_key).unwrap();
-    display_swig(swig_key, &swig_data);
 
-    let address_lookup_table_key = create_alt_and_add(&mut context).unwrap();
+    // let address_lookup_table_key = create_alt_and_add(&mut context).unwrap();
 
-    let raw_account = context.svm.get_account(&address_lookup_table_key).unwrap();
-    let address_lookup_table = AddressLookupTable::deserialize(&raw_account.data).unwrap();
+    // let raw_account = context.svm.get_account(&address_lookup_table_key).unwrap();
+    // let address_lookup_table = AddressLookupTable::deserialize(&raw_account.data).unwrap();
 
-    for address in address_lookup_table.addresses.to_vec() {
-        println!("address: {:?}", &address.to_bytes());
-    }
+    // for address in address_lookup_table.addresses.to_vec() {
+    //     println!("address: {:?}", &address.to_bytes());
+    // }
 
     // Test 1: Transfer below limit (1 SOL ≈ 150 USDC at mock price)
     let transfer_ix =
@@ -482,17 +461,15 @@ fn test_oracle_limit_sol_passthrough() {
         false,
     )]);
 
-    println!("sign_ix {:?}", &sign_ix);
+    // let address_lookup_table_account = AddressLookupTableAccount {
+    //     key: address_lookup_table_key,
+    //     addresses: address_lookup_table.addresses.to_vec(),
+    // };
 
-    let address_lookup_table_account = AddressLookupTableAccount {
-        key: address_lookup_table_key,
-        addresses: address_lookup_table.addresses.to_vec(),
-    };
-
-    println!(
-        "address_lookup_table_account: {:?}",
-        &address_lookup_table_account
-    );
+    // println!(
+    //     "address_lookup_table_account: {:?}",
+    //     &address_lookup_table_account
+    // );
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -502,41 +479,13 @@ fn test_oracle_limit_sol_passthrough() {
     )
     .unwrap();
 
-    println!("Message: {:?}", &message);
-
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&secondary_authority])
         .unwrap();
 
-    println!("tx: {:?}", &tx);
-
-    // read from json
-
-    let pubkey = Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap();
-    let owner = Pubkey::from_str("rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ").unwrap();
-
-    use base64;
-    let mut data = Account {
-        lamports: 1825020,
-        data: base64::decode("IvEjY51+9M1gMUcENA3t3zcf1CRyFI8kjp0abRpesqw6zYt/1dayQwHvDYtv2izrpB2hXUCV0do5Kg0vjtDGx7wPTPrIwoC1bbLod+YDAAAA6QJ4AAAAAAD4////lZpJaAAAAACVmkloAAAAAMC2EeIDAAAALL2AAAAAAADcSaEUAAAAAAA=").unwrap(),
-        owner,
-        executable: false,
-        rent_epoch: 18446744073709551615,
-    };
-
-    context.svm.set_account(pubkey, data);
-
     let result = context.svm.send_transaction(tx);
-    if (result.is_ok()) {
-        for log in &result.clone().unwrap().logs {
-            println!("TX logs: {:?}", log);
-        }
-    } else {
-        println!("result {:?}", &result);
-    }
     assert!(&result.is_ok(), "Transfer below limit should succeed");
 
     let swig_data = context.svm.get_account(&swig_key).unwrap();
-    display_swig(swig_key, &swig_data);
 
     // Test 2: Transfer above limit (2 SOL ≈ 300 USDC at mock price)
     let transfer_ix =
@@ -568,13 +517,6 @@ fn test_oracle_limit_sol_passthrough() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
-    if (result.is_ok()) {
-        for log in &result.clone().unwrap().logs {
-            println!("TX logs: {:?}", log);
-        }
-    } else {
-        println!("result {:?}", &result);
-    }
     assert!(result.is_err(), "Transfer above limit should fail");
     assert_eq!(
         result.unwrap_err().err,
@@ -609,12 +551,13 @@ fn test_oracle_limit_passthrough() {
     // Add oracle limit permission (3 USDC limit)
     let oracle_limit = OracleTokenLimit::new(
         BaseAsset::USDC,
-        3_000_000, // 3 USDC with 6 decimals (native USDC decimals)
+        300_000_000, // 3 USDC with 6 decimals (native USDC decimals)
         true,
     );
 
+    let mint_pubkey = setup_oracle_mint(&mut context).unwrap();
+
     // Setup token accounts
-    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
         &mut context.svm,
         &mint_pubkey,
@@ -671,10 +614,7 @@ fn test_oracle_limit_passthrough() {
     )
     .unwrap();
 
-    // println!("Mint {:?}", mint_pubkey);
-    // println!("transfer_ix: {:?}", &transfer_ix);
-
-    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
         swig_key,
         secondary_authority.pubkey(),
         secondary_authority.pubkey(),
@@ -683,45 +623,28 @@ fn test_oracle_limit_passthrough() {
     )
     .unwrap();
 
+    sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
+        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
+        false,
+    )]);
+
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
         &[sign_ix],
-        // &[address_lookup_table_account],
         &[],
         context.svm.latest_blockhash(),
     )
     .unwrap();
 
-    println!("msg {:?}", &message);
-
-    let tx: VersionedTransaction =
-        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&secondary_authority])
-            .unwrap();
-
-    println!("tx {:?}", &tx);
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&secondary_authority])
+        .unwrap();
     let swig_data = context.svm.get_account(&swig_key).unwrap();
-    display_swig(swig_key, &swig_data);
 
     let result = context.svm.send_transaction(tx);
 
-    // Print logs for debugging
-    match &result {
-        Ok(tx_result) => {
-            println!("Transaction logs:");
-            for log in &tx_result.logs {
-                println!("  {:?}", log);
-            }
-        },
-        Err(err) => {
-            println!("Transaction failed: {:?}", err);
-        },
-    }
-
-    println!("mint: {:?}", &mint_bytes);
     assert!(result.is_ok(), "Transfer below limit should succeed");
 
     let swig_data = context.svm.get_account(&swig_key).unwrap();
-    display_swig(swig_key, &swig_data);
 
     // Test 2: Transfer above limit (2.5 tokens ≈ 3.75 USDC at mock price)
     let transfer_ix = spl_token::instruction::transfer(
@@ -734,7 +657,7 @@ fn test_oracle_limit_passthrough() {
     )
     .unwrap();
 
-    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
         swig_key,
         secondary_authority.pubkey(),
         secondary_authority.pubkey(),
@@ -742,6 +665,11 @@ fn test_oracle_limit_passthrough() {
         1,
     )
     .unwrap();
+
+    sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
+        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
+        false,
+    )]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -767,218 +695,46 @@ fn test_oracle_limit_passthrough() {
     );
 }
 
-use alloy_primitives::hex;
-use solana_sdk::account::Account;
-use swig_interface::program_id;
-use swig_state_x::action::{
-    manage_authority::ManageAuthority, program_scope::ProgramScope,
-    sol_recurring_limit::SolRecurringLimit,
-};
-use swig_state_x::swig::swig_account_seeds;
+// fn create_alt_and_add(context: &mut SwigTestContext) -> Result<Pubkey, anyhow::Error> {
+//     // Create the lookup table
+//     let (create_lookup_table_ix, lookup_table_address) =
+//         solana_sdk::address_lookup_table::instruction::create_lookup_table(
+//             context.default_payer.pubkey(),
+//             context.default_payer.pubkey(),
+//             0,
+//         );
 
-pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), anyhow::Error> {
-    let swig_with_roles = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+//     let tx = Transaction::new_signed_with_payer(
+//         &[create_lookup_table_ix],
+//         Some(&context.default_payer.pubkey()),
+//         &[&context.default_payer],
+//         context.svm.latest_blockhash(),
+//     );
 
-    println!("╔══════════════════════════════════════════════════════════════════");
-    println!("║ SWIG WALLET DETAILS");
-    println!("╠══════════════════════════════════════════════════════════════════");
-    println!("║ Account Address: {}", swig_pubkey);
-    println!("║ Total Roles: {}", swig_with_roles.state.role_counter);
-    println!(
-        "║ Balance: {} SOL",
-        swig_account.lamports as f64 / 1_000_000_000.0
-    );
+//     context.svm.send_transaction(tx).unwrap();
 
-    println!("╠══════════════════════════════════════════════════════════════════");
-    println!("║ ROLES & PERMISSIONS");
-    println!("╠══════════════════════════════════════════════════════════════════");
+//     // Add addresses to the lookup table
+//     let addresses_to_add = vec![
+//         Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
+//         Pubkey::from_str("AxaxyeDT8JnWERSaTKvFXvPKkEdxnamKSqpWbsSjYg1g").unwrap(),
+//     ];
 
-    for i in 0..swig_with_roles.state.role_counter {
-        let role = swig_with_roles.get_role(i).unwrap();
+//     let extend_lookup_table_ix = solana_sdk::address_lookup_table::instruction::extend_lookup_table(
+//         lookup_table_address,
+//         context.default_payer.pubkey(),
+//         Some(context.default_payer.pubkey()),
+//         addresses_to_add,
+//     );
 
-        if let Some(role) = role {
-            println!("║");
-            println!("║ Role ID: {}", i);
-            println!(
-                "║ ├─ Type: {}",
-                if role.authority.session_based() {
-                    "Session-based Authority"
-                } else {
-                    "Permanent Authority"
-                }
-            );
-            println!("║ ├─ Authority Type: {:?}", role.authority.authority_type());
-            println!(
-                "║ ├─ Authority: {}",
-                match role.authority.authority_type() {
-                    AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
-                        let authority = role.authority.identity().unwrap();
-                        let authority = bs58::encode(authority).into_string();
-                        authority
-                    },
-                    AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
-                        let authority = role.authority.identity().unwrap();
-                        let authority_hex = hex::encode([&[0x4].as_slice(), authority].concat());
-                        // get eth address from public key
-                        let mut hasher = solana_sdk::keccak::Hasher::default();
-                        hasher.hash(authority_hex.as_bytes());
-                        let hash = hasher.result();
-                        let address = format!("0x{}", hex::encode(&hash.0[12..32]));
-                        address
-                    },
-                    _ => todo!(),
-                }
-            );
+//     let tx = Transaction::new_signed_with_payer(
+//         &[extend_lookup_table_ix],
+//         Some(&context.default_payer.pubkey()),
+//         &[&context.default_payer],
+//         context.svm.latest_blockhash(),
+//     );
 
-            println!("║ ├─ Permissions:");
+//     context.svm.send_transaction(tx).unwrap();
 
-            let actions = role.get_all_actions().unwrap();
-            println!("║ │  ├─ Actions length: {}", actions.len());
-            for action in actions {
-                println!("║ │  ├─ Action: {:?}", action);
-            }
-
-            // Check All permission
-            if (Role::get_action::<All>(&role, &[]).unwrap()).is_some() {
-                println!("║ │  ├─ Full Access (All Permissions)");
-            }
-
-            // Check Manage Authority permission
-            if (Role::get_action::<ManageAuthority>(&role, &[]).unwrap()).is_some() {
-                println!("║ │  ├─ Manage Authority");
-            }
-
-            // Check Sol Limit
-            if let Some(action) = Role::get_action::<SolLimit>(&role, &[]).unwrap() {
-                println!(
-                    "║ │  ├─ SOL Limit: {} SOL",
-                    action.amount as f64 / 1_000_000_000.0
-                );
-            }
-
-            // Check Sol Recurring Limit
-            if let Some(action) = Role::get_action::<SolRecurringLimit>(&role, &[]).unwrap() {
-                println!("║ │  ├─ Recurring SOL Limit:");
-                println!(
-                    "║ │  │  ├─ Amount: {} SOL",
-                    action.recurring_amount as f64 / 1_000_000_000.0
-                );
-                println!("║ │  │  ├─ Window: {} slots", action.window);
-                println!(
-                    "║ │  │  ├─ Current Usage: {} SOL",
-                    action.current_amount as f64 / 1_000_000_000.0
-                );
-                println!("║ │  │  └─ Last Reset: Slot {}", action.last_reset);
-            }
-
-            // Check Program Scope
-            if let Some(action) =
-                Role::get_action::<ProgramScope>(&role, &spl_token::ID.to_bytes()).unwrap()
-            {
-                let program_id = Pubkey::from(action.program_id);
-                let target_account = Pubkey::from(action.target_account);
-                println!("║ │  ├─ Program Scope");
-                println!("║ │  │  ├─ Program ID: {}", program_id);
-                println!("║ │  │  ├─ Target Account: {}", target_account);
-                println!(
-                    "║ │  │  ├─ Scope Type: {}",
-                    match action.scope_type {
-                        0 => "Basic",
-                        1 => "Limit",
-                        2 => "Recurring Limit",
-                        _ => "Unknown",
-                    }
-                );
-                println!(
-                    "║ │  │  ├─ Numeric Type: {}",
-                    match action.numeric_type {
-                        0 => "U64",
-                        1 => "U128",
-                        2 => "F64",
-                        _ => "Unknown",
-                    }
-                );
-                if action.scope_type > 0 {
-                    println!("║ │  │  ├─ Limit: {} ", action.limit);
-                    println!("║ │  │  ├─ Current Usage: {} ", action.current_amount);
-                }
-                if action.scope_type == 2 {
-                    println!("║ │  │  ├─ Window: {} slots", action.window);
-                    println!("║ │  │  ├─ Last Reset: Slot {}", action.last_reset);
-                }
-                println!("║ │  │  ");
-            }
-
-            // Oracle limits
-            if let Some(action) = Role::get_action::<OracleTokenLimit>(&role, &[0u8]).unwrap() {
-                println!("║ │  ├─ Oracle Token Limit:");
-                println!(
-                    "║ │  │  ├─ Base Asset: {}",
-                    match action.base_asset_type {
-                        0 => "USDC",
-                        1 => "EURC",
-                        _ => "Unknown",
-                    }
-                );
-                println!(
-                    "║ │  │  ├─ Value Limit: {} {}",
-                    action.value_limit as f64 / 1_000_000.0, // Divide by 10^6 since USDC/EURC have 6 decimals
-                    match action.base_asset_type {
-                        0 => "USDC",
-                        1 => "EURC",
-                        _ => "Unknown",
-                    }
-                );
-            }
-            println!("║ │  ");
-        }
-    }
-
-    println!("╚══════════════════════════════════════════════════════════════════");
-
-    Ok(())
-}
-
-fn create_alt_and_add(context: &mut SwigTestContext) -> Result<Pubkey, anyhow::Error> {
-    // Create the lookup table
-    let (create_lookup_table_ix, lookup_table_address) =
-        solana_sdk::address_lookup_table::instruction::create_lookup_table(
-            context.default_payer.pubkey(),
-            context.default_payer.pubkey(),
-            0,
-        );
-
-    let tx = Transaction::new_signed_with_payer(
-        &[create_lookup_table_ix],
-        Some(&context.default_payer.pubkey()),
-        &[&context.default_payer],
-        context.svm.latest_blockhash(),
-    );
-
-    context.svm.send_transaction(tx).unwrap();
-
-    // Add addresses to the lookup table
-    let addresses_to_add = vec![
-        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
-        Pubkey::from_str("AxaxyeDT8JnWERSaTKvFXvPKkEdxnamKSqpWbsSjYg1g").unwrap(),
-    ];
-
-    let extend_lookup_table_ix = solana_sdk::address_lookup_table::instruction::extend_lookup_table(
-        lookup_table_address,
-        context.default_payer.pubkey(),
-        Some(context.default_payer.pubkey()),
-        addresses_to_add,
-    );
-
-    let tx = Transaction::new_signed_with_payer(
-        &[extend_lookup_table_ix],
-        Some(&context.default_payer.pubkey()),
-        &[&context.default_payer],
-        context.svm.latest_blockhash(),
-    );
-
-    context.svm.send_transaction(tx).unwrap();
-
-    println!("ALT address: {:?}", lookup_table_address);
-    Ok(lookup_table_address)
-}
+//     println!("ALT address: {:?}", lookup_table_address);
+//     Ok(lookup_table_address)
+// }

@@ -1,11 +1,12 @@
 use alloy_signer_local::{LocalSigner, PrivateKeySigner};
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use litesvm::{types::TransactionMetadata, LiteSVM};
 use litesvm_token::{spl_token, CreateAssociatedTokenAccount, CreateMint, MintTo};
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
     instruction::Instruction,
     message::{v0, VersionedMessage},
+    program_pack::Pack,
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
@@ -337,6 +338,51 @@ pub fn setup_mint(svm: &mut LiteSVM, payer: &Keypair) -> anyhow::Result<Pubkey> 
     Ok(mint)
 }
 
+pub fn setup_oracle_mint(context: &mut SwigTestContext) -> anyhow::Result<Pubkey> {
+    load_sample_pyth_accounts(&mut context.svm).unwrap();
+
+    // Setup token accounts
+    let mint_key_bytes = [
+        193, 17, 76, 51, 120, 6, 8, 131, 149, 6, 187, 31, 102, 121, 14, 198, 202, 133, 249, 221,
+        22, 60, 55, 46, 12, 43, 226, 195, 167, 208, 193, 78, 247, 169, 151, 255, 215, 241, 92, 175,
+        239, 134, 208, 37, 97, 234, 209, 161, 53, 165, 40, 34, 193, 65, 166, 81, 164, 72, 62, 60,
+        149, 224, 228, 83,
+    ];
+    let mint_kp = Keypair::from_bytes(&mint_key_bytes).unwrap();
+    let mint_pubkey = mint_kp.pubkey();
+    use solana_program::system_instruction::create_account;
+    use solana_sdk::transaction::Transaction;
+    use spl_token::instruction::initialize_mint2;
+    use spl_token::state::Mint;
+
+    let mint_size = Mint::LEN;
+
+    let ix1 = create_account(
+        &context.default_payer.pubkey(),
+        &mint_kp.pubkey(),
+        context.svm.minimum_balance_for_rent_exemption(mint_size),
+        mint_size as u64,
+        &spl_token::ID,
+    );
+    let ix2 = initialize_mint2(
+        &spl_token::ID,
+        &mint_kp.pubkey(),
+        &context.default_payer.pubkey(),
+        None,
+        9,
+    )
+    .unwrap();
+    let block_hash = context.svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix1, ix2],
+        Some(&context.default_payer.pubkey()),
+        &[&context.default_payer, &mint_kp],
+        block_hash,
+    );
+    let tx_sig = context.svm.send_transaction(tx).unwrap();
+    Ok(mint_pubkey)
+}
+
 pub fn mint_to(
     svm: &mut LiteSVM,
     mint: &Pubkey,
@@ -640,4 +686,173 @@ pub fn add_sub_account_permission(
         .map_err(|e| anyhow::anyhow!("Failed to add SubAccount permission: {:?}", e))?;
 
     Ok(bench)
+}
+
+use alloy_primitives::hex;
+use solana_sdk::account::Account;
+use swig_state_x::action::{oracle_limits::OracleTokenLimit, sol_limit::SolLimit};
+use swig_state_x::action::{program_scope::ProgramScope, sol_recurring_limit::SolRecurringLimit};
+use swig_state_x::role::Role;
+
+pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), anyhow::Error> {
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+
+    println!("╔══════════════════════════════════════════════════════════════════");
+    println!("║ SWIG WALLET DETAILS");
+    println!("╠══════════════════════════════════════════════════════════════════");
+    println!("║ Account Address: {}", swig_pubkey);
+    println!("║ Total Roles: {}", swig_with_roles.state.role_counter);
+    println!(
+        "║ Balance: {} SOL",
+        swig_account.lamports as f64 / 1_000_000_000.0
+    );
+
+    println!("╠══════════════════════════════════════════════════════════════════");
+    println!("║ ROLES & PERMISSIONS");
+    println!("╠══════════════════════════════════════════════════════════════════");
+
+    for i in 0..swig_with_roles.state.role_counter {
+        let role = swig_with_roles.get_role(i).unwrap();
+
+        if let Some(role) = role {
+            println!("║");
+            println!("║ Role ID: {}", i);
+            println!(
+                "║ ├─ Type: {}",
+                if role.authority.session_based() {
+                    "Session-based Authority"
+                } else {
+                    "Permanent Authority"
+                }
+            );
+            println!("║ ├─ Authority Type: {:?}", role.authority.authority_type());
+            println!(
+                "║ ├─ Authority: {}",
+                match role.authority.authority_type() {
+                    AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
+                        let authority = role.authority.identity().unwrap();
+                        let authority = bs58::encode(authority).into_string();
+                        authority
+                    },
+                    AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
+                        let authority = role.authority.identity().unwrap();
+                        let authority_hex = hex::encode([&[0x4].as_slice(), authority].concat());
+                        // get eth address from public key
+                        let mut hasher = solana_sdk::keccak::Hasher::default();
+                        hasher.hash(authority_hex.as_bytes());
+                        let hash = hasher.result();
+                        let address = format!("0x{}", hex::encode(&hash.0[12..32]));
+                        address
+                    },
+                    _ => todo!(),
+                }
+            );
+
+            println!("║ ├─ Permissions:");
+
+            let actions = role.get_all_actions().unwrap();
+            println!("║ │  ├─ Actions length: {}", actions.len());
+            for action in actions {
+                println!("║ │  ├─ Action: {:?}", action);
+            }
+
+            // Check All permission
+            if (Role::get_action::<All>(&role, &[]).unwrap()).is_some() {
+                println!("║ │  ├─ Full Access (All Permissions)");
+            }
+
+            // Check Manage Authority permission
+            if (Role::get_action::<ManageAuthority>(&role, &[]).unwrap()).is_some() {
+                println!("║ │  ├─ Manage Authority");
+            }
+
+            // Check Sol Limit
+            if let Some(action) = Role::get_action::<SolLimit>(&role, &[]).unwrap() {
+                println!(
+                    "║ │  ├─ SOL Limit: {} SOL",
+                    action.amount as f64 / 1_000_000_000.0
+                );
+            }
+
+            // Check Sol Recurring Limit
+            if let Some(action) = Role::get_action::<SolRecurringLimit>(&role, &[]).unwrap() {
+                println!("║ │  ├─ Recurring SOL Limit:");
+                println!(
+                    "║ │  │  ├─ Amount: {} SOL",
+                    action.recurring_amount as f64 / 1_000_000_000.0
+                );
+                println!("║ │  │  ├─ Window: {} slots", action.window);
+                println!(
+                    "║ │  │  ├─ Current Usage: {} SOL",
+                    action.current_amount as f64 / 1_000_000_000.0
+                );
+                println!("║ │  │  └─ Last Reset: Slot {}", action.last_reset);
+            }
+
+            // Check Program Scope
+            if let Some(action) =
+                Role::get_action::<ProgramScope>(&role, &spl_token::ID.to_bytes()).unwrap()
+            {
+                let program_id = Pubkey::from(action.program_id);
+                let target_account = Pubkey::from(action.target_account);
+                println!("║ │  ├─ Program Scope");
+                println!("║ │  │  ├─ Program ID: {}", program_id);
+                println!("║ │  │  ├─ Target Account: {}", target_account);
+                println!(
+                    "║ │  │  ├─ Scope Type: {}",
+                    match action.scope_type {
+                        0 => "Basic",
+                        1 => "Limit",
+                        2 => "Recurring Limit",
+                        _ => "Unknown",
+                    }
+                );
+                println!(
+                    "║ │  │  ├─ Numeric Type: {}",
+                    match action.numeric_type {
+                        0 => "U64",
+                        1 => "U128",
+                        2 => "F64",
+                        _ => "Unknown",
+                    }
+                );
+                if action.scope_type > 0 {
+                    println!("║ │  │  ├─ Limit: {} ", action.limit);
+                    println!("║ │  │  ├─ Current Usage: {} ", action.current_amount);
+                }
+                if action.scope_type == 2 {
+                    println!("║ │  │  ├─ Window: {} slots", action.window);
+                    println!("║ │  │  ├─ Last Reset: Slot {}", action.last_reset);
+                }
+                println!("║ │  │  ");
+            }
+
+            // Oracle limits
+            if let Some(action) = Role::get_action::<OracleTokenLimit>(&role, &[0u8]).unwrap() {
+                println!("║ │  ├─ Oracle Token Limit:");
+                println!(
+                    "║ │  │  ├─ Base Asset: {}",
+                    match action.base_asset_type {
+                        0 => "USDC",
+                        1 => "EURC",
+                        _ => "Unknown",
+                    }
+                );
+                println!(
+                    "║ │  │  ├─ Value Limit: {} {}",
+                    action.value_limit as f64 / 1_000_000.0, // Divide by 10^6 since USDC/EURC have 6 decimals
+                    match action.base_asset_type {
+                        0 => "USDC",
+                        1 => "EURC",
+                        _ => "Unknown",
+                    }
+                );
+            }
+            println!("║ │  ");
+        }
+    }
+
+    println!("╚══════════════════════════════════════════════════════════════════");
+
+    Ok(())
 }

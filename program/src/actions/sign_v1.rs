@@ -232,12 +232,11 @@ pub fn sign_v1(
                             if let Some(action) =
                                 RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
                             {
-                                let data = unsafe {
+                                let oracle_data = unsafe {
                                     &all_accounts
                                         .get_unchecked(all_accounts.len() - 1)
                                         .borrow_data_unchecked()
                                 };
-                                msg!("data: {:?}", &data);
 
                                 let current_timestamp = Clock::get()?.unix_timestamp;
                                 let feed_id: [u8; 32] = [
@@ -246,18 +245,11 @@ pub fn sign_v1(
                                     200, 194, 128, 181, 109,
                                 ];
                                 let (price, confidence, exponent) = get_price_data_from_bytes(
-                                    data,
+                                    oracle_data,
                                     current_timestamp,
                                     100,
                                     &feed_id,
                                 )?;
-
-                                msg!(
-                                    "price {:?}, expo: {:?} confidence {:?}",
-                                    price,
-                                    exponent,
-                                    confidence
-                                );
 
                                 action.run_for_sol(amount_diff, price, confidence, exponent)?;
 
@@ -317,8 +309,6 @@ pub fn sign_v1(
                         );
                     }
 
-                    msg!("balance: {:?}", balance);
-                    msg!("current_token_balance: {:?}", current_token_balance);
                     if balance > &current_token_balance {
                         let diff = balance - current_token_balance;
                         // Check oracle token limit
@@ -326,17 +316,24 @@ pub fn sign_v1(
                             if let Some(action) =
                                 RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
                             {
-                                // Get oracle account based on mint
-                                // let data = unsafe {
-                                //     &all_accounts.get_unchecked(index).borrow_data_unchecked()
-                                // };
+                                let oracle_data = unsafe {
+                                    &all_accounts
+                                        .get_unchecked(all_accounts.len() - 1)
+                                        .borrow_data_unchecked()
+                                };
 
-                                // let current_timestamp = Clock::get()?.unix_timestamp;
-                                // let (price, confidence, exponent) =
-                                //     get_price_data_from_bytes(data, current_timestamp, 100)?;
+                                let current_timestamp = Clock::get()?.unix_timestamp;
+                                let (feed_id, decimal) =
+                                    OracleTokenLimit::get_feed_id_and_decimal_from_mint(mint)?;
 
-                                let price: i32 = 150;
-                                action.run_for_token(mint.try_into().unwrap(), diff)?;
+                                let (price, confidence, exponent) = get_price_data_from_bytes(
+                                    oracle_data,
+                                    current_timestamp,
+                                    100,
+                                    &feed_id,
+                                )?;
+
+                                action.run_for_token(diff, price, confidence, exponent, decimal)?;
                                 if !action.passthrough_check {
                                     continue;
                                 }
