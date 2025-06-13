@@ -11,12 +11,9 @@ use common::*;
 use litesvm::LiteSVM;
 use litesvm_token::spl_token;
 use solana_program::{pubkey::Pubkey, system_instruction};
-use solana_sdk::address_lookup_table::state::AddressLookupTable;
-use solana_sdk::program_pack::Pack;
 use solana_sdk::{
-    compute_budget::ComputeBudgetInstruction,
     instruction::{AccountMeta, Instruction},
-    message::{v0, AddressLookupTableAccount, VersionedMessage},
+    message::{v0, VersionedMessage},
     signature::{Keypair, Signer},
     transaction::{Transaction, VersionedTransaction},
 };
@@ -128,10 +125,10 @@ fn test_oracle_limit_sol_transfer() {
         .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Add oracle limit permission (1 USDC limit)
+    // Add oracle limit permission (200 USDC limit)
     let oracle_limit = OracleTokenLimit::new(
         BaseAsset::USDC,
-        200_000_000, // 1 USDC limit
+        200_000_000, // 200 USDC limit
         false,
     );
 
@@ -179,8 +176,11 @@ fn test_oracle_limit_sol_transfer() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
-
     assert!(result.is_ok(), "Transfer below limit should succeed");
+    println!(
+        "Compute units consumed for below limit transfer: {}",
+        result.unwrap().compute_units_consumed
+    );
 
     // Test 2: Transfer above limit (2 SOL ≈ 300 USDC at mock price)
     let transfer_ix =
@@ -211,7 +211,6 @@ fn test_oracle_limit_sol_transfer() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
-
     assert!(result.is_err(), "Transfer above limit should fail");
     assert_eq!(
         result.unwrap_err().err,
@@ -244,10 +243,10 @@ fn test_oracle_limit_token_transfer() {
         .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Add oracle limit permission (3 USDC limit)
+    // Add oracle limit permission (300 USDC limit)
     let oracle_limit = OracleTokenLimit::new(
         BaseAsset::USDC,
-        300_000_000, // 3 USDC with 6 decimals (native USDC decimals)
+        300_000_000, // 300 USDC with 6 decimals
         false,
     );
 
@@ -264,8 +263,6 @@ fn test_oracle_limit_token_transfer() {
     .unwrap();
 
     let mint_pubkey = setup_oracle_mint(&mut context).unwrap();
-
-    // let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
         &mut context.svm,
         &mint_pubkey,
@@ -326,13 +323,13 @@ fn test_oracle_limit_token_transfer() {
 
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&secondary_authority])
         .unwrap();
-    let swig_data = context.svm.get_account(&swig_key).unwrap();
 
     let result = context.svm.send_transaction(tx);
-
     assert!(result.is_ok(), "Transfer below limit should succeed");
-
-    let swig_data = context.svm.get_account(&swig_key).unwrap();
+    println!(
+        "Compute units consumed for below limit transfer: {}",
+        result.unwrap().compute_units_consumed
+    );
 
     // Test 2: Transfer above limit (2.5 tokens ≈ 3.75 USDC at mock price)
     let transfer_ix = spl_token::instruction::transfer(
@@ -353,6 +350,7 @@ fn test_oracle_limit_token_transfer() {
         1,
     )
     .unwrap();
+
     sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
         Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
         false,
@@ -370,7 +368,6 @@ fn test_oracle_limit_token_transfer() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
-
     assert!(result.is_err(), "Transfer above limit should fail");
     assert_eq!(
         result.unwrap_err().err,
@@ -382,7 +379,7 @@ fn test_oracle_limit_token_transfer() {
     );
 }
 
-/// Test 2: Test SOL transfers with oracle limits
+/// Test 4: Test SOL transfers with oracle limits and passthrough enabled
 #[test_log::test]
 fn test_oracle_limit_sol_passthrough() {
     let mut context = setup_test_context().unwrap();
@@ -405,10 +402,10 @@ fn test_oracle_limit_sol_passthrough() {
         .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Add oracle limit permission (1 USDC limit)
+    // Add oracle limit permission (200 USDC limit) with passthrough enabled
     let oracle_limit = OracleTokenLimit::new(
         BaseAsset::USDC,
-        200_000_000, // 1 USDC limit
+        200_000_000, // 200 USDC limit
         true,
     );
 
@@ -432,17 +429,6 @@ fn test_oracle_limit_sol_passthrough() {
     // Fund swig wallet
     context.svm.airdrop(&swig_key, 20_000_000_000).unwrap();
 
-    let swig_data = context.svm.get_account(&swig_key).unwrap();
-
-    // let address_lookup_table_key = create_alt_and_add(&mut context).unwrap();
-
-    // let raw_account = context.svm.get_account(&address_lookup_table_key).unwrap();
-    // let address_lookup_table = AddressLookupTable::deserialize(&raw_account.data).unwrap();
-
-    // for address in address_lookup_table.addresses.to_vec() {
-    //     println!("address: {:?}", &address.to_bytes());
-    // }
-
     // Test 1: Transfer below limit (1 SOL ≈ 150 USDC at mock price)
     let transfer_ix =
         system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 1_000_000_000);
@@ -455,21 +441,10 @@ fn test_oracle_limit_sol_passthrough() {
     )
     .unwrap();
 
-    // Add the addresses that were in lookup table to remaining accounts
     sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
         Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
         false,
     )]);
-
-    // let address_lookup_table_account = AddressLookupTableAccount {
-    //     key: address_lookup_table_key,
-    //     addresses: address_lookup_table.addresses.to_vec(),
-    // };
-
-    // println!(
-    //     "address_lookup_table_account: {:?}",
-    //     &address_lookup_table_account
-    // );
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -483,9 +458,11 @@ fn test_oracle_limit_sol_passthrough() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
-    assert!(&result.is_ok(), "Transfer below limit should succeed");
-
-    let swig_data = context.svm.get_account(&swig_key).unwrap();
+    assert!(result.is_ok(), "Transfer below limit should succeed");
+    println!(
+        "Compute units consumed for below limit transfer: {}",
+        result.unwrap().compute_units_consumed
+    );
 
     // Test 2: Transfer above limit (2 SOL ≈ 300 USDC at mock price)
     let transfer_ix =
@@ -499,7 +476,6 @@ fn test_oracle_limit_sol_passthrough() {
     )
     .unwrap();
 
-    // Add the addresses that were in lookup table to remaining accounts
     sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
         Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
         false,
@@ -528,7 +504,7 @@ fn test_oracle_limit_sol_passthrough() {
     );
 }
 
-/// Test 3: Test token transfers with oracle limits
+/// Test 5: Test token transfers with oracle limits and passthrough enabled
 #[test_log::test]
 fn test_oracle_limit_passthrough() {
     let mut context = setup_test_context().unwrap();
@@ -548,10 +524,10 @@ fn test_oracle_limit_passthrough() {
         .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Add oracle limit permission (3 USDC limit)
+    // Add oracle limit permission (300 USDC limit) with passthrough enabled
     let oracle_limit = OracleTokenLimit::new(
         BaseAsset::USDC,
-        300_000_000, // 3 USDC with 6 decimals (native USDC decimals)
+        300_000_000, // 300 USDC with 6 decimals
         true,
     );
 
@@ -638,13 +614,13 @@ fn test_oracle_limit_passthrough() {
 
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&secondary_authority])
         .unwrap();
-    let swig_data = context.svm.get_account(&swig_key).unwrap();
 
     let result = context.svm.send_transaction(tx);
-
     assert!(result.is_ok(), "Transfer below limit should succeed");
-
-    let swig_data = context.svm.get_account(&swig_key).unwrap();
+    println!(
+        "Compute units consumed for below limit transfer: {}",
+        result.unwrap().compute_units_consumed
+    );
 
     // Test 2: Transfer above limit (2.5 tokens ≈ 3.75 USDC at mock price)
     let transfer_ix = spl_token::instruction::transfer(
@@ -683,7 +659,6 @@ fn test_oracle_limit_passthrough() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
-
     assert!(result.is_err(), "Transfer above limit should fail");
     assert_eq!(
         result.unwrap_err().err,
