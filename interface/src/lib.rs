@@ -304,6 +304,7 @@ impl AddAuthorityInstruction {
         current_slot: u64,
         counter: u32,
         acting_role_id: u32,
+        public_key: &[u8; 33],
         new_authority_config: AuthorityConfig,
         actions: Vec<ClientAction>,
     ) -> anyhow::Result<Vec<Instruction>>
@@ -367,18 +368,17 @@ impl AddAuthorityInstruction {
 
         // Get signature from authority function
         let signature = authority_payload_fn(&message_hash);
-        let public_key: &[u8; 33] = new_authority_config.authority.try_into().map_err(|_| {
-            anyhow::anyhow!("Invalid secp256r1 public key length, expected 33 bytes")
-        })?;
         // Create secp256r1 verify instruction
         let secp256r1_verify_ix =
             new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
         // For secp256r1, the authority payload includes slot, counter, instruction index, and padding
         // Must be at least 17 bytes to satisfy secp256r1_authority_authenticate() requirements
+        let instruction_sysvar_index = 3; // Instructions sysvar is at index 3
         let mut authority_payload = Vec::new();
-        authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8; bytes
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
         authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
-        authority_payload.push(3); // this is the index of the instruction sysvar
+        authority_payload.push(instruction_sysvar_index as u8); // 1 byte: index of instruction sysvar
+        authority_payload.extend_from_slice(&[0u8; 4]); // 4 bytes padding to meet 17 byte minimum
 
         let main_ix = Instruction {
             program_id: Pubkey::from(swig::ID),
@@ -540,10 +540,12 @@ impl SignInstruction {
 
         // For secp256r1, the authority payload includes slot, counter, instruction index, and padding
         // Must be at least 17 bytes to satisfy secp256r1_authority_authenticate() requirements
+        let instruction_sysvar_index = 3; // Try hardcoded index 3 for debugging
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
         authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
-        authority_payload.push(3); // this is the index of the instruction sysvar
+        authority_payload.push(instruction_sysvar_index as u8); // 1 byte: index of instruction sysvar
+        authority_payload.extend_from_slice(&[0u8; 4]); // 4 bytes padding to meet 17 byte minimum
 
         let main_ix = Instruction {
             program_id: Pubkey::from(swig::ID),
@@ -694,10 +696,12 @@ impl RemoveAuthorityInstruction {
             new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
 
         // For secp256r1, the authority payload includes slot, counter, instruction index, and padding
+        let instruction_sysvar_index = 3; // Instructions sysvar is at index 3
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
         authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
-        authority_payload.push(3); // this is the index of the instruction sysvar
+        authority_payload.push(instruction_sysvar_index as u8); // 1 byte: index of instruction sysvar
+        authority_payload.extend_from_slice(&[0u8; 4]); // 4 bytes padding to meet 17 byte minimum
 
         let main_ix = Instruction {
             program_id: Pubkey::from(swig::ID),
@@ -853,10 +857,12 @@ impl CreateSessionInstruction {
             new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
 
         // For secp256r1, the authority payload includes slot, counter, instruction index, and padding
+        let instruction_sysvar_index = 3; // Instructions sysvar is at index 3
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
         authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
-        authority_payload.push(3); // this is the index of the instruction sysvar
+        authority_payload.push(instruction_sysvar_index as u8); // 1 byte: index of instruction sysvar
+        authority_payload.extend_from_slice(&[0u8; 4]); // 4 bytes padding to meet 17 byte minimum
 
         let main_ix = Instruction {
             program_id: Pubkey::from(swig::ID),
@@ -1259,10 +1265,12 @@ impl WithdrawFromSubAccountInstruction {
             new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
 
         // For secp256r1, the authority payload includes slot, counter, instruction index, and padding
+        let instruction_sysvar_index = 3; // Instructions sysvar is at index 3
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
         authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
-        authority_payload.push(4); // this is the index of the instruction sysvar
+        authority_payload.push(instruction_sysvar_index as u8); // 1 byte: index of instruction sysvar
+        authority_payload.extend_from_slice(&[0u8; 4]); // 4 bytes padding to meet 17 byte minimum
 
         let main_ix = Instruction {
             program_id: program_id(),

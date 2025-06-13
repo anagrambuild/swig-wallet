@@ -94,7 +94,7 @@ impl CreateSecp256r1SessionAuthority {
 }
 
 impl Transmutable for CreateSecp256r1SessionAuthority {
-    const LEN: usize = 33 + 32 + 8;
+    const LEN: usize = 33 + 7 + 32 + 8; // Include the 7 bytes of padding
 }
 
 impl TransmutableMut for CreateSecp256r1SessionAuthority {}
@@ -496,17 +496,14 @@ fn compute_message_hash(
 ) -> Result<[u8; 32], ProgramError> {
     use super::secp256k1::AccountsPayload;
 
-    let mut accounts_payload = [0u8; 100 * AccountsPayload::LEN];
+    let mut accounts_payload = [0u8; 64 * AccountsPayload::LEN];
     let mut cursor = 0;
-    msg!("account_infos len: {:?}", account_infos.len());
     for account in account_infos {
         let offset = cursor + AccountsPayload::LEN;
         accounts_payload[cursor..offset]
             .copy_from_slice(AccountsPayload::from(account).into_bytes()?);
         cursor = offset;
     }
-    msg!("data payload len: {:?}", data_payload.len());
-    msg!("data payload: {:?}", data_payload);
     let mut hash = MaybeUninit::<[u8; 32]>::uninit();
     let data: &[&[u8]] = &[
         data_payload,
@@ -561,12 +558,6 @@ fn verify_secp256r1_instruction_data(
     if pubkey_data != expected_pubkey {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidPubkey.into());
     }
-
-    msg!("message_data: {:?}", message_data);
-    msg!("expected_message: {:?}", expected_message);
-    //lens
-    msg!("message_data.len(): {:?}", message_data.len());
-    msg!("expected_message.len(): {:?}", expected_message.len());
     if message_data != expected_message {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessageHash.into());
     }
@@ -617,16 +608,16 @@ mod tests {
 
     #[test]
     fn test_verify_secp256r1_instruction_data_single_signature() {
-        let test_message = b"test message for secp256r1";
+        let test_message = [0u8; 32];
         let test_signature = [0xCD; 64]; // Test signature
         let test_pubkey = [0x02; 33]; // Test compressed pubkey
 
         let instruction_data =
-            create_test_secp256r1_instruction_data(test_message, &test_signature, &test_pubkey);
+            create_test_secp256r1_instruction_data(&test_message, &test_signature, &test_pubkey);
 
         // Should succeed with matching pubkey and message hash
         let result =
-            verify_secp256r1_instruction_data(&instruction_data, &test_pubkey, test_message);
+            verify_secp256r1_instruction_data(&instruction_data, &test_pubkey, &test_message);
         assert!(
             result.is_ok(),
             "Verification should succeed with correct data. Error: {:?}",
@@ -636,17 +627,17 @@ mod tests {
 
     #[test]
     fn test_verify_secp256r1_instruction_data_wrong_pubkey() {
-        let test_message = b"test message for secp256r1";
+        let test_message = [0u8; 32];
         let test_pubkey = [0x02; 33];
         let wrong_pubkey = [0x03; 33]; // Different pubkey
         let test_signature = [0xCD; 64];
 
         let instruction_data =
-            create_test_secp256r1_instruction_data(test_message, &test_signature, &test_pubkey);
+            create_test_secp256r1_instruction_data(&test_message, &test_signature, &test_pubkey);
 
         // Should fail with wrong pubkey
         let result =
-            verify_secp256r1_instruction_data(&instruction_data, &wrong_pubkey, test_message);
+            verify_secp256r1_instruction_data(&instruction_data, &wrong_pubkey, &test_message);
         assert!(
             result.is_err(),
             "Verification should fail with wrong pubkey"
@@ -659,17 +650,17 @@ mod tests {
 
     #[test]
     fn test_verify_secp256r1_instruction_data_wrong_message_hash() {
-        let test_message = b"test message for secp256r1";
-        let wrong_message = b"different message"; // Different message
+        let test_message = [0u8; 32];
+        let wrong_message = [1u8; 32]; // Different message
         let test_pubkey = [0x02; 33];
         let test_signature = [0xCD; 64];
 
         let instruction_data =
-            create_test_secp256r1_instruction_data(test_message, &test_signature, &test_pubkey);
+            create_test_secp256r1_instruction_data(&test_message, &test_signature, &test_pubkey);
 
         // Should fail with wrong message hash
         let result =
-            verify_secp256r1_instruction_data(&instruction_data, &test_pubkey, wrong_message);
+            verify_secp256r1_instruction_data(&instruction_data, &test_pubkey, &wrong_message);
         assert!(
             result.is_err(),
             "Verification should fail with wrong message hash"
@@ -754,8 +745,8 @@ mod tests {
 
     #[test]
     fn test_verify_secp256r1_with_real_crypto() {
-        // Create a test message
-        let test_message = b"Hello, secp256r1 world!";
+        // Create a test message 32 bytes
+        let test_message = b"Hello, secp256r1 world! dddddddd";
 
         // Generate real cryptographic signature and pubkey using OpenSSL
         let (signature_bytes, pubkey_bytes) = create_test_signature_and_pubkey(test_message);

@@ -549,6 +549,7 @@ fn test_secp256r1_add_authority_with_secp256r1() {
         current_slot,
         next_counter,
         0, // role_id of the primary authority
+        &public_key,
         AuthorityConfig {
             authority_type: AuthorityType::Secp256r1,
             authority: &new_public_key,
