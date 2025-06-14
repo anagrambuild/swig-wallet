@@ -97,6 +97,8 @@ pub enum SwigStateError {
     RoleNotFound,
     /// Error loading permissions
     PermissionLoadError,
+    /// Oracle not available for mint
+    InvalidOracleTokenMint,
 }
 
 /// Error types related to authentication operations.
@@ -145,6 +147,10 @@ pub enum SwigAuthenticateError {
     InvalidSessionDuration,
     /// Token account authority is not the Swig account
     PermissionDeniedTokenAccountAuthorityNotSwig,
+    /// Missing oracle account
+    PermissionDeniedOracleLimitReached,
+    /// Invalid oracle price data
+    InvalidOraclePriceData,
 }
 
 impl From<SwigStateError> for ProgramError {
