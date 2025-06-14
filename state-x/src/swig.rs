@@ -15,6 +15,7 @@ use crate::{
     authority::{
         ed25519::{ED25519Authority, Ed25519SessionAuthority},
         secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority},
+        secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority},
         Authority, AuthorityInfo, AuthorityType,
     },
     role::{Position, Role, RoleMut},
@@ -275,6 +276,21 @@ impl<'a> SwigBuilder<'a> {
                 )?;
                 Secp256k1SessionAuthority::LEN
             },
+            AuthorityType::Secp256r1 => {
+                Secp256r1Authority::set_into_bytes(
+                    authority_data,
+                    &mut self.role_buffer[auth_offset..auth_offset + Secp256r1Authority::LEN],
+                )?;
+                Secp256r1Authority::LEN
+            },
+            AuthorityType::Secp256r1Session => {
+                Secp256r1SessionAuthority::set_into_bytes(
+                    authority_data,
+                    &mut self.role_buffer
+                        [auth_offset..auth_offset + Secp256r1SessionAuthority::LEN],
+                )?;
+                Secp256r1SessionAuthority::LEN
+            },
             _ => return Err(SwigStateError::InvalidAuthorityData.into()),
         };
         let size = authority_length + actions_data.len();
@@ -395,6 +411,12 @@ impl Swig {
                 AuthorityType::Secp256k1Session => unsafe {
                     Secp256k1SessionAuthority::load_mut_unchecked(authority)?
                 },
+                AuthorityType::Secp256r1 => unsafe {
+                    Secp256r1Authority::load_mut_unchecked(authority)?
+                },
+                AuthorityType::Secp256r1Session => unsafe {
+                    Secp256r1SessionAuthority::load_mut_unchecked(authority)?
+                },
                 _ => return Err(ProgramError::InvalidAccountData),
             };
 
@@ -482,7 +504,16 @@ impl<'a> SwigWithRoles<'a> {
                         self.roles.get_unchecked(offset..offset + auth_len),
                     )?
                 },
-
+                AuthorityType::Secp256r1 => unsafe {
+                    Secp256r1Authority::load_unchecked(
+                        self.roles.get_unchecked(offset..offset + auth_len),
+                    )?
+                },
+                AuthorityType::Secp256r1Session => unsafe {
+                    Secp256r1SessionAuthority::load_unchecked(
+                        self.roles.get_unchecked(offset..offset + auth_len),
+                    )?
+                },
                 _ => return Err(ProgramError::InvalidAccountData),
             };
 
@@ -527,6 +558,16 @@ impl<'a> SwigWithRoles<'a> {
                         },
                         AuthorityType::Secp256k1Session => unsafe {
                             Secp256k1SessionAuthority::load_unchecked(self.roles.get_unchecked(
+                                offset..offset + position.authority_length() as usize,
+                            ))?
+                        },
+                        AuthorityType::Secp256r1 => unsafe {
+                            Secp256r1Authority::load_unchecked(self.roles.get_unchecked(
+                                offset..offset + position.authority_length() as usize,
+                            ))?
+                        },
+                        AuthorityType::Secp256r1Session => unsafe {
+                            Secp256r1SessionAuthority::load_unchecked(self.roles.get_unchecked(
                                 offset..offset + position.authority_length() as usize,
                             ))?
                         },

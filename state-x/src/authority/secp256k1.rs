@@ -12,7 +12,7 @@ use core::mem::MaybeUninit;
 
 #[allow(unused_imports)]
 use pinocchio::syscalls::{sol_keccak256, sol_secp256k1_recover, sol_sha256};
-use pinocchio::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey};
+use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, pubkey::Pubkey};
 use swig_assertions::sol_assert_bytes_eq;
 
 use super::{ed25519::ed25519_authenticate, Authority, AuthorityInfo, AuthorityType};
@@ -169,7 +169,9 @@ impl IntoBytes for Secp256k1Authority {
 pub struct Secp256k1SessionAuthority {
     /// The compressed Secp256k1 public key (33 bytes)
     pub public_key: [u8; 33],
-    _padding: [u8; 7],
+    _padding: [u8; 3],
+    /// Signature counter to prevent signature replay attacks
+    pub signature_odometer: u32,
     /// The current session key
     pub session_key: [u8; 32],
     /// Maximum allowed session duration
@@ -193,6 +195,7 @@ impl Authority for Secp256k1SessionAuthority {
         let authority = unsafe { Secp256k1SessionAuthority::load_mut_unchecked(bytes)? };
         let compressed = compress(&create.public_key);
         authority.public_key = compressed;
+        authority.signature_odometer = 0;
         authority.session_key = create.session_key;
         authority.max_session_age = create.max_session_length;
         Ok(())
@@ -236,7 +239,7 @@ impl AuthorityInfo for Secp256k1SessionAuthority {
         slot: u64,
     ) -> Result<(), ProgramError> {
         secp_session_authority_authenticate(
-            &self.public_key,
+            self,
             authority_payload,
             data_payload,
             slot,
@@ -306,6 +309,59 @@ fn secp_authority_authenticate(
     if authority_payload.len() < 77 {
         return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
     }
+
+    let authority_slot = u64::from_le_bytes(unsafe {
+        authority_payload
+            .get_unchecked(..8)
+            .try_into()
+            .map_err(|_| SwigAuthenticateError::InvalidAuthorityPayload)?
+    });
+
+    let counter = u32::from_le_bytes(unsafe {
+        authority_payload
+            .get_unchecked(8..12)
+            .try_into()
+            .map_err(|_| SwigAuthenticateError::InvalidAuthorityPayload)?
+    });
+
+    let expected_counter = authority.signature_odometer.wrapping_add(1);
+    if counter != expected_counter {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256k1SignatureReused.into());
+    }
+    secp256k1_authenticate(
+        &authority.public_key,
+        authority_payload[12..77].try_into().unwrap(),
+        data_payload,
+        authority_slot,
+        current_slot,
+        account_infos,
+        authority_payload[77..].try_into().unwrap(),
+        counter,
+    )?;
+
+    authority.signature_odometer = counter;
+    Ok(())
+}
+
+/// Authenticates a Secp256k1 session authority with additional payload data.
+///
+/// # Arguments
+/// * `authority` - The mutable authority reference for counter updates
+/// * `authority_payload` - The authority payload including slot, counter, and
+///   signature
+/// * `data_payload` - Additional data to be included in signature verification
+/// * `current_slot` - The current slot number
+/// * `account_infos` - List of accounts involved in the transaction
+fn secp_session_authority_authenticate(
+    authority: &mut Secp256k1SessionAuthority,
+    authority_payload: &[u8],
+    data_payload: &[u8],
+    current_slot: u64,
+    account_infos: &[AccountInfo],
+) -> Result<(), ProgramError> {
+    if authority_payload.len() < 77 {
+        return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
+    }
     let authority_slot =
         u64::from_le_bytes(unsafe { authority_payload.get_unchecked(..8).try_into().unwrap() });
 
@@ -325,44 +381,10 @@ fn secp_authority_authenticate(
         current_slot,
         account_infos,
         authority_payload[77..].try_into().unwrap(),
-        counter,
+        counter, // Now use proper counter-based replay protection
     )?;
 
     authority.signature_odometer = counter;
-    Ok(())
-}
-
-/// Authenticates a Secp256k1 session authority with additional payload data.
-///
-/// # Arguments
-/// * `expected_key` - The expected compressed public key
-/// * `authority_payload` - The authority payload including slot and signature
-/// * `data_payload` - Additional data to be included in signature verification
-/// * `current_slot` - The current slot number
-/// * `account_infos` - List of accounts involved in the transaction
-fn secp_session_authority_authenticate(
-    expected_key: &[u8; 33],
-    authority_payload: &[u8],
-    data_payload: &[u8],
-    current_slot: u64,
-    account_infos: &[AccountInfo],
-) -> Result<(), ProgramError> {
-    if authority_payload.len() < 73 {
-        return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
-    }
-    let authority_slot =
-        u64::from_le_bytes(unsafe { authority_payload.get_unchecked(..8).try_into().unwrap() });
-
-    secp256k1_authenticate(
-        expected_key,
-        authority_payload[8..73].try_into().unwrap(),
-        data_payload,
-        authority_slot,
-        current_slot,
-        account_infos,
-        authority_payload[73..].try_into().unwrap(),
-        0u32, // Session authorities don't use counter-based replay protection
-    )?;
     Ok(())
 }
 

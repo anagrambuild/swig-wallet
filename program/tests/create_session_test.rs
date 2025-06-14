@@ -518,6 +518,7 @@ fn test_secp256k1_session() {
     assert_eq!(auth.public_key, compressed_eth_pubkey.as_ref());
     assert_eq!(auth.current_session_expiration, 0);
     assert_eq!(auth.session_key, [0; 32]);
+    assert_eq!(auth.signature_odometer, 0, "Initial odometer should be 0");
 
     context
         .svm
@@ -541,6 +542,7 @@ fn test_secp256k1_session() {
         context.default_payer.pubkey(),
         signing_fn,
         current_slot,
+        1, // Counter for session authorities (starting from 1)
         0, // Role ID 0 is the root authority
         session_key.pubkey(),
         session_duration,
@@ -580,6 +582,10 @@ fn test_secp256k1_session() {
         current_slot + session_duration
     );
     assert_eq!(auth.session_key, session_key.pubkey().to_bytes());
+    assert_eq!(
+        auth.signature_odometer, 1,
+        "Odometer should be 1 after session creation"
+    );
 
     // Create a receiver keypair
     let receiver = Keypair::new();
