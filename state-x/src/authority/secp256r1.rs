@@ -1,10 +1,10 @@
 //! Secp256r1 authority implementation for passkey support.
 //!
 //! This module provides implementations for Secp256r1-based authority types in
-//! the Swig wallet system, designed to work with passkeys and WebAuthn. It includes
-//! both standard Secp256r1 authority and session-based Secp256r1 authority with
-//! expiration support. The implementation relies on the Solana secp256r1 precompile
-//! program for signature verification.
+//! the Swig wallet system, designed to work with passkeys and WebAuthn. It
+//! includes both standard Secp256r1 authority and session-based Secp256r1
+//! authority with expiration support. The implementation relies on the Solana
+//! secp256r1 precompile program for signature verification.
 
 #![warn(unexpected_cfgs)]
 
@@ -336,7 +336,8 @@ impl IntoBytes for Secp256r1SessionAuthority {
 ///
 /// # Arguments
 /// * `authority` - The mutable authority reference for counter updates
-/// * `authority_payload` - The authority payload including slot, counter, instruction index, and signature
+/// * `authority_payload` - The authority payload including slot, counter,
+///   instruction index, and signature
 /// * `data_payload` - Additional data to be included in signature verification
 /// * `current_slot` - The current slot number
 /// * `account_infos` - List of accounts involved in the transaction
@@ -391,7 +392,8 @@ fn secp256r1_authority_authenticate(
 ///
 /// # Arguments
 /// * `authority` - The mutable authority reference for counter updates
-/// * `authority_payload` - The authority payload including slot, counter, and instruction index
+/// * `authority_payload` - The authority payload including slot, counter, and
+///   instruction index
 /// * `data_payload` - Additional data to be included in signature verification
 /// * `current_slot` - The current slot number
 /// * `account_infos` - List of accounts involved in the transaction
@@ -529,7 +531,8 @@ fn compute_message_hash(
     }
 }
 
-/// Verify the secp256r1 instruction data contains the expected signature and public key
+/// Verify the secp256r1 instruction data contains the expected signature and
+/// public key
 fn verify_secp256r1_instruction_data(
     instruction_data: &[u8],
     expected_pubkey: &[u8; 33],
@@ -568,7 +571,8 @@ fn verify_secp256r1_instruction_data(
 mod tests {
     use super::*;
 
-    /// Helper function to create real secp256r1 instruction data using the official Solana secp256r1 program
+    /// Helper function to create real secp256r1 instruction data using the
+    /// official Solana secp256r1 program
     fn create_test_secp256r1_instruction_data(
         message: &[u8],
         signature: &[u8; 64],
@@ -585,9 +589,11 @@ mod tests {
 
     /// Helper function to create a signature using OpenSSL for testing
     fn create_test_signature_and_pubkey(message: &[u8]) -> ([u8; 64], [u8; 33]) {
-        use openssl::bn::BigNumContext;
-        use openssl::ec::{EcGroup, EcKey, PointConversionForm};
-        use openssl::nid::Nid;
+        use openssl::{
+            bn::BigNumContext,
+            ec::{EcGroup, EcKey, PointConversionForm},
+            nid::Nid,
+        };
         use solana_secp256r1_program::sign_message;
 
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();

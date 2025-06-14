@@ -347,7 +347,8 @@ fn secp_authority_authenticate(
 ///
 /// # Arguments
 /// * `authority` - The mutable authority reference for counter updates
-/// * `authority_payload` - The authority payload including slot, counter, and signature
+/// * `authority_payload` - The authority payload including slot, counter, and
+///   signature
 /// * `data_payload` - Additional data to be included in signature verification
 /// * `current_slot` - The current slot number
 /// * `account_infos` - List of accounts involved in the transaction

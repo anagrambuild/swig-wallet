@@ -180,7 +180,6 @@ pub fn remove_authority_v1(
                     slot,
                 )?;
             } else {
-                
                 acting_role.authority.authenticate(
                     all_accounts,
                     remove_authority_v1.authority_payload,

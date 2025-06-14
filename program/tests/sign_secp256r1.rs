@@ -26,9 +26,11 @@ use swig_state_x::{
 
 /// Helper to generate a real secp256r1 key pair for testing
 fn create_test_secp256r1_keypair() -> (openssl::ec::EcKey<openssl::pkey::Private>, [u8; 33]) {
-    use openssl::bn::BigNumContext;
-    use openssl::ec::{EcGroup, EcKey, PointConversionForm};
-    use openssl::nid::Nid;
+    use openssl::{
+        bn::BigNumContext,
+        ec::{EcGroup, EcKey, PointConversionForm},
+        nid::Nid,
+    };
 
     let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
     let signing_key = EcKey::generate(&group).unwrap();
@@ -49,7 +51,8 @@ fn create_test_secp256r1_authority() -> [u8; 33] {
     pubkey
 }
 
-/// Helper function to get the current signature counter for a secp256r1 authority
+/// Helper function to get the current signature counter for a secp256r1
+/// authority
 fn get_secp256r1_counter(
     context: &SwigTestContext,
     swig_key: &solana_sdk::pubkey::Pubkey,
@@ -269,7 +272,8 @@ fn test_secp256r1_replay_protection() {
     );
     println!("✓ First transaction with counter 1 succeeded");
 
-    // Try second transaction with same counter (should fail due to replay protection)
+    // Try second transaction with same counter (should fail due to replay
+    // protection)
     let mut authority_fn2 = |message_hash: &[u8]| -> [u8; 64] {
         use solana_secp256r1_program::sign_message;
         let signature =
@@ -472,7 +476,8 @@ fn test_secp256r1_session_authority_odometer() {
     println!("✓ Session authority has proper session-based behavior");
 }
 
-/// Helper function to create a swig account with secp256r1 authority for testing
+/// Helper function to create a swig account with secp256r1 authority for
+/// testing
 fn create_swig_secp256r1(
     context: &mut SwigTestContext,
     public_key: &[u8; 33],

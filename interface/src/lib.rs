@@ -371,8 +371,9 @@ impl AddAuthorityInstruction {
         // Create secp256r1 verify instruction
         let secp256r1_verify_ix =
             new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
-        // For secp256r1, the authority payload includes slot, counter, instruction index, and padding
-        // Must be at least 17 bytes to satisfy secp256r1_authority_authenticate() requirements
+        // For secp256r1, the authority payload includes slot, counter, instruction
+        // index, and padding Must be at least 17 bytes to satisfy
+        // secp256r1_authority_authenticate() requirements
         let instruction_sysvar_index = 3; // Instructions sysvar is at index 3
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
@@ -538,8 +539,9 @@ impl SignInstruction {
         let secp256r1_verify_ix =
             new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
 
-        // For secp256r1, the authority payload includes slot, counter, instruction index, and padding
-        // Must be at least 17 bytes to satisfy secp256r1_authority_authenticate() requirements
+        // For secp256r1, the authority payload includes slot, counter, instruction
+        // index, and padding Must be at least 17 bytes to satisfy
+        // secp256r1_authority_authenticate() requirements
         let instruction_sysvar_index = 3; // Try hardcoded index 3 for debugging
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
@@ -695,7 +697,8 @@ impl RemoveAuthorityInstruction {
         let secp256r1_verify_ix =
             new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
 
-        // For secp256r1, the authority payload includes slot, counter, instruction index, and padding
+        // For secp256r1, the authority payload includes slot, counter, instruction
+        // index, and padding
         let instruction_sysvar_index = 3; // Instructions sysvar is at index 3
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
@@ -856,7 +859,8 @@ impl CreateSessionInstruction {
         let secp256r1_verify_ix =
             new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
 
-        // For secp256r1, the authority payload includes slot, counter, instruction index, and padding
+        // For secp256r1, the authority payload includes slot, counter, instruction
+        // index, and padding
         let instruction_sysvar_index = 3; // Instructions sysvar is at index 3
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
@@ -1018,7 +1022,8 @@ impl CreateSubAccountInstruction {
         let secp256r1_verify_ix =
             new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
 
-        // For secp256r1, the authority payload includes slot, counter, instruction index, and padding
+        // For secp256r1, the authority payload includes slot, counter, instruction
+        // index, and padding
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
         authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
@@ -1264,7 +1269,8 @@ impl WithdrawFromSubAccountInstruction {
         let secp256r1_verify_ix =
             new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
 
-        // For secp256r1, the authority payload includes slot, counter, instruction index, and padding
+        // For secp256r1, the authority payload includes slot, counter, instruction
+        // index, and padding
         let instruction_sysvar_index = 3; // Instructions sysvar is at index 3
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
@@ -1348,7 +1354,8 @@ impl WithdrawFromSubAccountInstruction {
         let secp256r1_verify_ix =
             new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
 
-        // For secp256r1, the authority payload includes slot, counter, instruction index, and padding
+        // For secp256r1, the authority payload includes slot, counter, instruction
+        // index, and padding
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
         authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
@@ -1512,7 +1519,8 @@ impl SubAccountSignInstruction {
         let secp256r1_verify_ix =
             new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
 
-        // For secp256r1, the authority payload includes slot, counter, instruction index, and padding
+        // For secp256r1, the authority payload includes slot, counter, instruction
+        // index, and padding
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
         authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
@@ -1676,7 +1684,8 @@ impl ToggleSubAccountInstruction {
         let secp256r1_verify_ix =
             new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
 
-        // For secp256r1, the authority payload includes slot, counter, instruction index, and padding
+        // For secp256r1, the authority payload includes slot, counter, instruction
+        // index, and padding
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
         authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes

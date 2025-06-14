@@ -258,7 +258,8 @@ fn test_secp256k1_root_remove_authority() {
         .airdrop(&second_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Create signing function for secp256k1 authority (same pattern as working test)
+    // Create signing function for secp256k1 authority (same pattern as working
+    // test)
     let signing_fn = |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&payload[..32]);
@@ -266,7 +267,8 @@ fn test_secp256k1_root_remove_authority() {
         root_wallet.sign_hash_sync(&hash).unwrap().as_bytes()
     };
 
-    // Add the second authority using secp256k1 root authority (same as working test)
+    // Add the second authority using secp256k1 root authority (same as working
+    // test)
     let add_authority_ix = swig_interface::AddAuthorityInstruction::new_with_secp256k1_authority(
         swig_key,
         context.default_payer.pubkey(),
