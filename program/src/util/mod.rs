@@ -291,39 +291,47 @@ pub fn get_price_data_from_bytes(
     maximum_age: u64,
     feed_id: &[u8],
 ) -> Result<(u64, u64, i32), SwigError> {
-    let verification_level = price_update_data[40];
+    let verification_level = unsafe { *price_update_data.get_unchecked(40) };
     if verification_level != 1 {
         return Err(SwigError::OracleVerficationLevelFailed);
     }
 
     // Feed id
-    let mut feed_id_array = [0u8; 32];
-    feed_id_array.copy_from_slice(&price_update_data[41..73]);
-
-    msg!("feed_id_array {:?}, ", feed_id_array);
-    if feed_id_array != *feed_id {
+    if unsafe { price_update_data.get_unchecked(41..73) } != feed_id {
         return Err(SwigError::InvalidOraclePriceData);
     }
 
     // price (8 bytes) [73..81]
-    let mut price_bytes = [0u8; 8];
-    price_bytes.copy_from_slice(&price_update_data[73..81]);
-    let price = i64::from_le_bytes(price_bytes);
+    let price = i64::from_le_bytes(unsafe {
+        price_update_data
+            .get_unchecked(73..81)
+            .try_into()
+            .map_err(|_| SwigError::InvalidOraclePriceData)?
+    });
 
     // conf (8 bytes) [81..89]
-    let mut conf_bytes = [0u8; 8];
-    conf_bytes.copy_from_slice(&price_update_data[81..89]);
-    let confidence = u64::from_le_bytes(conf_bytes);
+    let confidence = u64::from_le_bytes(unsafe {
+        price_update_data
+            .get_unchecked(81..89)
+            .try_into()
+            .map_err(|_| SwigError::InvalidOraclePriceData)?
+    });
 
     // exponent (4 bytes) [89..93]
-    let mut exp_bytes = [0u8; 4];
-    exp_bytes.copy_from_slice(&price_update_data[89..93]);
-    let exponent = i32::from_le_bytes(exp_bytes);
+    let exponent = i32::from_le_bytes(unsafe {
+        price_update_data
+            .get_unchecked(89..93)
+            .try_into()
+            .map_err(|_| SwigError::InvalidOraclePriceData)?
+    });
 
     // publish_time (8 bytes) [93..101]
-    let mut pub_time_bytes = [0u8; 8];
-    pub_time_bytes.copy_from_slice(&price_update_data[93..101]);
-    let publish_time = i64::from_le_bytes(pub_time_bytes);
+    let publish_time = i64::from_le_bytes(unsafe {
+        price_update_data
+            .get_unchecked(93..101)
+            .try_into()
+            .map_err(|_| SwigError::InvalidOraclePriceData)?
+    });
 
     if publish_time.saturating_add(maximum_age.try_into().unwrap()) < current_timestamp {
         return Err(SwigError::OraclePriceTooOld);
