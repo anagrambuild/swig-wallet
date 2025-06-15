@@ -4,6 +4,7 @@
 //! - Program scope caching and lookup
 //! - Account balance reading
 //! - Token transfer operations
+//! - Oracle Program for token price fetch
 //! The utilities are optimized for performance and safety.
 
 use std::mem::MaybeUninit;
@@ -12,6 +13,7 @@ use pinocchio::{
     account_info::AccountInfo,
     cpi::invoke_signed,
     instruction::{AccountMeta, Instruction, Signer},
+    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
     ProgramResult,
@@ -281,4 +283,59 @@ impl<'a> TokenTransfer<'a> {
 
         invoke_signed(&instruction, &[self.from, self.to, self.authority], signers)
     }
+}
+
+pub fn get_price_data_from_bytes(
+    price_update_data: &[u8],
+    current_timestamp: i64,
+    maximum_age: u64,
+    feed_id: &[u8],
+) -> Result<(u64, u64, i32), SwigError> {
+    let verification_level = unsafe { *price_update_data.get_unchecked(40) };
+    if verification_level != 1 {
+        return Err(SwigError::OracleVerficationLevelFailed);
+    }
+
+    // Feed id
+    if unsafe { price_update_data.get_unchecked(41..73) } != feed_id {
+        return Err(SwigError::InvalidOraclePriceData);
+    }
+
+    // price (8 bytes) [73..81]
+    let price = i64::from_le_bytes(unsafe {
+        price_update_data
+            .get_unchecked(73..81)
+            .try_into()
+            .map_err(|_| SwigError::InvalidOraclePriceData)?
+    });
+
+    // conf (8 bytes) [81..89]
+    let confidence = u64::from_le_bytes(unsafe {
+        price_update_data
+            .get_unchecked(81..89)
+            .try_into()
+            .map_err(|_| SwigError::InvalidOraclePriceData)?
+    });
+
+    // exponent (4 bytes) [89..93]
+    let exponent = i32::from_le_bytes(unsafe {
+        price_update_data
+            .get_unchecked(89..93)
+            .try_into()
+            .map_err(|_| SwigError::InvalidOraclePriceData)?
+    });
+
+    // publish_time (8 bytes) [93..101]
+    let publish_time = i64::from_le_bytes(unsafe {
+        price_update_data
+            .get_unchecked(93..101)
+            .try_into()
+            .map_err(|_| SwigError::InvalidOraclePriceData)?
+    });
+
+    if publish_time.saturating_add(maximum_age.try_into().unwrap()) < current_timestamp {
+        return Err(SwigError::OraclePriceTooOld);
+    }
+
+    Ok((price as u64, confidence, exponent))
 }

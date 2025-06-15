@@ -19,6 +19,7 @@ use swig_compact_instructions::InstructionIterator;
 use swig_state_x::{
     action::{
         all::All,
+        oracle_limits::OracleTokenLimit,
         program_scope::{NumericType, ProgramScope},
         sol_limit::SolLimit,
         sol_recurring_limit::SolRecurringLimit,
@@ -40,6 +41,7 @@ use crate::{
         accounts::{Context, SignV1Accounts},
         SwigInstruction,
     },
+    util::get_price_data_from_bytes,
     AccountClassification,
 };
 // use swig_instructions::InstructionIterator;
@@ -225,7 +227,36 @@ pub fn sign_v1(
                     }
                     if lamports > &current_lamports {
                         let amount_diff = lamports - current_lamports;
+                        {
+                            if let Some(action) =
+                                RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
+                            {
+                                let oracle_data = unsafe {
+                                    &all_accounts
+                                        .get_unchecked(all_accounts.len() - 1)
+                                        .borrow_data_unchecked()
+                                };
 
+                                let current_timestamp = Clock::get()?.unix_timestamp;
+                                let feed_id: [u8; 32] = [
+                                    239, 13, 139, 111, 218, 44, 235, 164, 29, 161, 93, 64, 149,
+                                    209, 218, 57, 42, 13, 47, 142, 208, 198, 199, 188, 15, 76, 250,
+                                    200, 194, 128, 181, 109,
+                                ];
+                                let (price, confidence, exponent) = get_price_data_from_bytes(
+                                    oracle_data,
+                                    current_timestamp,
+                                    100,
+                                    &feed_id,
+                                )?;
+
+                                action.run_for_sol(amount_diff, price, confidence, exponent)?;
+
+                                if !action.passthrough_check {
+                                    continue;
+                                }
+                            };
+                        }
                         {
                             if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])?
                             {
@@ -279,6 +310,34 @@ pub fn sign_v1(
 
                     if balance > &current_token_balance {
                         let diff = balance - current_token_balance;
+                        // Check oracle token limit
+                        {
+                            if let Some(action) =
+                                RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
+                            {
+                                let oracle_data = unsafe {
+                                    &all_accounts
+                                        .get_unchecked(all_accounts.len() - 1)
+                                        .borrow_data_unchecked()
+                                };
+
+                                let current_timestamp = Clock::get()?.unix_timestamp;
+                                let (feed_id, decimal) =
+                                    OracleTokenLimit::get_feed_id_and_decimal_from_mint(mint)?;
+
+                                let (price, confidence, exponent) = get_price_data_from_bytes(
+                                    oracle_data,
+                                    current_timestamp,
+                                    100,
+                                    &feed_id,
+                                )?;
+
+                                action.run_for_token(diff, price, confidence, exponent, decimal)?;
+                                if !action.passthrough_check {
+                                    continue;
+                                }
+                            };
+                        }
                         {
                             if let Some(action) =
                                 RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?

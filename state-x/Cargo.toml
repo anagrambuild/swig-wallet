@@ -6,10 +6,12 @@ edition = "2021"
 
 [dependencies]
 pinocchio = { version = "=0.8.1", features = ["std"] }
+pinocchio-pubkey = { version = "0.2.4" }
 swig-assertions = { path = "../assertions" }
 no-padding = { path = "../no-padding" }
 murmur3 = { version = "0.5.2", optional = true }
 libsecp256k1 = { version = "0.7.2", default-features = false}
+hex = "0.4.3"
 
 [target.'cfg(not(feature = "static_syscalls"))'.dependencies]
 murmur3 = "0.5.2"

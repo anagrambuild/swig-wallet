@@ -97,6 +97,12 @@ pub enum SwigStateError {
     RoleNotFound,
     /// Error loading permissions
     PermissionLoadError,
+    /// Oracle not available for mint
+    InvalidOracleTokenMint,
+    /// Feed Id non hex char
+    FeedIdNonHexCharacter,
+    /// Feed id must be 32 bytes
+    FeedIdMustBe32Bytes,
 }
 
 /// Error types related to authentication operations.
@@ -145,6 +151,10 @@ pub enum SwigAuthenticateError {
     InvalidSessionDuration,
     /// Token account authority is not the Swig account
     PermissionDeniedTokenAccountAuthorityNotSwig,
+    /// Missing oracle account
+    PermissionDeniedOracleLimitReached,
+    /// Invalid oracle price data
+    InvalidOraclePriceData,
 }
 
 impl From<SwigStateError> for ProgramError {
