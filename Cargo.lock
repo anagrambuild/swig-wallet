@@ -9004,6 +9004,7 @@ dependencies = [
  "murmur3",
  "no-padding",
  "pinocchio 0.8.1",
+ "pinocchio-pubkey",
  "rand 0.9.0",
  "swig-assertions",
 ]

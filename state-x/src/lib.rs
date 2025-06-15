@@ -99,6 +99,10 @@ pub enum SwigStateError {
     PermissionLoadError,
     /// Oracle not available for mint
     InvalidOracleTokenMint,
+    /// Feed Id non hex char
+    FeedIdNonHexCharacter,
+    /// Feed id must be 32 bytes
+    FeedIdMustBe32Bytes,
 }
 
 /// Error types related to authentication operations.
