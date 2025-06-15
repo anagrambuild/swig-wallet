@@ -54,14 +54,14 @@ impl TryFrom<u8> for BaseAsset {
 /// by converting token amounts to the base asset value using oracle price feeds.
 ///
 /// # Fields
-/// * `value_limit` - The current remaining amount that can be used (in base asset lamports)
+/// * `value_limit` - The current remaining amount that can be used (in base asset)
 /// * `base_asset_type` - The base asset type used to denominate the limit (e.g. USDC)
 /// * `passthrough_check` - Flag to check remaining actions after oracle limit check
 /// * `_padding` - Padding bytes to ensure proper struct alignment
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct OracleTokenLimit {
-    /// The current remaining amount that can be used (in base asset lamports)
+    /// The current remaining amount that can be used (in base asset)
     pub value_limit: u64,
     /// The base asset type used to denominate the limit (e.g. USDC)
     pub base_asset_type: u8,
@@ -77,7 +77,7 @@ impl OracleTokenLimit {
     ///
     /// # Arguments
     /// * `base_asset` - The base asset to denominate the limit in (e.g. USDC)
-    /// * `value_limit` - The maximum value allowed in base asset lamports
+    /// * `value_limit` - The maximum value allowed in base asset
     /// * `passthrough_check` - Whether to check remaining actions after oracle limit check
     ///
     /// # Returns
