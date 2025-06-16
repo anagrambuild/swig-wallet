@@ -40,7 +40,7 @@ use crate::{
         accounts::{Context, SignV1Accounts},
         SwigInstruction,
     },
-    util::{hash_except, ExcludeRange},
+    util::hash_except,
     AccountClassification,
 };
 // use swig_instructions::InstructionIterator;
@@ -49,13 +49,10 @@ pub const INSTRUCTION_SYSVAR_ACCOUNT: Pubkey =
     from_str("Sysvar1nstructions1111111111111111111111111");
 
 /// Exclude range for token account balance field (bytes 64-72)
-const TOKEN_BALANCE_EXCLUDE_RANGE: ExcludeRange = ExcludeRange { start: 64, end: 72 };
+const TOKEN_BALANCE_EXCLUDE_RANGE: core::ops::Range<usize> = 64..72;
 
 /// Exclude range for stake account balance field (bytes 184-192)
-const STAKE_BALANCE_EXCLUDE_RANGE: ExcludeRange = ExcludeRange {
-    start: 184,
-    end: 192,
-};
+const STAKE_BALANCE_EXCLUDE_RANGE: core::ops::Range<usize> = 184..192;
 
 /// Token account field ranges
 const TOKEN_MINT_RANGE: core::ops::Range<usize> = 0..32;
@@ -70,7 +67,7 @@ const STAKE_BALANCE_RANGE: core::ops::Range<usize> = 184..192;
 const TOKEN_ACCOUNT_INITIALIZED_STATE: u8 = 1;
 
 /// Empty exclude ranges for hash_except when no exclusions are needed
-const NO_EXCLUDE_RANGES: &[ExcludeRange] = &[];
+const NO_EXCLUDE_RANGES: &[core::ops::Range<usize>] = &[];
 
 /// Arguments for signing a transaction with a Swig wallet.
 ///
@@ -276,7 +273,7 @@ pub fn sign_v1(
                     let start = program_scope.balance_field_start as usize;
                     let end = program_scope.balance_field_end as usize;
                     if start < end && end <= data.len() {
-                        let exclude_ranges = [ExcludeRange { start, end }];
+                        let exclude_ranges = [start..end];
                         let hash = hash_except(&data, &exclude_ranges);
                         Some(hash)
                     } else {
@@ -488,10 +485,8 @@ pub fn sign_v1(
                                 > 0
                                 && program_scope.balance_field_end as usize <= data.len()
                             {
-                                let exclude_ranges = [ExcludeRange {
-                                    start: program_scope.balance_field_start as usize,
-                                    end: program_scope.balance_field_end as usize,
-                                }];
+                                let exclude_ranges = [program_scope.balance_field_start as usize
+                                    ..program_scope.balance_field_end as usize];
                                 let current_hash = hash_except(&data, &exclude_ranges);
                                 let snapshot_hash =
                                     unsafe { account_snapshots[index].assume_init_ref() };

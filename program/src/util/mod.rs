@@ -285,12 +285,6 @@ impl<'a> TokenTransfer<'a> {
     }
 }
 
-/// Represents a range of bytes to exclude from hashing
-pub struct ExcludeRange {
-    pub start: usize,
-    pub end: usize,
-}
-
 /// Computes a hash of data while excluding specified byte ranges.
 ///
 /// This function uses the SHA256 hash algorithm which is optimized
@@ -309,7 +303,7 @@ pub struct ExcludeRange {
 /// - The exclude_ranges are non-overlapping and sorted by start position
 /// - All ranges are within the bounds of the data
 #[inline(always)]
-pub fn hash_except(data: &[u8], exclude_ranges: &[ExcludeRange]) -> [u8; 32] {
+pub fn hash_except(data: &[u8], exclude_ranges: &[core::ops::Range<usize>]) -> [u8; 32] {
     let mut segments = Vec::new();
     let mut position = 0;
 
