@@ -159,10 +159,10 @@ pub fn withdraw_from_sub_account_v1(
         )?;
     }
     let (action_accounts_index, action_accounts_len) =
-        if role.position.authority_type()? == AuthorityType::Ed25519 {
-            (4, 7)
-        } else {
+        if role.position.authority_type()? == AuthorityType::Secp256k1 {
             (3, 6)
+        } else {
+            (4, 7)
         };
     let manage_authority_action = role.get_action::<ManageAuthority>(&[])?;
     let all_action = role.get_action::<All>(&[])?;

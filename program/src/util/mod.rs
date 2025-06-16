@@ -23,8 +23,10 @@ use swig_state_x::{
         program_scope::{NumericType, ProgramScope},
         Action, Permission,
     },
+    authority::AuthorityType,
     constants::PROGRAM_SCOPE_BYTE_SIZE,
     read_numeric_field,
+    role::RoleMut,
     swig::{Swig, SwigWithRoles},
     Transmutable,
 };
@@ -282,6 +284,57 @@ impl<'a> TokenTransfer<'a> {
         };
 
         invoke_signed(&instruction, &[self.from, self.to, self.authority], signers)
+    }
+}
+
+/// Builds a restricted keys array for transaction signing.
+///
+/// This function creates an array of public keys that are restricted from being
+/// used as signers in the transaction. The behavior differs based on the
+/// authority type:
+/// - For Secp256k1 and Secp256r1: Only includes the payer key
+/// - For other authority types: Includes both the payer key and the authority
+///   key
+///
+/// # Arguments
+/// * `role` - The role containing the authority type information
+/// * `payer_key` - The payer account's public key
+/// * `authority_payload` - The authority payload containing the authority index
+/// * `all_accounts` - All accounts involved in the transaction
+///
+/// # Returns
+/// * `Result<&[&Pubkey], ProgramError>` - A slice of restricted public keys
+///
+/// # Safety
+/// This function uses unsafe operations for performance. The caller must
+/// ensure:
+/// - `authority_payload` has at least one byte when authority type is not
+///   Secp256k1/r1
+/// - `all_accounts` contains the account at the specified authority index
+#[inline(always)]
+pub unsafe fn build_restricted_keys<'a>(
+    role: &RoleMut,
+    payer_key: &'a Pubkey,
+    authority_payload: &[u8],
+    all_accounts: &'a [AccountInfo],
+    restricted_keys_storage: &'a mut [MaybeUninit<&'a Pubkey>; 2],
+) -> Result<&'a [&'a Pubkey], ProgramError> {
+    if role.position.authority_type()? == AuthorityType::Secp256k1
+        || role.position.authority_type()? == AuthorityType::Secp256r1
+    {
+        restricted_keys_storage[0].write(payer_key);
+        Ok(core::slice::from_raw_parts(
+            restricted_keys_storage.as_ptr() as _,
+            1,
+        ))
+    } else {
+        let authority_index = *authority_payload.get_unchecked(0) as usize;
+        restricted_keys_storage[0].write(payer_key);
+        restricted_keys_storage[1].write(all_accounts[authority_index].key());
+        Ok(core::slice::from_raw_parts(
+            restricted_keys_storage.as_ptr() as _,
+            2,
+        ))
     }
 }
 

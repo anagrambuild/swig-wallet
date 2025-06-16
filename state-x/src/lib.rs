@@ -145,6 +145,12 @@ pub enum SwigAuthenticateError {
     InvalidSessionDuration,
     /// Token account authority is not the Swig account
     PermissionDeniedTokenAccountAuthorityNotSwig,
+    /// Invalid Secp256r1 instruction
+    PermissionDeniedSecp256r1InvalidInstruction,
+    /// Invalid Secp256r1 public key
+    PermissionDeniedSecp256r1InvalidPubkey,
+    /// Invalid Secp256r1 message hash
+    PermissionDeniedSecp256r1InvalidMessageHash,
 }
 
 impl From<SwigStateError> for ProgramError {
