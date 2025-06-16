@@ -40,6 +40,7 @@ use crate::{
         accounts::{Context, SignV1Accounts},
         SwigInstruction,
     },
+    util::build_restricted_keys,
     AccountClassification,
 };
 // use swig_instructions::InstructionIterator;

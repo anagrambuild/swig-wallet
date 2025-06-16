@@ -73,6 +73,10 @@ pub enum SwigError {
     /// Invalid program scope
     #[error("Invalid program scope")]
     InvalidProgramScope,
+
+    /// Counter not set
+    #[error("Counter not set")]
+    CounterNotSet,
 }
 
 impl From<anyhow::Error> for SwigError {

@@ -236,6 +236,126 @@ fn test_create_remove_secp_authority() {
 }
 
 #[test_log::test]
+fn test_secp256k1_root_remove_authority() {
+    use alloy_primitives::B256;
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::LocalSigner;
+
+    let mut context = setup_test_context().unwrap();
+
+    // Create a secp256k1 root authority wallet
+    let root_wallet = LocalSigner::random();
+    let id = rand::random::<[u8; 32]>();
+
+    // Create a swig wallet with secp256k1 root authority
+    let (swig_key, _) = create_swig_secp256k1(&mut context, &root_wallet, id).unwrap();
+    context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
+
+    // Create a second Ed25519 authority to add and later remove
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Create signing function for secp256k1 authority (same pattern as working
+    // test)
+    let signing_fn = |payload: &[u8]| -> [u8; 65] {
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&payload[..32]);
+        let hash = B256::from(hash);
+        root_wallet.sign_hash_sync(&hash).unwrap().as_bytes()
+    };
+
+    // Add the second authority using secp256k1 root authority (same as working
+    // test)
+    let add_authority_ix = swig_interface::AddAuthorityInstruction::new_with_secp256k1_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        signing_fn,
+        0, // current slot (same as working test)
+        1, // counter = 1 (first transaction, same as working test)
+        0, // role_id of the primary wallet
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[add_authority_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
+
+    // Transaction should succeed
+    let result = context.svm.send_transaction(tx);
+    context.svm.expire_blockhash();
+    context.svm.warp_to_slot(1);
+    assert!(
+        result.is_ok(),
+        "Failed to add ed25519 authority: {:?}",
+        result.err()
+    );
+
+    // Verify the authority was added
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig_state.state.roles, 2);
+
+    let remove_ix = RemoveAuthorityInstruction::new_with_secp256k1_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        signing_fn,
+        1, // current slot
+        2, // counter = 2 (second transaction),
+        0, // role_id of the primary wallet (secp256k1 root authority)
+        1, // Authority to remove (the Ed25519 authority)
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[remove_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
+
+    // Transaction should succeed
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_ok(),
+        "Failed to remove authority with secp256k1: {:?}",
+        result.err()
+    );
+
+    // Verify that only one authority remains (the secp256k1 root)
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig_state.state.roles, 1);
+
+    // Verify it's the secp256k1 root authority by checking the authority type
+    let role = swig_state.get_role(0).unwrap().unwrap();
+    assert_eq!(role.authority.authority_type(), AuthorityType::Secp256k1);
+
+    println!("✓ Secp256k1 root authority successfully removed Ed25519 authority");
+    println!("✓ Signature counter functionality verified for secp256k1 remove authority operation");
+}
+
+#[test_log::test]
 fn test_remove_authority_permissions() {
     let mut context = setup_test_context().unwrap();
     let root_authority = Keypair::new();

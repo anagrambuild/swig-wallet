@@ -28,6 +28,7 @@ use crate::{
         accounts::{Context, SubAccountSignV1Accounts},
         SwigInstruction,
     },
+    util::build_restricted_keys,
     AccountClassification,
 };
 
