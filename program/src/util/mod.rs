@@ -304,21 +304,33 @@ impl<'a> TokenTransfer<'a> {
 /// - All ranges are within the bounds of the data
 #[inline(always)]
 pub fn hash_except(data: &[u8], exclude_ranges: &[core::ops::Range<usize>]) -> [u8; 32] {
-    let mut segments = Vec::new();
+    // Maximum possible segments: one before each exclude range + one after all ranges
+    const MAX_SEGMENTS: usize = 16; // Reasonable upper bound, however most cases are <= 3
+    let mut segments: [&[u8]; MAX_SEGMENTS] = [&[]; MAX_SEGMENTS];
+    let mut segment_count = 0;
     let mut position = 0;
 
-    for range in exclude_ranges {
-        // Add bytes before this exclusion range
-        if position < range.start {
-            segments.push(&data[position..range.start]);
+    // If no exclude ranges, hash the entire data
+    #[allow(unused)]
+    if exclude_ranges.is_empty() {
+        segments[0] = data;
+        segment_count = 1;
+    } else {
+        for range in exclude_ranges {
+            // Add bytes before this exclusion range
+            if position < range.start {
+                segments[segment_count] = &data[position..range.start];
+                segment_count += 1;
+            }
+            // Skip to end of exclusion range
+            position = range.end;
         }
-        // Skip to end of exclusion range
-        position = range.end;
-    }
 
-    // Add any remaining bytes after the last exclusion range
-    if position < data.len() {
-        segments.push(&data[position..]);
+        // Add any remaining bytes after the last exclusion range
+        if position < data.len() {
+            segments[segment_count] = &data[position..];
+            segment_count += 1;
+        }
     }
 
     let mut data_payload_hash = [0u8; 32];
@@ -327,7 +339,7 @@ pub fn hash_except(data: &[u8], exclude_ranges: &[core::ops::Range<usize>]) -> [
     unsafe {
         let res = sol_sha256(
             segments.as_ptr() as *const u8,
-            segments.len() as u64,
+            segment_count as u64,
             data_payload_hash.as_mut_ptr() as *mut u8,
         );
     }
