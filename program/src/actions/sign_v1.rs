@@ -48,6 +48,30 @@ use crate::{
 pub const INSTRUCTION_SYSVAR_ACCOUNT: Pubkey =
     from_str("Sysvar1nstructions1111111111111111111111111");
 
+/// Exclude range for token account balance field (bytes 64-72)
+const TOKEN_BALANCE_EXCLUDE_RANGE: ExcludeRange = ExcludeRange { start: 64, end: 72 };
+
+/// Exclude range for stake account balance field (bytes 184-192)
+const STAKE_BALANCE_EXCLUDE_RANGE: ExcludeRange = ExcludeRange {
+    start: 184,
+    end: 192,
+};
+
+/// Token account field ranges
+const TOKEN_MINT_RANGE: core::ops::Range<usize> = 0..32;
+const TOKEN_AUTHORITY_RANGE: core::ops::Range<usize> = 32..64;
+const TOKEN_BALANCE_RANGE: core::ops::Range<usize> = 64..72;
+const TOKEN_STATE_INDEX: usize = 108;
+
+/// Stake account field ranges
+const STAKE_BALANCE_RANGE: core::ops::Range<usize> = 184..192;
+
+/// Account state constants
+const TOKEN_ACCOUNT_INITIALIZED_STATE: u8 = 1;
+
+/// Empty exclude ranges for hash_except when no exclusions are needed
+const NO_EXCLUDE_RANGES: &[ExcludeRange] = &[];
+
 /// Arguments for signing a transaction with a Swig wallet.
 ///
 /// # Fields
@@ -224,23 +248,20 @@ pub fn sign_v1(
                 // modifications Lamports are handled separately in the
                 // permission check, but we still need to verify
                 // that the account data itself hasn't been tampered with
-                let hash = hash_except(&data, &[]);
+                let hash = hash_except(&data, NO_EXCLUDE_RANGES);
                 Some(hash)
             },
             AccountClassification::SwigTokenAccount { .. } => {
                 let data = unsafe { account.borrow_data_unchecked() };
                 // Exclude token balance field (bytes 64-72)
-                let exclude_ranges = [ExcludeRange { start: 64, end: 72 }];
+                let exclude_ranges = [TOKEN_BALANCE_EXCLUDE_RANGE];
                 let hash = hash_except(&data, &exclude_ranges);
                 Some(hash)
             },
             AccountClassification::SwigStakeAccount { .. } => {
                 let data = unsafe { account.borrow_data_unchecked() };
                 // Exclude stake balance field (bytes 184-192)
-                let exclude_ranges = [ExcludeRange {
-                    start: 184,
-                    end: 192,
-                }];
+                let exclude_ranges = [STAKE_BALANCE_EXCLUDE_RANGE];
                 let hash = hash_except(&data, &exclude_ranges);
                 Some(hash)
             },
@@ -290,7 +311,7 @@ pub fn sign_v1(
                 AccountClassification::ThisSwig { lamports } => {
                     let data =
                         unsafe { &all_accounts.get_unchecked(index).borrow_data_unchecked() };
-                    let current_hash = hash_except(&data, &[]);
+                    let current_hash = hash_except(&data, NO_EXCLUDE_RANGES);
                     let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
                     if *snapshot_hash != current_hash {
                         return Err(SwigError::AccountDataModifiedUnexpectedly.into());
@@ -327,17 +348,18 @@ pub fn sign_v1(
                     let data =
                         unsafe { &all_accounts.get_unchecked(index).borrow_data_unchecked() };
 
-                    let exclude_ranges = [ExcludeRange { start: 64, end: 72 }];
+                    let exclude_ranges = [TOKEN_BALANCE_EXCLUDE_RANGE];
                     let current_hash = hash_except(&data, &exclude_ranges);
                     let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
                     if *snapshot_hash != current_hash {
                         return Err(SwigError::AccountDataModifiedUnexpectedly.into());
                     }
-                    let mint = unsafe { data.get_unchecked(0..32) };
-                    let state = unsafe { *data.get_unchecked(108) };
-                    let authority = unsafe { data.get_unchecked(32..64) };
+                    let mint = unsafe { data.get_unchecked(TOKEN_MINT_RANGE) };
+                    let state = unsafe { *data.get_unchecked(TOKEN_STATE_INDEX) };
+
+                    let authority = unsafe { data.get_unchecked(TOKEN_AUTHORITY_RANGE) };
                     let current_token_balance = u64::from_le_bytes(unsafe {
-                        data.get_unchecked(64..72)
+                        data.get_unchecked(TOKEN_BALANCE_RANGE)
                             .try_into()
                             .map_err(|_| ProgramError::InvalidAccountData)?
                     });
@@ -348,7 +370,7 @@ pub fn sign_v1(
                                 .into(),
                         );
                     }
-                    if state != 1 {
+                    if state != TOKEN_ACCOUNT_INITIALIZED_STATE {
                         return Err(
                             SwigAuthenticateError::PermissionDeniedTokenAccountNotInitialized
                                 .into(),
@@ -380,10 +402,7 @@ pub fn sign_v1(
                     // Get current stake balance from account data
                     let data =
                         unsafe { &all_accounts.get_unchecked(index).borrow_data_unchecked() };
-                    let exclude_ranges = [ExcludeRange {
-                        start: 184,
-                        end: 192,
-                    }];
+                    let exclude_ranges = [STAKE_BALANCE_EXCLUDE_RANGE];
                     let current_hash = hash_except(&data, &exclude_ranges);
                     let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
                     if *snapshot_hash != current_hash {
@@ -392,7 +411,7 @@ pub fn sign_v1(
 
                     // Extract current stake balance from account
                     let current_stake_balance = u64::from_le_bytes(unsafe {
-                        data.get_unchecked(184..192)
+                        data.get_unchecked(STAKE_BALANCE_RANGE)
                             .try_into()
                             .map_err(|_| ProgramError::InvalidAccountData)?
                     });
