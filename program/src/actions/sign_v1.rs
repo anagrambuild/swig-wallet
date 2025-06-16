@@ -481,10 +481,12 @@ pub fn sign_v1(
                             let account = unsafe { all_accounts.get_unchecked(index) };
                             let data = unsafe { account.borrow_data_unchecked() };
 
+                            // Check if balance field range is valid
                             if program_scope.balance_field_end - program_scope.balance_field_start
                                 > 0
                                 && program_scope.balance_field_end as usize <= data.len()
                             {
+                                // Hash the data excluding the balance field
                                 let exclude_ranges = [program_scope.balance_field_start as usize
                                     ..program_scope.balance_field_end as usize];
                                 let current_hash = hash_except(&data, &exclude_ranges);
@@ -493,14 +495,10 @@ pub fn sign_v1(
                                 if *snapshot_hash != current_hash {
                                     return Err(SwigError::AccountDataModifiedUnexpectedly.into());
                                 }
-                            }
 
-                            let current_balance = if program_scope.balance_field_end
-                                - program_scope.balance_field_start
-                                > 0
-                            {
-                                // Use the defined balance field indices to read the balance
-                                match program_scope.read_account_balance(data) {
+                                // Read the current balance from the account data
+                                let current_balance = match program_scope.read_account_balance(data)
+                                {
                                     Ok(bal) => bal,
                                     Err(err) => {
                                         msg!("Error reading balance from account data: {:?}", err);
@@ -508,15 +506,15 @@ pub fn sign_v1(
                                             SwigError::InvalidProgramScopeBalanceFields.into()
                                         );
                                     },
-                                }
+                                };
+
+                                let amount_spent = balance - current_balance;
+
+                                // Execute the program scope run with proper amount and slot
+                                program_scope.run(amount_spent, Some(slot))?;
                             } else {
                                 return Err(SwigError::InvalidProgramScopeBalanceFields.into());
-                            };
-
-                            let amount_spent = balance - current_balance;
-
-                            // Execute the program scope run with proper amount and slot
-                            program_scope.run(amount_spent, Some(slot))?;
+                            }
                         },
                         None => {
                             return Err(
