@@ -500,7 +500,7 @@ fn secp256k1_authenticate(
         }
         // First compress the recovered key to 33 bytes
         let compressed_recovered_key = compress(&recovered_key.assume_init());
-        sol_assert_bytes_eq(&compressed_recovered_key, expected_key, 32)
+        sol_assert_bytes_eq(&compressed_recovered_key, expected_key, 33)
     };
     if !matches {
         return Err(SwigAuthenticateError::PermissionDenied.into());
