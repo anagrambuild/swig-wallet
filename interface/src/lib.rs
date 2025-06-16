@@ -153,7 +153,6 @@ impl CreateInstruction {
             swig_bump_seed,
             initial_authority.authority_type,
             initial_authority.authority.len() as u16,
-            actions.len() as u8,
         );
         let mut write = Vec::new();
         write.extend_from_slice(

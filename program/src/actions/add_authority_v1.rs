@@ -167,9 +167,7 @@ pub fn add_authority_v1(
     // closure here to avoid borrowing swig_account_data for the whole function so
     // that we can mutate after realloc
 
-    if add_authority_v1.args.num_actions == 0 {
-        return Err(SwigError::InvalidAuthorityMustHaveAtLeastOneAction.into());
-    }
+    // Note: num_actions validation is now done internally in add_role
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let swig_data_len = swig_account_data.len();
     let new_authority_type = AuthorityType::try_from(add_authority_v1.args.new_authority_type)?;
@@ -242,7 +240,6 @@ pub fn add_authority_v1(
     swig_builder.add_role(
         new_authority_type,
         add_authority_v1.authority_data,
-        add_authority_v1.args.num_actions,
         add_authority_v1.actions,
     )?;
     Ok(())
