@@ -1020,7 +1020,8 @@ fn test_transfer_between_swig_accounts() {
     let sender_account = context.svm.get_account(&sender_swig).unwrap();
     let recipient_account = context.svm.get_account(&recipient_swig).unwrap();
 
-    // Get initial recipient balance (should include the rent-exempt amount plus transfer)
+    // Get initial recipient balance (should include the rent-exempt amount plus
+    // transfer)
     let recipient_initial_balance = {
         let recipient_swig_state = SwigWithRoles::from_bytes(&recipient_account.data).unwrap();
         recipient_swig_state.state.reserved_lamports
