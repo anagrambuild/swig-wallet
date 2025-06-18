@@ -183,12 +183,13 @@ pub fn create_sub_account_v1(
             slot,
         )?;
     }
-    // Check if the role has the SubAccount permission
-    let sub_account_action = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?;
-    if sub_account_action.is_none() {
+    // Check if the role has the required permissions (All or SubAccount)
+    let all_action = role.get_action::<All>(&[])?;
+    let sub_account_action = role.get_action::<SubAccount>(&[])?;
+
+    if all_action.is_none() && sub_account_action.is_none() {
         return Err(SwigError::AuthorityCannotCreateSubAccount.into());
     }
-    let sub_account_action = sub_account_action.unwrap();
     // Derive the sub-account address using the authority index as seed
     let role_id_bytes = create_sub_account.args.role_id.to_le_bytes();
     let bump_byte = [create_sub_account.args.sub_account_bump];
