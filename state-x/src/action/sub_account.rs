@@ -6,6 +6,7 @@
 
 use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
+use swig_assertions::sol_assert_bytes_eq;
 
 use super::{Actionable, Permission};
 use crate::{IntoBytes, Transmutable, TransmutableMut};
@@ -41,9 +42,28 @@ impl<'a> Actionable<'a> for SubAccount {
     /// Multiple sub-account permissions can exist per role
     const REPEATABLE: bool = true;
 
-    /// Always returns true as matching is handled elsewhere
+    /// Checks if this sub-account permission matches the provided data.
+    ///
+    /// For sub-account creation, matches against empty data (since sub_account is initially zeroed).
+    /// For toggle/withdraw operations, matches against the actual sub-account pubkey.
+    ///
+    /// # Arguments
+    /// * `data` - The data to match against (empty for creation, pubkey for operations)
+    ///
+    /// # Returns
+    /// * `true` if the data matches this sub-account permission
+    /// * `false` if the data doesn't match
     fn match_data(&self, data: &[u8]) -> bool {
-        true
+        if data.is_empty() {
+            // For sub-account creation, match against zeroed sub_account field
+            sol_assert_bytes_eq(&self.sub_account, &[0u8; 32], 32);
+            self.sub_account == [0u8; 32]
+        } else if data.len() == 32 {
+            // For other operations, match against the actual sub-account pubkey
+            sol_assert_bytes_eq(&self.sub_account, data, 32)
+        } else {
+            false
+        }
     }
 
     /// Validates that the data has the correct length and is zeroed.
