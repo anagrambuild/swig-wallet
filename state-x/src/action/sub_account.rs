@@ -44,11 +44,13 @@ impl<'a> Actionable<'a> for SubAccount {
 
     /// Checks if this sub-account permission matches the provided data.
     ///
-    /// For sub-account creation, matches against empty data (since sub_account is initially zeroed).
-    /// For toggle/withdraw operations, matches against the actual sub-account pubkey.
+    /// For sub-account creation, matches against empty data (since sub_account
+    /// is initially zeroed). For toggle/withdraw operations, matches
+    /// against the actual sub-account pubkey.
     ///
     /// # Arguments
-    /// * `data` - The data to match against (empty for creation, pubkey for operations)
+    /// * `data` - The data to match against (empty for creation, pubkey for
+    ///   operations)
     ///
     /// # Returns
     /// * `true` if the data matches this sub-account permission
