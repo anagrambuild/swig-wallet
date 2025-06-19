@@ -2,6 +2,7 @@
 
 mod common;
 use common::*;
+use pinocchio_pubkey::pubkey;
 use solana_sdk::{
     clock::Clock,
     message::{v0, VersionedMessage},
@@ -75,11 +76,7 @@ fn test_authorization_lock_respects_simple_sol_limit() {
         .unwrap();
 
     // Wrapped SOL mint address (So11111111111111111111111111111111111111112)
-    let wrapped_sol_mint = [
-        0x06, 0x9b, 0x88, 0x57, 0xfe, 0xab, 0x89, 0x84, 0xfb, 0x98, 0x21, 0x9e, 0xed, 0xb0, 0x64,
-        0x52, 0x48, 0x1c, 0x28, 0x5e, 0x68, 0x5e, 0xa4, 0xfd, 0x83, 0x91, 0x35, 0x52, 0x2b, 0x70,
-        0x54, 0x2c,
-    ];
+    let wrapped_sol_mint = pubkey!("So11111111111111111111111111111111111111112");
 
     // Test 1: Successfully add authorization lock for 800 lamports (within limit)
     let auth_lock_amount_1 = 800u64;

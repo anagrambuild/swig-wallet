@@ -13,7 +13,7 @@ use pinocchio::{
     sysvars::{clock::Clock, Sysvar},
     ProgramResult,
 };
-use pinocchio_pubkey::from_str;
+use pinocchio_pubkey::{from_str, pubkey};
 use swig_assertions::*;
 use swig_compact_instructions::InstructionIterator;
 use swig_state_x::{
@@ -231,11 +231,8 @@ pub fn sign_v1(
                         let amount_diff = lamports - current_lamports;
 
                         // Wrapped SOL mint address
-                        const WRAPPED_SOL_MINT: [u8; 32] = [
-                            0x06, 0x9b, 0x88, 0x57, 0xfe, 0xab, 0x89, 0x84, 0xfb, 0x98, 0x21, 0x9e,
-                            0xed, 0xb0, 0x64, 0x52, 0x48, 0x1c, 0x28, 0x5e, 0x68, 0x5e, 0xa4, 0xfd,
-                            0x83, 0x91, 0x35, 0x52, 0x2b, 0x70, 0x54, 0x2c,
-                        ];
+                        const WRAPPED_SOL_MINT: [u8; 32] =
+                            pubkey!("So11111111111111111111111111111111111111112");
 
                         // Check authorization locks first for SOL spending using the cache
                         let mut total_authorized_amount = 0u64;
