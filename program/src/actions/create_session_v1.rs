@@ -25,7 +25,7 @@ use crate::{
 ///
 /// # Fields
 /// * `instruction` - The instruction type identifier
-/// * `authority_payload_len` - Length of the authority payload
+/// * `_padding` - Padding bytes for alignment
 /// * `role_id` - ID of the role creating the session
 /// * `session_duration` - Duration of the session in slots
 /// * `session_key` - Unique key for the session
@@ -33,7 +33,7 @@ use crate::{
 #[repr(C, align(8))]
 pub struct CreateSessionV1Args {
     pub instruction: SwigInstruction,
-    pub authority_payload_len: u16,
+    _padding: u16,
     pub role_id: u32,
     pub session_duration: u64,
     pub session_key: [u8; 32],
@@ -54,19 +54,13 @@ impl CreateSessionV1Args {
     ///
     /// # Arguments
     /// * `role_id` - ID of the role creating the session
-    /// * `authority_payload_len` - Length of the authority payload
     /// * `session_duration` - Duration of the session in slots
     /// * `session_key` - Unique key for the session
-    pub fn new(
-        role_id: u32,
-        authority_payload_len: u16,
-        session_duration: u64,
-        session_key: [u8; 32],
-    ) -> Self {
+    pub fn new(role_id: u32, session_duration: u64, session_key: [u8; 32]) -> Self {
         Self {
             instruction: SwigInstruction::CreateSessionV1,
+            _padding: 0,
             role_id,
-            authority_payload_len,
             session_duration,
             session_key,
         }

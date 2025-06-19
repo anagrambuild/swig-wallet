@@ -1,3 +1,7 @@
+#![cfg(not(feature = "program_scope_test"))]
+// This feature flag ensures these tests are only run when the
+// "program_scope_test" feature is not enabled. This allows us to isolate
+// and run only program_scope tests or only the regular tests.
 mod common;
 
 use common::*;
