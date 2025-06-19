@@ -141,7 +141,7 @@ impl<'a> CreateV1<'a> {
 #[inline(always)]
 pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult {
     check_system_owner(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
-    check_zero_balance(ctx.accounts.swig, SwigError::AccountNotEmptySwigAccount)?;
+    check_zero_data(ctx.accounts.swig, SwigError::AccountNotEmptySwigAccount)?;
 
     let create_v1 = CreateV1::from_instruction_bytes(create)?;
     let bump = check_self_pda(
@@ -168,10 +168,20 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
     let lamports_needed = Rent::get()?.minimum_balance(account_size);
     let swig = Swig::new(create_v1.args.id, bump, lamports_needed);
 
+    // Get current lamports in the account
+    let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
+
+    // Only transfer additional lamports if needed for rent exemption
+    let lamports_to_transfer = if current_lamports >= lamports_needed {
+        0
+    } else {
+        lamports_needed - current_lamports
+    };
+
     CreateAccount {
         from: ctx.accounts.payer,
         to: ctx.accounts.swig,
-        lamports: lamports_needed,
+        lamports: lamports_to_transfer,
         space: account_size as u64,
         owner: &crate::ID,
     }
