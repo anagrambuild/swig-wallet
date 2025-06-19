@@ -128,6 +128,10 @@ impl AuthorityInfo for Secp256k1Authority {
         Ok(self.public_key.as_ref())
     }
 
+    fn signature_odometer(&self) -> Option<u32> {
+        Some(self.signature_odometer)
+    }
+
     fn match_data(&self, data: &[u8]) -> bool {
         if data.len() != 64 {
             return false;
@@ -225,6 +229,10 @@ impl AuthorityInfo for Secp256k1SessionAuthority {
 
     fn identity(&self) -> Result<&[u8], ProgramError> {
         Ok(self.public_key.as_ref())
+    }
+
+    fn signature_odometer(&self) -> Option<u32> {
+        Some(self.signature_odometer)
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

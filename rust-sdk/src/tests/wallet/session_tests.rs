@@ -9,6 +9,7 @@ use swig_state_x::authority::{
 };
 
 use super::*;
+use crate::client_role::{Ed25519SessionClientRole, Secp256k1SessionClientRole};
 
 #[test_log::test]
 fn should_create_ed25519_session_authority() {
@@ -17,12 +18,13 @@ fn should_create_ed25519_session_authority() {
 
     let mut swig_wallet = SwigWallet::new(
         [0; 32],
-        AuthorityManager::Ed25519Session(CreateEd25519SessionAuthority::new(
-            main_authority.pubkey().to_bytes(),
-            session_key.pubkey().to_bytes(),
-            100,
+        Box::new(Ed25519SessionClientRole::new(
+            CreateEd25519SessionAuthority::new(
+                main_authority.pubkey().to_bytes(),
+                session_key.pubkey().to_bytes(),
+                100,
+            ),
         )),
-        &main_authority,
         &main_authority,
         "http://localhost:8899".to_string(),
         litesvm,
@@ -62,15 +64,14 @@ fn should_create_secp256k1_session_authority() {
 
     let swig_wallet = SwigWallet::new(
         [0; 32],
-        AuthorityManager::Secp256k1Session(
+        Box::new(Secp256k1SessionClientRole::new(
             CreateSecp256k1SessionAuthority::new(
                 secp_pubkey[1..].try_into().unwrap(),
                 [0; 32],
                 100,
             ),
             Box::new(sign_fn),
-        ),
-        &main_authority,
+        )),
         &main_authority,
         "http://localhost:8899".to_string(),
         litesvm,

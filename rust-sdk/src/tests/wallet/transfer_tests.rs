@@ -2,6 +2,7 @@ use solana_program::system_instruction;
 use solana_sdk::signature::{Keypair, Signer};
 
 use super::*;
+use crate::client_role::Ed25519ClientRole;
 
 #[test_log::test]
 fn should_transfer_within_limits() {
@@ -28,8 +29,8 @@ fn should_transfer_within_limits() {
     swig_wallet
         .switch_authority(
             1,
-            AuthorityManager::Ed25519(secondary_authority.pubkey()),
-            Some(&secondary_authority),
+            Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
+            None,
         )
         .unwrap();
 
@@ -45,7 +46,9 @@ fn should_transfer_within_limits() {
     // Transfer within limits
     let transfer_ix = system_instruction::transfer(&swig_account, &recipient.pubkey(), 100_000_000);
 
-    assert!(swig_wallet.sign(vec![transfer_ix], None).is_ok());
+    let signature = swig_wallet.sign(vec![transfer_ix], None).unwrap();
+    println!("signature: {:?}", signature);
+
     swig_wallet.display_swig().unwrap();
 }
 
@@ -74,8 +77,8 @@ fn should_fail_transfer_beyond_limits() {
     swig_wallet
         .switch_authority(
             1,
-            AuthorityManager::Ed25519(secondary_authority.pubkey()),
-            Some(&secondary_authority),
+            Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
+            None,
         )
         .unwrap();
     swig_wallet.switch_payer(&secondary_authority).unwrap();

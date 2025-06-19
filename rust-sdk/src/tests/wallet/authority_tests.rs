@@ -5,14 +5,15 @@ use solana_sdk::signature::{Keypair, Signer};
 use swig_state_x::authority::AuthorityType;
 
 use super::*;
+use crate::client_role::{Ed25519ClientRole, Secp256k1ClientRole};
 
 #[test_log::test]
 fn should_manage_authorities_successfully() {
     let (mut litesvm, main_authority) = setup_test_environment();
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
-    let secondary_authority = Keypair::new();
 
     // Add secondary authority with SOL permission
+    let secondary_authority = Keypair::new();
     swig_wallet
         .add_authority(
             AuthorityType::Ed25519,
@@ -54,8 +55,8 @@ fn should_manage_authorities_successfully() {
     swig_wallet
         .switch_authority(
             1,
-            AuthorityManager::Ed25519(third_authority.pubkey()),
-            Some(&third_authority),
+            Box::new(Ed25519ClientRole::new(third_authority.pubkey())),
+            None,
         )
         .unwrap();
 
@@ -137,8 +138,8 @@ fn should_add_secp256k1_authority() {
     swig_wallet
         .switch_authority(
             1,
-            AuthorityManager::Ed25519(third_authority.pubkey()),
-            Some(&third_authority),
+            Box::new(Ed25519ClientRole::new(third_authority.pubkey())),
+            None,
         )
         .unwrap();
 
@@ -172,8 +173,8 @@ fn should_switch_authority_and_payer() {
     swig_wallet
         .switch_authority(
             1,
-            AuthorityManager::Ed25519(secondary_authority.pubkey()),
-            Some(&secondary_authority),
+            Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
+            None,
         )
         .unwrap();
 

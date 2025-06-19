@@ -37,10 +37,8 @@ use swig_state_x::{
 const TOKEN_22_PROGRAM_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 
 use crate::{
-    error::SwigError,
-    instruction_builder::{AuthorityManager, SwigInstructionBuilder},
-    types::Permission,
-    RecurringConfig,
+    client_role::ClientRole, error::SwigError, instruction_builder::SwigInstructionBuilder,
+    types::Permission, RecurringConfig,
 };
 
 /// Swig protocol for transaction signing and authority management.
@@ -64,10 +62,9 @@ impl<'c> SwigWallet<'c> {
     /// # Arguments
     ///
     /// * `swig_id` - The unique identifier for the Swig account
-    /// * `authority_manager` - The authority manager specifying the type of
+    /// * `client_role` - The client role implementation specifying the type of
     ///   signing authority
     /// * `fee_payer` - The keypair that will pay for transactions
-    /// * `authority` - The wallet's authority keypair
     /// * `rpc_url` - The URL of the Solana RPC endpoint
     /// * `litesvm` - (test only) The LiteSVM instance for testing
     ///
@@ -77,7 +74,7 @@ impl<'c> SwigWallet<'c> {
     /// `SwigError`
     pub fn new(
         swig_id: [u8; 32],
-        authority_manager: AuthorityManager,
+        client_role: Box<dyn ClientRole>,
         fee_payer: &'c Keypair,
         rpc_url: String,
         #[cfg(all(feature = "rust_sdk_test", test))] mut litesvm: LiteSVM,
@@ -100,7 +97,7 @@ impl<'c> SwigWallet<'c> {
 
         if !account_exists {
             let instruction_builder =
-                SwigInstructionBuilder::new(swig_id, authority_manager, fee_payer.pubkey(), 0);
+                SwigInstructionBuilder::new(swig_id, client_role, fee_payer.pubkey(), 0);
 
             let create_ix = instruction_builder.build_swig_account()?;
 
@@ -138,33 +135,19 @@ impl<'c> SwigWallet<'c> {
             let swig_with_roles =
                 SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
 
-            let role_id = match &authority_manager {
-                AuthorityManager::Ed25519(authority) => swig_with_roles
-                    .lookup_role_id(authority.as_ref())
-                    .map_err(|_| SwigError::AuthorityNotFound)?,
-                AuthorityManager::Secp256k1(authority, _) => swig_with_roles
-                    .lookup_role_id(authority.as_ref())
-                    .map_err(|_| SwigError::AuthorityNotFound)?,
-                AuthorityManager::Ed25519Session(session_authority) => swig_with_roles
-                    .lookup_role_id(session_authority.public_key.as_ref())
-                    .map_err(|_| SwigError::AuthorityNotFound)?,
-                AuthorityManager::Secp256k1Session(session_authority, _) => swig_with_roles
-                    .lookup_role_id(session_authority.public_key.as_ref())
-                    .map_err(|_| SwigError::AuthorityNotFound)?,
-            }
-            .ok_or(SwigError::AuthorityNotFound)?;
+            let authority_bytes = client_role.authority_bytes()?;
+            let role_id = swig_with_roles
+                .lookup_role_id(authority_bytes.as_ref())
+                .map_err(|_| SwigError::AuthorityNotFound)?
+                .ok_or(SwigError::AuthorityNotFound)?;
 
             // Get the role to verify it exists and has the correct type
             let role = swig_with_roles
                 .get_role(role_id)
                 .map_err(|_| SwigError::AuthorityNotFound)?;
 
-            let instruction_builder = SwigInstructionBuilder::new(
-                swig_id,
-                authority_manager,
-                fee_payer.pubkey(),
-                role_id,
-            );
+            let instruction_builder =
+                SwigInstructionBuilder::new(swig_id, client_role, fee_payer.pubkey(), role_id);
 
             Ok(Self {
                 instruction_builder,
@@ -237,9 +220,11 @@ impl<'c> SwigWallet<'c> {
         let authority_id = swig_with_roles.lookup_role_id(authority.as_ref()).unwrap();
 
         if let Some(authority_id) = authority_id {
-            let instruction = self
-                .instruction_builder
-                .remove_authority(authority_id, Some(self.get_current_slot()?))?;
+            let instruction = self.instruction_builder.remove_authority(
+                authority_id,
+                Some(self.get_current_slot()?),
+                None,
+            )?;
 
             let msg = v0::Message::try_compile(
                 &self.fee_payer.pubkey(),
@@ -322,6 +307,7 @@ impl<'c> SwigWallet<'c> {
             new_authority,
             permissions,
             Some(current_slot),
+            None,
         )?;
 
         let msg = v0::Message::try_compile(
@@ -900,9 +886,9 @@ impl<'c> SwigWallet<'c> {
     /// # Arguments
     ///
     /// * `role_id` - The new role ID to switch to
-    /// * `authority_manager` - The authority manager specifying the type of
+    /// * `client_role` - The client role implementation specifying the type of
     ///   signing authority
-    /// * `authority_kp` - The public key of the new authority
+    /// * `authority_kp` - The public key of the new authority (unused in new implementation)
     ///
     /// # Returns
     ///
@@ -910,18 +896,13 @@ impl<'c> SwigWallet<'c> {
     pub fn switch_authority(
         &mut self,
         role_id: u32,
-        authority_manager: AuthorityManager,
-        authority_kp: Option<&'c Keypair>,
+        client_role: Box<dyn ClientRole>,
+        _authority_kp: Option<&'c Keypair>,
     ) -> Result<(), SwigError> {
-        // Ensure authority keypair is provided when switching authorities
-        let authority_kp = authority_kp.ok_or(SwigError::AuthorityNotFound)?;
-
         // Update the instruction builder's authority
         self.instruction_builder
-            .switch_authority(role_id, authority_manager)?;
+            .switch_authority(role_id, client_role)?;
 
-        // Update the authority keypair that will be used for signing
-        self.authority = authority_kp;
         Ok(())
     }
 
@@ -985,6 +966,7 @@ impl<'c> SwigWallet<'c> {
             session_key,
             duration,
             Some(current_slot),
+            None,
         )?;
 
         let msg = v0::Message::try_compile(
@@ -1077,12 +1059,8 @@ impl<'c> SwigWallet<'c> {
     /// Returns a `Result` containing the keypairs for signing transactions or a
     /// `SwigError`
     fn get_keypairs(&self) -> Result<Vec<&Keypair>, SwigError> {
-        // Check if the authority and fee payer are the same
-        if self.fee_payer.pubkey() == self.authority.pubkey() {
-            Ok(vec![&self.fee_payer])
-        } else {
-            Ok(vec![&self.fee_payer, &self.authority])
-        }
+        // For now, only the fee payer needs to sign since the authority is handled by the client role
+        Ok(vec![&self.fee_payer])
     }
 
     /// Returns the swig id

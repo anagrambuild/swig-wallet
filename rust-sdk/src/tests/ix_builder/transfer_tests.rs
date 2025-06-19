@@ -14,6 +14,7 @@ use swig_state_x::{
 };
 
 use super::*;
+use crate::client_role::{Ed25519ClientRole, Secp256k1ClientRole};
 
 #[test_log::test]
 fn test_sign_instruction_with_ed25519_authority() {
@@ -26,7 +27,7 @@ fn test_sign_instruction_with_ed25519_authority() {
 
     let builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Ed25519(authority.pubkey()),
+        Box::new(Ed25519ClientRole::new(authority.pubkey())),
         payer.pubkey(),
         role_id,
     );
@@ -51,7 +52,7 @@ fn test_sign_instruction_with_ed25519_authority() {
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Ed25519(authority.pubkey()),
+        Box::new(Ed25519ClientRole::new(authority.pubkey())),
         context.default_payer.pubkey(),
         role_id,
     );
@@ -122,7 +123,7 @@ fn test_sign_instruction_with_secp256k1_authority() {
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Secp256k1(secp_pubkey, Box::new(signing_fn)),
+        Box::new(Secp256k1ClientRole::new(secp_pubkey, Box::new(signing_fn))),
         payer.pubkey(),
         role_id,
     );
