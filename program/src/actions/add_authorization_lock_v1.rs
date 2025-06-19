@@ -4,7 +4,6 @@
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
-    msg,
     program_error::ProgramError,
     sysvars::{clock::Clock, rent::Rent, Sysvar},
     ProgramResult,
@@ -148,7 +147,6 @@ pub fn add_authorization_lock_v1(
     let role = swig_with_roles.get_role(add_lock.args.acting_role_id)?;
     // TODO need to merge in fix for getting all roles because of action boundary
     // cursor positions
-    msg!("role: {:?}", role.unwrap().get_all_actions());
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
     let acting_role = Swig::get_mut_role(add_lock.args.acting_role_id, swig_roles)?;
@@ -178,7 +176,6 @@ pub fn add_authorization_lock_v1(
     // Check permissions: must have All or ManageAuthorizationLocks
     let all = acting_role.get_action::<All>(&[])?;
     let manage_auth_locks = acting_role.get_action::<ManageAuthorizationLocks>(&[])?;
-    msg!("acting_role all actions: {:?}", acting_role.actions);
 
     if all.is_none() && manage_auth_locks.is_none() {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
@@ -276,13 +273,6 @@ pub fn add_authorization_lock_v1(
     let (swig_header, _) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
     swig.authorization_locks += 1;
-
-    msg!(
-        "Added authorization lock for mint {:?}, amount: {}, expiry_slot: {}",
-        add_lock.args.token_mint,
-        add_lock.args.amount,
-        add_lock.args.expiry_slot
-    );
 
     Ok(())
 }

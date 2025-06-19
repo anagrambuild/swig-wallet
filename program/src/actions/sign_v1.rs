@@ -275,11 +275,8 @@ pub fn sign_v1(
                                 );
                         }
 
-                        msg!("SOL has_active_locks: {:?}", has_active_locks);
                         // If there are active authorization locks, check against the total
                         if has_active_locks {
-                            msg!("SOL amount_diff: {}", amount_diff);
-                            msg!("SOL total_authorized_amount: {}", total_authorized_amount);
                             if amount_diff > total_authorized_amount {
                                 return Err(
                                     SwigAuthenticateError::PermissionDeniedMissingPermission.into(),
@@ -390,11 +387,8 @@ pub fn sign_v1(
                             });
                     }
 
-                    msg!("has_active_locks: {:?}", has_active_locks);
                     // If there are active authorization locks, check against the total
                     if has_active_locks {
-                        msg!("diff: {}", diff);
-                        msg!("total_authorized_amount: {}", total_authorized_amount);
                         if diff > total_authorized_amount {
                             return Err(
                                 SwigAuthenticateError::PermissionDeniedMissingPermission.into()

@@ -230,15 +230,6 @@ pub fn remove_authorization_lock_v1(
             &*(remaining_data[lock_to_remove_start..lock_to_remove_end].as_ptr()
                 as *const AuthorizationLock)
         };
-        msg!(
-            "Removing authorization lock {} for mint {:?}, amount: {}, expiry_slot: {}, created \
-             by role: {}",
-            lock_index,
-            lock.token_mint,
-            lock.amount,
-            lock.expiry_slot,
-            lock.role_id
-        );
     }
 
     // Shift all locks after the removed lock down by one position
@@ -265,12 +256,6 @@ pub fn remove_authorization_lock_v1(
     let (swig_header, _) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
     swig.authorization_locks -= 1;
-
-    msg!(
-        "Removed authorization lock at index {}, {} locks remaining",
-        lock_index,
-        swig.authorization_locks
-    );
 
     Ok(())
 }
