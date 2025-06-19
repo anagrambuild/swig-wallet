@@ -9,7 +9,7 @@
 pub mod actions;
 mod error;
 pub mod instruction;
-mod util;
+pub mod util;
 use core::mem::MaybeUninit;
 
 use actions::process_action;
