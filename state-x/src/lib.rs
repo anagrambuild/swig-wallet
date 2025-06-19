@@ -97,6 +97,8 @@ pub enum SwigStateError {
     RoleNotFound,
     /// Error loading permissions
     PermissionLoadError,
+    /// Adding an authority requires at least one action
+    InvalidAuthorityMustHaveAtLeastOneAction,
 }
 
 /// Error types related to authentication operations.
