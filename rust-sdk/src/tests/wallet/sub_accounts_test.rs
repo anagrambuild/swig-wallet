@@ -36,7 +36,7 @@ fn test_sub_account_creation_and_setup() {
         .switch_authority(
             secondary_role_id,
             Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
-            None,
+            Some(&secondary_authority),
         )
         .unwrap();
 
@@ -75,7 +75,7 @@ fn test_sub_account_sol_operations() {
         .switch_authority(
             secondary_role_id,
             Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
-            None,
+            Some(&secondary_authority),
         )
         .unwrap();
 
@@ -153,7 +153,7 @@ fn test_sub_account_sol_operations() {
         .switch_authority(
             0,
             Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
-            None,
+            Some(&main_authority),
         )
         .unwrap();
 
@@ -193,7 +193,7 @@ fn test_sub_account_token_operations() {
         .switch_authority(
             secondary_role_id,
             Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
-            None,
+            Some(&secondary_authority),
         )
         .unwrap();
 
@@ -229,7 +229,7 @@ fn test_sub_account_token_operations() {
         .switch_authority(
             0,
             Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
-            None,
+            Some(&main_authority),
         )
         .unwrap();
     let signature = swig_wallet
@@ -266,7 +266,7 @@ fn test_sub_account_toggle_operations() {
         .switch_authority(
             secondary_role_id,
             Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
-            None,
+            Some(&secondary_authority),
         )
         .unwrap();
 
@@ -281,7 +281,7 @@ fn test_sub_account_toggle_operations() {
         .switch_authority(
             0,
             Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
-            None,
+            Some(&main_authority),
         )
         .unwrap();
 
@@ -316,7 +316,7 @@ fn test_secondary_authority_operations() {
         .switch_authority(
             secondary_role_id,
             Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
-            None,
+            Some(&secondary_authority),
         )
         .unwrap();
 
@@ -343,7 +343,12 @@ fn test_secondary_authority_operations() {
     println!("Secondary authority signature: {:?}", signature);
 
     // Verify final state
-    swig_wallet.display_swig().unwrap();
+    assert!(signature != solana_sdk::signature::Signature::default());
+    assert_eq!(
+        swig_wallet.get_current_role_id().unwrap(),
+        secondary_role_id
+    );
+    assert!(swig_wallet.get_sub_account().unwrap().is_some());
 }
 
 #[test_log::test]
@@ -378,7 +383,7 @@ fn test_sub_account_error_cases() {
         .switch_authority(
             1,
             Box::new(Ed25519ClientRole::new(unauthorized_authority.pubkey())),
-            None,
+            Some(&unauthorized_authority),
         )
         .unwrap();
 
@@ -402,7 +407,7 @@ fn test_sub_account_error_cases() {
         .switch_authority(
             0,
             Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
-            None,
+            Some(&main_authority),
         )
         .unwrap();
 
@@ -420,7 +425,7 @@ fn test_sub_account_error_cases() {
         .switch_authority(
             2,
             Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
-            None,
+            Some(&main_authority),
         )
         .unwrap();
 
@@ -445,7 +450,7 @@ fn test_sub_account_error_cases() {
         .switch_authority(
             1,
             Box::new(Ed25519ClientRole::new(unauthorized_authority.pubkey())),
-            None,
+            Some(&unauthorized_authority),
         )
         .unwrap();
 
@@ -468,7 +473,7 @@ fn test_sub_account_error_cases() {
         .switch_authority(
             0,
             Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
-            None,
+            Some(&main_authority),
         )
         .unwrap();
 

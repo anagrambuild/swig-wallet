@@ -114,7 +114,6 @@ impl SwigInstructionBuilder {
         &mut self,
         instructions: Vec<Instruction>,
         current_slot: Option<u64>,
-        signature_counter: Option<u32>,
     ) -> Result<Vec<Instruction>, SwigError> {
         self.client_role.sign_instruction(
             self.swig_account,
@@ -122,7 +121,6 @@ impl SwigInstructionBuilder {
             self.role_id,
             instructions,
             current_slot,
-            signature_counter,
         )
     }
 
@@ -145,7 +143,6 @@ impl SwigInstructionBuilder {
         new_authority: &[u8],
         permissions: Vec<ClientPermission>,
         current_slot: Option<u64>,
-        signature_counter: Option<u32>,
     ) -> Result<Instruction, SwigError> {
         let actions = ClientPermission::to_client_actions(permissions);
 
@@ -157,7 +154,6 @@ impl SwigInstructionBuilder {
             new_authority,
             actions,
             current_slot,
-            signature_counter,
         )
     }
 
@@ -176,7 +172,6 @@ impl SwigInstructionBuilder {
         &mut self,
         authority_to_remove_id: u32,
         current_slot: Option<u64>,
-        counter: Option<u32>,
     ) -> Result<Instruction, SwigError> {
         self.client_role.remove_authority_instruction(
             self.swig_account,
@@ -184,7 +179,6 @@ impl SwigInstructionBuilder {
             self.role_id,
             authority_to_remove_id,
             current_slot,
-            counter,
         )
     }
 
@@ -218,7 +212,6 @@ impl SwigInstructionBuilder {
             self.role_id,
             authority_to_replace_id,
             current_slot,
-            counter,
         )?;
 
         let add_authority_instruction = self.client_role.add_authority_instruction(
@@ -229,7 +222,6 @@ impl SwigInstructionBuilder {
             new_authority,
             actions,
             current_slot,
-            counter,
         )?;
 
         Ok(vec![
@@ -264,7 +256,6 @@ impl SwigInstructionBuilder {
             session_key,
             session_duration,
             current_slot,
-            counter,
         )
     }
 
@@ -510,5 +501,22 @@ impl SwigInstructionBuilder {
     /// `SwigError`
     pub fn get_current_authority(&self) -> Result<Vec<u8>, SwigError> {
         self.client_role.authority_bytes()
+    }
+
+    /// Returns the odometer for the current authority if it is a Secp based authority
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the odometer or a `SwigError`
+    pub fn get_odometer(&self) -> Result<u32, SwigError> {
+        self.client_role.odometer()
+    }
+
+    /// Increments the odometer for the current authority if it is Secp based authority
+    ///
+    ///
+    ///
+    pub fn increment_odometer(&mut self) -> Result<(), SwigError> {
+        self.client_role.increment_odometer()
     }
 }

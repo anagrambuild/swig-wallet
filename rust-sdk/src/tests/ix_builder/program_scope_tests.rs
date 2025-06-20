@@ -93,7 +93,6 @@ fn test_token_transfer_with_program_scope() {
             &new_authority.pubkey().to_bytes(),
             permissions,
             None,
-            None,
         )
         .unwrap();
 
@@ -151,7 +150,6 @@ fn test_token_transfer_with_program_scope() {
         .sign_instruction(
             vec![swig_transfer_ix],
             Some(context.svm.get_sysvar::<Clock>().slot),
-            None,
         )
         .unwrap();
 
@@ -251,7 +249,6 @@ fn test_recurring_limit_program_scope() {
             &new_authority.pubkey().to_bytes(),
             permissions,
             None,
-            None,
         )
         .unwrap();
 
@@ -312,7 +309,7 @@ fn test_recurring_limit_program_scope() {
         let current_slot = context.svm.get_sysvar::<Clock>().slot;
 
         let sign_ix = new_ix_builder
-            .sign_instruction(vec![transfer_ix.clone()], Some(current_slot), None)
+            .sign_instruction(vec![transfer_ix.clone()], Some(current_slot))
             .unwrap();
 
         let transfer_message = v0::Message::try_compile(
@@ -344,7 +341,6 @@ fn test_recurring_limit_program_scope() {
         .sign_instruction(
             vec![transfer_ix],
             Some(context.svm.get_sysvar::<Clock>().slot),
-            None,
         )
         .unwrap();
 
@@ -388,7 +384,6 @@ fn test_recurring_limit_program_scope() {
         .sign_instruction(
             vec![transfer_ix],
             Some(context.svm.get_sysvar::<Clock>().slot),
-            None,
         )
         .unwrap();
 

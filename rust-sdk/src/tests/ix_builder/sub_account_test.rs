@@ -59,7 +59,6 @@ fn test_sub_account_functionality() {
                 sub_account: [0; 32],
             }],
             None,
-            None,
         )
         .unwrap();
 

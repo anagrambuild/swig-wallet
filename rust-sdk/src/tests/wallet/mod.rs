@@ -1,5 +1,8 @@
 pub mod authority_tests;
+pub mod creation_tests;
+pub mod helper_tests;
 pub mod program_scope_test;
+pub mod secp_tests;
 pub mod session_tests;
 pub mod sub_accounts_test;
 pub mod transfer_tests;
@@ -54,6 +57,7 @@ fn create_test_wallet(litesvm: LiteSVM, authority: &Keypair) -> SwigWallet {
         Box::new(Ed25519ClientRole::new(authority.pubkey())),
         authority,
         "http://localhost:8899".to_string(),
+        Some(authority),
         litesvm,
     )
     .unwrap()

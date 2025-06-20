@@ -25,7 +25,6 @@ pub trait ClientRole {
         role_id: u32,
         instructions: Vec<Instruction>,
         current_slot: Option<u64>,
-        signature_counter: Option<u32>,
     ) -> Result<Vec<Instruction>, SwigError>;
 
     /// Creates an add authority instruction
@@ -38,7 +37,6 @@ pub trait ClientRole {
         new_authority: &[u8],
         actions: Vec<ClientAction>,
         current_slot: Option<u64>,
-        signature_counter: Option<u32>,
     ) -> Result<Instruction, SwigError>;
 
     /// Creates a remove authority instruction
@@ -49,7 +47,6 @@ pub trait ClientRole {
         role_id: u32,
         authority_to_remove_id: u32,
         current_slot: Option<u64>,
-        counter: Option<u32>,
     ) -> Result<Instruction, SwigError>;
 
     /// Creates a create session instruction
@@ -61,7 +58,6 @@ pub trait ClientRole {
         session_key: Pubkey,
         session_duration: u64,
         current_slot: Option<u64>,
-        counter: Option<u32>,
     ) -> Result<Instruction, SwigError>;
 
     /// Creates a create sub account instruction
@@ -127,6 +123,12 @@ pub trait ClientRole {
 
     /// Returns the authority bytes for creating the Swig account
     fn authority_bytes(&self) -> Result<Vec<u8>, SwigError>;
+
+    /// Returns the odometer for the current authority if it is a Secp256k1 authority
+    fn odometer(&self) -> Result<u32, SwigError>;
+
+    /// Increments the odometer for the current authority if it is a Secp256k1 authority
+    fn increment_odometer(&mut self) -> Result<(), SwigError>;
 }
 
 /// Ed25519 authority implementation
@@ -147,8 +149,7 @@ impl ClientRole for Ed25519ClientRole {
         payer: Pubkey,
         role_id: u32,
         instructions: Vec<Instruction>,
-        _current_slot: Option<u64>,
-        _signature_counter: Option<u32>,
+        current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let mut signed_instructions = Vec::new();
         for instruction in instructions {
@@ -173,7 +174,6 @@ impl ClientRole for Ed25519ClientRole {
         new_authority: &[u8],
         actions: Vec<ClientAction>,
         _current_slot: Option<u64>,
-        _signature_counter: Option<u32>,
     ) -> Result<Instruction, SwigError> {
         Ok(AddAuthorityInstruction::new_with_ed25519_authority(
             swig_account,
@@ -195,7 +195,6 @@ impl ClientRole for Ed25519ClientRole {
         role_id: u32,
         authority_to_remove_id: u32,
         _current_slot: Option<u64>,
-        _counter: Option<u32>,
     ) -> Result<Instruction, SwigError> {
         Ok(RemoveAuthorityInstruction::new_with_ed25519_authority(
             swig_account,
@@ -214,7 +213,6 @@ impl ClientRole for Ed25519ClientRole {
         session_key: Pubkey,
         session_duration: u64,
         _current_slot: Option<u64>,
-        _counter: Option<u32>,
     ) -> Result<Instruction, SwigError> {
         Ok(CreateSessionInstruction::new_with_ed25519_authority(
             swig_account,
@@ -337,12 +335,22 @@ impl ClientRole for Ed25519ClientRole {
     fn authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
         Ok(self.authority.to_bytes().to_vec())
     }
+
+    fn odometer(&self) -> Result<u32, SwigError> {
+        Ok(0)
+    }
+
+    fn increment_odometer(&mut self) -> Result<(), SwigError> {
+        // Ed25519 authorities don't use odometer-based replay protection
+        Ok(())
+    }
 }
 
 /// Secp256k1 authority implementation
 pub struct Secp256k1ClientRole {
     pub authority: Box<[u8]>,
     pub signing_fn: Box<dyn Fn(&[u8]) -> [u8; 65]>,
+    pub odometer: u32,
 }
 
 impl Secp256k1ClientRole {
@@ -350,6 +358,19 @@ impl Secp256k1ClientRole {
         Self {
             authority,
             signing_fn,
+            odometer: 0,
+        }
+    }
+
+    pub fn new_with_odometer(
+        authority: Box<[u8]>,
+        signing_fn: Box<dyn Fn(&[u8]) -> [u8; 65]>,
+        odometer: u32,
+    ) -> Self {
+        Self {
+            authority,
+            signing_fn,
+            odometer,
         }
     }
 }
@@ -362,11 +383,9 @@ impl ClientRole for Secp256k1ClientRole {
         role_id: u32,
         instructions: Vec<Instruction>,
         current_slot: Option<u64>,
-        signature_counter: Option<u32>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
-        let counter = signature_counter.unwrap_or(1u32);
-
+        let new_odometer = self.odometer.wrapping_add(1);
         let mut signed_instructions = Vec::new();
         for instruction in instructions {
             let swig_signed_instruction = SignInstruction::new_secp256k1(
@@ -374,7 +393,7 @@ impl ClientRole for Secp256k1ClientRole {
                 payer,
                 &self.signing_fn,
                 current_slot,
-                counter,
+                new_odometer,
                 instruction,
                 role_id,
             )?;
@@ -392,17 +411,16 @@ impl ClientRole for Secp256k1ClientRole {
         new_authority: &[u8],
         actions: Vec<ClientAction>,
         current_slot: Option<u64>,
-        signature_counter: Option<u32>,
     ) -> Result<Instruction, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
-        let counter = signature_counter.unwrap_or(1u32);
+        let new_odometer = self.odometer.wrapping_add(1);
 
         Ok(AddAuthorityInstruction::new_with_secp256k1_authority(
             swig_account,
             payer,
             &self.signing_fn,
             current_slot,
-            counter,
+            new_odometer,
             role_id,
             AuthorityConfig {
                 authority_type: new_authority_type,
@@ -419,10 +437,9 @@ impl ClientRole for Secp256k1ClientRole {
         role_id: u32,
         authority_to_remove_id: u32,
         current_slot: Option<u64>,
-        counter: Option<u32>,
     ) -> Result<Instruction, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
-        let counter = counter.ok_or(SwigError::CounterNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
 
         Ok(RemoveAuthorityInstruction::new_with_secp256k1_authority(
             swig_account,
@@ -431,7 +448,7 @@ impl ClientRole for Secp256k1ClientRole {
             role_id,
             authority_to_remove_id,
             current_slot,
-            counter,
+            new_odometer,
         )?)
     }
 
@@ -443,17 +460,15 @@ impl ClientRole for Secp256k1ClientRole {
         session_key: Pubkey,
         session_duration: u64,
         current_slot: Option<u64>,
-        counter: Option<u32>,
     ) -> Result<Instruction, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
-        let counter = counter.ok_or(SwigError::CounterNotSet)?;
-
+        let new_odometer = self.odometer.wrapping_add(1);
         Ok(CreateSessionInstruction::new_with_secp256k1_authority(
             swig_account,
             payer,
             &self.signing_fn,
             current_slot,
-            counter,
+            new_odometer,
             role_id,
             session_key,
             session_duration,
@@ -586,6 +601,15 @@ impl ClientRole for Secp256k1ClientRole {
     fn authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
         Ok(self.authority[1..].to_vec())
     }
+
+    fn odometer(&self) -> Result<u32, SwigError> {
+        Ok(self.odometer)
+    }
+
+    fn increment_odometer(&mut self) -> Result<(), SwigError> {
+        self.odometer = self.odometer.wrapping_add(1);
+        Ok(())
+    }
 }
 
 /// Ed25519 Session authority implementation
@@ -607,7 +631,6 @@ impl ClientRole for Ed25519SessionClientRole {
         role_id: u32,
         instructions: Vec<Instruction>,
         _current_slot: Option<u64>,
-        _signature_counter: Option<u32>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let session_authority_pubkey = Pubkey::new_from_array(self.session_authority.public_key);
 
@@ -634,7 +657,6 @@ impl ClientRole for Ed25519SessionClientRole {
         new_authority: &[u8],
         actions: Vec<ClientAction>,
         _current_slot: Option<u64>,
-        _signature_counter: Option<u32>,
     ) -> Result<Instruction, SwigError> {
         Ok(AddAuthorityInstruction::new_with_ed25519_authority(
             swig_account,
@@ -656,7 +678,6 @@ impl ClientRole for Ed25519SessionClientRole {
         role_id: u32,
         authority_to_remove_id: u32,
         _current_slot: Option<u64>,
-        _counter: Option<u32>,
     ) -> Result<Instruction, SwigError> {
         Ok(RemoveAuthorityInstruction::new_with_ed25519_authority(
             swig_account,
@@ -675,7 +696,6 @@ impl ClientRole for Ed25519SessionClientRole {
         session_key: Pubkey,
         session_duration: u64,
         _current_slot: Option<u64>,
-        _counter: Option<u32>,
     ) -> Result<Instruction, SwigError> {
         Ok(CreateSessionInstruction::new_with_ed25519_authority(
             swig_account,
@@ -757,12 +777,22 @@ impl ClientRole for Ed25519SessionClientRole {
     fn authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
         Ok(self.session_authority.into_bytes().unwrap().to_vec())
     }
+
+    fn odometer(&self) -> Result<u32, SwigError> {
+        Ok(0)
+    }
+
+    fn increment_odometer(&mut self) -> Result<(), SwigError> {
+        // Ed25519 session authorities don't use odometer-based replay protection
+        Ok(())
+    }
 }
 
 /// Secp256k1 Session authority implementation
 pub struct Secp256k1SessionClientRole {
     pub session_authority: CreateSecp256k1SessionAuthority,
     pub signing_fn: Box<dyn Fn(&[u8]) -> [u8; 65]>,
+    pub odometer: u32,
 }
 
 impl Secp256k1SessionClientRole {
@@ -773,6 +803,19 @@ impl Secp256k1SessionClientRole {
         Self {
             session_authority,
             signing_fn,
+            odometer: 0,
+        }
+    }
+
+    pub fn new_with_odometer(
+        session_authority: CreateSecp256k1SessionAuthority,
+        signing_fn: Box<dyn Fn(&[u8]) -> [u8; 65]>,
+        odometer: u32,
+    ) -> Self {
+        Self {
+            session_authority,
+            signing_fn,
+            odometer,
         }
     }
 }
@@ -785,7 +828,6 @@ impl ClientRole for Secp256k1SessionClientRole {
         role_id: u32,
         instructions: Vec<Instruction>,
         current_slot: Option<u64>,
-        _signature_counter: Option<u32>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
 
@@ -814,7 +856,6 @@ impl ClientRole for Secp256k1SessionClientRole {
         new_authority: &[u8],
         actions: Vec<ClientAction>,
         current_slot: Option<u64>,
-        _signature_counter: Option<u32>,
     ) -> Result<Instruction, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
 
@@ -840,10 +881,9 @@ impl ClientRole for Secp256k1SessionClientRole {
         role_id: u32,
         authority_to_remove_id: u32,
         current_slot: Option<u64>,
-        counter: Option<u32>,
     ) -> Result<Instruction, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
-        let counter = counter.ok_or(SwigError::CounterNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
 
         Ok(RemoveAuthorityInstruction::new_with_secp256k1_authority(
             swig_account,
@@ -852,7 +892,7 @@ impl ClientRole for Secp256k1SessionClientRole {
             role_id,
             authority_to_remove_id,
             current_slot,
-            counter,
+            new_odometer,
         )?)
     }
 
@@ -864,17 +904,16 @@ impl ClientRole for Secp256k1SessionClientRole {
         session_key: Pubkey,
         session_duration: u64,
         current_slot: Option<u64>,
-        counter: Option<u32>,
     ) -> Result<Instruction, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
-        let counter = counter.ok_or(SwigError::CounterNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
 
         Ok(CreateSessionInstruction::new_with_secp256k1_authority(
             swig_account,
             payer,
             &self.signing_fn,
             current_slot,
-            counter,
+            new_odometer,
             role_id,
             session_key,
             session_duration,
@@ -950,5 +989,14 @@ impl ClientRole for Secp256k1SessionClientRole {
 
     fn authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
         Ok(self.session_authority.into_bytes().unwrap().to_vec())
+    }
+
+    fn odometer(&self) -> Result<u32, SwigError> {
+        Ok(self.odometer)
+    }
+
+    fn increment_odometer(&mut self) -> Result<(), SwigError> {
+        self.odometer = self.odometer.wrapping_add(1);
+        Ok(())
     }
 }

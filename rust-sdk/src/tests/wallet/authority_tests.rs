@@ -26,14 +26,21 @@ fn should_manage_authorities_successfully() {
         .unwrap();
 
     // Verify both authorities exist
-    swig_wallet.display_swig().unwrap();
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert!(swig_wallet
+        .get_role_id(&secondary_authority.pubkey().to_bytes())
+        .is_ok());
 
     // Remove secondary authority
     swig_wallet
         .remove_authority(&secondary_authority.pubkey().to_bytes())
         .unwrap();
 
-    swig_wallet.display_swig().unwrap();
+    // Verify authority was removed
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert!(swig_wallet
+        .get_role_id(&secondary_authority.pubkey().to_bytes())
+        .is_err());
 
     // Add third authority with recurring permissions
     let third_authority = Keypair::new();
@@ -49,14 +56,18 @@ fn should_manage_authorities_successfully() {
         )
         .unwrap();
 
-    swig_wallet.display_swig().unwrap();
+    // Verify third authority was added
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
+    assert!(swig_wallet
+        .get_role_id(&third_authority.pubkey().to_bytes())
+        .is_ok());
 
     // Switch to third authority
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(third_authority.pubkey())),
-            None,
+            Some(&third_authority),
         )
         .unwrap();
 
@@ -109,14 +120,17 @@ fn should_add_secp256k1_authority() {
         .unwrap();
 
     // Verify both authorities exist
-    swig_wallet.display_swig().unwrap();
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert!(swig_wallet.get_role_id(&secp_pubkey.as_ref()[1..]).is_ok());
 
     // Remove secondary authority
     swig_wallet
         .remove_authority(&secp_pubkey.as_ref()[1..])
         .unwrap();
 
-    swig_wallet.display_swig().unwrap();
+    // Verify authority was removed
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert!(swig_wallet.get_role_id(&secp_pubkey.as_ref()[1..]).is_err());
 
     // Add third authority with recurring permissions
     let third_authority = Keypair::new();
@@ -132,14 +146,18 @@ fn should_add_secp256k1_authority() {
         )
         .unwrap();
 
-    swig_wallet.display_swig().unwrap();
+    // Verify third authority was added
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
+    assert!(swig_wallet
+        .get_role_id(&third_authority.pubkey().to_bytes())
+        .is_ok());
 
     // Switch to third authority
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(third_authority.pubkey())),
-            None,
+            Some(&third_authority),
         )
         .unwrap();
 
@@ -174,12 +192,15 @@ fn should_switch_authority_and_payer() {
         .switch_authority(
             1,
             Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
-            None,
+            Some(&secondary_authority),
         )
         .unwrap();
 
     swig_wallet.switch_payer(&secondary_authority).unwrap();
-    swig_wallet.display_swig().unwrap();
+
+    // Verify authority switch and payer change
+    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 1);
+    assert_eq!(swig_wallet.get_fee_payer(), secondary_authority.pubkey());
 }
 
 #[test_log::test]
@@ -204,7 +225,10 @@ fn should_replace_authority() {
         .unwrap();
 
     // Verify old authority exists
-    swig_wallet.display_swig().unwrap();
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert!(swig_wallet
+        .get_role_id(&old_authority.pubkey().to_bytes())
+        .is_ok());
 
     // Replace old authority with new authority
     swig_wallet
@@ -220,7 +244,13 @@ fn should_replace_authority() {
         .unwrap();
 
     // Verify the replacement
-    swig_wallet.display_swig().unwrap();
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
+    assert!(swig_wallet
+        .get_role_id(&new_authority.pubkey().to_bytes())
+        .is_ok());
+    assert!(swig_wallet
+        .get_role_id(&old_authority.pubkey().to_bytes())
+        .is_err());
 
     // Try to authenticate with new authority (should succeed)
     assert!(swig_wallet

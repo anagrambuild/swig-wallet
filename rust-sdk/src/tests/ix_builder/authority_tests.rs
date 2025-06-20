@@ -50,7 +50,6 @@ fn test_add_authority_with_ed25519_root() {
             &new_authority_bytes,
             permissions,
             Some(current_slot),
-            None,
         )
         .unwrap();
 
@@ -142,7 +141,6 @@ fn test_add_authority_with_secp256k1_root() {
     // Get current counter for the signing wallet (not the new authority being
     // added)
     let current_counter = get_secp256k1_counter_from_wallet(&context, &swig_key, &wallet).unwrap();
-    let next_counter = current_counter + 1;
 
     let add_auth_ix = builder
         .add_authority_instruction(
@@ -150,7 +148,6 @@ fn test_add_authority_with_secp256k1_root() {
             &secp_pubkey_bytes,
             permissions,
             Some(current_slot),
-            Some(next_counter),
         )
         .unwrap();
 
@@ -208,7 +205,6 @@ fn test_remove_authority_with_ed25519_root() {
             &authority_pubkey.to_bytes(),
             permissions,
             None,
-            None,
         )
         .unwrap();
 
@@ -229,7 +225,7 @@ fn test_remove_authority_with_ed25519_root() {
         result.err()
     );
 
-    let remove_auth_ix = builder.remove_authority(1, None, None).unwrap();
+    let remove_auth_ix = builder.remove_authority(1, None).unwrap();
     let msg = v0::Message::try_compile(
         &payer.pubkey(),
         &[remove_auth_ix],

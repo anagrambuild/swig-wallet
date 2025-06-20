@@ -69,7 +69,7 @@ fn test_sign_instruction_with_ed25519_authority() {
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
 
     let sign_ix = builder
-        .sign_instruction(vec![transfer_ix], Some(current_slot), None)
+        .sign_instruction(vec![transfer_ix], Some(current_slot))
         .unwrap();
 
     let msg = v0::Message::try_compile(
@@ -156,10 +156,9 @@ fn test_sign_instruction_with_secp256k1_authority() {
 
     // Get current counter and calculate next counter
     let current_counter = get_secp256k1_counter_from_wallet(&context, &swig_key, &wallet).unwrap();
-    let next_counter = current_counter + 1;
 
     let sign_ix = builder
-        .sign_instruction(vec![transfer_ix], Some(current_slot), Some(next_counter))
+        .sign_instruction(vec![transfer_ix], Some(current_slot))
         .unwrap();
 
     let msg = v0::Message::try_compile(

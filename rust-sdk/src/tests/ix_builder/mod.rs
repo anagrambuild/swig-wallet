@@ -100,7 +100,7 @@ pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), S
                         let hash = hasher.result();
                         let address = format!("0x{}", hex::encode(&hash.0[12..32]));
                         format!(
-                            "{} odometer: {:?}",
+                            "{} \n║ │  ├─ odometer: {:?}",
                             address,
                             role.authority.signature_odometer()
                         )

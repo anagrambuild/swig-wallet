@@ -32,7 +32,7 @@ use swig_state_x::{
     },
     authority::{self, secp256k1::Secp256k1Authority, AuthorityType},
     role::Role,
-    swig::{sub_account_seeds, SwigWithRoles},
+    swig::{sub_account_seeds, Swig, SwigWithRoles},
 };
 const TOKEN_22_PROGRAM_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 
@@ -51,6 +51,10 @@ pub struct SwigWallet<'a> {
     pub rpc_client: RpcClient,
     /// The wallet's fee payer keypair
     fee_payer: &'a Keypair,
+    /// The authority keypair (for Ed25519 authorities)
+    authority_keypair: Option<&'a Keypair>,
+    /// The current role details for the wallet
+    pub current_role: crate::types::CurrentRole,
     /// The LiteSVM instance for testing
     #[cfg(all(feature = "rust_sdk_test", test))]
     litesvm: LiteSVM,
@@ -66,6 +70,7 @@ impl<'c> SwigWallet<'c> {
     ///   signing authority
     /// * `fee_payer` - The keypair that will pay for transactions
     /// * `rpc_url` - The URL of the Solana RPC endpoint
+    /// * `authority_keypair` - Optional authority keypair (required for Ed25519 authorities)
     /// * `litesvm` - (test only) The LiteSVM instance for testing
     ///
     /// # Returns
@@ -77,6 +82,7 @@ impl<'c> SwigWallet<'c> {
         client_role: Box<dyn ClientRole>,
         fee_payer: &'c Keypair,
         rpc_url: String,
+        authority_keypair: Option<&'c Keypair>,
         #[cfg(all(feature = "rust_sdk_test", test))] mut litesvm: LiteSVM,
     ) -> Result<Self, SwigError> {
         let rpc_client =
@@ -118,12 +124,31 @@ impl<'c> SwigWallet<'c> {
             #[cfg(all(feature = "rust_sdk_test", test))]
             let signature = litesvm.send_transaction(tx).unwrap().signature;
 
+            // Fetch the just-created account data to get the initial role
+            #[cfg(not(all(feature = "rust_sdk_test", test)))]
+            let swig_data = rpc_client.get_account_data(&swig_account)?;
+            #[cfg(all(feature = "rust_sdk_test", test))]
+            let swig_data = litesvm.get_account(&swig_account).unwrap().data;
+
+            let swig_with_roles =
+                SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
+            let role = swig_with_roles
+                .get_role(0)
+                .map_err(|_| SwigError::AuthorityNotFound)?;
+            let current_role = if let Some(role) = role {
+                build_current_role(0, &role)
+            } else {
+                return Err(SwigError::AuthorityNotFound);
+            };
+
             Ok(Self {
                 instruction_builder,
                 rpc_client,
                 fee_payer,
                 #[cfg(all(feature = "rust_sdk_test", test))]
                 litesvm,
+                authority_keypair,
+                current_role,
             })
         } else {
             // Safe unwrap because we know the account exists
@@ -146,6 +171,13 @@ impl<'c> SwigWallet<'c> {
                 .get_role(role_id)
                 .map_err(|_| SwigError::AuthorityNotFound)?;
 
+            // Extract the role data for storage
+            let current_role = if let Some(role) = role {
+                build_current_role(role_id, &role)
+            } else {
+                return Err(SwigError::AuthorityNotFound);
+            };
+
             let instruction_builder =
                 SwigInstructionBuilder::new(swig_id, client_role, fee_payer.pubkey(), role_id);
 
@@ -155,6 +187,8 @@ impl<'c> SwigWallet<'c> {
                 fee_payer: &fee_payer,
                 #[cfg(all(feature = "rust_sdk_test", test))]
                 litesvm,
+                authority_keypair,
+                current_role,
             })
         }
     }
@@ -182,7 +216,6 @@ impl<'c> SwigWallet<'c> {
             new_authority,
             permissions,
             Some(self.get_current_slot()?),
-            None,
         )?;
         let msg = v0::Message::try_compile(
             &self.fee_payer.pubkey(),
@@ -220,11 +253,9 @@ impl<'c> SwigWallet<'c> {
         let authority_id = swig_with_roles.lookup_role_id(authority.as_ref()).unwrap();
 
         if let Some(authority_id) = authority_id {
-            let instruction = self.instruction_builder.remove_authority(
-                authority_id,
-                Some(self.get_current_slot()?),
-                None,
-            )?;
+            let instruction = self
+                .instruction_builder
+                .remove_authority(authority_id, Some(self.get_current_slot()?))?;
 
             let msg = v0::Message::try_compile(
                 &self.fee_payer.pubkey(),
@@ -238,7 +269,12 @@ impl<'c> SwigWallet<'c> {
                 &[self.fee_payer.insecure_clone()],
             )?;
 
-            self.send_and_confirm_transaction(tx)
+            let tx_result = self.send_and_confirm_transaction(tx);
+            if tx_result.is_ok() {
+                self.refresh_permissions()?;
+                self.instruction_builder.increment_odometer()?;
+            }
+            tx_result
         } else {
             return Err(SwigError::AuthorityNotFound);
         }
@@ -260,11 +296,9 @@ impl<'c> SwigWallet<'c> {
         inner_instructions: Vec<Instruction>,
         alt: Option<&[AddressLookupTableAccount]>,
     ) -> Result<Signature, SwigError> {
-        let sign_ix = self.instruction_builder.sign_instruction(
-            inner_instructions,
-            Some(self.get_current_slot()?),
-            None,
-        )?;
+        let sign_ix = self
+            .instruction_builder
+            .sign_instruction(inner_instructions, Some(self.get_current_slot()?))?;
 
         let alt = if alt.is_some() { alt.unwrap() } else { &[] };
 
@@ -277,7 +311,12 @@ impl<'c> SwigWallet<'c> {
 
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
-        self.send_and_confirm_transaction(tx)
+        let tx_result = self.send_and_confirm_transaction(tx);
+        if tx_result.is_ok() {
+            self.refresh_permissions()?;
+            self.instruction_builder.increment_odometer()?;
+        }
+        tx_result
     }
 
     /// Replaces an existing authority with a new one
@@ -319,7 +358,12 @@ impl<'c> SwigWallet<'c> {
 
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
-        self.send_and_confirm_transaction(tx)
+        let tx_result = self.send_and_confirm_transaction(tx);
+        if tx_result.is_ok() {
+            self.refresh_permissions()?;
+            self.instruction_builder.increment_odometer()?;
+        }
+        tx_result
     }
 
     /// Creates a new sub-account for the Swig wallet
@@ -345,7 +389,12 @@ impl<'c> SwigWallet<'c> {
 
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
-        self.send_and_confirm_transaction(tx)
+        let tx_result = self.send_and_confirm_transaction(tx);
+        if tx_result.is_ok() {
+            self.refresh_permissions()?;
+            self.instruction_builder.increment_odometer()?;
+        }
+        tx_result
     }
 
     /// Signs instructions with a sub-account
@@ -381,7 +430,12 @@ impl<'c> SwigWallet<'c> {
         // We need both the fee payer and the authority to sign
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
-        self.send_and_confirm_transaction(tx)
+        let tx_result = self.send_and_confirm_transaction(tx);
+        if tx_result.is_ok() {
+            self.refresh_permissions()?;
+            self.instruction_builder.increment_odometer()?;
+        }
+        tx_result
     }
 
     /// Withdraws native SOL from a sub-account
@@ -415,7 +469,12 @@ impl<'c> SwigWallet<'c> {
 
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
-        self.send_and_confirm_transaction(tx)
+        let tx_result = self.send_and_confirm_transaction(tx);
+        if tx_result.is_ok() {
+            self.refresh_permissions()?;
+            self.instruction_builder.increment_odometer()?;
+        }
+        tx_result
     }
 
     /// Withdraws SPL tokens from a sub-account
@@ -458,7 +517,12 @@ impl<'c> SwigWallet<'c> {
 
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
-        self.send_and_confirm_transaction(tx)
+        let tx_result = self.send_and_confirm_transaction(tx);
+        if tx_result.is_ok() {
+            self.refresh_permissions()?;
+            self.instruction_builder.increment_odometer()?;
+        }
+        tx_result
     }
 
     /// Toggles a sub-account's enabled state
@@ -722,9 +786,9 @@ impl<'c> SwigWallet<'c> {
                         },
                         AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
                             let authority = role.authority.identity().unwrap();
-                            let authority_hex =
-                                hex::encode([&[0x4].as_slice(), authority].concat());
-                            // get eth address from public key
+                            let mut authority_hex = vec![0x4];
+                            authority_hex.extend_from_slice(authority);
+                            let authority_hex = hex::encode(authority_hex);
                             let mut hasher = solana_sdk::keccak::Hasher::default();
                             hasher.hash(authority_hex.as_bytes());
                             let hash = hasher.result();
@@ -881,6 +945,44 @@ impl<'c> SwigWallet<'c> {
         Ok(self.instruction_builder.get_role_id())
     }
 
+    /// Returns the current role permissions if available
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the current role permissions or a `SwigError`
+    pub fn get_current_permissions(&self) -> Result<&[Permission], SwigError> {
+        Ok(&self.current_role.permissions)
+    }
+
+    /// Updates the stored role permissions by fetching them from the chain
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing unit type or a `SwigError`
+    pub fn refresh_permissions(&mut self) -> Result<(), SwigError> {
+        let swig_pubkey = self.get_swig_account()?;
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let swig_data = self.litesvm.get_account(&swig_pubkey).unwrap().data;
+
+        let swig_with_roles =
+            SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
+
+        let role_id = self.get_current_role_id()?;
+        let role = swig_with_roles
+            .get_role(role_id)
+            .map_err(|_| SwigError::AuthorityNotFound)?;
+
+        if let Some(role) = role {
+            self.current_role = build_current_role(role_id, &role);
+        } else {
+            return Err(SwigError::AuthorityNotFound);
+        }
+
+        Ok(())
+    }
+
     /// Switches to a different authority for the Swig wallet
     ///
     /// # Arguments
@@ -897,11 +999,16 @@ impl<'c> SwigWallet<'c> {
         &mut self,
         role_id: u32,
         client_role: Box<dyn ClientRole>,
-        _authority_kp: Option<&'c Keypair>,
+        authority_kp: Option<&'c Keypair>,
     ) -> Result<(), SwigError> {
         // Update the instruction builder's authority
         self.instruction_builder
             .switch_authority(role_id, client_role)?;
+
+        self.authority_keypair = authority_kp;
+
+        // Update the stored role data for the new authority
+        self.refresh_permissions()?;
 
         Ok(())
     }
@@ -942,7 +1049,6 @@ impl<'c> SwigWallet<'c> {
 
         let indexed_authority = swig_with_roles.lookup_role_id(authority.as_ref()).unwrap();
 
-        println!("Indexed Authority: {:?}", indexed_authority);
         if indexed_authority.is_some() {
             Ok(())
         } else {
@@ -1003,7 +1109,7 @@ impl<'c> SwigWallet<'c> {
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let account_exists = self.rpc_client.get_account(&sub_account).is_ok();
         #[cfg(all(feature = "rust_sdk_test", test))]
-        let account_exists = self.litesvm.get_balance(&sub_account).unwrap() > 0;
+        let account_exists = self.litesvm.get_balance(&sub_account).is_some();
 
         if account_exists {
             Ok(Some(sub_account))
@@ -1059,8 +1165,16 @@ impl<'c> SwigWallet<'c> {
     /// Returns a `Result` containing the keypairs for signing transactions or a
     /// `SwigError`
     fn get_keypairs(&self) -> Result<Vec<&Keypair>, SwigError> {
-        // For now, only the fee payer needs to sign since the authority is handled by the client role
-        Ok(vec![&self.fee_payer])
+        let mut keypairs = vec![self.fee_payer];
+        if let Some(authority_kp) = self.authority_keypair {
+            // Only add the authority keypair if it's different from the fee payer
+            if std::ptr::eq(authority_kp, self.fee_payer) {
+                // Authority and fee payer are the same, so we already have it
+            } else {
+                keypairs.push(authority_kp);
+            }
+        }
+        Ok(keypairs)
     }
 
     /// Returns the swig id
@@ -1156,6 +1270,287 @@ impl<'c> SwigWallet<'c> {
     #[cfg(all(feature = "rust_sdk_test", test))]
     pub fn litesvm(&mut self) -> &mut LiteSVM {
         &mut self.litesvm
+    }
+
+    /// Checks if the current authority has a specific permission
+    ///
+    /// # Arguments
+    ///
+    /// * `permission` - The permission to check for
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing whether the permission exists or a `SwigError`
+    pub fn has_permission(&self, permission: &Permission) -> Result<bool, SwigError> {
+        let permissions = self.get_current_permissions()?;
+        Ok(permissions.contains(permission))
+    }
+
+    /// Checks if the current authority has "All" permissions
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing whether the authority has all permissions or a `SwigError`
+    pub fn has_all_permissions(&self) -> Result<bool, SwigError> {
+        let permissions = self.get_current_permissions()?;
+        Ok(permissions.iter().any(|p| matches!(p, Permission::All)))
+    }
+
+    /// Checks if the current authority has manage authority permissions
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing whether the authority can manage other authorities or a `SwigError`
+    pub fn can_manage_authority(&self) -> Result<bool, SwigError> {
+        let permissions = self.get_current_permissions()?;
+        Ok(permissions
+            .iter()
+            .any(|p| matches!(p, Permission::ManageAuthority)))
+    }
+
+    /// Gets the SOL spending limit for the current authority
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the SOL limit in lamports or a `SwigError`
+    pub fn get_sol_limit(&self) -> Result<Option<u64>, SwigError> {
+        let permissions = self.get_current_permissions()?;
+        for permission in permissions {
+            if let Permission::Sol { amount, .. } = permission {
+                return Ok(Some(*amount));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Gets the recurring SOL limit configuration for the current authority
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the recurring SOL limit config or a `SwigError`
+    pub fn get_recurring_sol_limit(&self) -> Result<Option<RecurringConfig>, SwigError> {
+        let permissions = self.get_current_permissions()?;
+        for permission in permissions {
+            if let Permission::Sol { recurring, .. } = permission {
+                return Ok(recurring.clone());
+            }
+        }
+        Ok(None)
+    }
+
+    /// Checks if the current authority can spend a specific amount of SOL
+    ///
+    /// # Arguments
+    ///
+    /// * `amount` - The amount to check in lamports
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing whether the authority can spend the amount or a `SwigError`
+    pub fn can_spend_sol(&self, amount: u64) -> Result<bool, SwigError> {
+        // If they have all permissions, they can spend any amount
+        if self.has_all_permissions()? {
+            return Ok(true);
+        }
+
+        let permissions = self.get_current_permissions()?;
+
+        for permission in permissions {
+            match permission {
+                Permission::Sol {
+                    amount: limit,
+                    recurring,
+                } => {
+                    // Check one-time limit
+                    if amount <= *limit {
+                        return Ok(true);
+                    }
+
+                    // Check recurring limit if it exists
+                    if let Some(recurring_config) = recurring {
+                        if amount <= recurring_config.current_amount {
+                            return Ok(true);
+                        }
+                    }
+                },
+                _ => continue,
+            }
+        }
+
+        Ok(false)
+    }
+
+    /// Gets the total number of roles in the Swig account
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the number of roles or a `SwigError`
+    pub fn get_role_count(&self) -> Result<u32, SwigError> {
+        let swig_pubkey = self.get_swig_account()?;
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let swig_data = self.litesvm.get_account(&swig_pubkey).unwrap().data;
+
+        let swig_with_roles =
+            SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
+
+        Ok(swig_with_roles.state.role_counter)
+    }
+
+    /// Gets the authority type for a specific role
+    ///
+    /// # Arguments
+    ///
+    /// * `role_id` - The ID of the role to check
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the authority type or a `SwigError`
+    pub fn get_authority_type(&self, role_id: u32) -> Result<AuthorityType, SwigError> {
+        self.with_role_data(role_id, |role| role.authority.authority_type())
+    }
+
+    /// Gets the authority identity for a specific role
+    ///
+    /// # Arguments
+    ///
+    /// * `role_id` - The ID of the role to check
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the authority identity bytes or a `SwigError`
+    pub fn get_authority_identity(&self, role_id: u32) -> Result<Vec<u8>, SwigError> {
+        self.with_role_data(role_id, |role| {
+            role.authority.identity().unwrap_or_default().to_vec()
+        })
+    }
+
+    /// Checks if a role is session-based
+    ///
+    /// # Arguments
+    ///
+    /// * `role_id` - The ID of the role to check
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing whether the role is session-based or a `SwigError`
+    pub fn is_session_based(&self, role_id: u32) -> Result<bool, SwigError> {
+        self.with_role_data(role_id, |role| role.authority.session_based())
+    }
+
+    /// Gets all permissions for a specific role
+    ///
+    /// # Arguments
+    ///
+    /// * `role_id` - The ID of the role to get permissions for
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the permissions for the role or a `SwigError`
+    pub fn get_role_permissions(&self, role_id: u32) -> Result<Vec<Permission>, SwigError> {
+        self.with_role_data(role_id, |role| Permission::from_role(role))?
+    }
+
+    /// Checks if a role has a specific permission
+    ///
+    /// # Arguments
+    ///
+    /// * `role_id` - The ID of the role to check
+    /// * `permission` - The permission to check for
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing whether the role has the permission or a `SwigError`
+    pub fn role_has_permission(
+        &self,
+        role_id: u32,
+        permission: &Permission,
+    ) -> Result<bool, SwigError> {
+        let permissions = self.get_role_permissions(role_id)?;
+        Ok(permissions.contains(permission))
+    }
+
+    /// Gets the formatted authority address for display
+    ///
+    /// # Arguments
+    ///
+    /// * `role_id` - The ID of the role to get the address for
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the formatted address string or a `SwigError`
+    pub fn get_formatted_authority_address(&self, role_id: u32) -> Result<String, SwigError> {
+        self.with_role_data(role_id, |role| match role.authority.authority_type() {
+            AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
+                let authority = role.authority.identity().unwrap_or_default();
+                Ok(bs58::encode(authority).into_string())
+            },
+            AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
+                let authority = role.authority.identity().unwrap_or_default();
+                let mut authority_hex = vec![0x4];
+                authority_hex.extend_from_slice(authority);
+                let authority_hex = hex::encode(authority_hex);
+                let mut hasher = solana_sdk::keccak::Hasher::default();
+                hasher.hash(authority_hex.as_bytes());
+                let hash = hasher.result();
+                Ok(format!("0x{}", hex::encode(&hash.0[12..32])))
+            },
+            _ => Err(SwigError::AuthorityNotFound),
+        })?
+    }
+
+    /// Get the odometer for the current authority if it is a Secp256k1 authority
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the odometer or a `SwigError`
+    pub fn get_odometer(&self) -> Result<u32, SwigError> {
+        self.instruction_builder.get_odometer()
+    }
+
+    /// Helper method to work with role data by ID using a closure
+    ///
+    /// # Arguments
+    ///
+    /// * `role_id` - The ID of the role to retrieve
+    /// * `f` - Closure to execute with the role data
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the result of the closure or a `SwigError`
+    fn with_role_data<F, T>(&self, role_id: u32, f: F) -> Result<T, SwigError>
+    where
+        F: FnOnce(&Role) -> T,
+    {
+        let swig_pubkey = self.get_swig_account()?;
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let swig_data = self.litesvm.get_account(&swig_pubkey).unwrap().data;
+
+        let swig_with_roles =
+            SwigWithRoles::from_bytes(&swig_data).map_err(|_| SwigError::InvalidSwigData)?;
+
+        if let Some(role) = swig_with_roles
+            .get_role(role_id)
+            .map_err(|_| SwigError::InvalidSwigData)?
+        {
+            Ok(f(&role))
+        } else {
+            Err(SwigError::AuthorityNotFound)
+        }
+    }
+}
+
+// Helper to build CurrentRole from a Role and role_id
+fn build_current_role(role_id: u32, role: &Role) -> crate::types::CurrentRole {
+    crate::types::CurrentRole {
+        role_id,
+        authority_type: role.authority.authority_type(),
+        authority_identity: role.authority.identity().unwrap_or_default().to_vec(),
+        permissions: crate::types::Permission::from_role(role).unwrap_or_default(),
+        session_based: role.authority.session_based(),
     }
 }
 

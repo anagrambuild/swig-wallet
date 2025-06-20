@@ -66,7 +66,7 @@ fn should_token_transfer_with_program_scope() {
         .switch_authority(
             1,
             Box::new(Ed25519ClientRole::new(new_authority.pubkey())),
-            None,
+            Some(&new_authority),
         )
         .unwrap();
 
@@ -156,7 +156,7 @@ fn should_token_transfer_with_recurring_limit_program_scope() {
         .switch_authority(
             1,
             Box::new(Ed25519ClientRole::new(new_authority.pubkey())),
-            None,
+            Some(&new_authority),
         )
         .unwrap();
 
@@ -211,7 +211,9 @@ fn should_token_transfer_with_recurring_limit_program_scope() {
         };
         println!("After transfer, token balance: {}", after_balance);
 
-        swig_wallet.display_swig().unwrap();
+        // Verify transfer was successful
+        assert!(sign_ix != solana_sdk::signature::Signature::default());
+        assert!(after_balance < before_balance);
     }
 
     // Try to transfer one more batch (should fail)
