@@ -172,7 +172,6 @@ pub fn remove_authority_v1(
             // Authenticate the caller
             let clock = Clock::get()?;
             let slot = clock.slot;
-
             if acting_role.authority.session_based() {
                 acting_role.authority.authenticate_session(
                     all_accounts,

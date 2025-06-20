@@ -18,7 +18,7 @@ use pinocchio::{
 use pinocchio_token::instructions::Transfer;
 use swig_assertions::*;
 use swig_state_x::{
-    action::{all::All, manage_authority::ManageAuthority, sub_account::SubAccount},
+    action::{all::All, sub_account::SubAccount},
     authority::AuthorityType,
     role::RoleMut,
     swig::{sub_account_signer, Swig, SwigSubAccount},
@@ -111,7 +111,8 @@ pub fn withdraw_from_sub_account_v1(
     data: &[u8],
     account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
-    // Verify that both the swig account and sub_account are owned by the current program
+    // Verify that both the swig account and sub_account are owned by the current
+    // program
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     check_self_owned(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
     let withdraw = WithdrawFromSubAccountV1::from_instruction_bytes(data)?;
@@ -157,17 +158,21 @@ pub fn withdraw_from_sub_account_v1(
             slot,
         )?;
     }
-    let (action_accounts_index, action_accounts_len) =
-        if role.position.authority_type()? == AuthorityType::Ed25519 {
-            (4, 7)
-        } else {
-            (3, 6)
-        };
-    let manage_authority_action = role.get_action::<ManageAuthority>(&[])?;
+    // Check if the role has the required permissions
     let all_action = role.get_action::<All>(&[])?;
-    if manage_authority_action.is_none() && all_action.is_none() {
+    let sub_account_action =
+        role.get_action::<SubAccount>(ctx.accounts.sub_account.key().as_ref())?;
+
+    if all_action.is_none() && sub_account_action.is_none() {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
+
+    let (action_accounts_index, action_accounts_len) =
+        if role.position.authority_type()? == AuthorityType::Secp256k1 {
+            (3, 6)
+        } else {
+            (4, 7)
+        };
     let amount = withdraw.args.amount;
     if all_accounts.len() >= action_accounts_len {
         let token_account = &all_accounts[action_accounts_index];

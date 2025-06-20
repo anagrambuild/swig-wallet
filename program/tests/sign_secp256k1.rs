@@ -937,11 +937,6 @@ fn test_secp256k1_replay_scenario_2() {
             .unwrap();
 
     let result2 = context.svm.send_transaction(tx2);
-    // assert!(
-    //     result2.is_ok(),
-    //     "Expected second transaction to succeed (demonstrating vulnerability):
-    // {:?}",     result2.err()
-    // );
     assert!(
         result2.is_err(),
         "Expected second transaction to succeed (demonstrating vulnerability): {:?}",

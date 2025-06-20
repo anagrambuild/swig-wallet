@@ -26,9 +26,11 @@ use swig_state_x::{
 
 /// Helper to generate a real secp256r1 key pair for testing
 fn create_test_secp256r1_keypair() -> (openssl::ec::EcKey<openssl::pkey::Private>, [u8; 33]) {
-    use openssl::bn::BigNumContext;
-    use openssl::ec::{EcGroup, EcKey, PointConversionForm};
-    use openssl::nid::Nid;
+    use openssl::{
+        bn::BigNumContext,
+        ec::{EcGroup, EcKey, PointConversionForm},
+        nid::Nid,
+    };
 
     let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
     let signing_key = EcKey::generate(&group).unwrap();
@@ -49,7 +51,8 @@ fn create_test_secp256r1_authority() -> [u8; 33] {
     pubkey
 }
 
-/// Helper function to get the current signature counter for a secp256r1 authority
+/// Helper function to get the current signature counter for a secp256r1
+/// authority
 fn get_secp256r1_counter(
     context: &SwigTestContext,
     swig_key: &solana_sdk::pubkey::Pubkey,
@@ -90,52 +93,6 @@ fn get_secp256r1_counter(
     }
 }
 
-/// Helper to compute the message hash that secp256r1 verification expects
-fn compute_secp256r1_message_hash(
-    instruction_data: &[u8],
-    accounts: &[(solana_sdk::pubkey::Pubkey, bool, bool)], // (pubkey, is_writable, is_signer)
-    slot: u64,
-    counter: u32,
-) -> [u8; 32] {
-    use solana_sdk::keccak::{hash as keccak_hash, Hash as KeccakHash};
-    let mut accounts_payload = Vec::new();
-
-    for (pubkey, is_writable, is_signer) in accounts {
-        accounts_payload.extend_from_slice(pubkey.as_ref()); // 32 bytes: pubkey
-        accounts_payload.push(*is_writable as u8); // 1 byte: is_writable
-        accounts_payload.push(*is_signer as u8); // 1 byte: is_signer
-        accounts_payload.extend_from_slice(&[0u8; 6]); // 6 bytes: padding
-    }
-
-    // Combine all the data that goes into the hash
-    let mut combined_data = Vec::new();
-    combined_data.extend_from_slice(instruction_data);
-    combined_data.extend_from_slice(&accounts_payload);
-    combined_data.extend_from_slice(&slot.to_le_bytes());
-    combined_data.extend_from_slice(&counter.to_le_bytes());
-
-    // Keccak hash for the final result (compatible with passkeys)
-    let final_hash = keccak_hash(&combined_data);
-    final_hash.to_bytes()
-}
-
-/// Create a real secp256r1 precompile instruction using actual cryptography
-fn create_secp256r1_instruction(
-    signing_key: &openssl::ec::EcKey<openssl::pkey::Private>,
-    public_key: &[u8; 33],
-    message: &[u8],
-) -> solana_sdk::instruction::Instruction {
-    use solana_secp256r1_program::{new_secp256r1_instruction_with_signature, sign_message};
-
-    // Create the signature using the official Solana function
-    let signature = sign_message(message, &signing_key.private_key_to_der().unwrap()).unwrap();
-
-    // Create the instruction using the official Solana function
-    let instruction = new_secp256r1_instruction_with_signature(message, &signature, public_key);
-
-    instruction
-}
-
 #[test_log::test]
 fn test_secp256r1_basic_signing() {
     let mut context = setup_test_context().unwrap();
@@ -164,34 +121,30 @@ fn test_secp256r1_basic_signing() {
         current_counter, next_counter
     );
 
-    // Create the secp256r1 signing instruction
-    let sign_ix = swig_interface::SignInstruction::new_secp256r1(
+    // Create authority function that signs the message hash
+    let mut authority_fn = |message_hash: &[u8]| -> [u8; 64] {
+        use solana_secp256r1_program::sign_message;
+        let signature =
+            sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap();
+        signature
+    };
+
+    // Create the secp256r1 signing instructions (returns Vec<Instruction>)
+    let instructions = swig_interface::SignInstruction::new_secp256r1(
         swig_key,
         context.default_payer.pubkey(),
+        authority_fn,
         current_slot,
         next_counter,
         transfer_ix.clone(),
         0, // Role ID 0
+        &public_key,
     )
     .unwrap();
 
-    // Compute the message hash that the secp256r1 verification will expect
-    // Account info: (pubkey, is_writable, is_signer)
-    let accounts = sign_ix
-        .accounts
-        .iter()
-        .map(|a| (a.pubkey, a.is_writable, a.is_signer))
-        .collect::<Vec<_>>();
-    let message_hash =
-        compute_secp256r1_message_hash(&transfer_ix.data, &accounts, current_slot, next_counter);
-
-    // Create a real secp256r1 verification instruction with proper cryptography
-    let secp256r1_verify_ix =
-        create_secp256r1_instruction(&signing_key, &public_key, &message_hash);
-
     let message = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[secp256r1_verify_ix, sign_ix], // secp256r1 verification must come first
+        &instructions, // Use the returned instructions directly
         &[],
         context.svm.latest_blockhash(),
     )
@@ -277,32 +230,31 @@ fn test_secp256r1_replay_protection() {
 
     // First transaction with counter 1
     let counter1 = 1;
-    let sign_ix1 = swig_interface::SignInstruction::new_secp256r1(
+
+    // Create authority function that signs the message hash
+    let mut authority_fn1 = |message_hash: &[u8]| -> [u8; 64] {
+        use solana_secp256r1_program::sign_message;
+        let signature =
+            sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap();
+        signature
+    };
+
+    let instructions1 = swig_interface::SignInstruction::new_secp256r1(
         swig_key,
         context.default_payer.pubkey(),
+        authority_fn1,
         current_slot,
         counter1,
         transfer_ix.clone(),
         0,
+        &public_key,
     )
     .unwrap();
-
-    // Create message hash and secp256r1 instruction for first transaction
-    let accounts = vec![
-        (swig_key, true, false), // Swig account (writable, not signer)
-        (context.default_payer.pubkey(), true, true), // Payer (writable, signer)
-        (solana_sdk::system_program::ID, false, false), // System program (not writable, not signer)
-        (solana_sdk::sysvar::instructions::ID, false, false), // Instructions sysvar (not writable, not signer)
-    ];
-    let message_hash1 =
-        compute_secp256r1_message_hash(&transfer_ix.data, &accounts, current_slot, counter1);
-    let secp256r1_verify_ix1 =
-        create_secp256r1_instruction(&signing_key, &public_key, &message_hash1);
 
     // Execute first transaction
     let message1 = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[secp256r1_verify_ix1, sign_ix1],
+        &instructions1,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -320,25 +272,30 @@ fn test_secp256r1_replay_protection() {
     );
     println!("✓ First transaction with counter 1 succeeded");
 
-    // Try second transaction with same counter (should fail due to replay protection)
-    let sign_ix2 = swig_interface::SignInstruction::new_secp256r1(
+    // Try second transaction with same counter (should fail due to replay
+    // protection)
+    let mut authority_fn2 = |message_hash: &[u8]| -> [u8; 64] {
+        use solana_secp256r1_program::sign_message;
+        let signature =
+            sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap();
+        signature
+    };
+
+    let instructions2 = swig_interface::SignInstruction::new_secp256r1(
         swig_key,
         context.default_payer.pubkey(),
+        authority_fn2,
         current_slot,
         counter1, // Same counter - should trigger replay protection
         transfer_ix.clone(),
         0,
+        &public_key,
     )
     .unwrap();
 
-    let message_hash2 =
-        compute_secp256r1_message_hash(&transfer_ix.data, &accounts, current_slot, counter1);
-    let secp256r1_verify_ix2 =
-        create_secp256r1_instruction(&signing_key, &public_key, &message_hash2);
-
     let message2 = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[secp256r1_verify_ix2, sign_ix2],
+        &instructions2,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -519,7 +476,8 @@ fn test_secp256r1_session_authority_odometer() {
     println!("✓ Session authority has proper session-based behavior");
 }
 
-/// Helper function to create a swig account with secp256r1 authority for testing
+/// Helper function to create a swig account with secp256r1 authority for
+/// testing
 fn create_swig_secp256r1(
     context: &mut SwigTestContext,
     public_key: &[u8; 33],
@@ -558,4 +516,85 @@ fn create_swig_secp256r1(
     context.svm.send_transaction(tx).unwrap();
 
     Ok((swig_address, swig_bump))
+}
+
+#[test_log::test]
+fn test_secp256r1_add_authority_with_secp256r1() {
+    let mut context = setup_test_context().unwrap();
+
+    // Create a real secp256r1 key pair for the primary authority
+    let (signing_key, public_key) = create_test_secp256r1_keypair();
+    let id = rand::random::<[u8; 32]>();
+
+    // Create a new swig with secp256r1 authority
+    let (swig_key, _) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
+    context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
+
+    // Create a second secp256r1 public key to add as a new authority
+    let (_, new_public_key) = create_test_secp256r1_keypair();
+
+    // Get current slot and counter for the authority
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    let current_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();
+    let next_counter = current_counter + 1;
+
+    // Create authority function that signs the message hash
+    let mut authority_fn = |message_hash: &[u8]| -> [u8; 64] {
+        use solana_secp256r1_program::sign_message;
+        let signature =
+            sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap();
+        signature
+    };
+
+    // Create instruction to add the new Secp256r1 authority
+    let instructions = swig_interface::AddAuthorityInstruction::new_with_secp256r1_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        authority_fn,
+        current_slot,
+        next_counter,
+        0, // role_id of the primary authority
+        &public_key,
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256r1,
+            authority: &new_public_key,
+        },
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &instructions,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_ok(),
+        "Failed to add Secp256r1 authority using secp256r1 signature: {:?}",
+        result.err()
+    );
+
+    // Verify the authority was added
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig_state.state.roles, 2);
+
+    // Verify the counter was incremented
+    let new_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();
+    assert_eq!(
+        new_counter, next_counter,
+        "Counter should be incremented after successful transaction"
+    );
+
+    println!("✓ Successfully added Secp256r1 authority using secp256r1 signature");
+    println!("✓ Authority count increased to 2");
+    println!("✓ Counter incremented correctly");
 }

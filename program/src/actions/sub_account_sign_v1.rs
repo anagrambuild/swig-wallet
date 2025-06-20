@@ -28,6 +28,7 @@ use crate::{
         accounts::{Context, SubAccountSignV1Accounts},
         SwigInstruction,
     },
+    util::build_restricted_keys,
     AccountClassification,
 };
 
@@ -188,14 +189,14 @@ pub fn sub_account_sign_v1(
     const UNINIT_KEY: MaybeUninit<&Pubkey> = MaybeUninit::uninit();
     let mut restricted_keys: [MaybeUninit<&Pubkey>; 2] = [UNINIT_KEY; 2];
     let rkeys: &[&Pubkey] = unsafe {
-        if role.position.authority_type()? == AuthorityType::Ed25519 {
+        if role.position.authority_type()? == AuthorityType::Secp256k1 {
+            restricted_keys[0].write(ctx.accounts.payer.key());
+            core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 1)
+        } else {
             let authority_index = *sign_v1.authority_payload.get_unchecked(0) as usize;
             restricted_keys[0].write(ctx.accounts.payer.key());
             restricted_keys[1].write(all_accounts[authority_index].key());
             core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 2)
-        } else {
-            restricted_keys[0].write(ctx.accounts.payer.key());
-            core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 1)
         }
     };
     let ix_iter = InstructionIterator::new(
