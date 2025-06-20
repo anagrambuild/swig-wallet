@@ -83,6 +83,10 @@ impl AuthorityInfo for ED25519Authority {
         Ok(self.public_key.as_ref())
     }
 
+    fn signature_odometer(&self) -> Option<u32> {
+        None
+    }
+
     fn authenticate(
         &mut self,
         account_infos: &[AccountInfo],
@@ -233,6 +237,10 @@ impl AuthorityInfo for Ed25519SessionAuthority {
 
     fn identity(&self) -> Result<&[u8], ProgramError> {
         Ok(self.public_key.as_ref())
+    }
+
+    fn signature_odometer(&self) -> Option<u32> {
+        None
     }
 
     fn as_any(&self) -> &dyn Any {

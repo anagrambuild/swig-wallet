@@ -1,5 +1,6 @@
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
+use alloy_signer_local::LocalSigner;
 use litesvm_token::spl_token;
 use solana_program::pubkey::Pubkey;
 use solana_sdk::{
@@ -15,6 +16,7 @@ use swig_state_x::{
 };
 
 use super::*;
+use crate::client_role::Ed25519ClientRole;
 use crate::tests::common::*;
 
 #[test_log::test]
@@ -43,7 +45,7 @@ fn test_sub_account_functionality() {
     // Create instruction builder with root authority
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Ed25519(root_authority.pubkey()),
+        Box::new(Ed25519ClientRole::new(root_authority.pubkey())),
         context.default_payer.pubkey(),
         role_id,
     );
@@ -56,7 +58,6 @@ fn test_sub_account_functionality() {
             vec![Permission::SubAccount {
                 sub_account: [0; 32],
             }],
-            None,
             None,
         )
         .unwrap();
@@ -81,7 +82,7 @@ fn test_sub_account_functionality() {
     let sub_account_role_id = 1; // The sub-account authority has role_id 1
     let mut sub_account_builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Ed25519(sub_account_authority.pubkey()),
+        Box::new(Ed25519ClientRole::new(sub_account_authority.pubkey())),
         context.default_payer.pubkey(),
         sub_account_role_id,
     );

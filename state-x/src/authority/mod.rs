@@ -60,6 +60,9 @@ pub trait AuthorityInfo: IntoBytes {
     /// Returns the identity bytes for this authority
     fn identity(&self) -> Result<&[u8], ProgramError>;
 
+    /// Returns the signature odometer for this authority if it exists
+    fn signature_odometer(&self) -> Option<u32>;
+
     /// Authenticates a session-based operation.
     ///
     /// # Arguments

@@ -1,24 +1,28 @@
 use solana_program::pubkey::Pubkey;
 use swig_interface::ClientAction;
-use swig_state_x::action::{
-    all::All,
-    manage_authority::ManageAuthority,
-    program::Program,
-    program_scope::{NumericType, ProgramScope, ProgramScopeType},
-    sol_limit::SolLimit,
-    sol_recurring_limit::SolRecurringLimit,
-    stake_all::StakeAll,
-    stake_limit::StakeLimit,
-    stake_recurring_limit::StakeRecurringLimit,
-    sub_account::SubAccount,
-    token_limit::TokenLimit,
-    token_recurring_limit::TokenRecurringLimit,
+use swig_state_x::{
+    action::{
+        all::All,
+        manage_authority::ManageAuthority,
+        program::Program,
+        program_scope::{NumericType, ProgramScope, ProgramScopeType},
+        sol_limit::SolLimit,
+        sol_recurring_limit::SolRecurringLimit,
+        stake_all::StakeAll,
+        stake_limit::StakeLimit,
+        stake_recurring_limit::StakeRecurringLimit,
+        sub_account::SubAccount,
+        token_limit::TokenLimit,
+        token_recurring_limit::TokenRecurringLimit,
+    },
+    role::Role,
+    Transmutable,
 };
 
 use crate::SwigError;
 
 /// Configuration for recurring limits that reset after a specified time window
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecurringConfig {
     /// The time window in slots after which the limit resets
     pub window: u64,
@@ -39,7 +43,7 @@ impl RecurringConfig {
 /// Represents the permissions that can be granted to a wallet authority.
 /// Each permission type maps to specific actions that can be performed on the
 /// wallet.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Permission {
     /// Full permissions for all actions. This is the highest level of
     /// permission that grants unrestricted access to all wallet operations.
@@ -220,4 +224,171 @@ impl Permission {
         }
         actions
     }
+
+    /// Converts a Role reference to a vector of Permission types
+    ///
+    /// # Arguments
+    ///
+    /// * `role` - Reference to a Role
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing a vector of permissions or a `SwigError`
+    pub fn from_role<'a>(
+        role: &swig_state_x::role::Role<'a>,
+    ) -> Result<Vec<Permission>, SwigError> {
+        let mut permissions = Vec::new();
+
+        // Check for All permission
+        if swig_state_x::role::Role::get_action::<All>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .is_some()
+        {
+            permissions.push(Permission::All);
+        }
+
+        // Check for ManageAuthority permission
+        if swig_state_x::role::Role::get_action::<ManageAuthority>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .is_some()
+        {
+            permissions.push(Permission::ManageAuthority);
+        }
+
+        // Check for SolLimit permission
+        if let Some(action) = swig_state_x::role::Role::get_action::<SolLimit>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+        {
+            permissions.push(Permission::Sol {
+                amount: action.amount,
+                recurring: None,
+            });
+        }
+
+        // Check for SolRecurringLimit permission
+        if let Some(action) = swig_state_x::role::Role::get_action::<SolRecurringLimit>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+        {
+            permissions.push(Permission::Sol {
+                amount: action.recurring_amount,
+                recurring: Some(RecurringConfig {
+                    window: action.window,
+                    last_reset: action.last_reset,
+                    current_amount: action.current_amount,
+                }),
+            });
+        }
+
+        // Check for TokenLimit permission
+        if let Some(action) = swig_state_x::role::Role::get_action::<TokenLimit>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+        {
+            permissions.push(Permission::Token {
+                mint: Pubkey::new_from_array(action.token_mint),
+                amount: action.current_amount,
+                recurring: None,
+            });
+        }
+
+        // Check for TokenRecurringLimit permission
+        if let Some(action) = swig_state_x::role::Role::get_action::<TokenRecurringLimit>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+        {
+            permissions.push(Permission::Token {
+                mint: Pubkey::new_from_array(action.token_mint),
+                amount: action.limit,
+                recurring: Some(RecurringConfig {
+                    window: action.window,
+                    last_reset: action.last_reset,
+                    current_amount: action.current,
+                }),
+            });
+        }
+
+        // Check for Program permission
+        if let Some(action) = swig_state_x::role::Role::get_action::<Program>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+        {
+            permissions.push(Permission::Program {
+                program_id: Pubkey::new_from_array(action.program_id),
+            });
+        }
+
+        // Check for ProgramScope permission
+        if let Some(action) =
+            swig_state_x::role::Role::get_action::<ProgramScope>(role, &spl_token::ID.to_bytes())
+                .map_err(|_| SwigError::InvalidSwigData)?
+        {
+            permissions.push(Permission::ProgramScope {
+                program_id: Pubkey::new_from_array(action.program_id),
+                target_account: Pubkey::new_from_array(action.target_account),
+                numeric_type: action.numeric_type,
+                limit: if action.scope_type > 0 {
+                    Some(action.limit as u64)
+                } else {
+                    None
+                },
+                window: if action.scope_type == 2 {
+                    Some(action.window)
+                } else {
+                    None
+                },
+                balance_field_start: Some(action.balance_field_start),
+                balance_field_end: Some(action.balance_field_end),
+            });
+        }
+
+        // Check for SubAccount permission
+        if let Some(action) = swig_state_x::role::Role::get_action::<SubAccount>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+        {
+            permissions.push(Permission::SubAccount {
+                sub_account: action.sub_account,
+            });
+        }
+
+        // Check for StakeLimit permission
+        if let Some(action) = swig_state_x::role::Role::get_action::<StakeLimit>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+        {
+            permissions.push(Permission::Stake {
+                amount: action.amount,
+                recurring: None,
+            });
+        }
+
+        // Check for StakeRecurringLimit permission
+        if let Some(action) = swig_state_x::role::Role::get_action::<StakeRecurringLimit>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+        {
+            permissions.push(Permission::Stake {
+                amount: action.recurring_amount,
+                recurring: Some(RecurringConfig {
+                    window: action.window,
+                    last_reset: action.last_reset,
+                    current_amount: action.current_amount,
+                }),
+            });
+        }
+
+        // Check for StakeAll permission
+        if swig_state_x::role::Role::get_action::<StakeAll>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .is_some()
+        {
+            permissions.push(Permission::StakeAll);
+        }
+
+        Ok(permissions)
+    }
+}
+
+/// Stores all details about the current role for a wallet session
+#[derive(Debug)]
+pub struct CurrentRole {
+    pub role_id: u32,
+    pub authority_type: swig_state_x::authority::AuthorityType,
+    pub authority_identity: Vec<u8>,
+    pub permissions: Vec<Permission>,
+    pub session_based: bool,
 }

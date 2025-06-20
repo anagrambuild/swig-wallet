@@ -9,6 +9,7 @@ use swig_state_x::authority::{
 };
 
 use super::*;
+use crate::client_role::{Ed25519SessionClientRole, Secp256k1SessionClientRole};
 
 #[test_log::test]
 fn should_create_ed25519_session_authority() {
@@ -17,14 +18,16 @@ fn should_create_ed25519_session_authority() {
 
     let mut swig_wallet = SwigWallet::new(
         [0; 32],
-        AuthorityManager::Ed25519Session(CreateEd25519SessionAuthority::new(
-            main_authority.pubkey().to_bytes(),
-            session_key.pubkey().to_bytes(),
-            100,
+        Box::new(Ed25519SessionClientRole::new(
+            CreateEd25519SessionAuthority::new(
+                main_authority.pubkey().to_bytes(),
+                session_key.pubkey().to_bytes(),
+                100,
+            ),
         )),
         &main_authority,
-        &main_authority,
         "http://localhost:8899".to_string(),
+        Some(&main_authority),
         litesvm,
     )
     .unwrap();
@@ -40,7 +43,10 @@ fn should_create_ed25519_session_authority() {
         .create_session(new_session_key.pubkey(), 100)
         .unwrap();
 
-    swig_wallet.display_swig().unwrap();
+    // Verify session authority was created successfully
+    assert!(swig_wallet.get_swig_account().is_ok());
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 1);
+    assert!(swig_wallet.get_balance().unwrap() > 0);
 }
 
 #[test_log::test]
@@ -62,20 +68,22 @@ fn should_create_secp256k1_session_authority() {
 
     let swig_wallet = SwigWallet::new(
         [0; 32],
-        AuthorityManager::Secp256k1Session(
+        Box::new(Secp256k1SessionClientRole::new(
             CreateSecp256k1SessionAuthority::new(
                 secp_pubkey[1..].try_into().unwrap(),
                 [0; 32],
                 100,
             ),
             Box::new(sign_fn),
-        ),
-        &main_authority,
+        )),
         &main_authority,
         "http://localhost:8899".to_string(),
+        None,
         litesvm,
     )
     .unwrap();
 
-    swig_wallet.display_swig().unwrap();
+    // Verify session authority was created successfully
+    assert!(swig_wallet.get_swig_account().is_ok());
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 1);
 }
