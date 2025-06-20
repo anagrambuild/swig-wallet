@@ -142,9 +142,22 @@ pub fn add_authorization_lock_v1(
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 
-    // Authentication and permission checking
+    // Authentication and permission checking - consolidate loads
     let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data).unwrap();
     let role = swig_with_roles.get_role(add_lock.args.acting_role_id)?;
+    
+    // Get existing authorization locks for this role using a smaller array to avoid
+    // stack overflow
+    const MAX_LOCKS: usize = 10; // Smaller bound to prevent stack overflow
+    let (existing_locks, _count) = swig_with_roles
+        .get_authorization_locks_by_role::<MAX_LOCKS>(add_lock.args.acting_role_id)?;
+
+    // Convert Option array to Vec of actual locks
+    let existing_locks_vec: Vec<swig_state_x::swig::AuthorizationLock> = existing_locks
+        .iter()
+        .filter_map(|opt_lock| *opt_lock)
+        .collect();
+
     // TODO need to merge in fix for getting all roles because of action boundary
     // cursor positions
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
@@ -181,24 +194,6 @@ pub fn add_authorization_lock_v1(
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
 
-    // Validate against existing token limits for this role
-    // First, get current account data to check existing authorization locks
-    let swig_account_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
-    let swig_with_roles = swig_state_x::swig::SwigWithRoles::from_bytes(&swig_account_data)
-        .map_err(|_| SwigError::InvalidSwigAccountDiscriminator)?;
-
-    // Get existing authorization locks for this role using a smaller array to avoid
-    // stack overflow
-    const MAX_LOCKS: usize = 10; // Smaller bound to prevent stack overflow
-    let (existing_locks, _count) = swig_with_roles
-        .get_authorization_locks_by_role::<MAX_LOCKS>(add_lock.args.acting_role_id)?;
-
-    // Convert Option array to Vec of actual locks
-    let existing_locks_vec: Vec<swig_state_x::swig::AuthorizationLock> = existing_locks
-        .iter()
-        .filter_map(|opt_lock| *opt_lock)
-        .collect();
-
     // Validate the new lock against existing token limits
     validate_authorization_lock_against_limits(
         &acting_role,
@@ -211,7 +206,6 @@ pub fn add_authorization_lock_v1(
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let (swig_header, remaining_data) =
         unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
-    let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
 
     // Find the end of roles data to determine where authorization locks start
     let mut roles_end = 0;
