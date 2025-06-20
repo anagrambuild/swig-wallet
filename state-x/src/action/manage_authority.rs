@@ -33,4 +33,9 @@ impl<'a> Actionable<'a> for ManageAuthority {
     const TYPE: Permission = Permission::ManageAuthority;
     /// Only one instance of authority management permissions can exist per role
     const REPEATABLE: bool = false;
+
+    /// Always returns true since this represents authority management access.
+    fn match_data(&self, _data: &[u8]) -> bool {
+        true
+    }
 }
