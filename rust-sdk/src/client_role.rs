@@ -451,10 +451,10 @@ impl ClientRole for Secp256k1ClientRole {
             swig_account,
             payer,
             &self.signing_fn,
-            role_id,
-            authority_to_remove_id,
             current_slot,
             new_odometer,
+            role_id,
+            authority_to_remove_id,
         )?)
     }
 
@@ -904,10 +904,10 @@ impl ClientRole for Secp256k1SessionClientRole {
             swig_account,
             payer,
             &self.signing_fn,
-            role_id,
-            authority_to_remove_id,
             current_slot,
             new_odometer,
+            authority_to_remove_id,
+            role_id,
         )?)
     }
 
