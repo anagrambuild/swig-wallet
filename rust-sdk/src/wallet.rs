@@ -998,9 +998,15 @@ impl<'c> SwigWallet<'c> {
     pub fn switch_authority(
         &mut self,
         role_id: u32,
-        client_role: Box<dyn ClientRole>,
+        mut client_role: Box<dyn ClientRole>,
         authority_kp: Option<&'c Keypair>,
     ) -> Result<(), SwigError> {
+        // The odometer is stored in client role and must be updated to match the on chain odometer
+        let odometer = self.with_role_data(role_id, |role| role.authority.signature_odometer())?;
+        if let Some(onchain_odometer) = odometer {
+            client_role.update_odometer(onchain_odometer)?;
+        }
+
         // Update the instruction builder's authority
         self.instruction_builder
             .switch_authority(role_id, client_role)?;

@@ -10,7 +10,6 @@ use solana_sdk::{
 };
 use swig_state_x::authority::AuthorityType;
 
-/// Test helper function to create a Secp256k1 wallet and get its public key
 fn create_secp256k1_wallet() -> (PrivateKeySigner, Vec<u8>) {
     let wallet = PrivateKeySigner::random();
     let secp_pubkey = wallet
@@ -21,14 +20,12 @@ fn create_secp256k1_wallet() -> (PrivateKeySigner, Vec<u8>) {
     (wallet, secp_pubkey.as_ref()[1..].to_vec())
 }
 
-/// Test helper function to get the current signature counter for a Secp256k1 authority
 fn get_secp256k1_counter(
     swig_wallet: &mut SwigWallet,
     authority_pubkey: &[u8],
 ) -> Result<u32, SwigError> {
     let role_id = swig_wallet.get_role_id(authority_pubkey)?;
 
-    // Get the role data from the swig account
     let swig_account = swig_wallet.get_swig_account()?;
     let account_data = swig_wallet
         .litesvm()
@@ -61,10 +58,8 @@ fn test_secp256k1_signature_reuse_error() {
     let (mut litesvm, main_authority) = setup_test_environment();
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
 
-    // Create a Secp256k1 wallet
     let (secp_wallet, secp_pubkey) = create_secp256k1_wallet();
 
-    // Add Secp256k1 authority
     swig_wallet
         .add_authority(
             AuthorityType::Secp256k1,
@@ -76,7 +71,6 @@ fn test_secp256k1_signature_reuse_error() {
         )
         .unwrap();
 
-    // Create a signing function for the Secp256k1 wallet
     let signing_fn = Box::new(move |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&payload[..32]);
@@ -84,7 +78,6 @@ fn test_secp256k1_signature_reuse_error() {
         secp_wallet.sign_hash_sync(&hash).unwrap().as_bytes()
     });
 
-    // Switch to Secp256k1 authority
     swig_wallet
         .switch_authority(
             1,
@@ -103,11 +96,9 @@ fn test_secp256k1_signature_reuse_error() {
         .airdrop(&swig_pubkey, 10_000_000_000)
         .unwrap();
 
-    // Get initial counter
     let initial_counter = get_secp256k1_counter(&mut swig_wallet, &secp_pubkey).unwrap();
     assert_eq!(initial_counter, 0);
 
-    // Create a test transaction
     let recipient = Keypair::new();
     let transfer_amount = 1_000_000;
 
@@ -125,8 +116,6 @@ fn test_secp256k1_signature_reuse_error() {
     assert_eq!(counter_after_first, 1);
 
     // Try to reuse the same signature (this should fail)
-    // Note: This test simulates signature reuse by attempting to use the same counter
-    // In a real scenario, this would be caught by the signature verification
     let transfer_ix2 = system_instruction::transfer(
         &swig_wallet.get_swig_account().unwrap(),
         &recipient.pubkey(),
@@ -136,7 +125,6 @@ fn test_secp256k1_signature_reuse_error() {
 
     // The transaction should fail due to signature reuse protection
     if result.is_err() {
-        // Check if it's the expected signature reuse error
         // The error code should correspond to PermissionDeniedSecp256k1SignatureReused
         println!("Transaction failed as expected: {:?}", result.err());
     }
@@ -147,10 +135,8 @@ fn test_secp256k1_invalid_signature_age_error() {
     let (mut litesvm, main_authority) = setup_test_environment();
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
 
-    // Create a Secp256k1 wallet
     let (secp_wallet, secp_pubkey) = create_secp256k1_wallet();
 
-    // Add Secp256k1 authority
     swig_wallet
         .add_authority(
             AuthorityType::Secp256k1,
@@ -162,7 +148,6 @@ fn test_secp256k1_invalid_signature_age_error() {
         )
         .unwrap();
 
-    // Create a signing function for the Secp256k1 wallet
     let signing_fn = Box::new(move |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&payload[..32]);
@@ -170,7 +155,6 @@ fn test_secp256k1_invalid_signature_age_error() {
         secp_wallet.sign_hash_sync(&hash).unwrap().as_bytes()
     });
 
-    // Switch to Secp256k1 authority
     swig_wallet
         .switch_authority(
             1,
@@ -182,7 +166,6 @@ fn test_secp256k1_invalid_signature_age_error() {
         )
         .unwrap();
 
-    // Create a test transaction
     let recipient = Keypair::new();
     let transfer_amount = 1_000_000;
 
@@ -214,10 +197,8 @@ fn test_secp256k1_invalid_signature_error() {
     let (mut litesvm, main_authority) = setup_test_environment();
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
 
-    // Create a Secp256k1 wallet
     let (secp_wallet, secp_pubkey) = create_secp256k1_wallet();
 
-    // Add Secp256k1 authority
     swig_wallet
         .add_authority(
             AuthorityType::Secp256k1,
@@ -229,10 +210,8 @@ fn test_secp256k1_invalid_signature_error() {
         )
         .unwrap();
 
-    // Create a different wallet to simulate invalid signature
     let different_wallet = PrivateKeySigner::random();
 
-    // Create a signing function that uses the different wallet (this should fail)
     let signing_fn = Box::new(move |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&payload[..32]);
@@ -240,7 +219,6 @@ fn test_secp256k1_invalid_signature_error() {
         different_wallet.sign_hash_sync(&hash).unwrap().as_bytes()
     });
 
-    // Switch to Secp256k1 authority with wrong signing function
     swig_wallet
         .switch_authority(
             1,
@@ -252,7 +230,6 @@ fn test_secp256k1_invalid_signature_error() {
         )
         .unwrap();
 
-    // Create a test transaction
     let recipient = Keypair::new();
     let transfer_amount = 1_000_000;
 
@@ -266,7 +243,6 @@ fn test_secp256k1_invalid_signature_error() {
 
     // The transaction should fail due to invalid signature
     if result.is_err() {
-        // Check if it's the expected invalid signature error
         // The error code should correspond to PermissionDeniedSecp256k1InvalidSignature
         println!(
             "Transaction failed due to invalid signature as expected: {:?}",
@@ -280,10 +256,8 @@ fn test_secp256k1_invalid_hash_error() {
     let (mut litesvm, main_authority) = setup_test_environment();
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
 
-    // Create a Secp256k1 wallet
     let (secp_wallet, secp_pubkey) = create_secp256k1_wallet();
 
-    // Add Secp256k1 authority
     swig_wallet
         .add_authority(
             AuthorityType::Secp256k1,
@@ -295,7 +269,6 @@ fn test_secp256k1_invalid_hash_error() {
         )
         .unwrap();
 
-    // Create a signing function for the Secp256k1 wallet
     let signing_fn = Box::new(move |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&payload[..32]);
@@ -303,7 +276,6 @@ fn test_secp256k1_invalid_hash_error() {
         secp_wallet.sign_hash_sync(&hash).unwrap().as_bytes()
     });
 
-    // Switch to Secp256k1 authority
     swig_wallet
         .switch_authority(
             1,
@@ -315,14 +287,11 @@ fn test_secp256k1_invalid_hash_error() {
         )
         .unwrap();
 
-    // Create a test transaction with corrupted data
     // This simulates a scenario where hash computation would fail
     let recipient = Keypair::new();
     let transfer_amount = 1_000_000;
 
     // Try to execute transaction with potentially corrupted data
-    // Note: This test simulates hash computation failure
-    // In practice, this would be caught by the hash verification in the program
     let transfer_ix = system_instruction::transfer(
         &swig_wallet.get_swig_account().unwrap(),
         &recipient.pubkey(),
@@ -332,7 +301,6 @@ fn test_secp256k1_invalid_hash_error() {
 
     // The transaction should fail due to invalid hash
     if result.is_err() {
-        // Check if it's the expected invalid hash error
         // The error code should correspond to PermissionDeniedSecp256k1InvalidHash
         println!(
             "Transaction failed due to invalid hash as expected: {:?}",
@@ -346,10 +314,8 @@ fn test_secp256k1_counter_increment() {
     let (mut litesvm, main_authority) = setup_test_environment();
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
 
-    // Create a Secp256k1 wallet
     let (secp_wallet, secp_pubkey) = create_secp256k1_wallet();
 
-    // Add Secp256k1 authority
     swig_wallet
         .add_authority(
             AuthorityType::Secp256k1,
@@ -361,7 +327,6 @@ fn test_secp256k1_counter_increment() {
         )
         .unwrap();
 
-    // Create a signing function for the Secp256k1 wallet
     let signing_fn = Box::new(move |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&payload[..32]);
@@ -369,19 +334,17 @@ fn test_secp256k1_counter_increment() {
         secp_wallet.sign_hash_sync(&hash).unwrap().as_bytes()
     });
 
-    // Switch to Secp256k1 authority
     swig_wallet
         .switch_authority(
             1,
             Box::new(Secp256k1ClientRole::new(
                 secp_pubkey.clone().into(),
-                signing_fn,
+                signing_fn.clone(),
             )),
             None,
         )
         .unwrap();
 
-    // Get initial counter
     let initial_counter = get_secp256k1_counter(&mut swig_wallet, &secp_pubkey).unwrap();
     assert_eq!(initial_counter, 0);
 
@@ -412,6 +375,33 @@ fn test_secp256k1_counter_increment() {
             i, i
         );
     }
+
+    let before_switch_odo = swig_wallet.get_odometer().unwrap();
+
+    swig_wallet
+        .switch_authority(
+            0,
+            Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
+            None,
+        )
+        .unwrap();
+
+    swig_wallet
+        .switch_authority(
+            1,
+            Box::new(Secp256k1ClientRole::new(
+                secp_pubkey.clone().into(),
+                signing_fn,
+            )),
+            None,
+        )
+        .unwrap();
+
+    assert_eq!(
+        before_switch_odo,
+        swig_wallet.get_odometer().unwrap(),
+        "Odometer state not consistent"
+    );
 }
 
 #[test_log::test]
@@ -419,10 +409,8 @@ fn test_secp256k1_authority_odometer() {
     let (mut litesvm, main_authority) = setup_test_environment();
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
 
-    // Create a Secp256k1 wallet
     let (secp_wallet, secp_pubkey) = create_secp256k1_wallet();
 
-    // Add Secp256k1 authority (using regular authority for odometer testing)
     swig_wallet
         .add_authority(
             AuthorityType::Secp256k1,
@@ -441,7 +429,6 @@ fn test_secp256k1_authority_odometer() {
         .airdrop(&swig_pubkey, 10_000_000_000)
         .unwrap();
 
-    // Create a signing function for the Secp256k1 wallet
     let signing_fn = Box::new(move |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&payload[..32]);
@@ -449,7 +436,6 @@ fn test_secp256k1_authority_odometer() {
         secp_wallet.sign_hash_sync(&hash).unwrap().as_bytes()
     });
 
-    // Switch to Secp256k1 authority
     swig_wallet
         .switch_authority(
             1,
@@ -461,7 +447,6 @@ fn test_secp256k1_authority_odometer() {
         )
         .unwrap();
 
-    // Get initial counter
     let initial_counter = get_secp256k1_counter(&mut swig_wallet, &secp_pubkey).unwrap();
     assert_eq!(initial_counter, 0);
 
@@ -492,10 +477,8 @@ fn test_secp256k1_odometer_wrapping() {
     let (mut litesvm, main_authority) = setup_test_environment();
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
 
-    // Create a Secp256k1 wallet
     let (secp_wallet, secp_pubkey) = create_secp256k1_wallet();
 
-    // Add Secp256k1 authority
     swig_wallet
         .add_authority(
             AuthorityType::Secp256k1,
@@ -514,7 +497,6 @@ fn test_secp256k1_odometer_wrapping() {
         .airdrop(&swig_pubkey, 10_000_000_000)
         .unwrap();
 
-    // Create a signing function for the Secp256k1 wallet
     let signing_fn = Box::new(move |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&payload[..32]);
@@ -522,7 +504,6 @@ fn test_secp256k1_odometer_wrapping() {
         secp_wallet.sign_hash_sync(&hash).unwrap().as_bytes()
     });
 
-    // Switch to Secp256k1 authority
     swig_wallet
         .switch_authority(
             1,
@@ -534,8 +515,6 @@ fn test_secp256k1_odometer_wrapping() {
         )
         .unwrap();
 
-    // Test that the odometer can handle wrapping (u32 overflow)
-    // This tests the wrapping_add(1) behavior in the implementation
     let recipient = Keypair::new();
     let transfer_amount = 1_000_000;
 

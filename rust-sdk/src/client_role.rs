@@ -129,6 +129,9 @@ pub trait ClientRole {
 
     /// Increments the odometer for the current authority if it is a Secp256k1 authority
     fn increment_odometer(&mut self) -> Result<(), SwigError>;
+
+    /// Update the odometer for the authority
+    fn update_odometer(&mut self, odometer: u32) -> Result<(), SwigError>;
 }
 
 /// Ed25519 authority implementation
@@ -344,6 +347,10 @@ impl ClientRole for Ed25519ClientRole {
         // Ed25519 authorities don't use odometer-based replay protection
         Ok(())
     }
+
+    fn update_odometer(&mut self, odometer: u32) -> Result<(), SwigError> {
+        Ok(())
+    }
 }
 
 /// Secp256k1 authority implementation
@@ -362,15 +369,14 @@ impl Secp256k1ClientRole {
         }
     }
 
-    pub fn new_with_odometer(
+    pub fn new_without_odometer(
         authority: Box<[u8]>,
         signing_fn: Box<dyn Fn(&[u8]) -> [u8; 65]>,
-        odometer: u32,
     ) -> Self {
         Self {
             authority,
             signing_fn,
-            odometer,
+            odometer: 0,
         }
     }
 }
@@ -610,6 +616,11 @@ impl ClientRole for Secp256k1ClientRole {
         self.odometer = self.odometer.wrapping_add(1);
         Ok(())
     }
+
+    fn update_odometer(&mut self, odometer: u32) -> Result<(), SwigError> {
+        self.odometer = odometer;
+        Ok(())
+    }
 }
 
 /// Ed25519 Session authority implementation
@@ -786,6 +797,10 @@ impl ClientRole for Ed25519SessionClientRole {
         // Ed25519 session authorities don't use odometer-based replay protection
         Ok(())
     }
+
+    fn update_odometer(&mut self, odometer: u32) -> Result<(), SwigError> {
+        Ok(())
+    }
 }
 
 /// Secp256k1 Session authority implementation
@@ -838,7 +853,7 @@ impl ClientRole for Secp256k1SessionClientRole {
                 payer,
                 &self.signing_fn,
                 current_slot,
-                0u32, // Session authorities always use 0 for counter
+                0u32,
                 instruction,
                 role_id,
             )?;
@@ -864,7 +879,7 @@ impl ClientRole for Secp256k1SessionClientRole {
             payer,
             &self.signing_fn,
             current_slot,
-            0u32, // Session authorities don't use counter-based replay protection
+            0u32,
             role_id,
             AuthorityConfig {
                 authority_type: new_authority_type,
@@ -997,6 +1012,11 @@ impl ClientRole for Secp256k1SessionClientRole {
 
     fn increment_odometer(&mut self) -> Result<(), SwigError> {
         self.odometer = self.odometer.wrapping_add(1);
+        Ok(())
+    }
+
+    fn update_odometer(&mut self, odometer: u32) -> Result<(), SwigError> {
+        self.odometer = odometer;
         Ok(())
     }
 }

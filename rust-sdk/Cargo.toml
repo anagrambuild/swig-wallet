@@ -31,7 +31,6 @@ litesvm = { version = "0.6.1" }
 
 [features]
 rust_sdk_test = []
-program_scope_test = []
 
 [lints]
 workspace = true
