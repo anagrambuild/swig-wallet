@@ -470,7 +470,7 @@ fn secp256r1_authenticate(
     let message = if additional_paylaod.is_empty() {
         &computed_hash
     } else {
-        webauthn_message_hash(additional_paylaod, computed_hash, unsafe {
+        webauthn_message(additional_paylaod, computed_hash, unsafe {
             &mut *message_buf.as_mut_ptr()
         })?
     };
@@ -545,10 +545,10 @@ fn compute_message_hash(
     }
 }
 
-fn webauthn_message_hash<'a>(
+fn webauthn_message<'a>(
     auth_payload: &[u8],
     computed_hash: [u8; 32],
-    webauthn_message: &'a mut [u8],
+    message_buf: &'a mut [u8],
 ) -> Result<&'a [u8], ProgramError> {
     // let _auth_type = u16::from_le_bytes(prefix[..2].try_into().unwrap());
     let auth_len = u16::from_le_bytes(auth_payload[2..4].try_into().unwrap()) as usize;
@@ -589,11 +589,11 @@ fn webauthn_message_hash<'a>(
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
     }
 
-    webauthn_message[0..auth_len].copy_from_slice(auth_data);
-    webauthn_message[auth_len..auth_len + 32]
+    message_buf[0..auth_len].copy_from_slice(auth_data);
+    message_buf[auth_len..auth_len + 32]
         .copy_from_slice(&unsafe { client_data_hash.assume_init() });
 
-    Ok(&webauthn_message[..auth_data.len() + 32])
+    Ok(&message_buf[..auth_len + 32])
 }
 
 fn get_computed_hash_from_client_data_json(json: &str) -> Option<[u8; 32]> {
