@@ -33,7 +33,6 @@ use crate::{
 /// * `authority_type` - Type of authority to be created
 /// * `authority_data_len` - Length of the authority data
 /// * `bump` - Bump seed for PDA derivation
-/// * `num_actions` - Number of actions associated with the authority
 /// * `id` - Unique identifier for the wallet
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
@@ -42,7 +41,7 @@ pub struct CreateV1Args {
     pub authority_type: u16,
     pub authority_data_len: u16,
     pub bump: u8,
-    pub num_actions: u8,
+    _padding: u8,
     pub id: [u8; 32],
 }
 
@@ -54,13 +53,11 @@ impl CreateV1Args {
     /// * `bump` - Bump seed for PDA derivation
     /// * `authority_type` - Type of authority to create
     /// * `authority_data_len` - Length of the authority data
-    /// * `num_actions` - Number of actions to associate
     pub fn new(
         id: [u8; 32],
         bump: u8,
         authority_type: AuthorityType,
         authority_data_len: u16,
-        num_actions: u8,
     ) -> Self {
         Self {
             discriminator: SwigInstruction::CreateV1,
@@ -68,7 +65,7 @@ impl CreateV1Args {
             bump,
             authority_type: authority_type as u16,
             authority_data_len,
-            num_actions,
+            _padding: 0,
         }
     }
 }
@@ -191,11 +188,6 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
     let swig_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let mut swig_builder = SwigBuilder::create(swig_data, swig)?;
 
-    swig_builder.add_role(
-        authority_type,
-        create_v1.authority_data,
-        create_v1.args.num_actions,
-        create_v1.actions,
-    )?;
+    swig_builder.add_role(authority_type, create_v1.authority_data, create_v1.actions)?;
     Ok(())
 }
