@@ -41,6 +41,7 @@ const PUBKEY_DATA_OFFSET: usize = DATA_START;
 const SIGNATURE_DATA_OFFSET: usize = DATA_START + COMPRESSED_PUBKEY_SERIALIZED_SIZE;
 const MESSAGE_DATA_OFFSET: usize = SIGNATURE_DATA_OFFSET + SIGNATURE_SERIALIZED_SIZE;
 const MESSAGE_DATA_SIZE: usize = 32;
+const WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE: usize = 196;
 
 /// Secp256r1 signature offsets structure (matches solana-secp256r1-program)
 #[derive(Debug, Copy, Clone)]
@@ -382,6 +383,7 @@ fn secp256r1_authority_authenticate(
         account_infos,
         instruction_account_index,
         counter,
+        &authority_payload[17..],
     )?;
 
     authority.signature_odometer = counter;
@@ -430,6 +432,7 @@ fn secp256r1_session_authority_authenticate(
         account_infos,
         instruction_index,
         counter, // Now use proper counter-based replay protection
+        &authority_payload[17..],
     )?;
 
     authority.signature_odometer = counter;
@@ -452,6 +455,7 @@ fn secp256r1_authenticate(
     account_infos: &[AccountInfo],
     instruction_account_index: usize,
     counter: u32,
+    additional_paylaod: &[u8],
 ) -> Result<(), ProgramError> {
     // Validate signature age
     if current_slot < authority_slot || current_slot - authority_slot > MAX_SIGNATURE_AGE_IN_SLOTS {
@@ -460,6 +464,16 @@ fn secp256r1_authenticate(
 
     // Compute our expected message hash
     let computed_hash = compute_message_hash(data_payload, account_infos, authority_slot, counter)?;
+    let mut message_buf: MaybeUninit<[u8; WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE + 32]> =
+        MaybeUninit::uninit();
+
+    let message = if additional_paylaod.is_empty() {
+        &computed_hash
+    } else {
+        webauthn_message_hash(additional_paylaod, computed_hash, unsafe {
+            &mut *message_buf.as_mut_ptr()
+        })?
+    };
 
     // Get the sysvar instructions account
     let sysvar_instructions = account_infos
@@ -485,7 +499,7 @@ fn secp256r1_authenticate(
     }
     let instruction_data = secpr1ix.get_instruction_data();
     // Parse and verify the secp256r1 instruction data
-    verify_secp256r1_instruction_data(&instruction_data, expected_key, &computed_hash)?;
+    verify_secp256r1_instruction_data(&instruction_data, expected_key, message)?;
     Ok(())
 }
 
@@ -531,6 +545,106 @@ fn compute_message_hash(
     }
 }
 
+fn webauthn_message_hash<'a>(
+    auth_payload: &[u8],
+    computed_hash: [u8; 32],
+    webauthn_message: &'a mut [u8],
+) -> Result<&'a [u8], ProgramError> {
+    // let _auth_type = u16::from_le_bytes(prefix[..2].try_into().unwrap());
+    let auth_len = u16::from_le_bytes(auth_payload[2..4].try_into().unwrap()) as usize;
+
+    if auth_len >= WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    let auth_data = &auth_payload[4..4 + auth_len];
+    let client_data_json = &auth_payload[4 + auth_len..];
+    // Compute our expected message hash
+    let maybe_computed_hash = get_computed_hash_from_client_data_json(unsafe {
+        core::str::from_utf8_unchecked(client_data_json)
+    });
+
+    if maybe_computed_hash != Some(computed_hash) {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessageHash.into());
+    };
+
+    #[allow(unused)]
+    let mut client_data_hash = MaybeUninit::<[u8; 32]>::uninit();
+
+    #[allow(unused)]
+    let client_data: &[&[u8]] = &[client_data_json];
+
+    #[cfg(target_os = "solana")]
+    let res = unsafe {
+        sol_sha256(
+            client_data.as_ptr() as *const u8,
+            1,
+            client_data_hash.as_mut_ptr() as *mut u8,
+        )
+    };
+    #[cfg(not(target_os = "solana"))]
+    let res = 0;
+
+    if res != 0 {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    webauthn_message[0..auth_len].copy_from_slice(auth_data);
+    webauthn_message[auth_len..auth_len + 32]
+        .copy_from_slice(&unsafe { client_data_hash.assume_init() });
+
+    Ok(&webauthn_message[..auth_data.len() + 32])
+}
+
+fn get_computed_hash_from_client_data_json(json: &str) -> Option<[u8; 32]> {
+    let key = "\"challenge\":\"";
+    let start = json.find(key)? + key.len();
+    let end = json[start..].find('"')?;
+    let challenge = &json[start..start + end];
+    base64_decode_challenge(challenge)
+}
+
+fn base64_decode_challenge(input: &str) -> Option<[u8; 32]> {
+    let mut out_uninit = MaybeUninit::<[u8; 32]>::uninit();
+    let out_ptr = out_uninit.as_mut_ptr() as *mut u8;
+
+    let mut buf = 0u32;
+    let mut bits = 0;
+    let mut out_idx = 0;
+
+    for &c in input.as_bytes() {
+        let val = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'-' => 62,
+            b'_' => 63,
+            _ => return None,
+        } as u32;
+
+        buf = (buf << 6) | val;
+        bits += 6;
+
+        if bits >= 8 {
+            bits -= 8;
+            if out_idx >= 32 {
+                return None;
+            }
+            unsafe {
+                out_ptr.add(out_idx).write((buf >> bits) as u8);
+            }
+            out_idx += 1;
+            buf &= (1 << bits) - 1;
+        }
+    }
+
+    if out_idx != 32 {
+        return None;
+    }
+
+    Some(unsafe { out_uninit.assume_init() })
+}
+
 /// Verify the secp256r1 instruction data contains the expected signature and
 /// public key
 fn verify_secp256r1_instruction_data(
@@ -541,9 +655,6 @@ fn verify_secp256r1_instruction_data(
     // Minimum check: must have at least the header and offsets
     if instruction_data.len() < DATA_START {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
-    }
-    if expected_message.len() != 32 {
-        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessageHash.into());
     }
     let num_signatures = instruction_data[0] as usize;
     if num_signatures == 0 || num_signatures > 1 {
@@ -556,7 +667,7 @@ fn verify_secp256r1_instruction_data(
     let pubkey_data = &instruction_data
         [PUBKEY_DATA_OFFSET..PUBKEY_DATA_OFFSET + COMPRESSED_PUBKEY_SERIALIZED_SIZE];
     let message_data =
-        &instruction_data[MESSAGE_DATA_OFFSET..MESSAGE_DATA_OFFSET + MESSAGE_DATA_SIZE];
+        &instruction_data[MESSAGE_DATA_OFFSET..MESSAGE_DATA_OFFSET + expected_message.len()];
 
     if pubkey_data != expected_pubkey {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidPubkey.into());

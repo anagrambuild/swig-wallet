@@ -151,6 +151,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedSecp256r1InvalidPubkey,
     /// Invalid Secp256r1 message hash
     PermissionDeniedSecp256r1InvalidMessageHash,
+    /// Invalid Secp256r1 message
+    PermissionDeniedSecp256r1InvalidMessage,
 }
 
 impl From<SwigStateError> for ProgramError {
