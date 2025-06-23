@@ -137,7 +137,7 @@ impl AuthorityInfo for Secp256k1Authority {
             return false;
         }
         let expanded = compress(data.try_into().unwrap());
-        sol_assert_bytes_eq(&self.public_key, &expanded, 32)
+        sol_assert_bytes_eq(&self.public_key, &expanded, 33)
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -224,7 +224,7 @@ impl AuthorityInfo for Secp256k1SessionAuthority {
             return false;
         }
         let expanded = compress(data.try_into().unwrap());
-        sol_assert_bytes_eq(data, &expanded, 33)
+        sol_assert_bytes_eq(&self.public_key, &expanded, 33)
     }
 
     fn identity(&self) -> Result<&[u8], ProgramError> {
