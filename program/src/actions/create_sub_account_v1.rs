@@ -184,10 +184,17 @@ pub fn create_sub_account_v1(
         )?;
     }
     // Check if the role has the required permissions (All or SubAccount)
-    let all_action = role.get_action::<All>(&[])?;
-    let sub_account_action = role.get_action::<SubAccount>(&[])?;
+    let has_all_permission = {
+        let all_action = RoleMut::get_action_mut::<All>(role.actions, &[])?;
+        all_action.is_some()
+    };
 
-    if all_action.is_none() && sub_account_action.is_none() {
+    let has_sub_account_permission = {
+        let sub_account_action = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?;
+        sub_account_action.is_some()
+    };
+
+    if !has_all_permission && !has_sub_account_permission {
         return Err(SwigError::AuthorityCannotCreateSubAccount.into());
     }
     // Derive the sub-account address using the authority index as seed
@@ -236,5 +243,13 @@ pub fn create_sub_account_v1(
     sub_account.enabled = true;
     // Set reserved lamports to the minimum rent-exempt amount
     sub_account.reserved_lamports = lamports_needed;
+
+    // Update the SubAccount action to store the newly created sub-account's public
+    // key
+    if let Some(sub_account_action_mut) = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?
+    {
+        sub_account_action_mut.sub_account = *ctx.accounts.sub_account.key();
+    }
+
     Ok(())
 }
