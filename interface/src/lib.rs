@@ -732,7 +732,7 @@ impl CreateSessionInstruction {
         ];
 
         let create_session_args =
-            CreateSessionV1Args::new(role_id, 1, session_duration, session_key.to_bytes());
+            CreateSessionV1Args::new(role_id, session_duration, session_key.to_bytes());
         let args_bytes = create_session_args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -762,7 +762,7 @@ impl CreateSessionInstruction {
             AccountMeta::new_readonly(system_program::ID, false),
         ];
         let create_session_args =
-            CreateSessionV1Args::new(role_id, 1, session_duration, session_key.to_bytes());
+            CreateSessionV1Args::new(role_id, session_duration, session_key.to_bytes());
         let args_bytes = create_session_args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -819,7 +819,7 @@ impl CreateSessionInstruction {
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
         let create_session_args =
-            CreateSessionV1Args::new(role_id, 17, session_duration, session_key.to_bytes()); // 17 bytes for secp256r1 authority payload
+            CreateSessionV1Args::new(role_id, session_duration, session_key.to_bytes());
         let args_bytes = create_session_args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
