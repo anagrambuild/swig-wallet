@@ -68,7 +68,7 @@ pub enum SwigInstruction {
     #[account(0, writable, signer, name="swig", desc="the swig smart wallet")]
     #[account(1, writable, signer, name="payer", desc="the payer")]
     #[account(2, name="system_program", desc="the system program")]
-    SignV1 = 3,
+    SignV1 = 4,
 
     /// Creates a new session for temporary authority.
     ///
@@ -79,7 +79,7 @@ pub enum SwigInstruction {
     #[account(0, writable, signer, name="swig", desc="the swig smart wallet")]
     #[account(1, writable, signer, name="payer", desc="the payer")]
     #[account(2, name="system_program", desc="the system program")]
-    CreateSessionV1 = 4,
+    CreateSessionV1 = 5,
 
     /// Creates a new sub-account.
     ///
@@ -92,7 +92,7 @@ pub enum SwigInstruction {
     #[account(1, writable, signer, name="payer", desc="the payer")]
     #[account(2, writable, name="sub_account", desc="the sub account to be created")]
     #[account(3, name="system_program", desc="the system program")]
-    CreateSubAccountV1 = 5,
+    CreateSubAccountV1 = 6,
 
     /// Withdraws funds from a sub-account.
     ///
@@ -103,7 +103,7 @@ pub enum SwigInstruction {
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
     #[account(1, writable, signer, name="payer", desc="the payer")]
     #[account(2, writable, name="sub_account", desc="the sub account to withdraw from")]
-    WithdrawFromSubAccountV1 = 6,
+    WithdrawFromSubAccountV1 = 7,
 
     /// Signs and executes a transaction from a sub-account.
     ///
@@ -116,7 +116,7 @@ pub enum SwigInstruction {
     #[account(1, writable, signer, name="payer", desc="the payer")]
     #[account(2, writable, name="sub_account", desc="the sub account")]
     #[account(3, name="system_program", desc="the system program")]
-    SubAccountSignV1 = 7,
+    SubAccountSignV1 = 9,
 
     /// Toggles the enabled state of a sub-account.
     ///
@@ -127,5 +127,5 @@ pub enum SwigInstruction {
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
     #[account(1, signer, name="payer", desc="the payer")]
     #[account(2, writable, name="sub_account", desc="the sub account to toggle enabled state")]
-    ToggleSubAccountV1 = 8,
+    ToggleSubAccountV1 = 10,
 }
