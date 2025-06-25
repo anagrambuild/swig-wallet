@@ -5,10 +5,12 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
 use anyhow::{anyhow, Result};
 use colored::*;
+use rand;
 use serde_json::Value;
 use solana_sdk::{pubkey::Pubkey, signature::Keypair, system_instruction};
 use swig_sdk::{
-    authority::AuthorityType, AuthorityManager, Permission, RecurringConfig, SwigError, SwigWallet,
+    authority::AuthorityType, ClientRole, Ed25519ClientRole, Permission, RecurringConfig,
+    Secp256k1ClientRole, SwigError, SwigWallet,
 };
 
 use crate::{format_authority, Command, SwigCliContext};
@@ -19,13 +21,18 @@ pub fn create_swig_instance(
     authority_type: AuthorityType,
     authority: String,
     authority_kp: String,
-) -> Result<Box<SwigWallet<'static>>> {
-    let (authority_manager, signing_authority) = match authority_type {
+    fee_payer_string: Option<String>,
+) -> Result<()> {
+    let fee_payer = Keypair::from_base58_string(&fee_payer_string.unwrap_or(authority_kp.clone()));
+    let (client_role, fee_payer) = match authority_type {
         AuthorityType::Ed25519 => {
             let authority_kp = Keypair::from_base58_string(&authority_kp);
             let authority = Pubkey::from_str(&authority)?;
 
-            (AuthorityManager::Ed25519(authority), Some(authority_kp))
+            (
+                Box::new(Ed25519ClientRole::new(authority)) as Box<dyn ClientRole>,
+                authority_kp,
+            )
         },
         AuthorityType::Secp256k1 => {
             let wallet = LocalSigner::from_str(&authority_kp)?;
@@ -52,30 +59,34 @@ pub fn create_swig_instance(
             };
 
             (
-                AuthorityManager::Secp256k1(eth_pubkey, Box::new(sign_fn)),
-                None,
+                Box::new(Secp256k1ClientRole::new(
+                    eth_pubkey[1..].to_vec().into_boxed_slice(),
+                    Box::new(sign_fn),
+                )) as Box<dyn ClientRole>,
+                fee_payer.insecure_clone(),
             )
         },
         _ => return Err(anyhow!("Unsupported authority type")),
     };
 
-    // Create a static reference to avoid lifetime issues
-    let payer = Box::new(ctx.payer.insecure_clone());
-    let auth_for_wallet = Box::new(signing_authority.unwrap_or_else(|| ctx.payer.insecure_clone()));
+    // Use Box::leak to create static references (similar to interactive mode)
+    let fee_payer_static = Box::leak(Box::new(fee_payer));
+    let authority_keypair_static = Box::leak(Box::new(fee_payer_static.insecure_clone()));
 
-    // Convert to static references
-    let payer_static = Box::leak(payer);
-    let auth_static = Box::leak(auth_for_wallet);
-
-    SwigWallet::new(
+    let wallet = SwigWallet::new(
         swig_id,
-        authority_manager,
-        payer_static,
-        auth_static,
+        client_role,
+        fee_payer_static,
         ctx.rpc_url.clone(),
+        Some(authority_keypair_static),
     )
-    .map(Box::new)
-    .map_err(|e| anyhow!("Failed to create SWIG wallet: {}", e))
+    .unwrap();
+
+    ctx.wallet = Some(Box::new(wallet));
+    ctx.payer = fee_payer_static.insecure_clone();
+    ctx.authority = Some(authority_keypair_static.insecure_clone());
+
+    Ok(())
 }
 
 pub fn parse_permission_from_json(permission_json: &Value) -> Result<Permission> {
@@ -157,12 +168,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 .try_into()
                 .unwrap();
 
-            // Set the fee payer from command args or config
-            let fee_payer_str =
-                fee_payer.unwrap_or_else(|| ctx.config.default_authority.fee_payer.clone());
-            ctx.payer = Keypair::from_base58_string(&fee_payer_str);
-
-            let mut wallet = create_swig_instance(
+            create_swig_instance(
                 ctx,
                 swig_id,
                 parse_authority_type(
@@ -171,9 +177,8 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 )?,
                 authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
                 authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+                fee_payer,
             )?;
-
-            ctx.wallet = Some(wallet);
 
             Ok(())
         },
@@ -189,11 +194,6 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
         } => {
             let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
 
-            // Set the fee payer from command args or config
-            let fee_payer_str =
-                fee_payer.unwrap_or_else(|| ctx.config.default_authority.fee_payer.clone());
-            ctx.payer = Keypair::from_base58_string(&fee_payer_str);
-
             // Parse permissions from JSON
             if permissions.is_empty() {
                 return Err(anyhow!("Permissions are required"));
@@ -208,7 +208,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 })
                 .collect::<Result<Vec<_>>>()?;
 
-            let mut wallet = create_swig_instance(
+            create_swig_instance(
                 ctx,
                 swig_id,
                 parse_authority_type(
@@ -217,6 +217,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 )?,
                 authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
                 authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+                fee_payer,
             )?;
 
             let new_authority =
@@ -227,7 +228,11 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
             let new_authority_type = parse_authority_type(new_authority_type)?;
             let authority_bytes = format_authority(&new_authority, &new_authority_type)?;
 
-            wallet.add_authority(new_authority_type, &authority_bytes, parsed_permissions)?;
+            ctx.wallet.as_mut().unwrap().add_authority(
+                new_authority_type,
+                &authority_bytes,
+                parsed_permissions,
+            )?;
 
             println!("Authority added successfully!");
             Ok(())
@@ -242,12 +247,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
         } => {
             let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
 
-            // Set the fee payer from command args or config
-            let fee_payer_str =
-                fee_payer.unwrap_or_else(|| ctx.config.default_authority.fee_payer.clone());
-            ctx.payer = Keypair::from_base58_string(&fee_payer_str);
-
-            let mut wallet = create_swig_instance(
+            create_swig_instance(
                 ctx,
                 swig_id,
                 parse_authority_type(
@@ -256,11 +256,15 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 )?,
                 authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
                 authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+                fee_payer,
             )?;
 
             let remove_authority =
                 remove_authority.ok_or_else(|| anyhow!("Remove authority is required"))?;
-            wallet.remove_authority(remove_authority.as_bytes())?;
+            ctx.wallet
+                .as_mut()
+                .unwrap()
+                .remove_authority(remove_authority.as_bytes())?;
             println!("Authority removed successfully!");
             Ok(())
         },
@@ -272,7 +276,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
         } => {
             let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
 
-            let wallet = create_swig_instance(
+            create_swig_instance(
                 ctx,
                 swig_id,
                 parse_authority_type(
@@ -281,9 +285,10 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 )?,
                 authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
                 authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+                None,
             )?;
 
-            wallet.display_swig()?;
+            ctx.wallet.as_ref().unwrap().display_swig()?;
             Ok(())
         },
         Command::GetRoleId {
@@ -300,7 +305,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
             let fetch_authority_bytes =
                 format_authority(&authority_to_fetch, &fetch_authority_type)?;
 
-            let wallet = create_swig_instance(
+            create_swig_instance(
                 ctx,
                 swig_id,
                 parse_authority_type(
@@ -309,9 +314,14 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 )?,
                 authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
                 authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+                None,
             )?;
 
-            let role_id = wallet.get_role_id(&fetch_authority_bytes)?;
+            let role_id = ctx
+                .wallet
+                .as_ref()
+                .unwrap()
+                .get_role_id(&fetch_authority_bytes)?;
             println!("Role ID: {}", role_id);
             Ok(())
         },
@@ -323,7 +333,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
         } => {
             let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
 
-            let wallet = create_swig_instance(
+            create_swig_instance(
                 ctx,
                 swig_id,
                 parse_authority_type(
@@ -332,9 +342,10 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 )?,
                 authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
                 authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+                None,
             )?;
 
-            let balance = wallet.get_balance()?;
+            let balance = ctx.wallet.as_ref().unwrap().get_balance()?;
             println!("Balance: {} SOL", balance as f64 / 1_000_000_000.0);
             Ok(())
         },
@@ -346,7 +357,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
         } => {
             let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
 
-            let mut wallet = create_swig_instance(
+            create_swig_instance(
                 ctx,
                 swig_id,
                 parse_authority_type(
@@ -355,9 +366,10 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 )?,
                 authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
                 authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+                None,
             )?;
 
-            let signature = wallet.create_sub_account()?;
+            let signature = ctx.wallet.as_mut().unwrap().create_sub_account()?;
             println!("Sub-account created successfully!");
             println!("Signature: {}", signature);
             Ok(())
@@ -372,7 +384,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
         } => {
             let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
 
-            let mut wallet = create_swig_instance(
+            create_swig_instance(
                 ctx,
                 swig_id,
                 parse_authority_type(
@@ -381,13 +393,18 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 )?,
                 authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
                 authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+                None,
             )?;
 
-            let sub_account = wallet.get_sub_account()?;
+            let sub_account = ctx.wallet.as_ref().unwrap().get_sub_account()?;
             if let Some(sub_account) = sub_account {
                 let recipient = Pubkey::from_str(&recipient)?;
                 let transfer_ix = system_instruction::transfer(&sub_account, &recipient, amount);
-                let signature = wallet.sign_with_sub_account(vec![transfer_ix], None)?;
+                let signature = ctx
+                    .wallet
+                    .as_mut()
+                    .unwrap()
+                    .sign_with_sub_account(vec![transfer_ix], None)?;
                 println!("Transfer successful!");
                 println!("Signature: {}", signature);
             } else {
@@ -404,7 +421,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
         } => {
             let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
 
-            let mut wallet = create_swig_instance(
+            create_swig_instance(
                 ctx,
                 swig_id,
                 parse_authority_type(
@@ -413,11 +430,15 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 )?,
                 authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
                 authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+                None,
             )?;
 
-            let sub_account = wallet.get_sub_account()?;
+            let sub_account = ctx.wallet.as_ref().unwrap().get_sub_account()?;
             if let Some(sub_account) = sub_account {
-                wallet.toggle_sub_account(sub_account, enabled)?;
+                ctx.wallet
+                    .as_mut()
+                    .unwrap()
+                    .toggle_sub_account(sub_account, enabled)?;
                 println!(
                     "Sub-account {} successfully!",
                     if enabled { "enabled" } else { "disabled" }
@@ -437,7 +458,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
         } => {
             let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
 
-            let mut wallet = create_swig_instance(
+            create_swig_instance(
                 ctx,
                 swig_id,
                 parse_authority_type(
@@ -446,10 +467,14 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 )?,
                 authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
                 authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+                None,
             )?;
 
             let sub_account = Pubkey::from_str(&sub_account)?;
-            wallet.withdraw_from_sub_account(sub_account, amount)?;
+            ctx.wallet
+                .as_mut()
+                .unwrap()
+                .withdraw_from_sub_account(sub_account, amount)?;
             println!("Successfully withdrew {} lamports from sub-account", amount);
             Ok(())
         },

@@ -15,7 +15,8 @@ use solana_sdk::{
 use swig_sdk::{
     authority::{ed25519::CreateEd25519SessionAuthority, AuthorityType},
     swig::SwigWithRoles,
-    AuthorityManager, Permission, RecurringConfig, SwigError, SwigWallet,
+    ClientRole, Ed25519ClientRole, Permission, RecurringConfig, Secp256k1ClientRole, SwigError,
+    SwigWallet,
 };
 
 use crate::SwigCliContext;
@@ -94,7 +95,7 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
 
     let authority_type = get_authority_type()?;
 
-    let (authority_manager, fee_payer) = match authority_type {
+    let (client_role, fee_payer) = match authority_type {
         AuthorityType::Ed25519 => {
             let authority_keypair = Password::with_theme(&ColorfulTheme::default())
                 .with_prompt("Enter authority keypair")
@@ -104,7 +105,7 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
             let authority_pubkey = authority.pubkey();
             println!("Authority public key: {}", authority_pubkey);
             (
-                AuthorityManager::Ed25519(authority_pubkey),
+                Box::new(Ed25519ClientRole::new(authority_pubkey)) as Box<dyn ClientRole>,
                 authority.insecure_clone(),
             )
         },
@@ -148,27 +149,31 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
             let fee_payer_keypair = Keypair::from_base58_string(&fee_payer_kp_str);
 
             (
-                AuthorityManager::Secp256k1(eth_pubkey, Box::new(sign_fn)),
+                Box::new(Secp256k1ClientRole::new(
+                    eth_pubkey[1..].to_vec().into_boxed_slice(),
+                    Box::new(sign_fn),
+                )) as Box<dyn ClientRole>,
                 fee_payer_keypair,
             )
         },
         _ => todo!(),
     };
 
-    let fee_payer = Box::leak(Box::new(fee_payer));
+    let fee_payer_static = Box::leak(Box::new(fee_payer));
+    let authority_keypair_static = Box::leak(Box::new(fee_payer_static.insecure_clone()));
     let wallet = SwigWallet::new(
         swig_id,
-        authority_manager,
-        fee_payer,
-        fee_payer,
+        client_role,
+        fee_payer_static,
         "http://localhost:8899".to_string(),
+        Some(authority_keypair_static),
     )
     .unwrap();
 
     wallet.display_swig()?;
 
     ctx.wallet = Some(Box::new(wallet));
-    ctx.payer = fee_payer.insecure_clone();
+    ctx.payer = fee_payer_static.insecure_clone();
 
     Ok(())
 }
@@ -282,13 +287,13 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
     let authority = Keypair::from_base58_string(&authority_keypair);
     let authority_pubkey = authority.pubkey();
 
-    let authority_manager = match authority_type {
+    let client_role: Box<dyn ClientRole> = match authority_type {
         AuthorityType::Ed25519 => {
             let pubkey = authority_pubkey;
             println!("Authority: {}", authority_pubkey);
             println!("Authority type: {:?}", authority_type);
             println!("Authority pubkey: {}", pubkey);
-            AuthorityManager::Ed25519(pubkey)
+            Box::new(Ed25519ClientRole::new(pubkey))
         },
         AuthorityType::Ed25519Session => {
             let create_session_authority = CreateEd25519SessionAuthority::new(
@@ -296,7 +301,9 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                 authority_pubkey.to_bytes(),
                 100,
             );
-            AuthorityManager::Ed25519Session(create_session_authority)
+            Box::new(swig_sdk::Ed25519SessionClientRole::new(
+                create_session_authority,
+            ))
         },
         _ => {
             return Err(anyhow!("Session-based authorities not supported for root"));
@@ -309,7 +316,7 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
     ctx.wallet
         .as_mut()
         .unwrap()
-        .switch_authority(role_id, authority_manager, None)?;
+        .switch_authority(role_id, client_role, None)?;
     Ok(())
 }
 
@@ -656,16 +663,24 @@ pub fn format_authority(authority: &str, authority_type: &AuthorityType) -> Resu
             Ok(authority.to_bytes().to_vec())
         },
         AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
-            let wallet = LocalSigner::random();
+            // For Secp256k1, the authority should be a hex string of the public key
+            // Remove 0x prefix if present
+            let clean_authority = authority.trim_start_matches("0x");
 
-            let secp_pubkey = wallet
-                .credential()
-                .verifying_key()
-                .to_encoded_point(false)
-                .to_bytes();
+            // Parse as hex bytes
+            let authority_bytes = hex::decode(clean_authority)
+                .map_err(|_| anyhow!("Invalid hex string for Secp256k1 authority"))?;
 
-            println!("Secp256k1 public key: {:?}", wallet.address());
-            Ok(secp_pubkey.as_ref()[1..].to_vec())
+            // For Secp256k1, we expect the uncompressed public key without the 0x04 prefix
+            if authority_bytes.len() == 65 && authority_bytes[0] == 0x04 {
+                // Remove the 0x04 prefix
+                Ok(authority_bytes[1..].to_vec())
+            } else if authority_bytes.len() == 64 {
+                // Already in the correct format
+                Ok(authority_bytes)
+            } else {
+                Err(anyhow!("Invalid Secp256k1 public key format"))
+            }
         },
         _ => Err(anyhow!("Unsupported authority type")),
     }
@@ -701,7 +716,10 @@ pub fn get_authorities(ctx: &mut SwigCliContext) -> Result<HashMap<String, Vec<u
                     authorities.insert(authority, authority_pubkey.to_bytes().to_vec());
                 },
                 AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
-                    // Implementation for Secp256k1 authorities
+                    let authority = role.authority.identity().unwrap();
+                    // For Secp256k1, encode as hex string
+                    let authority_hex = hex::encode(authority);
+                    authorities.insert(format!("0x{}", authority_hex), authority.to_vec());
                 },
                 _ => todo!(),
             }

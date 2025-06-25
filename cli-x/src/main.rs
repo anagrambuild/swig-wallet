@@ -25,7 +25,7 @@ use solana_sdk::{
 use swig_sdk::{
     authority::{ed25519::CreateEd25519SessionAuthority, AuthorityType},
     swig::SwigWithRoles,
-    AuthorityManager, Permission, RecurringConfig, SwigError, SwigWallet,
+    ClientRole, Permission, RecurringConfig, SwigError, SwigWallet,
 };
 
 mod commands;
