@@ -12,8 +12,10 @@ use solana_sdk::{
     signer::Signer,
     system_instruction::{self, transfer},
 };
+use swig_sdk::authority::secp256r1::CreateSecp256r1SessionAuthority;
 use swig_sdk::{
     authority::{ed25519::CreateEd25519SessionAuthority, AuthorityType},
+    client_role::{Secp256r1ClientRole, Secp256r1SessionClientRole},
     swig::SwigWithRoles,
     ClientRole, Ed25519ClientRole, Permission, RecurringConfig, Secp256k1ClientRole, SwigError,
     SwigWallet,
@@ -156,11 +158,100 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                 fee_payer_keypair,
             )
         },
+        AuthorityType::Secp256r1 => {
+            let authority_keypair = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter Secp256r1 authority keypair (hex format)")
+                .interact()?;
+
+            // Parse the Secp256r1 keypair (assuming it's in hex format)
+            let clean_keypair = authority_keypair.trim_start_matches("0x");
+            let keypair_bytes = hex::decode(clean_keypair)
+                .map_err(|_| anyhow!("Invalid hex format for Secp256r1 keypair"))?;
+
+            // Create a compressed public key (33 bytes) from the keypair
+            let compressed_pubkey = if keypair_bytes.len() >= 33 {
+                keypair_bytes[..33].try_into().unwrap()
+            } else {
+                // Pad with zeros if needed (this is just for demonstration)
+                let mut pubkey = [0u8; 33];
+                pubkey[..keypair_bytes.len()].copy_from_slice(&keypair_bytes);
+                pubkey
+            };
+
+            // Create a signing function (placeholder implementation)
+            let sign_fn = move |payload: &[u8]| -> [u8; 64] {
+                // This is a placeholder - in a real implementation, you'd use a Secp256r1 library
+                let mut signature = [0u8; 64];
+                signature.copy_from_slice(&payload[..64]);
+                signature
+            };
+
+            let fee_payer_kp_str = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter Fee payer keypair")
+                .interact()?;
+            let fee_payer_keypair = Keypair::from_base58_string(&fee_payer_kp_str);
+
+            (
+                Box::new(Secp256r1ClientRole::new(
+                    compressed_pubkey,
+                    Box::new(sign_fn),
+                )) as Box<dyn ClientRole>,
+                fee_payer_keypair,
+            )
+        },
+        AuthorityType::Secp256r1Session => {
+            let authority_keypair = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter Secp256r1 authority keypair (hex format)")
+                .interact()?;
+
+            // Parse the Secp256r1 keypair (assuming it's in hex format)
+            let clean_keypair = authority_keypair.trim_start_matches("0x");
+            let keypair_bytes = hex::decode(clean_keypair)
+                .map_err(|_| anyhow!("Invalid hex format for Secp256r1 keypair"))?;
+
+            // Create a compressed public key (33 bytes) from the keypair
+            let compressed_pubkey = if keypair_bytes.len() >= 33 {
+                keypair_bytes[..33].try_into().unwrap()
+            } else {
+                // Pad with zeros if needed (this is just for demonstration)
+                let mut pubkey = [0u8; 33];
+                pubkey[..keypair_bytes.len()].copy_from_slice(&keypair_bytes);
+                pubkey
+            };
+
+            let create_session_authority = CreateSecp256r1SessionAuthority::new(
+                compressed_pubkey,
+                [0; 32], // session key
+                100,     // max session length
+            );
+
+            // Create a signing function (placeholder implementation)
+            let sign_fn = move |payload: &[u8]| -> [u8; 64] {
+                // This is a placeholder - in a real implementation, you'd use a Secp256r1 library
+                let mut signature = [0u8; 64];
+                signature.copy_from_slice(&payload[..64]);
+                signature
+            };
+
+            let fee_payer_kp_str = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter Fee payer keypair")
+                .interact()?;
+            let fee_payer_keypair = Keypair::from_base58_string(&fee_payer_kp_str);
+
+            (
+                Box::new(Secp256r1SessionClientRole::new(
+                    create_session_authority,
+                    Box::new(sign_fn),
+                )) as Box<dyn ClientRole>,
+                fee_payer_keypair,
+            )
+        },
         _ => todo!(),
     };
 
-    let fee_payer_static = Box::leak(Box::new(fee_payer));
-    let authority_keypair_static = Box::leak(Box::new(fee_payer_static.insecure_clone()));
+    let fee_payer_static: &mut Keypair = Box::leak(Box::new(fee_payer));
+    let authority_keypair_static: &mut Keypair =
+        Box::leak(Box::new(fee_payer_static.insecure_clone()));
     let wallet = SwigWallet::new(
         swig_id,
         client_role,
@@ -260,8 +351,10 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
     let authority_types = vec![
         "Ed25519 (Recommended for standard usage)",
         "Secp256k1 (For Ethereum/Bitcoin compatibility)",
+        "Secp256r1 (For passkey/WebAuthn support)",
         "Ed25519Session (For temporary session-based auth)",
         "Secp256k1Session (For temporary session-based auth with Ethereum/Bitcoin)",
+        "Secp256r1Session (For temporary session-based auth with passkey/WebAuthn)",
     ];
 
     let authority_type_idx = Select::with_theme(&ColorfulTheme::default())
@@ -273,8 +366,10 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
     let authority_type = match authority_type_idx {
         0 => AuthorityType::Ed25519,
         1 => AuthorityType::Secp256k1,
-        2 => AuthorityType::Ed25519Session,
-        3 => AuthorityType::Secp256k1Session,
+        2 => AuthorityType::Secp256r1,
+        3 => AuthorityType::Ed25519Session,
+        4 => AuthorityType::Secp256k1Session,
+        5 => AuthorityType::Secp256r1Session,
         _ => unreachable!(),
     };
 
@@ -303,6 +398,80 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
             );
             Box::new(swig_sdk::Ed25519SessionClientRole::new(
                 create_session_authority,
+            ))
+        },
+        AuthorityType::Secp256r1 => {
+            let authority_keypair = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter Secp256r1 authority keypair (hex format)")
+                .interact()?;
+
+            // Parse the Secp256r1 keypair (assuming it's in hex format)
+            let clean_keypair = authority_keypair.trim_start_matches("0x");
+            let keypair_bytes = hex::decode(clean_keypair)
+                .map_err(|_| anyhow!("Invalid hex format for Secp256r1 keypair"))?;
+
+            // Create a compressed public key (33 bytes) from the keypair
+            let compressed_pubkey = if keypair_bytes.len() >= 33 {
+                keypair_bytes[..33].try_into().unwrap()
+            } else {
+                // Pad with zeros if needed (this is just for demonstration)
+                let mut pubkey = [0u8; 33];
+                pubkey[..keypair_bytes.len()].copy_from_slice(&keypair_bytes);
+                pubkey
+            };
+
+            // Create a signing function (placeholder implementation)
+            let sign_fn = move |payload: &[u8]| -> [u8; 64] {
+                // This is a placeholder - in a real implementation, you'd use a Secp256r1 library
+                let mut signature = [0u8; 64];
+                signature.copy_from_slice(&payload[..64]);
+                signature
+            };
+
+            println!("Authority type: {:?}", authority_type);
+            println!("Authority pubkey: 0x{}", hex::encode(compressed_pubkey));
+            Box::new(Secp256r1ClientRole::new(
+                compressed_pubkey,
+                Box::new(sign_fn),
+            ))
+        },
+        AuthorityType::Secp256r1Session => {
+            let authority_keypair = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter Secp256r1 authority keypair (hex format)")
+                .interact()?;
+
+            // Parse the Secp256r1 keypair (assuming it's in hex format)
+            let clean_keypair = authority_keypair.trim_start_matches("0x");
+            let keypair_bytes = hex::decode(clean_keypair)
+                .map_err(|_| anyhow!("Invalid hex format for Secp256r1 keypair"))?;
+
+            // Create a compressed public key (33 bytes) from the keypair
+            let compressed_pubkey = if keypair_bytes.len() >= 33 {
+                keypair_bytes[..33].try_into().unwrap()
+            } else {
+                // Pad with zeros if needed (this is just for demonstration)
+                let mut pubkey = [0u8; 33];
+                pubkey[..keypair_bytes.len()].copy_from_slice(&keypair_bytes);
+                pubkey
+            };
+
+            let create_session_authority = CreateSecp256r1SessionAuthority::new(
+                compressed_pubkey,
+                [0; 32], // session key
+                100,     // max session length
+            );
+
+            // Create a signing function (placeholder implementation)
+            let sign_fn = move |payload: &[u8]| -> [u8; 64] {
+                // This is a placeholder - in a real implementation, you'd use a Secp256r1 library
+                let mut signature = [0u8; 64];
+                signature.copy_from_slice(&payload[..64]);
+                signature
+            };
+
+            Box::new(Secp256r1SessionClientRole::new(
+                create_session_authority,
+                Box::new(sign_fn),
             ))
         },
         _ => {
@@ -364,8 +533,10 @@ pub fn get_authority_type() -> Result<AuthorityType> {
     let authority_types = vec![
         "Ed25519 (Recommended for standard usage)",
         "Secp256k1 (For Ethereum/Bitcoin compatibility)",
+        "Secp256r1 (For passkey/WebAuthn support)",
         "Ed25519Session (For temporary session-based auth)",
         "Secp256k1Session (For temporary session-based auth with Ethereum/Bitcoin)",
+        "Secp256r1Session (For temporary session-based auth with passkey/WebAuthn)",
     ];
 
     let authority_type_idx = Select::with_theme(&ColorfulTheme::default())
@@ -377,8 +548,10 @@ pub fn get_authority_type() -> Result<AuthorityType> {
     let authority_type = match authority_type_idx {
         0 => AuthorityType::Ed25519,
         1 => AuthorityType::Secp256k1,
-        2 => AuthorityType::Ed25519Session,
-        3 => AuthorityType::Secp256k1Session,
+        2 => AuthorityType::Secp256r1,
+        3 => AuthorityType::Ed25519Session,
+        4 => AuthorityType::Secp256k1Session,
+        5 => AuthorityType::Secp256r1Session,
         _ => unreachable!(),
     };
 
@@ -682,6 +855,24 @@ pub fn format_authority(authority: &str, authority_type: &AuthorityType) -> Resu
                 Err(anyhow!("Invalid Secp256k1 public key format"))
             }
         },
+        AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
+            // For Secp256r1, the authority should be a hex string of the compressed public key
+            // Remove 0x prefix if present
+            let clean_authority = authority.trim_start_matches("0x");
+
+            // Parse as hex bytes
+            let authority_bytes = hex::decode(clean_authority)
+                .map_err(|_| anyhow!("Invalid hex string for Secp256r1 authority"))?;
+
+            // For Secp256r1, we expect the compressed public key (33 bytes)
+            if authority_bytes.len() == 33 {
+                Ok(authority_bytes)
+            } else {
+                Err(anyhow!(
+                    "Invalid Secp256r1 public key format - expected 33 bytes"
+                ))
+            }
+        },
         _ => Err(anyhow!("Unsupported authority type")),
     }
 }
@@ -718,6 +909,12 @@ pub fn get_authorities(ctx: &mut SwigCliContext) -> Result<HashMap<String, Vec<u
                 AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
                     let authority = role.authority.identity().unwrap();
                     // For Secp256k1, encode as hex string
+                    let authority_hex = hex::encode(authority);
+                    authorities.insert(format!("0x{}", authority_hex), authority.to_vec());
+                },
+                AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
+                    let authority = role.authority.identity().unwrap();
+                    // For Secp256r1, encode as hex string
                     let authority_hex = hex::encode(authority);
                     authorities.insert(format!("0x{}", authority_hex), authority.to_vec());
                 },

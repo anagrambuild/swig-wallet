@@ -5,15 +5,25 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
 use anyhow::{anyhow, Result};
 use colored::*;
-use rand;
+use hex;
+use openssl::{
+    bn::BigNumContext,
+    ec::{EcGroup, EcKey, PointConversionForm},
+    nid::Nid,
+};
+use rand::Rng;
 use serde_json::Value;
-use solana_sdk::{pubkey::Pubkey, signature::Keypair, system_instruction};
+use solana_sdk::{
+    pubkey::Pubkey,
+    signature::{Keypair, Signer},
+    system_instruction,
+};
 use swig_sdk::{
-    authority::AuthorityType, ClientRole, Ed25519ClientRole, Permission, RecurringConfig,
-    Secp256k1ClientRole, SwigError, SwigWallet,
+    authority::AuthorityType, client_role::Secp256r1ClientRole, ClientRole, Ed25519ClientRole,
+    Permission, RecurringConfig, Secp256k1ClientRole, SwigError, SwigWallet,
 };
 
-use crate::{format_authority, Command, SwigCliContext};
+use crate::{Command, SwigCliContext};
 
 pub fn create_swig_instance(
     ctx: &mut SwigCliContext,
@@ -66,12 +76,44 @@ pub fn create_swig_instance(
                 fee_payer.insecure_clone(),
             )
         },
+        AuthorityType::Secp256r1 => {
+            // For Secp256r1, the authority_kp should be a hex string of the compressed public key
+            let clean_authority = authority_kp.trim_start_matches("0x");
+            let authority_bytes = hex::decode(clean_authority)
+                .map_err(|_| anyhow!("Invalid hex string for Secp256r1 authority"))?;
+
+            // For Secp256r1, we expect the compressed public key (33 bytes)
+            if authority_bytes.len() != 33 {
+                return Err(anyhow!(
+                    "Invalid Secp256r1 public key format - expected 33 bytes"
+                ));
+            }
+
+            let compressed_pubkey: [u8; 33] = authority_bytes.try_into().unwrap();
+
+            // Create a signing function (placeholder implementation)
+            let sign_fn = move |payload: &[u8]| -> [u8; 64] {
+                // This is a placeholder - in a real implementation, you'd use a Secp256r1 library
+                let mut signature = [0u8; 64];
+                signature.copy_from_slice(&payload[..64]);
+                signature
+            };
+
+            (
+                Box::new(Secp256r1ClientRole::new(
+                    compressed_pubkey,
+                    Box::new(sign_fn),
+                )) as Box<dyn ClientRole>,
+                fee_payer.insecure_clone(),
+            )
+        },
         _ => return Err(anyhow!("Unsupported authority type")),
     };
 
     // Use Box::leak to create static references (similar to interactive mode)
-    let fee_payer_static = Box::leak(Box::new(fee_payer));
-    let authority_keypair_static = Box::leak(Box::new(fee_payer_static.insecure_clone()));
+    let fee_payer_static: &mut Keypair = Box::leak(Box::new(fee_payer));
+    let authority_keypair_static: &mut Keypair =
+        Box::leak(Box::new(fee_payer_static.insecure_clone()));
 
     let wallet = SwigWallet::new(
         swig_id,
@@ -226,7 +268,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 new_authority_type.ok_or_else(|| anyhow!("New authority type is required"))?;
 
             let new_authority_type = parse_authority_type(new_authority_type)?;
-            let authority_bytes = format_authority(&new_authority, &new_authority_type)?;
+            let authority_bytes = crate::format_authority(&new_authority, &new_authority_type)?;
 
             ctx.wallet.as_mut().unwrap().add_authority(
                 new_authority_type,
@@ -303,7 +345,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
 
             let fetch_authority_type = parse_authority_type(authority_type_to_fetch)?;
             let fetch_authority_bytes =
-                format_authority(&authority_to_fetch, &fetch_authority_type)?;
+                crate::format_authority(&authority_to_fetch, &fetch_authority_type)?;
 
             create_swig_instance(
                 ctx,
@@ -478,6 +520,121 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
             println!("Successfully withdrew {} lamports from sub-account", amount);
             Ok(())
         },
+        Command::Generate {
+            authority_type,
+            output_format,
+        } => {
+            let authority_type = parse_authority_type(authority_type)?;
+            let output_format = output_format.unwrap_or_else(|| "json".to_string());
+
+            match authority_type {
+                AuthorityType::Ed25519 => {
+                    let keypair = Keypair::new();
+                    let public_key = keypair.pubkey();
+                    let private_key = bs58::encode(keypair.to_bytes()).into_string();
+
+                    match output_format.as_str() {
+                        "json" => {
+                            println!(
+                                "{}",
+                                serde_json::json!({
+                                    "authority_type": "Ed25519",
+                                    "public_key": public_key.to_string(),
+                                    "private_key": private_key,
+                                    "public_key_bytes": hex::encode(public_key.to_bytes())
+                                })
+                            );
+                        },
+                        "text" => {
+                            println!("Ed25519 Keypair:");
+                            println!("Public Key: {}", public_key);
+                            println!("Private Key: {}", private_key);
+                            println!("Public Key (hex): {}", hex::encode(public_key.to_bytes()));
+                        },
+                        _ => return Err(anyhow!("Unsupported output format: {}", output_format)),
+                    }
+                },
+                AuthorityType::Secp256k1 => {
+                    // Generate secp256k1 keypair using alloy
+                    let wallet = LocalSigner::random();
+                    let public_key = wallet.credential().verifying_key().to_encoded_point(false);
+                    let private_key_bytes = wallet.credential().to_bytes();
+                    let eth_address = wallet.address();
+
+                    // Get uncompressed public key (64 bytes without 0x04 prefix)
+                    let uncompressed_pubkey = public_key.to_bytes();
+
+                    match output_format.as_str() {
+                        "json" => {
+                            println!(
+                                "{}",
+                                serde_json::json!({
+                                    "authority_type": "Secp256k1",
+                                    "public_key": hex::encode(&uncompressed_pubkey[1..]),
+                                    "private_key": hex::encode(private_key_bytes),
+                                    "eth_address": format!("{:?}", eth_address)
+                                })
+                            );
+                        },
+                        "text" => {
+                            println!("Secp256k1 Keypair:");
+                            println!(
+                                "Public Key (uncompressed): {}",
+                                hex::encode(&uncompressed_pubkey[1..])
+                            );
+                            println!("Private Key: {}", hex::encode(private_key_bytes));
+                            println!("Ethereum Address: {:?}", eth_address);
+                        },
+                        _ => return Err(anyhow!("Unsupported output format: {}", output_format)),
+                    }
+                },
+                AuthorityType::Secp256r1 => {
+                    // Generate secp256r1 keypair using openssl
+                    let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)
+                        .map_err(|e| anyhow!("Failed to create EC group: {}", e))?;
+                    let signing_key = EcKey::generate(&group)
+                        .map_err(|e| anyhow!("Failed to generate EC key: {}", e))?;
+
+                    let mut ctx = BigNumContext::new()
+                        .map_err(|e| anyhow!("Failed to create BigNum context: {}", e))?;
+                    let pubkey_bytes = signing_key
+                        .public_key()
+                        .to_bytes(&group, PointConversionForm::COMPRESSED, &mut ctx)
+                        .map_err(|e| anyhow!("Failed to serialize public key: {}", e))?;
+
+                    let private_key_der = signing_key
+                        .private_key_to_der()
+                        .map_err(|e| anyhow!("Failed to serialize private key: {}", e))?;
+
+                    match output_format.as_str() {
+                        "json" => {
+                            println!(
+                                "{}",
+                                serde_json::json!({
+                                    "authority_type": "Secp256r1",
+                                    "public_key": hex::encode(&pubkey_bytes),
+                                    "private_key": hex::encode(&private_key_der)
+                                })
+                            );
+                        },
+                        "text" => {
+                            println!("Secp256r1 Keypair:");
+                            println!("Public Key (compressed): {}", hex::encode(&pubkey_bytes));
+                            println!("Private Key (DER): {}", hex::encode(&private_key_der));
+                        },
+                        _ => return Err(anyhow!("Unsupported output format: {}", output_format)),
+                    }
+                },
+                _ => {
+                    return Err(anyhow!(
+                        "Unsupported authority type for generation: {:?}",
+                        authority_type
+                    ))
+                },
+            }
+
+            Ok(())
+        },
     }
 }
 
@@ -485,6 +642,7 @@ pub fn parse_authority_type(authority_type: String) -> Result<AuthorityType> {
     match authority_type.as_str() {
         "Ed25519" => Ok(AuthorityType::Ed25519),
         "Secp256k1" => Ok(AuthorityType::Secp256k1),
+        "Secp256r1" => Ok(AuthorityType::Secp256r1),
         _ => Err(anyhow!("Invalid authority type: {}", authority_type)),
     }
 }
