@@ -370,7 +370,7 @@ fn secp256r1_authority_authenticate(
 
     let expected_counter = authority.signature_odometer.wrapping_add(1);
     if counter != expected_counter {
-        return Err(SwigAuthenticateError::PermissionDeniedSecp256k1SignatureReused.into());
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1SignatureReused.into());
     }
 
     secp256r1_authenticate(
@@ -419,7 +419,7 @@ fn secp256r1_session_authority_authenticate(
 
     let expected_counter = authority.signature_odometer.wrapping_add(1);
     if counter != expected_counter {
-        return Err(SwigAuthenticateError::PermissionDeniedSecp256k1SignatureReused.into());
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1SignatureReused.into());
     }
 
     secp256r1_authenticate(

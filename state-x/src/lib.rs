@@ -137,6 +137,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedSecp256k1SignatureReused,
     /// Invalid Secp256k1 hash
     PermissionDeniedSecp256k1InvalidHash,
+    /// Secp256r1 signature has been reused
+    PermissionDeniedSecp256r1SignatureReused,
     /// Stake account is in an invalid state
     PermissionDeniedStakeAccountInvalidState,
     /// Cannot reuse session key
