@@ -27,7 +27,8 @@ solana-account-decoder-client-types = "2.0"
 test-log = "0.2"
 rand = "0.8"
 litesvm = { version = "0.6.1" }
-
+openssl = "0.10"
+solana-secp256r1-program = "2.0"
 
 [features]
 rust_sdk_test = []

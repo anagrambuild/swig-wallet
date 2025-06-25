@@ -64,7 +64,7 @@ fn test_sub_account_functionality() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[ix],
+        &ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -91,7 +91,7 @@ fn test_sub_account_functionality() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[create_sub_account_ix],
+        &create_sub_account_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -147,7 +147,7 @@ fn test_sub_account_functionality() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[sub_account_sign_ix],
+        &sub_account_sign_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -209,7 +209,7 @@ fn test_sub_account_functionality() {
         .unwrap();
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[withdraw_ix],
+        &withdraw_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -258,7 +258,7 @@ fn test_sub_account_functionality() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[toggle_ix],
+        &toggle_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -287,7 +287,7 @@ fn test_sub_account_functionality() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[sub_account_sign_ix],
+        &sub_account_sign_ix,
         &[],
         context.svm.latest_blockhash(),
     )

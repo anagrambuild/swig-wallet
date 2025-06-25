@@ -28,6 +28,9 @@ use swig_state_x::{
         secp256k1::{
             CreateSecp256k1SessionAuthority, Secp256k1Authority, Secp256k1SessionAuthority,
         },
+        secp256r1::{
+            CreateSecp256r1SessionAuthority, Secp256r1Authority, Secp256r1SessionAuthority,
+        },
         AuthorityType,
     },
     role::Role,
@@ -42,6 +45,7 @@ use crate::{
 
 pub mod authority_tests;
 pub mod program_scope_tests;
+pub mod secp256r1_tests;
 pub mod session_tests;
 pub mod sub_account_test;
 pub mod swig_account_tests;
@@ -105,7 +109,16 @@ pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), S
                             role.authority.signature_odometer()
                         )
                     },
-                    _ => todo!(),
+                    AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
+                        let authority = role.authority.identity().unwrap();
+                        let authority_hex = hex::encode(authority);
+                        format!(
+                            "Secp256r1: {} \n║ │  ├─ odometer: {:?}",
+                            authority_hex,
+                            role.authority.signature_odometer()
+                        )
+                    },
+                    _ => "Unknown authority type".to_string(),
                 }
             );
 

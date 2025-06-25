@@ -89,7 +89,7 @@ fn test_create_ed25519_session() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[create_session_ix],
+        &create_session_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -222,7 +222,7 @@ fn test_create_secp256k1_session() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[create_session_ix],
+        &create_session_ix,
         &[],
         context.svm.latest_blockhash(),
     )
