@@ -12,8 +12,10 @@ use pinocchio::{
     account_info::AccountInfo,
     cpi::invoke_signed,
     instruction::{AccountMeta, Instruction, Signer},
+    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
+    syscalls::sol_sha256,
     ProgramResult,
 };
 use swig_state_x::{
@@ -334,4 +336,69 @@ pub unsafe fn build_restricted_keys<'a>(
             2,
         ))
     }
+}
+
+/// Computes a hash of data while excluding specified byte ranges.
+///
+/// This function uses the SHA256 hash algorithm which is optimized
+/// for low compute units on Solana. It hashes all bytes in the
+/// account's data except those in the specified exclusion ranges.
+///
+/// # Arguments
+/// * `data` - The data to hash
+/// * `exclude_ranges` - Sorted list of byte ranges to exclude from hashing
+///
+/// # Returns
+/// * `[u8; 32]` - The computed SHA256 hash (32 bytes)
+///
+/// # Safety
+/// This function assumes that:
+/// - The exclude_ranges are non-overlapping and sorted by start position
+/// - All ranges are within the bounds of the data
+#[inline(always)]
+pub fn hash_except(data: &[u8], exclude_ranges: &[core::ops::Range<usize>]) -> [u8; 32] {
+    // Maximum possible segments: one before each exclude range + one after all ranges
+    const MAX_SEGMENTS: usize = 16; // Reasonable upper bound, however most cases are <= 3
+    let mut segments: [&[u8]; MAX_SEGMENTS] = [&[]; MAX_SEGMENTS];
+    let mut segment_count = 0;
+    let mut position = 0;
+
+    // If no exclude ranges, hash the entire data
+    #[allow(unused)]
+    if exclude_ranges.is_empty() {
+        segments[0] = data;
+        segment_count = 1;
+    } else {
+        for range in exclude_ranges {
+            // Add bytes before this exclusion range
+            if position < range.start {
+                segments[segment_count] = &data[position..range.start];
+                segment_count += 1;
+            }
+            // Skip to end of exclusion range
+            position = range.end;
+        }
+
+        // Add any remaining bytes after the last exclusion range
+        if position < data.len() {
+            segments[segment_count] = &data[position..];
+            segment_count += 1;
+        }
+    }
+
+    let mut data_payload_hash = [0u8; 32];
+
+    #[cfg(target_os = "solana")]
+    unsafe {
+        let res = sol_sha256(
+            segments.as_ptr() as *const u8,
+            segment_count as u64,
+            data_payload_hash.as_mut_ptr() as *mut u8,
+        );
+    }
+
+    #[cfg(not(target_os = "solana"))]
+    let res = 0;
+
+    data_payload_hash
 }
