@@ -128,12 +128,16 @@ impl AuthorityInfo for Secp256k1Authority {
         Ok(self.public_key.as_ref())
     }
 
+    fn signature_odometer(&self) -> Option<u32> {
+        Some(self.signature_odometer)
+    }
+
     fn match_data(&self, data: &[u8]) -> bool {
         if data.len() != 64 {
             return false;
         }
         let expanded = compress(data.try_into().unwrap());
-        sol_assert_bytes_eq(&self.public_key, &expanded, 32)
+        sol_assert_bytes_eq(&self.public_key, &expanded, 33)
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -220,11 +224,15 @@ impl AuthorityInfo for Secp256k1SessionAuthority {
             return false;
         }
         let expanded = compress(data.try_into().unwrap());
-        sol_assert_bytes_eq(data, &expanded, 33)
+        sol_assert_bytes_eq(&self.public_key, &expanded, 33)
     }
 
     fn identity(&self) -> Result<&[u8], ProgramError> {
         Ok(self.public_key.as_ref())
+    }
+
+    fn signature_odometer(&self) -> Option<u32> {
+        Some(self.signature_odometer)
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -500,7 +508,7 @@ fn secp256k1_authenticate(
         }
         // First compress the recovered key to 33 bytes
         let compressed_recovered_key = compress(&recovered_key.assume_init());
-        sol_assert_bytes_eq(&compressed_recovered_key, expected_key, 32)
+        sol_assert_bytes_eq(&compressed_recovered_key, expected_key, 33)
     };
     if !matches {
         return Err(SwigAuthenticateError::PermissionDenied.into());

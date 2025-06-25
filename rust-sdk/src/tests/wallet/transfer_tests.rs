@@ -2,6 +2,7 @@ use solana_program::system_instruction;
 use solana_sdk::signature::{Keypair, Signer};
 
 use super::*;
+use crate::client_role::Ed25519ClientRole;
 
 #[test_log::test]
 fn should_transfer_within_limits() {
@@ -28,7 +29,7 @@ fn should_transfer_within_limits() {
     swig_wallet
         .switch_authority(
             1,
-            AuthorityManager::Ed25519(secondary_authority.pubkey()),
+            Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
             Some(&secondary_authority),
         )
         .unwrap();
@@ -45,8 +46,12 @@ fn should_transfer_within_limits() {
     // Transfer within limits
     let transfer_ix = system_instruction::transfer(&swig_account, &recipient.pubkey(), 100_000_000);
 
-    assert!(swig_wallet.sign(vec![transfer_ix], None).is_ok());
-    swig_wallet.display_swig().unwrap();
+    let signature = swig_wallet.sign(vec![transfer_ix], None).unwrap();
+    println!("signature: {:?}", signature);
+
+    // Verify transfer was successful
+    assert!(signature != solana_sdk::signature::Signature::default());
+    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 1);
 }
 
 #[test_log::test]
@@ -74,7 +79,7 @@ fn should_fail_transfer_beyond_limits() {
     swig_wallet
         .switch_authority(
             1,
-            AuthorityManager::Ed25519(secondary_authority.pubkey()),
+            Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
             Some(&secondary_authority),
         )
         .unwrap();
@@ -121,7 +126,15 @@ fn should_get_role_id() {
         )
         .unwrap();
 
-    swig_wallet.display_swig().unwrap();
+    // Verify authorities were added correctly
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
+    assert!(swig_wallet
+        .get_role_id(&authority_2.pubkey().to_bytes())
+        .is_ok());
+    assert!(swig_wallet
+        .get_role_id(&authority_3.pubkey().to_bytes())
+        .is_ok());
+
     let role_id = swig_wallet
         .get_role_id(&authority_3.pubkey().to_bytes())
         .unwrap();

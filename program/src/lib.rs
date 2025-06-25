@@ -9,7 +9,7 @@
 pub mod actions;
 mod error;
 pub mod instruction;
-mod util;
+pub mod util;
 use core::mem::MaybeUninit;
 
 use actions::process_action;
@@ -169,7 +169,8 @@ unsafe fn execute(
 ///
 /// This function determines the type and role of an account in the Swig wallet
 /// system. It handles several special cases:
-/// - Swig accounts (must be first in the account list)
+/// - Swig accounts (the first one must be at index 0 for signing/permission
+///   checking)
 /// - Stake accounts (with validation of withdrawer authority)
 /// - Token accounts (SPL Token and Token-2022)
 /// - Program-scoped accounts (using the program scope cache)
@@ -207,7 +208,19 @@ unsafe fn classify_account(
                     lamports: account.lamports(),
                 }),
                 Discriminator::SwigAccount if index != 0 => {
-                    return Err(SwigError::InvalidAccountsSwigMustBeFirst.into());
+                    // Additional Swig accounts are only allowed if the first account is also a Swig
+                    // account
+                    let first_account = accounts.get_unchecked(0).assume_init_ref();
+                    let first_data = first_account.borrow_data_unchecked();
+
+                    if first_account.owner() == &crate::ID
+                        && first_data.len() >= 8
+                        && *first_data.get_unchecked(0) == Discriminator::SwigAccount as u8
+                    {
+                        Ok(AccountClassification::None)
+                    } else {
+                        Err(SwigError::InvalidAccountsSwigMustBeFirst.into())
+                    }
                 },
                 _ => Ok(AccountClassification::None),
             }
