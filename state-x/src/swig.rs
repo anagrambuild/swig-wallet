@@ -227,14 +227,68 @@ impl<'a> SwigBuilder<'a> {
         Err(SwigStateError::RoleNotFound.into())
     }
 
+    /// Calculates the actual number of actions in the provided actions data.
+    ///
+    /// This function iterates through the actions data and counts the number of
+    /// valid actions by parsing action headers and their boundaries.
+    ///
+    /// # Arguments
+    /// * `actions_data` - Raw bytes containing action data
+    ///
+    /// # Returns
+    /// * `Result<u8, ProgramError>` - The number of actions found, or error if invalid data
+    fn calculate_num_actions(actions_data: &[u8]) -> Result<u8, ProgramError> {
+        let mut cursor = 0;
+        let mut count = 0u8;
+
+        while cursor < actions_data.len() {
+            if cursor + Action::LEN > actions_data.len() {
+                break;
+            }
+
+            let action_header =
+                unsafe { Action::load_unchecked(&actions_data[cursor..cursor + Action::LEN])? };
+            cursor += Action::LEN;
+
+            let action_len = action_header.length() as usize;
+            if cursor + action_len > actions_data.len() {
+                return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
+            }
+
+            cursor += action_len;
+            count += 1;
+
+            // Prevent overflow
+            if count == u8::MAX {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+        }
+
+        if count == 0 {
+            return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
+        }
+
+        Ok(count)
+    }
+
     /// Adds a new role to the Swig account.
+    ///
+    /// # Arguments
+    /// * `authority_type` - The type of authority for this role
+    /// * `authority_data` - Raw bytes containing the authority data
+    /// * `actions_data` - Raw bytes containing the actions data
+    ///
+    /// # Returns
+    /// * `Result<(), ProgramError>` - Success or error status
     pub fn add_role(
         &mut self,
         authority_type: AuthorityType,
         authority_data: &[u8],
-        num_actions: u8,
         actions_data: &'a [u8],
     ) -> Result<(), ProgramError> {
+        // Calculate the actual number of actions from the actions data
+        let num_actions = Self::calculate_num_actions(actions_data)?;
+
         // check number of roles and iterate to last boundary
         let mut cursor = 0;
         // iterate and transmute each position to get boundary if not the last then jump
@@ -760,7 +814,6 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority.into_bytes().unwrap(),
-                1,
                 &actions_data,
             )
             .unwrap();
@@ -809,7 +862,6 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority.into_bytes().unwrap(),
-                1,
                 &actions_data,
             )
             .unwrap();
@@ -864,7 +916,6 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority1.into_bytes().unwrap(),
-                1,
                 &actions_data,
             )
             .unwrap();
@@ -876,7 +927,6 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority2.into_bytes().unwrap(),
-                1,
                 &actions_data,
             )
             .unwrap();
@@ -926,7 +976,6 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority.into_bytes().unwrap(),
-                1,
                 &actions_data,
             )
             .unwrap();
@@ -1041,7 +1090,6 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority.into_bytes().unwrap(),
-                2,
                 &actions_data,
             )
             .unwrap();
@@ -1182,7 +1230,6 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority1.into_bytes().unwrap(),
-                1,
                 &all_actions_data,
             )
             .unwrap();
@@ -1192,7 +1239,6 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority2.into_bytes().unwrap(),
-                1,
                 &sol_limit_actions_data,
             )
             .unwrap();
@@ -1244,7 +1290,6 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority1.into_bytes().unwrap(),
-                1,
                 &all_actions_data,
             )
             .unwrap();
@@ -1252,7 +1297,6 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority1.into_bytes().unwrap(),
-                1,
                 &sol_limit_actions_data,
             )
             .unwrap();
@@ -1308,7 +1352,6 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority1.into_bytes().unwrap(),
-                1,
                 &all_actions,
             )
             .unwrap();
@@ -1316,7 +1359,6 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority2.into_bytes().unwrap(),
-                1,
                 &all_actions,
             )
             .unwrap();
@@ -1445,7 +1487,6 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority.into_bytes().unwrap(),
-                1,
                 &actions_data,
             )
             .unwrap();
@@ -1512,7 +1553,6 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority.into_bytes().unwrap(),
-                1,
                 &actions_data,
             )
             .unwrap();
@@ -1574,7 +1614,6 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority1.into_bytes().unwrap(),
-                1,
                 &all_actions,
             )
             .unwrap();
@@ -1582,7 +1621,6 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority2.into_bytes().unwrap(),
-                1,
                 &all_actions,
             )
             .unwrap();
@@ -1707,12 +1745,11 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority1.into_bytes().unwrap(),
-                1,
                 &all_actions,
             )
             .unwrap();
         builder
-            .add_role(AuthorityType::Secp256k1, &authority2, 1, &ma_actions)
+            .add_role(AuthorityType::Secp256k1, &authority2, &ma_actions)
             .unwrap();
 
         // Scan for assigned role IDs
@@ -1832,12 +1869,11 @@ mod tests {
             .add_role(
                 AuthorityType::Ed25519,
                 authority1.into_bytes().unwrap(),
-                1,
                 &all_actions,
             )
             .unwrap();
         builder
-            .add_role(AuthorityType::Secp256k1, &authority2, 1, &all_actions)
+            .add_role(AuthorityType::Secp256k1, &authority2, &all_actions)
             .unwrap();
 
         // Verify two roles exist
