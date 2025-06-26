@@ -79,7 +79,7 @@ impl<'c> SwigWallet<'c> {
     /// `SwigError`
     pub fn new(
         swig_id: [u8; 32],
-        client_role: Box<dyn ClientRole>,
+        mut client_role: Box<dyn ClientRole>,
         fee_payer: &'c Keypair,
         rpc_url: String,
         authority_keypair: Option<&'c Keypair>,
@@ -171,9 +171,13 @@ impl<'c> SwigWallet<'c> {
                 .get_role(role_id)
                 .map_err(|_| SwigError::AuthorityNotFound)?;
 
-            // Extract the role data for storage
-            let current_role = if let Some(role) = role {
-                build_current_role(role_id, &role)
+            // Extract the role data for storage and update odometer if needed
+            let current_role = if let Some(role) = &role {
+                // Update odometer if this is a Secp256k1 authority
+                if let Some(odometer) = role.authority.signature_odometer() {
+                    client_role.update_odometer(odometer)?;
+                }
+                build_current_role(role_id, role)
             } else {
                 return Err(SwigError::AuthorityNotFound);
             };
@@ -314,6 +318,7 @@ impl<'c> SwigWallet<'c> {
         let tx_result = self.send_and_confirm_transaction(tx);
         if tx_result.is_ok() {
             self.refresh_permissions()?;
+            println!("incrementing odometer");
             self.instruction_builder.increment_odometer()?;
         }
         tx_result
