@@ -789,7 +789,10 @@ impl<'c> SwigWallet<'c> {
                             let authority = bs58::encode(authority).into_string();
                             authority
                         },
-                        AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
+                        AuthorityType::Secp256k1
+                        | AuthorityType::Secp256k1Session
+                        | AuthorityType::Secp256r1
+                        | AuthorityType::Secp256r1Session => {
                             let authority = role.authority.identity().unwrap();
                             let mut authority_hex = vec![0x4];
                             authority_hex.extend_from_slice(authority);
@@ -1179,9 +1182,11 @@ impl<'c> SwigWallet<'c> {
         let mut keypairs = vec![self.fee_payer];
         if let Some(authority_kp) = self.authority_keypair {
             // Only add the authority keypair if it's different from the fee payer
-            if std::ptr::eq(authority_kp, self.fee_payer) {
+            if authority_kp.pubkey() == self.fee_payer.pubkey() {
                 // Authority and fee payer are the same, so we already have it
+                println!("Authority and fee payer are the same, so we already have it");
             } else {
+                println!("Adding authority keypair");
                 keypairs.push(authority_kp);
             }
         }
@@ -1497,7 +1502,10 @@ impl<'c> SwigWallet<'c> {
                 let authority = role.authority.identity().unwrap_or_default();
                 Ok(bs58::encode(authority).into_string())
             },
-            AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
+            AuthorityType::Secp256k1
+            | AuthorityType::Secp256k1Session
+            | AuthorityType::Secp256r1
+            | AuthorityType::Secp256r1Session => {
                 let authority = role.authority.identity().unwrap_or_default();
                 let mut authority_hex = vec![0x4];
                 authority_hex.extend_from_slice(authority);

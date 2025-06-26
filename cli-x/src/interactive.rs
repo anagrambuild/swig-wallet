@@ -6,13 +6,22 @@ use alloy_signer_local::LocalSigner;
 use anyhow::{anyhow, Result};
 use colored::*;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
+use openssl::{
+    bn::BigNumContext,
+    ec::{EcGroup, EcKey, EcPoint, PointConversionForm},
+    nid::Nid,
+};
 use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
     system_instruction::{self, transfer},
 };
-use swig_sdk::authority::secp256r1::CreateSecp256r1SessionAuthority;
+use solana_secp256r1_program;
+use swig_sdk::authority::{
+    secp256k1::CreateSecp256k1SessionAuthority, secp256r1::CreateSecp256r1SessionAuthority,
+};
+use swig_sdk::Secp256k1SessionClientRole;
 use swig_sdk::{
     authority::{ed25519::CreateEd25519SessionAuthority, AuthorityType},
     client_role::{Secp256r1ClientRole, Secp256r1SessionClientRole},
@@ -97,7 +106,7 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
 
     let authority_type = get_authority_type()?;
 
-    let (client_role, fee_payer) = match authority_type {
+    let client_role = match authority_type {
         AuthorityType::Ed25519 => {
             let authority_keypair = Password::with_theme(&ColorfulTheme::default())
                 .with_prompt("Enter authority keypair")
@@ -106,12 +115,10 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
             let authority = Keypair::from_base58_string(&authority_keypair);
             let authority_pubkey = authority.pubkey();
             println!("Authority public key: {}", authority_pubkey);
-            (
-                Box::new(Ed25519ClientRole::new(authority_pubkey)) as Box<dyn ClientRole>,
-                authority.insecure_clone(),
-            )
+
+            Box::new(Ed25519ClientRole::new(authority_pubkey)) as Box<dyn ClientRole>
         },
-        AuthorityType::Secp256k1 => {
+        AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
             let authority_keypair = Password::with_theme(&ColorfulTheme::default())
                 .with_prompt("Enter Secp256k1 authority keypair")
                 .interact()?;
@@ -145,79 +152,102 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                 sig
             };
 
-            let fee_payer_kp_str = Password::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter Fee payer keypair")
-                .interact()?;
-            let fee_payer_keypair = Keypair::from_base58_string(&fee_payer_kp_str);
-
-            (
+            if authority_type == AuthorityType::Secp256k1 {
                 Box::new(Secp256k1ClientRole::new(
                     eth_pubkey[1..].to_vec().into_boxed_slice(),
                     Box::new(sign_fn),
-                )) as Box<dyn ClientRole>,
-                fee_payer_keypair,
-            )
+                )) as Box<dyn ClientRole>
+            } else {
+                let create_session_authority = CreateSecp256k1SessionAuthority::new(
+                    eth_pubkey[1..].to_vec().try_into().unwrap(),
+                    [0; 32], // session key
+                    100,     // max session length
+                );
+                Box::new(Secp256k1SessionClientRole::new(
+                    create_session_authority,
+                    Box::new(sign_fn),
+                )) as Box<dyn ClientRole>
+            }
         },
         AuthorityType::Secp256r1 => {
             let authority_keypair = Password::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter Secp256r1 authority keypair (hex format)")
+                .with_prompt("Enter Secp256r1 authority keypair (DER format in hex)")
                 .interact()?;
 
-            // Parse the Secp256r1 keypair (assuming it's in hex format)
+            // Parse the Secp256r1 keypair (DER format in hex)
             let clean_keypair = authority_keypair.trim_start_matches("0x");
-            let keypair_bytes = hex::decode(clean_keypair)
+            let der_bytes = hex::decode(clean_keypair)
                 .map_err(|_| anyhow!("Invalid hex format for Secp256r1 keypair"))?;
 
-            // Create a compressed public key (33 bytes) from the keypair
-            let compressed_pubkey = if keypair_bytes.len() >= 33 {
-                keypair_bytes[..33].try_into().unwrap()
-            } else {
-                // Pad with zeros if needed (this is just for demonstration)
-                let mut pubkey = [0u8; 33];
-                pubkey[..keypair_bytes.len()].copy_from_slice(&keypair_bytes);
-                pubkey
-            };
+            // Create an EcKey from the DER bytes
+            let signing_key = openssl::ec::EcKey::private_key_from_der(&der_bytes)
+                .map_err(|_| anyhow!("Invalid DER format for Secp256r1 keypair"))?;
 
-            // Create a signing function (placeholder implementation)
+            // Get the compressed public key
+            let group = openssl::ec::EcGroup::from_curve_name(openssl::nid::Nid::X9_62_PRIME256V1)
+                .map_err(|_| anyhow!("Failed to create EC group"))?;
+            let mut ctx = openssl::bn::BigNumContext::new()
+                .map_err(|_| anyhow!("Failed to create BigNum context"))?;
+            let pubkey_bytes = signing_key
+                .public_key()
+                .to_bytes(
+                    &group,
+                    openssl::ec::PointConversionForm::COMPRESSED,
+                    &mut ctx,
+                )
+                .map_err(|_| anyhow!("Failed to get public key bytes"))?;
+
+            let compressed_pubkey: [u8; 33] = pubkey_bytes
+                .try_into()
+                .map_err(|_| anyhow!("Invalid public key length"))?;
+
+            // Proper signing function using solana_secp256r1_program
+            let signing_key_clone = signing_key.clone();
             let sign_fn = move |payload: &[u8]| -> [u8; 64] {
-                // This is a placeholder - in a real implementation, you'd use a Secp256r1 library
-                let mut signature = [0u8; 64];
-                signature.copy_from_slice(&payload[..64]);
+                let signature = solana_secp256r1_program::sign_message(
+                    payload,
+                    &signing_key_clone.private_key_to_der().unwrap(),
+                )
+                .unwrap();
                 signature
             };
 
-            let fee_payer_kp_str = Password::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter Fee payer keypair")
-                .interact()?;
-            let fee_payer_keypair = Keypair::from_base58_string(&fee_payer_kp_str);
-
-            (
-                Box::new(Secp256r1ClientRole::new(
-                    compressed_pubkey,
-                    Box::new(sign_fn),
-                )) as Box<dyn ClientRole>,
-                fee_payer_keypair,
-            )
+            Box::new(Secp256r1ClientRole::new(
+                compressed_pubkey,
+                Box::new(sign_fn),
+            )) as Box<dyn ClientRole>
         },
         AuthorityType::Secp256r1Session => {
             let authority_keypair = Password::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter Secp256r1 authority keypair (hex format)")
+                .with_prompt("Enter Secp256r1 authority keypair (DER format in hex)")
                 .interact()?;
 
-            // Parse the Secp256r1 keypair (assuming it's in hex format)
+            // Parse the Secp256r1 keypair (DER format in hex)
             let clean_keypair = authority_keypair.trim_start_matches("0x");
-            let keypair_bytes = hex::decode(clean_keypair)
+            let der_bytes = hex::decode(clean_keypair)
                 .map_err(|_| anyhow!("Invalid hex format for Secp256r1 keypair"))?;
 
-            // Create a compressed public key (33 bytes) from the keypair
-            let compressed_pubkey = if keypair_bytes.len() >= 33 {
-                keypair_bytes[..33].try_into().unwrap()
-            } else {
-                // Pad with zeros if needed (this is just for demonstration)
-                let mut pubkey = [0u8; 33];
-                pubkey[..keypair_bytes.len()].copy_from_slice(&keypair_bytes);
-                pubkey
-            };
+            // Create an EcKey from the DER bytes
+            let signing_key = openssl::ec::EcKey::private_key_from_der(&der_bytes)
+                .map_err(|_| anyhow!("Invalid DER format for Secp256r1 keypair"))?;
+
+            // Get the compressed public key
+            let group = openssl::ec::EcGroup::from_curve_name(openssl::nid::Nid::X9_62_PRIME256V1)
+                .map_err(|_| anyhow!("Failed to create EC group"))?;
+            let mut ctx = openssl::bn::BigNumContext::new()
+                .map_err(|_| anyhow!("Failed to create BigNum context"))?;
+            let pubkey_bytes = signing_key
+                .public_key()
+                .to_bytes(
+                    &group,
+                    openssl::ec::PointConversionForm::COMPRESSED,
+                    &mut ctx,
+                )
+                .map_err(|_| anyhow!("Failed to get public key bytes"))?;
+
+            let compressed_pubkey: [u8; 33] = pubkey_bytes
+                .try_into()
+                .map_err(|_| anyhow!("Invalid public key length"))?;
 
             let create_session_authority = CreateSecp256r1SessionAuthority::new(
                 compressed_pubkey,
@@ -225,39 +255,47 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                 100,     // max session length
             );
 
-            // Create a signing function (placeholder implementation)
+            // Proper signing function using solana_secp256r1_program
+            let signing_key_clone = signing_key.clone();
             let sign_fn = move |payload: &[u8]| -> [u8; 64] {
-                // This is a placeholder - in a real implementation, you'd use a Secp256r1 library
-                let mut signature = [0u8; 64];
-                signature.copy_from_slice(&payload[..64]);
+                let signature = solana_secp256r1_program::sign_message(
+                    payload,
+                    &signing_key_clone.private_key_to_der().unwrap(),
+                )
+                .unwrap();
                 signature
             };
 
-            let fee_payer_kp_str = Password::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter Fee payer keypair")
-                .interact()?;
-            let fee_payer_keypair = Keypair::from_base58_string(&fee_payer_kp_str);
-
-            (
-                Box::new(Secp256r1SessionClientRole::new(
-                    create_session_authority,
-                    Box::new(sign_fn),
-                )) as Box<dyn ClientRole>,
-                fee_payer_keypair,
-            )
+            Box::new(Secp256r1SessionClientRole::new(
+                create_session_authority,
+                Box::new(sign_fn),
+            )) as Box<dyn ClientRole>
         },
         _ => todo!(),
     };
 
-    let fee_payer_static: &mut Keypair = Box::leak(Box::new(fee_payer));
-    let authority_keypair_static: &mut Keypair =
-        Box::leak(Box::new(fee_payer_static.insecure_clone()));
+    let fee_payer_str = Password::with_theme(&ColorfulTheme::default())
+        .with_prompt("Enter Fee payer keypair (Solana Ed25519 keypair in base58 format)")
+        .interact()?;
+    let fee_payer_keypair = Keypair::from_base58_string(&fee_payer_str);
+
+    let fee_payer_static: &mut Keypair = Box::leak(Box::new(fee_payer_keypair));
+
+    // For Secp256k1 and Secp256r1 authorities, we don't need the authority keypair as a transaction signer
+    // since the signature is provided in the instruction data
+    let authority_keypair_static: Option<&Keypair> = match authority_type {
+        AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
+            Some(Box::leak(Box::new(fee_payer_static.insecure_clone())))
+        },
+        _ => None,
+    };
+
     let wallet = SwigWallet::new(
         swig_id,
         client_role,
         fee_payer_static,
         "http://localhost:8899".to_string(),
-        Some(authority_keypair_static),
+        authority_keypair_static,
     )
     .unwrap();
 
@@ -286,6 +324,22 @@ fn add_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
 
     let authority = format_authority(&authority, &authority_type)?;
 
+    // Validate Secp256r1 public key if applicable
+    if matches!(
+        authority_type,
+        AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session
+    ) {
+        if authority.len() == 33 {
+            let pubkey_array: [u8; 33] = authority.clone().try_into().unwrap();
+            if let Err(e) = validate_secp256r1_public_key(&pubkey_array) {
+                println!("Warning: {}", e);
+                println!("The public key might not be valid for Secp256r1 operations.");
+            } else {
+                println!("✓ Secp256r1 public key validation passed");
+            }
+        }
+    }
+
     let permissions = get_permissions_interactive()?;
 
     let signature =
@@ -298,6 +352,8 @@ fn add_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
         println!("\n{}", "Authority added successfully!".bright_green());
         println!("Signature: {}", signature);
     } else {
+        println!("Authority: {:?}", authority);
+        println!("Signature: {:?}", signature);
         println!("\n{}", "Failed to add authority".bright_red());
         println!("Error: {}", signature.err().unwrap());
     }
@@ -402,29 +458,44 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
         },
         AuthorityType::Secp256r1 => {
             let authority_keypair = Password::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter Secp256r1 authority keypair (hex format)")
+                .with_prompt("Enter Secp256r1 authority keypair (DER format in hex)")
                 .interact()?;
 
-            // Parse the Secp256r1 keypair (assuming it's in hex format)
+            // Parse the Secp256r1 keypair (DER format in hex)
             let clean_keypair = authority_keypair.trim_start_matches("0x");
-            let keypair_bytes = hex::decode(clean_keypair)
+            let der_bytes = hex::decode(clean_keypair)
                 .map_err(|_| anyhow!("Invalid hex format for Secp256r1 keypair"))?;
 
-            // Create a compressed public key (33 bytes) from the keypair
-            let compressed_pubkey = if keypair_bytes.len() >= 33 {
-                keypair_bytes[..33].try_into().unwrap()
-            } else {
-                // Pad with zeros if needed (this is just for demonstration)
-                let mut pubkey = [0u8; 33];
-                pubkey[..keypair_bytes.len()].copy_from_slice(&keypair_bytes);
-                pubkey
-            };
+            // Create an EcKey from the DER bytes
+            let signing_key = openssl::ec::EcKey::private_key_from_der(&der_bytes)
+                .map_err(|_| anyhow!("Invalid DER format for Secp256r1 keypair"))?;
 
-            // Create a signing function (placeholder implementation)
+            // Get the compressed public key
+            let group = openssl::ec::EcGroup::from_curve_name(openssl::nid::Nid::X9_62_PRIME256V1)
+                .map_err(|_| anyhow!("Failed to create EC group"))?;
+            let mut ctx = openssl::bn::BigNumContext::new()
+                .map_err(|_| anyhow!("Failed to create BigNum context"))?;
+            let pubkey_bytes = signing_key
+                .public_key()
+                .to_bytes(
+                    &group,
+                    openssl::ec::PointConversionForm::COMPRESSED,
+                    &mut ctx,
+                )
+                .map_err(|_| anyhow!("Failed to get public key bytes"))?;
+
+            let compressed_pubkey: [u8; 33] = pubkey_bytes
+                .try_into()
+                .map_err(|_| anyhow!("Invalid public key length"))?;
+
+            // Proper signing function using solana_secp256r1_program
+            let signing_key_clone = signing_key.clone();
             let sign_fn = move |payload: &[u8]| -> [u8; 64] {
-                // This is a placeholder - in a real implementation, you'd use a Secp256r1 library
-                let mut signature = [0u8; 64];
-                signature.copy_from_slice(&payload[..64]);
+                let signature = solana_secp256r1_program::sign_message(
+                    payload,
+                    &signing_key_clone.private_key_to_der().unwrap(),
+                )
+                .unwrap();
                 signature
             };
 
@@ -437,23 +508,35 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
         },
         AuthorityType::Secp256r1Session => {
             let authority_keypair = Password::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter Secp256r1 authority keypair (hex format)")
+                .with_prompt("Enter Secp256r1 authority keypair (DER format in hex)")
                 .interact()?;
 
-            // Parse the Secp256r1 keypair (assuming it's in hex format)
+            // Parse the Secp256r1 keypair (DER format in hex)
             let clean_keypair = authority_keypair.trim_start_matches("0x");
-            let keypair_bytes = hex::decode(clean_keypair)
+            let der_bytes = hex::decode(clean_keypair)
                 .map_err(|_| anyhow!("Invalid hex format for Secp256r1 keypair"))?;
 
-            // Create a compressed public key (33 bytes) from the keypair
-            let compressed_pubkey = if keypair_bytes.len() >= 33 {
-                keypair_bytes[..33].try_into().unwrap()
-            } else {
-                // Pad with zeros if needed (this is just for demonstration)
-                let mut pubkey = [0u8; 33];
-                pubkey[..keypair_bytes.len()].copy_from_slice(&keypair_bytes);
-                pubkey
-            };
+            // Create an EcKey from the DER bytes
+            let signing_key = openssl::ec::EcKey::private_key_from_der(&der_bytes)
+                .map_err(|_| anyhow!("Invalid DER format for Secp256r1 keypair"))?;
+
+            // Get the compressed public key
+            let group = openssl::ec::EcGroup::from_curve_name(openssl::nid::Nid::X9_62_PRIME256V1)
+                .map_err(|_| anyhow!("Failed to create EC group"))?;
+            let mut ctx = openssl::bn::BigNumContext::new()
+                .map_err(|_| anyhow!("Failed to create BigNum context"))?;
+            let pubkey_bytes = signing_key
+                .public_key()
+                .to_bytes(
+                    &group,
+                    openssl::ec::PointConversionForm::COMPRESSED,
+                    &mut ctx,
+                )
+                .map_err(|_| anyhow!("Failed to get public key bytes"))?;
+
+            let compressed_pubkey: [u8; 33] = pubkey_bytes
+                .try_into()
+                .map_err(|_| anyhow!("Invalid public key length"))?;
 
             let create_session_authority = CreateSecp256r1SessionAuthority::new(
                 compressed_pubkey,
@@ -461,18 +544,29 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                 100,     // max session length
             );
 
-            // Create a signing function (placeholder implementation)
+            // Proper signing function using solana_secp256r1_program
+            let signing_key_clone = signing_key.clone();
             let sign_fn = move |payload: &[u8]| -> [u8; 64] {
-                // This is a placeholder - in a real implementation, you'd use a Secp256r1 library
-                let mut signature = [0u8; 64];
-                signature.copy_from_slice(&payload[..64]);
+                let signature = solana_secp256r1_program::sign_message(
+                    payload,
+                    &signing_key_clone.private_key_to_der().unwrap(),
+                )
+                .unwrap();
                 signature
             };
+
+            println!("✓ Secp256r1 session authority keypair parsed successfully");
+            println!("Note: You now need to provide a separate Solana Ed25519 keypair for transaction fees");
+
+            let fee_payer_kp_str = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter Fee payer keypair (Solana Ed25519 keypair in base58 format)")
+                .interact()?;
+            let fee_payer_keypair = Keypair::from_base58_string(&fee_payer_kp_str);
 
             Box::new(Secp256r1SessionClientRole::new(
                 create_session_authority,
                 Box::new(sign_fn),
-            ))
+            )) as Box<dyn ClientRole>
         },
         _ => {
             return Err(anyhow!("Session-based authorities not supported for root"));
@@ -924,4 +1018,23 @@ pub fn get_authorities(ctx: &mut SwigCliContext) -> Result<HashMap<String, Vec<u
     }
 
     Ok(authorities)
+}
+
+/// Validates if a Secp256r1 public key is a valid point on the curve
+fn validate_secp256r1_public_key(public_key: &[u8; 33]) -> Result<(), anyhow::Error> {
+    let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)
+        .map_err(|e| anyhow!("Failed to create EC group: {}", e))?;
+
+    let mut ctx =
+        BigNumContext::new().map_err(|e| anyhow!("Failed to create BigNum context: {}", e))?;
+
+    let point = EcPoint::from_bytes(&group, public_key, &mut ctx)
+        .map_err(|e| anyhow!("Invalid Secp256r1 public key: {}", e))?;
+
+    // Check if the point is at infinity
+    if point.is_infinity(&group) {
+        return Err(anyhow!("Secp256r1 public key is at infinity"));
+    }
+
+    Ok(())
 }

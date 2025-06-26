@@ -627,7 +627,11 @@ impl ClientRole for Secp256k1ClientRole {
     }
 
     fn authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
-        Ok(self.authority[1..].to_vec())
+        // For Secp256k1, the authority is stored as 64 bytes (uncompressed, no 0x04 prefix)
+        if self.authority.len() != 64 {
+            return Err(SwigError::InvalidAuthorityType);
+        }
+        Ok(self.authority.to_vec())
     }
 
     fn odometer(&self) -> Result<u32, SwigError> {

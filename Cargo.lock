@@ -1348,6 +1348,7 @@ dependencies = [
  "serde",
  "serde_json",
  "solana-sdk",
+ "solana-secp256r1-program",
  "spl-associated-token-account",
  "spl-token 8.0.0",
  "swig-sdk",
