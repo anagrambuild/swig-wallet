@@ -468,9 +468,12 @@ fn secp256r1_authenticate(
     let message = if additional_paylaod.is_empty() {
         &computed_hash
     } else {
-        webauthn_message(additional_paylaod, computed_hash, unsafe {
-            &mut *message_buf.as_mut_ptr()
-        })?
+        webauthn_message(
+            additional_paylaod,
+            computed_hash,
+            unsafe { &mut *message_buf.as_mut_ptr() },
+            counter,
+        )?
     };
 
     // Get the sysvar instructions account
@@ -547,6 +550,7 @@ fn webauthn_message<'a>(
     auth_payload: &[u8],
     computed_hash: [u8; 32],
     message_buf: &'a mut [u8],
+    expected_counter: u32,
 ) -> Result<&'a [u8], ProgramError> {
     // let _auth_type = u16::from_le_bytes(prefix[..2].try_into().unwrap());
     let auth_len = u16::from_le_bytes(auth_payload[2..4].try_into().unwrap()) as usize;
@@ -557,14 +561,50 @@ fn webauthn_message<'a>(
 
     let auth_data = &auth_payload[4..4 + auth_len];
 
-    // Check if we have exactly 32 bytes after auth_data (SHA256 hash of
-    // clientDataJSON)
+    // Check if we have the required data: 32 bytes for clientDataJSON hash +
+    // 4 bytes for counter + at least 2 bytes for challenge excerpt length
     let remaining_bytes = auth_payload.len() - (4 + auth_len);
-    if remaining_bytes != 32 {
+    if remaining_bytes < 38 {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
     }
 
     let client_data_json_hash = &auth_payload[4 + auth_len..4 + auth_len + 32];
+    let provided_counter_bytes = &auth_payload[4 + auth_len + 32..4 + auth_len + 36];
+    let provided_counter = u32::from_le_bytes(provided_counter_bytes.try_into().unwrap());
+
+    if provided_counter != expected_counter {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1SignatureReused.into());
+    }
+
+    // Get the challenge excerpt length and data
+    let challenge_excerpt_len_offset = 4 + auth_len + 36;
+    if challenge_excerpt_len_offset + 2 > auth_payload.len() {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    let challenge_excerpt_len = u16::from_le_bytes(
+        auth_payload[challenge_excerpt_len_offset..challenge_excerpt_len_offset + 2]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+
+    let challenge_excerpt_start = challenge_excerpt_len_offset + 2;
+    if challenge_excerpt_start + challenge_excerpt_len > auth_payload.len() {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    let challenge_excerpt =
+        &auth_payload[challenge_excerpt_start..challenge_excerpt_start + challenge_excerpt_len];
+
+    // Verify the counter appears in the challenge excerpt
+    // The challenge should contain the counter in little-endian format
+    let counter_found = challenge_excerpt
+        .windows(4)
+        .any(|window| window == provided_counter_bytes);
+
+    if !counter_found {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1SignatureReused.into());
+    }
 
     // The client_data_json_hash is the SHA256 of clientDataJSON provided by the
     // frontend We use this directly instead of computing it from the full JSON
@@ -825,6 +865,146 @@ mod tests {
         assert!(
             result.is_err(),
             "Verification should fail with wrong public key"
+        );
+    }
+
+    #[test]
+    fn test_webauthn_message_with_counter_verification() {
+        let auth_data = [0x01, 0x02, 0x03, 0x04]; // 4 bytes of authenticator data
+        let client_data_hash = [0xAB; 32]; // 32 bytes of clientDataJSON hash
+        let counter: u32 = 12345;
+        let counter_bytes = counter.to_le_bytes();
+
+        // Create a challenge excerpt that contains the counter
+        let challenge_excerpt = [
+            0x00,
+            0x11,
+            0x22, // Some prefix data
+            counter_bytes[0],
+            counter_bytes[1],
+            counter_bytes[2],
+            counter_bytes[3], // Counter
+            0x33,
+            0x44,
+            0x55, // Some suffix data
+        ];
+
+        // Build the auth_payload with counter verification data
+        let mut auth_payload = Vec::new();
+        auth_payload.extend_from_slice(&0u16.to_le_bytes()); // auth_type (2 bytes)
+        auth_payload.extend_from_slice(&(auth_data.len() as u16).to_le_bytes()); // auth_len (2 bytes)
+        auth_payload.extend_from_slice(&auth_data); // auth_data
+        auth_payload.extend_from_slice(&client_data_hash); // client_data_json_hash (32 bytes)
+        auth_payload.extend_from_slice(&counter_bytes); // counter (4 bytes)
+        auth_payload.extend_from_slice(&(challenge_excerpt.len() as u16).to_le_bytes()); // excerpt_len (2 bytes)
+        auth_payload.extend_from_slice(&challenge_excerpt); // challenge_excerpt
+
+        // Create a computed hash that includes the counter (simulating the original
+        // message hash)
+        let mut computed_hash = [0u8; 32];
+        computed_hash[28..32].copy_from_slice(&counter_bytes); // Put counter in last 4 bytes
+
+        let mut message_buf = [0u8; WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE + 32];
+
+        // Should succeed with matching counter
+        let result = webauthn_message(&auth_payload, computed_hash, &mut message_buf, counter);
+        assert!(
+            result.is_ok(),
+            "Should succeed with matching counter in challenge"
+        );
+
+        // Should fail with counter not in challenge
+        let mut bad_challenge_excerpt = challenge_excerpt.clone();
+        bad_challenge_excerpt[3] = 0xFF; // Corrupt the counter in the challenge
+
+        let mut bad_auth_payload = Vec::new();
+        bad_auth_payload.extend_from_slice(&0u16.to_le_bytes()); // auth_type (2 bytes)
+        bad_auth_payload.extend_from_slice(&(auth_data.len() as u16).to_le_bytes()); // auth_len (2 bytes)
+        bad_auth_payload.extend_from_slice(&auth_data); // auth_data
+        bad_auth_payload.extend_from_slice(&client_data_hash); // client_data_json_hash (32 bytes)
+        bad_auth_payload.extend_from_slice(&counter_bytes); // counter (4 bytes)
+        bad_auth_payload.extend_from_slice(&(bad_challenge_excerpt.len() as u16).to_le_bytes()); // excerpt_len (2 bytes)
+        bad_auth_payload.extend_from_slice(&bad_challenge_excerpt); // bad challenge_excerpt
+
+        let result = webauthn_message(&bad_auth_payload, computed_hash, &mut message_buf, counter);
+        assert!(
+            result.is_err(),
+            "Should fail when counter not found in challenge"
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            SwigAuthenticateError::PermissionDeniedSecp256r1SignatureReused.into()
+        );
+    }
+
+    #[test]
+    fn test_webauthn_message_rejects_old_format() {
+        let auth_data = [0x01, 0x02, 0x03, 0x04]; // 4 bytes of authenticator data
+        let client_data_hash = [0xAB; 32]; // 32 bytes of clientDataJSON hash
+
+        // Build the old format auth_payload (without counter verification data)
+        let mut old_auth_payload = Vec::new();
+        old_auth_payload.extend_from_slice(&0u16.to_le_bytes()); // auth_type (2 bytes)
+        old_auth_payload.extend_from_slice(&(auth_data.len() as u16).to_le_bytes()); // auth_len (2 bytes)
+        old_auth_payload.extend_from_slice(&auth_data); // auth_data
+        old_auth_payload.extend_from_slice(&client_data_hash); // client_data_json_hash (32 bytes)
+                                                               // No counter verification data
+
+        let computed_hash = [0u8; 32];
+        let mut message_buf = [0u8; WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE + 32];
+
+        // Should fail with old format (insufficient data)
+        let result = webauthn_message(&old_auth_payload, computed_hash, &mut message_buf, 1);
+        assert!(
+            result.is_err(),
+            "Should reject old format without counter verification"
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into()
+        );
+    }
+
+    #[test]
+    fn test_webauthn_message_counter_mismatch() {
+        let test_counter = 42u32;
+        let wrong_counter = 43u32;
+        let auth_data = [0u8; 37]; // Minimal auth data
+        let client_data_json_hash = [1u8; 32];
+        let counter_bytes = test_counter.to_le_bytes();
+        let challenge_excerpt = [
+            &[0u8; 32][..],     // message hash
+            &counter_bytes[..], // counter in challenge
+        ]
+        .concat();
+        let challenge_excerpt_len = (challenge_excerpt.len() as u16).to_le_bytes();
+
+        let mut auth_payload = Vec::new();
+        auth_payload.extend_from_slice(&[0u8; 2]); // auth_type
+        auth_payload.extend_from_slice(&(auth_data.len() as u16).to_le_bytes()); // auth_len
+        auth_payload.extend_from_slice(&auth_data); // auth_data
+        auth_payload.extend_from_slice(&client_data_json_hash); // clientDataJSON hash
+        auth_payload.extend_from_slice(&counter_bytes); // counter (matches challenge)
+        auth_payload.extend_from_slice(&challenge_excerpt_len); // challenge_excerpt_len
+        auth_payload.extend_from_slice(&challenge_excerpt); // challenge_excerpt
+
+        let computed_hash = [0u8; 32];
+        let mut message_buf = [0u8; WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE + 32];
+
+        // Should fail when expected counter doesn't match counter in WebAuthn prefix
+        let result = webauthn_message(
+            &auth_payload,
+            computed_hash,
+            &mut message_buf,
+            wrong_counter,
+        );
+        assert!(
+            result.is_err(),
+            "Should fail when expected counter doesn't match WebAuthn prefix counter"
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            SwigAuthenticateError::PermissionDeniedSecp256r1SignatureReused.into()
         );
     }
 }
