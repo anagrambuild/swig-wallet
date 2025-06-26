@@ -16,7 +16,7 @@ pub mod util;
 #[repr(u8)]
 pub enum Discriminator {
     /// Represents a main Swig account
-    SwigAccount,
+    SwigAccount = 1,
     /// Represents a sub-account within a Swig account
     SwigSubAccount,
 }
@@ -24,8 +24,8 @@ pub enum Discriminator {
 impl From<u8> for Discriminator {
     fn from(discriminator: u8) -> Self {
         match discriminator {
-            0 => Discriminator::SwigAccount,
-            1 => Discriminator::SwigSubAccount,
+            1 => Discriminator::SwigAccount,
+            2 => Discriminator::SwigSubAccount,
             _ => panic!("Invalid discriminator"),
         }
     }
