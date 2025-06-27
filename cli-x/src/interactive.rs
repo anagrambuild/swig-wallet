@@ -171,17 +171,14 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
         },
         AuthorityType::Secp256r1 => {
             let authority_keypair = Password::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter Secp256r1 authority keypair (DER format in hex)")
+                .with_prompt("Enter Secp256r1 authority keypair (PEM format in hex)")
                 .interact()?;
 
-            // Parse the Secp256r1 keypair (DER format in hex)
-            let clean_keypair = authority_keypair.trim_start_matches("0x");
-            let der_bytes = hex::decode(clean_keypair)
+            let pem_decoded = hex::decode(authority_keypair)
                 .map_err(|_| anyhow!("Invalid hex format for Secp256r1 keypair"))?;
 
-            // Create an EcKey from the DER bytes
-            let signing_key = openssl::ec::EcKey::private_key_from_der(&der_bytes)
-                .map_err(|_| anyhow!("Invalid DER format for Secp256r1 keypair"))?;
+            let signing_key = openssl::ec::EcKey::private_key_from_pem(&pem_decoded)
+                .map_err(|_| anyhow!("Invalid PEM format for Secp256r1 keypair"))?;
 
             // Get the compressed public key
             let group = openssl::ec::EcGroup::from_curve_name(openssl::nid::Nid::X9_62_PRIME256V1)
@@ -203,19 +200,17 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
 
             // Proper signing function using solana_secp256r1_program
             let signing_key_clone = signing_key.clone();
-            let sign_fn = move |payload: &[u8]| -> [u8; 64] {
-                let signature = solana_secp256r1_program::sign_message(
-                    payload,
+            let signing_fn = Box::new(move |message_hash: &[u8]| -> [u8; 64] {
+                use solana_secp256r1_program::sign_message;
+                let signature = sign_message(
+                    message_hash,
                     &signing_key_clone.private_key_to_der().unwrap(),
                 )
                 .unwrap();
                 signature
-            };
+            });
 
-            Box::new(Secp256r1ClientRole::new(
-                compressed_pubkey,
-                Box::new(sign_fn),
-            )) as Box<dyn ClientRole>
+            Box::new(Secp256r1ClientRole::new(compressed_pubkey, signing_fn)) as Box<dyn ClientRole>
         },
         AuthorityType::Secp256r1Session => {
             let authority_keypair = Password::with_theme(&ColorfulTheme::default())

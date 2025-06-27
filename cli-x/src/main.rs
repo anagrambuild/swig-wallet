@@ -499,7 +499,7 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
     Ok(permissions)
 }
 
-fn format_authority(authority: &str, authority_type: &AuthorityType) -> Result<Vec<u8>> {
+pub fn format_authority(authority: &str, authority_type: &AuthorityType) -> Result<Vec<u8>> {
     match authority_type {
         AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
             let authority = Pubkey::from_str(authority)?;
