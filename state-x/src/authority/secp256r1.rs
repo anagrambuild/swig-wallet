@@ -470,6 +470,7 @@ fn secp256r1_authenticate(
 
     // Compute our expected message hash
     let computed_hash = compute_message_hash(data_payload, account_infos, authority_slot, counter)?;
+
     let mut message_buf: MaybeUninit<[u8; WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE + 32]> =
         MaybeUninit::uninit();
 
@@ -487,7 +488,6 @@ fn secp256r1_authenticate(
         .ok_or(SwigAuthenticateError::InvalidAuthorityPayload)?;
 
     // Verify this is the sysvar instructions account
-
     if sysvar_instructions.key().as_ref() != &INSTRUCTIONS_ID {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
     }
@@ -498,12 +498,16 @@ fn secp256r1_authenticate(
     if current_index == 0 {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
     }
+
     let secpr1ix = unsafe { ixs.deserialize_instruction_unchecked(current_index - 1) };
+
     // Verify the instruction is calling the secp256r1 program
     if secpr1ix.get_program_id() != &SECP256R1_PROGRAM_ID {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
     }
+
     let instruction_data = secpr1ix.get_instruction_data();
+
     // Parse and verify the secp256r1 instruction data
     verify_secp256r1_instruction_data(&instruction_data, expected_key, message)?;
     Ok(())
@@ -556,30 +560,257 @@ fn webauthn_message<'a>(
     computed_hash: [u8; 32],
     message_buf: &'a mut [u8],
 ) -> Result<&'a [u8], ProgramError> {
-    // let _auth_type = u16::from_le_bytes(prefix[..2].try_into().unwrap());
+    // Parse the new WebAuthn payload format:
+    // [2 bytes auth_type][2 bytes auth_len][auth_data][4 bytes counter][2 bytes
+    // huffman_tree_len][huffman_tree][2 bytes
+    // huffman_encoded_len][huffman_encoded_origin]
+
+    if auth_payload.len() < 6 {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
     let auth_len = u16::from_le_bytes(auth_payload[2..4].try_into().unwrap()) as usize;
 
     if auth_len >= WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
     }
 
-    let auth_data = &auth_payload[4..4 + auth_len];
-
-    // Check if we have exactly 32 bytes after auth_data (SHA256 hash of
-    // clientDataJSON)
-    let remaining_bytes = auth_payload.len() - (4 + auth_len);
-    if remaining_bytes != 32 {
+    if auth_payload.len() < 4 + auth_len + 4 + 4 {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
     }
 
-    let client_data_json_hash = &auth_payload[4 + auth_len..4 + auth_len + 32];
+    let auth_data = &auth_payload[4..4 + auth_len];
+    let counter_bytes = &auth_payload[4 + auth_len..4 + auth_len + 4];
+    let counter = u32::from_le_bytes(counter_bytes.try_into().unwrap());
 
-    // The client_data_json_hash is the SHA256 of clientDataJSON provided by the
-    // frontend We use this directly instead of computing it from the full JSON
+    let mut offset = 4 + auth_len + 4;
+
+    // Parse huffman tree length
+    if auth_payload.len() < offset + 2 {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+    let huffman_tree_len =
+        u16::from_le_bytes(auth_payload[offset..offset + 2].try_into().unwrap()) as usize;
+    offset += 2;
+
+    // Parse huffman encoded origin length
+    if auth_payload.len() < offset + 2 {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+    let huffman_encoded_len =
+        u16::from_le_bytes(auth_payload[offset..offset + 2].try_into().unwrap()) as usize;
+    offset += 2;
+
+    // Validate we have enough data
+    if auth_payload.len() < offset + huffman_tree_len + huffman_encoded_len {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    let huffman_tree = &auth_payload[offset..offset + huffman_tree_len];
+    let huffman_encoded_origin =
+        &auth_payload[offset + huffman_tree_len..offset + huffman_tree_len + huffman_encoded_len];
+
+    // Log the huffman input for monitoring
+    pinocchio::msg!("Huffman input: {} bytes encoded", huffman_encoded_len);
+
+    // Decode the huffman-encoded origin URL
+    let decoded_origin = decode_huffman_origin(huffman_tree, huffman_encoded_origin)?;
+
+    // Log the decoded origin for monitoring
+    let origin_str = core::str::from_utf8(&decoded_origin).unwrap_or("<invalid utf8>");
+    pinocchio::msg!("Huffman decoded origin: '{}'", origin_str);
+
+    // Reconstruct the challenge: computed_hash + counter (this is what should have
+    // been signed)
+    let mut challenge_data = [0u8; 36]; // 32 bytes hash + 4 bytes counter
+    challenge_data[0..32].copy_from_slice(&computed_hash);
+    challenge_data[32..36].copy_from_slice(&counter.to_le_bytes());
+
+    // Reconstruct the client data JSON using the decoded origin and reconstructed
+    // challenge
+    let client_data_json = reconstruct_client_data_json(&decoded_origin, &challenge_data)?;
+
+    // Compute SHA256 hash of the reconstructed client data JSON
+    let mut client_data_hash = [0u8; 32];
+    unsafe {
+        #[cfg(target_os = "solana")]
+        let res = pinocchio::syscalls::sol_sha256(
+            [client_data_json.as_slice()].as_ptr() as *const u8,
+            1,
+            client_data_hash.as_mut_ptr(),
+        );
+        #[cfg(not(target_os = "solana"))]
+        let res = 0;
+        if res != 0 {
+            return Err(SwigAuthenticateError::PermissionDeniedSecp256k1InvalidHash.into());
+        }
+    }
+
+    // Build the final message: authenticator_data + client_data_json_hash
     message_buf[0..auth_len].copy_from_slice(auth_data);
-    message_buf[auth_len..auth_len + 32].copy_from_slice(client_data_json_hash);
+    message_buf[auth_len..auth_len + 32].copy_from_slice(&client_data_hash);
 
     Ok(&message_buf[..auth_len + 32])
+}
+
+/// Decode huffman-encoded origin URL
+fn decode_huffman_origin(tree_data: &[u8], encoded_data: &[u8]) -> Result<Vec<u8>, ProgramError> {
+    // Constants for huffman decoding
+    const NODE_SIZE: usize = 3;
+    const LEAF_NODE: u8 = 0;
+    const INTERNAL_NODE: u8 = 1;
+    const BIT_MASKS: [u8; 8] = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
+
+    if tree_data.len() % NODE_SIZE != 0 || tree_data.is_empty() {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    let node_count = tree_data.len() / NODE_SIZE;
+    let root_index = node_count - 1;
+    let mut current_node = root_index;
+    let mut decoded = Vec::new();
+
+    let mut bit_count = 0;
+    let total_bits = encoded_data.len() * 8;
+    let expected_length = 21; // "http://localhost:3000".len()
+
+    for (_byte_idx, &byte) in encoded_data.iter().enumerate() {
+        for bit_pos in 0..8 {
+            if bit_count >= total_bits {
+                break;
+            }
+
+            let bit = (byte & BIT_MASKS[bit_pos]) != 0;
+            bit_count += 1;
+
+            // Navigate tree based on current bit
+            let node_offset = current_node * NODE_SIZE;
+            if node_offset + 2 >= tree_data.len() {
+                return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+            }
+
+            let node_type = tree_data[node_offset];
+            let left_or_char = tree_data[node_offset + 1];
+            let right = tree_data[node_offset + 2];
+
+            if node_type == LEAF_NODE {
+                // We're at a leaf, output the character and reset to root
+                decoded.push(left_or_char);
+                current_node = root_index;
+
+                // Stop when we've decoded the expected URL length
+                if decoded.len() >= expected_length {
+                    break;
+                }
+
+                // Re-process the current bit from the root
+                let root_node_offset = current_node * NODE_SIZE;
+                if root_node_offset + 2 < tree_data.len() {
+                    let root_node_type = tree_data[root_node_offset];
+                    let root_left_or_char = tree_data[root_node_offset + 1];
+                    let root_right = tree_data[root_node_offset + 2];
+
+                    if root_node_type == INTERNAL_NODE {
+                        current_node = if bit {
+                            root_right as usize
+                        } else {
+                            root_left_or_char as usize
+                        };
+
+                        if current_node >= node_count {
+                            return Err(
+                                SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage
+                                    .into(),
+                            );
+                        }
+                    }
+                }
+            } else if node_type == INTERNAL_NODE {
+                // Navigate tree based on bit (false=left, true=right)
+                current_node = if bit {
+                    right as usize
+                } else {
+                    left_or_char as usize
+                };
+
+                if current_node >= node_count {
+                    return Err(
+                        SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into(),
+                    );
+                }
+            } else {
+                return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+            }
+        }
+
+        // Break out of outer loop too if we've reached expected length
+        if decoded.len() >= expected_length {
+            break;
+        }
+    }
+
+    Ok(decoded)
+}
+
+/// Reconstruct client data JSON from origin and challenge data
+fn reconstruct_client_data_json(
+    origin: &[u8],
+    challenge_data: &[u8],
+) -> Result<Vec<u8>, ProgramError> {
+    // Convert origin bytes to string
+    let origin_str = core::str::from_utf8(origin)
+        .map_err(|_| SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage)?;
+
+    // Base64url encode the challenge data (without padding)
+    let challenge_b64 = base64url_encode_no_pad(challenge_data);
+
+    // Construct the client data JSON to match the exact format that WebAuthn
+    // creates This must match exactly what the frontend creates for the
+    // WebAuthn challenge
+    let client_data_json = format!(
+        r#"{{"type":"webauthn.get","challenge":"{}","origin":"{}","crossOrigin":false}}"#,
+        challenge_b64, origin_str
+    );
+
+    Ok(client_data_json.into_bytes())
+}
+
+/// Base64url encode without padding
+fn base64url_encode_no_pad(data: &[u8]) -> String {
+    const BASE64URL_CHARS: &[u8] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+    let mut result = String::new();
+    let mut i = 0;
+
+    while i + 2 < data.len() {
+        let b1 = data[i];
+        let b2 = data[i + 1];
+        let b3 = data[i + 2];
+
+        result.push(BASE64URL_CHARS[(b1 >> 2) as usize] as char);
+        result.push(BASE64URL_CHARS[(((b1 & 0x03) << 4) | (b2 >> 4)) as usize] as char);
+        result.push(BASE64URL_CHARS[(((b2 & 0x0f) << 2) | (b3 >> 6)) as usize] as char);
+        result.push(BASE64URL_CHARS[(b3 & 0x3f) as usize] as char);
+
+        i += 3;
+    }
+
+    // Handle remaining bytes
+    if i < data.len() {
+        let b1 = data[i];
+        result.push(BASE64URL_CHARS[(b1 >> 2) as usize] as char);
+
+        if i + 1 < data.len() {
+            let b2 = data[i + 1];
+            result.push(BASE64URL_CHARS[(((b1 & 0x03) << 4) | (b2 >> 4)) as usize] as char);
+            result.push(BASE64URL_CHARS[((b2 & 0x0f) << 2) as usize] as char);
+        } else {
+            result.push(BASE64URL_CHARS[((b1 & 0x03) << 4) as usize] as char);
+        }
+    }
+
+    result
 }
 
 /// Verify the secp256r1 instruction data contains the expected signature and
