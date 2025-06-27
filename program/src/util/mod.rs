@@ -16,6 +16,7 @@ use pinocchio::{
     msg,
     program_error::ProgramError,
     pubkey::Pubkey,
+    syscalls::sol_sha256,
     ProgramResult,
 };
 use swig_state_x::{
@@ -23,8 +24,10 @@ use swig_state_x::{
         program_scope::{NumericType, ProgramScope},
         Action, Permission,
     },
+    authority::AuthorityType,
     constants::PROGRAM_SCOPE_BYTE_SIZE,
     read_numeric_field,
+    role::RoleMut,
     swig::{Swig, SwigWithRoles},
     Transmutable,
 };
@@ -338,4 +341,120 @@ pub fn get_price_data_from_bytes(
     }
 
     Ok((price as u64, confidence, exponent))
+}
+
+/// Builds a restricted keys array for transaction signing.
+///
+/// This function creates an array of public keys that are restricted from being
+/// used as signers in the transaction. The behavior differs based on the
+/// authority type:
+/// - For Secp256k1 and Secp256r1: Only includes the payer key
+/// - For other authority types: Includes both the payer key and the authority
+///   key
+///
+/// # Arguments
+/// * `role` - The role containing the authority type information
+/// * `payer_key` - The payer account's public key
+/// * `authority_payload` - The authority payload containing the authority index
+/// * `all_accounts` - All accounts involved in the transaction
+///
+/// # Returns
+/// * `Result<&[&Pubkey], ProgramError>` - A slice of restricted public keys
+///
+/// # Safety
+/// This function uses unsafe operations for performance. The caller must
+/// ensure:
+/// - `authority_payload` has at least one byte when authority type is not
+///   Secp256k1/r1
+/// - `all_accounts` contains the account at the specified authority index
+#[inline(always)]
+pub unsafe fn build_restricted_keys<'a>(
+    role: &RoleMut,
+    payer_key: &'a Pubkey,
+    authority_payload: &[u8],
+    all_accounts: &'a [AccountInfo],
+    restricted_keys_storage: &'a mut [MaybeUninit<&'a Pubkey>; 2],
+) -> Result<&'a [&'a Pubkey], ProgramError> {
+    if role.position.authority_type()? == AuthorityType::Secp256k1
+        || role.position.authority_type()? == AuthorityType::Secp256r1
+    {
+        restricted_keys_storage[0].write(payer_key);
+        Ok(core::slice::from_raw_parts(
+            restricted_keys_storage.as_ptr() as _,
+            1,
+        ))
+    } else {
+        let authority_index = *authority_payload.get_unchecked(0) as usize;
+        restricted_keys_storage[0].write(payer_key);
+        restricted_keys_storage[1].write(all_accounts[authority_index].key());
+        Ok(core::slice::from_raw_parts(
+            restricted_keys_storage.as_ptr() as _,
+            2,
+        ))
+    }
+}
+
+/// Computes a hash of data while excluding specified byte ranges.
+///
+/// This function uses the SHA256 hash algorithm which is optimized
+/// for low compute units on Solana. It hashes all bytes in the
+/// account's data except those in the specified exclusion ranges.
+///
+/// # Arguments
+/// * `data` - The data to hash
+/// * `exclude_ranges` - Sorted list of byte ranges to exclude from hashing
+///
+/// # Returns
+/// * `[u8; 32]` - The computed SHA256 hash (32 bytes)
+///
+/// # Safety
+/// This function assumes that:
+/// - The exclude_ranges are non-overlapping and sorted by start position
+/// - All ranges are within the bounds of the data
+#[inline(always)]
+pub fn hash_except(data: &[u8], exclude_ranges: &[core::ops::Range<usize>]) -> [u8; 32] {
+    // Maximum possible segments: one before each exclude range + one after all ranges
+    const MAX_SEGMENTS: usize = 16; // Reasonable upper bound, however most cases are <= 3
+    let mut segments: [&[u8]; MAX_SEGMENTS] = [&[]; MAX_SEGMENTS];
+    let mut segment_count = 0;
+    let mut position = 0;
+
+    // If no exclude ranges, hash the entire data
+    #[allow(unused)]
+    if exclude_ranges.is_empty() {
+        segments[0] = data;
+        segment_count = 1;
+    } else {
+        for range in exclude_ranges {
+            // Add bytes before this exclusion range
+            if position < range.start {
+                segments[segment_count] = &data[position..range.start];
+                segment_count += 1;
+            }
+            // Skip to end of exclusion range
+            position = range.end;
+        }
+
+        // Add any remaining bytes after the last exclusion range
+        if position < data.len() {
+            segments[segment_count] = &data[position..];
+            segment_count += 1;
+        }
+    }
+
+    let mut data_payload_hash = [0u8; 32];
+
+    #[cfg(target_os = "solana")]
+    unsafe {
+        let res = sol_sha256(
+            segments.as_ptr() as *const u8,
+            segment_count as u64,
+            data_payload_hash.as_mut_ptr() as *mut u8,
+        );
+    }
+
+    #[cfg(not(target_os = "solana"))]
+    let res = 0;
+
+    data_payload_hash
 }

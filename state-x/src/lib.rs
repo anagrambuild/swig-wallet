@@ -97,6 +97,8 @@ pub enum SwigStateError {
     RoleNotFound,
     /// Error loading permissions
     PermissionLoadError,
+    /// Adding an authority requires at least one action
+    InvalidAuthorityMustHaveAtLeastOneAction,
     /// Oracle not available for mint
     InvalidOracleTokenMint,
     /// Feed Id non hex char
@@ -143,6 +145,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedSecp256k1SignatureReused,
     /// Invalid Secp256k1 hash
     PermissionDeniedSecp256k1InvalidHash,
+    /// Secp256r1 signature has been reused
+    PermissionDeniedSecp256r1SignatureReused,
     /// Stake account is in an invalid state
     PermissionDeniedStakeAccountInvalidState,
     /// Cannot reuse session key
@@ -151,6 +155,14 @@ pub enum SwigAuthenticateError {
     InvalidSessionDuration,
     /// Token account authority is not the Swig account
     PermissionDeniedTokenAccountAuthorityNotSwig,
+    /// Invalid Secp256r1 instruction
+    PermissionDeniedSecp256r1InvalidInstruction,
+    /// Invalid Secp256r1 public key
+    PermissionDeniedSecp256r1InvalidPubkey,
+    /// Invalid Secp256r1 message hash
+    PermissionDeniedSecp256r1InvalidMessageHash,
+    /// Invalid Secp256r1 message
+    PermissionDeniedSecp256r1InvalidMessage,
     /// Missing oracle account
     PermissionDeniedOracleLimitReached,
     /// Invalid oracle price data

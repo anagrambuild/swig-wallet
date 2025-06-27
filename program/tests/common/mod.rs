@@ -21,7 +21,7 @@ use swig_state_x::{
     action::{all::All, manage_authority::ManageAuthority, sub_account::SubAccount},
     authority::{
         ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
-        AuthorityType,
+        secp256r1::CreateSecp256r1SessionAuthority, AuthorityType,
     },
     swig::{sub_account_seeds, swig_account_seeds, SwigWithRoles},
     IntoBytes, Transmutable,
@@ -248,6 +248,60 @@ pub fn create_swig_secp256k1_session(
 
     let initial_authority = AuthorityConfig {
         authority_type: AuthorityType::Secp256k1Session,
+        authority: authority_data
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?,
+    };
+
+    let create_ix = CreateInstruction::new(
+        swig,
+        bump,
+        payer_pubkey,
+        initial_authority,
+        vec![ClientAction::All(All {})],
+        id,
+    )?;
+
+    let msg = v0::Message::try_compile(
+        &payer_pubkey,
+        &[create_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[context.default_payer.insecure_clone()],
+    )
+    .unwrap();
+
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+
+    Ok((swig, bench))
+}
+
+pub fn create_swig_secp256r1_session(
+    context: &mut SwigTestContext,
+    public_key: &[u8; 33],
+    id: [u8; 32],
+    session_max_length: u64,
+    initial_session_key: [u8; 32],
+) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
+    use swig_state_x::authority::secp256r1::CreateSecp256r1SessionAuthority;
+
+    let payer_pubkey = context.default_payer.pubkey();
+    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+
+    // Create the session authority data
+    let authority_data =
+        CreateSecp256r1SessionAuthority::new(*public_key, initial_session_key, session_max_length);
+
+    let initial_authority = AuthorityConfig {
+        authority_type: AuthorityType::Secp256r1Session,
         authority: authority_data
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?,

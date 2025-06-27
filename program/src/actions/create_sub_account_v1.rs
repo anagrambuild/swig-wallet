@@ -143,7 +143,7 @@ pub fn create_sub_account_v1(
     // Check that the swig account is owned by our program
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     check_system_owner(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
-    check_zero_balance(ctx.accounts.sub_account, SwigError::SubAccountAlreadyExists)?;
+    check_zero_data(ctx.accounts.sub_account, SwigError::SubAccountAlreadyExists)?;
 
     // Parse the instruction data
     let create_sub_account = CreateSubAccountV1::from_instruction_bytes(data)?;
@@ -183,12 +183,20 @@ pub fn create_sub_account_v1(
             slot,
         )?;
     }
-    // Check if the role has the SubAccount permission
-    let sub_account_action = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?;
-    if sub_account_action.is_none() {
+    // Check if the role has the required permissions (All or SubAccount)
+    let has_all_permission = {
+        let all_action = RoleMut::get_action_mut::<All>(role.actions, &[])?;
+        all_action.is_some()
+    };
+
+    let has_sub_account_permission = {
+        let sub_account_action = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?;
+        sub_account_action.is_some()
+    };
+
+    if !has_all_permission && !has_sub_account_permission {
         return Err(SwigError::AuthorityCannotCreateSubAccount.into());
     }
-    let sub_account_action = sub_account_action.unwrap();
     // Derive the sub-account address using the authority index as seed
     let role_id_bytes = create_sub_account.args.role_id.to_le_bytes();
     let bump_byte = [create_sub_account.args.sub_account_bump];
@@ -202,11 +210,22 @@ pub fn create_sub_account_v1(
     // Create the sub-account
     let account_size = SwigSubAccount::LEN;
     let lamports_needed = Rent::get()?.minimum_balance(account_size);
-    // Create account
+
+    // Get current lamports in the account
+    let current_lamports = unsafe { *ctx.accounts.sub_account.borrow_lamports_unchecked() };
+
+    // Only transfer additional lamports if needed for rent exemption
+    let lamports_to_transfer = if current_lamports >= lamports_needed {
+        0
+    } else {
+        lamports_needed - current_lamports
+    };
+
+    // Create account with proper space allocation and ownership assignment
     let create_account_ix = CreateAccount {
         from: ctx.accounts.payer,
         to: ctx.accounts.sub_account,
-        lamports: lamports_needed,
+        lamports: lamports_to_transfer,
         space: account_size as u64,
         owner: &crate::ID,
     };
@@ -224,5 +243,13 @@ pub fn create_sub_account_v1(
     sub_account.enabled = true;
     // Set reserved lamports to the minimum rent-exempt amount
     sub_account.reserved_lamports = lamports_needed;
+
+    // Update the SubAccount action to store the newly created sub-account's public
+    // key
+    if let Some(sub_account_action_mut) = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?
+    {
+        sub_account_action_mut.sub_account = *ctx.accounts.sub_account.key();
+    }
+
     Ok(())
 }

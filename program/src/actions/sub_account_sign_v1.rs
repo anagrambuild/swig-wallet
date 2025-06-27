@@ -28,6 +28,7 @@ use crate::{
         accounts::{Context, SubAccountSignV1Accounts},
         SwigInstruction,
     },
+    util::build_restricted_keys,
     AccountClassification,
 };
 
@@ -134,6 +135,7 @@ pub fn sub_account_sign_v1(
     account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
+    check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSubAccount)?;
     check_self_owned(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
     let sign_v1 = SubAccountSignV1::from_instruction_bytes(data)?;
     let sub_account_data = unsafe { ctx.accounts.sub_account.borrow_data_unchecked() };
@@ -187,14 +189,14 @@ pub fn sub_account_sign_v1(
     const UNINIT_KEY: MaybeUninit<&Pubkey> = MaybeUninit::uninit();
     let mut restricted_keys: [MaybeUninit<&Pubkey>; 2] = [UNINIT_KEY; 2];
     let rkeys: &[&Pubkey] = unsafe {
-        if role.position.authority_type()? == AuthorityType::Ed25519 {
+        if role.position.authority_type()? == AuthorityType::Secp256k1 {
+            restricted_keys[0].write(ctx.accounts.payer.key());
+            core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 1)
+        } else {
             let authority_index = *sign_v1.authority_payload.get_unchecked(0) as usize;
             restricted_keys[0].write(ctx.accounts.payer.key());
             restricted_keys[1].write(all_accounts[authority_index].key());
             core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 2)
-        } else {
-            restricted_keys[0].write(ctx.accounts.payer.key());
-            core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 1)
         }
     };
     let ix_iter = InstructionIterator::new(

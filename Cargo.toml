@@ -8,8 +8,8 @@ members = [
   "assertions",
   "no-padding",
   "rust-sdk",
-  "cli",
-  "cli-x",
+  #"cli",
+  #"cli-x",
 ]
 
 [workspace.lints.rust]

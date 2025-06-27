@@ -18,7 +18,7 @@ use pinocchio::{
 use pinocchio_token::instructions::Transfer;
 use swig_assertions::*;
 use swig_state_x::{
-    action::{all::All, manage_authority::ManageAuthority, sub_account::SubAccount},
+    action::{all::All, sub_account::SubAccount},
     authority::AuthorityType,
     role::RoleMut,
     swig::{sub_account_signer, Swig, SwigSubAccount},
@@ -111,11 +111,19 @@ pub fn withdraw_from_sub_account_v1(
     data: &[u8],
     account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
+    // Verify that both the swig account and sub_account are owned by the current
+    // program
+    check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     check_self_owned(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
     let withdraw = WithdrawFromSubAccountV1::from_instruction_bytes(data)?;
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_unchecked(&swig_header)? };
+
+    // Verify the swig account has the correct discriminator
+    if unsafe { *swig_header.get_unchecked(0) } != Discriminator::SwigAccount as u8 {
+        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+    }
     let sub_account_data = unsafe { ctx.accounts.sub_account.borrow_data_unchecked() };
     if unsafe { *sub_account_data.get_unchecked(0) } != Discriminator::SwigSubAccount as u8 {
         return Err(SwigError::InvalidSwigSubAccountDiscriminator.into());
@@ -150,17 +158,21 @@ pub fn withdraw_from_sub_account_v1(
             slot,
         )?;
     }
-    let (action_accounts_index, action_accounts_len) =
-        if role.position.authority_type()? == AuthorityType::Ed25519 {
-            (4, 7)
-        } else {
-            (3, 6)
-        };
-    let manage_authority_action = role.get_action::<ManageAuthority>(&[])?;
+    // Check if the role has the required permissions
     let all_action = role.get_action::<All>(&[])?;
-    if manage_authority_action.is_none() && all_action.is_none() {
+    let sub_account_action =
+        role.get_action::<SubAccount>(ctx.accounts.sub_account.key().as_ref())?;
+
+    if all_action.is_none() && sub_account_action.is_none() {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
+
+    let (action_accounts_index, action_accounts_len) =
+        if role.position.authority_type()? == AuthorityType::Secp256k1 {
+            (3, 6)
+        } else {
+            (4, 7)
+        };
     let amount = withdraw.args.amount;
     if all_accounts.len() >= action_accounts_len {
         let token_account = &all_accounts[action_accounts_index];
