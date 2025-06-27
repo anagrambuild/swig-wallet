@@ -16,6 +16,7 @@ use swig_state_x::{
     action::all::All,
     authority::AuthorityType,
     swig::{swig_account_seeds, SwigWithRoles},
+    IntoBytes,
 };
 
 pub struct SwigTestContext {
@@ -202,6 +203,48 @@ pub fn get_secp256k1_counter_from_wallet(
     get_secp256k1_counter(context, swig_key, authority_bytes)
 }
 
+/// Helper function to get the current signature counter for a secp256r1
+/// authority
+pub fn get_secp256r1_counter(
+    context: &SwigTestContext,
+    swig_key: &Pubkey,
+    public_key: &[u8; 33], // The compressed public key bytes (33 bytes)
+) -> Result<u32, String> {
+    // Get the swig account data
+    let swig_account = context
+        .svm
+        .get_account(swig_key)
+        .ok_or("Swig account not found")?;
+    let swig = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| format!("Failed to parse swig data: {:?}", e))?;
+
+    // Look up the role ID for this authority
+    let role_id = swig
+        .lookup_role_id(public_key)
+        .map_err(|e| format!("Failed to lookup role: {:?}", e))?
+        .ok_or("Authority not found in swig account")?;
+
+    // Get the role
+    let role = swig
+        .get_role(role_id)
+        .map_err(|e| format!("Failed to get role: {:?}", e))?
+        .ok_or("Role not found")?;
+
+    // The authority should be a Secp256r1Authority
+    if matches!(role.authority.authority_type(), AuthorityType::Secp256r1) {
+        // Get the authority from the any() interface
+        let secp_authority = role
+            .authority
+            .as_any()
+            .downcast_ref::<swig_state_x::authority::secp256r1::Secp256r1Authority>()
+            .ok_or("Failed to downcast to Secp256r1Authority")?;
+
+        Ok(secp_authority.signature_odometer)
+    } else {
+        Err("Authority is not a Secp256r1Authority".to_string())
+    }
+}
+
 pub fn create_swig_secp256k1(
     context: &mut SwigTestContext,
     wallet: &PrivateKeySigner,
@@ -245,5 +288,125 @@ pub fn create_swig_secp256k1(
         .svm
         .send_transaction(tx)
         .map_err(|e| anyhow::anyhow!("Failed to send transaction: {:?}", e))?;
+    Ok((swig, bench))
+}
+
+pub fn create_swig_secp256r1(
+    context: &mut SwigTestContext,
+    public_key: &[u8; 33],
+    id: [u8; 32],
+) -> Result<(Pubkey, TransactionMetadata)> {
+    let (swig, bump) =
+        Pubkey::find_program_address(&swig_account_seeds(&id), &Pubkey::new_from_array(swig::ID));
+
+    let create_ix = CreateInstruction::new(
+        swig,
+        bump,
+        context.default_payer.pubkey(),
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256r1,
+            authority: public_key,
+        },
+        vec![ClientAction::All(All {})],
+        id,
+    )?;
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[create_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&context.default_payer])
+        .unwrap();
+
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction: {:?}", e))?;
+    Ok((swig, bench))
+}
+
+/// Helper to generate a real secp256r1 key pair for testing
+pub fn create_test_secp256r1_keypair() -> (openssl::ec::EcKey<openssl::pkey::Private>, [u8; 33]) {
+    use openssl::{
+        bn::BigNumContext,
+        ec::{EcGroup, EcKey, PointConversionForm},
+        nid::Nid,
+    };
+
+    let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+    let signing_key = EcKey::generate(&group).unwrap();
+
+    let mut ctx = BigNumContext::new().unwrap();
+    let pubkey_bytes = signing_key
+        .public_key()
+        .to_bytes(&group, PointConversionForm::COMPRESSED, &mut ctx)
+        .unwrap();
+
+    let pubkey_array: [u8; 33] = pubkey_bytes.try_into().unwrap();
+    (signing_key, pubkey_array)
+}
+
+/// Helper function to create a secp256r1 authority with a test public key
+pub fn create_test_secp256r1_authority() -> [u8; 33] {
+    let (_, pubkey) = create_test_secp256r1_keypair();
+    pubkey
+}
+
+pub fn create_swig_secp256r1_session(
+    context: &mut SwigTestContext,
+    public_key: &[u8; 33],
+    id: [u8; 32],
+    session_max_length: u64,
+    initial_session_key: [u8; 32],
+) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
+    use swig_state_x::authority::secp256r1::CreateSecp256r1SessionAuthority;
+
+    let payer_pubkey = context.default_payer.pubkey();
+    let (swig, bump) =
+        Pubkey::find_program_address(&swig_account_seeds(&id), &Pubkey::new_from_array(swig::ID));
+
+    // Create the session authority data
+    let authority_data =
+        CreateSecp256r1SessionAuthority::new(*public_key, initial_session_key, session_max_length);
+
+    let initial_authority = AuthorityConfig {
+        authority_type: AuthorityType::Secp256r1Session,
+        authority: authority_data
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?,
+    };
+
+    let create_ix = CreateInstruction::new(
+        swig,
+        bump,
+        payer_pubkey,
+        initial_authority,
+        vec![ClientAction::All(All {})],
+        id,
+    )?;
+
+    let msg = v0::Message::try_compile(
+        &payer_pubkey,
+        &[create_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[context.default_payer.insecure_clone()],
+    )
+    .unwrap();
+
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+
     Ok((swig, bench))
 }

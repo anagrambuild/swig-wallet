@@ -6,16 +6,28 @@ use alloy_signer_local::LocalSigner;
 use anyhow::{anyhow, Result};
 use colored::*;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
+use openssl::{
+    bn::BigNumContext,
+    ec::{EcGroup, EcKey, EcPoint, PointConversionForm},
+    nid::Nid,
+};
 use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
     system_instruction::{self, transfer},
 };
+use solana_secp256r1_program;
+use swig_sdk::authority::{
+    secp256k1::CreateSecp256k1SessionAuthority, secp256r1::CreateSecp256r1SessionAuthority,
+};
+use swig_sdk::Secp256k1SessionClientRole;
 use swig_sdk::{
     authority::{ed25519::CreateEd25519SessionAuthority, AuthorityType},
+    client_role::{Secp256r1ClientRole, Secp256r1SessionClientRole},
     swig::SwigWithRoles,
-    AuthorityManager, Permission, RecurringConfig, SwigError, SwigWallet,
+    ClientRole, Ed25519ClientRole, Permission, RecurringConfig, Secp256k1ClientRole, SwigError,
+    SwigWallet,
 };
 
 use crate::SwigCliContext;
@@ -94,7 +106,7 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
 
     let authority_type = get_authority_type()?;
 
-    let (authority_manager, fee_payer) = match authority_type {
+    let client_role = match authority_type {
         AuthorityType::Ed25519 => {
             let authority_keypair = Password::with_theme(&ColorfulTheme::default())
                 .with_prompt("Enter authority keypair")
@@ -103,12 +115,10 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
             let authority = Keypair::from_base58_string(&authority_keypair);
             let authority_pubkey = authority.pubkey();
             println!("Authority public key: {}", authority_pubkey);
-            (
-                AuthorityManager::Ed25519(authority_pubkey),
-                authority.insecure_clone(),
-            )
+
+            Box::new(Ed25519ClientRole::new(authority_pubkey)) as Box<dyn ClientRole>
         },
-        AuthorityType::Secp256k1 => {
+        AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
             let authority_keypair = Password::with_theme(&ColorfulTheme::default())
                 .with_prompt("Enter Secp256k1 authority keypair")
                 .interact()?;
@@ -142,33 +152,152 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                 sig
             };
 
-            let fee_payer_kp_str = Password::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter Fee payer keypair")
+            if authority_type == AuthorityType::Secp256k1 {
+                Box::new(Secp256k1ClientRole::new(
+                    eth_pubkey[1..].to_vec().into_boxed_slice(),
+                    Box::new(sign_fn),
+                )) as Box<dyn ClientRole>
+            } else {
+                let create_session_authority = CreateSecp256k1SessionAuthority::new(
+                    eth_pubkey[1..].to_vec().try_into().unwrap(),
+                    [0; 32], // session key
+                    100,     // max session length
+                );
+                Box::new(Secp256k1SessionClientRole::new(
+                    create_session_authority,
+                    Box::new(sign_fn),
+                )) as Box<dyn ClientRole>
+            }
+        },
+        AuthorityType::Secp256r1 => {
+            let authority_keypair = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter Secp256r1 authority keypair (PEM format in hex)")
                 .interact()?;
-            let fee_payer_keypair = Keypair::from_base58_string(&fee_payer_kp_str);
 
-            (
-                AuthorityManager::Secp256k1(eth_pubkey, Box::new(sign_fn)),
-                fee_payer_keypair,
-            )
+            let pem_decoded = hex::decode(authority_keypair)
+                .map_err(|_| anyhow!("Invalid hex format for Secp256r1 keypair"))?;
+
+            let signing_key = openssl::ec::EcKey::private_key_from_pem(&pem_decoded)
+                .map_err(|_| anyhow!("Invalid PEM format for Secp256r1 keypair"))?;
+
+            // Get the compressed public key
+            let group = openssl::ec::EcGroup::from_curve_name(openssl::nid::Nid::X9_62_PRIME256V1)
+                .map_err(|_| anyhow!("Failed to create EC group"))?;
+            let mut ctx = openssl::bn::BigNumContext::new()
+                .map_err(|_| anyhow!("Failed to create BigNum context"))?;
+            let pubkey_bytes = signing_key
+                .public_key()
+                .to_bytes(
+                    &group,
+                    openssl::ec::PointConversionForm::COMPRESSED,
+                    &mut ctx,
+                )
+                .map_err(|_| anyhow!("Failed to get public key bytes"))?;
+
+            let compressed_pubkey: [u8; 33] = pubkey_bytes
+                .try_into()
+                .map_err(|_| anyhow!("Invalid public key length"))?;
+
+            // Proper signing function using solana_secp256r1_program
+            let signing_key_clone = signing_key.clone();
+            let signing_fn = Box::new(move |message_hash: &[u8]| -> [u8; 64] {
+                use solana_secp256r1_program::sign_message;
+                let signature = sign_message(
+                    message_hash,
+                    &signing_key_clone.private_key_to_der().unwrap(),
+                )
+                .unwrap();
+                signature
+            });
+
+            Box::new(Secp256r1ClientRole::new(compressed_pubkey, signing_fn)) as Box<dyn ClientRole>
+        },
+        AuthorityType::Secp256r1Session => {
+            let authority_keypair = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter Secp256r1 authority keypair (DER format in hex)")
+                .interact()?;
+
+            // Parse the Secp256r1 keypair (DER format in hex)
+            let clean_keypair = authority_keypair.trim_start_matches("0x");
+            let der_bytes = hex::decode(clean_keypair)
+                .map_err(|_| anyhow!("Invalid hex format for Secp256r1 keypair"))?;
+
+            // Create an EcKey from the DER bytes
+            let signing_key = openssl::ec::EcKey::private_key_from_der(&der_bytes)
+                .map_err(|_| anyhow!("Invalid DER format for Secp256r1 keypair"))?;
+
+            // Get the compressed public key
+            let group = openssl::ec::EcGroup::from_curve_name(openssl::nid::Nid::X9_62_PRIME256V1)
+                .map_err(|_| anyhow!("Failed to create EC group"))?;
+            let mut ctx = openssl::bn::BigNumContext::new()
+                .map_err(|_| anyhow!("Failed to create BigNum context"))?;
+            let pubkey_bytes = signing_key
+                .public_key()
+                .to_bytes(
+                    &group,
+                    openssl::ec::PointConversionForm::COMPRESSED,
+                    &mut ctx,
+                )
+                .map_err(|_| anyhow!("Failed to get public key bytes"))?;
+
+            let compressed_pubkey: [u8; 33] = pubkey_bytes
+                .try_into()
+                .map_err(|_| anyhow!("Invalid public key length"))?;
+
+            let create_session_authority = CreateSecp256r1SessionAuthority::new(
+                compressed_pubkey,
+                [0; 32], // session key
+                100,     // max session length
+            );
+
+            // Proper signing function using solana_secp256r1_program
+            let signing_key_clone = signing_key.clone();
+            let sign_fn = move |payload: &[u8]| -> [u8; 64] {
+                let signature = solana_secp256r1_program::sign_message(
+                    payload,
+                    &signing_key_clone.private_key_to_der().unwrap(),
+                )
+                .unwrap();
+                signature
+            };
+
+            Box::new(Secp256r1SessionClientRole::new(
+                create_session_authority,
+                Box::new(sign_fn),
+            )) as Box<dyn ClientRole>
         },
         _ => todo!(),
     };
 
-    let fee_payer = Box::leak(Box::new(fee_payer));
+    let fee_payer_str = Password::with_theme(&ColorfulTheme::default())
+        .with_prompt("Enter Fee payer keypair (Solana Ed25519 keypair in base58 format)")
+        .interact()?;
+    let fee_payer_keypair = Keypair::from_base58_string(&fee_payer_str);
+
+    let fee_payer_static: &mut Keypair = Box::leak(Box::new(fee_payer_keypair));
+
+    // For Secp256k1 and Secp256r1 authorities, we don't need the authority keypair as a transaction signer
+    // since the signature is provided in the instruction data
+    let authority_keypair_static: Option<&Keypair> = match authority_type {
+        AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
+            Some(Box::leak(Box::new(fee_payer_static.insecure_clone())))
+        },
+        _ => None,
+    };
+
     let wallet = SwigWallet::new(
         swig_id,
-        authority_manager,
-        fee_payer,
-        fee_payer,
+        client_role,
+        fee_payer_static,
         "http://localhost:8899".to_string(),
+        authority_keypair_static,
     )
     .unwrap();
 
     wallet.display_swig()?;
 
     ctx.wallet = Some(Box::new(wallet));
-    ctx.payer = fee_payer.insecure_clone();
+    ctx.payer = fee_payer_static.insecure_clone();
 
     Ok(())
 }
@@ -190,6 +319,22 @@ fn add_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
 
     let authority = format_authority(&authority, &authority_type)?;
 
+    // Validate Secp256r1 public key if applicable
+    if matches!(
+        authority_type,
+        AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session
+    ) {
+        if authority.len() == 33 {
+            let pubkey_array: [u8; 33] = authority.clone().try_into().unwrap();
+            if let Err(e) = validate_secp256r1_public_key(&pubkey_array) {
+                println!("Warning: {}", e);
+                println!("The public key might not be valid for Secp256r1 operations.");
+            } else {
+                println!("✓ Secp256r1 public key validation passed");
+            }
+        }
+    }
+
     let permissions = get_permissions_interactive()?;
 
     let signature =
@@ -202,6 +347,8 @@ fn add_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
         println!("\n{}", "Authority added successfully!".bright_green());
         println!("Signature: {}", signature);
     } else {
+        println!("Authority: {:?}", authority);
+        println!("Signature: {:?}", signature);
         println!("\n{}", "Failed to add authority".bright_red());
         println!("Error: {}", signature.err().unwrap());
     }
@@ -255,8 +402,10 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
     let authority_types = vec![
         "Ed25519 (Recommended for standard usage)",
         "Secp256k1 (For Ethereum/Bitcoin compatibility)",
+        "Secp256r1 (For passkey/WebAuthn support)",
         "Ed25519Session (For temporary session-based auth)",
         "Secp256k1Session (For temporary session-based auth with Ethereum/Bitcoin)",
+        "Secp256r1Session (For temporary session-based auth with passkey/WebAuthn)",
     ];
 
     let authority_type_idx = Select::with_theme(&ColorfulTheme::default())
@@ -268,8 +417,10 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
     let authority_type = match authority_type_idx {
         0 => AuthorityType::Ed25519,
         1 => AuthorityType::Secp256k1,
-        2 => AuthorityType::Ed25519Session,
-        3 => AuthorityType::Secp256k1Session,
+        2 => AuthorityType::Secp256r1,
+        3 => AuthorityType::Ed25519Session,
+        4 => AuthorityType::Secp256k1Session,
+        5 => AuthorityType::Secp256r1Session,
         _ => unreachable!(),
     };
 
@@ -282,13 +433,13 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
     let authority = Keypair::from_base58_string(&authority_keypair);
     let authority_pubkey = authority.pubkey();
 
-    let authority_manager = match authority_type {
+    let client_role: Box<dyn ClientRole> = match authority_type {
         AuthorityType::Ed25519 => {
             let pubkey = authority_pubkey;
             println!("Authority: {}", authority_pubkey);
             println!("Authority type: {:?}", authority_type);
             println!("Authority pubkey: {}", pubkey);
-            AuthorityManager::Ed25519(pubkey)
+            Box::new(Ed25519ClientRole::new(pubkey))
         },
         AuthorityType::Ed25519Session => {
             let create_session_authority = CreateEd25519SessionAuthority::new(
@@ -296,7 +447,121 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                 authority_pubkey.to_bytes(),
                 100,
             );
-            AuthorityManager::Ed25519Session(create_session_authority)
+            Box::new(swig_sdk::Ed25519SessionClientRole::new(
+                create_session_authority,
+            ))
+        },
+        AuthorityType::Secp256r1 => {
+            let authority_keypair = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter Secp256r1 authority keypair (DER format in hex)")
+                .interact()?;
+
+            // Parse the Secp256r1 keypair (DER format in hex)
+            let clean_keypair = authority_keypair.trim_start_matches("0x");
+            let der_bytes = hex::decode(clean_keypair)
+                .map_err(|_| anyhow!("Invalid hex format for Secp256r1 keypair"))?;
+
+            // Create an EcKey from the DER bytes
+            let signing_key = openssl::ec::EcKey::private_key_from_der(&der_bytes)
+                .map_err(|_| anyhow!("Invalid DER format for Secp256r1 keypair"))?;
+
+            // Get the compressed public key
+            let group = openssl::ec::EcGroup::from_curve_name(openssl::nid::Nid::X9_62_PRIME256V1)
+                .map_err(|_| anyhow!("Failed to create EC group"))?;
+            let mut ctx = openssl::bn::BigNumContext::new()
+                .map_err(|_| anyhow!("Failed to create BigNum context"))?;
+            let pubkey_bytes = signing_key
+                .public_key()
+                .to_bytes(
+                    &group,
+                    openssl::ec::PointConversionForm::COMPRESSED,
+                    &mut ctx,
+                )
+                .map_err(|_| anyhow!("Failed to get public key bytes"))?;
+
+            let compressed_pubkey: [u8; 33] = pubkey_bytes
+                .try_into()
+                .map_err(|_| anyhow!("Invalid public key length"))?;
+
+            // Proper signing function using solana_secp256r1_program
+            let signing_key_clone = signing_key.clone();
+            let sign_fn = move |payload: &[u8]| -> [u8; 64] {
+                let signature = solana_secp256r1_program::sign_message(
+                    payload,
+                    &signing_key_clone.private_key_to_der().unwrap(),
+                )
+                .unwrap();
+                signature
+            };
+
+            println!("Authority type: {:?}", authority_type);
+            println!("Authority pubkey: 0x{}", hex::encode(compressed_pubkey));
+            Box::new(Secp256r1ClientRole::new(
+                compressed_pubkey,
+                Box::new(sign_fn),
+            ))
+        },
+        AuthorityType::Secp256r1Session => {
+            let authority_keypair = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter Secp256r1 authority keypair (DER format in hex)")
+                .interact()?;
+
+            // Parse the Secp256r1 keypair (DER format in hex)
+            let clean_keypair = authority_keypair.trim_start_matches("0x");
+            let der_bytes = hex::decode(clean_keypair)
+                .map_err(|_| anyhow!("Invalid hex format for Secp256r1 keypair"))?;
+
+            // Create an EcKey from the DER bytes
+            let signing_key = openssl::ec::EcKey::private_key_from_der(&der_bytes)
+                .map_err(|_| anyhow!("Invalid DER format for Secp256r1 keypair"))?;
+
+            // Get the compressed public key
+            let group = openssl::ec::EcGroup::from_curve_name(openssl::nid::Nid::X9_62_PRIME256V1)
+                .map_err(|_| anyhow!("Failed to create EC group"))?;
+            let mut ctx = openssl::bn::BigNumContext::new()
+                .map_err(|_| anyhow!("Failed to create BigNum context"))?;
+            let pubkey_bytes = signing_key
+                .public_key()
+                .to_bytes(
+                    &group,
+                    openssl::ec::PointConversionForm::COMPRESSED,
+                    &mut ctx,
+                )
+                .map_err(|_| anyhow!("Failed to get public key bytes"))?;
+
+            let compressed_pubkey: [u8; 33] = pubkey_bytes
+                .try_into()
+                .map_err(|_| anyhow!("Invalid public key length"))?;
+
+            let create_session_authority = CreateSecp256r1SessionAuthority::new(
+                compressed_pubkey,
+                [0; 32], // session key
+                100,     // max session length
+            );
+
+            // Proper signing function using solana_secp256r1_program
+            let signing_key_clone = signing_key.clone();
+            let sign_fn = move |payload: &[u8]| -> [u8; 64] {
+                let signature = solana_secp256r1_program::sign_message(
+                    payload,
+                    &signing_key_clone.private_key_to_der().unwrap(),
+                )
+                .unwrap();
+                signature
+            };
+
+            println!("✓ Secp256r1 session authority keypair parsed successfully");
+            println!("Note: You now need to provide a separate Solana Ed25519 keypair for transaction fees");
+
+            let fee_payer_kp_str = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter Fee payer keypair (Solana Ed25519 keypair in base58 format)")
+                .interact()?;
+            let fee_payer_keypair = Keypair::from_base58_string(&fee_payer_kp_str);
+
+            Box::new(Secp256r1SessionClientRole::new(
+                create_session_authority,
+                Box::new(sign_fn),
+            )) as Box<dyn ClientRole>
         },
         _ => {
             return Err(anyhow!("Session-based authorities not supported for root"));
@@ -309,7 +574,7 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
     ctx.wallet
         .as_mut()
         .unwrap()
-        .switch_authority(role_id, authority_manager, None)?;
+        .switch_authority(role_id, client_role, None)?;
     Ok(())
 }
 
@@ -357,8 +622,10 @@ pub fn get_authority_type() -> Result<AuthorityType> {
     let authority_types = vec![
         "Ed25519 (Recommended for standard usage)",
         "Secp256k1 (For Ethereum/Bitcoin compatibility)",
+        "Secp256r1 (For passkey/WebAuthn support)",
         "Ed25519Session (For temporary session-based auth)",
         "Secp256k1Session (For temporary session-based auth with Ethereum/Bitcoin)",
+        "Secp256r1Session (For temporary session-based auth with passkey/WebAuthn)",
     ];
 
     let authority_type_idx = Select::with_theme(&ColorfulTheme::default())
@@ -370,8 +637,10 @@ pub fn get_authority_type() -> Result<AuthorityType> {
     let authority_type = match authority_type_idx {
         0 => AuthorityType::Ed25519,
         1 => AuthorityType::Secp256k1,
-        2 => AuthorityType::Ed25519Session,
-        3 => AuthorityType::Secp256k1Session,
+        2 => AuthorityType::Secp256r1,
+        3 => AuthorityType::Ed25519Session,
+        4 => AuthorityType::Secp256k1Session,
+        5 => AuthorityType::Secp256r1Session,
         _ => unreachable!(),
     };
 
@@ -656,16 +925,42 @@ pub fn format_authority(authority: &str, authority_type: &AuthorityType) -> Resu
             Ok(authority.to_bytes().to_vec())
         },
         AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
-            let wallet = LocalSigner::random();
+            // For Secp256k1, the authority should be a hex string of the public key
+            // Remove 0x prefix if present
+            let clean_authority = authority.trim_start_matches("0x");
 
-            let secp_pubkey = wallet
-                .credential()
-                .verifying_key()
-                .to_encoded_point(false)
-                .to_bytes();
+            // Parse as hex bytes
+            let authority_bytes = hex::decode(clean_authority)
+                .map_err(|_| anyhow!("Invalid hex string for Secp256k1 authority"))?;
 
-            println!("Secp256k1 public key: {:?}", wallet.address());
-            Ok(secp_pubkey.as_ref()[1..].to_vec())
+            // For Secp256k1, we expect the uncompressed public key without the 0x04 prefix
+            if authority_bytes.len() == 65 && authority_bytes[0] == 0x04 {
+                // Remove the 0x04 prefix
+                Ok(authority_bytes[1..].to_vec())
+            } else if authority_bytes.len() == 64 {
+                // Already in the correct format
+                Ok(authority_bytes)
+            } else {
+                Err(anyhow!("Invalid Secp256k1 public key format"))
+            }
+        },
+        AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
+            // For Secp256r1, the authority should be a hex string of the compressed public key
+            // Remove 0x prefix if present
+            let clean_authority = authority.trim_start_matches("0x");
+
+            // Parse as hex bytes
+            let authority_bytes = hex::decode(clean_authority)
+                .map_err(|_| anyhow!("Invalid hex string for Secp256r1 authority"))?;
+
+            // For Secp256r1, we expect the compressed public key (33 bytes)
+            if authority_bytes.len() == 33 {
+                Ok(authority_bytes)
+            } else {
+                Err(anyhow!(
+                    "Invalid Secp256r1 public key format - expected 33 bytes"
+                ))
+            }
         },
         _ => Err(anyhow!("Unsupported authority type")),
     }
@@ -701,7 +996,16 @@ pub fn get_authorities(ctx: &mut SwigCliContext) -> Result<HashMap<String, Vec<u
                     authorities.insert(authority, authority_pubkey.to_bytes().to_vec());
                 },
                 AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
-                    // Implementation for Secp256k1 authorities
+                    let authority = role.authority.identity().unwrap();
+                    // For Secp256k1, encode as hex string
+                    let authority_hex = hex::encode(authority);
+                    authorities.insert(format!("0x{}", authority_hex), authority.to_vec());
+                },
+                AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
+                    let authority = role.authority.identity().unwrap();
+                    // For Secp256r1, encode as hex string
+                    let authority_hex = hex::encode(authority);
+                    authorities.insert(format!("0x{}", authority_hex), authority.to_vec());
                 },
                 _ => todo!(),
             }
@@ -709,4 +1013,23 @@ pub fn get_authorities(ctx: &mut SwigCliContext) -> Result<HashMap<String, Vec<u
     }
 
     Ok(authorities)
+}
+
+/// Validates if a Secp256r1 public key is a valid point on the curve
+fn validate_secp256r1_public_key(public_key: &[u8; 33]) -> Result<(), anyhow::Error> {
+    let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)
+        .map_err(|e| anyhow!("Failed to create EC group: {}", e))?;
+
+    let mut ctx =
+        BigNumContext::new().map_err(|e| anyhow!("Failed to create BigNum context: {}", e))?;
+
+    let point = EcPoint::from_bytes(&group, public_key, &mut ctx)
+        .map_err(|e| anyhow!("Invalid Secp256r1 public key: {}", e))?;
+
+    // Check if the point is at infinity
+    if point.is_infinity(&group) {
+        return Err(anyhow!("Secp256r1 public key is at infinity"));
+    }
+
+    Ok(())
 }

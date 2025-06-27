@@ -15,8 +15,9 @@ use colored::*;
 use console::Term;
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
 use directories::BaseDirs;
+use hex;
 use indicatif::{ProgressBar, ProgressStyle};
-use secp256k1::{PublicKey as Secp256k1PublicKey, Secp256k1, SecretKey as Secp256k1SecretKey};
+use rand::Rng;
 use solana_sdk::{
     pubkey::Pubkey,
     signature::{read_keypair_file, Keypair, Signer},
@@ -25,7 +26,7 @@ use solana_sdk::{
 use swig_sdk::{
     authority::{ed25519::CreateEd25519SessionAuthority, AuthorityType},
     swig::SwigWithRoles,
-    AuthorityManager, Permission, RecurringConfig, SwigError, SwigWallet,
+    ClientRole, Permission, RecurringConfig, SwigError, SwigWallet,
 };
 
 mod commands;
@@ -224,6 +225,13 @@ pub enum Command {
         #[arg(short, long)]
         amount: u64,
     },
+    /// Generate keypairs for different authority types
+    Generate {
+        #[arg(short, long)]
+        authority_type: String,
+        #[arg(short, long)]
+        output_format: Option<String>,
+    },
 }
 
 pub struct SwigCliContext {
@@ -348,8 +356,10 @@ fn get_authority_type() -> Result<AuthorityType> {
     let authority_types = vec![
         "Ed25519 (Recommended for standard usage)",
         "Secp256k1 (For Ethereum/Bitcoin compatibility)",
+        "Secp256r1 (For passkey/WebAuthn support)",
         "Ed25519Session (For temporary session-based auth)",
         "Secp256k1Session (For temporary session-based auth with Ethereum/Bitcoin)",
+        "Secp256r1Session (For temporary session-based auth with passkey/WebAuthn)",
     ];
 
     let authority_type_idx = Select::with_theme(&ColorfulTheme::default())
@@ -361,8 +371,10 @@ fn get_authority_type() -> Result<AuthorityType> {
     let authority_type = match authority_type_idx {
         0 => AuthorityType::Ed25519,
         1 => AuthorityType::Secp256k1,
-        2 => AuthorityType::Ed25519Session,
-        3 => AuthorityType::Secp256k1Session,
+        2 => AuthorityType::Secp256r1,
+        3 => AuthorityType::Ed25519Session,
+        4 => AuthorityType::Secp256k1Session,
+        5 => AuthorityType::Secp256r1Session,
         _ => unreachable!(),
     };
 
@@ -487,23 +499,54 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
     Ok(permissions)
 }
 
-fn format_authority(authority: &str, authority_type: &AuthorityType) -> Result<Vec<u8>> {
+pub fn format_authority(authority: &str, authority_type: &AuthorityType) -> Result<Vec<u8>> {
     match authority_type {
         AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
             let authority = Pubkey::from_str(authority)?;
             Ok(authority.to_bytes().to_vec())
         },
         AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
-            let wallet = LocalSigner::random();
+            // For Secp256k1, the authority should be a hex string of the public key
+            // Remove 0x prefix if present
+            let clean_authority = authority.trim_start_matches("0x");
 
-            let secp_pubkey = wallet
-                .credential()
-                .verifying_key()
-                .to_encoded_point(false)
-                .to_bytes();
+            // Parse as hex bytes
+            let authority_bytes = hex::decode(clean_authority)
+                .map_err(|_| anyhow!("Invalid hex string for Secp256k1 authority"))?;
 
-            println!("Secp256k1 public key: {:?}", wallet.address());
-            Ok(secp_pubkey.as_ref()[1..].to_vec())
+            // For Secp256k1, we expect the uncompressed public key (65 bytes starting with 0x04)
+            // or compressed public key (33 bytes starting with 0x02 or 0x03)
+            if authority_bytes.len() == 65 && authority_bytes[0] == 0x04 {
+                // Uncompressed format - remove the 0x04 prefix
+                Ok(authority_bytes[1..].to_vec())
+            } else if authority_bytes.len() == 33
+                && (authority_bytes[0] == 0x02 || authority_bytes[0] == 0x03)
+            {
+                // Compressed format - remove the prefix
+                Ok(authority_bytes[1..].to_vec())
+            } else {
+                Err(anyhow!(
+                    "Invalid Secp256k1 public key format - expected 33 bytes (compressed) or 65 bytes (uncompressed)"
+                ))
+            }
+        },
+        AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
+            // For Secp256r1, the authority should be a hex string of the compressed public key
+            // Remove 0x prefix if present
+            let clean_authority = authority.trim_start_matches("0x");
+
+            // Parse as hex bytes
+            let authority_bytes = hex::decode(clean_authority)
+                .map_err(|_| anyhow!("Invalid hex string for Secp256r1 authority"))?;
+
+            // For Secp256r1, we expect the compressed public key (33 bytes)
+            if authority_bytes.len() == 33 {
+                Ok(authority_bytes)
+            } else {
+                Err(anyhow!(
+                    "Invalid Secp256r1 public key format - expected 33 bytes"
+                ))
+            }
         },
         _ => Err(anyhow!("Unsupported authority type")),
     }
@@ -551,6 +594,12 @@ fn get_authorities(ctx: &mut SwigCliContext) -> Result<HashMap<String, Vec<u8>>>
                     // let authority_pubkey =
                     // Secp256k1PublicKey::from_str(&address)?;
                     // authorities.insert(address, authority_pubkey);
+                },
+                AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
+                    let authority = role.authority.identity().unwrap();
+                    // For Secp256r1, encode as hex string
+                    let authority_hex = hex::encode(authority);
+                    authorities.insert(format!("0x{}", authority_hex), authority.to_vec());
                 },
                 _ => todo!(),
             }
