@@ -216,9 +216,9 @@ fn test_oracle_limit_sol_transfer() {
         result.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3022)
+            solana_sdk::instruction::InstructionError::Custom(3027)
         ),
-        "Expected error code 3022"
+        "Expected error code 3027"
     );
 }
 
@@ -498,9 +498,9 @@ fn test_oracle_limit_sol_passthrough() {
         result.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3022)
+            solana_sdk::instruction::InstructionError::Custom(3027)
         ),
-        "Expected error code 3022"
+        "Expected error code 3027"
     );
 }
 
