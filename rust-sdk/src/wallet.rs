@@ -794,10 +794,7 @@ impl<'c> SwigWallet<'c> {
                             let authority = bs58::encode(authority).into_string();
                             authority
                         },
-                        AuthorityType::Secp256k1
-                        | AuthorityType::Secp256k1Session
-                        | AuthorityType::Secp256r1
-                        | AuthorityType::Secp256r1Session => {
+                        AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
                             let authority = role.authority.identity().unwrap();
                             let mut authority_hex = vec![0x4];
                             authority_hex.extend_from_slice(authority);
@@ -807,6 +804,11 @@ impl<'c> SwigWallet<'c> {
                             let hash = hasher.result();
                             let address = format!("0x{}", hex::encode(&hash.0[12..32]));
                             address
+                        },
+                        AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
+                            let authority = role.authority.identity().unwrap();
+                            // For Secp256r1, display the compressed public key directly
+                            format!("0x{}", hex::encode(authority))
                         },
                         _ => todo!(),
                     }
@@ -1507,18 +1509,21 @@ impl<'c> SwigWallet<'c> {
                 let authority = role.authority.identity().unwrap_or_default();
                 Ok(bs58::encode(authority).into_string())
             },
-            AuthorityType::Secp256k1
-            | AuthorityType::Secp256k1Session
-            | AuthorityType::Secp256r1
-            | AuthorityType::Secp256r1Session => {
-                let authority = role.authority.identity().unwrap_or_default();
+            AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
+                let authority = role.authority.identity().unwrap();
                 let mut authority_hex = vec![0x4];
                 authority_hex.extend_from_slice(authority);
                 let authority_hex = hex::encode(authority_hex);
                 let mut hasher = solana_sdk::keccak::Hasher::default();
                 hasher.hash(authority_hex.as_bytes());
                 let hash = hasher.result();
-                Ok(format!("0x{}", hex::encode(&hash.0[12..32])))
+                let address = format!("0x{}", hex::encode(&hash.0[12..32]));
+                Ok(address)
+            },
+            AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
+                let authority = role.authority.identity().unwrap();
+                // For Secp256r1, display the compressed public key directly
+                Ok(format!("0x{}", hex::encode(authority)))
             },
             _ => Err(SwigError::AuthorityNotFound),
         })?
