@@ -1,3 +1,6 @@
+use crate::Ed25519ClientRole;
+use crate::Secp256k1ClientRole;
+
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
@@ -27,7 +30,7 @@ fn test_add_authority_with_ed25519_root() {
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Ed25519(authority.pubkey()),
+        Box::new(Ed25519ClientRole::new(authority.pubkey())),
         context.default_payer.pubkey(),
         role_id,
     );
@@ -47,7 +50,6 @@ fn test_add_authority_with_ed25519_root() {
             &new_authority_bytes,
             permissions,
             Some(current_slot),
-            None,
         )
         .unwrap();
 
@@ -102,7 +104,7 @@ fn test_add_authority_with_secp256k1_root() {
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Secp256k1(secp_pubkey, Box::new(signing_fn)),
+        Box::new(Secp256k1ClientRole::new(secp_pubkey, Box::new(signing_fn))),
         payer.pubkey(),
         role_id,
     );
@@ -139,7 +141,6 @@ fn test_add_authority_with_secp256k1_root() {
     // Get current counter for the signing wallet (not the new authority being
     // added)
     let current_counter = get_secp256k1_counter_from_wallet(&context, &swig_key, &wallet).unwrap();
-    let next_counter = current_counter + 1;
 
     let add_auth_ix = builder
         .add_authority_instruction(
@@ -147,7 +148,6 @@ fn test_add_authority_with_secp256k1_root() {
             &secp_pubkey_bytes,
             permissions,
             Some(current_slot),
-            Some(next_counter),
         )
         .unwrap();
 
@@ -194,7 +194,7 @@ fn test_remove_authority_with_ed25519_root() {
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Ed25519(authority.pubkey()),
+        Box::new(Ed25519ClientRole::new(authority.pubkey())),
         payer.pubkey(),
         role_id,
     );
@@ -204,7 +204,6 @@ fn test_remove_authority_with_ed25519_root() {
             AuthorityType::Ed25519,
             &authority_pubkey.to_bytes(),
             permissions,
-            None,
             None,
         )
         .unwrap();
@@ -259,7 +258,7 @@ fn test_switch_authority_and_payer() {
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Ed25519(authority.pubkey()),
+        Box::new(Ed25519ClientRole::new(authority.pubkey())),
         payer.pubkey(),
         role_id,
     );
@@ -268,7 +267,7 @@ fn test_switch_authority_and_payer() {
     let new_payer = Keypair::new();
 
     builder
-        .switch_authority(1, AuthorityManager::Ed25519(new_authority.pubkey()))
+        .switch_authority(1, Box::new(Ed25519ClientRole::new(new_authority.pubkey())))
         .unwrap();
     assert_eq!(builder.get_role_id(), 1);
     assert_eq!(

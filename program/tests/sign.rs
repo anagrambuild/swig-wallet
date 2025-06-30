@@ -107,7 +107,7 @@ fn test_transfer_sol_with_additional_authority() {
         assert!(false);
     } else {
         let txn = res.unwrap();
-        println!("logs {:?}", txn.logs);
+        println!("logs {}", txn.pretty_logs());
         println!("Sign Transfer CU {:?}", txn.compute_units_consumed);
     }
 
@@ -940,4 +940,101 @@ fn test_transfer_token_with_recurring_limit() {
         .unwrap()
         .unwrap();
     assert_eq!(action.current, action.limit - amount3);
+}
+
+#[test_log::test]
+fn test_transfer_between_swig_accounts() {
+    let mut context = setup_test_context().unwrap();
+
+    // Create first Swig account (sender)
+    let sender_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&sender_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    let sender_id = rand::random::<[u8; 32]>();
+    let sender_swig =
+        Pubkey::find_program_address(&swig_account_seeds(&sender_id), &program_id()).0;
+
+    // Create second Swig account (recipient)
+    let recipient_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&recipient_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    let recipient_id = rand::random::<[u8; 32]>();
+    let recipient_swig =
+        Pubkey::find_program_address(&swig_account_seeds(&recipient_id), &program_id()).0;
+
+    // Create both Swig accounts
+    let sender_create_result = create_swig_ed25519(&mut context, &sender_authority, sender_id);
+    assert!(
+        sender_create_result.is_ok(),
+        "Failed to create sender Swig account"
+    );
+
+    let recipient_create_result =
+        create_swig_ed25519(&mut context, &recipient_authority, recipient_id);
+    assert!(
+        recipient_create_result.is_ok(),
+        "Failed to create recipient Swig account"
+    );
+
+    // Fund the sender Swig account
+    context.svm.airdrop(&sender_swig, 5_000_000_000).unwrap();
+
+    // Create transfer instruction from sender Swig to recipient Swig
+    let transfer_amount = 1_000_000_000; // 1 SOL
+    let transfer_ix = system_instruction::transfer(&sender_swig, &recipient_swig, transfer_amount);
+
+    // Sign the transfer with sender authority
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        sender_swig,
+        sender_authority.pubkey(),
+        sender_authority.pubkey(),
+        transfer_ix,
+        0, // root authority role
+    )
+    .unwrap();
+
+    let transfer_message = v0::Message::try_compile(
+        &sender_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(transfer_message), &[&sender_authority])
+            .unwrap();
+
+    let result = context.svm.send_transaction(transfer_tx);
+    assert!(
+        result.is_ok(),
+        "Transfer between Swig accounts failed: {:?}",
+        result.err()
+    );
+
+    // Verify the transfer was successful
+    let sender_account = context.svm.get_account(&sender_swig).unwrap();
+    let recipient_account = context.svm.get_account(&recipient_swig).unwrap();
+
+    // Get initial recipient balance (should include the rent-exempt amount plus
+    // transfer)
+    let recipient_initial_balance = {
+        let recipient_swig_state = SwigWithRoles::from_bytes(&recipient_account.data).unwrap();
+        recipient_swig_state.state.reserved_lamports
+    };
+
+    assert_eq!(
+        recipient_account.lamports,
+        recipient_initial_balance + transfer_amount,
+        "Recipient Swig account did not receive the correct amount"
+    );
+
+    println!(
+        "Successfully transferred {} lamports from Swig {} to Swig {}",
+        transfer_amount, sender_swig, recipient_swig
+    );
 }

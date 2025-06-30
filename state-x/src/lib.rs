@@ -97,6 +97,8 @@ pub enum SwigStateError {
     RoleNotFound,
     /// Error loading permissions
     PermissionLoadError,
+    /// Adding an authority requires at least one action
+    InvalidAuthorityMustHaveAtLeastOneAction,
 }
 
 /// Error types related to authentication operations.
@@ -137,6 +139,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedSecp256k1SignatureReused,
     /// Invalid Secp256k1 hash
     PermissionDeniedSecp256k1InvalidHash,
+    /// Secp256r1 signature has been reused
+    PermissionDeniedSecp256r1SignatureReused,
     /// Stake account is in an invalid state
     PermissionDeniedStakeAccountInvalidState,
     /// Cannot reuse session key
@@ -151,6 +155,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedSecp256r1InvalidPubkey,
     /// Invalid Secp256r1 message hash
     PermissionDeniedSecp256r1InvalidMessageHash,
+    /// Invalid Secp256r1 message
+    PermissionDeniedSecp256r1InvalidMessage,
 }
 
 impl From<SwigStateError> for ProgramError {

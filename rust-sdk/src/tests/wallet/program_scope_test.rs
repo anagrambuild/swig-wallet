@@ -5,6 +5,7 @@ use solana_program::pubkey::Pubkey;
 use solana_sdk::{clock::Clock, signature::Keypair, transaction::VersionedTransaction};
 
 use super::*;
+use crate::client_role::Ed25519ClientRole;
 use crate::tests::common::*;
 
 #[test_log::test]
@@ -33,18 +34,14 @@ fn should_token_transfer_with_program_scope() {
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
     let swig_ata = swig_wallet.create_ata(&mint_pubkey).unwrap();
 
-    // Setup a RecurringLimit program scope
-    // Set a limit of 500 tokens per 100 slots
-    let window_size = 100;
-    let transfer_limit = 500_u64;
-
+    // Setup a basic program scope
     let new_authority = Keypair::new();
 
     let permissions = vec![Permission::ProgramScope {
         program_id: spl_token::ID,
         target_account: swig_ata,
         numeric_type: 2, // U64
-        limit: None,
+        limit: Some(1000),
         window: None,
         balance_field_start: Some(64),
         balance_field_end: Some(72),
@@ -65,9 +62,12 @@ fn should_token_transfer_with_program_scope() {
     assert_eq!(swig_with_roles.state.roles, 2);
 
     // Switch to the new authority
-    let authority_manager = AuthorityManager::Ed25519(new_authority.pubkey());
     swig_wallet
-        .switch_authority(1, authority_manager, Some(&new_authority))
+        .switch_authority(
+            1,
+            Box::new(Ed25519ClientRole::new(new_authority.pubkey())),
+            Some(&new_authority),
+        )
         .unwrap();
 
     // Mint initial tokens to swig wallet
@@ -152,9 +152,12 @@ fn should_token_transfer_with_recurring_limit_program_scope() {
     assert_eq!(swig_with_roles.state.roles, 2);
 
     // Switch to the new authority
-    let authority_manager = AuthorityManager::Ed25519(new_authority.pubkey());
     swig_wallet
-        .switch_authority(1, authority_manager, Some(&new_authority))
+        .switch_authority(
+            1,
+            Box::new(Ed25519ClientRole::new(new_authority.pubkey())),
+            Some(&new_authority),
+        )
         .unwrap();
 
     // Mint initial tokens to swig wallet
@@ -208,7 +211,9 @@ fn should_token_transfer_with_recurring_limit_program_scope() {
         };
         println!("After transfer, token balance: {}", after_balance);
 
-        swig_wallet.display_swig().unwrap();
+        // Verify transfer was successful
+        assert!(sign_ix != solana_sdk::signature::Signature::default());
+        assert!(after_balance < before_balance);
     }
 
     // Try to transfer one more batch (should fail)
