@@ -35,6 +35,8 @@ use swig_state_x::{
     AccountClassification, Discriminator, StakeAccountState, Transmutable,
 };
 use util::{read_program_scope_account_balance, ProgramScopeCache};
+#[cfg(not(feature = "no-entrypoint"))]
+use {default_env::default_env, solana_security_txt::security_txt};
 
 /// Program ID for the Swig wallet program
 declare_id!("swigDk8JezhiAVde8k6NMwxpZfgGm2NNuMe1KYCmUjP");
@@ -50,6 +52,23 @@ pinocchio::default_panic_handler!();
 
 #[cfg(not(feature = "no-entrypoint"))]
 lazy_entrypoint!(process_instruction);
+
+#[cfg(not(feature = "no-entrypoint"))]
+security_txt! {
+    name: "Swig",
+    project_url: "https://onswig.com",
+    contacts: "email:security@onswig.com",
+    policy: "https://github.com/anagrambuild/swig-wallet/security/policy",
+
+    // Optional Fields
+    preferred_languages: "en",
+    source_code: "https://github.com/anagrambuild/swig-wallet",
+    source_revision: "",
+    source_release: "",
+    encryption: "",
+    auditors: "https://accretion.xyz/",
+    acknowledgements: "Thank you to our bug bounty hunters!"
+}
 
 /// Main program entry point.
 ///
