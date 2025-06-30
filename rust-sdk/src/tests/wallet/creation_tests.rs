@@ -9,7 +9,11 @@ use super::*;
 fn should_create_ed25519_wallet() {
     let (litesvm, main_authority) = setup_test_environment();
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
-    swig_wallet.display_swig().unwrap();
+
+    // Verify wallet was created successfully
+    assert!(swig_wallet.get_swig_account().is_ok());
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 1);
+    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 0);
 
     let swig_pubkey = swig_wallet.get_swig_account().unwrap();
     let swig_data = swig_wallet.litesvm().get_account(&swig_pubkey).unwrap();
@@ -44,13 +48,16 @@ fn should_create_secp256k1_wallet() {
 
     let swig_wallet = SwigWallet::new(
         [0; 32],
-        AuthorityManager::Secp256k1(secp_pubkey, Box::new(sign_fn)),
-        &main_authority,
+        Box::new(Secp256k1ClientRole::new(secp_pubkey, Box::new(sign_fn))),
         &main_authority,
         "http://localhost:8899".to_string(),
+        Some(&main_authority),
         litesvm,
     )
     .unwrap();
 
-    swig_wallet.display_swig().unwrap();
+    // Verify wallet was created successfully
+    assert!(swig_wallet.get_swig_account().is_ok());
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 1);
+    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 0);
 }

@@ -7,12 +7,14 @@
 
 pub mod ed25519;
 pub mod secp256k1;
+pub mod secp256r1;
 
 use std::any::Any;
 
 use ed25519::{ED25519Authority, Ed25519SessionAuthority};
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
 use secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority};
+use secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority};
 
 use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
 
@@ -57,6 +59,9 @@ pub trait AuthorityInfo: IntoBytes {
 
     /// Returns the identity bytes for this authority
     fn identity(&self) -> Result<&[u8], ProgramError>;
+
+    /// Returns the signature odometer for this authority if it exists
+    fn signature_odometer(&self) -> Option<u32>;
 
     /// Authenticates a session-based operation.
     ///
@@ -120,10 +125,10 @@ pub enum AuthorityType {
     Secp256k1,
     /// Session-based Secp256k1 authority
     Secp256k1Session,
+    /// Standard Secp256r1 authority (for passkeys)
+    Secp256r1,
     /// Session-based Secp256r1 authority
     Secp256r1Session,
-    /// Session-based R1 Passkey authority
-    R1PasskeySession,
 }
 
 impl TryFrom<u16> for AuthorityType {
@@ -137,8 +142,8 @@ impl TryFrom<u16> for AuthorityType {
             2 => Ok(AuthorityType::Ed25519Session),
             3 => Ok(AuthorityType::Secp256k1),
             4 => Ok(AuthorityType::Secp256k1Session),
-            5 => Ok(AuthorityType::Secp256r1Session),
-            6 => Ok(AuthorityType::R1PasskeySession),
+            5 => Ok(AuthorityType::Secp256r1),
+            6 => Ok(AuthorityType::Secp256r1Session),
             _ => Err(ProgramError::InvalidInstructionData),
         }
     }
@@ -160,6 +165,8 @@ pub const fn authority_type_to_length(
         AuthorityType::Ed25519Session => Ok(Ed25519SessionAuthority::LEN),
         AuthorityType::Secp256k1 => Ok(Secp256k1Authority::LEN),
         AuthorityType::Secp256k1Session => Ok(Secp256k1SessionAuthority::LEN),
+        AuthorityType::Secp256r1 => Ok(Secp256r1Authority::LEN),
+        AuthorityType::Secp256r1Session => Ok(Secp256r1SessionAuthority::LEN),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
