@@ -338,36 +338,49 @@ pub unsafe fn build_restricted_keys<'a>(
     }
 }
 
-/// Computes a hash of data while excluding specified byte ranges.
+/// Computes a hash of account data and owner while excluding specified byte
+/// ranges.
 ///
 /// This function uses the SHA256 hash algorithm which is optimized
-/// for low compute units on Solana. It hashes all bytes in the
-/// account's data except those in the specified exclusion ranges.
+/// for low compute units on Solana. It hashes the account owner followed by
+/// all bytes in the account's data except those in the specified exclusion
+/// ranges. This ensures that program ownership changes are detected during
+/// execution.
 ///
 /// # Arguments
-/// * `data` - The data to hash
-/// * `exclude_ranges` - Sorted list of byte ranges to exclude from hashing
+/// * `data` - The account data to hash
+/// * `owner` - The account owner pubkey
+/// * `exclude_ranges` - Sorted list of byte ranges to exclude from data hashing
 ///
 /// # Returns
-/// * `[u8; 32]` - The computed SHA256 hash (32 bytes)
+/// * `[u8; 32]` - The computed SHA256 hash including owner and data (32 bytes)
 ///
 /// # Safety
 /// This function assumes that:
 /// - The exclude_ranges are non-overlapping and sorted by start position
 /// - All ranges are within the bounds of the data
 #[inline(always)]
-pub fn hash_except(data: &[u8], exclude_ranges: &[core::ops::Range<usize>]) -> [u8; 32] {
-    // Maximum possible segments: one before each exclude range + one after all ranges
-    const MAX_SEGMENTS: usize = 16; // Reasonable upper bound, however most cases are <= 3
+pub fn hash_except(
+    data: &[u8],
+    owner: &Pubkey,
+    exclude_ranges: &[core::ops::Range<usize>],
+) -> [u8; 32] {
+    // Maximum possible segments: owner + one before each exclude range + one after
+    // all ranges
+    const MAX_SEGMENTS: usize = 17; // 1 for owner + 16 for data segments
     let mut segments: [&[u8]; MAX_SEGMENTS] = [&[]; MAX_SEGMENTS];
     let mut segment_count = 0;
+
+    // Always include the owner as the first segment
+    segments[0] = owner.as_ref();
+    segment_count = 1;
+
     let mut position = 0;
 
-    // If no exclude ranges, hash the entire data
-    #[allow(unused)]
+    // If no exclude ranges, hash the entire data after owner
     if exclude_ranges.is_empty() {
-        segments[0] = data;
-        segment_count = 1;
+        segments[segment_count] = data;
+        segment_count += 1;
     } else {
         for range in exclude_ranges {
             // Add bytes before this exclusion range
