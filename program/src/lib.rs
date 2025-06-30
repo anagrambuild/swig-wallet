@@ -39,7 +39,7 @@ use util::{read_program_scope_account_balance, ProgramScopeCache};
 use {default_env::default_env, solana_security_txt::security_txt};
 
 /// Program ID for the Swig wallet program
-declare_id!("swigDk8JezhiAVde8k6NMwxpZfgGm2NNuMe1KYCmUjP");
+declare_id!("swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB");
 /// Program ID for the SPL Token program
 const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 /// Program ID for the SPL Token 2022 program

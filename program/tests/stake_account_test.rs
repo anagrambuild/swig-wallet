@@ -131,7 +131,7 @@ impl ValidatorProcess {
             .arg("--bind-address")
             .arg("0.0.0.0")
             .arg("--bpf-program")
-            .arg("swigDk8JezhiAVde8k6NMwxpZfgGm2NNuMe1KYCmUjP")
+            .arg("swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB")
             .arg(swig_so_path)
             .arg("-r")  // Reset the ledger
             .arg("--ticks-per-slot")
@@ -701,7 +701,7 @@ fn create_swig_ed25519(
     id: [u8; 32],
 ) -> anyhow::Result<SolanaPubkey> {
     // Get program ID
-    let program_id = SolanaPubkey::from_str("swigDk8JezhiAVde8k6NMwxpZfgGm2NNuMe1KYCmUjP")?;
+    let program_id = SolanaPubkey::from_str("swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB")?;
 
     // Calculate PDA for swig account
     let (swig, bump) = SolanaPubkey::find_program_address(&swig_account_seeds(&id), &program_id);
