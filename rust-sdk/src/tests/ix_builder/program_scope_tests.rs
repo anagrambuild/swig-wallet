@@ -98,7 +98,7 @@ fn test_token_transfer_with_program_scope() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[add_auth_ix],
+        &add_auth_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -254,7 +254,7 @@ fn test_recurring_limit_program_scope() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[add_auth_ix],
+        &add_auth_ix,
         &[],
         context.svm.latest_blockhash(),
     )

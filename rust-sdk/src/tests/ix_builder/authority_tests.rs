@@ -55,7 +55,7 @@ fn test_add_authority_with_ed25519_root() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[add_auth_ix],
+        &add_auth_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -153,7 +153,7 @@ fn test_add_authority_with_secp256k1_root() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[add_auth_ix],
+        &add_auth_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -210,7 +210,7 @@ fn test_remove_authority_with_ed25519_root() {
 
     let msg = v0::Message::try_compile(
         &payer.pubkey(),
-        &[add_auth_ix],
+        &add_auth_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -228,7 +228,7 @@ fn test_remove_authority_with_ed25519_root() {
     let remove_auth_ix = builder.remove_authority(1, None).unwrap();
     let msg = v0::Message::try_compile(
         &payer.pubkey(),
-        &[remove_auth_ix],
+        &remove_auth_ix,
         &[],
         context.svm.latest_blockhash(),
     )

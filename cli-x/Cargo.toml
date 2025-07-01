@@ -22,8 +22,9 @@ tokio = { version = "1.0", features = ["full"] }
 bs58 = "0.5.1"
 hex = "0.4.3"
 swig-sdk = { path = "../rust-sdk" }
-secp256k1 = "0.30.0"
+openssl = { version = "0.10", features = ["vendored"] }
 solana-sdk = "2.0"
+solana-secp256r1-program = "2.0"
 
 alloy-primitives = { version = "1.0.0", features = ["k256"] }
 alloy-signer = { version = "0.14.0" }
