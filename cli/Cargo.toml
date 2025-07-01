@@ -1,10 +1,11 @@
 [package]
 name = "swig-cli"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 license = "AGPL-3.0"
 description = "SWIG CLI - A command-line interface for the SWIG wallet"
-authors = ["SWIG Team"]
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 anyhow = "1.0"

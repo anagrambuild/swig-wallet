@@ -1,9 +1,11 @@
 [package]
 name = "swig-compact-instructions"
-version = "0.0.1"
+version.workspace = true
 edition = "2021"
 license = "AGPL-3.0"
 description = "Swig protocol instructions handling"
+authors.workspace = true
+documentation.workspace = true
 
 [features]
 client = ["solana-program"]

@@ -1,10 +1,12 @@
 [package]
 name = "swig-interface"
-version = "0.0.1"
+version.workspace = true
 edition = "2021"
 license = "AGPL-3.0"
 description = "Solana program for the Swig protocol"
 publish = false
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 bytemuck = { version = "1.19.0", features = ["derive"] }

@@ -1,8 +1,10 @@
 [package]
 name = "swig-state"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
-
+license = "AGPL-3.0"
+authors.workspace = true
+documentation.workspace = true
 
 [dependencies]
 pinocchio = { version = "=0.8.1", features = ["std"] }
