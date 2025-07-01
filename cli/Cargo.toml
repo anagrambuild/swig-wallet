@@ -1,5 +1,5 @@
 [package]
-name = "cli-x"
+name = "cli"
 version = "0.1.0"
 edition = "2021"
 description = "SWIG CLI - A command-line interface for the SWIG wallet"
