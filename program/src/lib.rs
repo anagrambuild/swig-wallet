@@ -26,7 +26,7 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_pubkey::{declare_id, pubkey};
-use swig_state_x::{
+use swig_state::{
     action::{
         program_scope::{NumericType, ProgramScope},
         Action, Actionable, Permission,
@@ -271,10 +271,10 @@ unsafe fn classify_account(
                     );
 
                     let state = match state_value {
-                        0 => swig_state_x::StakeAccountState::Uninitialized,
-                        1 => swig_state_x::StakeAccountState::Initialized,
-                        2 => swig_state_x::StakeAccountState::Stake,
-                        3 => swig_state_x::StakeAccountState::RewardsPool,
+                        0 => swig_state::StakeAccountState::Uninitialized,
+                        1 => swig_state::StakeAccountState::Initialized,
+                        2 => swig_state::StakeAccountState::Stake,
+                        3 => swig_state::StakeAccountState::RewardsPool,
                         _ => return Err(ProgramError::InvalidAccountData),
                     };
                     // Extract the stake amount from the account

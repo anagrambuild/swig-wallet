@@ -1,14 +1,15 @@
-use super::*;
-use crate::client_role::{Ed25519ClientRole, Secp256k1ClientRole};
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::{LocalSigner, PrivateKeySigner};
-use solana_sdk::sysvar::clock::Clock;
 use solana_sdk::{
     signature::{Keypair, Signer},
     system_instruction,
+    sysvar::clock::Clock,
 };
-use swig_state_x::authority::AuthorityType;
+use swig_state::authority::AuthorityType;
+
+use super::*;
+use crate::client_role::{Ed25519ClientRole, Secp256k1ClientRole};
 
 fn create_secp256k1_wallet() -> (PrivateKeySigner, Vec<u8>) {
     let wallet = PrivateKeySigner::random();
@@ -33,7 +34,7 @@ fn get_secp256k1_counter(
         .unwrap()
         .data;
 
-    let swig_with_roles = swig_state_x::swig::SwigWithRoles::from_bytes(&account_data)
+    let swig_with_roles = swig_state::swig::SwigWithRoles::from_bytes(&account_data)
         .map_err(|_| SwigError::InvalidSwigData)?;
 
     let role = swig_with_roles
@@ -45,7 +46,7 @@ fn get_secp256k1_counter(
         let auth = role
             .authority
             .as_any()
-            .downcast_ref::<swig_state_x::authority::secp256k1::Secp256k1Authority>()
+            .downcast_ref::<swig_state::authority::secp256k1::Secp256k1Authority>()
             .ok_or(SwigError::AuthorityNotFound)?;
         Ok(auth.signature_odometer)
     } else {
@@ -184,7 +185,8 @@ fn test_secp256k1_invalid_signature_age_error() {
     // The transaction should fail due to invalid signature age
     if result.is_err() {
         // Check if it's the expected invalid signature age error
-        // The error code should correspond to PermissionDeniedSecp256k1InvalidSignatureAge
+        // The error code should correspond to
+        // PermissionDeniedSecp256k1InvalidSignatureAge
         println!(
             "Transaction failed due to old signature as expected: {:?}",
             result.err()
@@ -536,7 +538,8 @@ fn test_secp256k1_odometer_wrapping() {
         );
     }
 
-    // Verify that the odometer continues to work correctly after multiple transactions
+    // Verify that the odometer continues to work correctly after multiple
+    // transactions
     let final_counter = get_secp256k1_counter(&mut swig_wallet, &secp_pubkey).unwrap();
     assert_eq!(final_counter, 10, "Final counter should be 10");
 }

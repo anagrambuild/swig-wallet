@@ -1,5 +1,5 @@
 use alloy_signer_local::PrivateKeySigner;
-use swig_state_x::{
+use swig_state::{
     authority::{secp256k1::Secp256k1Authority, secp256r1::Secp256r1Authority, AuthorityType},
     swig::SwigWithRoles,
 };
@@ -81,7 +81,8 @@ pub fn get_secp256k1_signature_counter(
 ///
 /// # Arguments
 /// * `swig_account_data` - The raw account data bytes from the Swig account
-/// * `public_key` - The 33-byte compressed public key of the Secp256r1 authority
+/// * `public_key` - The 33-byte compressed public key of the Secp256r1
+///   authority
 ///
 /// # Returns
 /// * `Ok(u32)` - The current signature counter (odometer) value

@@ -18,7 +18,7 @@ use solana_sdk::{
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{AuthorityConfig, ClientAction};
-use swig_state_x::{
+use swig_state::{
     action::{
         all::All, sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
         token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit,

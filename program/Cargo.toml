@@ -1,10 +1,12 @@
 [package]
 name = "swig"
-version = "0.0.1"
+version.workspace = true
 edition = "2021"
 license = "AGPL-3.0"
 description = "Solana program for the Swig protocol"
 publish = false
+authors.workspace = true
+documentation.workspace = true
 
 [lints]
 workspace = true
@@ -16,7 +18,7 @@ pinocchio-system = { version = "0.2.3" }
 pinocchio-token = { version = "0.2" }
 shank = { version = "0.4.2", git = "https://github.com/anagrambuild/shank.git" }
 swig-compact-instructions = { path = "../instructions" }
-swig-state-x = { path = "../state-x" }
+swig-state = { path = "../state" }
 swig-assertions = { path = "../assertions" }
 static_assertions = "1.1.0"
 bs58 = "*"

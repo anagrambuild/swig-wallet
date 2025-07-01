@@ -25,7 +25,7 @@ use spl_associated_token_account::{
 };
 use spl_token::ID as TOKEN_PROGRAM_ID;
 use swig_interface::{swig, swig_key};
-use swig_state_x::{
+use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, program_scope::ProgramScope,
         sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
@@ -70,7 +70,8 @@ impl<'c> SwigWallet<'c> {
     ///   signing authority
     /// * `fee_payer` - The keypair that will pay for transactions
     /// * `rpc_url` - The URL of the Solana RPC endpoint
-    /// * `authority_keypair` - Optional authority keypair (required for Ed25519 authorities)
+    /// * `authority_keypair` - Optional authority keypair (required for Ed25519
+    ///   authorities)
     /// * `litesvm` - (test only) The LiteSVM instance for testing
     ///
     /// # Returns
@@ -487,7 +488,8 @@ impl<'c> SwigWallet<'c> {
     /// # Arguments
     ///
     /// * `sub_account` - The public key of the sub-account
-    /// * `sub_account_token` - The public key of the sub-account's token account
+    /// * `sub_account_token` - The public key of the sub-account's token
+    ///   account
     /// * `swig_token` - The public key of the Swig wallet's token account
     /// * `token_program` - The token program ID
     /// * `amount` - The amount of tokens to withdraw
@@ -964,7 +966,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the current role permissions or a `SwigError`
+    /// Returns a `Result` containing the current role permissions or a
+    /// `SwigError`
     pub fn get_current_permissions(&self) -> Result<&[Permission], SwigError> {
         Ok(&self.current_role.permissions)
     }
@@ -1005,7 +1008,8 @@ impl<'c> SwigWallet<'c> {
     /// * `role_id` - The new role ID to switch to
     /// * `client_role` - The client role implementation specifying the type of
     ///   signing authority
-    /// * `authority_kp` - The public key of the new authority (unused in new implementation)
+    /// * `authority_kp` - The public key of the new authority (unused in new
+    ///   implementation)
     ///
     /// # Returns
     ///
@@ -1016,7 +1020,8 @@ impl<'c> SwigWallet<'c> {
         mut client_role: Box<dyn ClientRole>,
         authority_kp: Option<&'c Keypair>,
     ) -> Result<(), SwigError> {
-        // The odometer is stored in client role and must be updated to match the on chain odometer
+        // The odometer is stored in client role and must be updated to match the on
+        // chain odometer
         let odometer = self.with_role_data(role_id, |role| role.authority.signature_odometer())?;
         if let Some(onchain_odometer) = odometer {
             client_role.update_odometer(onchain_odometer)?;
@@ -1303,7 +1308,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing whether the permission exists or a `SwigError`
+    /// Returns a `Result` containing whether the permission exists or a
+    /// `SwigError`
     pub fn has_permission(&self, permission: &Permission) -> Result<bool, SwigError> {
         let permissions = self.get_current_permissions()?;
         Ok(permissions.contains(permission))
@@ -1313,7 +1319,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing whether the authority has all permissions or a `SwigError`
+    /// Returns a `Result` containing whether the authority has all permissions
+    /// or a `SwigError`
     pub fn has_all_permissions(&self) -> Result<bool, SwigError> {
         let permissions = self.get_current_permissions()?;
         Ok(permissions.iter().any(|p| matches!(p, Permission::All)))
@@ -1323,7 +1330,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing whether the authority can manage other authorities or a `SwigError`
+    /// Returns a `Result` containing whether the authority can manage other
+    /// authorities or a `SwigError`
     pub fn can_manage_authority(&self) -> Result<bool, SwigError> {
         let permissions = self.get_current_permissions()?;
         Ok(permissions
@@ -1350,7 +1358,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the recurring SOL limit config or a `SwigError`
+    /// Returns a `Result` containing the recurring SOL limit config or a
+    /// `SwigError`
     pub fn get_recurring_sol_limit(&self) -> Result<Option<RecurringConfig>, SwigError> {
         let permissions = self.get_current_permissions()?;
         for permission in permissions {
@@ -1369,7 +1378,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing whether the authority can spend the amount or a `SwigError`
+    /// Returns a `Result` containing whether the authority can spend the amount
+    /// or a `SwigError`
     pub fn can_spend_sol(&self, amount: u64) -> Result<bool, SwigError> {
         // If they have all permissions, they can spend any amount
         if self.has_all_permissions()? {
@@ -1442,7 +1452,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the authority identity bytes or a `SwigError`
+    /// Returns a `Result` containing the authority identity bytes or a
+    /// `SwigError`
     pub fn get_authority_identity(&self, role_id: u32) -> Result<Vec<u8>, SwigError> {
         self.with_role_data(role_id, |role| {
             role.authority.identity().unwrap_or_default().to_vec()
@@ -1457,7 +1468,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing whether the role is session-based or a `SwigError`
+    /// Returns a `Result` containing whether the role is session-based or a
+    /// `SwigError`
     pub fn is_session_based(&self, role_id: u32) -> Result<bool, SwigError> {
         self.with_role_data(role_id, |role| role.authority.session_based())
     }
@@ -1470,7 +1482,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the permissions for the role or a `SwigError`
+    /// Returns a `Result` containing the permissions for the role or a
+    /// `SwigError`
     pub fn get_role_permissions(&self, role_id: u32) -> Result<Vec<Permission>, SwigError> {
         self.with_role_data(role_id, |role| Permission::from_role(role))?
     }
@@ -1484,7 +1497,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing whether the role has the permission or a `SwigError`
+    /// Returns a `Result` containing whether the role has the permission or a
+    /// `SwigError`
     pub fn role_has_permission(
         &self,
         role_id: u32,
@@ -1502,7 +1516,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the formatted address string or a `SwigError`
+    /// Returns a `Result` containing the formatted address string or a
+    /// `SwigError`
     pub fn get_formatted_authority_address(&self, role_id: u32) -> Result<String, SwigError> {
         self.with_role_data(role_id, |role| match role.authority.authority_type() {
             AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
@@ -1529,7 +1544,8 @@ impl<'c> SwigWallet<'c> {
         })?
     }
 
-    /// Get the odometer for the current authority if it is a Secp256k1 authority
+    /// Get the odometer for the current authority if it is a Secp256k1
+    /// authority
     ///
     /// # Returns
     ///

@@ -1,9 +1,3 @@
-use super::*;
-use crate::{
-    client_role::{ClientRole, Ed25519ClientRole, Secp256r1ClientRole},
-    instruction_builder::SwigInstructionBuilder,
-    types::Permission as ClientPermission,
-};
 use solana_sdk::{
     clock::Clock,
     instruction::InstructionError,
@@ -14,13 +8,20 @@ use solana_sdk::{
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{AuthorityConfig, ClientAction};
-use swig_state_x::{
+use swig_state::{
     action::all::All,
     authority::{
         secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority},
         AuthorityType,
     },
     swig::SwigWithRoles,
+};
+
+use super::*;
+use crate::{
+    client_role::{ClientRole, Ed25519ClientRole, Secp256r1ClientRole},
+    instruction_builder::SwigInstructionBuilder,
+    types::Permission as ClientPermission,
 };
 
 #[test_log::test]
@@ -270,8 +271,8 @@ fn test_secp256r1_replay_protection() {
     );
     println!("✓ First transaction succeeded");
 
-    // Try second transaction with same counter (should fail due to replay protection)
-    // We need to manually set the counter to 1 to simulate replay
+    // Try second transaction with same counter (should fail due to replay
+    // protection) We need to manually set the counter to 1 to simulate replay
     // Re-create the signing_key for the replay closure
     let (replay_signing_key, _) = create_test_secp256r1_keypair();
     let signing_fn_clone = Box::new(move |message_hash: &[u8]| -> [u8; 64] {
@@ -423,7 +424,7 @@ fn test_secp256r1_session_authority() {
     let session_key = rand::random::<[u8; 32]>();
     let max_session_length = 1000; // 1000 slots
 
-    let create_params = swig_state_x::authority::secp256r1::CreateSecp256r1SessionAuthority::new(
+    let create_params = swig_state::authority::secp256r1::CreateSecp256r1SessionAuthority::new(
         public_key,
         session_key,
         max_session_length,
@@ -514,7 +515,7 @@ fn create_swig_secp256r1(
     public_key: &[u8; 33],
     id: [u8; 32],
 ) -> Result<(solana_sdk::pubkey::Pubkey, u8), Box<dyn std::error::Error>> {
-    use swig_state_x::swig::swig_account_seeds;
+    use swig_state::swig::swig_account_seeds;
 
     let payer_pubkey = context.default_payer.pubkey();
     let (swig_address, swig_bump) = solana_sdk::pubkey::Pubkey::find_program_address(
@@ -607,7 +608,8 @@ fn test_secp256r1_add_authority_with_secp256r1() {
     // Get current slot for signing
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
 
-    // Create instruction to add the new Secp256r1 authority using instruction builder
+    // Create instruction to add the new Secp256r1 authority using instruction
+    // builder
     let add_authority_ix = builder
         .add_authority_instruction(
             AuthorityType::Secp256r1,

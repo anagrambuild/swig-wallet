@@ -5,7 +5,7 @@ use solana_program::system_instruction;
 use solana_sdk::signature::{Keypair, Signer};
 use spl_token::ID as TOKEN_PROGRAM_ID;
 use swig_interface::program_id;
-use swig_state_x::{
+use swig_state::{
     authority::AuthorityType,
     swig::{sub_account_seeds, SwigWithRoles},
 };
@@ -46,7 +46,7 @@ fn test_sub_account_creation_and_setup() {
     // Verify sub-account creation
     let role_id_bytes = swig_wallet.get_current_role_id().unwrap().to_le_bytes();
     let (sub_account, _) = Pubkey::find_program_address(
-        &swig_state_x::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
+        &swig_state::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
         &swig_interface::program_id(),
     );
     println!("Sub-account address: {}", &sub_account);
@@ -90,7 +90,7 @@ fn test_sub_account_sol_operations() {
     println!("Role ID: {:?}", swig_wallet.get_current_role_id().unwrap());
     println!("program_id: {:?}", swig_interface::program_id());
     let (sub_account, _) = Pubkey::find_program_address(
-        &swig_state_x::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
+        &swig_state::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
         &swig_interface::program_id(),
     );
     println!("Sub-account address: {}", &sub_account);
@@ -200,7 +200,7 @@ fn test_sub_account_token_operations() {
     let signature = swig_wallet.create_sub_account().unwrap();
     let role_id_bytes = swig_wallet.get_current_role_id().unwrap().to_le_bytes();
     let (sub_account, _) = Pubkey::find_program_address(
-        &swig_state_x::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
+        &swig_state::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
         &swig_interface::program_id(),
     );
 
@@ -273,7 +273,7 @@ fn test_sub_account_toggle_operations() {
     let signature = swig_wallet.create_sub_account().unwrap();
     let role_id_bytes = swig_wallet.get_current_role_id().unwrap().to_le_bytes();
     let (sub_account, _) = Pubkey::find_program_address(
-        &swig_state_x::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
+        &swig_state::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
         &swig_interface::program_id(),
     );
 
@@ -323,7 +323,7 @@ fn test_secondary_authority_operations() {
     let signature = swig_wallet.create_sub_account().unwrap();
     let role_id_bytes = swig_wallet.get_current_role_id().unwrap().to_le_bytes();
     let (sub_account, _) = Pubkey::find_program_address(
-        &swig_state_x::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
+        &swig_state::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
         &swig_interface::program_id(),
     );
 
@@ -435,7 +435,7 @@ fn test_sub_account_error_cases() {
     // Get sub-account address
     let role_id_bytes = swig_wallet.get_current_role_id().unwrap().to_le_bytes();
     let (sub_account, _) = Pubkey::find_program_address(
-        &swig_state_x::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
+        &swig_state::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
         &swig_interface::program_id(),
     );
 

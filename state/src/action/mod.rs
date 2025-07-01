@@ -1,4 +1,4 @@
-//! Action module for the State-X crate.
+//! Action module for the state crate.
 //!
 //! This module defines the core action system used by the Swig wallet for
 //! permission management and operation control. It includes various types of

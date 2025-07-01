@@ -5,8 +5,7 @@ use solana_program::pubkey::Pubkey;
 use solana_sdk::{clock::Clock, signature::Keypair, transaction::VersionedTransaction};
 
 use super::*;
-use crate::client_role::Ed25519ClientRole;
-use crate::tests::common::*;
+use crate::{client_role::Ed25519ClientRole, tests::common::*};
 
 #[test_log::test]
 fn should_token_transfer_with_program_scope() {

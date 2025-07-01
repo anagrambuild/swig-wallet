@@ -236,7 +236,8 @@ impl<'a> SwigBuilder<'a> {
     /// * `actions_data` - Raw bytes containing action data
     ///
     /// # Returns
-    /// * `Result<u8, ProgramError>` - The number of actions found, or error if invalid data
+    /// * `Result<u8, ProgramError>` - The number of actions found, or error if
+    ///   invalid data
     fn calculate_num_actions(actions_data: &[u8]) -> Result<u8, ProgramError> {
         let mut cursor = 0;
         let mut count = 0u8;

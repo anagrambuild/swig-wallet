@@ -18,7 +18,7 @@ use swig_interface::{
     program_id, AuthorityConfig, ClientAction, CreateInstruction, CreateSessionInstruction,
     SignInstruction,
 };
-use swig_state_x::{
+use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, program_scope::ProgramScope,
         sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,

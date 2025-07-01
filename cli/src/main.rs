@@ -514,8 +514,9 @@ pub fn format_authority(authority: &str, authority_type: &AuthorityType) -> Resu
             let authority_bytes = hex::decode(clean_authority)
                 .map_err(|_| anyhow!("Invalid hex string for Secp256k1 authority"))?;
 
-            // For Secp256k1, we expect the uncompressed public key (65 bytes starting with 0x04)
-            // or compressed public key (33 bytes starting with 0x02 or 0x03)
+            // For Secp256k1, we expect the uncompressed public key (65 bytes starting with
+            // 0x04) or compressed public key (33 bytes starting with 0x02 or
+            // 0x03)
             if authority_bytes.len() == 65 && authority_bytes[0] == 0x04 {
                 // Uncompressed format - remove the 0x04 prefix
                 Ok(authority_bytes[1..].to_vec())
@@ -526,13 +527,14 @@ pub fn format_authority(authority: &str, authority_type: &AuthorityType) -> Resu
                 Ok(authority_bytes[1..].to_vec())
             } else {
                 Err(anyhow!(
-                    "Invalid Secp256k1 public key format - expected 33 bytes (compressed) or 65 bytes (uncompressed)"
+                    "Invalid Secp256k1 public key format - expected 33 bytes (compressed) or 65 \
+                     bytes (uncompressed)"
                 ))
             }
         },
         AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
-            // For Secp256r1, the authority should be a hex string of the compressed public key
-            // Remove 0x prefix if present
+            // For Secp256r1, the authority should be a hex string of the compressed public
+            // key Remove 0x prefix if present
             let clean_authority = authority.trim_start_matches("0x");
 
             // Parse as hex bytes

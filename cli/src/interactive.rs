@@ -18,16 +18,15 @@ use solana_sdk::{
     system_instruction::{self, transfer},
 };
 use solana_secp256r1_program;
-use swig_sdk::authority::{
-    secp256k1::CreateSecp256k1SessionAuthority, secp256r1::CreateSecp256r1SessionAuthority,
-};
-use swig_sdk::Secp256k1SessionClientRole;
 use swig_sdk::{
-    authority::{ed25519::CreateEd25519SessionAuthority, AuthorityType},
+    authority::{
+        ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
+        secp256r1::CreateSecp256r1SessionAuthority, AuthorityType,
+    },
     client_role::{Secp256r1ClientRole, Secp256r1SessionClientRole},
     swig::SwigWithRoles,
-    ClientRole, Ed25519ClientRole, Permission, RecurringConfig, Secp256k1ClientRole, SwigError,
-    SwigWallet,
+    ClientRole, Ed25519ClientRole, Permission, RecurringConfig, Secp256k1ClientRole,
+    Secp256k1SessionClientRole, SwigError, SwigWallet,
 };
 
 use crate::SwigCliContext;
@@ -276,8 +275,9 @@ fn create_wallet_interactive(ctx: &mut SwigCliContext) -> Result<()> {
 
     let fee_payer_static: &mut Keypair = Box::leak(Box::new(fee_payer_keypair));
 
-    // For Secp256k1 and Secp256r1 authorities, we don't need the authority keypair as a transaction signer
-    // since the signature is provided in the instruction data
+    // For Secp256k1 and Secp256r1 authorities, we don't need the authority keypair
+    // as a transaction signer since the signature is provided in the
+    // instruction data
     let authority_keypair_static: Option<&Keypair> = match authority_type {
         AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
             Some(Box::leak(Box::new(fee_payer_static.insecure_clone())))
@@ -551,7 +551,10 @@ fn switch_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
             };
 
             println!("✓ Secp256r1 session authority keypair parsed successfully");
-            println!("Note: You now need to provide a separate Solana Ed25519 keypair for transaction fees");
+            println!(
+                "Note: You now need to provide a separate Solana Ed25519 keypair for transaction \
+                 fees"
+            );
 
             let fee_payer_kp_str = Password::with_theme(&ColorfulTheme::default())
                 .with_prompt("Enter Fee payer keypair (Solana Ed25519 keypair in base58 format)")
@@ -945,8 +948,8 @@ pub fn format_authority(authority: &str, authority_type: &AuthorityType) -> Resu
             }
         },
         AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
-            // For Secp256r1, the authority should be a hex string of the compressed public key
-            // Remove 0x prefix if present
+            // For Secp256r1, the authority should be a hex string of the compressed public
+            // key Remove 0x prefix if present
             let clean_authority = authority.trim_start_matches("0x");
 
             // Parse as hex bytes

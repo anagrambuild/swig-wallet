@@ -14,7 +14,7 @@ use pinocchio::{
 };
 use swig_assertions::*;
 use swig_compact_instructions::InstructionIterator;
-use swig_state_x::{
+use swig_state::{
     action::{all::All, sub_account::SubAccount, ActionLoader, Actionable},
     authority::AuthorityType,
     role::RoleMut,

@@ -10,14 +10,13 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::program_id;
-use swig_state_x::{
+use swig_state::{
     authority::AuthorityType,
     swig::{sub_account_seeds, swig_account_seeds, SwigWithRoles},
 };
 
 use super::*;
-use crate::client_role::Ed25519ClientRole;
-use crate::tests::common::*;
+use crate::{client_role::Ed25519ClientRole, tests::common::*};
 
 #[test_log::test]
 fn test_sub_account_functionality() {

@@ -1,17 +1,18 @@
-use super::*;
-use crate::client_role::{ClientRole, Ed25519ClientRole, Secp256r1ClientRole};
 use solana_sdk::{
     signature::{Keypair, Signer},
     system_instruction,
     sysvar::clock::Clock,
 };
-use swig_state_x::{
+use swig_state::{
     authority::{
         secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority},
         AuthorityType,
     },
     swig::SwigWithRoles,
 };
+
+use super::*;
+use crate::client_role::{ClientRole, Ed25519ClientRole, Secp256r1ClientRole};
 
 /// Helper function to create a test secp256r1 key pair
 fn create_test_secp256r1_keypair() -> (openssl::ec::EcKey<openssl::pkey::Private>, [u8; 33]) {
@@ -271,8 +272,8 @@ fn test_secp256r1_replay_protection() {
     );
     println!("✓ First transaction succeeded");
 
-    // Try second transaction with same counter (should fail due to replay protection)
-    // We need to manually set the counter to 1 to simulate replay
+    // Try second transaction with same counter (should fail due to replay
+    // protection) We need to manually set the counter to 1 to simulate replay
     let (replay_signing_key, _) = create_test_secp256r1_keypair();
     let signing_fn_clone = Box::new(move |message_hash: &[u8]| -> [u8; 64] {
         use solana_secp256r1_program::sign_message;
@@ -425,7 +426,7 @@ fn test_secp256r1_session_authority() {
     let session_key = rand::random::<[u8; 32]>();
     let max_session_length = 1000; // 1000 slots
 
-    let create_params = swig_state_x::authority::secp256r1::CreateSecp256r1SessionAuthority::new(
+    let create_params = swig_state::authority::secp256r1::CreateSecp256r1SessionAuthority::new(
         public_key,
         session_key,
         max_session_length,
@@ -455,7 +456,7 @@ fn test_secp256r1_session_authority_odometer() {
     let session_key = [0; 32];
     let max_session_length = 100;
 
-    let create_params = swig_state_x::authority::secp256r1::CreateSecp256r1SessionAuthority::new(
+    let create_params = swig_state::authority::secp256r1::CreateSecp256r1SessionAuthority::new(
         public_key,
         session_key,
         max_session_length,

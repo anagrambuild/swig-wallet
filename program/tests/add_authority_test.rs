@@ -8,7 +8,7 @@ mod common;
 use common::*;
 use solana_sdk::{signature::Keypair, signer::Signer};
 use swig_interface::{AuthorityConfig, ClientAction};
-use swig_state_x::{
+use swig_state::{
     action::manage_authority::ManageAuthority, authority::AuthorityType, swig::SwigWithRoles,
 };
 
@@ -163,7 +163,7 @@ fn test_multiple_authorities_with_different_actions() {
     .unwrap();
     context.svm.warp_to_slot(10);
     // Add authority2 with SolLimit action (imported from remove_authority_test.rs)
-    use swig_state_x::action::sol_limit::SolLimit;
+    use swig_state::action::sol_limit::SolLimit;
     add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
@@ -179,7 +179,7 @@ fn test_multiple_authorities_with_different_actions() {
     .unwrap();
     context.svm.warp_to_slot(12);
     // Add authority3 with All action
-    use swig_state_x::action::all::All;
+    use swig_state::action::all::All;
     add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
@@ -255,7 +255,7 @@ fn test_recurring_action_layout_validation() {
         .unwrap();
 
     // Test SOL recurring limit validation
-    use swig_state_x::action::sol_recurring_limit::SolRecurringLimit;
+    use swig_state::action::sol_recurring_limit::SolRecurringLimit;
 
     // Should succeed - current equals limit and last_reset is 0
     let result = add_authority_with_ed25519_root(
@@ -318,7 +318,7 @@ fn test_recurring_action_layout_validation() {
     );
 
     // Test Token recurring limit validation
-    use swig_state_x::action::token_recurring_limit::TokenRecurringLimit;
+    use swig_state::action::token_recurring_limit::TokenRecurringLimit;
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
 
     // Should succeed - current equals limit and last_reset is 0
@@ -385,7 +385,7 @@ fn test_recurring_action_layout_validation() {
     );
 
     // Test Stake recurring limit validation
-    use swig_state_x::action::stake_recurring_limit::StakeRecurringLimit;
+    use swig_state::action::stake_recurring_limit::StakeRecurringLimit;
 
     // Should succeed - current equals limit and last_reset is 0
     let result = add_authority_with_ed25519_root(

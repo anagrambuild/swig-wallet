@@ -18,7 +18,7 @@ use solana_sdk::{
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{AuthorityConfig, ClientAction, CreateSessionInstruction};
-use swig_state_x::{
+use swig_state::{
     action::all::All,
     authority::{
         secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority},

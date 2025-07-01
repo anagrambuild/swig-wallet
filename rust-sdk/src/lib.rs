@@ -13,7 +13,7 @@ pub use client_role::{
 };
 pub use error::SwigError;
 pub use instruction_builder::SwigInstructionBuilder;
-pub use swig_state_x::{authority, swig};
+pub use swig_state::{authority, swig};
 pub use types::{Permission, RecurringConfig};
 pub use utils::*;
 pub use wallet::SwigWallet;

@@ -33,7 +33,7 @@ use solana_sdk::{
     },
 };
 use swig_interface::{AuthorityConfig, ClientAction, SignInstruction};
-use swig_state_x::{
+use swig_state::{
     action::{
         all::All, stake_all::StakeAll, stake_limit::StakeLimit,
         stake_recurring_limit::StakeRecurringLimit,

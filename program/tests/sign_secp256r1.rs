@@ -15,7 +15,7 @@ use solana_sdk::{
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{AuthorityConfig, ClientAction};
-use swig_state_x::{
+use swig_state::{
     action::all::All,
     authority::{
         secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority},
@@ -392,7 +392,7 @@ fn test_secp256r1_session_authority() {
     let session_key = rand::random::<[u8; 32]>();
     let max_session_length = 1000; // 1000 slots
 
-    let create_params = swig_state_x::authority::secp256r1::CreateSecp256r1SessionAuthority::new(
+    let create_params = swig_state::authority::secp256r1::CreateSecp256r1SessionAuthority::new(
         public_key,
         session_key,
         max_session_length,
@@ -483,7 +483,7 @@ fn create_swig_secp256r1(
     public_key: &[u8; 33],
     id: [u8; 32],
 ) -> Result<(solana_sdk::pubkey::Pubkey, u8), Box<dyn std::error::Error>> {
-    use swig_state_x::swig::swig_account_seeds;
+    use swig_state::swig::swig_account_seeds;
 
     let payer_pubkey = context.default_payer.pubkey();
     let (swig_address, swig_bump) = solana_sdk::pubkey::Pubkey::find_program_address(
