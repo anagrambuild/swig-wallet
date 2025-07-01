@@ -234,9 +234,7 @@ impl Permission {
     /// # Returns
     ///
     /// Returns a `Result` containing a vector of permissions or a `SwigError`
-    pub fn from_role<'a>(
-        role: &swig_state::role::Role<'a>,
-    ) -> Result<Vec<Permission>, SwigError> {
+    pub fn from_role<'a>(role: &swig_state::role::Role<'a>) -> Result<Vec<Permission>, SwigError> {
         let mut permissions = Vec::new();
 
         // Check for All permission

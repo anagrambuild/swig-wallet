@@ -1,5 +1,3 @@
-use super::*;
-use crate::client_role::{ClientRole, Ed25519ClientRole, Secp256r1ClientRole};
 use solana_sdk::{
     signature::{Keypair, Signer},
     system_instruction,
@@ -12,6 +10,9 @@ use swig_state::{
     },
     swig::SwigWithRoles,
 };
+
+use super::*;
+use crate::client_role::{ClientRole, Ed25519ClientRole, Secp256r1ClientRole};
 
 /// Helper function to create a test secp256r1 key pair
 fn create_test_secp256r1_keypair() -> (openssl::ec::EcKey<openssl::pkey::Private>, [u8; 33]) {
@@ -271,8 +272,8 @@ fn test_secp256r1_replay_protection() {
     );
     println!("✓ First transaction succeeded");
 
-    // Try second transaction with same counter (should fail due to replay protection)
-    // We need to manually set the counter to 1 to simulate replay
+    // Try second transaction with same counter (should fail due to replay
+    // protection) We need to manually set the counter to 1 to simulate replay
     let (replay_signing_key, _) = create_test_secp256r1_keypair();
     let signing_fn_clone = Box::new(move |message_hash: &[u8]| -> [u8; 64] {
         use solana_secp256r1_program::sign_message;

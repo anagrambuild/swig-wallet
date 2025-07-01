@@ -662,7 +662,10 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                             println!("Public Key: {}", public_key);
                             println!("Private Key: {}", private_key);
                             println!("Public Key (hex): {}", hex::encode(public_key.to_bytes()));
-                            println!("Note: For session authorities, you'll also need a separate fee payer keypair");
+                            println!(
+                                "Note: For session authorities, you'll also need a separate fee \
+                                 payer keypair"
+                            );
                         },
                         _ => return Err(anyhow!("Unsupported output format: {}", output_format)),
                     }
@@ -698,7 +701,10 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                             );
                             println!("Private Key: {}", hex::encode(private_key_bytes));
                             println!("Ethereum Address: {:?}", eth_address);
-                            println!("Note: For session authorities, you'll also need a separate fee payer keypair");
+                            println!(
+                                "Note: For session authorities, you'll also need a separate fee \
+                                 payer keypair"
+                            );
                         },
                         _ => return Err(anyhow!("Unsupported output format: {}", output_format)),
                     }
@@ -737,7 +743,10 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                             println!("Secp256r1Session Keypair:");
                             println!("Public Key (compressed): {}", hex::encode(&pubkey_bytes));
                             println!("Private Key (PEM): {}", hex::encode(&prviate_key_pem));
-                            println!("Note: For session authorities, you'll also need a separate fee payer keypair");
+                            println!(
+                                "Note: For session authorities, you'll also need a separate fee \
+                                 payer keypair"
+                            );
                         },
                         _ => return Err(anyhow!("Unsupported output format: {}", output_format)),
                     }

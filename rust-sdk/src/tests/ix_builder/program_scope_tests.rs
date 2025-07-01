@@ -19,8 +19,10 @@ use swig_state::{
 };
 
 use super::*;
-use crate::client_role::Ed25519ClientRole;
-use crate::tests::common::{mint_to, setup_ata, setup_mint};
+use crate::{
+    client_role::Ed25519ClientRole,
+    tests::common::{mint_to, setup_ata, setup_mint},
+};
 
 #[test_log::test]
 fn test_token_transfer_with_program_scope() {

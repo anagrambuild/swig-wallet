@@ -1,6 +1,3 @@
-use crate::Ed25519ClientRole;
-use crate::Secp256k1ClientRole;
-
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
@@ -17,6 +14,7 @@ use swig_state::{
 };
 
 use super::*;
+use crate::{Ed25519ClientRole, Secp256k1ClientRole};
 
 #[test_log::test]
 fn test_add_authority_with_ed25519_root() {

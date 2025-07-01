@@ -16,8 +16,7 @@ use swig_state::{
 };
 
 use super::*;
-use crate::client_role::Ed25519ClientRole;
-use crate::tests::common::*;
+use crate::{client_role::Ed25519ClientRole, tests::common::*};
 
 #[test_log::test]
 fn test_sub_account_functionality() {

@@ -512,7 +512,6 @@ impl SwigInstructionBuilder {
     /// Increments the odometer for the current authority if it is Secp based
     /// authority
     ///
-    ///
     pub fn increment_odometer(&mut self) -> Result<(), SwigError> {
         self.client_role.increment_odometer()
     }
