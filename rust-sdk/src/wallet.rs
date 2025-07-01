@@ -25,7 +25,7 @@ use spl_associated_token_account::{
 };
 use spl_token::ID as TOKEN_PROGRAM_ID;
 use swig_interface::{swig, swig_key};
-use swig_state_x::{
+use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, program_scope::ProgramScope,
         sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,

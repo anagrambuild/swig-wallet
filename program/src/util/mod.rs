@@ -18,7 +18,7 @@ use pinocchio::{
     syscalls::sol_sha256,
     ProgramResult,
 };
-use swig_state_x::{
+use swig_state::{
     action::{
         program_scope::{NumericType, ProgramScope},
         Action, Permission,

@@ -20,7 +20,7 @@ use solana_sdk::{
     system_instruction,
     transaction::VersionedTransaction,
 };
-use swig_state_x::{
+use swig_state::{
     authority::{secp256k1::Secp256k1Authority, AuthorityType},
     swig::{swig_account_seeds, SwigWithRoles},
 };

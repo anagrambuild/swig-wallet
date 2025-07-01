@@ -8,7 +8,7 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::program_id;
-use swig_state_x::{
+use swig_state::{
     authority::{
         ed25519::{CreateEd25519SessionAuthority, Ed25519SessionAuthority},
         secp256k1::{CreateSecp256k1SessionAuthority, Secp256k1SessionAuthority},

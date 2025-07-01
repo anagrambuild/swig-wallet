@@ -20,7 +20,7 @@ use swig_interface::{
     AuthorityConfig, ClientAction, CreateSubAccountInstruction, SignInstruction,
     SubAccountSignInstruction, ToggleSubAccountInstruction, WithdrawFromSubAccountInstruction,
 };
-use swig_state_x::{
+use swig_state::{
     action::{
         all::All,
         manage_authority::ManageAuthority,

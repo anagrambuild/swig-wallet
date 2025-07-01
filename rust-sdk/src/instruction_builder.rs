@@ -5,7 +5,7 @@ use swig_interface::{
     SignInstruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
     WithdrawFromSubAccountInstruction,
 };
-use swig_state_x::{
+use swig_state::{
     authority::{
         ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
         secp256r1::CreateSecp256r1SessionAuthority, AuthorityType,
@@ -83,7 +83,7 @@ impl SwigInstructionBuilder {
         let authority_type = self.client_role.authority_type();
         let auth_bytes = self.client_role.authority_bytes()?;
 
-        let actions = vec![ClientAction::All(swig_state_x::action::all::All {})];
+        let actions = vec![ClientAction::All(swig_state::action::all::All {})];
 
         let instruction = CreateInstruction::new(
             swig_account,
@@ -428,7 +428,8 @@ impl SwigInstructionBuilder {
     /// # Arguments
     ///
     /// * `sub_account` - The public key of the sub-account
-    /// * `sub_account_token` - The public key of the sub-account's token account
+    /// * `sub_account_token` - The public key of the sub-account's token
+    ///   account
     /// * `swig_token` - The public key of the Swig wallet's token account
     /// * `token_program` - The token program ID
     /// * `amount` - The amount of tokens to withdraw
@@ -436,7 +437,8 @@ impl SwigInstructionBuilder {
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing the withdraw token instruction or a `SwigError`
+    /// Returns a `Result` containing the withdraw token instruction or a
+    /// `SwigError`
     pub fn withdraw_token_from_sub_account(
         &self,
         sub_account: Pubkey,
@@ -497,7 +499,8 @@ impl SwigInstructionBuilder {
         self.client_role.authority_bytes()
     }
 
-    /// Returns the odometer for the current authority if it is a Secp based authority
+    /// Returns the odometer for the current authority if it is a Secp based
+    /// authority
     ///
     /// # Returns
     ///
@@ -506,8 +509,8 @@ impl SwigInstructionBuilder {
         self.client_role.odometer()
     }
 
-    /// Increments the odometer for the current authority if it is Secp based authority
-    ///
+    /// Increments the odometer for the current authority if it is Secp based
+    /// authority
     ///
     ///
     pub fn increment_odometer(&mut self) -> Result<(), SwigError> {

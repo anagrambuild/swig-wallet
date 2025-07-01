@@ -7983,7 +7983,7 @@ dependencies = [
  "swig-assertions",
  "swig-compact-instructions",
  "swig-interface",
- "swig-state-x",
+ "swig-state",
  "test-log",
 ]
 
@@ -8045,7 +8045,7 @@ dependencies = [
  "solana-secp256r1-program",
  "swig",
  "swig-compact-instructions",
- "swig-state-x",
+ "swig-state",
 ]
 
 [[package]]
@@ -8071,13 +8071,13 @@ dependencies = [
  "spl-associated-token-account",
  "spl-token 8.0.0",
  "swig-interface",
- "swig-state-x",
+ "swig-state",
  "test-log",
  "thiserror 2.0.12",
 ]
 
 [[package]]
-name = "swig-state-x"
+name = "swig-state"
 version = "0.1.0"
 dependencies = [
  "agave-precompiles",

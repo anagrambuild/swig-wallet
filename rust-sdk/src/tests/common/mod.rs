@@ -12,7 +12,7 @@ use solana_sdk::{
 use swig_interface::{
     swig, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
 };
-use swig_state_x::{
+use swig_state::{
     action::all::All,
     authority::AuthorityType,
     swig::{swig_account_seeds, SwigWithRoles},
@@ -236,7 +236,7 @@ pub fn get_secp256r1_counter(
         let secp_authority = role
             .authority
             .as_any()
-            .downcast_ref::<swig_state_x::authority::secp256r1::Secp256r1Authority>()
+            .downcast_ref::<swig_state::authority::secp256r1::Secp256r1Authority>()
             .ok_or("Failed to downcast to Secp256r1Authority")?;
 
         Ok(secp_authority.signature_odometer)
@@ -363,7 +363,7 @@ pub fn create_swig_secp256r1_session(
     session_max_length: u64,
     initial_session_key: [u8; 32],
 ) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
-    use swig_state_x::authority::secp256r1::CreateSecp256r1SessionAuthority;
+    use swig_state::authority::secp256r1::CreateSecp256r1SessionAuthority;
 
     let payer_pubkey = context.default_payer.pubkey();
     let (swig, bump) =

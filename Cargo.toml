@@ -4,7 +4,7 @@ members = [
     "program",
     "interface",
     "instructions",
-    "state-x",
+    "state",
     "assertions",
     "no-padding",
     "rust-sdk",

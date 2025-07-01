@@ -5,7 +5,7 @@ use solana_sdk::{
     system_instruction,
     sysvar::clock::Clock,
 };
-use swig_state_x::{
+use swig_state::{
     authority::{
         secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority},
         AuthorityType,
@@ -425,7 +425,7 @@ fn test_secp256r1_session_authority() {
     let session_key = rand::random::<[u8; 32]>();
     let max_session_length = 1000; // 1000 slots
 
-    let create_params = swig_state_x::authority::secp256r1::CreateSecp256r1SessionAuthority::new(
+    let create_params = swig_state::authority::secp256r1::CreateSecp256r1SessionAuthority::new(
         public_key,
         session_key,
         max_session_length,
@@ -455,7 +455,7 @@ fn test_secp256r1_session_authority_odometer() {
     let session_key = [0; 32];
     let max_session_length = 100;
 
-    let create_params = swig_state_x::authority::secp256r1::CreateSecp256r1SessionAuthority::new(
+    let create_params = swig_state::authority::secp256r1::CreateSecp256r1SessionAuthority::new(
         public_key,
         session_key,
         max_session_length,

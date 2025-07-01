@@ -1,4 +1,4 @@
-//! Authority module for the State-X crate.
+//! Authority module for the state crate.
 //!
 //! This module provides functionality for managing different types of
 //! authorities in the Swig wallet system. It includes support for various

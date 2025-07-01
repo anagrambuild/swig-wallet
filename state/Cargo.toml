@@ -1,5 +1,5 @@
 [package]
-name = "swig-state-x"
+name = "swig-state"
 version = "0.1.0"
 edition = "2021"
 

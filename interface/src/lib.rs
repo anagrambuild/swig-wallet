@@ -15,7 +15,7 @@ use swig::actions::{
     withdraw_from_sub_account_v1::WithdrawFromSubAccountV1Args,
 };
 pub use swig_compact_instructions::*;
-use swig_state_x::{
+use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, program::Program, program_scope::ProgramScope,
         sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll,

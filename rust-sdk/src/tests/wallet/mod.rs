@@ -15,7 +15,7 @@ use litesvm::LiteSVM;
 use solana_program::pubkey::Pubkey;
 use solana_sdk::signature::{Keypair, Signer};
 use swig_interface::swig;
-use swig_state_x::{
+use swig_state::{
     authority::{
         ed25519::{CreateEd25519SessionAuthority, Ed25519SessionAuthority},
         secp256k1::{CreateSecp256k1SessionAuthority, Secp256k1SessionAuthority},

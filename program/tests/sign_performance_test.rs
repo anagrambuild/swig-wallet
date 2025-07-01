@@ -11,7 +11,7 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::{AuthorityConfig, ClientAction};
-use swig_state_x::{
+use swig_state::{
     action::program_scope::{NumericType, ProgramScope, ProgramScopeType},
     swig::swig_account_seeds,
 };

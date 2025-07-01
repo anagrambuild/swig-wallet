@@ -4,7 +4,7 @@ use swig_interface::{
     CreateSubAccountInstruction, RemoveAuthorityInstruction, SignInstruction,
     SubAccountSignInstruction, ToggleSubAccountInstruction, WithdrawFromSubAccountInstruction,
 };
-use swig_state_x::{
+use swig_state::{
     authority::{
         ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
         secp256r1::CreateSecp256r1SessionAuthority, AuthorityType,
@@ -124,10 +124,12 @@ pub trait ClientRole {
     /// Returns the authority bytes for creating the Swig account
     fn authority_bytes(&self) -> Result<Vec<u8>, SwigError>;
 
-    /// Returns the odometer for the current authority if it is a Secp256k1 authority
+    /// Returns the odometer for the current authority if it is a Secp256k1
+    /// authority
     fn odometer(&self) -> Result<u32, SwigError>;
 
-    /// Increments the odometer for the current authority if it is a Secp256k1 authority
+    /// Increments the odometer for the current authority if it is a Secp256k1
+    /// authority
     fn increment_odometer(&mut self) -> Result<(), SwigError>;
 
     /// Update the odometer for the authority
@@ -627,8 +629,8 @@ impl ClientRole for Secp256k1ClientRole {
     }
 
     fn authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
-        // For Secp256k1, the authority can be either 64 bytes (uncompressed, no 0x04 prefix)
-        // or 65 bytes (uncompressed with 0x04 prefix)
+        // For Secp256k1, the authority can be either 64 bytes (uncompressed, no 0x04
+        // prefix) or 65 bytes (uncompressed with 0x04 prefix)
         match self.authority.len() {
             64 => Ok(self.authority.to_vec()),
             65 => {

@@ -12,7 +12,7 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::{program_id, AuthorityConfig};
-use swig_state_x::{
+use swig_state::{
     action::program_scope::ProgramScope,
     authority::AuthorityType,
     swig::{swig_account_seeds, SwigWithRoles},

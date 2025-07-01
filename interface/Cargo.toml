@@ -10,11 +10,11 @@ publish = false
 bytemuck = { version = "1.19.0", features = ["derive"] }
 solana-sdk = { version = "2" }
 swig = { path = "../program", default-features = false, features = [
-  "no-entrypoint",
+    "no-entrypoint",
 ] }
 swig-compact-instructions = { path = "../instructions", default-features = false, features = [
-  "client",
+    "client",
 ] }
-swig-state-x = { path = "../state-x" }
+swig-state = { path = "../state" }
 anyhow = "1.0.75"
 solana-secp256r1-program = "2.2.1"

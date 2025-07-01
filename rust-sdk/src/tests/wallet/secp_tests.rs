@@ -8,7 +8,7 @@ use solana_sdk::{
     signature::{Keypair, Signer},
     system_instruction,
 };
-use swig_state_x::authority::AuthorityType;
+use swig_state::authority::AuthorityType;
 
 fn create_secp256k1_wallet() -> (PrivateKeySigner, Vec<u8>) {
     let wallet = PrivateKeySigner::random();
@@ -33,7 +33,7 @@ fn get_secp256k1_counter(
         .unwrap()
         .data;
 
-    let swig_with_roles = swig_state_x::swig::SwigWithRoles::from_bytes(&account_data)
+    let swig_with_roles = swig_state::swig::SwigWithRoles::from_bytes(&account_data)
         .map_err(|_| SwigError::InvalidSwigData)?;
 
     let role = swig_with_roles
@@ -45,7 +45,7 @@ fn get_secp256k1_counter(
         let auth = role
             .authority
             .as_any()
-            .downcast_ref::<swig_state_x::authority::secp256k1::Secp256k1Authority>()
+            .downcast_ref::<swig_state::authority::secp256k1::Secp256k1Authority>()
             .ok_or(SwigError::AuthorityNotFound)?;
         Ok(auth.signature_odometer)
     } else {

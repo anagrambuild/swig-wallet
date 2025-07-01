@@ -22,7 +22,7 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::{AuthorityConfig, ClientAction, RemoveAuthorityInstruction};
-use swig_state_x::{
+use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, sol_limit::SolLimit, Actionable},
     authority::AuthorityType,
     swig::{swig_account_seeds, SwigWithRoles},
@@ -75,7 +75,7 @@ fn test_multiple_actions_with_multiple_actions() {
     let role = swig.get_role(role_id).unwrap().unwrap();
     assert_eq!(role.position.num_actions(), 2);
 
-    use swig_state_x::role::Role;
+    use swig_state::role::Role;
     if (Role::get_action::<ManageAuthority>(&role, &[]).unwrap()).is_some() {
         println!("Manage Authority action found");
     }
@@ -206,7 +206,7 @@ fn test_action_boundaries_after_role_removal() {
         transaction::VersionedTransaction,
     };
     use swig_interface::RemoveAuthorityInstruction;
-    use swig_state_x::action::token_limit::TokenLimit;
+    use swig_state::action::token_limit::TokenLimit;
 
     let mut context = setup_test_context().unwrap();
     let root_authority = Keypair::new();

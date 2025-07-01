@@ -1,4 +1,4 @@
-//! State-X is a crate that provides state management and authentication
+//! state is a crate that provides state management and authentication
 //! functionality for the Swig wallet system. It includes account management,
 //! role-based access control, and various authentication mechanisms.
 

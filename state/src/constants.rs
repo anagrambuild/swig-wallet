@@ -1,4 +1,4 @@
-//! Constants used throughout the State-X crate.
+//! Constants used throughout the state crate.
 //!
 //! This module defines various constant values used by the Swig wallet system.
 
