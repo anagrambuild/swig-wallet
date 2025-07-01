@@ -1327,35 +1327,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
-name = "cli"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-signer",
- "alloy-signer-local",
- "anyhow",
- "bs58",
- "clap",
- "colored",
- "console",
- "dialoguer",
- "directories",
- "dirs",
- "hex",
- "indicatif",
- "openssl",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "solana-sdk",
- "solana-secp256r1-program",
- "spl-associated-token-account",
- "spl-token 8.0.0",
- "swig-sdk",
- "tokio",
-]
-
-[[package]]
 name = "colorchoice"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7965,6 +7936,35 @@ dependencies = [
  "pinocchio 0.8.1",
  "pinocchio-pubkey",
  "pinocchio-system",
+]
+
+[[package]]
+name = "swig-cli"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
+ "anyhow",
+ "bs58",
+ "clap",
+ "colored",
+ "console",
+ "dialoguer",
+ "directories",
+ "dirs",
+ "hex",
+ "indicatif",
+ "openssl",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "solana-sdk",
+ "solana-secp256r1-program",
+ "spl-associated-token-account",
+ "spl-token 8.0.0",
+ "swig-sdk",
+ "tokio",
 ]
 
 [[package]]
