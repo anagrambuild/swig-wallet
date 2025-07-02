@@ -29,6 +29,7 @@ use swig_state::{
         stake_recurring_limit::StakeRecurringLimit,
         token_destination_limit::TokenDestinationLimit,
         token_limit::TokenLimit,
+        token_recurring_destination_limit::TokenRecurringDestinationLimit,
         token_recurring_limit::TokenRecurringLimit,
     },
     authority::AuthorityType,
@@ -472,24 +473,38 @@ pub fn sign_v1(
                             all_accounts,
                             ctx.accounts.swig.key(),
                         )?;
-                        
-                        // Check each destination against TokenDestinationLimit actions
+
+                        // Check each destination against TokenDestinationLimit and
+                        // TokenRecurringDestinationLimit actions
                         let mut destination_limit_applied = false;
                         for destination in destinations {
                             // Create the combined key [mint + destination] for matching
                             let mut combined_key = [0u8; 64];
                             combined_key[..32].copy_from_slice(mint);
                             combined_key[32..].copy_from_slice(destination.as_ref());
-                            
-                            if let Some(action) = 
-                                RoleMut::get_action_mut::<TokenDestinationLimit>(actions, &combined_key)?
-                            {
+
+                            // First check recurring destination limits
+                            if let Some(action) = RoleMut::get_action_mut::<
+                                TokenRecurringDestinationLimit,
+                            >(
+                                actions, &combined_key
+                            )? {
+                                action.run(diff, slot)?;
+                                destination_limit_applied = true;
+                                break;
+                            }
+
+                            // Then check non-recurring destination limits
+                            if let Some(action) = RoleMut::get_action_mut::<TokenDestinationLimit>(
+                                actions,
+                                &combined_key,
+                            )? {
                                 action.run(diff)?;
                                 destination_limit_applied = true;
                                 break;
                             }
                         }
-                        
+
                         // If a destination limit was applied, continue to next account
                         if destination_limit_applied {
                             continue 'account_loop;
@@ -667,11 +682,12 @@ pub fn sign_v1(
     Ok(())
 }
 
-/// Extracts token destination accounts from instruction payload for a specific source account.
+/// Extracts token destination accounts from instruction payload for a specific
+/// source account.
 ///
-/// This function parses the instruction payload to find SPL Token Transfer instructions
-/// where the specified source account is being debited, and returns the destination
-/// token accounts for those transfers.
+/// This function parses the instruction payload to find SPL Token Transfer
+/// instructions where the specified source account is being debited, and
+/// returns the destination token accounts for those transfers.
 ///
 /// # Arguments
 /// * `instruction_payload` - The raw instruction payload bytes
@@ -680,7 +696,8 @@ pub fn sign_v1(
 /// * `signer` - The signer pubkey for the transaction
 ///
 /// # Returns
-/// * `Result<Vec<Pubkey>, ProgramError>` - List of destination token account pubkeys
+/// * `Result<Vec<Pubkey>, ProgramError>` - List of destination token account
+///   pubkeys
 fn extract_token_destinations(
     instruction_payload: &[u8],
     source_account: &Pubkey,
@@ -688,25 +705,28 @@ fn extract_token_destinations(
     signer: &Pubkey,
 ) -> Result<Vec<Pubkey>, ProgramError> {
     let mut destinations = Vec::new();
-    
+
     // Parse the instruction payload using the instruction iterator
     let restricted_keys: &[&Pubkey] = &[]; // No restricted keys for this use case
-    let mut instruction_iter = InstructionIterator::new(all_accounts, instruction_payload, signer, restricted_keys)?;
-    
+    let mut instruction_iter =
+        InstructionIterator::new(all_accounts, instruction_payload, signer, restricted_keys)?;
+
     while let Some(instruction) = instruction_iter.next() {
         let instruction = instruction?;
-        
+
         // Check if this is a token program instruction
-        if *instruction.program_id == crate::SPL_TOKEN_ID || *instruction.program_id == crate::SPL_TOKEN_2022_ID {
+        if *instruction.program_id == crate::SPL_TOKEN_ID
+            || *instruction.program_id == crate::SPL_TOKEN_2022_ID
+        {
             // Check if this is a Transfer instruction (discriminator = 3)
             if !instruction.data.is_empty() && instruction.data[0] == 3 {
                 // SPL Token Transfer instruction layout:
                 // - accounts[0]: source token account
-                // - accounts[1]: destination token account  
+                // - accounts[1]: destination token account
                 // - accounts[2]: authority
                 if instruction.accounts.len() >= 2 {
                     let source_pubkey = &instruction.accounts[0].pubkey;
-                    
+
                     // Check if this transfer is from our source account
                     if *source_pubkey == source_account.as_ref() {
                         let destination_pubkey = instruction.accounts[1].pubkey;
@@ -716,6 +736,6 @@ fn extract_token_destinations(
             }
         }
     }
-    
+
     Ok(destinations)
 }
