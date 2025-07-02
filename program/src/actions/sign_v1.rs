@@ -307,7 +307,7 @@ pub fn sign_v1(
     if RoleMut::get_action_mut::<All>(actions, &[])?.is_some() {
         return Ok(());
     } else {
-        for (index, account) in account_classifiers.iter().enumerate() {
+        'account_loop: for (index, account) in account_classifiers.iter().enumerate() {
             match account {
                 AccountClassification::ThisSwig { lamports } => {
                     let account = unsafe { all_accounts.get_unchecked(index) };
@@ -463,17 +463,37 @@ pub fn sign_v1(
                         // Tokens are being sent out from this swig-owned account
                         let diff = current_token_balance - balance;
 
-                        // TODO: Implement full token destination limit checking
-                        // This requires parsing the instruction payload to extract the destination
-                        // token account from token transfer instructions. For now, we'll check
-                        // regular token limits and add a placeholder for destination limits.
-
-                        // Check token destination limits (placeholder implementation)
-                        // In a full implementation, we would:
-                        // 1. Parse the instruction payload to find token transfer instructions
-                        // 2. Extract the destination token account from those instructions
-                        // 3. Create a combined key [mint + destination] for matching
-                        // 4. Check if any TokenDestinationLimit actions match this key
+                        // Check token destination limits for outgoing transfers
+                        // Extract destination accounts from token transfer instructions
+                        let source_account_key = unsafe { all_accounts.get_unchecked(index) }.key();
+                        let destinations = extract_token_destinations(
+                            sign_v1.instruction_payload,
+                            source_account_key,
+                            all_accounts,
+                            ctx.accounts.swig.key(),
+                        )?;
+                        
+                        // Check each destination against TokenDestinationLimit actions
+                        let mut destination_limit_applied = false;
+                        for destination in destinations {
+                            // Create the combined key [mint + destination] for matching
+                            let mut combined_key = [0u8; 64];
+                            combined_key[..32].copy_from_slice(mint);
+                            combined_key[32..].copy_from_slice(destination.as_ref());
+                            
+                            if let Some(action) = 
+                                RoleMut::get_action_mut::<TokenDestinationLimit>(actions, &combined_key)?
+                            {
+                                action.run(diff)?;
+                                destination_limit_applied = true;
+                                break;
+                            }
+                        }
+                        
+                        // If a destination limit was applied, continue to next account
+                        if destination_limit_applied {
+                            continue 'account_loop;
+                        }
 
                         // Check regular token limits for outgoing transfers
                         {
@@ -645,4 +665,57 @@ pub fn sign_v1(
     }
 
     Ok(())
+}
+
+/// Extracts token destination accounts from instruction payload for a specific source account.
+///
+/// This function parses the instruction payload to find SPL Token Transfer instructions
+/// where the specified source account is being debited, and returns the destination
+/// token accounts for those transfers.
+///
+/// # Arguments
+/// * `instruction_payload` - The raw instruction payload bytes
+/// * `source_account` - The source token account to look for
+/// * `all_accounts` - All accounts in the transaction
+/// * `signer` - The signer pubkey for the transaction
+///
+/// # Returns
+/// * `Result<Vec<Pubkey>, ProgramError>` - List of destination token account pubkeys
+fn extract_token_destinations(
+    instruction_payload: &[u8],
+    source_account: &Pubkey,
+    all_accounts: &[AccountInfo],
+    signer: &Pubkey,
+) -> Result<Vec<Pubkey>, ProgramError> {
+    let mut destinations = Vec::new();
+    
+    // Parse the instruction payload using the instruction iterator
+    let restricted_keys: &[&Pubkey] = &[]; // No restricted keys for this use case
+    let mut instruction_iter = InstructionIterator::new(all_accounts, instruction_payload, signer, restricted_keys)?;
+    
+    while let Some(instruction) = instruction_iter.next() {
+        let instruction = instruction?;
+        
+        // Check if this is a token program instruction
+        if *instruction.program_id == crate::SPL_TOKEN_ID || *instruction.program_id == crate::SPL_TOKEN_2022_ID {
+            // Check if this is a Transfer instruction (discriminator = 3)
+            if !instruction.data.is_empty() && instruction.data[0] == 3 {
+                // SPL Token Transfer instruction layout:
+                // - accounts[0]: source token account
+                // - accounts[1]: destination token account  
+                // - accounts[2]: authority
+                if instruction.accounts.len() >= 2 {
+                    let source_pubkey = &instruction.accounts[0].pubkey;
+                    
+                    // Check if this transfer is from our source account
+                    if *source_pubkey == source_account.as_ref() {
+                        let destination_pubkey = instruction.accounts[1].pubkey;
+                        destinations.push(*destination_pubkey);
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(destinations)
 }
