@@ -19,6 +19,7 @@ pub mod stake_recurring_limit;
 pub mod sub_account;
 pub mod token_destination_limit;
 pub mod token_limit;
+pub mod token_recurring_destination_limit;
 pub mod token_recurring_limit;
 use all::All;
 use manage_authority::ManageAuthority;
@@ -36,6 +37,7 @@ use stake_recurring_limit::StakeRecurringLimit;
 use sub_account::SubAccount;
 use token_destination_limit::TokenDestinationLimit;
 use token_limit::TokenLimit;
+use token_recurring_destination_limit::TokenRecurringDestinationLimit;
 use token_recurring_limit::TokenRecurringLimit;
 
 use crate::{IntoBytes, SwigStateError, Transmutable, TransmutableMut};
@@ -133,6 +135,9 @@ pub enum Permission {
     /// Permission to perform token operations with limits to specific
     /// destinations
     TokenDestinationLimit = 15,
+    /// Permission to perform recurring token operations with limits to specific
+    /// destinations
+    TokenRecurringDestinationLimit = 16,
     /// Permission to perform all operations
     All = 7,
     /// Permission to manage authority settings
@@ -154,7 +159,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=15 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=16 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -216,6 +221,9 @@ impl ActionLoader {
             Permission::StakeRecurringLimit => StakeRecurringLimit::valid_layout(data),
             Permission::StakeAll => StakeAll::valid_layout(data),
             Permission::TokenDestinationLimit => TokenDestinationLimit::valid_layout(data),
+            Permission::TokenRecurringDestinationLimit => {
+                TokenRecurringDestinationLimit::valid_layout(data)
+            },
             _ => Ok(false),
         }
     }

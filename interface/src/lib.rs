@@ -27,6 +27,7 @@ use swig_state::{
         sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll, stake_limit::StakeLimit,
         stake_recurring_limit::StakeRecurringLimit, sub_account::SubAccount,
         token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
+        token_recurring_destination_limit::TokenRecurringDestinationLimit,
         token_recurring_limit::TokenRecurringLimit, Action, Permission,
     },
     authority::{
@@ -41,6 +42,7 @@ pub enum ClientAction {
     TokenLimit(TokenLimit),
     TokenDestinationLimit(TokenDestinationLimit),
     TokenRecurringLimit(TokenRecurringLimit),
+    TokenRecurringDestinationLimit(TokenRecurringDestinationLimit),
     SolLimit(SolLimit),
     SolRecurringLimit(SolRecurringLimit),
     SolDestinationLimit(SolDestinationLimit),
@@ -66,6 +68,10 @@ impl ClientAction {
             ClientAction::TokenRecurringLimit(_) => {
                 (Permission::TokenRecurringLimit, TokenRecurringLimit::LEN)
             },
+            ClientAction::TokenRecurringDestinationLimit(_) => (
+                Permission::TokenRecurringDestinationLimit,
+                TokenRecurringDestinationLimit::LEN,
+            ),
             ClientAction::SolLimit(_) => (Permission::SolLimit, SolLimit::LEN),
             ClientAction::SolRecurringLimit(_) => {
                 (Permission::SolRecurringLimit, SolRecurringLimit::LEN)
@@ -102,6 +108,7 @@ impl ClientAction {
             ClientAction::TokenLimit(action) => action.into_bytes(),
             ClientAction::TokenDestinationLimit(action) => action.into_bytes(),
             ClientAction::TokenRecurringLimit(action) => action.into_bytes(),
+            ClientAction::TokenRecurringDestinationLimit(action) => action.into_bytes(),
             ClientAction::SolLimit(action) => action.into_bytes(),
             ClientAction::SolRecurringLimit(action) => action.into_bytes(),
             ClientAction::SolDestinationLimit(action) => action.into_bytes(),
