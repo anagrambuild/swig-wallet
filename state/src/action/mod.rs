@@ -11,6 +11,7 @@ pub mod program;
 pub mod program_scope;
 pub mod sol_destination_limit;
 pub mod sol_limit;
+pub mod sol_recurring_destination_limit;
 pub mod sol_recurring_limit;
 pub mod stake_all;
 pub mod stake_limit;
@@ -26,6 +27,7 @@ use program::Program;
 use program_scope::ProgramScope;
 use sol_destination_limit::SolDestinationLimit;
 use sol_limit::SolLimit;
+use sol_recurring_destination_limit::SolRecurringDestinationLimit;
 use sol_recurring_limit::SolRecurringLimit;
 use stake_all::StakeAll;
 use stake_limit::StakeLimit;
@@ -115,6 +117,9 @@ pub enum Permission {
     /// Permission to perform SOL token operations with limits to specific
     /// destinations
     SolDestinationLimit = 13,
+    /// Permission to perform recurring SOL token operations with limits to specific
+    /// destinations
+    SolRecurringDestinationLimit = 14,
     /// Permission to interact with programs
     Program = 3,
     /// Permission to interact with program scopes
@@ -144,7 +149,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=13 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=14 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -192,6 +197,7 @@ impl ActionLoader {
             Permission::SolLimit => SolLimit::valid_layout(data),
             Permission::SolRecurringLimit => SolRecurringLimit::valid_layout(data),
             Permission::SolDestinationLimit => SolDestinationLimit::valid_layout(data),
+            Permission::SolRecurringDestinationLimit => SolRecurringDestinationLimit::valid_layout(data),
             Permission::Program => Program::valid_layout(data),
             Permission::ProgramScope => ProgramScope::valid_layout(data),
             Permission::TokenLimit => TokenLimit::valid_layout(data),

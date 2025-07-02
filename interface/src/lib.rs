@@ -23,7 +23,7 @@ use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, program::Program, program_scope::ProgramScope,
         sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
-        sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll, stake_limit::StakeLimit,
+        sol_recurring_destination_limit::SolRecurringDestinationLimit, sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll, stake_limit::StakeLimit,
         stake_recurring_limit::StakeRecurringLimit, sub_account::SubAccount,
         token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit, Action, Permission,
     },
@@ -41,6 +41,7 @@ pub enum ClientAction {
     SolLimit(SolLimit),
     SolRecurringLimit(SolRecurringLimit),
     SolDestinationLimit(SolDestinationLimit),
+    SolRecurringDestinationLimit(SolRecurringDestinationLimit),
     Program(Program),
     ProgramScope(ProgramScope),
     All(All),
@@ -64,6 +65,9 @@ impl ClientAction {
             },
             ClientAction::SolDestinationLimit(_) => {
                 (Permission::SolDestinationLimit, SolDestinationLimit::LEN)
+            },
+            ClientAction::SolRecurringDestinationLimit(_) => {
+                (Permission::SolRecurringDestinationLimit, SolRecurringDestinationLimit::LEN)
             },
             ClientAction::Program(_) => (Permission::Program, Program::LEN),
             ClientAction::ProgramScope(_) => (Permission::ProgramScope, ProgramScope::LEN),
@@ -92,6 +96,7 @@ impl ClientAction {
             ClientAction::SolLimit(action) => action.into_bytes(),
             ClientAction::SolRecurringLimit(action) => action.into_bytes(),
             ClientAction::SolDestinationLimit(action) => action.into_bytes(),
+            ClientAction::SolRecurringDestinationLimit(action) => action.into_bytes(),
             ClientAction::Program(action) => action.into_bytes(),
             ClientAction::ProgramScope(action) => action.into_bytes(),
             ClientAction::All(action) => action.into_bytes(),
