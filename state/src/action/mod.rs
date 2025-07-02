@@ -9,13 +9,17 @@ pub mod all;
 pub mod manage_authority;
 pub mod program;
 pub mod program_scope;
+pub mod sol_destination_limit;
 pub mod sol_limit;
+pub mod sol_recurring_destination_limit;
 pub mod sol_recurring_limit;
 pub mod stake_all;
 pub mod stake_limit;
 pub mod stake_recurring_limit;
 pub mod sub_account;
+pub mod token_destination_limit;
 pub mod token_limit;
+pub mod token_recurring_destination_limit;
 pub mod token_recurring_limit;
 use all::All;
 use manage_authority::ManageAuthority;
@@ -23,13 +27,17 @@ use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 use program::Program;
 use program_scope::ProgramScope;
+use sol_destination_limit::SolDestinationLimit;
 use sol_limit::SolLimit;
+use sol_recurring_destination_limit::SolRecurringDestinationLimit;
 use sol_recurring_limit::SolRecurringLimit;
 use stake_all::StakeAll;
 use stake_limit::StakeLimit;
 use stake_recurring_limit::StakeRecurringLimit;
 use sub_account::SubAccount;
+use token_destination_limit::TokenDestinationLimit;
 use token_limit::TokenLimit;
+use token_recurring_destination_limit::TokenRecurringDestinationLimit;
 use token_recurring_limit::TokenRecurringLimit;
 
 use crate::{IntoBytes, SwigStateError, Transmutable, TransmutableMut};
@@ -130,6 +138,18 @@ pub enum Permission {
     StakeRecurringLimit = 11,
     /// Permission to perform all stake operations
     StakeAll = 12,
+    /// Permission to perform SOL token operations with limits to specific
+    /// destinations
+    SolDestinationLimit = 13,
+    /// Permission to perform recurring SOL token operations with limits to
+    /// specific destinations
+    SolRecurringDestinationLimit = 14,
+    /// Permission to perform token operations with limits to specific
+    /// destinations
+    TokenDestinationLimit = 15,
+    /// Permission to perform recurring token operations with limits to specific
+    /// destinations
+    TokenRecurringDestinationLimit = 16,
 }
 
 impl TryFrom<u16> for Permission {
@@ -139,7 +159,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=12 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=16 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -186,6 +206,10 @@ impl ActionLoader {
         match permission {
             Permission::SolLimit => SolLimit::valid_layout(data),
             Permission::SolRecurringLimit => SolRecurringLimit::valid_layout(data),
+            Permission::SolDestinationLimit => SolDestinationLimit::valid_layout(data),
+            Permission::SolRecurringDestinationLimit => {
+                SolRecurringDestinationLimit::valid_layout(data)
+            },
             Permission::Program => Program::valid_layout(data),
             Permission::ProgramScope => ProgramScope::valid_layout(data),
             Permission::TokenLimit => TokenLimit::valid_layout(data),
@@ -196,6 +220,10 @@ impl ActionLoader {
             Permission::StakeLimit => StakeLimit::valid_layout(data),
             Permission::StakeRecurringLimit => StakeRecurringLimit::valid_layout(data),
             Permission::StakeAll => StakeAll::valid_layout(data),
+            Permission::TokenDestinationLimit => TokenDestinationLimit::valid_layout(data),
+            Permission::TokenRecurringDestinationLimit => {
+                TokenRecurringDestinationLimit::valid_layout(data)
+            },
             _ => Ok(false),
         }
     }
