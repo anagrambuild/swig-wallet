@@ -161,6 +161,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedSecp256r1InvalidMessage,
     /// SOL destination limit exceeded
     PermissionDeniedSolDestinationLimitExceeded,
+    /// Token destination limit exceeded
+    PermissionDeniedTokenDestinationLimitExceeded,
 }
 
 impl From<SwigStateError> for ProgramError {
