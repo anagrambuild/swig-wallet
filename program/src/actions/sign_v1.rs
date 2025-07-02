@@ -27,6 +27,7 @@ use swig_state::{
         stake_all::StakeAll,
         stake_limit::StakeLimit,
         stake_recurring_limit::StakeRecurringLimit,
+        token_destination_limit::TokenDestinationLimit,
         token_limit::TokenLimit,
         token_recurring_limit::TokenRecurringLimit,
     },
@@ -441,6 +442,40 @@ pub fn sign_v1(
 
                     if balance > &current_token_balance {
                         let diff = balance - current_token_balance;
+                        {
+                            if let Some(action) =
+                                RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?
+                            {
+                                action.run(diff, slot)?;
+                                continue;
+                            };
+                        }
+                        {
+                            if let Some(action) =
+                                RoleMut::get_action_mut::<TokenLimit>(actions, mint)?
+                            {
+                                action.run(diff)?;
+                                continue;
+                            };
+                        }
+                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+                    } else if balance < &current_token_balance {
+                        // Tokens are being sent out from this swig-owned account
+                        let diff = current_token_balance - balance;
+
+                        // TODO: Implement full token destination limit checking
+                        // This requires parsing the instruction payload to extract the destination
+                        // token account from token transfer instructions. For now, we'll check
+                        // regular token limits and add a placeholder for destination limits.
+
+                        // Check token destination limits (placeholder implementation)
+                        // In a full implementation, we would:
+                        // 1. Parse the instruction payload to find token transfer instructions
+                        // 2. Extract the destination token account from those instructions
+                        // 3. Create a combined key [mint + destination] for matching
+                        // 4. Check if any TokenDestinationLimit actions match this key
+
+                        // Check regular token limits for outgoing transfers
                         {
                             if let Some(action) =
                                 RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?
