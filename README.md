@@ -1,11 +1,5 @@
 # SWIG Solana Wallet Protocol
 
-## ⚠️ SECURITY DISCLAIMER
-
-**Important: Swig is a work in progress and is not yet ready for production use. The workflows are provided for reference and testing purposes only.**
-
-**Swig is currently undergoing audit and should not be used in any production environment until audits are complete.**
-
 ## Building
 
 1. You must have the Agave toolchain of at least version 2.2.1 and its requirements installed. See [https://docs.anza.xyz/cli/install](https://docs.anza.xyz/cli/install) for more info.
@@ -17,6 +11,10 @@
 2. Run the general test suite with `cargo build-sbf && cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast`
 3. Run the tests covering `ProgramScope` with `cargo build-sbf --features=program_scope_test && cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=program_scope_test`
 4. Run the tests covering Stake actions by running `cargo build-sbf --features=stake_tests && cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=stake_tests`
+
+## Audit
+
+Swig has been independently auditted by Accretion with plans to undergo additional audits. A copy of the audit report can be shared upon request.
 
 ## License
 
