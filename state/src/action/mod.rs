@@ -118,12 +118,6 @@ pub enum Permission {
     SolLimit = 1,
     /// Permission to perform recurring SOL token operations with limits
     SolRecurringLimit = 2,
-    /// Permission to perform SOL token operations with limits to specific
-    /// destinations
-    SolDestinationLimit = 13,
-    /// Permission to perform recurring SOL token operations with limits to
-    /// specific destinations
-    SolRecurringDestinationLimit = 14,
     /// Permission to interact with programs
     Program = 3,
     /// Permission to interact with program scopes
@@ -132,12 +126,6 @@ pub enum Permission {
     TokenLimit = 5,
     /// Permission to perform recurring token operations with limits
     TokenRecurringLimit = 6,
-    /// Permission to perform token operations with limits to specific
-    /// destinations
-    TokenDestinationLimit = 15,
-    /// Permission to perform recurring token operations with limits to specific
-    /// destinations
-    TokenRecurringDestinationLimit = 16,
     /// Permission to perform all operations
     All = 7,
     /// Permission to manage authority settings
@@ -150,6 +138,18 @@ pub enum Permission {
     StakeRecurringLimit = 11,
     /// Permission to perform all stake operations
     StakeAll = 12,
+    /// Permission to perform SOL token operations with limits to specific
+    /// destinations
+    SolDestinationLimit = 13,
+    /// Permission to perform recurring SOL token operations with limits to
+    /// specific destinations
+    SolRecurringDestinationLimit = 14,
+    /// Permission to perform token operations with limits to specific
+    /// destinations
+    TokenDestinationLimit = 15,
+    /// Permission to perform recurring token operations with limits to specific
+    /// destinations
+    TokenRecurringDestinationLimit = 16,
 }
 
 impl TryFrom<u16> for Permission {
