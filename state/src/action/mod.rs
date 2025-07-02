@@ -9,6 +9,7 @@ pub mod all;
 pub mod manage_authority;
 pub mod program;
 pub mod program_scope;
+pub mod sol_destination_limit;
 pub mod sol_limit;
 pub mod sol_recurring_limit;
 pub mod stake_all;
@@ -23,6 +24,7 @@ use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 use program::Program;
 use program_scope::ProgramScope;
+use sol_destination_limit::SolDestinationLimit;
 use sol_limit::SolLimit;
 use sol_recurring_limit::SolRecurringLimit;
 use stake_all::StakeAll;
@@ -110,6 +112,9 @@ pub enum Permission {
     SolLimit = 1,
     /// Permission to perform recurring SOL token operations with limits
     SolRecurringLimit = 2,
+    /// Permission to perform SOL token operations with limits to specific
+    /// destinations
+    SolDestinationLimit = 13,
     /// Permission to interact with programs
     Program = 3,
     /// Permission to interact with program scopes
@@ -139,7 +144,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=12 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=13 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -186,6 +191,7 @@ impl ActionLoader {
         match permission {
             Permission::SolLimit => SolLimit::valid_layout(data),
             Permission::SolRecurringLimit => SolRecurringLimit::valid_layout(data),
+            Permission::SolDestinationLimit => SolDestinationLimit::valid_layout(data),
             Permission::Program => Program::valid_layout(data),
             Permission::ProgramScope => ProgramScope::valid_layout(data),
             Permission::TokenLimit => TokenLimit::valid_layout(data),
