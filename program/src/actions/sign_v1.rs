@@ -22,6 +22,7 @@ use swig_state::{
         program_scope::{NumericType, ProgramScope},
         sol_destination_limit::SolDestinationLimit,
         sol_limit::SolLimit,
+        sol_recurring_destination_limit::SolRecurringDestinationLimit,
         sol_recurring_limit::SolRecurringLimit,
         stake_all::StakeAll,
         stake_limit::StakeLimit,
@@ -360,6 +361,14 @@ pub fn sign_v1(
                                     // In a real implementation, you'd want to track the exact
                                     // amount sent to each destination
                                     dest_action.run(amount_diff)?;
+                                    destination_limit_applied = true;
+                                } else if let Some(dest_action) = RoleMut::get_action_mut::<
+                                    SolRecurringDestinationLimit,
+                                >(
+                                    actions, &dest_pubkey
+                                )? {
+                                    // Apply recurring destination limit
+                                    dest_action.run(amount_diff, slot)?;
                                     destination_limit_applied = true;
                                 }
                             }
