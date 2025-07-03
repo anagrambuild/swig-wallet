@@ -1,7 +1,8 @@
 //! Program All action type.
 //!
 //! This module defines the ProgramAll action type which grants permission to
-//! interact with any program in the Swig wallet system (unrestricted CPI access).
+//! interact with any program in the Swig wallet system (unrestricted CPI
+//! access).
 
 use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
@@ -9,11 +10,12 @@ use pinocchio::program_error::ProgramError;
 use super::{Actionable, Permission};
 use crate::{IntoBytes, Transmutable, TransmutableMut};
 
-/// Represents permission to interact with any program (unrestricted CPI access).
+/// Represents permission to interact with any program (unrestricted CPI
+/// access).
 ///
-/// This action grants the authority the ability to make CPI calls to any program
-/// without restrictions. This is the most permissive program permission and should
-/// be used with caution.
+/// This action grants the authority the ability to make CPI calls to any
+/// program without restrictions. This is the most permissive program permission
+/// and should be used with caution.
 #[derive(NoPadding)]
 #[repr(C, align(8))]
 pub struct ProgramAll {
@@ -24,9 +26,7 @@ pub struct ProgramAll {
 impl ProgramAll {
     /// Creates a new ProgramAll permission
     pub fn new() -> Self {
-        Self {
-            _reserved: [0; 32],
-        }
+        Self { _reserved: [0; 32] }
     }
 }
 

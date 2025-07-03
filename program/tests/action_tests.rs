@@ -23,7 +23,10 @@ use solana_sdk::{
 };
 use swig_interface::{AuthorityConfig, ClientAction, RemoveAuthorityInstruction};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, program::Program, sol_limit::SolLimit, Actionable},
+    action::{
+        all::All, manage_authority::ManageAuthority, program::Program, sol_limit::SolLimit,
+        Actionable,
+    },
     authority::AuthorityType,
     swig::{swig_account_seeds, SwigWithRoles},
     IntoBytes, Transmutable,
