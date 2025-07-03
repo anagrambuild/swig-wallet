@@ -13,6 +13,7 @@ pub mod remove_authority_v1;
 pub mod sign_v1;
 pub mod sub_account_sign_v1;
 pub mod toggle_sub_account_v1;
+pub mod update_authority_v1;
 pub mod withdraw_from_sub_account_v1;
 
 use num_enum::FromPrimitive;
@@ -21,14 +22,15 @@ use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, Pro
 use self::{
     add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*, create_v1::*,
     remove_authority_v1::*, sign_v1::*, sub_account_sign_v1::*, toggle_sub_account_v1::*,
-    withdraw_from_sub_account_v1::*,
+    update_authority_v1::*, withdraw_from_sub_account_v1::*,
 };
 use crate::{
     instruction::{
         accounts::{
             AddAuthorityV1Accounts, CreateSessionV1Accounts, CreateSubAccountV1Accounts,
             CreateV1Accounts, RemoveAuthorityV1Accounts, SignV1Accounts, SubAccountSignV1Accounts,
-            ToggleSubAccountV1Accounts, WithdrawFromSubAccountV1Accounts,
+            ToggleSubAccountV1Accounts, UpdateAuthorityV1Accounts,
+            WithdrawFromSubAccountV1Accounts,
         },
         SwigInstruction,
     },
@@ -64,6 +66,7 @@ pub fn process_action(
         SwigInstruction::SignV1 => process_sign_v1(accounts, account_classification, data),
         SwigInstruction::AddAuthorityV1 => process_add_authority_v1(accounts, data),
         SwigInstruction::RemoveAuthorityV1 => process_remove_authority_v1(accounts, data),
+        SwigInstruction::UpdateAuthorityV1 => process_update_authority_v1(accounts, data),
         SwigInstruction::CreateSessionV1 => process_create_session_v1(accounts, data),
         SwigInstruction::CreateSubAccountV1 => process_create_sub_account_v1(accounts, data),
         SwigInstruction::WithdrawFromSubAccountV1 => {
@@ -110,6 +113,14 @@ fn process_add_authority_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramRes
 fn process_remove_authority_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = RemoveAuthorityV1Accounts::context(accounts)?;
     remove_authority_v1(account_ctx, data, accounts)
+}
+
+/// Processes an UpdateAuthorityV1 instruction.
+///
+/// Updates an existing authority in the wallet with new permissions.
+fn process_update_authority_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = UpdateAuthorityV1Accounts::context(accounts)?;
+    update_authority_v1(account_ctx, data, accounts)
 }
 
 /// Processes a CreateSessionV1 instruction.
