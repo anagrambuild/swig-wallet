@@ -19,6 +19,7 @@ use swig_compact_instructions::InstructionIterator;
 use swig_state::{
     action::{
         all::All,
+        program::Program,
         program_scope::{NumericType, ProgramScope},
         sol_limit::SolLimit,
         sol_recurring_limit::SolRecurringLimit,
@@ -225,6 +226,39 @@ pub fn sign_v1(
     let b = [swig.bump];
     let seeds = swig_account_signer(&swig.id, &b);
     let signer = seeds.as_slice();
+
+    // Check CPI signing permissions if not All permission
+    if RoleMut::get_action_mut::<All>(role.actions, &[])?.is_none() {
+        // Create a second iterator to validate CPI permissions before execution
+        let validation_ix_iter = InstructionIterator::new(
+            all_accounts,
+            sign_v1.instruction_payload,
+            ctx.accounts.swig.key(),
+            rkeys,
+        )?;
+        
+        // Validate that the authority has Program permission for any external programs being called
+        for ix in validation_ix_iter {
+            if let Ok(instruction) = ix {
+                // Check if swig account is being used as a signer for this instruction
+                let swig_is_signer = instruction.accounts.iter().any(|account_meta| {
+                    account_meta.pubkey == ctx.accounts.swig.key() && account_meta.is_signer
+                });
+                
+                if swig_is_signer {
+                    // This is a CPI call where swig is signing - check Program permission
+                    let program_id_bytes = instruction.program_id.as_ref();
+                    
+                    // Check if we have Program permission for this program
+                    if RoleMut::get_action_mut::<Program>(role.actions, program_id_bytes)?.is_none() {
+                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+                    }
+                }
+            } else {
+                return Err(SwigError::InstructionExecutionError.into());
+            }
+        }
+    }
 
     // Capture account snapshots before instruction execution
     const UNINIT_HASH: MaybeUninit<[u8; 32]> = MaybeUninit::uninit();
