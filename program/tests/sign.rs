@@ -20,7 +20,7 @@ use solana_sdk::{
 use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state::{
     action::{
-        all::All, sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
+        all::All, program::Program, sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
         token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit,
     },
     authority::AuthorityType,
@@ -75,7 +75,12 @@ fn test_transfer_sol_with_additional_authority() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SolLimit(SolLimit { amount: amount / 2 })],
+        vec![
+            ClientAction::SolLimit(SolLimit { amount: amount / 2 }),
+            ClientAction::Program(Program {
+                program_id: solana_sdk::system_program::ID.to_bytes(),
+            }),
+        ],
     )
     .unwrap();
     println!("add authority txn {:?}", transaction_metadata.logs);
@@ -375,7 +380,12 @@ fn test_fail_transfer_sol_with_additional_authority_not_enough() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SolLimit(SolLimit { amount: 1000 })],
+        vec![
+            ClientAction::SolLimit(SolLimit { amount: 1000 }),
+            ClientAction::Program(Program {
+                program_id: solana_sdk::system_program::ID.to_bytes(),
+            }),
+        ],
     )
     .unwrap();
     context.svm.airdrop(&swig, 10_000_000_000).unwrap();
@@ -608,12 +618,17 @@ fn test_transfer_sol_with_recurring_limit() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SolRecurringLimit(SolRecurringLimit {
-            recurring_amount: 500,
-            window: 100,
-            last_reset: 0,
-            current_amount: 500,
-        })],
+        vec![
+            ClientAction::SolRecurringLimit(SolRecurringLimit {
+                recurring_amount: 500,
+                window: 100,
+                last_reset: 0,
+                current_amount: 500,
+            }),
+            ClientAction::Program(Program {
+                program_id: solana_sdk::system_program::ID.to_bytes(),
+            }),
+        ],
     )
     .unwrap();
 
@@ -789,13 +804,18 @@ fn test_transfer_token_with_recurring_limit() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::TokenRecurringLimit(TokenRecurringLimit {
-            token_mint: mint_pubkey.to_bytes().try_into().unwrap(),
-            window: 100,
-            limit: 500,
-            current: 500,
-            last_reset: 0,
-        })],
+        vec![
+            ClientAction::TokenRecurringLimit(TokenRecurringLimit {
+                token_mint: mint_pubkey.to_bytes().try_into().unwrap(),
+                window: 100,
+                limit: 500,
+                current: 500,
+                last_reset: 0,
+            }),
+            ClientAction::Program(Program {
+                program_id: spl_token::id().to_bytes(),
+            }),
+        ],
     )
     .unwrap();
 
