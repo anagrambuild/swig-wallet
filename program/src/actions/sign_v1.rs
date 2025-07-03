@@ -20,6 +20,8 @@ use swig_state::{
     action::{
         all::All,
         program::Program,
+        program_all::ProgramAll,
+        program_curated::ProgramCurated,
         program_scope::{NumericType, ProgramScope},
         sol_limit::SolLimit,
         sol_recurring_limit::SolRecurringLimit,
@@ -227,38 +229,8 @@ pub fn sign_v1(
     let seeds = swig_account_signer(&swig.id, &b);
     let signer = seeds.as_slice();
 
-    // Check CPI signing permissions if not All permission
-    if RoleMut::get_action_mut::<All>(role.actions, &[])?.is_none() {
-        // Create a second iterator to validate CPI permissions before execution
-        let validation_ix_iter = InstructionIterator::new(
-            all_accounts,
-            sign_v1.instruction_payload,
-            ctx.accounts.swig.key(),
-            rkeys,
-        )?;
-        
-        // Validate that the authority has Program permission for any external programs being called
-        for ix in validation_ix_iter {
-            if let Ok(instruction) = ix {
-                // Check if swig account is being used as a signer for this instruction
-                let swig_is_signer = instruction.accounts.iter().any(|account_meta| {
-                    account_meta.pubkey == ctx.accounts.swig.key() && account_meta.is_signer
-                });
-                
-                if swig_is_signer {
-                    // This is a CPI call where swig is signing - check Program permission
-                    let program_id_bytes = instruction.program_id.as_ref();
-                    
-                    // Check if we have Program permission for this program
-                    if RoleMut::get_action_mut::<Program>(role.actions, program_id_bytes)?.is_none() {
-                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
-                    }
-                }
-            } else {
-                return Err(SwigError::InstructionExecutionError.into());
-            }
-        }
-    }
+    // Check if we have All permission to skip CPI validation
+    let has_all_permission = RoleMut::get_action_mut::<All>(role.actions, &[])?.is_some();
 
     // Capture account snapshots before instruction execution
     const UNINIT_HASH: MaybeUninit<[u8; 32]> = MaybeUninit::uninit();
@@ -328,6 +300,33 @@ pub fn sign_v1(
 
     for ix in ix_iter {
         if let Ok(instruction) = ix {
+            // Check CPI signing permissions if not All permission
+            if !has_all_permission {
+                // Check if swig account is being used as a signer for this instruction
+                let swig_is_signer = instruction.accounts.iter().any(|account_meta| {
+                    account_meta.pubkey == ctx.accounts.swig.key() && account_meta.is_signer
+                });
+                
+                if swig_is_signer {
+                    // This is a CPI call where swig is signing - check Program permissions
+                    let program_id_bytes = instruction.program_id.as_ref();
+                    
+                    // Check if we have any program permission that allows this program
+                    let has_permission = 
+                        // Check for ProgramAll permission (allows any program)
+                        RoleMut::get_action_mut::<ProgramAll>(role.actions, &[])?.is_some() ||
+                        // Check for ProgramCurated permission (allows curated programs)
+                        (RoleMut::get_action_mut::<ProgramCurated>(role.actions, &[])?.is_some() && 
+                         ProgramCurated::is_curated_program(&program_id_bytes.try_into().unwrap_or([0; 32]))) ||
+                        // Check for specific Program permission
+                        RoleMut::get_action_mut::<Program>(role.actions, program_id_bytes)?.is_some();
+                    
+                    if !has_permission {
+                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+                    }
+                }
+            }
+            
             instruction.execute(all_accounts, ctx.accounts.swig.key(), &[signer.into()])?;
         } else {
             return Err(SwigError::InstructionExecutionError.into());
@@ -335,7 +334,7 @@ pub fn sign_v1(
     }
 
     let actions = role.actions;
-    if RoleMut::get_action_mut::<All>(actions, &[])?.is_some() {
+    if has_all_permission {
         return Ok(());
     } else {
         for (index, account) in account_classifiers.iter().enumerate() {
