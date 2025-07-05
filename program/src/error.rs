@@ -108,6 +108,38 @@ pub enum SwigError {
     /// Account data was modified in unexpected ways during instruction
     /// execution
     AccountDataModifiedUnexpectedly,
+    /// Oracle account required for token limit check was not found
+    PermissionDeniedMissingOracleAccount,
+    /// Failed to read oracle price data
+    InvalidOraclePriceData,
+    /// Failed to verify the oracle level to FULL
+    OracleVerficationLevelFailed,
+    /// Failed to fetch latest oracle price
+    OraclePriceTooOld,
+    /// Wrong oracle program account
+    WrongOracleProgramAccount,
+    /// Wrong oracle mapping account
+    WrongOracleMappingAccount,
+    /// Oracle mint not found
+    OracleMintNotFound,
+    /// Oracle value overflow during calculation
+    OracleValueOverflow,
+    /// Oracle invalid price chain configuration
+    OracleInvalidPriceChain,
+    /// Oracle data bounds error
+    OracleDataBoundsError,
+    /// Oracle empty price chain
+    OracleEmptyPriceChain,
+    /// Oracle multiplication overflow
+    OracleMultiplicationOverflow,
+    /// Oracle addition overflow
+    OracleAdditionOverflow,
+    /// Oracle subtraction overflow
+    OracleSubtractionOverflow,
+    /// Oracle exponent mismatch between price sources
+    OracleExponentMismatch,
+    /// Oracle price difference exceeds threshold
+    OraclePriceDifferenceExceedsThreshold,
 }
 
 /// Implements conversion from SwigError to ProgramError.

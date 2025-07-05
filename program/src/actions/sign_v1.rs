@@ -13,12 +13,13 @@ use pinocchio::{
     sysvars::{clock::Clock, Sysvar},
     ProgramResult,
 };
-use pinocchio_pubkey::from_str;
+use pinocchio_pubkey::{from_str, pubkey};
 use swig_assertions::*;
 use swig_compact_instructions::InstructionIterator;
 use swig_state::{
     action::{
         all::All,
+        oracle_limits::OracleTokenLimit,
         program_scope::{NumericType, ProgramScope},
         sol_limit::SolLimit,
         sol_recurring_limit::SolRecurringLimit,
@@ -40,7 +41,7 @@ use crate::{
         accounts::{Context, SignV1Accounts},
         SwigInstruction,
     },
-    util::{build_restricted_keys, hash_except},
+    util::{build_restricted_keys, calculate_token_value, get_price_data, hash_except},
     AccountClassification,
 };
 // use swig_instructions::InstructionIterator;
@@ -329,7 +330,68 @@ pub fn sign_v1(
                     }
                     if lamports > &current_lamports {
                         let amount_diff = lamports - current_lamports;
+                        {
+                            if let Some(action) =
+                                RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
+                            {
+                                let scope_data = unsafe {
+                                    // also check if owner matches
+                                    let owner =
+                                        all_accounts.get_unchecked(all_accounts.len() - 1).owner();
+                                    if owner.as_ref()
+                                        != &pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ")
+                                    {
+                                        return Err(SwigError::WrongOracleProgramAccount.into());
+                                    }
 
+                                    &all_accounts
+                                        .get_unchecked(all_accounts.len() - 1)
+                                        .borrow_data_unchecked()
+                                };
+
+                                // let pyth_data = unsafe {
+                                //     &all_accounts
+                                //         .get_unchecked(all_accounts.len() - 1)
+                                //         .borrow_data_unchecked()
+                                // };
+
+                                let mapping_data = unsafe {
+                                    let owner =
+                                        all_accounts.get_unchecked(all_accounts.len() - 2).owner();
+                                    if owner.as_ref()
+                                        != &pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ")
+                                    {
+                                        return Err(SwigError::WrongOracleMappingAccount.into());
+                                    }
+                                    &all_accounts
+                                        .get_unchecked(all_accounts.len() - 2)
+                                        .borrow_data_unchecked()
+                                };
+
+                                let (price, exp, mint_decimal) = get_price_data(
+                                    mapping_data,
+                                    scope_data,
+                                    None,
+                                    &pubkey!("So11111111111111111111111111111111111111112"),
+                                    &clock,
+                                )?;
+
+                                let token_value_in_base = calculate_token_value(
+                                    price,
+                                    exp,
+                                    action.get_base_asset_decimals(),
+                                    amount_diff,
+                                    mint_decimal,
+                                    action.get_base_asset_decimals(),
+                                )?;
+
+                                action.run_for_sol(token_value_in_base)?;
+
+                                if !action.passthrough_check {
+                                    continue;
+                                }
+                            };
+                        }
                         {
                             if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])?
                             {
@@ -389,6 +451,48 @@ pub fn sign_v1(
 
                     if balance > &current_token_balance {
                         let diff = balance - current_token_balance;
+                        // Check oracle token limit
+                        {
+                            if let Some(action) =
+                                RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
+                            {
+                                let scope_data = unsafe {
+                                    &all_accounts
+                                        .get_unchecked(all_accounts.len() - 1)
+                                        .borrow_data_unchecked()
+                                };
+
+                                // let pyth_data = unsafe {
+                                //     &all_accounts
+                                //         .get_unchecked(all_accounts.len() - 1)
+                                //         .borrow_data_unchecked()
+                                // };
+
+                                let mapping_data = unsafe {
+                                    &all_accounts
+                                        .get_unchecked(all_accounts.len() - 2)
+                                        .borrow_data_unchecked()
+                                };
+
+                                let (price, exp, mint_decimal) =
+                                    get_price_data(mapping_data, scope_data, None, mint, &clock)?;
+
+                                let token_value_in_base = calculate_token_value(
+                                    price,
+                                    exp,
+                                    action.get_base_asset_decimals(),
+                                    diff,
+                                    mint_decimal,
+                                    action.get_base_asset_decimals(),
+                                )?;
+
+                                action.run_for_token(token_value_in_base)?;
+
+                                if !action.passthrough_check {
+                                    continue;
+                                }
+                            };
+                        }
                         {
                             if let Some(action) =
                                 RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?
