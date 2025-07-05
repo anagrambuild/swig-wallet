@@ -18,7 +18,7 @@ use solana_sdk::{
     transaction::{Transaction, VersionedTransaction},
 };
 use swig_interface::{AuthorityConfig, ClientAction};
-use swig_state_x::{
+use swig_state::{
     action::{
         all::All,
         oracle_limits::{BaseAsset, OracleTokenLimit},
