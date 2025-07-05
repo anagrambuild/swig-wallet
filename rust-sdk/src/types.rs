@@ -1,6 +1,6 @@
 use solana_program::pubkey::Pubkey;
 use swig_interface::ClientAction;
-use swig_state_x::{
+use swig_state::{
     action::{
         all::All,
         manage_authority::ManageAuthority,
@@ -234,13 +234,11 @@ impl Permission {
     /// # Returns
     ///
     /// Returns a `Result` containing a vector of permissions or a `SwigError`
-    pub fn from_role<'a>(
-        role: &swig_state_x::role::Role<'a>,
-    ) -> Result<Vec<Permission>, SwigError> {
+    pub fn from_role<'a>(role: &swig_state::role::Role<'a>) -> Result<Vec<Permission>, SwigError> {
         let mut permissions = Vec::new();
 
         // Check for All permission
-        if swig_state_x::role::Role::get_action::<All>(role, &[])
+        if swig_state::role::Role::get_action::<All>(role, &[])
             .map_err(|_| SwigError::InvalidSwigData)?
             .is_some()
         {
@@ -248,7 +246,7 @@ impl Permission {
         }
 
         // Check for ManageAuthority permission
-        if swig_state_x::role::Role::get_action::<ManageAuthority>(role, &[])
+        if swig_state::role::Role::get_action::<ManageAuthority>(role, &[])
             .map_err(|_| SwigError::InvalidSwigData)?
             .is_some()
         {
@@ -256,7 +254,7 @@ impl Permission {
         }
 
         // Check for SolLimit permission
-        if let Some(action) = swig_state_x::role::Role::get_action::<SolLimit>(role, &[])
+        if let Some(action) = swig_state::role::Role::get_action::<SolLimit>(role, &[])
             .map_err(|_| SwigError::InvalidSwigData)?
         {
             permissions.push(Permission::Sol {
@@ -266,7 +264,7 @@ impl Permission {
         }
 
         // Check for SolRecurringLimit permission
-        if let Some(action) = swig_state_x::role::Role::get_action::<SolRecurringLimit>(role, &[])
+        if let Some(action) = swig_state::role::Role::get_action::<SolRecurringLimit>(role, &[])
             .map_err(|_| SwigError::InvalidSwigData)?
         {
             permissions.push(Permission::Sol {
@@ -280,7 +278,7 @@ impl Permission {
         }
 
         // Check for TokenLimit permission
-        if let Some(action) = swig_state_x::role::Role::get_action::<TokenLimit>(role, &[])
+        if let Some(action) = swig_state::role::Role::get_action::<TokenLimit>(role, &[])
             .map_err(|_| SwigError::InvalidSwigData)?
         {
             permissions.push(Permission::Token {
@@ -291,7 +289,7 @@ impl Permission {
         }
 
         // Check for TokenRecurringLimit permission
-        if let Some(action) = swig_state_x::role::Role::get_action::<TokenRecurringLimit>(role, &[])
+        if let Some(action) = swig_state::role::Role::get_action::<TokenRecurringLimit>(role, &[])
             .map_err(|_| SwigError::InvalidSwigData)?
         {
             permissions.push(Permission::Token {
@@ -306,7 +304,7 @@ impl Permission {
         }
 
         // Check for Program permission
-        if let Some(action) = swig_state_x::role::Role::get_action::<Program>(role, &[])
+        if let Some(action) = swig_state::role::Role::get_action::<Program>(role, &[])
             .map_err(|_| SwigError::InvalidSwigData)?
         {
             permissions.push(Permission::Program {
@@ -316,7 +314,7 @@ impl Permission {
 
         // Check for ProgramScope permission
         if let Some(action) =
-            swig_state_x::role::Role::get_action::<ProgramScope>(role, &spl_token::ID.to_bytes())
+            swig_state::role::Role::get_action::<ProgramScope>(role, &spl_token::ID.to_bytes())
                 .map_err(|_| SwigError::InvalidSwigData)?
         {
             permissions.push(Permission::ProgramScope {
@@ -339,7 +337,7 @@ impl Permission {
         }
 
         // Check for SubAccount permission
-        if let Some(action) = swig_state_x::role::Role::get_action::<SubAccount>(role, &[])
+        if let Some(action) = swig_state::role::Role::get_action::<SubAccount>(role, &[])
             .map_err(|_| SwigError::InvalidSwigData)?
         {
             permissions.push(Permission::SubAccount {
@@ -348,7 +346,7 @@ impl Permission {
         }
 
         // Check for StakeLimit permission
-        if let Some(action) = swig_state_x::role::Role::get_action::<StakeLimit>(role, &[])
+        if let Some(action) = swig_state::role::Role::get_action::<StakeLimit>(role, &[])
             .map_err(|_| SwigError::InvalidSwigData)?
         {
             permissions.push(Permission::Stake {
@@ -358,7 +356,7 @@ impl Permission {
         }
 
         // Check for StakeRecurringLimit permission
-        if let Some(action) = swig_state_x::role::Role::get_action::<StakeRecurringLimit>(role, &[])
+        if let Some(action) = swig_state::role::Role::get_action::<StakeRecurringLimit>(role, &[])
             .map_err(|_| SwigError::InvalidSwigData)?
         {
             permissions.push(Permission::Stake {
@@ -372,7 +370,7 @@ impl Permission {
         }
 
         // Check for StakeAll permission
-        if swig_state_x::role::Role::get_action::<StakeAll>(role, &[])
+        if swig_state::role::Role::get_action::<StakeAll>(role, &[])
             .map_err(|_| SwigError::InvalidSwigData)?
             .is_some()
         {
@@ -387,7 +385,7 @@ impl Permission {
 #[derive(Debug)]
 pub struct CurrentRole {
     pub role_id: u32,
-    pub authority_type: swig_state_x::authority::AuthorityType,
+    pub authority_type: swig_state::authority::AuthorityType,
     pub authority_identity: Vec<u8>,
     pub permissions: Vec<Permission>,
     pub session_based: bool,

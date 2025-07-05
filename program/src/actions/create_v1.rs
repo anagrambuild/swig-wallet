@@ -10,7 +10,7 @@ use pinocchio::{
 };
 use pinocchio_system::instructions::CreateAccount;
 use swig_assertions::*;
-use swig_state_x::{
+use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, ActionLoader, Actionable},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,

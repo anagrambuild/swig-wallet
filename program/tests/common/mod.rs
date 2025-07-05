@@ -17,7 +17,7 @@ use swig_interface::{
     CreateSubAccountInstruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
     WithdrawFromSubAccountInstruction,
 };
-use swig_state_x::{
+use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, sub_account::SubAccount},
     authority::{
         ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
@@ -291,7 +291,7 @@ pub fn create_swig_secp256r1_session(
     session_max_length: u64,
     initial_session_key: [u8; 32],
 ) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
-    use swig_state_x::authority::secp256r1::CreateSecp256r1SessionAuthority;
+    use swig_state::authority::secp256r1::CreateSecp256r1SessionAuthority;
 
     let payer_pubkey = context.default_payer.pubkey();
     let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());

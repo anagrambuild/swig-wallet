@@ -10,14 +10,13 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::program_id;
-use swig_state_x::{
+use swig_state::{
     authority::AuthorityType,
     swig::{sub_account_seeds, swig_account_seeds, SwigWithRoles},
 };
 
 use super::*;
-use crate::client_role::Ed25519ClientRole;
-use crate::tests::common::*;
+use crate::{client_role::Ed25519ClientRole, tests::common::*};
 
 #[test_log::test]
 fn test_sub_account_functionality() {
@@ -64,7 +63,7 @@ fn test_sub_account_functionality() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[ix],
+        &ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -91,7 +90,7 @@ fn test_sub_account_functionality() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[create_sub_account_ix],
+        &create_sub_account_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -147,7 +146,7 @@ fn test_sub_account_functionality() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[sub_account_sign_ix],
+        &sub_account_sign_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -209,7 +208,7 @@ fn test_sub_account_functionality() {
         .unwrap();
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[withdraw_ix],
+        &withdraw_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -258,7 +257,7 @@ fn test_sub_account_functionality() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[toggle_ix],
+        &toggle_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -287,7 +286,7 @@ fn test_sub_account_functionality() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[sub_account_sign_ix],
+        &sub_account_sign_ix,
         &[],
         context.svm.latest_blockhash(),
     )

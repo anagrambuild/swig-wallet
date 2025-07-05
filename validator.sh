@@ -5,7 +5,7 @@ cargo --version
 cargo build-sbf && solana-test-validator \
    --limit-ledger-size 0 \
    --bind-address 0.0.0.0 \
-   --bpf-program swigDk8JezhiAVde8k6NMwxpZfgGm2NNuMe1KYCmUjP target/deploy/swig.so  \
+   --bpf-program swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB target/deploy/swig.so  \
     -r \
     --ticks-per-slot 10 \
     --slots-per-epoch 64

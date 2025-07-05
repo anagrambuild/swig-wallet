@@ -26,7 +26,7 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_pubkey::{declare_id, pubkey};
-use swig_state_x::{
+use swig_state::{
     action::{
         program_scope::{NumericType, ProgramScope},
         Action, Actionable, Permission,
@@ -35,9 +35,11 @@ use swig_state_x::{
     AccountClassification, Discriminator, StakeAccountState, Transmutable,
 };
 use util::{read_program_scope_account_balance, ProgramScopeCache};
+#[cfg(not(feature = "no-entrypoint"))]
+use {default_env::default_env, solana_security_txt::security_txt};
 
 /// Program ID for the Swig wallet program
-declare_id!("swigDk8JezhiAVde8k6NMwxpZfgGm2NNuMe1KYCmUjP");
+declare_id!("swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB");
 /// Program ID for the SPL Token program
 const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 /// Program ID for the SPL Token 2022 program
@@ -50,6 +52,23 @@ pinocchio::default_panic_handler!();
 
 #[cfg(not(feature = "no-entrypoint"))]
 lazy_entrypoint!(process_instruction);
+
+#[cfg(not(feature = "no-entrypoint"))]
+security_txt! {
+    name: "Swig",
+    project_url: "https://onswig.com",
+    contacts: "email:security@onswig.com",
+    policy: "https://github.com/anagrambuild/swig-wallet/security/policy",
+
+    // Optional Fields
+    preferred_languages: "en",
+    source_code: "https://github.com/anagrambuild/swig-wallet",
+    source_revision: "",
+    source_release: "",
+    encryption: "",
+    auditors: "https://accretion.xyz/",
+    acknowledgements: "Thank you to our bug bounty hunters!"
+}
 
 /// Main program entry point.
 ///
@@ -252,10 +271,10 @@ unsafe fn classify_account(
                     );
 
                     let state = match state_value {
-                        0 => swig_state_x::StakeAccountState::Uninitialized,
-                        1 => swig_state_x::StakeAccountState::Initialized,
-                        2 => swig_state_x::StakeAccountState::Stake,
-                        3 => swig_state_x::StakeAccountState::RewardsPool,
+                        0 => swig_state::StakeAccountState::Uninitialized,
+                        1 => swig_state::StakeAccountState::Initialized,
+                        2 => swig_state::StakeAccountState::Stake,
+                        3 => swig_state::StakeAccountState::RewardsPool,
                         _ => return Err(ProgramError::InvalidAccountData),
                     };
                     // Extract the stake amount from the account

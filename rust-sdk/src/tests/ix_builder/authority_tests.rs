@@ -11,12 +11,13 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::program_id;
-use swig_state_x::{
+use swig_state::{
     authority::AuthorityType,
     swig::{swig_account_seeds, SwigWithRoles},
 };
 
 use super::*;
+use crate::{Ed25519ClientRole, Secp256k1ClientRole};
 
 #[test_log::test]
 fn test_add_authority_with_ed25519_root() {
@@ -55,7 +56,7 @@ fn test_add_authority_with_ed25519_root() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[add_auth_ix],
+        &add_auth_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -153,7 +154,7 @@ fn test_add_authority_with_secp256k1_root() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[add_auth_ix],
+        &add_auth_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -210,7 +211,7 @@ fn test_remove_authority_with_ed25519_root() {
 
     let msg = v0::Message::try_compile(
         &payer.pubkey(),
-        &[add_auth_ix],
+        &add_auth_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -228,7 +229,7 @@ fn test_remove_authority_with_ed25519_root() {
     let remove_auth_ix = builder.remove_authority(1, None).unwrap();
     let msg = v0::Message::try_compile(
         &payer.pubkey(),
-        &[remove_auth_ix],
+        &remove_auth_ix,
         &[],
         context.svm.latest_blockhash(),
     )

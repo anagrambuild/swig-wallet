@@ -1,16 +1,20 @@
 [workspace]
 resolver = "2"
 members = [
-  "program",
-  "interface",
-  "instructions",
-  "state-x",
-  "assertions",
-  "no-padding",
-  "rust-sdk",
-  #"cli",
-  #"cli-x",
+    "program",
+    "interface",
+    "instructions",
+    "state",
+    "assertions",
+    "no-padding",
+    "rust-sdk",
+    "cli",
 ]
+
+[workspace.package]
+version = "1.0.0"
+authors = ["SWIG Team"]
+documentation = "https://build.onswig.com"
 
 [workspace.lints.rust]
 unused_imports = "allow"

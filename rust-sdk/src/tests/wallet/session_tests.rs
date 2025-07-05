@@ -2,7 +2,7 @@ use alloy_primitives::B256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
 use solana_sdk::signature::{Keypair, Signer};
-use swig_state_x::authority::{
+use swig_state::authority::{
     ed25519::{CreateEd25519SessionAuthority, Ed25519SessionAuthority},
     secp256k1::{CreateSecp256k1SessionAuthority, Secp256k1SessionAuthority},
     AuthorityType,

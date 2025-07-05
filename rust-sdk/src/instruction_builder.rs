@@ -5,10 +5,10 @@ use swig_interface::{
     SignInstruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
     WithdrawFromSubAccountInstruction,
 };
-use swig_state_x::{
+use swig_state::{
     authority::{
         ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
-        AuthorityType,
+        secp256r1::CreateSecp256r1SessionAuthority, AuthorityType,
     },
     swig::{sub_account_seeds, swig_account_seeds},
     IntoBytes,
@@ -83,7 +83,7 @@ impl SwigInstructionBuilder {
         let authority_type = self.client_role.authority_type();
         let auth_bytes = self.client_role.authority_bytes()?;
 
-        let actions = vec![ClientAction::All(swig_state_x::action::all::All {})];
+        let actions = vec![ClientAction::All(swig_state::action::all::All {})];
 
         let instruction = CreateInstruction::new(
             swig_account,
@@ -143,7 +143,7 @@ impl SwigInstructionBuilder {
         new_authority: &[u8],
         permissions: Vec<ClientPermission>,
         current_slot: Option<u64>,
-    ) -> Result<Instruction, SwigError> {
+    ) -> Result<Vec<Instruction>, SwigError> {
         let actions = ClientPermission::to_client_actions(permissions);
 
         self.client_role.add_authority_instruction(
@@ -172,7 +172,7 @@ impl SwigInstructionBuilder {
         &mut self,
         authority_to_remove_id: u32,
         current_slot: Option<u64>,
-    ) -> Result<Instruction, SwigError> {
+    ) -> Result<Vec<Instruction>, SwigError> {
         self.client_role.remove_authority_instruction(
             self.swig_account,
             self.payer,
@@ -206,7 +206,7 @@ impl SwigInstructionBuilder {
     ) -> Result<Vec<Instruction>, SwigError> {
         let actions = ClientPermission::to_client_actions(permissions);
 
-        let remove_authority_instruction = self.client_role.remove_authority_instruction(
+        let remove_authority_instructions = self.client_role.remove_authority_instruction(
             self.swig_account,
             self.payer,
             self.role_id,
@@ -214,7 +214,7 @@ impl SwigInstructionBuilder {
             current_slot,
         )?;
 
-        let add_authority_instruction = self.client_role.add_authority_instruction(
+        let add_authority_instructions = self.client_role.add_authority_instruction(
             self.swig_account,
             self.payer,
             self.role_id,
@@ -224,10 +224,9 @@ impl SwigInstructionBuilder {
             current_slot,
         )?;
 
-        Ok(vec![
-            remove_authority_instruction,
-            add_authority_instruction,
-        ])
+        let mut instructions = remove_authority_instructions;
+        instructions.extend(add_authority_instructions);
+        Ok(instructions)
     }
 
     /// Creates an instruction to create a new session
@@ -248,7 +247,7 @@ impl SwigInstructionBuilder {
         session_duration: u64,
         current_slot: Option<u64>,
         counter: Option<u32>,
-    ) -> Result<Instruction, SwigError> {
+    ) -> Result<Vec<Instruction>, SwigError> {
         self.client_role.create_session_instruction(
             self.swig_account,
             self.payer,
@@ -344,7 +343,10 @@ impl SwigInstructionBuilder {
     ///
     /// Returns a `Result` containing the subaccount's public key or a
     /// `SwigError`
-    pub fn create_sub_account(&self, current_slot: Option<u64>) -> Result<Instruction, SwigError> {
+    pub fn create_sub_account(
+        &self,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
         let role_id_bytes = self.role_id.to_le_bytes();
         let swig_id_bytes = self.swig_id;
         let (sub_account, sub_account_bump) = Pubkey::find_program_address(
@@ -362,11 +364,11 @@ impl SwigInstructionBuilder {
         )
     }
 
-    /// Signs a instruction with sub-account
+    /// Signs instructions with a sub-account
     ///
     /// # Arguments
     ///
-    /// * `instructions` - The instructions to sign
+    /// * `instructions` - Vector of instructions to sign with the sub-account
     /// * `current_slot` - Optional current slot number (required for Secp256k1)
     ///
     /// # Returns
@@ -376,20 +378,13 @@ impl SwigInstructionBuilder {
         &self,
         instructions: Vec<Instruction>,
         current_slot: Option<u64>,
-    ) -> Result<Instruction, SwigError> {
-        println!("Signing instruction with sub-account");
-        println!("Swig account: {}", self.swig_account);
-        println!("Payer: {}", self.payer);
-        println!("Role ID: {}", self.role_id);
-        println!("Swig ID: {:?}", self.swig_id);
-        println!("Program ID: {:?}", program_id());
+    ) -> Result<Vec<Instruction>, SwigError> {
         let role_id_bytes = self.role_id.to_le_bytes();
         let swig_id_bytes = self.swig_id;
-        let (sub_account, sub_account_bump) = Pubkey::find_program_address(
+        let (sub_account, _) = Pubkey::find_program_address(
             &sub_account_seeds(&swig_id_bytes, &role_id_bytes),
             &swig_interface::program_id(),
         );
-        println!("Sub-account: {}", sub_account);
 
         self.client_role.sub_account_sign_instruction(
             self.swig_account,
@@ -401,12 +396,12 @@ impl SwigInstructionBuilder {
         )
     }
 
-    /// Withdraws funds from a sub-account
+    /// Withdraws native SOL from a sub-account
     ///
     /// # Arguments
     ///
     /// * `sub_account` - The public key of the sub-account
-    /// * `amount` - The amount to withdraw
+    /// * `amount` - The amount of SOL to withdraw in lamports
     /// * `current_slot` - Optional current slot number (required for Secp256k1)
     ///
     /// # Returns
@@ -417,7 +412,7 @@ impl SwigInstructionBuilder {
         sub_account: Pubkey,
         amount: u64,
         current_slot: Option<u64>,
-    ) -> Result<Instruction, SwigError> {
+    ) -> Result<Vec<Instruction>, SwigError> {
         self.client_role.withdraw_from_sub_account_instruction(
             self.swig_account,
             self.payer,
@@ -433,8 +428,9 @@ impl SwigInstructionBuilder {
     /// # Arguments
     ///
     /// * `sub_account` - The public key of the sub-account
-    /// * `sub_account_token` - The token account of the sub-account
-    /// * `swig_token` - The token account of the Swig account
+    /// * `sub_account_token` - The public key of the sub-account's token
+    ///   account
+    /// * `swig_token` - The public key of the Swig wallet's token account
     /// * `token_program` - The token program ID
     /// * `amount` - The amount of tokens to withdraw
     /// * `current_slot` - Optional current slot number (required for Secp256k1)
@@ -451,7 +447,7 @@ impl SwigInstructionBuilder {
         token_program: Pubkey,
         amount: u64,
         current_slot: Option<u64>,
-    ) -> Result<Instruction, SwigError> {
+    ) -> Result<Vec<Instruction>, SwigError> {
         self.client_role
             .withdraw_token_from_sub_account_instruction(
                 self.swig_account,
@@ -482,7 +478,7 @@ impl SwigInstructionBuilder {
         sub_account: Pubkey,
         enabled: bool,
         current_slot: Option<u64>,
-    ) -> Result<Instruction, SwigError> {
+    ) -> Result<Vec<Instruction>, SwigError> {
         self.client_role.toggle_sub_account_instruction(
             self.swig_account,
             self.payer,
@@ -503,7 +499,8 @@ impl SwigInstructionBuilder {
         self.client_role.authority_bytes()
     }
 
-    /// Returns the odometer for the current authority if it is a Secp based authority
+    /// Returns the odometer for the current authority if it is a Secp based
+    /// authority
     ///
     /// # Returns
     ///
@@ -512,9 +509,8 @@ impl SwigInstructionBuilder {
         self.client_role.odometer()
     }
 
-    /// Increments the odometer for the current authority if it is Secp based authority
-    ///
-    ///
+    /// Increments the odometer for the current authority if it is Secp based
+    /// authority
     ///
     pub fn increment_odometer(&mut self) -> Result<(), SwigError> {
         self.client_role.increment_odometer()

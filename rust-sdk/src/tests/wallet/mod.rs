@@ -2,6 +2,7 @@ pub mod authority_tests;
 pub mod creation_tests;
 pub mod helper_tests;
 pub mod program_scope_test;
+pub mod secp256r1_test;
 pub mod secp_tests;
 pub mod session_tests;
 pub mod sub_accounts_test;
@@ -14,7 +15,7 @@ use litesvm::LiteSVM;
 use solana_program::pubkey::Pubkey;
 use solana_sdk::signature::{Keypair, Signer};
 use swig_interface::swig;
-use swig_state_x::{
+use swig_state::{
     authority::{
         ed25519::{CreateEd25519SessionAuthority, Ed25519SessionAuthority},
         secp256k1::{CreateSecp256k1SessionAuthority, Secp256k1SessionAuthority},
@@ -28,7 +29,7 @@ use super::*;
 use crate::{
     client_role::{
         Ed25519ClientRole, Ed25519SessionClientRole, Secp256k1ClientRole,
-        Secp256k1SessionClientRole,
+        Secp256k1SessionClientRole, Secp256r1ClientRole,
     },
     error::SwigError,
     types::Permission,

@@ -97,10 +97,10 @@ impl From<solana_sdk::signature::SignerError> for SwigError {
     }
 }
 
-impl From<swig_state_x::SwigStateError> for SwigError {
-    fn from(error: swig_state_x::SwigStateError) -> Self {
+impl From<swig_state::SwigStateError> for SwigError {
+    fn from(error: swig_state::SwigStateError) -> Self {
         match error {
-            swig_state_x::SwigStateError::InvalidSwigData => SwigError::InvalidSwigData,
+            swig_state::SwigStateError::InvalidSwigData => SwigError::InvalidSwigData,
             _ => SwigError::ProgramError(solana_program::program_error::ProgramError::Custom(
                 error as u32,
             )),

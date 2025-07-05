@@ -12,15 +12,17 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::{program_id, AuthorityConfig};
-use swig_state_x::{
+use swig_state::{
     action::program_scope::ProgramScope,
     authority::AuthorityType,
     swig::{swig_account_seeds, SwigWithRoles},
 };
 
 use super::*;
-use crate::client_role::Ed25519ClientRole;
-use crate::tests::common::{mint_to, setup_ata, setup_mint};
+use crate::{
+    client_role::Ed25519ClientRole,
+    tests::common::{mint_to, setup_ata, setup_mint},
+};
 
 #[test_log::test]
 fn test_token_transfer_with_program_scope() {
@@ -98,7 +100,7 @@ fn test_token_transfer_with_program_scope() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[add_auth_ix],
+        &add_auth_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -254,7 +256,7 @@ fn test_recurring_limit_program_scope() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[add_auth_ix],
+        &add_auth_ix,
         &[],
         context.svm.latest_blockhash(),
     )

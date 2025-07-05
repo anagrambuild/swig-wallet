@@ -8,7 +8,7 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::program_id;
-use swig_state_x::{
+use swig_state::{
     authority::{
         ed25519::{CreateEd25519SessionAuthority, Ed25519SessionAuthority},
         secp256k1::{CreateSecp256k1SessionAuthority, Secp256k1SessionAuthority},
@@ -89,7 +89,7 @@ fn test_create_ed25519_session() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[create_session_ix],
+        &create_session_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -222,7 +222,7 @@ fn test_create_secp256k1_session() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[create_session_ix],
+        &create_session_ix,
         &[],
         context.svm.latest_blockhash(),
     )
