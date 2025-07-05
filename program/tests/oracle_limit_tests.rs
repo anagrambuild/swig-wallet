@@ -107,7 +107,8 @@ fn test_oracle_limit_permission_add() {
 #[test_log::test]
 fn test_oracle_limit_sol_transfer() {
     let mut context = setup_test_context().unwrap();
-    load_sample_pyth_accounts(&mut context.svm);
+    load_sample_scope_data(&mut context.svm, &context.default_payer).unwrap();
+
     let swig_authority = Keypair::new();
     context
         .svm
@@ -159,10 +160,16 @@ fn test_oracle_limit_sol_transfer() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
-        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
-        false,
-    )]);
+    sign_ix.accounts.extend(vec![
+        AccountMeta::new_readonly(
+            Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap(),
+            false,
+        ),
+        AccountMeta::new_readonly(
+            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
+            false,
+        ),
+    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -194,10 +201,16 @@ fn test_oracle_limit_sol_transfer() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
-        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
-        false,
-    )]);
+    sign_ix.accounts.extend(vec![
+        AccountMeta::new_readonly(
+            Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap(),
+            false,
+        ),
+        AccountMeta::new_readonly(
+            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
+            false,
+        ),
+    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -226,6 +239,7 @@ fn test_oracle_limit_sol_transfer() {
 #[test_log::test]
 fn test_oracle_limit_token_transfer() {
     let mut context = setup_test_context().unwrap();
+    let mint = load_sample_scope_data(&mut context.svm, &context.default_payer).unwrap();
     let swig_authority = Keypair::new();
     context
         .svm
@@ -262,7 +276,7 @@ fn test_oracle_limit_token_transfer() {
     )
     .unwrap();
 
-    let mint_pubkey = setup_oracle_mint(&mut context).unwrap();
+    let mint_pubkey = mint;
     let swig_ata = setup_ata(
         &mut context.svm,
         &mint_pubkey,
@@ -308,10 +322,16 @@ fn test_oracle_limit_token_transfer() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
-        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
-        false,
-    )]);
+    sign_ix.accounts.extend(vec![
+        AccountMeta::new_readonly(
+            Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap(),
+            false,
+        ),
+        AccountMeta::new_readonly(
+            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
+            false,
+        ),
+    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -351,10 +371,16 @@ fn test_oracle_limit_token_transfer() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
-        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
-        false,
-    )]);
+    sign_ix.accounts.extend(vec![
+        AccountMeta::new_readonly(
+            Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap(),
+            false,
+        ),
+        AccountMeta::new_readonly(
+            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
+            false,
+        ),
+    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -383,7 +409,7 @@ fn test_oracle_limit_token_transfer() {
 #[test_log::test]
 fn test_oracle_limit_sol_passthrough() {
     let mut context = setup_test_context().unwrap();
-    load_sample_pyth_accounts(&mut context.svm);
+    load_sample_scope_data(&mut context.svm, &context.default_payer).unwrap();
 
     let swig_authority = Keypair::new();
     context
@@ -441,10 +467,16 @@ fn test_oracle_limit_sol_passthrough() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
-        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
-        false,
-    )]);
+    sign_ix.accounts.extend(vec![
+        AccountMeta::new_readonly(
+            Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap(),
+            false,
+        ),
+        AccountMeta::new_readonly(
+            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
+            false,
+        ),
+    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -476,10 +508,16 @@ fn test_oracle_limit_sol_passthrough() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
-        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
-        false,
-    )]);
+    sign_ix.accounts.extend(vec![
+        AccountMeta::new_readonly(
+            Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap(),
+            false,
+        ),
+        AccountMeta::new_readonly(
+            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
+            false,
+        ),
+    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -508,6 +546,7 @@ fn test_oracle_limit_sol_passthrough() {
 #[test_log::test]
 fn test_oracle_limit_passthrough() {
     let mut context = setup_test_context().unwrap();
+    let mint = load_sample_scope_data(&mut context.svm, &context.default_payer).unwrap();
     let swig_authority = Keypair::new();
     context
         .svm
@@ -531,7 +570,7 @@ fn test_oracle_limit_passthrough() {
         true,
     );
 
-    let mint_pubkey = setup_oracle_mint(&mut context).unwrap();
+    let mint_pubkey = mint;
 
     // Setup token accounts
     let swig_ata = setup_ata(
@@ -599,10 +638,16 @@ fn test_oracle_limit_passthrough() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
-        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
-        false,
-    )]);
+    sign_ix.accounts.extend(vec![
+        AccountMeta::new_readonly(
+            Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap(),
+            false,
+        ),
+        AccountMeta::new_readonly(
+            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
+            false,
+        ),
+    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -642,10 +687,16 @@ fn test_oracle_limit_passthrough() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![AccountMeta::new_readonly(
-        Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
-        false,
-    )]);
+    sign_ix.accounts.extend(vec![
+        AccountMeta::new_readonly(
+            Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap(),
+            false,
+        ),
+        AccountMeta::new_readonly(
+            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
+            false,
+        ),
+    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -690,7 +741,7 @@ fn test_oracle_limit_passthrough() {
 
 //     // Add addresses to the lookup table
 //     let addresses_to_add = vec![
-//         Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE").unwrap(),
+//         Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
 //         Pubkey::from_str("AxaxyeDT8JnWERSaTKvFXvPKkEdxnamKSqpWbsSjYg1g").unwrap(),
 //     ];
 

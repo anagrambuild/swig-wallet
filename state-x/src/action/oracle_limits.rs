@@ -95,7 +95,7 @@ impl OracleTokenLimit {
     ///
     /// # Returns
     /// The number of decimal places for the base asset (e.g. 6 for USDC)
-    fn get_base_asset_decimals(&self) -> u8 {
+    pub fn get_base_asset_decimals(&self) -> u8 {
         match BaseAsset::try_from(self.base_asset_type).unwrap() {
             BaseAsset::USDC => 6,
             BaseAsset::EURC => 6,
@@ -121,54 +121,9 @@ impl OracleTokenLimit {
     /// # Returns
     /// * `Ok(())` - If the operation is within limits
     /// * `Err(ProgramError)` - If the operation would exceed the limit or encounters an error
-    pub fn run_for_token(
-        &mut self,
-        amount: u64,
-        oracle_price: u64,
-        _confidence: u64,
-        exponent: i32,
-        token_decimals: u8,
-    ) -> Result<(), ProgramError> {
-        // Early return if amount is 0
-        if amount == 0 {
-            return Ok(());
-        }
-
-        // Get base asset decimals
-        let base_decimals = self.get_base_asset_decimals();
-
-        // Convert to u128 for intermediate calculations to prevent overflow
-        let amount = amount as u128;
-        let oracle_price = oracle_price as u128;
-
-        // Calculate value with proper decimal handling
-        let value = if exponent >= 0 {
-            // For positive exponent:
-            // (amount * price * 10^exponent) / 10^token_decimals
-            amount
-                .checked_mul(oracle_price)
-                .and_then(|v| v.checked_mul(10u128.pow(exponent as u32)))
-                .and_then(|v| v.checked_div(10u128.pow(token_decimals as u32)))
-                .ok_or(SwigAuthenticateError::PermissionDeniedInsufficientBalance)?
-        } else {
-            // For negative exponent:
-            // (amount * price) / (10^|exponent| * 10^token_decimals)
-            // First multiply by 10^base_decimals to preserve precision
-            amount
-                .checked_mul(oracle_price)
-                .and_then(|v| v.checked_mul(10u128.pow(base_decimals as u32)))
-                .and_then(|v| v.checked_div(10u128.pow((-exponent) as u32)))
-                .and_then(|v| v.checked_div(10u128.pow(token_decimals as u32)))
-                .ok_or(SwigAuthenticateError::PermissionDeniedInsufficientBalance)?
-        };
-
-        // No need for additional decimal conversion since we already handled it above
-        let value = value
-            .try_into()
-            .map_err(|_| SwigAuthenticateError::PermissionDeniedInsufficientBalance)?;
-
+    pub fn run_for_token(&mut self, price: u64) -> Result<(), ProgramError> {
         // Check if operation would exceed limit
-        if value > self.value_limit {
+        if price > self.value_limit {
             msg!("Operation denied: Would exceed value limit");
             return Err(SwigAuthenticateError::PermissionDeniedOracleLimitReached.into());
         }
@@ -176,7 +131,7 @@ impl OracleTokenLimit {
         // Safe to subtract since we verified value <= value_limit
         self.value_limit = self
             .value_limit
-            .checked_sub(value)
+            .checked_sub(price)
             .ok_or(SwigAuthenticateError::PermissionDeniedInsufficientBalance)?;
 
         Ok(())
@@ -199,31 +154,14 @@ impl OracleTokenLimit {
     /// # Returns
     /// * `Ok(())` - If the operation is within limits
     /// * `Err(ProgramError)` - If the operation would exceed the limit or encounters an error
-    pub fn run_for_sol(
-        &mut self,
-        amount: u64,
-        oracle_price: u64,
-        _confidence: u64,
-        exponent: i32,
-    ) -> Result<(), ProgramError> {
-        // First check if amount * oracle_price would overflow u64
-        if amount != 0 && oracle_price as u128 > u128::MAX / amount as u128 {
-            return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
-        }
-
-        let value = if exponent >= 0 {
-            amount * oracle_price * 10u64.pow(exponent as u32) / 1000
-        } else {
-            amount * oracle_price / (1000 * 10u64.pow((-exponent) as u32))
-        };
-
+    pub fn run_for_sol(&mut self, price: u64) -> Result<(), ProgramError> {
         // Check if we have enough limit
-        if value > self.value_limit {
+        if price > self.value_limit {
             return Err(SwigAuthenticateError::PermissionDeniedOracleLimitReached.into());
         }
 
         // Safe to subtract since we verified value <= value_limit
-        self.value_limit -= value;
+        self.value_limit -= price;
         Ok(())
     }
 

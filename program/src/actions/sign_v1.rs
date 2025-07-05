@@ -13,7 +13,7 @@ use pinocchio::{
     sysvars::{clock::Clock, Sysvar},
     ProgramResult,
 };
-use pinocchio_pubkey::from_str;
+use pinocchio_pubkey::{from_str, pubkey};
 use swig_assertions::*;
 use swig_compact_instructions::InstructionIterator;
 use swig_state_x::{
@@ -41,7 +41,7 @@ use crate::{
         accounts::{Context, SignV1Accounts},
         SwigInstruction,
     },
-    util::{build_restricted_keys, get_price_data_from_bytes, hash_except},
+    util::{build_restricted_keys, calculate_token_value, get_price_data, hash_except},
     AccountClassification,
 };
 // use swig_instructions::InstructionIterator;
@@ -333,26 +333,58 @@ pub fn sign_v1(
                             if let Some(action) =
                                 RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
                             {
-                                let oracle_data = unsafe {
+                                let scope_data = unsafe {
+                                    // also check if owner matches
+                                    let owner =
+                                        all_accounts.get_unchecked(all_accounts.len() - 1).owner();
+                                    if owner.as_ref()
+                                        != &pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ")
+                                    {
+                                        return Err(SwigError::WrongOracleProgramAccount.into());
+                                    }
+
                                     &all_accounts
                                         .get_unchecked(all_accounts.len() - 1)
                                         .borrow_data_unchecked()
                                 };
 
-                                let current_timestamp = Clock::get()?.unix_timestamp;
-                                let feed_id: [u8; 32] = [
-                                    239, 13, 139, 111, 218, 44, 235, 164, 29, 161, 93, 64, 149,
-                                    209, 218, 57, 42, 13, 47, 142, 208, 198, 199, 188, 15, 76, 250,
-                                    200, 194, 128, 181, 109,
-                                ];
-                                let (price, confidence, exponent) = get_price_data_from_bytes(
-                                    oracle_data,
-                                    current_timestamp,
-                                    100,
-                                    &feed_id,
+                                // let pyth_data = unsafe {
+                                //     &all_accounts
+                                //         .get_unchecked(all_accounts.len() - 1)
+                                //         .borrow_data_unchecked()
+                                // };
+
+                                let mapping_data = unsafe {
+                                    let owner =
+                                        all_accounts.get_unchecked(all_accounts.len() - 2).owner();
+                                    if owner.as_ref()
+                                        != &pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ")
+                                    {
+                                        return Err(SwigError::WrongOracleMappingAccount.into());
+                                    }
+                                    &all_accounts
+                                        .get_unchecked(all_accounts.len() - 2)
+                                        .borrow_data_unchecked()
+                                };
+
+                                let (price, exp, mint_decimal) = get_price_data(
+                                    mapping_data,
+                                    scope_data,
+                                    None,
+                                    &pubkey!("So11111111111111111111111111111111111111112"),
+                                    &clock,
                                 )?;
 
-                                action.run_for_sol(amount_diff, price, confidence, exponent)?;
+                                let token_value_in_base = calculate_token_value(
+                                    price,
+                                    exp,
+                                    action.get_base_asset_decimals(),
+                                    amount_diff,
+                                    mint_decimal,
+                                    action.get_base_asset_decimals(),
+                                )?;
+
+                                action.run_for_sol(token_value_in_base)?;
 
                                 if !action.passthrough_check {
                                     continue;
@@ -422,24 +454,38 @@ pub fn sign_v1(
                             if let Some(action) =
                                 RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
                             {
-                                let oracle_data = unsafe {
+                                let scope_data = unsafe {
                                     &all_accounts
                                         .get_unchecked(all_accounts.len() - 1)
                                         .borrow_data_unchecked()
                                 };
 
-                                let current_timestamp = Clock::get()?.unix_timestamp;
-                                let (feed_id, decimal) =
-                                    OracleTokenLimit::get_feed_id_and_decimal_from_mint(mint)?;
+                                // let pyth_data = unsafe {
+                                //     &all_accounts
+                                //         .get_unchecked(all_accounts.len() - 1)
+                                //         .borrow_data_unchecked()
+                                // };
 
-                                let (price, confidence, exponent) = get_price_data_from_bytes(
-                                    oracle_data,
-                                    current_timestamp,
-                                    100,
-                                    &feed_id,
+                                let mapping_data = unsafe {
+                                    &all_accounts
+                                        .get_unchecked(all_accounts.len() - 2)
+                                        .borrow_data_unchecked()
+                                };
+
+                                let (price, exp, mint_decimal) =
+                                    get_price_data(mapping_data, scope_data, None, mint, &clock)?;
+
+                                let token_value_in_base = calculate_token_value(
+                                    price,
+                                    exp,
+                                    action.get_base_asset_decimals(),
+                                    diff,
+                                    mint_decimal,
+                                    action.get_base_asset_decimals(),
                                 )?;
 
-                                action.run_for_token(diff, price, confidence, exponent, decimal)?;
+                                action.run_for_token(token_value_in_base)?;
+
                                 if !action.passthrough_check {
                                     continue;
                                 }

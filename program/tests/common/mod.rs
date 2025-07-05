@@ -383,6 +383,158 @@ pub fn load_sample_pyth_accounts(svm: &mut LiteSVM) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn load_sample_scope_data(svm: &mut LiteSVM, payer: &Keypair) -> anyhow::Result<(Pubkey)> {
+    use base64;
+    use solana_program::pubkey::Pubkey;
+    use solana_sdk::account::Account;
+    use std::str::FromStr;
+
+    let pubkey = Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap();
+    let owner = Pubkey::from_str("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ").unwrap();
+
+    use solana_client::rpc_client::RpcClient;
+
+    let client = RpcClient::new("https://api.mainnet-beta.solana.com".to_string());
+    let mut scope_account = client.get_account(&pubkey).unwrap();
+
+    let mut data = Account {
+        lamports: 200_700_000,
+        data: scope_account.data,
+        owner,
+        executable: false,
+        rent_epoch: 18446744073709551615,
+    };
+
+    svm.set_account(pubkey, data).unwrap();
+
+    let mapping_pubkey = Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap();
+    let owner_pubkey = Pubkey::from_str("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ").unwrap();
+
+    let mint = setup_mint(svm, &payer).unwrap();
+
+    data = Account {
+        lamports: 200_700_000,
+        data: get_mapping_data(&mint, 9, 153),
+        owner: owner_pubkey,
+        executable: false,
+        rent_epoch: 18446744073709551615,
+    };
+
+    svm.set_account(mapping_pubkey, data).unwrap();
+
+    Ok(mint)
+}
+
+pub struct ScopeMappingRegistry {
+    pub authority: Pubkey,
+    pub total_mappings: u32,
+    pub mappings: Vec<MintMapping>,
+    pub version: u8,
+}
+
+pub struct MintMapping {
+    pub mint: [u8; 32],
+    pub price_chain: [u16; 4], // Conversion chain (e.g., [32, 0, u16::MAX, u16::MAX])
+    pub decimals: u8,          // Mint decimals for price calculations
+    pub is_active: bool,
+    pub last_updated: i64,
+    pub pyth_account: Option<[u8; 32]>,
+    pub switch_board: Option<[u8; 32]>,
+}
+
+use std::str::FromStr;
+
+fn get_mapping_data(token_pubkey: &Pubkey, token_decimals: u8, token_index: u16) -> Vec<u8> {
+    let sol_pubkey = Pubkey::from_str("So11111111111111111111111111111111111111112").unwrap();
+    let mapping_pubkey = MintMapping {
+        mint: sol_pubkey.to_bytes(),
+        price_chain: [0, u16::MAX, u16::MAX, u16::MAX], // SOL price chain
+        decimals: 9,                                    // SOL has 9 decimals
+        is_active: true,
+        last_updated: 0,
+        pyth_account: Some(
+            Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE")
+                .unwrap()
+                .to_bytes(),
+        ),
+        switch_board: None,
+    };
+
+    let mapping_token_pubkey = MintMapping {
+        mint: token_pubkey.to_bytes(),
+        price_chain: [token_index, u16::MAX, u16::MAX, u16::MAX], // SOL price chain
+        decimals: token_decimals,                                 // SOL has 9 decimals
+        is_active: true,
+        last_updated: 0,
+        pyth_account: Some(
+            Pubkey::from_str("7yyaeuJ1GGtVBLT2z2xub5ZWYKaNhF28mj1RdV4VDFVk")
+                .unwrap()
+                .to_bytes(),
+        ),
+        switch_board: None,
+    };
+
+    let scope_mapping_registry = ScopeMappingRegistry {
+        authority: Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
+        mappings: vec![mapping_pubkey, mapping_token_pubkey],
+        version: 0,
+        total_mappings: 2,
+    };
+
+    scope_mapping_registry.to_bytes()
+}
+
+impl ScopeMappingRegistry {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+
+        // Authority (32 bytes)
+        bytes.extend_from_slice(&self.authority.to_bytes());
+
+        // Total mappings
+        bytes.extend_from_slice(&(self.total_mappings as u16).to_le_bytes());
+
+        // Mappings
+        for mapping in &self.mappings {
+            bytes.extend_from_slice(&mapping.mint);
+            bytes.extend_from_slice(
+                &mapping
+                    .price_chain
+                    .iter()
+                    .flat_map(|&x| x.to_le_bytes())
+                    .collect::<Vec<u8>>(),
+            );
+            bytes.push(mapping.decimals);
+            bytes.push(mapping.is_active as u8);
+            bytes.extend_from_slice(&mapping.last_updated.to_le_bytes());
+
+            pub const NULL_PUBKEY: [u8; 32] = [
+                11, 193, 238, 216, 208, 116, 241, 195, 55, 212, 76, 22, 75, 202, 40, 216, 76, 206,
+                27, 169, 138, 64, 177, 28, 19, 90, 156, 0, 0, 0, 0, 0,
+            ];
+
+            // Pyth account (32 bytes)
+            if let Some(pyth) = mapping.pyth_account {
+                bytes.extend_from_slice(&pyth);
+            } else {
+                bytes.extend_from_slice(&NULL_PUBKEY);
+            }
+
+            // Switch board (32 bytes)
+            if let Some(switch_board) = mapping.switch_board {
+                bytes.extend_from_slice(&switch_board);
+            } else {
+                bytes.extend_from_slice(&NULL_PUBKEY);
+            }
+        }
+
+        // Version (1 byte)
+        bytes.push(self.version);
+
+        bytes
+    }
+}
+
 pub fn setup_mint(svm: &mut LiteSVM, payer: &Keypair) -> anyhow::Result<Pubkey> {
     let mint = CreateMint::new(svm, payer)
         .decimals(9)
