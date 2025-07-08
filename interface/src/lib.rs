@@ -15,7 +15,7 @@ use swig::actions::{
     withdraw_from_sub_account_v1::WithdrawFromSubAccountV1Args,
 };
 pub use swig_compact_instructions::*;
-use swig_state_x::{
+use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, program::Program, program_scope::ProgramScope,
         sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll,
@@ -153,7 +153,6 @@ impl CreateInstruction {
             swig_bump_seed,
             initial_authority.authority_type,
             initial_authority.authority.len() as u16,
-            actions.len() as u8,
         );
         let mut write = Vec::new();
         write.extend_from_slice(
@@ -733,7 +732,7 @@ impl CreateSessionInstruction {
         ];
 
         let create_session_args =
-            CreateSessionV1Args::new(role_id, 1, session_duration, session_key.to_bytes());
+            CreateSessionV1Args::new(role_id, session_duration, session_key.to_bytes());
         let args_bytes = create_session_args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -763,7 +762,7 @@ impl CreateSessionInstruction {
             AccountMeta::new_readonly(system_program::ID, false),
         ];
         let create_session_args =
-            CreateSessionV1Args::new(role_id, 1, session_duration, session_key.to_bytes());
+            CreateSessionV1Args::new(role_id, session_duration, session_key.to_bytes());
         let args_bytes = create_session_args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -820,7 +819,7 @@ impl CreateSessionInstruction {
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
         let create_session_args =
-            CreateSessionV1Args::new(role_id, 17, session_duration, session_key.to_bytes()); // 17 bytes for secp256r1 authority payload
+            CreateSessionV1Args::new(role_id, session_duration, session_key.to_bytes());
         let args_bytes = create_session_args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;

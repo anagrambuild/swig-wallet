@@ -1,6 +1,9 @@
 pub mod authority_tests;
 pub mod creation_tests;
+pub mod helper_tests;
 pub mod program_scope_test;
+pub mod secp256r1_test;
+pub mod secp_tests;
 pub mod session_tests;
 pub mod sub_accounts_test;
 pub mod transfer_tests;
@@ -12,7 +15,7 @@ use litesvm::LiteSVM;
 use solana_program::pubkey::Pubkey;
 use solana_sdk::signature::{Keypair, Signer};
 use swig_interface::swig;
-use swig_state_x::{
+use swig_state::{
     authority::{
         ed25519::{CreateEd25519SessionAuthority, Ed25519SessionAuthority},
         secp256k1::{CreateSecp256k1SessionAuthority, Secp256k1SessionAuthority},
@@ -24,8 +27,13 @@ use swig_state_x::{
 
 use super::*;
 use crate::{
-    error::SwigError, instruction_builder::AuthorityManager, types::Permission, RecurringConfig,
-    SwigWallet,
+    client_role::{
+        Ed25519ClientRole, Ed25519SessionClientRole, Secp256k1ClientRole,
+        Secp256k1SessionClientRole, Secp256r1ClientRole,
+    },
+    error::SwigError,
+    types::Permission,
+    RecurringConfig, SwigWallet,
 };
 
 // Test helper functions
@@ -47,10 +55,10 @@ fn setup_test_environment() -> (LiteSVM, Keypair) {
 fn create_test_wallet(litesvm: LiteSVM, authority: &Keypair) -> SwigWallet {
     SwigWallet::new(
         [0; 32],
-        AuthorityManager::Ed25519(authority.pubkey()),
-        authority,
+        Box::new(Ed25519ClientRole::new(authority.pubkey())),
         authority,
         "http://localhost:8899".to_string(),
+        Some(authority),
         litesvm,
     )
     .unwrap()

@@ -1,6 +1,6 @@
 use alloy_signer_local::PrivateKeySigner;
-use swig_state_x::{
-    authority::{secp256k1::Secp256k1Authority, AuthorityType},
+use swig_state::{
+    authority::{secp256k1::Secp256k1Authority, secp256r1::Secp256r1Authority, AuthorityType},
     swig::SwigWithRoles,
 };
 
@@ -64,6 +64,71 @@ pub fn get_secp256k1_signature_counter(
             .authority
             .as_any()
             .downcast_ref::<Secp256k1Authority>()
+            .ok_or(SwigError::AuthorityNotFound)?;
+
+        Ok(secp_authority.signature_odometer)
+    } else {
+        Err(SwigError::InvalidAuthorityType)
+    }
+}
+
+/// Gets the current signature counter for a Secp256r1 authority from a Swig
+/// account.
+///
+/// This function is useful for constructing transactions with the correct
+/// counter value to prevent replay attacks. The counter must be incremented by
+/// 1 for each new transaction.
+///
+/// # Arguments
+/// * `swig_account_data` - The raw account data bytes from the Swig account
+/// * `public_key` - The 33-byte compressed public key of the Secp256r1
+///   authority
+///
+/// # Returns
+/// * `Ok(u32)` - The current signature counter (odometer) value
+/// * `Err(SwigError)` - If the account data is invalid, authority is not found,
+///   or is not a Secp256r1 authority
+///
+/// # Example
+/// ```ignore
+/// use swig_sdk::get_secp256r1_signature_counter;
+///
+/// // Get the Swig account data from RPC
+/// let swig_account = rpc_client.get_account(&swig_pubkey)?;
+///
+/// // Get the compressed public key (33 bytes)
+/// let public_key = secp256r1_key.compressed_public_key();
+///
+/// // Get current counter
+/// let current_counter = get_secp256r1_signature_counter(&swig_account.data, &public_key)?;
+/// let next_counter = current_counter + 1; // Use this for the next transaction
+/// ```
+pub fn get_secp256r1_signature_counter(
+    swig_account_data: &[u8],
+    public_key: &[u8; 33], // 33-byte compressed public key
+) -> Result<u32, SwigError> {
+    // Parse the Swig account data
+    let swig =
+        SwigWithRoles::from_bytes(swig_account_data).map_err(|_| SwigError::InvalidSwigData)?;
+
+    // Look up the role ID for this authority
+    let role_id = swig
+        .lookup_role_id(public_key)
+        .map_err(|_| SwigError::AuthorityNotFound)?
+        .ok_or(SwigError::AuthorityNotFound)?;
+
+    // Get the role
+    let role = swig
+        .get_role(role_id)
+        .map_err(|_| SwigError::AuthorityNotFound)?
+        .ok_or(SwigError::AuthorityNotFound)?;
+
+    // Verify this is a Secp256r1Authority and get the counter
+    if matches!(role.authority.authority_type(), AuthorityType::Secp256r1) {
+        let secp_authority = role
+            .authority
+            .as_any()
+            .downcast_ref::<Secp256r1Authority>()
             .ok_or(SwigError::AuthorityNotFound)?;
 
         Ok(secp_authority.signature_odometer)

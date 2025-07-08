@@ -8,7 +8,7 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::program_id;
-use swig_state_x::{
+use swig_state::{
     authority::{
         ed25519::{CreateEd25519SessionAuthority, Ed25519SessionAuthority},
         secp256k1::{CreateSecp256k1SessionAuthority, Secp256k1SessionAuthority},
@@ -18,6 +18,7 @@ use swig_state_x::{
 };
 
 use super::*;
+use crate::client_role::{Ed25519SessionClientRole, Secp256k1SessionClientRole};
 
 #[test_log::test]
 fn test_create_ed25519_session() {
@@ -33,10 +34,8 @@ fn test_create_ed25519_session() {
 
     let mut swig_ix_builder = SwigInstructionBuilder::new(
         id,
-        AuthorityManager::Ed25519Session(CreateEd25519SessionAuthority::new(
-            swig_authority.pubkey().to_bytes(),
-            [0; 32],
-            100,
+        Box::new(Ed25519SessionClientRole::new(
+            CreateEd25519SessionAuthority::new(swig_authority.pubkey().to_bytes(), [0; 32], 100),
         )),
         context.default_payer.pubkey(),
         0,
@@ -85,12 +84,12 @@ fn test_create_ed25519_session() {
     // Create a session
     let session_authority = Keypair::new();
     let create_session_ix = swig_ix_builder
-        .create_session_instruction(session_authority.pubkey(), 100, None)
+        .create_session_instruction(session_authority.pubkey(), 100, None, None)
         .unwrap();
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[create_session_ix],
+        &create_session_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -146,14 +145,14 @@ fn test_create_secp256k1_session() {
 
     let mut swig_ix_builder = SwigInstructionBuilder::new(
         id,
-        AuthorityManager::Secp256k1Session(
+        Box::new(Secp256k1SessionClientRole::new(
             CreateSecp256k1SessionAuthority::new(
                 secp_pubkey[1..].try_into().unwrap(),
                 [0; 32],
                 100,
             ),
             Box::new(signing_fn),
-        ),
+        )),
         context.default_payer.pubkey(),
         0,
     );
@@ -177,6 +176,15 @@ fn test_create_secp256k1_session() {
         "Failed to create Swig account: {:?}",
         result.err()
     );
+
+    display_swig(
+        swig_ix_builder.get_swig_account().unwrap(),
+        &context
+            .svm
+            .get_account(&swig_ix_builder.get_swig_account().unwrap())
+            .unwrap(),
+    )
+    .unwrap();
 
     let swig_key = swig_ix_builder.get_swig_account().unwrap();
 
@@ -202,13 +210,19 @@ fn test_create_secp256k1_session() {
     let session_authority = Keypair::new();
 
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    let counter = 1;
     let create_session_ix = swig_ix_builder
-        .create_session_instruction(session_authority.pubkey(), 100, Some(current_slot))
+        .create_session_instruction(
+            session_authority.pubkey(),
+            100,
+            Some(current_slot),
+            Some(counter),
+        )
         .unwrap();
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[create_session_ix],
+        &create_session_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -223,6 +237,15 @@ fn test_create_secp256k1_session() {
         "Failed to create session: {:?}",
         result.err()
     );
+
+    display_swig(
+        swig_ix_builder.get_swig_account().unwrap(),
+        &context
+            .svm
+            .get_account(&swig_ix_builder.get_swig_account().unwrap())
+            .unwrap(),
+    )
+    .unwrap();
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_data = swig_account.data;

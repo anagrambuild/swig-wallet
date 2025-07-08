@@ -18,7 +18,7 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::{CreateSessionInstruction, SignInstruction};
-use swig_state_x::{
+use swig_state::{
     authority::{
         ed25519::Ed25519SessionAuthority, secp256k1::Secp256k1SessionAuthority, AuthorityType,
     },

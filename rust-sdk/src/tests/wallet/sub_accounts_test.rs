@@ -4,15 +4,21 @@ use alloy_signer_local::LocalSigner;
 use solana_program::system_instruction;
 use solana_sdk::signature::{Keypair, Signer};
 use spl_token::ID as TOKEN_PROGRAM_ID;
+use swig_interface::program_id;
+use swig_state::{
+    authority::AuthorityType,
+    swig::{sub_account_seeds, SwigWithRoles},
+};
 
 use super::*;
+use crate::client_role::Ed25519ClientRole;
 
 #[test_log::test]
 fn test_sub_account_creation_and_setup() {
     let (mut litesvm, main_authority) = setup_test_environment();
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
 
-    // Create a secondary authority with sub-account permissions
+    // Setup secondary authority
     let secondary_authority = Keypair::new();
     let secondary_role_id = 1;
     swig_wallet
@@ -25,14 +31,11 @@ fn test_sub_account_creation_and_setup() {
         )
         .unwrap();
 
-    // Verify initial setup
-    swig_wallet.display_swig().unwrap();
-
     // Switch to secondary authority and create sub-account
     swig_wallet
         .switch_authority(
             secondary_role_id,
-            AuthorityManager::Ed25519(secondary_authority.pubkey()),
+            Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
             Some(&secondary_authority),
         )
         .unwrap();
@@ -43,7 +46,7 @@ fn test_sub_account_creation_and_setup() {
     // Verify sub-account creation
     let role_id_bytes = swig_wallet.get_current_role_id().unwrap().to_le_bytes();
     let (sub_account, _) = Pubkey::find_program_address(
-        &swig_state_x::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
+        &swig_state::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
         &swig_interface::program_id(),
     );
     println!("Sub-account address: {}", &sub_account);
@@ -71,8 +74,8 @@ fn test_sub_account_sol_operations() {
     swig_wallet
         .switch_authority(
             secondary_role_id,
-            AuthorityManager::Ed25519(secondary_authority.pubkey()),
-            Some(&secondary_authority), // Pass the actual keypair
+            Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
+            Some(&secondary_authority),
         )
         .unwrap();
 
@@ -87,7 +90,7 @@ fn test_sub_account_sol_operations() {
     println!("Role ID: {:?}", swig_wallet.get_current_role_id().unwrap());
     println!("program_id: {:?}", swig_interface::program_id());
     let (sub_account, _) = Pubkey::find_program_address(
-        &swig_state_x::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
+        &swig_state::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
         &swig_interface::program_id(),
     );
     println!("Sub-account address: {}", &sub_account);
@@ -149,7 +152,7 @@ fn test_sub_account_sol_operations() {
     swig_wallet
         .switch_authority(
             0,
-            AuthorityManager::Ed25519(main_authority.pubkey()),
+            Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
             Some(&main_authority),
         )
         .unwrap();
@@ -189,7 +192,7 @@ fn test_sub_account_token_operations() {
     swig_wallet
         .switch_authority(
             secondary_role_id,
-            AuthorityManager::Ed25519(secondary_authority.pubkey()),
+            Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
             Some(&secondary_authority),
         )
         .unwrap();
@@ -197,7 +200,7 @@ fn test_sub_account_token_operations() {
     let signature = swig_wallet.create_sub_account().unwrap();
     let role_id_bytes = swig_wallet.get_current_role_id().unwrap().to_le_bytes();
     let (sub_account, _) = Pubkey::find_program_address(
-        &swig_state_x::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
+        &swig_state::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
         &swig_interface::program_id(),
     );
 
@@ -225,7 +228,7 @@ fn test_sub_account_token_operations() {
     swig_wallet
         .switch_authority(
             0,
-            AuthorityManager::Ed25519(main_authority.pubkey()),
+            Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
             Some(&main_authority),
         )
         .unwrap();
@@ -262,7 +265,7 @@ fn test_sub_account_toggle_operations() {
     swig_wallet
         .switch_authority(
             secondary_role_id,
-            AuthorityManager::Ed25519(secondary_authority.pubkey()),
+            Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
             Some(&secondary_authority),
         )
         .unwrap();
@@ -270,14 +273,14 @@ fn test_sub_account_toggle_operations() {
     let signature = swig_wallet.create_sub_account().unwrap();
     let role_id_bytes = swig_wallet.get_current_role_id().unwrap().to_le_bytes();
     let (sub_account, _) = Pubkey::find_program_address(
-        &swig_state_x::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
+        &swig_state::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
         &swig_interface::program_id(),
     );
 
     swig_wallet
         .switch_authority(
             0,
-            AuthorityManager::Ed25519(main_authority.pubkey()),
+            Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
             Some(&main_authority),
         )
         .unwrap();
@@ -312,7 +315,7 @@ fn test_secondary_authority_operations() {
     swig_wallet
         .switch_authority(
             secondary_role_id,
-            AuthorityManager::Ed25519(secondary_authority.pubkey()),
+            Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
             Some(&secondary_authority),
         )
         .unwrap();
@@ -320,7 +323,7 @@ fn test_secondary_authority_operations() {
     let signature = swig_wallet.create_sub_account().unwrap();
     let role_id_bytes = swig_wallet.get_current_role_id().unwrap().to_le_bytes();
     let (sub_account, _) = Pubkey::find_program_address(
-        &swig_state_x::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
+        &swig_state::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
         &swig_interface::program_id(),
     );
 
@@ -340,7 +343,12 @@ fn test_secondary_authority_operations() {
     println!("Secondary authority signature: {:?}", signature);
 
     // Verify final state
-    swig_wallet.display_swig().unwrap();
+    assert!(signature != solana_sdk::signature::Signature::default());
+    assert_eq!(
+        swig_wallet.get_current_role_id().unwrap(),
+        secondary_role_id
+    );
+    assert!(swig_wallet.get_sub_account().unwrap().is_some());
 }
 
 #[test_log::test]
@@ -374,7 +382,7 @@ fn test_sub_account_error_cases() {
     swig_wallet
         .switch_authority(
             1,
-            AuthorityManager::Ed25519(unauthorized_authority.pubkey()),
+            Box::new(Ed25519ClientRole::new(unauthorized_authority.pubkey())),
             Some(&unauthorized_authority),
         )
         .unwrap();
@@ -398,7 +406,7 @@ fn test_sub_account_error_cases() {
     swig_wallet
         .switch_authority(
             0,
-            AuthorityManager::Ed25519(main_authority.pubkey()),
+            Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
             Some(&main_authority),
         )
         .unwrap();
@@ -416,7 +424,7 @@ fn test_sub_account_error_cases() {
     swig_wallet
         .switch_authority(
             2,
-            AuthorityManager::Ed25519(main_authority.pubkey()),
+            Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
             Some(&main_authority),
         )
         .unwrap();
@@ -427,7 +435,7 @@ fn test_sub_account_error_cases() {
     // Get sub-account address
     let role_id_bytes = swig_wallet.get_current_role_id().unwrap().to_le_bytes();
     let (sub_account, _) = Pubkey::find_program_address(
-        &swig_state_x::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
+        &swig_state::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
         &swig_interface::program_id(),
     );
 
@@ -441,7 +449,7 @@ fn test_sub_account_error_cases() {
     swig_wallet
         .switch_authority(
             1,
-            AuthorityManager::Ed25519(unauthorized_authority.pubkey()),
+            Box::new(Ed25519ClientRole::new(unauthorized_authority.pubkey())),
             Some(&unauthorized_authority),
         )
         .unwrap();
@@ -464,7 +472,7 @@ fn test_sub_account_error_cases() {
     swig_wallet
         .switch_authority(
             0,
-            AuthorityManager::Ed25519(main_authority.pubkey()),
+            Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
             Some(&main_authority),
         )
         .unwrap();

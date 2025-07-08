@@ -8,12 +8,13 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::program_id;
-use swig_state_x::{
+use swig_state::{
     authority::AuthorityType,
     swig::{swig_account_seeds, SwigWithRoles},
 };
 
 use super::*;
+use crate::client_role::{Ed25519ClientRole, Secp256k1ClientRole};
 
 #[test_log::test]
 fn test_sign_instruction_with_ed25519_authority() {
@@ -26,7 +27,7 @@ fn test_sign_instruction_with_ed25519_authority() {
 
     let builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Ed25519(authority.pubkey()),
+        Box::new(Ed25519ClientRole::new(authority.pubkey())),
         payer.pubkey(),
         role_id,
     );
@@ -51,7 +52,7 @@ fn test_sign_instruction_with_ed25519_authority() {
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Ed25519(authority.pubkey()),
+        Box::new(Ed25519ClientRole::new(authority.pubkey())),
         context.default_payer.pubkey(),
         role_id,
     );
@@ -68,7 +69,7 @@ fn test_sign_instruction_with_ed25519_authority() {
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
 
     let sign_ix = builder
-        .sign_instruction(vec![transfer_ix], Some(current_slot), None)
+        .sign_instruction(vec![transfer_ix], Some(current_slot))
         .unwrap();
 
     let msg = v0::Message::try_compile(
@@ -122,7 +123,7 @@ fn test_sign_instruction_with_secp256k1_authority() {
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Secp256k1(secp_pubkey, Box::new(signing_fn)),
+        Box::new(Secp256k1ClientRole::new(secp_pubkey, Box::new(signing_fn))),
         payer.pubkey(),
         role_id,
     );
@@ -155,10 +156,9 @@ fn test_sign_instruction_with_secp256k1_authority() {
 
     // Get current counter and calculate next counter
     let current_counter = get_secp256k1_counter_from_wallet(&context, &swig_key, &wallet).unwrap();
-    let next_counter = current_counter + 1;
 
     let sign_ix = builder
-        .sign_instruction(vec![transfer_ix], Some(current_slot), Some(next_counter))
+        .sign_instruction(vec![transfer_ix], Some(current_slot))
         .unwrap();
 
     let msg = v0::Message::try_compile(

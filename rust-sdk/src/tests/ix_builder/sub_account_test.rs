@@ -1,5 +1,6 @@
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
+use alloy_signer_local::LocalSigner;
 use litesvm_token::spl_token;
 use solana_program::pubkey::Pubkey;
 use solana_sdk::{
@@ -9,13 +10,13 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::program_id;
-use swig_state_x::{
+use swig_state::{
     authority::AuthorityType,
     swig::{sub_account_seeds, swig_account_seeds, SwigWithRoles},
 };
 
 use super::*;
-use crate::tests::common::*;
+use crate::{client_role::Ed25519ClientRole, tests::common::*};
 
 #[test_log::test]
 fn test_sub_account_functionality() {
@@ -43,7 +44,7 @@ fn test_sub_account_functionality() {
     // Create instruction builder with root authority
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Ed25519(root_authority.pubkey()),
+        Box::new(Ed25519ClientRole::new(root_authority.pubkey())),
         context.default_payer.pubkey(),
         role_id,
     );
@@ -57,13 +58,12 @@ fn test_sub_account_functionality() {
                 sub_account: [0; 32],
             }],
             None,
-            None,
         )
         .unwrap();
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[ix],
+        &ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -81,7 +81,7 @@ fn test_sub_account_functionality() {
     let sub_account_role_id = 1; // The sub-account authority has role_id 1
     let mut sub_account_builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Ed25519(sub_account_authority.pubkey()),
+        Box::new(Ed25519ClientRole::new(sub_account_authority.pubkey())),
         context.default_payer.pubkey(),
         sub_account_role_id,
     );
@@ -90,7 +90,7 @@ fn test_sub_account_functionality() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[create_sub_account_ix],
+        &create_sub_account_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -146,7 +146,7 @@ fn test_sub_account_functionality() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[sub_account_sign_ix],
+        &sub_account_sign_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -208,7 +208,7 @@ fn test_sub_account_functionality() {
         .unwrap();
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[withdraw_ix],
+        &withdraw_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -257,7 +257,7 @@ fn test_sub_account_functionality() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[toggle_ix],
+        &toggle_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -286,7 +286,7 @@ fn test_sub_account_functionality() {
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[sub_account_sign_ix],
+        &sub_account_sign_ix,
         &[],
         context.svm.latest_blockhash(),
     )

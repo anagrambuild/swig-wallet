@@ -28,7 +28,7 @@ pub enum SwigInstruction {
     /// 3. `[writable]` System program account
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
     #[account(1, writable, signer, name="payer", desc="the payer")]
-    #[account(2, writable, name="system_program", desc="the system program")]
+    #[account(2, name="system_program", desc="the system program")]
     #[num_enum(default)]
     CreateV1 = 0,
 

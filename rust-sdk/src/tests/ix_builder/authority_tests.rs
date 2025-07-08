@@ -8,12 +8,13 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::program_id;
-use swig_state_x::{
+use swig_state::{
     authority::AuthorityType,
     swig::{swig_account_seeds, SwigWithRoles},
 };
 
 use super::*;
+use crate::{Ed25519ClientRole, Secp256k1ClientRole};
 
 #[test_log::test]
 fn test_add_authority_with_ed25519_root() {
@@ -27,7 +28,7 @@ fn test_add_authority_with_ed25519_root() {
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Ed25519(authority.pubkey()),
+        Box::new(Ed25519ClientRole::new(authority.pubkey())),
         context.default_payer.pubkey(),
         role_id,
     );
@@ -47,13 +48,12 @@ fn test_add_authority_with_ed25519_root() {
             &new_authority_bytes,
             permissions,
             Some(current_slot),
-            None,
         )
         .unwrap();
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[add_auth_ix],
+        &add_auth_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -102,7 +102,7 @@ fn test_add_authority_with_secp256k1_root() {
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Secp256k1(secp_pubkey, Box::new(signing_fn)),
+        Box::new(Secp256k1ClientRole::new(secp_pubkey, Box::new(signing_fn))),
         payer.pubkey(),
         role_id,
     );
@@ -139,7 +139,6 @@ fn test_add_authority_with_secp256k1_root() {
     // Get current counter for the signing wallet (not the new authority being
     // added)
     let current_counter = get_secp256k1_counter_from_wallet(&context, &swig_key, &wallet).unwrap();
-    let next_counter = current_counter + 1;
 
     let add_auth_ix = builder
         .add_authority_instruction(
@@ -147,13 +146,12 @@ fn test_add_authority_with_secp256k1_root() {
             &secp_pubkey_bytes,
             permissions,
             Some(current_slot),
-            Some(next_counter),
         )
         .unwrap();
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[add_auth_ix],
+        &add_auth_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -194,7 +192,7 @@ fn test_remove_authority_with_ed25519_root() {
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Ed25519(authority.pubkey()),
+        Box::new(Ed25519ClientRole::new(authority.pubkey())),
         payer.pubkey(),
         role_id,
     );
@@ -205,13 +203,12 @@ fn test_remove_authority_with_ed25519_root() {
             &authority_pubkey.to_bytes(),
             permissions,
             None,
-            None,
         )
         .unwrap();
 
     let msg = v0::Message::try_compile(
         &payer.pubkey(),
-        &[add_auth_ix],
+        &add_auth_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -229,7 +226,7 @@ fn test_remove_authority_with_ed25519_root() {
     let remove_auth_ix = builder.remove_authority(1, None).unwrap();
     let msg = v0::Message::try_compile(
         &payer.pubkey(),
-        &[remove_auth_ix],
+        &remove_auth_ix,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -259,7 +256,7 @@ fn test_switch_authority_and_payer() {
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Ed25519(authority.pubkey()),
+        Box::new(Ed25519ClientRole::new(authority.pubkey())),
         payer.pubkey(),
         role_id,
     );
@@ -268,7 +265,7 @@ fn test_switch_authority_and_payer() {
     let new_payer = Keypair::new();
 
     builder
-        .switch_authority(1, AuthorityManager::Ed25519(new_authority.pubkey()))
+        .switch_authority(1, Box::new(Ed25519ClientRole::new(new_authority.pubkey())))
         .unwrap();
     assert_eq!(builder.get_role_id(), 1);
     assert_eq!(

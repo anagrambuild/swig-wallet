@@ -10,7 +10,7 @@ use pinocchio::{
     ProgramResult,
 };
 use swig_assertions::{check_bytes_match, check_self_owned};
-use swig_state_x::{
+use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
     swig::{Swig, SwigBuilder},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,

@@ -8,9 +8,13 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::program_id;
-use swig_state_x::swig::{swig_account_seeds, SwigWithRoles};
+use swig_state::{
+    authority::AuthorityType,
+    swig::{swig_account_seeds, SwigWithRoles},
+};
 
 use super::*;
+use crate::client_role::{Ed25519ClientRole, Secp256k1ClientRole};
 
 #[test_log::test]
 fn test_create_swig_account_with_ed25519_authority() {
@@ -22,7 +26,7 @@ fn test_create_swig_account_with_ed25519_authority() {
 
     let builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Ed25519(authority.pubkey()),
+        Box::new(Ed25519ClientRole::new(authority.pubkey())),
         payer.pubkey(),
         role_id,
     );
@@ -69,7 +73,10 @@ fn test_create_swig_account_with_secp256k1_authority() {
 
     let builder = SwigInstructionBuilder::new(
         swig_id,
-        AuthorityManager::Secp256k1(secp_pubkey, Box::new(|_| [0u8; 65])),
+        Box::new(Secp256k1ClientRole::new(
+            secp_pubkey,
+            Box::new(|_| [0u8; 65]),
+        )),
         payer.pubkey(),
         role_id,
     );

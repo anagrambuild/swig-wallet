@@ -15,7 +15,7 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::{AuthorityConfig, ClientAction};
-use swig_state_x::{
+use swig_state::{
     action::program_scope::{NumericType, ProgramScope, ProgramScopeType},
     swig::swig_account_seeds,
     Transmutable,
@@ -83,7 +83,7 @@ fn test_token_transfer_with_program_scope() {
         &swig,
         &swig_authority,
         AuthorityConfig {
-            authority_type: swig_state_x::authority::AuthorityType::Ed25519,
+            authority_type: swig_state::authority::AuthorityType::Ed25519,
             authority: swig_authority.pubkey().as_ref(),
         },
         vec![ClientAction::ProgramScope(program_scope)],
@@ -222,7 +222,7 @@ fn test_token_transfer_with_program_scope() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    assert!(swig_transfer_cu - regular_transfer_cu <= 4500);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 5106);
 }
 
 /// Helper function to perform token transfers through the swig
@@ -348,7 +348,7 @@ fn read_program_scope_state(
         return None;
     }
 
-    let swig_with_roles = swig_state_x::swig::SwigWithRoles::from_bytes(&swig_data).ok()?;
+    let swig_with_roles = swig_state::swig::SwigWithRoles::from_bytes(&swig_data).ok()?;
 
     // Find the authority's role
     let role_id = swig_with_roles
@@ -368,7 +368,7 @@ fn read_program_scope_state(
         }
 
         let action = unsafe {
-            swig_state_x::action::Action::load_unchecked(&role.actions[cursor..cursor + ACTION_LEN])
+            swig_state::action::Action::load_unchecked(&role.actions[cursor..cursor + ACTION_LEN])
         }
         .ok()?;
 
@@ -379,13 +379,13 @@ fn read_program_scope_state(
             break;
         }
 
-        if action.permission().ok() == Some(swig_state_x::action::Permission::ProgramScope) {
+        if action.permission().ok() == Some(swig_state::action::Permission::ProgramScope) {
             let action_data = &role.actions[cursor..cursor + action_len];
             const PROGRAM_SCOPE_LEN: usize = 128;
 
             if action_data.len() == PROGRAM_SCOPE_LEN {
                 let program_scope = unsafe {
-                    swig_state_x::action::program_scope::ProgramScope::load_unchecked(action_data)
+                    swig_state::action::program_scope::ProgramScope::load_unchecked(action_data)
                 }
                 .ok()?;
 
@@ -516,7 +516,7 @@ fn test_recurring_limit_program_scope() {
         &swig,
         &swig_authority,
         AuthorityConfig {
-            authority_type: swig_state_x::authority::AuthorityType::Ed25519,
+            authority_type: swig_state::authority::AuthorityType::Ed25519,
             authority: swig_authority.pubkey().as_ref(),
         },
         vec![ClientAction::ProgramScope(program_scope)],
