@@ -54,6 +54,17 @@ pub enum SwigInstruction {
     #[account(2, name="system_program", desc="the system program")]
     RemoveAuthorityV1 = 2,
 
+    /// Updates an existing authority in the wallet.
+    ///
+    /// Required accounts:
+    /// 1. `[writable, signer]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. System program account
+    #[account(0, writable, signer, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, name="system_program", desc="the system program")]
+    UpdateAuthorityV1 = 3,
+
     /// Signs and executes a transaction.
     ///
     /// The instruction data includes:
