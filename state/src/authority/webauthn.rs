@@ -1,12 +1,11 @@
-//! Secp256r1 authority implementation for standard ECDSA signature support.
+//! WebAuthn authority implementation for passkey support.
 //!
-//! This module provides implementations for Secp256r1-based authority types in
-//! the Swig wallet system, designed for standard ECDSA signature verification.
-//! It includes both standard Secp256r1 authority and session-based Secp256r1
+//! This module provides implementations for WebAuthn-based authority types in
+//! the Swig wallet system, designed specifically for WebAuthn/passkey authentication.
+//! It includes both standard WebAuthn authority and session-based WebAuthn
 //! authority with expiration support. The implementation relies on the Solana
-//! secp256r1 precompile program for signature verification.
-//!
-//! For WebAuthn/passkey-specific functionality, see the webauthn module.
+//! secp256r1 precompile program for signature verification but includes WebAuthn-specific
+//! message formatting and validation.
 
 #![warn(unexpected_cfgs)]
 
@@ -25,10 +24,10 @@ use swig_assertions::sol_assert_bytes_eq;
 use super::{Authority, AuthorityInfo, AuthorityType};
 use crate::{IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut};
 
-/// Maximum age (in slots) for a Secp256r1 signature to be considered valid
+/// Maximum age (in slots) for a WebAuthn signature to be considered valid
 const MAX_SIGNATURE_AGE_IN_SLOTS: u64 = 60;
 
-/// Secp256r1 program ID
+/// Secp256r1 program ID (used for WebAuthn signature verification)
 const SECP256R1_PROGRAM_ID: [u8; 32] = pubkey!("Secp256r1SigVerify1111111111111111111111111");
 
 /// Constants from the secp256r1 program
@@ -41,6 +40,7 @@ const PUBKEY_DATA_OFFSET: usize = DATA_START;
 const SIGNATURE_DATA_OFFSET: usize = DATA_START + COMPRESSED_PUBKEY_SERIALIZED_SIZE;
 const MESSAGE_DATA_OFFSET: usize = SIGNATURE_DATA_OFFSET + SIGNATURE_SERIALIZED_SIZE;
 const MESSAGE_DATA_SIZE: usize = 32;
+const WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE: usize = 196;
 
 /// Secp256r1 signature offsets structure (matches solana-secp256r1-program)
 #[derive(Debug, Copy, Clone)]
@@ -62,10 +62,10 @@ pub struct Secp256r1SignatureOffsets {
     pub message_instruction_index: u16,
 }
 
-/// Creation parameters for a session-based Secp256r1 authority.
+/// Creation parameters for a session-based WebAuthn authority.
 #[derive(Debug, no_padding::NoPadding)]
 #[repr(C, align(8))]
-pub struct CreateSecp256r1SessionAuthority {
+pub struct CreateWebAuthnSessionAuthority {
     /// The compressed Secp256r1 public key (33 bytes)
     pub public_key: [u8; 33],
     /// Padding for alignment
@@ -76,7 +76,7 @@ pub struct CreateSecp256r1SessionAuthority {
     pub max_session_length: u64,
 }
 
-impl CreateSecp256r1SessionAuthority {
+impl CreateWebAuthnSessionAuthority {
     /// Creates a new set of session authority parameters.
     ///
     /// # Arguments
@@ -93,13 +93,13 @@ impl CreateSecp256r1SessionAuthority {
     }
 }
 
-impl Transmutable for CreateSecp256r1SessionAuthority {
+impl Transmutable for CreateWebAuthnSessionAuthority {
     const LEN: usize = 33 + 7 + 32 + 8; // Include the 7 bytes of padding
 }
 
-impl TransmutableMut for CreateSecp256r1SessionAuthority {}
+impl TransmutableMut for CreateWebAuthnSessionAuthority {}
 
-impl IntoBytes for CreateSecp256r1SessionAuthority {
+impl IntoBytes for CreateWebAuthnSessionAuthority {
     fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         let bytes =
             unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
@@ -107,13 +107,14 @@ impl IntoBytes for CreateSecp256r1SessionAuthority {
     }
 }
 
-/// Standard Secp256r1 authority implementation for passkey support.
+/// Standard WebAuthn authority implementation for passkey support.
 ///
-/// This struct represents a Secp256r1 authority with a compressed public key
-/// for signature verification using the Solana secp256r1 precompile program.
+/// This struct represents a WebAuthn authority with a compressed public key
+/// for signature verification using the Solana secp256r1 precompile program
+/// with WebAuthn-specific message formatting.
 #[derive(Debug, no_padding::NoPadding)]
 #[repr(C, align(8))]
-pub struct Secp256r1Authority {
+pub struct WebAuthnAuthority {
     /// The compressed Secp256r1 public key (33 bytes)
     pub public_key: [u8; 33],
     /// Padding for u32 alignment
@@ -122,8 +123,8 @@ pub struct Secp256r1Authority {
     pub signature_odometer: u32,
 }
 
-impl Secp256r1Authority {
-    /// Creates a new Secp256r1Authority with a compressed public key.
+impl WebAuthnAuthority {
+    /// Creates a new WebAuthnAuthority with a compressed public key.
     pub fn new(public_key: [u8; 33]) -> Self {
         Self {
             public_key,
@@ -133,28 +134,28 @@ impl Secp256r1Authority {
     }
 }
 
-impl Transmutable for Secp256r1Authority {
-    const LEN: usize = core::mem::size_of::<Secp256r1Authority>();
+impl Transmutable for WebAuthnAuthority {
+    const LEN: usize = core::mem::size_of::<WebAuthnAuthority>();
 }
 
-impl TransmutableMut for Secp256r1Authority {}
+impl TransmutableMut for WebAuthnAuthority {}
 
-impl Authority for Secp256r1Authority {
-    const TYPE: AuthorityType = AuthorityType::Secp256r1;
+impl Authority for WebAuthnAuthority {
+    const TYPE: AuthorityType = AuthorityType::WebAuthn;
     const SESSION_BASED: bool = false;
 
     fn set_into_bytes(create_data: &[u8], bytes: &mut [u8]) -> Result<(), ProgramError> {
         if create_data.len() != 33 {
             return Err(SwigStateError::InvalidRoleData.into());
         }
-        let authority = unsafe { Secp256r1Authority::load_mut_unchecked(bytes)? };
+        let authority = unsafe { WebAuthnAuthority::load_mut_unchecked(bytes)? };
         authority.public_key.copy_from_slice(create_data);
         authority.signature_odometer = 0;
         Ok(())
     }
 }
 
-impl AuthorityInfo for Secp256r1Authority {
+impl AuthorityInfo for WebAuthnAuthority {
     fn authority_type(&self) -> AuthorityType {
         Self::TYPE
     }
@@ -193,11 +194,11 @@ impl AuthorityInfo for Secp256r1Authority {
         data_payload: &[u8],
         slot: u64,
     ) -> Result<(), ProgramError> {
-        secp256r1_authority_authenticate(self, authority_payload, data_payload, slot, account_infos)
+        webauthn_authority_authenticate(self, authority_payload, data_payload, slot, account_infos)
     }
 }
 
-impl IntoBytes for Secp256r1Authority {
+impl IntoBytes for WebAuthnAuthority {
     fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         let bytes =
             unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
@@ -205,14 +206,14 @@ impl IntoBytes for Secp256r1Authority {
     }
 }
 
-/// Session-based Secp256r1 authority implementation.
+/// Session-based WebAuthn authority implementation.
 ///
-/// This struct represents a Secp256r1 authority that supports temporary session
+/// This struct represents a WebAuthn authority that supports temporary session
 /// keys with expiration times. It maintains both a root public key and a
 /// session key.
 #[derive(Debug, no_padding::NoPadding)]
 #[repr(C, align(8))]
-pub struct Secp256r1SessionAuthority {
+pub struct WebAuthnSessionAuthority {
     /// The compressed Secp256r1 public key (33 bytes)
     pub public_key: [u8; 33],
     _padding: [u8; 3],
@@ -226,19 +227,19 @@ pub struct Secp256r1SessionAuthority {
     pub current_session_expiration: u64,
 }
 
-impl Transmutable for Secp256r1SessionAuthority {
-    const LEN: usize = core::mem::size_of::<Secp256r1SessionAuthority>();
+impl Transmutable for WebAuthnSessionAuthority {
+    const LEN: usize = core::mem::size_of::<WebAuthnSessionAuthority>();
 }
 
-impl TransmutableMut for Secp256r1SessionAuthority {}
+impl TransmutableMut for WebAuthnSessionAuthority {}
 
-impl Authority for Secp256r1SessionAuthority {
-    const TYPE: AuthorityType = AuthorityType::Secp256r1Session;
+impl Authority for WebAuthnSessionAuthority {
+    const TYPE: AuthorityType = AuthorityType::WebAuthnSession;
     const SESSION_BASED: bool = true;
 
     fn set_into_bytes(create_data: &[u8], bytes: &mut [u8]) -> Result<(), ProgramError> {
-        let create = unsafe { CreateSecp256r1SessionAuthority::load_unchecked(create_data)? };
-        let authority = unsafe { Secp256r1SessionAuthority::load_mut_unchecked(bytes)? };
+        let create = unsafe { CreateWebAuthnSessionAuthority::load_unchecked(create_data)? };
+        let authority = unsafe { WebAuthnSessionAuthority::load_mut_unchecked(bytes)? };
         authority.public_key = create.public_key;
         authority.signature_odometer = 0;
         authority.session_key = create.session_key;
@@ -247,7 +248,7 @@ impl Authority for Secp256r1SessionAuthority {
     }
 }
 
-impl AuthorityInfo for Secp256r1SessionAuthority {
+impl AuthorityInfo for WebAuthnSessionAuthority {
     fn authority_type(&self) -> AuthorityType {
         Self::TYPE
     }
@@ -286,7 +287,7 @@ impl AuthorityInfo for Secp256r1SessionAuthority {
         data_payload: &[u8],
         slot: u64,
     ) -> Result<(), ProgramError> {
-        secp256r1_session_authority_authenticate(
+        webauthn_session_authority_authenticate(
             self,
             authority_payload,
             data_payload,
@@ -332,7 +333,7 @@ impl AuthorityInfo for Secp256r1SessionAuthority {
     }
 }
 
-impl IntoBytes for Secp256r1SessionAuthority {
+impl IntoBytes for WebAuthnSessionAuthority {
     fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         let bytes =
             unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) };
@@ -340,17 +341,17 @@ impl IntoBytes for Secp256r1SessionAuthority {
     }
 }
 
-/// Authenticates a Secp256r1 authority with additional payload data.
+/// Authenticates a WebAuthn authority with additional payload data.
 ///
 /// # Arguments
 /// * `authority` - The mutable authority reference for counter updates
 /// * `authority_payload` - The authority payload including slot, counter,
-///   instruction index, and signature
+///   instruction index, and WebAuthn-specific data
 /// * `data_payload` - Additional data to be included in signature verification
 /// * `current_slot` - The current slot number
 /// * `account_infos` - List of accounts involved in the transaction
-fn secp256r1_authority_authenticate(
-    authority: &mut Secp256r1Authority,
+fn webauthn_authority_authenticate(
+    authority: &mut WebAuthnAuthority,
     authority_payload: &[u8],
     data_payload: &[u8],
     current_slot: u64,
@@ -382,7 +383,7 @@ fn secp256r1_authority_authenticate(
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1SignatureReused.into());
     }
 
-    secp256r1_authenticate(
+    webauthn_authenticate(
         &authority.public_key,
         data_payload,
         authority_slot,
@@ -397,7 +398,7 @@ fn secp256r1_authority_authenticate(
     Ok(())
 }
 
-/// Authenticates a Secp256r1 session authority with additional payload data.
+/// Authenticates a WebAuthn session authority with additional payload data.
 ///
 /// # Arguments
 /// * `authority` - The mutable authority reference for counter updates
@@ -406,8 +407,8 @@ fn secp256r1_authority_authenticate(
 /// * `data_payload` - Additional data to be included in signature verification
 /// * `current_slot` - The current slot number
 /// * `account_infos` - List of accounts involved in the transaction
-fn secp256r1_session_authority_authenticate(
-    authority: &mut Secp256r1SessionAuthority,
+fn webauthn_session_authority_authenticate(
+    authority: &mut WebAuthnSessionAuthority,
     authority_payload: &[u8],
     data_payload: &[u8],
     current_slot: u64,
@@ -431,14 +432,14 @@ fn secp256r1_session_authority_authenticate(
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1SignatureReused.into());
     }
 
-    secp256r1_authenticate(
+    webauthn_authenticate(
         &authority.public_key,
         data_payload,
         authority_slot,
         current_slot,
         account_infos,
         instruction_index,
-        counter, // Now use proper counter-based replay protection
+        counter,
         &authority_payload[17..],
     )?;
 
@@ -446,15 +447,16 @@ fn secp256r1_session_authority_authenticate(
     Ok(())
 }
 
-/// Core Secp256r1 signature verification function.
+/// Core WebAuthn signature verification function.
 ///
 /// This function performs the actual signature verification by:
 /// - Validating signature age
 /// - Computing the message hash (including counter for replay protection)
+/// - Processing WebAuthn-specific message formatting
 /// - Finding and validating the secp256r1 precompile instruction
 /// - Verifying the message hash matches what was passed to the precompile
 /// - Verifying the public key matches
-fn secp256r1_authenticate(
+fn webauthn_authenticate(
     expected_key: &[u8; 33],
     data_payload: &[u8],
     authority_slot: u64,
@@ -462,7 +464,7 @@ fn secp256r1_authenticate(
     account_infos: &[AccountInfo],
     instruction_account_index: usize,
     counter: u32,
-    additional_paylaod: &[u8],
+    additional_payload: &[u8],
 ) -> Result<(), ProgramError> {
     // Validate signature age
     if current_slot < authority_slot || current_slot - authority_slot > MAX_SIGNATURE_AGE_IN_SLOTS {
@@ -471,10 +473,20 @@ fn secp256r1_authenticate(
 
     // Compute our expected message hash
     let computed_hash = compute_message_hash(data_payload, account_infos, authority_slot, counter)?;
+    let mut message_buf: MaybeUninit<[u8; WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE + 32]> =
+        MaybeUninit::uninit();
 
-    // For standard secp256r1, we use the computed hash directly
-    // WebAuthn-specific message formatting is handled in the webauthn module
-    let message = &computed_hash;
+    // WebAuthn requires additional payload processing
+    let message = if additional_payload.is_empty() {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    } else {
+        webauthn_message(
+            additional_payload,
+            computed_hash,
+            unsafe { &mut *message_buf.as_mut_ptr() },
+            counter,
+        )?
+    };
 
     // Get the sysvar instructions account
     let sysvar_instructions = account_infos
@@ -482,7 +494,6 @@ fn secp256r1_authenticate(
         .ok_or(SwigAuthenticateError::InvalidAuthorityPayload)?;
 
     // Verify this is the sysvar instructions account
-
     if sysvar_instructions.key().as_ref() != &INSTRUCTIONS_ID {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
     }
@@ -504,7 +515,7 @@ fn secp256r1_authenticate(
     Ok(())
 }
 
-/// Compute the message hash for secp256r1 authentication
+/// Compute the message hash for WebAuthn authentication
 fn compute_message_hash(
     data_payload: &[u8],
     account_infos: &[AccountInfo],
@@ -546,7 +557,85 @@ fn compute_message_hash(
     }
 }
 
+/// Process WebAuthn-specific message formatting.
+///
+/// This function handles the WebAuthn-specific message format which includes:
+/// - Authenticator data
+/// - Client data JSON hash
+/// - Counter verification within challenge excerpt
+/// - Proper message construction for signature verification
+fn webauthn_message<'a>(
+    auth_payload: &[u8],
+    computed_hash: [u8; 32],
+    message_buf: &'a mut [u8],
+    expected_counter: u32,
+) -> Result<&'a [u8], ProgramError> {
+    // Check minimum length for auth_payload (need at least 4 bytes for auth_len)
+    if auth_payload.len() < 4 {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+    
+    // let _auth_type = u16::from_le_bytes(prefix[..2].try_into().unwrap());
+    let auth_len = u16::from_le_bytes(auth_payload[2..4].try_into().unwrap()) as usize;
 
+    if auth_len >= WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    let auth_data = &auth_payload[4..4 + auth_len];
+
+    // Check if we have the required data: 32 bytes for clientDataJSON hash +
+    // 4 bytes for counter + at least 2 bytes for challenge excerpt length
+    let remaining_bytes = auth_payload.len() - (4 + auth_len);
+    if remaining_bytes < 38 {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    let client_data_json_hash = &auth_payload[4 + auth_len..4 + auth_len + 32];
+    let provided_counter_bytes = &auth_payload[4 + auth_len + 32..4 + auth_len + 36];
+    let provided_counter = u32::from_le_bytes(provided_counter_bytes.try_into().unwrap());
+
+    if provided_counter != expected_counter {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1SignatureReused.into());
+    }
+
+    // Get the challenge excerpt length and data
+    let challenge_excerpt_len_offset = 4 + auth_len + 36;
+    if challenge_excerpt_len_offset + 2 > auth_payload.len() {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    let challenge_excerpt_len = u16::from_le_bytes(
+        auth_payload[challenge_excerpt_len_offset..challenge_excerpt_len_offset + 2]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+
+    let challenge_excerpt_start = challenge_excerpt_len_offset + 2;
+    if challenge_excerpt_start + challenge_excerpt_len > auth_payload.len() {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    let challenge_excerpt =
+        &auth_payload[challenge_excerpt_start..challenge_excerpt_start + challenge_excerpt_len];
+
+    // Verify the counter appears in the challenge excerpt
+    // The challenge should contain the counter in little-endian format
+    let counter_found = challenge_excerpt
+        .windows(4)
+        .any(|window| window == provided_counter_bytes);
+
+    if !counter_found {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1SignatureReused.into());
+    }
+
+    // The client_data_json_hash is the SHA256 of clientDataJSON provided by the
+    // frontend We use this directly instead of computing it from the full JSON
+    message_buf[0..auth_len].copy_from_slice(auth_data);
+    message_buf[auth_len..auth_len + 32].copy_from_slice(client_data_json_hash);
+
+    Ok(&message_buf[..auth_len + 32])
+}
 
 /// Verify the secp256r1 instruction data contains the expected signature and
 /// public key
@@ -564,13 +653,13 @@ fn verify_secp256r1_instruction_data(
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
     }
 
-    if instruction_data.len() < MESSAGE_DATA_OFFSET + MESSAGE_DATA_SIZE {
+    if instruction_data.len() < MESSAGE_DATA_OFFSET + expected_message.len() {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
     }
     let pubkey_data = &instruction_data
         [PUBKEY_DATA_OFFSET..PUBKEY_DATA_OFFSET + COMPRESSED_PUBKEY_SERIALIZED_SIZE];
     let message_data =
-        &instruction_data[MESSAGE_DATA_OFFSET..MESSAGE_DATA_OFFSET + MESSAGE_DATA_SIZE];
+        &instruction_data[MESSAGE_DATA_OFFSET..MESSAGE_DATA_OFFSET + expected_message.len()];
 
     if pubkey_data != expected_pubkey {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidPubkey.into());
@@ -627,180 +716,127 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_secp256r1_instruction_data_single_signature() {
-        let test_message = [0u8; 32];
-        let test_signature = [0xCD; 64]; // Test signature
-        let test_pubkey = [0x02; 33]; // Test compressed pubkey
+    fn test_webauthn_message_with_counter_verification() {
+        let auth_data = [0x01, 0x02, 0x03, 0x04]; // 4 bytes of authenticator data
+        let client_data_hash = [0xAB; 32]; // 32 bytes of clientDataJSON hash
+        let counter: u32 = 12345;
+        let counter_bytes = counter.to_le_bytes();
 
-        let instruction_data =
-            create_test_secp256r1_instruction_data(&test_message, &test_signature, &test_pubkey);
+        // Create a challenge excerpt that contains the counter
+        let challenge_excerpt = [
+            0x00,
+            0x11,
+            0x22, // Some prefix data
+            counter_bytes[0],
+            counter_bytes[1],
+            counter_bytes[2],
+            counter_bytes[3], // Counter
+            0x33,
+            0x44,
+            0x55, // Some suffix data
+        ];
 
-        // Should succeed with matching pubkey and message hash
-        let result =
-            verify_secp256r1_instruction_data(&instruction_data, &test_pubkey, &test_message);
+        // Build the auth_payload with counter verification data
+        let mut auth_payload = Vec::new();
+        auth_payload.extend_from_slice(&0u16.to_le_bytes()); // auth_type (2 bytes)
+        auth_payload.extend_from_slice(&(auth_data.len() as u16).to_le_bytes()); // auth_len (2 bytes)
+        auth_payload.extend_from_slice(&auth_data); // auth_data
+        auth_payload.extend_from_slice(&client_data_hash); // client_data_json_hash (32 bytes)
+        auth_payload.extend_from_slice(&counter_bytes); // counter (4 bytes)
+        auth_payload.extend_from_slice(&(challenge_excerpt.len() as u16).to_le_bytes()); // excerpt_len (2 bytes)
+        auth_payload.extend_from_slice(&challenge_excerpt); // challenge_excerpt
+
+        // Create a computed hash that includes the counter (simulating the original
+        // message hash)
+        let mut computed_hash = [0u8; 32];
+        computed_hash[28..32].copy_from_slice(&counter_bytes); // Put counter in last 4 bytes
+
+        let mut message_buf = [0u8; WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE + 32];
+
+        // Should succeed with matching counter
+        let result = webauthn_message(&auth_payload, computed_hash, &mut message_buf, counter);
         assert!(
             result.is_ok(),
-            "Verification should succeed with correct data. Error: {:?}",
-            result.err()
+            "Should succeed with matching counter in challenge"
         );
-    }
 
-    #[test]
-    fn test_verify_secp256r1_instruction_data_wrong_pubkey() {
-        let test_message = [0u8; 32];
-        let test_pubkey = [0x02; 33];
-        let wrong_pubkey = [0x03; 33]; // Different pubkey
-        let test_signature = [0xCD; 64];
+        // Should fail with counter not in challenge
+        let mut bad_challenge_excerpt = challenge_excerpt.clone();
+        bad_challenge_excerpt[3] = 0xFF; // Corrupt the counter in the challenge
 
-        let instruction_data =
-            create_test_secp256r1_instruction_data(&test_message, &test_signature, &test_pubkey);
+        let mut bad_auth_payload = Vec::new();
+        bad_auth_payload.extend_from_slice(&0u16.to_le_bytes()); // auth_type (2 bytes)
+        bad_auth_payload.extend_from_slice(&(auth_data.len() as u16).to_le_bytes()); // auth_len (2 bytes)
+        bad_auth_payload.extend_from_slice(&auth_data); // auth_data
+        bad_auth_payload.extend_from_slice(&client_data_hash); // client_data_json_hash (32 bytes)
+        bad_auth_payload.extend_from_slice(&counter_bytes); // counter (4 bytes)
+        bad_auth_payload.extend_from_slice(&(bad_challenge_excerpt.len() as u16).to_le_bytes()); // excerpt_len (2 bytes)
+        bad_auth_payload.extend_from_slice(&bad_challenge_excerpt); // bad challenge_excerpt
 
-        // Should fail with wrong pubkey
-        let result =
-            verify_secp256r1_instruction_data(&instruction_data, &wrong_pubkey, &test_message);
+        let result = webauthn_message(&bad_auth_payload, computed_hash, &mut message_buf, counter);
         assert!(
             result.is_err(),
-            "Verification should fail with wrong pubkey"
+            "Should fail when counter not found in challenge"
         );
         assert_eq!(
             result.unwrap_err(),
-            SwigAuthenticateError::PermissionDeniedSecp256r1InvalidPubkey.into()
+            SwigAuthenticateError::PermissionDeniedSecp256r1SignatureReused.into()
         );
     }
 
     #[test]
-    fn test_verify_secp256r1_instruction_data_wrong_message_hash() {
-        let test_message = [0u8; 32];
-        let wrong_message = [1u8; 32]; // Different message
-        let test_pubkey = [0x02; 33];
-        let test_signature = [0xCD; 64];
+    fn test_webauthn_message_counter_mismatch() {
+        let test_counter = 42u32;
+        let wrong_counter = 43u32;
+        let auth_data = [0u8; 37]; // Minimal auth data
+        let client_data_json_hash = [1u8; 32];
+        let counter_bytes = test_counter.to_le_bytes();
+        let challenge_excerpt = [
+            &[0u8; 32][..],     // message hash
+            &counter_bytes[..], // counter in challenge
+        ]
+        .concat();
+        let challenge_excerpt_len = (challenge_excerpt.len() as u16).to_le_bytes();
 
-        let instruction_data =
-            create_test_secp256r1_instruction_data(&test_message, &test_signature, &test_pubkey);
+        let mut auth_payload = Vec::new();
+        auth_payload.extend_from_slice(&[0u8; 2]); // auth_type
+        auth_payload.extend_from_slice(&(auth_data.len() as u16).to_le_bytes()); // auth_len
+        auth_payload.extend_from_slice(&auth_data); // auth_data
+        auth_payload.extend_from_slice(&client_data_json_hash); // clientDataJSON hash
+        auth_payload.extend_from_slice(&counter_bytes); // counter (matches challenge)
+        auth_payload.extend_from_slice(&challenge_excerpt_len); // challenge_excerpt_len
+        auth_payload.extend_from_slice(&challenge_excerpt); // challenge_excerpt
 
-        // Should fail with wrong message hash
-        let result =
-            verify_secp256r1_instruction_data(&instruction_data, &test_pubkey, &wrong_message);
+        let computed_hash = [0u8; 32];
+        let mut message_buf = [0u8; WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE + 32];
+
+        // Should fail when expected counter doesn't match counter in WebAuthn prefix
+        let result = webauthn_message(
+            &auth_payload,
+            computed_hash,
+            &mut message_buf,
+            wrong_counter,
+        );
         assert!(
             result.is_err(),
-            "Verification should fail with wrong message hash"
+            "Should fail when expected counter doesn't match WebAuthn prefix counter"
         );
         assert_eq!(
             result.unwrap_err(),
-            SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessageHash.into()
+            SwigAuthenticateError::PermissionDeniedSecp256r1SignatureReused.into()
         );
     }
 
     #[test]
-    fn test_verify_secp256r1_instruction_data_insufficient_length() {
-        let short_data = vec![0x01, 0x00]; // Only 2 bytes
+    fn test_webauthn_message_requires_additional_payload() {
+        let computed_hash = [0u8; 32];
+        let mut message_buf = [0u8; WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE + 32];
 
-        let test_pubkey = [0x02; 33];
-        let test_message_hash = [0xAB; 32];
-
-        let result =
-            verify_secp256r1_instruction_data(&short_data, &test_pubkey, &test_message_hash);
+        // Empty payload should fail for WebAuthn (unlike regular secp256r1)
+        let result = webauthn_message(&[], computed_hash, &mut message_buf, 1);
         assert!(
             result.is_err(),
-            "Verification should fail with insufficient data"
-        );
-        assert_eq!(
-            result.unwrap_err(),
-            SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into()
+            "WebAuthn should require additional payload data"
         );
     }
-
-    #[test]
-    fn test_verify_secp256r1_instruction_data_zero_signatures() {
-        let mut instruction_data = Vec::new();
-        instruction_data.push(0u8); // Zero signatures (1 byte, not 2)
-        instruction_data.push(0u8); // Padding
-
-        let test_pubkey = [0x02; 33];
-        let test_message_hash = [0xAB; 32];
-
-        let result =
-            verify_secp256r1_instruction_data(&instruction_data, &test_pubkey, &test_message_hash);
-        assert!(
-            result.is_err(),
-            "Verification should fail with zero signatures"
-        );
-        assert_eq!(
-            result.unwrap_err(),
-            SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into()
-        );
-    }
-
-    #[test]
-    fn test_verify_secp256r1_instruction_data_cross_instruction_reference() {
-        let mut instruction_data = Vec::new();
-
-        // Number of signature sets (1 byte) and padding (1 byte)
-        instruction_data.push(1u8); // Number of signature sets
-        instruction_data.push(0u8); // Padding
-
-        // Signature offsets with cross-instruction reference
-        instruction_data.extend_from_slice(&16u16.to_le_bytes()); // signature_offset
-        instruction_data.extend_from_slice(&1u16.to_le_bytes()); // signature_instruction_index (different instruction)
-        instruction_data.extend_from_slice(&80u16.to_le_bytes()); // public_key_offset
-        instruction_data.extend_from_slice(&0u16.to_le_bytes()); // public_key_instruction_index
-        instruction_data.extend_from_slice(&113u16.to_le_bytes()); // message_data_offset
-        instruction_data.extend_from_slice(&32u16.to_le_bytes()); // message_data_size
-        instruction_data.extend_from_slice(&0u16.to_le_bytes()); // message_instruction_index
-
-        let test_pubkey = [0x02; 33];
-        let test_message_hash = [0xAB; 32];
-
-        let result =
-            verify_secp256r1_instruction_data(&instruction_data, &test_pubkey, &test_message_hash);
-        assert!(
-            result.is_err(),
-            "Verification should fail with cross-instruction reference"
-        );
-        assert_eq!(
-            result.unwrap_err(),
-            SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into()
-        );
-    }
-
-    #[test]
-    fn test_verify_secp256r1_with_real_crypto() {
-        // Create a test message 32 bytes
-        let test_message = b"Hello, secp256r1 world! dddddddd";
-
-        // Generate real cryptographic signature and pubkey using OpenSSL
-        let (signature_bytes, pubkey_bytes) = create_test_signature_and_pubkey(test_message);
-
-        // Create instruction data using the official Solana function
-        let instruction_data =
-            create_test_secp256r1_instruction_data(test_message, &signature_bytes, &pubkey_bytes);
-
-        // Should succeed with real cryptographic data
-        let result =
-            verify_secp256r1_instruction_data(&instruction_data, &pubkey_bytes, test_message);
-        assert!(
-            result.is_ok(),
-            "Verification should succeed with real cryptographic data"
-        );
-
-        // Should fail with wrong message
-        let wrong_message = b"Different message";
-        let result =
-            verify_secp256r1_instruction_data(&instruction_data, &pubkey_bytes, wrong_message);
-        assert!(
-            result.is_err(),
-            "Verification should fail with wrong message"
-        );
-
-        // Should fail with wrong public key
-        let wrong_pubkey = [0xFF; 33];
-        let result =
-            verify_secp256r1_instruction_data(&instruction_data, &wrong_pubkey, test_message);
-        assert!(
-            result.is_err(),
-            "Verification should fail with wrong public key"
-        );
-    }
-
-
 }

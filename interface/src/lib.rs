@@ -1368,6 +1368,107 @@ impl WithdrawFromSubAccountInstruction {
 
         Ok(vec![secp256r1_verify_ix, main_ix])
     }
+
+    pub fn new_with_webauthn_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        acting_role_id: u32,
+        new_authority_config: AuthorityConfig,
+        actions: Vec<ClientAction>,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> ([u8; 64], Vec<u8>),
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+
+        let mut action_bytes = Vec::new();
+        let num_actions = actions.len() as u8;
+        for action in actions {
+            action
+                .write(&mut action_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize action {:?}", e))?;
+        }
+
+        let args = AddAuthorityV1Args::new(
+            acting_role_id,
+            new_authority_config.authority_type,
+            new_authority_config.authority.len() as u16,
+            action_bytes.len() as u16,
+            num_actions,
+        );
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Create the message hash for WebAuthn authentication
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let mut data_to_besigned_bytes = Vec::new();
+        data_to_besigned_bytes.extend_from_slice(args_bytes);
+        data_to_besigned_bytes.extend_from_slice(new_authority_config.authority);
+        data_to_besigned_bytes.extend_from_slice(&action_bytes);
+
+        // Compute message hash (keccak for WebAuthn compatibility)
+        let slot_bytes = current_slot.to_le_bytes();
+        let counter_bytes = counter.to_le_bytes();
+        let message_hash = keccak::hash(
+            &[
+                &data_to_besigned_bytes,
+                &account_payload_bytes,
+                &slot_bytes[..],
+                &counter_bytes[..],
+            ]
+            .concat(),
+        )
+        .to_bytes();
+
+        // Get signature and WebAuthn payload from authority function
+        let (signature, webauthn_payload) = authority_payload_fn(&message_hash);
+
+        // Create secp256r1 verify instruction
+        let secp256r1_verify_ix =
+            new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
+
+        // For WebAuthn, the authority payload includes slot, counter, instruction
+        // index, and WebAuthn-specific payload
+        let instruction_sysvar_index = 3; // Instructions sysvar is at index 3
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
+        authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
+        authority_payload.push(instruction_sysvar_index as u8); // 1 byte: index of instruction sysvar
+        authority_payload.extend_from_slice(&[0u8; 4]); // 4 bytes padding to meet 17 byte minimum
+        authority_payload.extend_from_slice(&webauthn_payload); // WebAuthn-specific payload
+
+        let main_ix = Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [
+                args_bytes,
+                new_authority_config.authority,
+                &action_bytes,
+                &authority_payload,
+            ]
+            .concat(),
+        };
+
+        Ok(vec![secp256r1_verify_ix, main_ix])
+    }
 }
 
 pub struct SubAccountSignInstruction;
