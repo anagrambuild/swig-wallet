@@ -56,6 +56,8 @@ pub enum SwigError {
     InvalidSwigRemoveAuthorityInstructionDataTooShort,
     /// Add authority instruction data is too short
     InvalidSwigAddAuthorityInstructionDataTooShort,
+    /// Update authority instruction data is too short
+    InvalidSwigUpdateAuthorityInstructionDataTooShort,
     /// Create instruction data is too short
     InvalidSwigCreateInstructionDataTooShort,
     /// Create session instruction data is too short
@@ -108,6 +110,8 @@ pub enum SwigError {
     /// Account data was modified in unexpected ways during instruction
     /// execution
     AccountDataModifiedUnexpectedly,
+    /// Cannot update root authority (ID 0)
+    PermissionDeniedCannotUpdateRootAuthority,
 }
 
 /// Implements conversion from SwigError to ProgramError.
