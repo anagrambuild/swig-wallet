@@ -304,12 +304,14 @@ impl Permission {
         }
 
         // Check for Program permissions by iterating through all actions
-        let all_actions = role.get_all_actions().map_err(|_| SwigError::InvalidSwigData)?;
+        let all_actions = role
+            .get_all_actions()
+            .map_err(|_| SwigError::InvalidSwigData)?;
         for action in all_actions {
             match action.permission() {
-                Ok(swig_state::action::Permission::Program) |
-                Ok(swig_state::action::Permission::ProgramAll) |
-                Ok(swig_state::action::Permission::ProgramCurated) => {
+                Ok(swig_state::action::Permission::Program)
+                | Ok(swig_state::action::Permission::ProgramAll)
+                | Ok(swig_state::action::Permission::ProgramCurated) => {
                     // Get the program action data
                     let action_data = unsafe {
                         core::slice::from_raw_parts(
@@ -324,7 +326,7 @@ impl Permission {
                         });
                     }
                 },
-                _ => {}
+                _ => {},
             }
         }
 

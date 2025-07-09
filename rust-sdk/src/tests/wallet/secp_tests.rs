@@ -3,8 +3,7 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::{LocalSigner, PrivateKeySigner};
 use solana_sdk::{
     signature::{Keypair, Signer},
-    system_instruction,
-    system_program,
+    system_instruction, system_program,
     sysvar::clock::Clock,
 };
 use swig_state::authority::AuthorityType;
@@ -71,9 +70,10 @@ fn test_secp256k1_signature_reuse_error() {
                     program_id: system_program::ID,
                 },
                 Permission::Sol {
-                amount: 10_000_000_000,
-                recurring: None,
-            }],
+                    amount: 10_000_000_000,
+                    recurring: None,
+                },
+            ],
         )
         .unwrap();
 
@@ -152,9 +152,10 @@ fn test_secp256k1_invalid_signature_age_error() {
                     program_id: system_program::ID,
                 },
                 Permission::Sol {
-                amount: 10_000_000_000,
-                recurring: None,
-            }],
+                    amount: 10_000_000_000,
+                    recurring: None,
+                },
+            ],
         )
         .unwrap();
 
@@ -219,9 +220,10 @@ fn test_secp256k1_invalid_signature_error() {
                     program_id: system_program::ID,
                 },
                 Permission::Sol {
-                amount: 10_000_000_000,
-                recurring: None,
-            }],
+                    amount: 10_000_000_000,
+                    recurring: None,
+                },
+            ],
         )
         .unwrap();
 
@@ -282,9 +284,10 @@ fn test_secp256k1_invalid_hash_error() {
                     program_id: system_program::ID,
                 },
                 Permission::Sol {
-                amount: 10_000_000_000,
-                recurring: None,
-            }],
+                    amount: 10_000_000_000,
+                    recurring: None,
+                },
+            ],
         )
         .unwrap();
 
@@ -344,9 +347,10 @@ fn test_secp256k1_counter_increment() {
                     program_id: system_program::ID,
                 },
                 Permission::Sol {
-                amount: 10_000_000_000,
-                recurring: None,
-            }],
+                    amount: 10_000_000_000,
+                    recurring: None,
+                },
+            ],
         )
         .unwrap();
 
@@ -443,9 +447,10 @@ fn test_secp256k1_authority_odometer() {
                     program_id: system_program::ID,
                 },
                 Permission::Sol {
-                amount: 10_000_000_000,
-                recurring: None,
-            }],
+                    amount: 10_000_000_000,
+                    recurring: None,
+                },
+            ],
         )
         .unwrap();
 
@@ -515,9 +520,10 @@ fn test_secp256k1_odometer_wrapping() {
                     program_id: system_program::ID,
                 },
                 Permission::Sol {
-                amount: 10_000_000_000,
-                recurring: None,
-            }],
+                    amount: 10_000_000_000,
+                    recurring: None,
+                },
+            ],
         )
         .unwrap();
 
