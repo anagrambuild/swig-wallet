@@ -16,17 +16,12 @@ use crate::{IntoBytes, Transmutable, TransmutableMut};
 /// This action grants the authority the ability to make CPI calls to any
 /// program without restrictions. This is the most permissive program permission
 /// and should be used with caution.
-#[derive(NoPadding)]
-#[repr(C, align(8))]
-pub struct ProgramAll {
-    /// Reserved bytes for future use and alignment
-    pub _reserved: [u8; 32],
-}
+pub struct ProgramAll;
 
 impl ProgramAll {
     /// Creates a new ProgramAll permission
     pub fn new() -> Self {
-        Self { _reserved: [0; 32] }
+        Self
     }
 }
 
@@ -38,12 +33,12 @@ impl Default for ProgramAll {
 
 impl Transmutable for ProgramAll {
     /// Size of the ProgramAll struct in bytes (32 bytes for alignment)
-    const LEN: usize = 32;
+    const LEN: usize = 0;
 }
 
 impl IntoBytes for ProgramAll {
     fn into_bytes(&self) -> Result<&[u8], ProgramError> {
-        Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
+        Ok(&[])
     }
 }
 
@@ -58,7 +53,7 @@ impl<'a> Actionable<'a> for ProgramAll {
     /// Always returns true since this grants access to all programs.
     ///
     /// # Arguments
-    /// * `_data` - The program ID to check against (ignored for ProgramAll)
+    /// * `_data` - unused
     fn match_data(&self, _data: &[u8]) -> bool {
         true
     }
