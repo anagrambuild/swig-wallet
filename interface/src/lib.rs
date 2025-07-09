@@ -21,11 +21,11 @@ use swig::actions::{
 pub use swig_compact_instructions::*;
 use swig_state::{
     action::{
-        all::All, manage_authority::ManageAuthority, program::Program, program_scope::ProgramScope,
-        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll,
-        stake_limit::StakeLimit, stake_recurring_limit::StakeRecurringLimit,
-        sub_account::SubAccount, token_limit::TokenLimit,
-        token_recurring_limit::TokenRecurringLimit, Action, Permission,
+        all::All, manage_authority::ManageAuthority, program::Program, program_all::ProgramAll,
+        program_curated::ProgramCurated, program_scope::ProgramScope, sol_limit::SolLimit,
+        sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll, stake_limit::StakeLimit,
+        stake_recurring_limit::StakeRecurringLimit, sub_account::SubAccount,
+        token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit, Action, Permission,
     },
     authority::{
         secp256k1::{hex_encode, AccountsPayload},
@@ -41,6 +41,8 @@ pub enum ClientAction {
     SolLimit(SolLimit),
     SolRecurringLimit(SolRecurringLimit),
     Program(Program),
+    ProgramAll(ProgramAll),
+    ProgramCurated(ProgramCurated),
     ProgramScope(ProgramScope),
     All(All),
     ManageAuthority(ManageAuthority),
@@ -62,6 +64,8 @@ impl ClientAction {
                 (Permission::SolRecurringLimit, SolRecurringLimit::LEN)
             },
             ClientAction::Program(_) => (Permission::Program, Program::LEN),
+            ClientAction::ProgramAll(_) => (Permission::ProgramAll, ProgramAll::LEN),
+            ClientAction::ProgramCurated(_) => (Permission::ProgramCurated, ProgramCurated::LEN),
             ClientAction::ProgramScope(_) => (Permission::ProgramScope, ProgramScope::LEN),
             ClientAction::All(_) => (Permission::All, All::LEN),
             ClientAction::ManageAuthority(_) => (Permission::ManageAuthority, ManageAuthority::LEN),
@@ -88,6 +92,8 @@ impl ClientAction {
             ClientAction::SolLimit(action) => action.into_bytes(),
             ClientAction::SolRecurringLimit(action) => action.into_bytes(),
             ClientAction::Program(action) => action.into_bytes(),
+            ClientAction::ProgramAll(action) => action.into_bytes(),
+            ClientAction::ProgramCurated(action) => action.into_bytes(),
             ClientAction::ProgramScope(action) => action.into_bytes(),
             ClientAction::All(action) => action.into_bytes(),
             ClientAction::ManageAuthority(action) => action.into_bytes(),
