@@ -16,7 +16,10 @@ use solana_sdk::{
 };
 use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state::{
-    action::program_scope::{NumericType, ProgramScope, ProgramScopeType},
+    action::{
+        program::Program,
+        program_scope::{NumericType, ProgramScope, ProgramScopeType},
+    },
     swig::swig_account_seeds,
     Transmutable,
 };
@@ -86,7 +89,12 @@ fn test_token_transfer_with_program_scope() {
             authority_type: swig_state::authority::AuthorityType::Ed25519,
             authority: swig_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::ProgramScope(program_scope)],
+        vec![
+            ClientAction::Program(Program {
+                program_id: spl_token::ID.to_bytes(),
+            }),
+            ClientAction::ProgramScope(program_scope),
+        ],
     );
 
     println!("{:?}", add_authority_result);
@@ -222,7 +230,7 @@ fn test_token_transfer_with_program_scope() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    assert!(swig_transfer_cu - regular_transfer_cu <= 5106);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 5235);
 }
 
 /// Helper function to perform token transfers through the swig
@@ -519,7 +527,12 @@ fn test_recurring_limit_program_scope() {
             authority_type: swig_state::authority::AuthorityType::Ed25519,
             authority: swig_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::ProgramScope(program_scope)],
+        vec![
+            ClientAction::Program(Program {
+                program_id: spl_token::ID.to_bytes(),
+            }),
+            ClientAction::ProgramScope(program_scope),
+        ],
     );
 
     assert!(add_authority_result.is_ok());
