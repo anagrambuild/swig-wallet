@@ -20,8 +20,9 @@ use solana_sdk::{
 };
 use solana_secp256r1_program;
 use swig_sdk::{
-    authority::AuthorityType, client_role::Secp256r1ClientRole, ClientRole, Ed25519ClientRole,
-    Permission, RecurringConfig, Secp256k1ClientRole, SwigError, SwigWallet, types::UpdateAuthorityData,
+    authority::AuthorityType, client_role::Secp256r1ClientRole, types::UpdateAuthorityData,
+    ClientRole, Ed25519ClientRole, Permission, RecurringConfig, Secp256k1ClientRole, SwigError,
+    SwigWallet,
 };
 
 use crate::{Command, SwigCliContext};
@@ -828,9 +829,9 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                                 "ManageAuthority" => Ok(Permission::ManageAuthority),
                                 "Sol" => Ok(Permission::Sol { amount: 0, recurring: None }),
                                 "Token" => Ok(Permission::Token { 
-                                    mint: Pubkey::default(), 
-                                    amount: 0, 
-                                    recurring: None 
+                                    mint: Pubkey::default(),
+                                    amount: 0,
+                                    recurring: None
                                 }),
                                 "Program" => Ok(Permission::Program { program_id: Pubkey::default() }),
                                 "ProgramScope" => Ok(Permission::ProgramScope {
@@ -860,10 +861,10 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 _ => return Err(anyhow!("Invalid operation: {}. Must be one of: ReplaceAll, AddActions, RemoveActionsByType, RemoveActionsByIndex", operation)),
             };
 
-            ctx.wallet.as_mut().unwrap().update_authority(
-                authority_to_update_id,
-                update_data,
-            )?;
+            ctx.wallet
+                .as_mut()
+                .unwrap()
+                .update_authority(authority_to_update_id, update_data)?;
 
             println!("Authority updated successfully!");
             Ok(())
