@@ -23,7 +23,10 @@ use solana_sdk::{
 };
 use swig_interface::{AuthorityConfig, ClientAction, RemoveAuthorityInstruction};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, sol_limit::SolLimit, Actionable},
+    action::{
+        all::All, manage_authority::ManageAuthority, program::Program, sol_limit::SolLimit,
+        Actionable,
+    },
     authority::AuthorityType,
     swig::{swig_account_seeds, SwigWithRoles},
     IntoBytes, Transmutable,
@@ -126,6 +129,9 @@ fn test_multiple_actions_with_transfer_and_manage_authority() {
                 amount: 10_000_000_000,
             }),
             ClientAction::ManageAuthority(ManageAuthority {}),
+            ClientAction::Program(Program {
+                program_id: solana_sdk::system_program::ID.to_bytes(),
+            }),
         ],
     )
     .unwrap();

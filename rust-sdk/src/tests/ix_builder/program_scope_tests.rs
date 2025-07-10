@@ -69,15 +69,20 @@ fn test_token_transfer_with_program_scope() {
     .unwrap();
 
     // Define program scope permissions
-    let permissions = vec![Permission::ProgramScope {
-        program_id: spl_token::ID,
-        target_account: swig_ata,
-        numeric_type: 2,
-        limit: Some(1000),
-        window: Some(0),
-        balance_field_start: Some(64),
-        balance_field_end: Some(72),
-    }];
+    let permissions = vec![
+        Permission::Program {
+            program_id: spl_token::ID,
+        },
+        Permission::ProgramScope {
+            program_id: spl_token::ID,
+            target_account: swig_ata,
+            numeric_type: 2,
+            limit: Some(1000),
+            window: Some(0),
+            balance_field_start: Some(64),
+            balance_field_end: Some(72),
+        },
+    ];
 
     let mut ix_builder = SwigInstructionBuilder::new(
         id,
@@ -226,15 +231,20 @@ fn test_recurring_limit_program_scope() {
     let window_size = 100;
     let transfer_limit = 500_u64;
 
-    let permissions = vec![Permission::ProgramScope {
-        program_id: spl_token::ID,
-        target_account: swig_ata,
-        numeric_type: 2, // U64
-        limit: Some(transfer_limit),
-        window: Some(window_size),
-        balance_field_start: Some(64),
-        balance_field_end: Some(72),
-    }];
+    let permissions = vec![
+        Permission::Program {
+            program_id: spl_token::ID,
+        },
+        Permission::ProgramScope {
+            program_id: spl_token::ID,
+            target_account: swig_ata,
+            numeric_type: 2, // U64
+            limit: Some(transfer_limit),
+            window: Some(window_size),
+            balance_field_start: Some(64),
+            balance_field_end: Some(72),
+        },
+    ];
 
     let mut ix_builder = SwigInstructionBuilder::new(
         id,
