@@ -556,6 +556,86 @@ impl SignInstruction {
 
         Ok(vec![secp256r1_verify_ix, main_ix])
     }
+
+    pub fn new_with_webauthn_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        sub_account: Pubkey,
+        role_id: u32,
+        enabled: bool,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> ([u8; 64], Vec<u8>),
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+
+        let args = ToggleSubAccountV1Args::new(role_id, enabled);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Create the message hash for WebAuthn authentication
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let mut data_to_be_signed_bytes = Vec::new();
+        data_to_be_signed_bytes.extend_from_slice(args_bytes);
+
+        // Compute message hash (keccak for WebAuthn compatibility)
+        let slot_bytes = current_slot.to_le_bytes();
+        let counter_bytes = counter.to_le_bytes();
+        let message_hash = keccak::hash(
+            &[
+                &data_to_be_signed_bytes,
+                &account_payload_bytes,
+                &slot_bytes[..],
+                &counter_bytes[..],
+            ]
+            .concat(),
+        )
+        .to_bytes();
+
+        // Get signature and WebAuthn payload from authority function
+        let (signature, webauthn_payload) = authority_payload_fn(&message_hash);
+
+        // Create secp256r1 verify instruction
+        let secp256r1_verify_ix =
+            new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
+
+        // For WebAuthn, the authority payload includes slot, counter, instruction
+        // index, and WebAuthn-specific payload
+        let instruction_sysvar_index = 4; // Instructions sysvar is at index 4
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
+        authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
+        authority_payload.push(instruction_sysvar_index as u8); // 1 byte: index of instruction sysvar
+        authority_payload.extend_from_slice(&[0u8; 4]); // 4 bytes padding to meet 17 byte minimum
+        authority_payload.extend_from_slice(&webauthn_payload); // WebAuthn-specific payload
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![secp256r1_verify_ix, main_ix])
+    }
 }
 
 pub struct RemoveAuthorityInstruction;
@@ -709,6 +789,172 @@ impl RemoveAuthorityInstruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
             data: [arg_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![secp256r1_verify_ix, main_ix])
+    }
+
+    pub fn new_with_webauthn_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        sub_account: Pubkey,
+        role_id: u32,
+        amount: u64,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> ([u8; 64], Vec<u8>),
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+
+        let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Create the message hash for WebAuthn authentication
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let mut data_to_be_signed_bytes = Vec::new();
+        data_to_be_signed_bytes.extend_from_slice(args_bytes);
+
+        // Compute message hash (keccak for WebAuthn compatibility)
+        let slot_bytes = current_slot.to_le_bytes();
+        let counter_bytes = counter.to_le_bytes();
+        let message_hash = keccak::hash(
+            &[
+                &data_to_be_signed_bytes,
+                &account_payload_bytes,
+                &slot_bytes[..],
+                &counter_bytes[..],
+            ]
+            .concat(),
+        )
+        .to_bytes();
+
+        // Get signature and WebAuthn payload from authority function
+        let (signature, webauthn_payload) = authority_payload_fn(&message_hash);
+
+        // Create secp256r1 verify instruction
+        let secp256r1_verify_ix =
+            new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
+
+        // For WebAuthn, the authority payload includes slot, counter, instruction
+        // index, and WebAuthn-specific payload
+        let instruction_sysvar_index = 4; // Instructions sysvar is at index 4
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
+        authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
+        authority_payload.push(instruction_sysvar_index as u8); // 1 byte: index of instruction sysvar
+        authority_payload.extend_from_slice(&[0u8; 4]); // 4 bytes padding to meet 17 byte minimum
+        authority_payload.extend_from_slice(&webauthn_payload); // WebAuthn-specific payload
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![secp256r1_verify_ix, main_ix])
+    }
+
+    pub fn new_token_with_webauthn_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        sub_account: Pubkey,
+        sub_account_token: Pubkey,
+        swig_token: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        amount: u64,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> ([u8; 64], Vec<u8>),
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new(sub_account_token, false),
+            AccountMeta::new(swig_token, false),
+            AccountMeta::new_readonly(token_program, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+
+        let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Create the message hash for WebAuthn authentication
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let mut data_to_be_signed_bytes = Vec::new();
+        data_to_be_signed_bytes.extend_from_slice(args_bytes);
+
+        // Compute message hash (keccak for WebAuthn compatibility)
+        let slot_bytes = current_slot.to_le_bytes();
+        let counter_bytes = counter.to_le_bytes();
+        let message_hash = keccak::hash(
+            &[
+                &data_to_be_signed_bytes,
+                &account_payload_bytes,
+                &slot_bytes[..],
+                &counter_bytes[..],
+            ]
+            .concat(),
+        )
+        .to_bytes();
+
+        // Get signature and WebAuthn payload from authority function
+        let (signature, webauthn_payload) = authority_payload_fn(&message_hash);
+
+        // Create secp256r1 verify instruction
+        let secp256r1_verify_ix =
+            new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
+
+        // For WebAuthn, the authority payload includes slot, counter, instruction
+        // index, and WebAuthn-specific payload
+        let instruction_sysvar_index = 7; // Instructions sysvar is at index 7
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
+        authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
+        authority_payload.push(instruction_sysvar_index as u8); // 1 byte: index of instruction sysvar
+        authority_payload.extend_from_slice(&[0u8; 4]); // 4 bytes padding to meet 17 byte minimum
+        authority_payload.extend_from_slice(&webauthn_payload); // WebAuthn-specific payload
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
         };
 
         Ok(vec![secp256r1_verify_ix, main_ix])
@@ -875,6 +1121,85 @@ impl CreateSessionInstruction {
 
         Ok(vec![secp256r1_verify_ix, main_ix])
     }
+
+    pub fn new_with_webauthn_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        role_id: u32,
+        session_key: Pubkey,
+        session_duration: u64,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> ([u8; 64], Vec<u8>),
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+        let create_session_args =
+            CreateSessionV1Args::new(role_id, session_duration, session_key.to_bytes());
+        let args_bytes = create_session_args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Create the message hash for WebAuthn authentication
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let mut data_to_be_signed_bytes = Vec::new();
+        data_to_be_signed_bytes.extend_from_slice(args_bytes);
+
+        // Compute message hash (keccak for WebAuthn compatibility)
+        let slot_bytes = current_slot.to_le_bytes();
+        let counter_bytes = counter.to_le_bytes();
+        let message_hash = keccak::hash(
+            &[
+                &data_to_be_signed_bytes,
+                &account_payload_bytes,
+                &slot_bytes[..],
+                &counter_bytes[..],
+            ]
+            .concat(),
+        )
+        .to_bytes();
+
+        // Get signature and WebAuthn payload from authority function
+        let (signature, webauthn_payload) = authority_payload_fn(&message_hash);
+
+        // Create secp256r1 verify instruction
+        let secp256r1_verify_ix =
+            new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
+
+        // For WebAuthn, the authority payload includes slot, counter, instruction
+        // index, and WebAuthn-specific payload
+        let instruction_sysvar_index = 3; // Instructions sysvar is at index 3
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
+        authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
+        authority_payload.push(instruction_sysvar_index as u8); // 1 byte: index of instruction sysvar
+        authority_payload.extend_from_slice(&[0u8; 4]); // 4 bytes padding to meet 17 byte minimum
+        authority_payload.extend_from_slice(&webauthn_payload); // WebAuthn-specific payload
+
+        let main_ix = Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![secp256r1_verify_ix, main_ix])
+    }
 }
 
 // Sub-account instruction structures
@@ -1027,6 +1352,86 @@ impl CreateSubAccountInstruction {
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
         authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
         authority_payload.push(4); // this is the index of the instruction sysvar
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![secp256r1_verify_ix, main_ix])
+    }
+
+    pub fn new_with_webauthn_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        sub_account: Pubkey,
+        role_id: u32,
+        sub_account_bump: u8,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> ([u8; 64], Vec<u8>),
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+
+        let args = CreateSubAccountV1Args::new(role_id, sub_account_bump);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Create the message hash for WebAuthn authentication
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let mut data_to_be_signed_bytes = Vec::new();
+        data_to_be_signed_bytes.extend_from_slice(args_bytes);
+
+        // Compute message hash (keccak for WebAuthn compatibility)
+        let slot_bytes = current_slot.to_le_bytes();
+        let counter_bytes = counter.to_le_bytes();
+        let message_hash = keccak::hash(
+            &[
+                &data_to_be_signed_bytes,
+                &account_payload_bytes,
+                &slot_bytes[..],
+                &counter_bytes[..],
+            ]
+            .concat(),
+        )
+        .to_bytes();
+
+        // Get signature and WebAuthn payload from authority function
+        let (signature, webauthn_payload) = authority_payload_fn(&message_hash);
+
+        // Create secp256r1 verify instruction
+        let secp256r1_verify_ix =
+            new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
+
+        // For WebAuthn, the authority payload includes slot, counter, instruction
+        // index, and WebAuthn-specific payload
+        let instruction_sysvar_index = 4; // Instructions sysvar is at index 4
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
+        authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
+        authority_payload.push(instruction_sysvar_index as u8); // 1 byte: index of instruction sysvar
+        authority_payload.extend_from_slice(&[0u8; 4]); // 4 bytes padding to meet 17 byte minimum
+        authority_payload.extend_from_slice(&webauthn_payload); // WebAuthn-specific payload
 
         let main_ix = Instruction {
             program_id: program_id(),
@@ -1625,6 +2030,89 @@ impl SubAccountSignInstruction {
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
         authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
         authority_payload.push(4); // this is the index of the instruction sysvar
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &ix_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![secp256r1_verify_ix, main_ix])
+    }
+
+    pub fn new_with_webauthn_authority<F>(
+        swig_account: Pubkey,
+        sub_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        role_id: u32,
+        instructions: Vec<Instruction>,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> ([u8; 64], Vec<u8>),
+    {
+        let accounts = vec![
+            AccountMeta::new_readonly(swig_account, false),
+            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+
+        let (accounts, ixs) =
+            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions);
+        let ix_bytes = ixs.into_bytes();
+        let args = SubAccountSignV1Args::new(role_id, ix_bytes.len() as u16);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Create the message hash for WebAuthn authentication
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let mut data_to_be_signed_bytes = Vec::new();
+        data_to_be_signed_bytes.extend_from_slice(&ix_bytes);
+
+        // Compute message hash (keccak for WebAuthn compatibility)
+        let slot_bytes = current_slot.to_le_bytes();
+        let counter_bytes = counter.to_le_bytes();
+        let message_hash = keccak::hash(
+            &[
+                &data_to_be_signed_bytes,
+                &account_payload_bytes,
+                &slot_bytes[..],
+                &counter_bytes[..],
+            ]
+            .concat(),
+        )
+        .to_bytes();
+
+        // Get signature and WebAuthn payload from authority function
+        let (signature, webauthn_payload) = authority_payload_fn(&message_hash);
+
+        // Create secp256r1 verify instruction
+        let secp256r1_verify_ix =
+            new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
+
+        // For WebAuthn, the authority payload includes slot, counter, instruction
+        // index, and WebAuthn-specific payload
+        let instruction_sysvar_index = 4; // Instructions sysvar is at index 4
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
+        authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
+        authority_payload.push(instruction_sysvar_index as u8); // 1 byte: index of instruction sysvar
+        authority_payload.extend_from_slice(&[0u8; 4]); // 4 bytes padding to meet 17 byte minimum
+        authority_payload.extend_from_slice(&webauthn_payload); // WebAuthn-specific payload
 
         let main_ix = Instruction {
             program_id: program_id(),

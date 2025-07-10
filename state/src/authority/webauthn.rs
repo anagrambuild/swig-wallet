@@ -1,11 +1,11 @@
 //! WebAuthn authority implementation for passkey support.
 //!
 //! This module provides implementations for WebAuthn-based authority types in
-//! the Swig wallet system, designed specifically for WebAuthn/passkey authentication.
-//! It includes both standard WebAuthn authority and session-based WebAuthn
-//! authority with expiration support. The implementation relies on the Solana
-//! secp256r1 precompile program for signature verification but includes WebAuthn-specific
-//! message formatting and validation.
+//! the Swig wallet system, designed specifically for WebAuthn/passkey
+//! authentication. It includes both standard WebAuthn authority and
+//! session-based WebAuthn authority with expiration support. The implementation
+//! relies on the Solana secp256r1 precompile program for signature verification
+//! but includes WebAuthn-specific message formatting and validation.
 
 #![warn(unexpected_cfgs)]
 
@@ -18,49 +18,19 @@ use pinocchio::{
     program_error::ProgramError,
     sysvars::instructions::{Instructions, INSTRUCTIONS_ID},
 };
-use pinocchio_pubkey::pubkey;
 use swig_assertions::sol_assert_bytes_eq;
 
-use super::{Authority, AuthorityInfo, AuthorityType};
+use super::{
+    secp256r1::{verify_secp256r1_instruction_data, SECP256R1_PROGRAM_ID},
+    Authority, AuthorityInfo, AuthorityType,
+};
 use crate::{IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut};
 
 /// Maximum age (in slots) for a WebAuthn signature to be considered valid
 const MAX_SIGNATURE_AGE_IN_SLOTS: u64 = 60;
 
-/// Secp256r1 program ID (used for WebAuthn signature verification)
-const SECP256R1_PROGRAM_ID: [u8; 32] = pubkey!("Secp256r1SigVerify1111111111111111111111111");
-
-/// Constants from the secp256r1 program
-const COMPRESSED_PUBKEY_SERIALIZED_SIZE: usize = 33;
-const SIGNATURE_SERIALIZED_SIZE: usize = 64;
-const SIGNATURE_OFFSETS_SERIALIZED_SIZE: usize = 14;
-const SIGNATURE_OFFSETS_START: usize = 2;
-const DATA_START: usize = SIGNATURE_OFFSETS_SERIALIZED_SIZE + SIGNATURE_OFFSETS_START;
-const PUBKEY_DATA_OFFSET: usize = DATA_START;
-const SIGNATURE_DATA_OFFSET: usize = DATA_START + COMPRESSED_PUBKEY_SERIALIZED_SIZE;
-const MESSAGE_DATA_OFFSET: usize = SIGNATURE_DATA_OFFSET + SIGNATURE_SERIALIZED_SIZE;
-const MESSAGE_DATA_SIZE: usize = 32;
+/// WebAuthn-specific constants
 const WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE: usize = 196;
-
-/// Secp256r1 signature offsets structure (matches solana-secp256r1-program)
-#[derive(Debug, Copy, Clone)]
-#[repr(C)]
-pub struct Secp256r1SignatureOffsets {
-    /// Offset to compact secp256r1 signature of 64 bytes
-    pub signature_offset: u16,
-    /// Instruction index where the signature can be found
-    pub signature_instruction_index: u16,
-    /// Offset to compressed public key of 33 bytes
-    pub public_key_offset: u16,
-    /// Instruction index where the public key can be found
-    pub public_key_instruction_index: u16,
-    /// Offset to the start of message data
-    pub message_data_offset: u16,
-    /// Size of message data in bytes
-    pub message_data_size: u16,
-    /// Instruction index where the message data can be found
-    pub message_instruction_index: u16,
-}
 
 /// Creation parameters for a session-based WebAuthn authority.
 #[derive(Debug, no_padding::NoPadding)]
@@ -515,46 +485,15 @@ fn webauthn_authenticate(
     Ok(())
 }
 
-/// Compute the message hash for WebAuthn authentication
+/// Compute the message hash for WebAuthn authentication (reuses secp256r1
+/// implementation)
 fn compute_message_hash(
     data_payload: &[u8],
     account_infos: &[AccountInfo],
     authority_slot: u64,
     counter: u32,
 ) -> Result<[u8; 32], ProgramError> {
-    use super::secp256k1::AccountsPayload;
-
-    let mut accounts_payload = [0u8; 64 * AccountsPayload::LEN];
-    let mut cursor = 0;
-    for account in account_infos {
-        let offset = cursor + AccountsPayload::LEN;
-        accounts_payload[cursor..offset]
-            .copy_from_slice(AccountsPayload::from(account).into_bytes()?);
-        cursor = offset;
-    }
-    let mut hash = MaybeUninit::<[u8; 32]>::uninit();
-    let data: &[&[u8]] = &[
-        data_payload,
-        &accounts_payload[..cursor],
-        &authority_slot.to_le_bytes(),
-        &counter.to_le_bytes(),
-    ];
-
-    unsafe {
-        #[cfg(target_os = "solana")]
-        let res = pinocchio::syscalls::sol_keccak256(
-            data.as_ptr() as *const u8,
-            4,
-            hash.as_mut_ptr() as *mut u8,
-        );
-        #[cfg(not(target_os = "solana"))]
-        let res = 0;
-        if res != 0 {
-            return Err(SwigAuthenticateError::PermissionDeniedSecp256k1InvalidHash.into());
-        }
-
-        Ok(hash.assume_init())
-    }
+    super::secp256r1::compute_message_hash(data_payload, account_infos, authority_slot, counter)
 }
 
 /// Process WebAuthn-specific message formatting.
@@ -574,7 +513,7 @@ fn webauthn_message<'a>(
     if auth_payload.len() < 4 {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
     }
-    
+
     // let _auth_type = u16::from_le_bytes(prefix[..2].try_into().unwrap());
     let auth_len = u16::from_le_bytes(auth_payload[2..4].try_into().unwrap()) as usize;
 
@@ -637,42 +576,10 @@ fn webauthn_message<'a>(
     Ok(&message_buf[..auth_len + 32])
 }
 
-/// Verify the secp256r1 instruction data contains the expected signature and
-/// public key
-fn verify_secp256r1_instruction_data(
-    instruction_data: &[u8],
-    expected_pubkey: &[u8; 33],
-    expected_message: &[u8],
-) -> Result<(), ProgramError> {
-    // Minimum check: must have at least the header and offsets
-    if instruction_data.len() < DATA_START {
-        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
-    }
-    let num_signatures = instruction_data[0] as usize;
-    if num_signatures == 0 || num_signatures > 1 {
-        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
-    }
-
-    if instruction_data.len() < MESSAGE_DATA_OFFSET + expected_message.len() {
-        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
-    }
-    let pubkey_data = &instruction_data
-        [PUBKEY_DATA_OFFSET..PUBKEY_DATA_OFFSET + COMPRESSED_PUBKEY_SERIALIZED_SIZE];
-    let message_data =
-        &instruction_data[MESSAGE_DATA_OFFSET..MESSAGE_DATA_OFFSET + expected_message.len()];
-
-    if pubkey_data != expected_pubkey {
-        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidPubkey.into());
-    }
-    if message_data != expected_message {
-        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessageHash.into());
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::authority::secp256r1::COMPRESSED_PUBKEY_SERIALIZED_SIZE;
 
     /// Helper function to create real secp256r1 instruction data using the
     /// official Solana secp256r1 program

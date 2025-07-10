@@ -29,18 +29,18 @@ use crate::{IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, Tran
 const MAX_SIGNATURE_AGE_IN_SLOTS: u64 = 60;
 
 /// Secp256r1 program ID
-const SECP256R1_PROGRAM_ID: [u8; 32] = pubkey!("Secp256r1SigVerify1111111111111111111111111");
+pub const SECP256R1_PROGRAM_ID: [u8; 32] = pubkey!("Secp256r1SigVerify1111111111111111111111111");
 
 /// Constants from the secp256r1 program
-const COMPRESSED_PUBKEY_SERIALIZED_SIZE: usize = 33;
-const SIGNATURE_SERIALIZED_SIZE: usize = 64;
-const SIGNATURE_OFFSETS_SERIALIZED_SIZE: usize = 14;
-const SIGNATURE_OFFSETS_START: usize = 2;
-const DATA_START: usize = SIGNATURE_OFFSETS_SERIALIZED_SIZE + SIGNATURE_OFFSETS_START;
-const PUBKEY_DATA_OFFSET: usize = DATA_START;
-const SIGNATURE_DATA_OFFSET: usize = DATA_START + COMPRESSED_PUBKEY_SERIALIZED_SIZE;
-const MESSAGE_DATA_OFFSET: usize = SIGNATURE_DATA_OFFSET + SIGNATURE_SERIALIZED_SIZE;
-const MESSAGE_DATA_SIZE: usize = 32;
+pub const COMPRESSED_PUBKEY_SERIALIZED_SIZE: usize = 33;
+pub const SIGNATURE_SERIALIZED_SIZE: usize = 64;
+pub const SIGNATURE_OFFSETS_SERIALIZED_SIZE: usize = 14;
+pub const SIGNATURE_OFFSETS_START: usize = 2;
+pub const DATA_START: usize = SIGNATURE_OFFSETS_SERIALIZED_SIZE + SIGNATURE_OFFSETS_START;
+pub const PUBKEY_DATA_OFFSET: usize = DATA_START;
+pub const SIGNATURE_DATA_OFFSET: usize = DATA_START + COMPRESSED_PUBKEY_SERIALIZED_SIZE;
+pub const MESSAGE_DATA_OFFSET: usize = SIGNATURE_DATA_OFFSET + SIGNATURE_SERIALIZED_SIZE;
+pub const MESSAGE_DATA_SIZE: usize = 32;
 
 /// Secp256r1 signature offsets structure (matches solana-secp256r1-program)
 #[derive(Debug, Copy, Clone)]
@@ -505,7 +505,7 @@ fn secp256r1_authenticate(
 }
 
 /// Compute the message hash for secp256r1 authentication
-fn compute_message_hash(
+pub fn compute_message_hash(
     data_payload: &[u8],
     account_infos: &[AccountInfo],
     authority_slot: u64,
@@ -546,11 +546,9 @@ fn compute_message_hash(
     }
 }
 
-
-
 /// Verify the secp256r1 instruction data contains the expected signature and
 /// public key
-fn verify_secp256r1_instruction_data(
+pub fn verify_secp256r1_instruction_data(
     instruction_data: &[u8],
     expected_pubkey: &[u8; 33],
     expected_message: &[u8],
@@ -801,6 +799,4 @@ mod tests {
             "Verification should fail with wrong public key"
         );
     }
-
-
 }
