@@ -338,11 +338,43 @@ fn perform_replace_all_operation(
         position.num_actions = calculate_num_actions(new_actions)? as u16;
     }
 
-    // Copy the new actions data
     if actions_offset + new_actions_size > swig_roles.len() {
         return Err(SwigError::StateError.into());
     }
-    swig_roles[actions_offset..actions_offset + new_actions_size].copy_from_slice(new_actions);
+
+    // Copy actions data and recalculate boundaries
+    let mut cursor = actions_offset;
+    let mut action_cursor = 0;
+
+    while action_cursor < new_actions.len() {
+        if action_cursor + Action::LEN > new_actions.len() {
+            break;
+        }
+
+        let action_header = unsafe {
+            Action::load_unchecked(&new_actions[action_cursor..action_cursor + Action::LEN])?
+        };
+        let action_len = action_header.length() as usize;
+        let total_action_size = Action::LEN + action_len;
+
+        if action_cursor + total_action_size > new_actions.len() {
+            return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
+        }
+
+        // Copy action header and update boundary
+        swig_roles[cursor..cursor + Action::LEN]
+            .copy_from_slice(&new_actions[action_cursor..action_cursor + Action::LEN]);
+        let next_boundary = (cursor - actions_offset + total_action_size) as u32;
+        swig_roles[cursor + 4..cursor + 8].copy_from_slice(&next_boundary.to_le_bytes());
+
+        // Copy action data
+        swig_roles[cursor + Action::LEN..cursor + total_action_size].copy_from_slice(
+            &new_actions[action_cursor + Action::LEN..action_cursor + total_action_size],
+        );
+
+        cursor += total_action_size;
+        action_cursor += total_action_size;
+    }
 
     Ok(size_diff)
 }
