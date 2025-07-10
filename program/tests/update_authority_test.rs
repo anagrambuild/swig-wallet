@@ -132,7 +132,8 @@ fn test_update_authority_ed25519_add_actions() -> anyhow::Result<()> {
         authority_type: AuthorityType::Ed25519,
         authority: second_authority_pubkey.as_ref(),
     };
-    let actions = vec![ClientAction::All(All {})];
+
+    let actions = vec![ClientAction::ManageAuthority(ManageAuthority {})];
 
     let _add_result = add_authority_with_ed25519_root(
         &mut context,
@@ -182,6 +183,17 @@ fn test_update_authority_ed25519_add_actions() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
 
     println!("Transaction logs: {:?}", result.logs);
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
+    let role = swig_data.get_role(1).unwrap().unwrap();
+
+    println!("role: {:?}", role.get_all_actions());
+    let role_actions = role.get_all_actions().unwrap();
+    for action in role_actions {
+        println!("action: {:?}", action.permission());
+    }
 
     Ok(())
 }

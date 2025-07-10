@@ -303,13 +303,31 @@ impl Permission {
             });
         }
 
-        // Check for Program permission
-        if let Some(action) = swig_state::role::Role::get_action::<Program>(role, &[])
-            .map_err(|_| SwigError::InvalidSwigData)?
-        {
-            permissions.push(Permission::Program {
-                program_id: Pubkey::new_from_array(action.program_id),
-            });
+        // Check for Program permissions by iterating through all actions
+        let all_actions = role
+            .get_all_actions()
+            .map_err(|_| SwigError::InvalidSwigData)?;
+        for action in all_actions {
+            match action.permission() {
+                Ok(swig_state::action::Permission::Program)
+                | Ok(swig_state::action::Permission::ProgramAll)
+                | Ok(swig_state::action::Permission::ProgramCurated) => {
+                    // Get the program action data
+                    let action_data = unsafe {
+                        core::slice::from_raw_parts(
+                            (action as *const _ as *const u8).add(swig_state::action::Action::LEN),
+                            action.length() as usize,
+                        )
+                    };
+                    if action_data.len() >= 32 {
+                        let program_id_bytes: [u8; 32] = action_data[0..32].try_into().unwrap();
+                        permissions.push(Permission::Program {
+                            program_id: Pubkey::new_from_array(program_id_bytes),
+                        });
+                    }
+                },
+                _ => {},
+            }
         }
 
         // Check for ProgramScope permission
