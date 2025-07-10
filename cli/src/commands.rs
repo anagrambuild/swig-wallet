@@ -21,7 +21,7 @@ use solana_sdk::{
 use solana_secp256r1_program;
 use swig_sdk::{
     authority::AuthorityType, client_role::Secp256r1ClientRole, ClientRole, Ed25519ClientRole,
-    Permission, RecurringConfig, Secp256k1ClientRole, SwigError, SwigWallet,
+    Permission, RecurringConfig, Secp256k1ClientRole, SwigError, SwigWallet, types::UpdateAuthorityData,
 };
 
 use crate::{Command, SwigCliContext};
@@ -759,6 +759,113 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 },
             }
 
+            Ok(())
+        },
+        Command::UpdateAuthority {
+            authority_type,
+            authority,
+            authority_kp,
+            fee_payer,
+            id,
+            authority_to_update_id,
+            operation,
+            permissions,
+            action_types,
+            indices,
+        } => {
+            let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
+
+            create_swig_instance(
+                ctx,
+                swig_id,
+                parse_authority_type(
+                    authority_type
+                        .unwrap_or_else(|| ctx.config.default_authority.authority_type.clone()),
+                )?,
+                authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
+                authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+                fee_payer,
+            )?;
+
+            let update_data = match operation.as_str() {
+                "ReplaceAll" => {
+                    if permissions.is_empty() {
+                        return Err(anyhow!("Permissions are required for ReplaceAll operation"));
+                    }
+                    let parsed_permissions = permissions
+                        .iter()
+                        .map(|p| {
+                            let permission_value: Value = serde_json::from_str(p)
+                                .map_err(|e| anyhow!("Invalid permission JSON: {}", e))?;
+                            parse_permission_from_json(&permission_value)
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    UpdateAuthorityData::ReplaceAll(parsed_permissions)
+                },
+                "AddActions" => {
+                    if permissions.is_empty() {
+                        return Err(anyhow!("Permissions are required for AddActions operation"));
+                    }
+                    let parsed_permissions = permissions
+                        .iter()
+                        .map(|p| {
+                            let permission_value: Value = serde_json::from_str(p)
+                                .map_err(|e| anyhow!("Invalid permission JSON: {}", e))?;
+                            parse_permission_from_json(&permission_value)
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    UpdateAuthorityData::AddActions(parsed_permissions)
+                },
+                "RemoveActionsByType" => {
+                    if action_types.is_empty() {
+                        return Err(anyhow!("Action types are required for RemoveActionsByType operation"));
+                    }
+                    let parsed_permissions = action_types
+                        .iter()
+                        .map(|action_type| {
+                            match action_type.as_str() {
+                                "All" => Ok(Permission::All),
+                                "ManageAuthority" => Ok(Permission::ManageAuthority),
+                                "Sol" => Ok(Permission::Sol { amount: 0, recurring: None }),
+                                "Token" => Ok(Permission::Token { 
+                                    mint: Pubkey::default(), 
+                                    amount: 0, 
+                                    recurring: None 
+                                }),
+                                "Program" => Ok(Permission::Program { program_id: Pubkey::default() }),
+                                "ProgramScope" => Ok(Permission::ProgramScope {
+                                    program_id: Pubkey::default(),
+                                    target_account: Pubkey::default(),
+                                    numeric_type: 0,
+                                    limit: None,
+                                    window: None,
+                                    balance_field_start: None,
+                                    balance_field_end: None,
+                                }),
+                                "SubAccount" => Ok(Permission::SubAccount { sub_account: [0; 32] }),
+                                "Stake" => Ok(Permission::Stake { amount: 0, recurring: None }),
+                                "StakeAll" => Ok(Permission::StakeAll),
+                                _ => Err(anyhow!("Invalid action type: {}", action_type)),
+                            }
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    UpdateAuthorityData::RemoveActionsByType(parsed_permissions)
+                },
+                "RemoveActionsByIndex" => {
+                    if indices.is_empty() {
+                        return Err(anyhow!("Indices are required for RemoveActionsByIndex operation"));
+                    }
+                    UpdateAuthorityData::RemoveActionsByIndex(indices)
+                },
+                _ => return Err(anyhow!("Invalid operation: {}. Must be one of: ReplaceAll, AddActions, RemoveActionsByType, RemoveActionsByIndex", operation)),
+            };
+
+            ctx.wallet.as_mut().unwrap().update_authority(
+                authority_to_update_id,
+                update_data,
+            )?;
+
+            println!("Authority updated successfully!");
             Ok(())
         },
     }

@@ -26,6 +26,7 @@ use solana_sdk::{
 use swig_sdk::{
     authority::{ed25519::CreateEd25519SessionAuthority, AuthorityType},
     swig::SwigWithRoles,
+    types::UpdateAuthorityData,
     ClientRole, Permission, RecurringConfig, SwigError, SwigWallet,
 };
 
@@ -130,6 +131,35 @@ pub enum Command {
         // Remove authority
         #[arg(short, long)]
         remove_authority: Option<String>,
+    },
+    /// Update an existing authority in a wallet
+    UpdateAuthority {
+        // Signing authority
+        #[arg(short, long)]
+        authority_type: Option<String>,
+        #[arg(short, long)]
+        authority: Option<String>,
+        #[arg(short, long)]
+        authority_kp: Option<String>,
+        #[arg(short, long)]
+        fee_payer: Option<String>,
+        #[arg(short, long = "swig-id")]
+        id: String,
+        // Authority to update
+        #[arg(short, long)]
+        authority_to_update_id: u32,
+        // Update operation
+        #[arg(short, long)]
+        operation: String,
+        // New permissions (for ReplaceAll and AddActions operations)
+        #[arg(short, long, value_parser, num_args = 0.., value_delimiter = ',')]
+        permissions: Vec<String>,
+        // Action types to remove (for RemoveActionsByType operation)
+        #[arg(short, long, value_parser, num_args = 0.., value_delimiter = ',')]
+        action_types: Vec<String>,
+        // Indices to remove (for RemoveActionsByIndex operation)
+        #[arg(short, long, value_parser, num_args = 0.., value_delimiter = ',')]
+        indices: Vec<u16>,
     },
     /// View wallet details
     View {

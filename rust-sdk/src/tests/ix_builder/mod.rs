@@ -40,7 +40,8 @@ use swig_state::{
 
 use super::*;
 use crate::{
-    error::SwigError, types::Permission, RecurringConfig, SwigInstructionBuilder, SwigWallet,
+    error::SwigError, types::Permission, types::UpdateAuthorityData, RecurringConfig,
+    SwigInstructionBuilder, SwigWallet,
 };
 
 pub mod authority_tests;
