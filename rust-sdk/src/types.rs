@@ -379,6 +379,56 @@ impl Permission {
 
         Ok(permissions)
     }
+
+    pub fn to_action_type(&self) -> u8 {
+        match self {
+            Permission::All => 0x07,
+            Permission::ManageAuthority => 0x08,
+            Permission::Sol {
+                amount: _,
+                recurring,
+            } => {
+                if recurring.is_some() {
+                    0x02 // SolRecurringLimit
+                } else {
+                    0x01 // SolLimit
+                }
+            },
+            Permission::Token {
+                mint: _,
+                amount: _,
+                recurring,
+            } => {
+                if recurring.is_some() {
+                    0x06 // TokenRecurringLimit
+                } else {
+                    0x05 // TokenLimit
+                }
+            },
+            Permission::Program { program_id: _ } => 0x03,
+            Permission::ProgramScope {
+                program_id: _,
+                target_account: _,
+                numeric_type: _,
+                limit: _,
+                window: _,
+                balance_field_start: _,
+                balance_field_end: _,
+            } => 0x04,
+            Permission::SubAccount { sub_account: _ } => 0x09,
+            Permission::Stake {
+                amount: _,
+                recurring,
+            } => {
+                if recurring.is_some() {
+                    0x0B // StakeRecurringLimit
+                } else {
+                    0x0A // StakeLimit
+                }
+            },
+            Permission::StakeAll => 0x0C,
+        }
+    }
 }
 
 /// Stores all details about the current role for a wallet session
@@ -389,4 +439,42 @@ pub struct CurrentRole {
     pub authority_identity: Vec<u8>,
     pub permissions: Vec<Permission>,
     pub session_based: bool,
+}
+
+/// Represents the data that can be updated for an authority
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateAuthorityData {
+    ReplaceAll(Vec<Permission>),
+    AddActions(Vec<Permission>),
+    RemoveActionsByType(Vec<Permission>),
+    RemoveActionsByIndex(Vec<u16>),
+}
+
+use swig_interface::UpdateAuthorityData as InterfaceUpdateAuthorityData;
+
+impl UpdateAuthorityData {
+    pub fn to_interface_data(&self) -> InterfaceUpdateAuthorityData {
+        match self {
+            UpdateAuthorityData::ReplaceAll(permissions) => {
+                InterfaceUpdateAuthorityData::ReplaceAll(Permission::to_client_actions(
+                    permissions.clone(),
+                ))
+            },
+            UpdateAuthorityData::AddActions(permissions) => {
+                InterfaceUpdateAuthorityData::AddActions(Permission::to_client_actions(
+                    permissions.clone(),
+                ))
+            },
+            UpdateAuthorityData::RemoveActionsByType(action_types) => {
+                let action_types_vec = action_types
+                    .iter()
+                    .map(|action| action.to_action_type())
+                    .collect::<Vec<u8>>();
+                InterfaceUpdateAuthorityData::RemoveActionsByType(action_types_vec)
+            },
+            UpdateAuthorityData::RemoveActionsByIndex(indices) => {
+                InterfaceUpdateAuthorityData::RemoveActionsByIndex(indices.clone())
+            },
+        }
+    }
 }
