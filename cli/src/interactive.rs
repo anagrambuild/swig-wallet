@@ -25,6 +25,7 @@ use swig_sdk::{
     },
     client_role::{Secp256r1ClientRole, Secp256r1SessionClientRole},
     swig::SwigWithRoles,
+    types::UpdateAuthorityData,
     ClientRole, Ed25519ClientRole, Permission, RecurringConfig, Secp256k1ClientRole,
     Secp256k1SessionClientRole, SwigError, SwigWallet,
 };
@@ -44,6 +45,7 @@ pub fn run_interactive_mode(ctx: &mut SwigCliContext) -> Result<()> {
             vec![
                 "Add Authority",
                 "Remove Authority",
+                "Update Authority",
                 "View Wallet",
                 "Transfer",
                 "Switch Authority",
@@ -68,11 +70,12 @@ pub fn run_interactive_mode(ctx: &mut SwigCliContext) -> Result<()> {
             match selection {
                 0 => add_authority_interactive(ctx)?,
                 1 => remove_authority_interactive(ctx)?,
-                2 => view_wallet_interactive(ctx)?,
-                3 => transfer_interactive(ctx)?,
-                4 => switch_authority_interactive(ctx)?,
-                5 => sub_accounts_interactive(ctx)?,
-                6 => break,
+                2 => update_authority_interactive(ctx)?,
+                3 => view_wallet_interactive(ctx)?,
+                4 => transfer_interactive(ctx)?,
+                5 => switch_authority_interactive(ctx)?,
+                6 => sub_accounts_interactive(ctx)?,
+                7 => break,
                 _ => unreachable!(),
             }
         }
@@ -389,6 +392,173 @@ fn remove_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
         .remove_authority(authorities.get(authority).unwrap())?;
 
     println!("\n{}", "Authority removed successfully!".bright_green());
+    Ok(())
+}
+
+fn update_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
+    println!("\n{}", "Updating authority...".bright_blue().bold());
+
+    if ctx.wallet.is_none() {
+        return Err(anyhow!(
+            "No wallet loaded. Please create or load a wallet first."
+        ));
+    }
+
+    // Get the authority to update
+    let authorities = get_authorities(ctx)?;
+    println!("\nAvailable authorities:");
+
+    let authority_keys: Vec<String> = authorities.keys().cloned().collect();
+    if authority_keys.is_empty() {
+        return Err(anyhow!("No authorities found to update"));
+    }
+
+    let selection = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("Choose authority to update")
+        .items(&authority_keys)
+        .default(0)
+        .interact()?;
+
+    let authority = &authority_keys[selection];
+    let authority_bytes = authorities.get(authority).unwrap();
+
+    // Get the role ID for the selected authority
+    let role_id = ctx.wallet.as_ref().unwrap().get_role_id(authority_bytes)?;
+
+    // Cannot update root authority (ID 0)
+    if role_id == 0 {
+        return Err(anyhow!("Cannot update root authority (ID 0)"));
+    }
+
+    println!("Updating authority: {:?} (Role ID: {})", authority, role_id);
+
+    // Choose update operation
+    let operations = vec![
+        "Replace All (Replace all permissions with new ones)",
+        "Add Actions (Add new permissions to existing ones)",
+        "Remove Actions By Type (Remove permissions by type)",
+        "Remove Actions By Index (Remove permissions by index)",
+    ];
+
+    let operation_selection = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("Choose update operation")
+        .items(&operations)
+        .default(0)
+        .interact()?;
+
+    let update_data = match operation_selection {
+        0 => {
+            // Replace All
+            let permissions = get_permissions_interactive()?;
+            UpdateAuthorityData::ReplaceAll(permissions)
+        },
+        1 => {
+            // Add Actions
+            let permissions = get_permissions_interactive()?;
+            UpdateAuthorityData::AddActions(permissions)
+        },
+        2 => {
+            // Remove Actions By Type
+            let permission_types = vec![
+                "All",
+                "Manage Authority",
+                "SOL",
+                "Token",
+                "Program",
+                "Program Scope",
+                "Sub Account",
+                "Stake",
+                "Stake All",
+            ];
+
+            let mut selected_types = Vec::new();
+            loop {
+                let type_selection = Select::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Choose permission type to remove")
+                    .items(&permission_types)
+                    .default(0)
+                    .interact()?;
+
+                let permission = match type_selection {
+                    0 => Permission::All,
+                    1 => Permission::ManageAuthority,
+                    2 => Permission::Sol {
+                        amount: 0,
+                        recurring: None,
+                    },
+                    3 => Permission::Token {
+                        mint: Pubkey::default(),
+                        amount: 0,
+                        recurring: None,
+                    },
+                    4 => Permission::Program {
+                        program_id: Pubkey::default(),
+                    },
+                    5 => Permission::ProgramScope {
+                        program_id: Pubkey::default(),
+                        target_account: Pubkey::default(),
+                        numeric_type: 0,
+                        limit: None,
+                        window: None,
+                        balance_field_start: None,
+                        balance_field_end: None,
+                    },
+                    6 => Permission::SubAccount {
+                        sub_account: [0; 32],
+                    },
+                    7 => Permission::Stake {
+                        amount: 0,
+                        recurring: None,
+                    },
+                    8 => Permission::StakeAll,
+                    _ => unreachable!(),
+                };
+
+                selected_types.push(permission);
+
+                let add_more = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Remove more permission types?")
+                    .default(false)
+                    .interact()?;
+
+                if !add_more {
+                    break;
+                }
+            }
+
+            UpdateAuthorityData::RemoveActionsByType(selected_types)
+        },
+        3 => {
+            // Remove Actions By Index
+            let indices_input: String = Input::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter indices to remove (comma-separated, e.g., 0,1,2)")
+                .interact_text()?;
+
+            let indices: Vec<u16> = indices_input
+                .split(',')
+                .map(|s| s.trim().parse::<u16>())
+                .collect::<Result<Vec<u16>, _>>()
+                .map_err(|_| anyhow!("Invalid indices format"))?;
+
+            UpdateAuthorityData::RemoveActionsByIndex(indices)
+        },
+        _ => unreachable!(),
+    };
+
+    let signature = ctx
+        .wallet
+        .as_mut()
+        .unwrap()
+        .update_authority(role_id, update_data);
+
+    if let Ok(signature) = signature {
+        println!("\n{}", "Authority updated successfully!".bright_green());
+        println!("Signature: {}", signature);
+    } else {
+        println!("\n{}", "Failed to update authority".bright_red());
+        println!("Error: {}", signature.err().unwrap());
+    }
+
     Ok(())
 }
 
