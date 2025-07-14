@@ -672,7 +672,6 @@ fn decode_huffman_origin(tree_data: &[u8], encoded_data: &[u8]) -> Result<Vec<u8
 
     let mut bit_count = 0;
     let total_bits = encoded_data.len() * 8;
-    let expected_length = 21; // "http://localhost:3000".len()
 
     for (_byte_idx, &byte) in encoded_data.iter().enumerate() {
         for bit_pos in 0..8 {
@@ -699,10 +698,6 @@ fn decode_huffman_origin(tree_data: &[u8], encoded_data: &[u8]) -> Result<Vec<u8
                 current_node = root_index;
 
                 // Stop when we've decoded the expected URL length
-                if decoded.len() >= expected_length {
-                    break;
-                }
-
                 // Re-process the current bit from the root
                 let root_node_offset = current_node * NODE_SIZE;
                 if root_node_offset + 2 < tree_data.len() {
@@ -744,9 +739,6 @@ fn decode_huffman_origin(tree_data: &[u8], encoded_data: &[u8]) -> Result<Vec<u8
         }
 
         // Break out of outer loop too if we've reached expected length
-        if decoded.len() >= expected_length {
-            break;
-        }
     }
 
     Ok(decoded)
