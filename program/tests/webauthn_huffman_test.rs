@@ -17,7 +17,7 @@ use solana_sdk::{
     signer::Signer,
     transaction::VersionedTransaction,
 };
-use swig_state_x::IntoBytes;
+use swig_state::IntoBytes;
 
 /// Huffman tree node for encoding
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -165,33 +165,33 @@ fn create_webauthn_prefix_with_huffman(
 
     // Build the new WebAuthn prefix format:
     // [2 bytes auth_type][2 bytes auth_len][auth_data][4 bytes counter][2 bytes huffman_tree_len][huffman_tree][2 bytes huffman_encoded_len][huffman_encoded_origin]
-    
+
     let mut prefix = Vec::new();
-    
+
     // auth_type (2 bytes, zeroed)
     prefix.extend_from_slice(&[0u8, 0u8]);
-    
+
     // auth_len (2 bytes, little-endian)
     prefix.extend_from_slice(&(auth_data.len() as u16).to_le_bytes());
-    
+
     // auth_data
     prefix.extend_from_slice(auth_data);
-    
+
     // counter (4 bytes, little-endian)
     prefix.extend_from_slice(&counter.to_le_bytes());
-    
+
     // huffman_tree_len (2 bytes, little-endian)
     prefix.extend_from_slice(&(huffman_tree.len() as u16).to_le_bytes());
-    
+
     // huffman_encoded_len (2 bytes, little-endian)
     prefix.extend_from_slice(&(huffman_encoded_origin.len() as u16).to_le_bytes());
-    
+
     // huffman_tree
     prefix.extend_from_slice(&huffman_tree);
-    
+
     // huffman_encoded_origin
     prefix.extend_from_slice(&huffman_encoded_origin);
-    
+
     prefix
 }
 
@@ -214,24 +214,30 @@ fn test_webauthn_huffman_integration() {
 
     // Create the new WebAuthn prefix with huffman encoding
     let webauthn_prefix = create_webauthn_prefix_with_huffman(origin, challenge, auth_data);
-    
+
     println!("  WebAuthn prefix length: {} bytes", webauthn_prefix.len());
-    
+
     // Calculate compression ratio
     let original_size = 2 + 2 + auth_data.len() + origin.len() + challenge.len();
     let compressed_size = webauthn_prefix.len();
     let compression_ratio = compressed_size as f64 / original_size as f64;
-    
+
     println!("  Original size (estimated): {} bytes", original_size);
     println!("  Compressed size: {} bytes", compressed_size);
     println!("  Compression ratio: {:.2}", compression_ratio);
 
     // For this test, we'll just validate that the prefix can be created successfully
     // In a real scenario, this would be used in a secp256r1 signature verification
-    
-    assert!(!webauthn_prefix.is_empty(), "WebAuthn prefix should not be empty");
-    assert!(webauthn_prefix.len() > auth_data.len() + 32, "Prefix should contain auth data, challenge, and huffman data");
-    
+
+    assert!(
+        !webauthn_prefix.is_empty(),
+        "WebAuthn prefix should not be empty"
+    );
+    assert!(
+        webauthn_prefix.len() > auth_data.len() + 32,
+        "Prefix should contain auth data, challenge, and huffman data"
+    );
+
     println!("  ✓ WebAuthn prefix with Huffman encoding created successfully");
 }
 
@@ -248,28 +254,31 @@ fn test_webauthn_huffman_various_origins() {
 
     for (i, origin) in test_origins.iter().enumerate() {
         println!("Testing origin {}: {}", i + 1, origin);
-        
+
         let challenge = format!("challenge_data_for_test_{}", i).into_bytes();
         let auth_data = b"mock_auth_data";
-        
+
         let webauthn_prefix = create_webauthn_prefix_with_huffman(origin, &challenge, auth_data);
-        
+
         // Calculate compression metrics
         let encoder = HuffmanEncoder::new(origin);
         let huffman_tree = encoder.tree_data.clone();
         let huffman_encoded = encoder.encode(origin);
-        
+
         let original_origin_size = origin.len();
         let compressed_origin_size = huffman_tree.len() + huffman_encoded.len();
         let origin_compression_ratio = compressed_origin_size as f64 / original_origin_size as f64;
-        
+
         println!("  Original origin: {} bytes", original_origin_size);
         println!("  Huffman tree: {} bytes", huffman_tree.len());
         println!("  Huffman encoded: {} bytes", huffman_encoded.len());
         println!("  Total compressed: {} bytes", compressed_origin_size);
-        println!("  Origin compression ratio: {:.2}", origin_compression_ratio);
+        println!(
+            "  Origin compression ratio: {:.2}",
+            origin_compression_ratio
+        );
         println!("  Total prefix size: {} bytes", webauthn_prefix.len());
-        
+
         assert!(!webauthn_prefix.is_empty());
         println!("  ✓ Success\\n");
     }
