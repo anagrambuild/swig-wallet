@@ -5,8 +5,10 @@ use solana_sdk::signature::{Keypair, Signer};
 use swig_state::authority::AuthorityType;
 
 use super::*;
-use crate::client_role::{Ed25519ClientRole, Secp256k1ClientRole};
-use crate::types::UpdateAuthorityData;
+use crate::{
+    client_role::{Ed25519ClientRole, Secp256k1ClientRole},
+    types::UpdateAuthorityData,
+};
 
 #[test_log::test]
 fn should_manage_authorities_successfully() {

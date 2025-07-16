@@ -1,0 +1,382 @@
+diff --git a/.github/README_GH.md b/.github/README.md
+similarity index 100%
+rename from .github/README_GH.md
+rename to .github/README.md
+diff --git a/interface/src/lib.rs b/interface/src/lib.rs
+index 053f407..1920755 100644
+--- a/interface/src/lib.rs
++++ b/interface/src/lib.rs
+@@ -1,6 +1,7 @@
+ use solana_sdk::{
++    hash as sha256,
+     instruction::{AccountMeta, Instruction},
+-    keccak::hash,
++    keccak,
+     pubkey::Pubkey,
+     system_program,
+ };
+@@ -21,7 +22,10 @@ use swig_state_x::{
+         sub_account::SubAccount, token_limit::TokenLimit,
+         token_recurring_limit::TokenRecurringLimit, Action, Permission,
+     },
+-    authority::{secp256k1::AccountsPayload, AuthorityType},
++    authority::{
++        secp256k1::{hex_encode, AccountsPayload},
++        AuthorityType,
++    },
+     swig::swig_account_seeds,
+     IntoBytes, Transmutable,
+ };
+@@ -111,8 +115,14 @@ fn prepare_secp_payload(
+     current_slot: u64,
+     data_payload: &[u8],
+     accounts_payload: &[u8],
++    prefix: &[u8],
+ ) -> [u8; 32] {
+-    hash(&[data_payload, accounts_payload, &current_slot.to_le_bytes()].concat()).to_bytes()
++    let compressed_payload =
++        sha256::hash(&[data_payload, accounts_payload, &current_slot.to_le_bytes()].concat())
++            .to_bytes();
++    let mut compressed_payload_hex = [0u8; 64];
++    hex_encode(&compressed_payload, &mut compressed_payload_hex);
++    keccak::hash(&[prefix, &compressed_payload_hex].concat()).to_bytes()
+ }
+ 
+ fn accounts_payload_from_meta(meta: &AccountMeta) -> AccountsPayload {
+@@ -194,6 +204,7 @@ impl AddAuthorityInstruction {
+             action_bytes.len() as u16,
+             num_actions,
+         );
++
+         write.extend_from_slice(args.into_bytes().unwrap());
+         write.extend_from_slice(new_authority_config.authority);
+         write.extend_from_slice(&action_bytes);
+@@ -251,11 +262,12 @@ impl AddAuthorityInstruction {
+         signature_bytes.extend_from_slice(new_authority_config.authority);
+         signature_bytes.extend_from_slice(&action_bytes);
+         let nonced_payload =
+-            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes);
++            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes, &[]);
+         let signature = authority_payload_fn(&nonced_payload);
+         let mut authority_payload = Vec::new();
+         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+         authority_payload.extend_from_slice(&signature);
++
+         Ok(Instruction {
+             program_id: Pubkey::from(swig::ID),
+             accounts,
+@@ -332,12 +344,14 @@ impl SignInstruction {
+ 
+         let mut signature_bytes = Vec::new();
+         signature_bytes.extend_from_slice(&ix_bytes);
++
+         let nonced_payload =
+-            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes);
++            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes, &[]);
+         let signature = authority_payload_fn(&nonced_payload);
+         let mut authority_payload = Vec::new();
+         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+         authority_payload.extend_from_slice(&signature);
++
+         Ok(Instruction {
+             program_id: Pubkey::from(swig::ID),
+             accounts,
+@@ -406,11 +420,12 @@ impl RemoveAuthorityInstruction {
+         let mut signature_bytes = Vec::new();
+         signature_bytes.extend_from_slice(arg_bytes);
+         let nonced_payload =
+-            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes);
++            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes, &[]);
+         let signature = authority_payload_fn(&nonced_payload);
+         let mut authority_payload = Vec::new();
+         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+         authority_payload.extend_from_slice(&signature);
++
+         Ok(Instruction {
+             program_id: Pubkey::from(swig::ID),
+             accounts,
+@@ -482,11 +497,12 @@ impl CreateSessionInstruction {
+         let mut signature_bytes = Vec::new();
+         signature_bytes.extend_from_slice(args_bytes);
+         let nonced_payload =
+-            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes);
++            prepare_secp_payload(current_slot, &signature_bytes, &account_payload_bytes, &[]);
+         let signature = authority_payload_fn(&nonced_payload);
+         let mut authority_payload = Vec::new();
+         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+         authority_payload.extend_from_slice(&signature);
++
+         Ok(Instruction {
+             program_id: Pubkey::from(swig::ID),
+             accounts,
+@@ -563,7 +579,7 @@ impl CreateSubAccountInstruction {
+ 
+         // Sign the payload
+         let nonced_payload =
+-            prepare_secp_payload(current_slot, &args_bytes, &account_payload_bytes);
++            prepare_secp_payload(current_slot, args_bytes, &account_payload_bytes, &[]);
+         let signature = authority_payload_fn(&nonced_payload);
+ 
+         // Add authority payload
+@@ -644,7 +660,7 @@ impl WithdrawFromSubAccountInstruction {
+ 
+         // Sign the payload
+         let nonced_payload =
+-            prepare_secp_payload(current_slot, &args_bytes, &account_payload_bytes);
++            prepare_secp_payload(current_slot, args_bytes, &account_payload_bytes, &[]);
+         let signature = authority_payload_fn(&nonced_payload);
+ 
+         // Add authority payload
+@@ -733,7 +749,7 @@ impl WithdrawFromSubAccountInstruction {
+ 
+         // Sign the payload
+         let nonced_payload =
+-            prepare_secp_payload(current_slot, &args_bytes, &account_payload_bytes);
++            prepare_secp_payload(current_slot, args_bytes, &account_payload_bytes, &[]);
+         let signature = authority_payload_fn(&nonced_payload);
+ 
+         // Add authority payload
+@@ -817,7 +833,8 @@ impl SubAccountSignInstruction {
+         }
+ 
+         // Sign the payload
+-        let nonced_payload = prepare_secp_payload(current_slot, &ix_bytes, &account_payload_bytes);
++        let nonced_payload =
++            prepare_secp_payload(current_slot, &ix_bytes, &account_payload_bytes, &[]);
+         let signature = authority_payload_fn(&nonced_payload);
+ 
+         // Add authority payload
+@@ -896,9 +913,11 @@ impl ToggleSubAccountInstruction {
+             );
+         }
+ 
++        let prefix = &[];
++
+         // Sign the payload
+         let nonced_payload =
+-            prepare_secp_payload(current_slot, &args_bytes, &account_payload_bytes);
++            prepare_secp_payload(current_slot, args_bytes, &account_payload_bytes, prefix);
+         let signature = authority_payload_fn(&nonced_payload);
+ 
+         // Add authority payload
+diff --git a/program/src/actions/add_authority_v1.rs b/program/src/actions/add_authority_v1.rs
+index ca8e2ff..ef360af 100644
+--- a/program/src/actions/add_authority_v1.rs
++++ b/program/src/actions/add_authority_v1.rs
+@@ -120,6 +120,7 @@ impl<'a> AddAuthorityV1<'a> {
+         let args = unsafe { AddAuthorityV1Args::load_unchecked(inst)? };
+         let (authority_data, rest) = rest.split_at(args.new_authority_data_len as usize);
+         let (actions_payload, authority_payload) = rest.split_at(args.actions_data_len as usize);
++
+         Ok(Self {
+             args,
+             authority_data,
+diff --git a/program/src/actions/create_session_v1.rs b/program/src/actions/create_session_v1.rs
+index 4591f40..b330314 100644
+--- a/program/src/actions/create_session_v1.rs
++++ b/program/src/actions/create_session_v1.rs
+@@ -97,8 +97,7 @@ impl<'a> CreateSessionV1<'a> {
+         if data.len() < CreateSessionV1Args::LEN {
+             return Err(SwigError::InvalidSwigCreateSessionInstructionDataTooShort.into());
+         }
+-        let (inst, authority_payload) =
+-            unsafe { data.split_at_unchecked(CreateSessionV1Args::LEN) };
++        let (inst, rest) = unsafe { data.split_at_unchecked(CreateSessionV1Args::LEN) };
+         let args = unsafe {
+             CreateSessionV1Args::load_unchecked(inst).map_err(|e| {
+                 msg!("CreateSessionV1Args Args Error: {:?}", e);
+@@ -108,7 +107,7 @@ impl<'a> CreateSessionV1<'a> {
+ 
+         Ok(Self {
+             args,
+-            authority_payload,
++            authority_payload: rest,
+             data_payload: &data[..CreateSessionV1Args::LEN],
+         })
+     }
+diff --git a/program/src/actions/create_sub_account_v1.rs b/program/src/actions/create_sub_account_v1.rs
+index 933a2ab..5b5d1ca 100644
+--- a/program/src/actions/create_sub_account_v1.rs
++++ b/program/src/actions/create_sub_account_v1.rs
+@@ -107,13 +107,13 @@ impl<'a> CreateSubAccountV1<'a> {
+         }
+ 
+         // Split the data into args and the rest (authority payload)
+-        let (args_data, rest) = data.split_at(CreateSubAccountV1Args::LEN);
++        let (args_data, authority_payload) = data.split_at(CreateSubAccountV1Args::LEN);
+ 
+         let args = unsafe { CreateSubAccountV1Args::load_unchecked(args_data)? };
+ 
+         Ok(Self {
+             args,
+-            authority_payload: rest,
++            authority_payload,
+             data_payload: args_data,
+         })
+     }
+diff --git a/program/src/actions/remove_authority_v1.rs b/program/src/actions/remove_authority_v1.rs
+index 488903b..2563dcb 100644
+--- a/program/src/actions/remove_authority_v1.rs
++++ b/program/src/actions/remove_authority_v1.rs
+@@ -100,6 +100,7 @@ impl<'a> RemoveAuthorityV1<'a> {
+         }
+         let (inst, authority_payload) = data.split_at(RemoveAuthorityV1Args::LEN);
+         let args = unsafe { RemoveAuthorityV1Args::load_unchecked(inst)? };
++
+         Ok(Self {
+             args,
+             authority_payload,
+diff --git a/program/src/actions/sign_v1.rs b/program/src/actions/sign_v1.rs
+index 9b73853..62a50f1 100644
+--- a/program/src/actions/sign_v1.rs
++++ b/program/src/actions/sign_v1.rs
+@@ -112,8 +112,10 @@ impl<'a> SignV1<'a> {
+         }
+         let (inst, rest) = unsafe { data.split_at_unchecked(SignV1Args::LEN) };
+         let args = unsafe { SignV1Args::load_unchecked(inst)? };
++
+         let (instruction_payload, authority_payload) =
+             unsafe { rest.split_at_unchecked(args.instruction_payload_len as usize) };
++
+         Ok(Self {
+             args,
+             authority_payload,
+diff --git a/program/src/actions/toggle_sub_account_v1.rs b/program/src/actions/toggle_sub_account_v1.rs
+index 7112156..8fcd9f1 100644
+--- a/program/src/actions/toggle_sub_account_v1.rs
++++ b/program/src/actions/toggle_sub_account_v1.rs
+@@ -94,13 +94,13 @@ impl<'a> ToggleSubAccountV1<'a> {
+         }
+ 
+         // Split the data into args and the rest (authority payload)
+-        let (args_data, rest) = data.split_at(ToggleSubAccountV1Args::LEN);
++        let (args_data, authority_payload) = data.split_at(ToggleSubAccountV1Args::LEN);
+ 
+         let args = unsafe { ToggleSubAccountV1Args::load_unchecked(args_data)? };
+ 
+         Ok(Self {
+             args,
+-            authority_payload: rest,
++            authority_payload,
+             data_payload: args_data,
+         })
+     }
+diff --git a/program/src/actions/withdraw_from_sub_account_v1.rs b/program/src/actions/withdraw_from_sub_account_v1.rs
+index dbd38e4..5d2e59a 100644
+--- a/program/src/actions/withdraw_from_sub_account_v1.rs
++++ b/program/src/actions/withdraw_from_sub_account_v1.rs
+@@ -91,13 +91,13 @@ impl<'a> WithdrawFromSubAccountV1<'a> {
+         }
+ 
+         // Split the data into args and the rest (authority payload)
+-        let (args_data, rest) = data.split_at(WithdrawFromSubAccountV1Args::LEN);
++        let (args_data, authority_payload) = data.split_at(WithdrawFromSubAccountV1Args::LEN);
+ 
+         let args = unsafe { WithdrawFromSubAccountV1Args::load_unchecked(args_data)? };
+ 
+         Ok(Self {
+             args,
+-            authority_payload: rest,
++            authority_payload,
+             data_payload: args_data,
+         })
+     }
+diff --git a/state-x/src/authority/secp256k1.rs b/state-x/src/authority/secp256k1.rs
+index f4db8c3..8070301 100644
+--- a/state-x/src/authority/secp256k1.rs
++++ b/state-x/src/authority/secp256k1.rs
+@@ -11,7 +11,7 @@
+ use core::mem::MaybeUninit;
+ 
+ #[allow(unused_imports)]
+-use pinocchio::syscalls::{sol_keccak256, sol_secp256k1_recover};
++use pinocchio::syscalls::{sol_keccak256, sol_secp256k1_recover, sol_sha256};
+ use pinocchio::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey};
+ use swig_assertions::sol_assert_bytes_eq;
+ 
+@@ -311,11 +311,12 @@ fn secp_authority_authenticate(
+ 
+     secp256k1_authenticate(
+         expected_key,
+-        authority_payload[8..].try_into().unwrap(),
++        authority_payload[8..73].try_into().unwrap(),
+         data_payload,
+         authority_slot,
+         current_slot,
+         account_infos,
++        authority_payload[73..].try_into().unwrap(),
+     )?;
+     Ok(())
+ }
+@@ -334,6 +335,7 @@ fn secp256k1_authenticate(
+     authority_slot: u64,
+     current_slot: u64,
+     account_infos: &[AccountInfo],
++    prefix: &[u8],
+ ) -> Result<(), ProgramError> {
+     if authority_payload.len() != 65 {
+         return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
+@@ -353,20 +355,49 @@ fn secp256k1_authenticate(
+         cursor = offset;
+     }
+ 
++    #[allow(unused)]
++    let mut data_payload_hash = [0; 32];
++    #[allow(unused)]
++    let mut data_payload_hash_hex = [0; 64];
++
+     #[allow(unused)]
+     let mut recovered_key = MaybeUninit::<[u8; 64]>::uninit();
+     #[allow(unused)]
+     let mut hash = MaybeUninit::<[u8; 32]>::uninit();
++
+     #[allow(unused)]
+     let data: &[&[u8]] = &[
+         data_payload,
+         &accounts_payload[..cursor],
+         &authority_slot.to_le_bytes(),
+     ];
++
+     let matches = unsafe {
++        // get the sha256 hash of our instruction payload
++        #[cfg(target_os = "solana")]
++        let res = sol_sha256(
++            data.as_ptr() as *const u8,
++            3,
++            data_payload_hash.as_mut_ptr() as *mut u8,
++        );
++        #[cfg(not(target_os = "solana"))]
++        let res = 0;
++        if res != 0 {
++            return Err(SwigAuthenticateError::PermissionDeniedSecp256k1InvalidHash.into());
++        }
++
++        hex_encode(&data_payload_hash, &mut data_payload_hash_hex);
++
++        #[allow(unused)]
++        let keccak_data: &[&[u8]] = &[prefix, &data_payload_hash_hex];
++
+         // do not remove this line we must hash the instruction payload
+         #[cfg(target_os = "solana")]
+-        let res = sol_keccak256(data.as_ptr() as *const u8, 3, hash.as_mut_ptr() as *mut u8);
++        let res = sol_keccak256(
++            keccak_data.as_ptr() as *const u8,
++            2,
++            hash.as_mut_ptr() as *mut u8,
++        );
+         #[cfg(not(target_os = "solana"))]
+         let res = 0;
+         if res != 0 {
+@@ -467,3 +498,12 @@ impl From<&AccountInfo> for AccountsPayload {
+         Self::new(*info.key(), info.is_writable(), info.is_signer())
+     }
+ }
++
++pub fn hex_encode(input: &[u8], output: &mut [u8]) {
++    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
++
++    for (i, &byte) in input.iter().enumerate() {
++        output[i * 2] = HEX_CHARS[(byte >> 4) as usize];
++        output[i * 2 + 1] = HEX_CHARS[(byte & 0x0F) as usize];
++    }
++}
