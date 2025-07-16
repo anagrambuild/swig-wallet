@@ -357,8 +357,7 @@ impl<'a> SwigBuilder<'a> {
             AuthorityType::WebAuthnSession => {
                 WebAuthnSessionAuthority::set_into_bytes(
                     authority_data,
-                    &mut self.role_buffer
-                        [auth_offset..auth_offset + WebAuthnSessionAuthority::LEN],
+                    &mut self.role_buffer[auth_offset..auth_offset + WebAuthnSessionAuthority::LEN],
                 )?;
                 WebAuthnSessionAuthority::LEN
             },

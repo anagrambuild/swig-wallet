@@ -1,10 +1,11 @@
 //! WebAuthn authority implementation for passkey support.
 //!
 //! This module provides implementations for WebAuthn-based authority types in
-//! the Swig wallet system, designed specifically for WebAuthn passkey authentication.
-//! It includes both standard WebAuthn authority and session-based WebAuthn
-//! authority with expiration support. The implementation relies on the Solana
-//! secp256r1 precompile program for signature verification.
+//! the Swig wallet system, designed specifically for WebAuthn passkey
+//! authentication. It includes both standard WebAuthn authority and
+//! session-based WebAuthn authority with expiration support. The implementation
+//! relies on the Solana secp256r1 precompile program for signature
+//! verification.
 
 #![warn(unexpected_cfgs)]
 

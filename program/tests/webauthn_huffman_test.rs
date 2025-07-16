@@ -164,7 +164,9 @@ fn create_webauthn_prefix_with_huffman(
     let counter = 12345u32;
 
     // Build the new WebAuthn prefix format:
-    // [2 bytes auth_type][2 bytes auth_len][auth_data][4 bytes counter][2 bytes huffman_tree_len][huffman_tree][2 bytes huffman_encoded_len][huffman_encoded_origin]
+    // [2 bytes auth_type][2 bytes auth_len][auth_data][4 bytes counter][2 bytes
+    // huffman_tree_len][huffman_tree][2 bytes
+    // huffman_encoded_len][huffman_encoded_origin]
 
     let mut prefix = Vec::new();
 
@@ -226,8 +228,9 @@ fn test_webauthn_huffman_integration() {
     println!("  Compressed size: {} bytes", compressed_size);
     println!("  Compression ratio: {:.2}", compression_ratio);
 
-    // For this test, we'll just validate that the prefix can be created successfully
-    // In a real scenario, this would be used in a secp256r1 signature verification
+    // For this test, we'll just validate that the prefix can be created
+    // successfully In a real scenario, this would be used in a secp256r1
+    // signature verification
 
     assert!(
         !webauthn_prefix.is_empty(),
