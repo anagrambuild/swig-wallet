@@ -419,50 +419,54 @@ pub fn hash_except(
     data_payload_hash
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScopeMappingRegistry {
-    pub authority: Pubkey,
+    pub is_initialized: u8,
+    pub owner: [u8; 32],
     pub total_mappings: u32,
-    pub mappings: Vec<MintMapping>,
     pub version: u8,
+    pub bump: u8,
+    // Remove the fixed array and we'll handle mappings separately
 }
 
+impl ScopeMappingRegistry {
+    pub const LEN: usize = core::mem::size_of::<ScopeMappingRegistry>();
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MintMapping {
     pub mint: [u8; 32],
     pub price_chain: [u16; 4], // Conversion chain (e.g., [32, 0, u16::MAX, u16::MAX])
     pub decimals: u8,          // Mint decimals for price calculations
     pub is_active: bool,
-    pub last_updated: i64,
-    pub pyth_account: Option<[u8; 32]>,
-    pub switch_board: Option<[u8; 32]>,
+    pub pyth_account: [u8; 33], // 0 = None, 1 = Some + 32 bytes
+    pub switch_board: [u8; 33], // 0 = None, 1 = Some + 32 bytes
 }
 
 impl MintMapping {
     pub const LEN: usize = core::mem::size_of::<MintMapping>();
 }
 
-pub fn get_mint_mapping(data: &[u8], target_mint: &[u8]) -> Result<MintMapping, SwigError> {
-    const MINT_ORACLE_MAPPING_SIZE: usize = 114;
+pub fn get_mint_mapping(
+    mapping_registry: &[u8],
+    target_mint: &[u8],
+) -> Result<MintMapping, SwigError> {
+    let is_initialized = unsafe { *mapping_registry.get_unchecked(0) };
+    if is_initialized == 0 {
+        return Err(SwigError::OracleMappingRegistryNotInitialized);
+    }
 
-    let authority = &data[0..32];
+    let authority = &mapping_registry[1..33];
 
-    let mapping_count = &data[32..34];
+    let total_mappings_u16 = u16::from_le_bytes(mapping_registry[33..35].try_into().unwrap());
 
-    let mapping_count_u16 = u16::from_le_bytes(mapping_count.try_into().unwrap());
+    let mut mapping_count = 0;
 
-    for i in (34..data.len()).step_by(MINT_ORACLE_MAPPING_SIZE) {
-        if unsafe { data.get_unchecked(i..i + 32) } == target_mint {
-            let mapping_data = unsafe { data.get_unchecked(i..i + MINT_ORACLE_MAPPING_SIZE) };
-            let pyth_account = if unsafe { mapping_data.get_unchecked(52..84) } != NULL_PUBKEY {
-                Some(unsafe { mapping_data.get_unchecked(52..84).try_into().unwrap() })
-            } else {
-                None
-            };
-
-            let switch_board = if unsafe { mapping_data.get_unchecked(84..116) } != NULL_PUBKEY {
-                Some(unsafe { mapping_data.get_unchecked(84..116).try_into().unwrap() })
-            } else {
-                None
-            };
+    for i in (ScopeMappingRegistry::LEN..mapping_registry.len()).step_by(MintMapping::LEN) {
+        if unsafe { mapping_registry.get_unchecked(i..i + 32) } == target_mint {
+            let mapping_data = unsafe { mapping_registry.get_unchecked(i..i + MintMapping::LEN) };
 
             return Ok(MintMapping {
                 mint: unsafe { mapping_data.get_unchecked(0..32).try_into().unwrap() },
@@ -480,13 +484,14 @@ pub fn get_mint_mapping(data: &[u8], target_mint: &[u8]) -> Result<MintMapping, 
                         mapping_data.get_unchecked(38..40).try_into().unwrap()
                     }),
                 ],
-                decimals: unsafe { *mapping_data.get_unchecked(40) },
-                is_active: unsafe { *mapping_data.get_unchecked(41) } == 1,
-                last_updated: i64::from_le_bytes(unsafe {
-                    mapping_data.get_unchecked(42..50).try_into().unwrap()
+                decimals: u8::from_le_bytes(unsafe {
+                    mapping_data.get_unchecked(40..41).try_into().unwrap()
                 }),
-                pyth_account,
-                switch_board,
+                is_active: u8::from_le_bytes(unsafe {
+                    mapping_data.get_unchecked(41..42).try_into().unwrap()
+                }) == 1,
+                pyth_account: unsafe { mapping_data.get_unchecked(42..75).try_into().unwrap() },
+                switch_board: unsafe { mapping_data.get_unchecked(75..108).try_into().unwrap() },
             });
         }
     }
@@ -542,23 +547,26 @@ pub const NULL_PUBKEY: [u8; 32] = [
 ];
 
 pub fn get_price_data(
-    mapping_data: &[u8],
+    mapping_registry: &[u8],
     scope_data: &[u8],
     pyth_data: Option<&[u8]>,
     mint: &[u8],
     clock: &Clock,
 ) -> Result<(u64, u8, u8), SwigError> {
-    let mapping = get_mint_mapping(mapping_data, mint)?;
+    let mapping = get_mint_mapping(mapping_registry, mint)?;
     let (scope_price, scope_exp) = get_scope_price_data(scope_data, mapping.price_chain)?;
 
-    let mut pyth_price = None;
-    if let (Some(pyth_address), Some(pyth_oracle_data)) = (mapping.pyth_account, pyth_data) {
-        pyth_price = Some(get_pyth_price_data(
-            pyth_oracle_data,
-            clock.unix_timestamp,
-            0,
-            &pyth_address,
-        )?);
+    let mut _pyth_price = None;
+    if let Some(pyth_oracle_data) = pyth_data {
+        if mapping.pyth_account[0] == 1 {
+            let pyth_address = unsafe { mapping.pyth_account.get_unchecked(1..33) };
+            _pyth_price = Some(get_pyth_price_data(
+                pyth_oracle_data,
+                clock.unix_timestamp,
+                0,
+                &pyth_address,
+            )?);
+        }
     }
 
     // compare_price_difference(&scope_price, &pyth_price)?;

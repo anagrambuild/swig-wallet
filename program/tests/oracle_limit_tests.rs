@@ -22,6 +22,7 @@ use swig_state::{
     action::{
         all::All,
         oracle_limits::{BaseAsset, OracleTokenLimit},
+        program_all::ProgramAll,
         sol_limit::SolLimit,
         token_limit::TokenLimit,
         Permission,
@@ -76,6 +77,7 @@ fn test_oracle_limit_permission_add() {
         vec![
             ClientAction::OracleTokenLimit(oracle_limit),
             ClientAction::SolLimit(sol_limit),
+            ClientAction::ProgramAll(ProgramAll {}),
         ],
     )
     .unwrap();
@@ -90,7 +92,7 @@ fn test_oracle_limit_permission_add() {
     let role = swig.get_role(role_id).unwrap().unwrap();
 
     // Verify both permissions exist
-    assert_eq!(role.position.num_actions(), 2, "Should have 2 actions");
+    assert_eq!(role.position.num_actions(), 3, "Should have 3 actions");
 
     let oracle_action = role
         .get_action::<OracleTokenLimit>(&[BaseAsset::USDC as u8])
@@ -141,7 +143,10 @@ fn test_oracle_limit_sol_transfer() {
             authority_type: AuthorityType::Ed25519,
             authority: secondary_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::OracleTokenLimit(oracle_limit)],
+        vec![
+            ClientAction::OracleTokenLimit(oracle_limit),
+            ClientAction::ProgramAll(ProgramAll {}),
+        ],
     )
     .unwrap();
 
@@ -183,6 +188,7 @@ fn test_oracle_limit_sol_transfer() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
+    println!("result: {:?}", result);
     assert!(result.is_ok(), "Transfer below limit should succeed");
     println!(
         "Compute units consumed for below limit transfer: {}",
@@ -229,9 +235,9 @@ fn test_oracle_limit_sol_transfer() {
         result.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3027)
+            solana_sdk::instruction::InstructionError::Custom(3028)
         ),
-        "Expected error code 3027"
+        "Expected error code 3028"
     );
 }
 
@@ -272,7 +278,10 @@ fn test_oracle_limit_token_transfer() {
             authority_type: AuthorityType::Ed25519,
             authority: secondary_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::OracleTokenLimit(oracle_limit)],
+        vec![
+            ClientAction::OracleTokenLimit(oracle_limit),
+            ClientAction::ProgramAll(ProgramAll {}),
+        ],
     )
     .unwrap();
 
@@ -399,9 +408,9 @@ fn test_oracle_limit_token_transfer() {
         result.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3027)
+            solana_sdk::instruction::InstructionError::Custom(3028)
         ),
-        "Expected error code 3027"
+        "Expected error code 3028"
     );
 }
 
@@ -448,6 +457,7 @@ fn test_oracle_limit_sol_passthrough() {
             ClientAction::SolLimit(SolLimit {
                 amount: 100_000_000_000,
             }),
+            ClientAction::ProgramAll(ProgramAll {}),
         ],
     )
     .unwrap();
@@ -536,9 +546,9 @@ fn test_oracle_limit_sol_passthrough() {
         result.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3027)
+            solana_sdk::instruction::InstructionError::Custom(3028)
         ),
-        "Expected error code 3027"
+        "Expected error code 3028"
     );
 }
 
@@ -604,6 +614,7 @@ fn test_oracle_limit_passthrough() {
                 token_mint: mint_bytes,
                 current_amount: 600_000_000,
             }),
+            ClientAction::ProgramAll(ProgramAll {}),
         ],
     )
     .unwrap();
@@ -661,6 +672,7 @@ fn test_oracle_limit_passthrough() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
+    println!("Result: {:?}", result);
     assert!(result.is_ok(), "Transfer below limit should succeed");
     println!(
         "Compute units consumed for below limit transfer: {}",
@@ -715,9 +727,9 @@ fn test_oracle_limit_passthrough() {
         result.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3027)
+            solana_sdk::instruction::InstructionError::Custom(3028)
         ),
-        "Expected error code 3027"
+        "Expected error code 3028"
     );
 }
 

@@ -144,6 +144,8 @@ pub enum SwigError {
     OracleExponentMismatch,
     /// Oracle price difference exceeds threshold
     OraclePriceDifferenceExceedsThreshold,
+    /// Oracle mapping registry is not initialized
+    OracleMappingRegistryNotInitialized,
 }
 
 /// Implements conversion from SwigError to ProgramError.

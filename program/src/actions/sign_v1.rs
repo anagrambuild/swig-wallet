@@ -387,7 +387,7 @@ pub fn sign_v1(
                                 //         .borrow_data_unchecked()
                                 // };
 
-                                let mapping_data = unsafe {
+                                let mapping_registry = unsafe {
                                     let owner =
                                         all_accounts.get_unchecked(all_accounts.len() - 2).owner();
                                     if owner.as_ref()
@@ -401,7 +401,7 @@ pub fn sign_v1(
                                 };
 
                                 let (price, exp, mint_decimal) = get_price_data(
-                                    mapping_data,
+                                    mapping_registry,
                                     scope_data,
                                     None,
                                     &pubkey!("So11111111111111111111111111111111111111112"),
