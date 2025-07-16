@@ -3,7 +3,7 @@ use swig_interface::{
     program_id, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
     CreateSessionInstruction, CreateSubAccountInstruction, RemoveAuthorityInstruction,
     SignInstruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
-    WithdrawFromSubAccountInstruction,
+    UpdateAuthorityData as InterfaceUpdateAuthorityData, WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
     authority::{
@@ -14,7 +14,11 @@ use swig_state::{
     IntoBytes,
 };
 
-use crate::{client_role::ClientRole, error::SwigError, types::Permission as ClientPermission};
+use crate::{
+    client_role::ClientRole,
+    error::SwigError,
+    types::{Permission as ClientPermission, UpdateAuthorityData},
+};
 
 /// A builder for creating and managing Swig wallet instructions.
 ///
@@ -195,38 +199,22 @@ impl SwigInstructionBuilder {
     /// # Returns
     ///
     /// Returns a `Result` containing a vector of instructions or a `SwigError`
-    pub fn replace_authority(
+    pub fn update_authority(
         &mut self,
         authority_to_replace_id: u32,
-        new_authority_type: AuthorityType,
-        new_authority: &[u8],
-        permissions: Vec<ClientPermission>,
         current_slot: Option<u64>,
-        counter: Option<u32>,
+        update_data: UpdateAuthorityData,
     ) -> Result<Vec<Instruction>, SwigError> {
-        let actions = ClientPermission::to_client_actions(permissions);
-
-        let remove_authority_instructions = self.client_role.remove_authority_instruction(
+        let update_authority_instructions = self.client_role.update_authority_instruction(
             self.swig_account,
             self.payer,
             self.role_id,
             authority_to_replace_id,
+            update_data.to_interface_data(),
             current_slot,
         )?;
 
-        let add_authority_instructions = self.client_role.add_authority_instruction(
-            self.swig_account,
-            self.payer,
-            self.role_id,
-            new_authority_type,
-            new_authority,
-            actions,
-            current_slot,
-        )?;
-
-        let mut instructions = remove_authority_instructions;
-        instructions.extend(add_authority_instructions);
-        Ok(instructions)
+        Ok(update_authority_instructions)
     }
 
     /// Creates an instruction to create a new session
@@ -511,7 +499,6 @@ impl SwigInstructionBuilder {
 
     /// Increments the odometer for the current authority if it is Secp based
     /// authority
-    ///
     pub fn increment_odometer(&mut self) -> Result<(), SwigError> {
         self.client_role.increment_odometer()
     }

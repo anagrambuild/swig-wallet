@@ -135,6 +135,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedInsufficientBalance,
     /// Cannot remove root authority
     PermissionDeniedCannotRemoveRootAuthority,
+    /// Cannot update root authority
+    PermissionDeniedCannotUpdateRootAuthority,
     /// Session has expired
     PermissionDeniedSessionExpired,
     /// Invalid Secp256k1 signature

@@ -2,7 +2,8 @@ use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
     AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateSessionInstruction,
     CreateSubAccountInstruction, RemoveAuthorityInstruction, SignInstruction,
-    SubAccountSignInstruction, ToggleSubAccountInstruction, WithdrawFromSubAccountInstruction,
+    SubAccountSignInstruction, ToggleSubAccountInstruction, UpdateAuthorityData,
+    UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
     authority::{
@@ -46,6 +47,17 @@ pub trait ClientRole {
         payer: Pubkey,
         role_id: u32,
         authority_to_remove_id: u32,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError>;
+
+    /// Creates an update authority instruction
+    fn update_authority_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError>;
 
@@ -210,6 +222,27 @@ impl ClientRole for Ed25519ClientRole {
                 self.authority,
                 role_id,
                 authority_to_remove_id,
+            )?,
+        ])
+    }
+
+    fn update_authority_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Ok(vec![
+            UpdateAuthorityInstruction::new_with_ed25519_authority(
+                swig_account,
+                payer,
+                self.authority,
+                role_id,
+                authority_to_update_id,
+                update_data,
             )?,
         ])
     }
@@ -469,6 +502,32 @@ impl ClientRole for Secp256k1ClientRole {
                 new_odometer,
                 role_id,
                 authority_to_remove_id,
+            )?,
+        ])
+    }
+
+    fn update_authority_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+
+        Ok(vec![
+            UpdateAuthorityInstruction::new_with_secp256k1_authority(
+                swig_account,
+                payer,
+                &self.signing_fn,
+                current_slot,
+                new_odometer,
+                role_id,
+                authority_to_update_id,
+                update_data,
             )?,
         ])
     }
@@ -772,6 +831,31 @@ impl ClientRole for Secp256r1ClientRole {
         Ok(instructions)
     }
 
+    fn update_authority_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+
+        Ok(UpdateAuthorityInstruction::new_with_secp256r1_authority(
+            swig_account,
+            payer,
+            &self.signing_fn,
+            current_slot,
+            new_odometer,
+            role_id,
+            authority_to_update_id,
+            update_data,
+            &self.authority,
+        )?)
+    }
+
     fn create_session_instruction(
         &self,
         swig_account: Pubkey,
@@ -1043,6 +1127,27 @@ impl ClientRole for Ed25519SessionClientRole {
         ])
     }
 
+    fn update_authority_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Ok(vec![
+            UpdateAuthorityInstruction::new_with_ed25519_authority(
+                swig_account,
+                payer,
+                self.session_authority.public_key.into(),
+                role_id,
+                authority_to_update_id,
+                update_data,
+            )?,
+        ])
+    }
+
     fn create_session_instruction(
         &self,
         swig_account: Pubkey,
@@ -1255,6 +1360,32 @@ impl ClientRole for Secp256k1SessionClientRole {
                 new_odometer,
                 authority_to_remove_id,
                 role_id,
+            )?,
+        ])
+    }
+
+    fn update_authority_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+
+        Ok(vec![
+            UpdateAuthorityInstruction::new_with_secp256k1_authority(
+                swig_account,
+                payer,
+                &self.signing_fn,
+                current_slot,
+                new_odometer,
+                role_id,
+                authority_to_update_id,
+                update_data,
             )?,
         ])
     }
@@ -1484,6 +1615,31 @@ impl ClientRole for Secp256r1SessionClientRole {
         )?;
 
         Ok(instructions)
+    }
+
+    fn update_authority_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+
+        Ok(UpdateAuthorityInstruction::new_with_secp256r1_authority(
+            swig_account,
+            payer,
+            &self.signing_fn,
+            current_slot,
+            new_odometer,
+            role_id,
+            authority_to_update_id,
+            update_data,
+            &self.session_authority.public_key,
+        )?)
     }
 
     fn create_session_instruction(

@@ -9,6 +9,8 @@ pub mod all;
 pub mod manage_authority;
 pub mod oracle_limits;
 pub mod program;
+pub mod program_all;
+pub mod program_curated;
 pub mod program_scope;
 pub mod sol_limit;
 pub mod sol_recurring_limit;
@@ -25,6 +27,8 @@ use no_padding::NoPadding;
 use oracle_limits::OracleTokenLimit;
 use pinocchio::program_error::ProgramError;
 use program::Program;
+use program_all::ProgramAll;
+use program_curated::ProgramCurated;
 use program_scope::ProgramScope;
 use sol_limit::SolLimit;
 use sol_recurring_limit::SolRecurringLimit;
@@ -131,8 +135,12 @@ pub enum Permission {
     StakeRecurringLimit = 11,
     /// Permission to perform all stake operations
     StakeAll = 12,
+    /// Permission to interact with any program (unrestricted CPI)
+    ProgramAll = 13,
+    /// Permission to interact with curated programs only
+    ProgramCurated = 14,
     /// Permission to perform token operations with oracle-based limits
-    OracleTokenLimit = 13,
+    OracleTokenLimit = 15,
 }
 
 impl TryFrom<u16> for Permission {
@@ -142,7 +150,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=13 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=15 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -199,6 +207,8 @@ impl ActionLoader {
             Permission::StakeLimit => StakeLimit::valid_layout(data),
             Permission::StakeRecurringLimit => StakeRecurringLimit::valid_layout(data),
             Permission::StakeAll => StakeAll::valid_layout(data),
+            Permission::ProgramAll => ProgramAll::valid_layout(data),
+            Permission::ProgramCurated => ProgramCurated::valid_layout(data),
             Permission::OracleTokenLimit => OracleTokenLimit::valid_layout(data),
             _ => Ok(false),
         }

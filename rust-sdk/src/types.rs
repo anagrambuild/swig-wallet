@@ -303,13 +303,31 @@ impl Permission {
             });
         }
 
-        // Check for Program permission
-        if let Some(action) = swig_state::role::Role::get_action::<Program>(role, &[])
-            .map_err(|_| SwigError::InvalidSwigData)?
-        {
-            permissions.push(Permission::Program {
-                program_id: Pubkey::new_from_array(action.program_id),
-            });
+        // Check for Program permissions by iterating through all actions
+        let all_actions = role
+            .get_all_actions()
+            .map_err(|_| SwigError::InvalidSwigData)?;
+        for action in all_actions {
+            match action.permission() {
+                Ok(swig_state::action::Permission::Program)
+                | Ok(swig_state::action::Permission::ProgramAll)
+                | Ok(swig_state::action::Permission::ProgramCurated) => {
+                    // Get the program action data
+                    let action_data = unsafe {
+                        core::slice::from_raw_parts(
+                            (action as *const _ as *const u8).add(swig_state::action::Action::LEN),
+                            action.length() as usize,
+                        )
+                    };
+                    if action_data.len() >= 32 {
+                        let program_id_bytes: [u8; 32] = action_data[0..32].try_into().unwrap();
+                        permissions.push(Permission::Program {
+                            program_id: Pubkey::new_from_array(program_id_bytes),
+                        });
+                    }
+                },
+                _ => {},
+            }
         }
 
         // Check for ProgramScope permission
@@ -379,6 +397,56 @@ impl Permission {
 
         Ok(permissions)
     }
+
+    pub fn to_action_type(&self) -> u8 {
+        match self {
+            Permission::All => 0x07,
+            Permission::ManageAuthority => 0x08,
+            Permission::Sol {
+                amount: _,
+                recurring,
+            } => {
+                if recurring.is_some() {
+                    0x02 // SolRecurringLimit
+                } else {
+                    0x01 // SolLimit
+                }
+            },
+            Permission::Token {
+                mint: _,
+                amount: _,
+                recurring,
+            } => {
+                if recurring.is_some() {
+                    0x06 // TokenRecurringLimit
+                } else {
+                    0x05 // TokenLimit
+                }
+            },
+            Permission::Program { program_id: _ } => 0x03,
+            Permission::ProgramScope {
+                program_id: _,
+                target_account: _,
+                numeric_type: _,
+                limit: _,
+                window: _,
+                balance_field_start: _,
+                balance_field_end: _,
+            } => 0x04,
+            Permission::SubAccount { sub_account: _ } => 0x09,
+            Permission::Stake {
+                amount: _,
+                recurring,
+            } => {
+                if recurring.is_some() {
+                    0x0B // StakeRecurringLimit
+                } else {
+                    0x0A // StakeLimit
+                }
+            },
+            Permission::StakeAll => 0x0C,
+        }
+    }
 }
 
 /// Stores all details about the current role for a wallet session
@@ -389,4 +457,42 @@ pub struct CurrentRole {
     pub authority_identity: Vec<u8>,
     pub permissions: Vec<Permission>,
     pub session_based: bool,
+}
+
+/// Represents the data that can be updated for an authority
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateAuthorityData {
+    ReplaceAll(Vec<Permission>),
+    AddActions(Vec<Permission>),
+    RemoveActionsByType(Vec<Permission>),
+    RemoveActionsByIndex(Vec<u16>),
+}
+
+use swig_interface::UpdateAuthorityData as InterfaceUpdateAuthorityData;
+
+impl UpdateAuthorityData {
+    pub fn to_interface_data(&self) -> InterfaceUpdateAuthorityData {
+        match self {
+            UpdateAuthorityData::ReplaceAll(permissions) => {
+                InterfaceUpdateAuthorityData::ReplaceAll(Permission::to_client_actions(
+                    permissions.clone(),
+                ))
+            },
+            UpdateAuthorityData::AddActions(permissions) => {
+                InterfaceUpdateAuthorityData::AddActions(Permission::to_client_actions(
+                    permissions.clone(),
+                ))
+            },
+            UpdateAuthorityData::RemoveActionsByType(action_types) => {
+                let action_types_vec = action_types
+                    .iter()
+                    .map(|action| action.to_action_type())
+                    .collect::<Vec<u8>>();
+                InterfaceUpdateAuthorityData::RemoveActionsByType(action_types_vec)
+            },
+            UpdateAuthorityData::RemoveActionsByIndex(indices) => {
+                InterfaceUpdateAuthorityData::RemoveActionsByIndex(indices.clone())
+            },
+        }
+    }
 }

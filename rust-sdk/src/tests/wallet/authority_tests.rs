@@ -6,6 +6,7 @@ use swig_state::authority::AuthorityType;
 
 use super::*;
 use crate::client_role::{Ed25519ClientRole, Secp256k1ClientRole};
+use crate::types::UpdateAuthorityData;
 
 #[test_log::test]
 fn should_manage_authorities_successfully() {
@@ -204,19 +205,17 @@ fn should_switch_authority_and_payer() {
 }
 
 #[test_log::test]
-fn should_replace_authority() {
+fn should_update_authority_replace_all() {
     let (mut litesvm, main_authority) = setup_test_environment();
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
     let old_authority = Keypair::new();
     let new_authority = Keypair::new();
 
-    println!("old authority: {:?}", old_authority.pubkey());
-    println!("new authority: {:?}", new_authority.pubkey());
     // Add old authority with SOL permission
     swig_wallet
         .add_authority(
             AuthorityType::Ed25519,
-            &old_authority.pubkey().to_bytes(),
+            &new_authority.pubkey().to_bytes(),
             vec![Permission::Sol {
                 amount: 10_000_000_000,
                 recurring: None,
@@ -227,38 +226,161 @@ fn should_replace_authority() {
     // Verify old authority exists
     assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
     assert!(swig_wallet
-        .get_role_id(&old_authority.pubkey().to_bytes())
+        .get_role_id(&new_authority.pubkey().to_bytes())
         .is_ok());
 
+    let new_permissions = vec![
+        Permission::ManageAuthority {},
+        Permission::Sol {
+            amount: 5_000_000_000,
+            recurring: None,
+        },
+    ];
+
+    let update_data = UpdateAuthorityData::ReplaceAll(new_permissions);
+
     // Replace old authority with new authority
+    swig_wallet.update_authority(1, update_data).unwrap();
+
+    // Verify the replacement
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+
+    let role_permissions = swig_wallet.get_role_permissions(1).unwrap();
+    println!("role permissions: {:?}", role_permissions);
+    assert_eq!(role_permissions.len(), 2);
+    assert_eq!(role_permissions[0], Permission::ManageAuthority {});
+    assert_eq!(
+        role_permissions[1],
+        Permission::Sol {
+            amount: 5_000_000_000,
+            recurring: None,
+        }
+    );
+}
+
+#[test_log::test]
+fn should_update_authority_remove_actions_by_index() {
+    let (mut litesvm, main_authority) = setup_test_environment();
+    let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+    let old_authority = Keypair::new();
+    let new_authority = Keypair::new();
+
+    // Add old authority with SOL permission
     swig_wallet
-        .replace_authority(
-            1,
+        .add_authority(
             AuthorityType::Ed25519,
             &new_authority.pubkey().to_bytes(),
-            vec![Permission::Sol {
-                amount: 5_000_000_000, // Different amount to verify the replacement
-                recurring: None,
-            }],
+            vec![
+                Permission::Sol {
+                    amount: 10_000_000_000,
+                    recurring: None,
+                },
+                Permission::ManageAuthority {},
+            ],
         )
         .unwrap();
 
-    // Verify the replacement
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
-    assert!(swig_wallet
-        .get_role_id(&new_authority.pubkey().to_bytes())
-        .is_ok());
-    assert!(swig_wallet
-        .get_role_id(&old_authority.pubkey().to_bytes())
-        .is_err());
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    let role_permissions = swig_wallet.get_role_permissions(1).unwrap();
+    assert_eq!(role_permissions.len(), 2);
 
-    // Try to authenticate with new authority (should succeed)
-    assert!(swig_wallet
-        .authenticate_authority(&new_authority.pubkey().to_bytes())
-        .is_ok());
+    let update_data = UpdateAuthorityData::RemoveActionsByIndex(vec![1]);
+    swig_wallet.update_authority(1, update_data).unwrap();
 
-    // Try to authenticate with old authority (should fail)
-    assert!(swig_wallet
-        .authenticate_authority(&old_authority.pubkey().to_bytes())
-        .is_err());
+    let role_permissions = swig_wallet.get_role_permissions(1).unwrap();
+
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+
+    assert_eq!(role_permissions.len(), 1);
+    assert_eq!(
+        role_permissions[0],
+        Permission::Sol {
+            amount: 10_000_000_000,
+            recurring: None,
+        }
+    );
+}
+
+#[test_log::test]
+fn should_update_authority_remove_actions_by_type() {
+    let (mut litesvm, main_authority) = setup_test_environment();
+    let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+    let old_authority = Keypair::new();
+    let new_authority = Keypair::new();
+
+    // Add old authority with SOL permission
+    swig_wallet
+        .add_authority(
+            AuthorityType::Ed25519,
+            &new_authority.pubkey().to_bytes(),
+            vec![
+                Permission::Sol {
+                    amount: 10_000_000_000,
+                    recurring: None,
+                },
+                Permission::ManageAuthority {},
+            ],
+        )
+        .unwrap();
+
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    let role_permissions = swig_wallet.get_role_permissions(1).unwrap();
+    assert_eq!(role_permissions.len(), 2);
+
+    let update_data =
+        UpdateAuthorityData::RemoveActionsByType(vec![Permission::ManageAuthority {}]);
+    swig_wallet.update_authority(1, update_data).unwrap();
+
+    let role_permissions = swig_wallet.get_role_permissions(1).unwrap();
+
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+
+    assert_eq!(role_permissions.len(), 1);
+    assert_eq!(
+        role_permissions[0],
+        Permission::Sol {
+            amount: 10_000_000_000,
+            recurring: None,
+        }
+    );
+}
+
+#[test_log::test]
+fn should_update_authority_add_actions() {
+    let (mut litesvm, main_authority) = setup_test_environment();
+    let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+    let old_authority = Keypair::new();
+    let new_authority = Keypair::new();
+
+    // Add old authority with SOL permission
+    swig_wallet
+        .add_authority(
+            AuthorityType::Ed25519,
+            &new_authority.pubkey().to_bytes(),
+            vec![Permission::ManageAuthority {}],
+        )
+        .unwrap();
+
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    let role_permissions = swig_wallet.get_role_permissions(1).unwrap();
+    assert_eq!(role_permissions.len(), 1);
+
+    let update_data = UpdateAuthorityData::AddActions(vec![Permission::Sol {
+        amount: 10_000_000_000,
+        recurring: None,
+    }]);
+    swig_wallet.update_authority(1, update_data).unwrap();
+
+    let role_permissions = swig_wallet.get_role_permissions(1).unwrap();
+
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+
+    assert_eq!(role_permissions.len(), 2);
+    assert_eq!(
+        role_permissions[1],
+        Permission::Sol {
+            amount: 10_000_000_000,
+            recurring: None,
+        }
+    );
 }
