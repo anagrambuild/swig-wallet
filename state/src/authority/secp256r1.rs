@@ -598,6 +598,51 @@ pub fn verify_secp256r1_instruction_data(
     Ok(())
 }
 
+fn generate_client_data_json(
+    field_order: &[u8],
+    challenge: &str,
+    origin: &str,
+) -> Result<String, ProgramError> {
+    let mut fields = Vec::new();
+
+    for key in field_order {
+        match WebAuthnField::try_from(*key)? {
+            WebAuthnField::None => {},
+            WebAuthnField::Challenge => fields.push(format!(r#""challenge":"{}""#, challenge)),
+            WebAuthnField::Type => fields.push(r#""type":"webauthn.get""#.to_string()),
+            WebAuthnField::Origin => fields.push(format!(r#""origin":"{}""#, origin)),
+            WebAuthnField::CrossOrigin => fields.push(r#""crossOrigin":false"#.to_string()),
+        }
+    }
+
+    Ok(format!("{{{}}}", fields.join(",")))
+}
+
+#[repr(u8)]
+pub enum WebAuthnField {
+    None,
+    Type,
+    Challenge,
+    Origin,
+    CrossOrigin,
+}
+
+impl TryFrom<u8> for WebAuthnField {
+    type Error = SwigAuthenticateError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::None),
+            1 => Ok(Self::Type),
+            2 => Ok(Self::Challenge),
+            3 => Ok(Self::Origin),
+            4 => Ok(Self::CrossOrigin),
+            // todo: change this error message
+            _ => Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage),
+        }
+    }
+}
+
 #[repr(u16)]
 pub enum R1AuthenticationKind {
     WebAuthn = 1,
@@ -623,6 +668,7 @@ fn webauthn_message<'a>(
     // Parse the WebAuthn payload format:
     // [2 bytes auth_type]
     // [2 bytes auth_data_len][auth_data]
+    // [4 bytes webauthn client json field_order]
     // [2 bytes huffman_tree_len][huffman_tree]
     // [2 bytes huffman_encoded_len][huffman_encoded_origin]
 
@@ -643,6 +689,10 @@ fn webauthn_message<'a>(
     let auth_data = &auth_payload[4..4 + auth_len];
 
     let mut offset = 4 + auth_len;
+
+    let field_order = &auth_payload[offset..offset + 4];
+
+    offset += 4;
 
     // Parse huffman tree length
     if auth_payload.len() < offset + 2 {
@@ -679,12 +729,17 @@ fn webauthn_message<'a>(
     let decoded_origin = decode_huffman_origin(huffman_tree, huffman_encoded_origin)?;
 
     // Log the decoded origin for monitoring
-    let origin_str = core::str::from_utf8(&decoded_origin).unwrap_or("<invalid utf8>");
+    let origin_str = core::str::from_utf8(&decoded_origin[..decoded_origin.len() - 1])
+        .unwrap_or("<invalid utf8>");
     pinocchio::msg!("WebAuthn Huffman decoded origin: '{}'", origin_str);
 
     // Reconstruct the client data JSON using the decoded origin and reconstructed
     // challenge
-    let client_data_json = reconstruct_client_data_json(&decoded_origin, &computed_hash)?;
+    let client_data_json = reconstruct_client_data_json(
+        field_order,
+        &decoded_origin[..decoded_origin.len() - 1],
+        &computed_hash,
+    )?;
 
     // Compute SHA256 hash of the reconstructed client data JSON
     let mut client_data_hash = [0u8; 32];
@@ -800,6 +855,7 @@ fn decode_huffman_origin(tree_data: &[u8], encoded_data: &[u8]) -> Result<Vec<u8
 
 /// Reconstruct client data JSON from origin and challenge data
 fn reconstruct_client_data_json(
+    field_order: &[u8],
     origin: &[u8],
     challenge_data: &[u8],
 ) -> Result<Vec<u8>, ProgramError> {
@@ -810,13 +866,19 @@ fn reconstruct_client_data_json(
     // Base64url encode the challenge data (without padding)
     let challenge_b64 = base64url_encode_no_pad(challenge_data);
 
-    // Construct the client data JSON to match the exact format that WebAuthn
-    // creates This must match exactly what the frontend creates for the
-    // WebAuthn challenge
-    let client_data_json = format!(
-        r#"{{"type":"webauthn.get","challenge":"{}","origin":"{}","crossOrigin":false}}"#,
-        challenge_b64, origin_str
-    );
+    let mut fields = Vec::new();
+
+    for key in field_order {
+        match WebAuthnField::try_from(*key)? {
+            WebAuthnField::None => {},
+            WebAuthnField::Challenge => fields.push(format!(r#""challenge":"{}""#, challenge_b64)),
+            WebAuthnField::Type => fields.push(r#""type":"webauthn.get""#.to_string()),
+            WebAuthnField::Origin => fields.push(format!(r#""origin":"{}""#, origin_str)),
+            WebAuthnField::CrossOrigin => fields.push(r#""crossOrigin":false"#.to_string()),
+        }
+    }
+
+    let client_data_json = format!("{{{}}}", fields.join(","));
 
     Ok(client_data_json.into_bytes())
 }
