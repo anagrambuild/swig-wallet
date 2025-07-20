@@ -669,6 +669,7 @@ fn webauthn_message<'a>(
     // [2 bytes auth_type]
     // [2 bytes auth_data_len][auth_data]
     // [4 bytes webauthn client json field_order]
+    // [2 bytes origin_len]
     // [2 bytes huffman_tree_len][huffman_tree]
     // [2 bytes huffman_encoded_len][huffman_encoded_origin]
 
@@ -693,6 +694,11 @@ fn webauthn_message<'a>(
     let field_order = &auth_payload[offset..offset + 4];
 
     offset += 4;
+
+    let origin_len =
+        u16::from_le_bytes(auth_payload[offset..offset + 2].try_into().unwrap()) as usize;
+
+    offset += 2;
 
     // Parse huffman tree length
     if auth_payload.len() < offset + 2 {
@@ -726,20 +732,16 @@ fn webauthn_message<'a>(
     );
 
     // Decode the huffman-encoded origin URL
-    let decoded_origin = decode_huffman_origin(huffman_tree, huffman_encoded_origin)?;
+    let decoded_origin = decode_huffman_origin(huffman_tree, huffman_encoded_origin, origin_len)?;
 
     // Log the decoded origin for monitoring
-    let origin_str = core::str::from_utf8(&decoded_origin[..decoded_origin.len() - 1])
-        .unwrap_or("<invalid utf8>");
+    let origin_str = core::str::from_utf8(&decoded_origin).unwrap_or("<invalid utf8>");
     pinocchio::msg!("WebAuthn Huffman decoded origin: '{}'", origin_str);
 
     // Reconstruct the client data JSON using the decoded origin and reconstructed
     // challenge
-    let client_data_json = reconstruct_client_data_json(
-        field_order,
-        &decoded_origin[..decoded_origin.len() - 1],
-        &computed_hash,
-    )?;
+    let client_data_json =
+        reconstruct_client_data_json(field_order, &decoded_origin, &computed_hash)?;
 
     // Compute SHA256 hash of the reconstructed client data JSON
     let mut client_data_hash = [0u8; 32];
@@ -765,11 +767,15 @@ fn webauthn_message<'a>(
 }
 
 /// Decode huffman-encoded origin URL
-fn decode_huffman_origin(tree_data: &[u8], encoded_data: &[u8]) -> Result<Vec<u8>, ProgramError> {
+fn decode_huffman_origin(
+    tree_data: &[u8],
+    encoded_data: &[u8],
+    decoded_len: usize,
+) -> Result<Vec<u8>, ProgramError> {
     // Constants for huffman decoding
     const NODE_SIZE: usize = 3;
     const LEAF_NODE: u8 = 0;
-    const INTERNAL_NODE: u8 = 1;
+    // const INTERNAL_NODE: u8 = 1;
     const BIT_MASKS: [u8; 8] = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
 
     if tree_data.len() % NODE_SIZE != 0 || tree_data.is_empty() {
@@ -778,74 +784,46 @@ fn decode_huffman_origin(tree_data: &[u8], encoded_data: &[u8]) -> Result<Vec<u8
 
     let node_count = tree_data.len() / NODE_SIZE;
     let root_index = node_count - 1;
-    let mut current_node = root_index;
+    let mut current_node_index = root_index;
     let mut decoded = Vec::new();
 
-    let mut bit_count = 0;
-    let total_bits = encoded_data.len() * 8;
-
-    for (_byte_idx, &byte) in encoded_data.iter().enumerate() {
+    for &byte in encoded_data.iter() {
         for bit_pos in 0..8 {
-            if bit_count >= total_bits {
-                break;
+            if decoded.len() == decoded_len {
+                return Ok(decoded);
             }
 
             let bit = (byte & BIT_MASKS[bit_pos]) != 0;
-            bit_count += 1;
 
-            // Navigate tree based on current bit
-            let node_offset = current_node * NODE_SIZE;
-            if node_offset + 2 >= tree_data.len() {
+            let node_offset = current_node_index * NODE_SIZE;
+            let node_type = tree_data[node_offset];
+
+            // Should not start a loop at a leaf
+            if node_type == LEAF_NODE {
                 return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
             }
 
-            let node_type = tree_data[node_offset];
+            // Navigate to the correct child index
             let left_or_char = tree_data[node_offset + 1];
             let right = tree_data[node_offset + 2];
-
-            if node_type == LEAF_NODE {
-                // We're at a leaf, output the character and reset to root
-                decoded.push(left_or_char);
-                current_node = root_index;
-
-                // Stop when we've decoded the expected URL length
-                // Re-process the current bit from the root
-                let root_node_offset = current_node * NODE_SIZE;
-                if root_node_offset + 2 < tree_data.len() {
-                    let root_node_type = tree_data[root_node_offset];
-                    let root_left_or_char = tree_data[root_node_offset + 1];
-                    let root_right = tree_data[root_node_offset + 2];
-
-                    if root_node_type == INTERNAL_NODE {
-                        current_node = if bit {
-                            root_right as usize
-                        } else {
-                            root_left_or_char as usize
-                        };
-
-                        if current_node >= node_count {
-                            return Err(
-                                SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage
-                                    .into(),
-                            );
-                        }
-                    }
-                }
-            } else if node_type == INTERNAL_NODE {
-                // Navigate tree based on bit (false=left, true=right)
-                current_node = if bit {
-                    right as usize
-                } else {
-                    left_or_char as usize
-                };
-
-                if current_node >= node_count {
-                    return Err(
-                        SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into(),
-                    );
-                }
+            current_node_index = if bit {
+                right as usize
             } else {
+                left_or_char as usize
+            };
+
+            if current_node_index >= node_count {
                 return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+            }
+
+            // Check if the new node is a leaf
+            let next_node_offset = current_node_index * NODE_SIZE;
+            let next_node_type = tree_data[next_node_offset];
+
+            if next_node_type == LEAF_NODE {
+                let character = tree_data[next_node_offset + 1];
+                decoded.push(character);
+                current_node_index = root_index; // Reset for the next bit
             }
         }
     }
@@ -866,7 +844,7 @@ fn reconstruct_client_data_json(
     // Base64url encode the challenge data (without padding)
     let challenge_b64 = base64url_encode_no_pad(challenge_data);
 
-    let mut fields = Vec::new();
+    let mut fields = Vec::with_capacity(4);
 
     for key in field_order {
         match WebAuthnField::try_from(*key)? {
