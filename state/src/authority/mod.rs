@@ -8,7 +8,6 @@
 pub mod ed25519;
 pub mod secp256k1;
 pub mod secp256r1;
-pub mod webauthn;
 
 use std::any::Any;
 
@@ -16,7 +15,6 @@ use ed25519::{ED25519Authority, Ed25519SessionAuthority};
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
 use secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority};
 use secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority};
-use webauthn::{WebAuthnAuthority, WebAuthnSessionAuthority};
 
 use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
 
@@ -131,10 +129,6 @@ pub enum AuthorityType {
     Secp256r1,
     /// Session-based Secp256r1 authority
     Secp256r1Session,
-    /// Standard WebAuthn authority (for passkeys)
-    WebAuthn,
-    /// Session-based WebAuthn authority
-    WebAuthnSession,
 }
 
 impl TryFrom<u16> for AuthorityType {
@@ -150,8 +144,6 @@ impl TryFrom<u16> for AuthorityType {
             4 => Ok(AuthorityType::Secp256k1Session),
             5 => Ok(AuthorityType::Secp256r1),
             6 => Ok(AuthorityType::Secp256r1Session),
-            7 => Ok(AuthorityType::WebAuthn),
-            8 => Ok(AuthorityType::WebAuthnSession),
             _ => Err(ProgramError::InvalidInstructionData),
         }
     }
@@ -175,8 +167,6 @@ pub const fn authority_type_to_length(
         AuthorityType::Secp256k1Session => Ok(Secp256k1SessionAuthority::LEN),
         AuthorityType::Secp256r1 => Ok(Secp256r1Authority::LEN),
         AuthorityType::Secp256r1Session => Ok(Secp256r1SessionAuthority::LEN),
-        AuthorityType::WebAuthn => Ok(WebAuthnAuthority::LEN),
-        AuthorityType::WebAuthnSession => Ok(WebAuthnSessionAuthority::LEN),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
