@@ -36,15 +36,20 @@ fn should_token_transfer_with_program_scope() {
     // Setup a basic program scope
     let new_authority = Keypair::new();
 
-    let permissions = vec![Permission::ProgramScope {
-        program_id: spl_token::ID,
-        target_account: swig_ata,
-        numeric_type: 2, // U64
-        limit: Some(1000),
-        window: None,
-        balance_field_start: Some(64),
-        balance_field_end: Some(72),
-    }];
+    let permissions = vec![
+        Permission::Program {
+            program_id: spl_token::ID,
+        },
+        Permission::ProgramScope {
+            program_id: spl_token::ID,
+            target_account: swig_ata,
+            numeric_type: 2, // U64
+            limit: Some(1000),
+            window: None,
+            balance_field_start: Some(64),
+            balance_field_end: Some(72),
+        },
+    ];
 
     swig_wallet
         .add_authority(
@@ -126,15 +131,20 @@ fn should_token_transfer_with_recurring_limit_program_scope() {
 
     let new_authority = Keypair::new();
 
-    let permissions = vec![Permission::ProgramScope {
-        program_id: spl_token::ID,
-        target_account: swig_ata,
-        numeric_type: 2, // U64
-        limit: Some(transfer_limit),
-        window: Some(window_size),
-        balance_field_start: Some(64),
-        balance_field_end: Some(72),
-    }];
+    let permissions = vec![
+        Permission::Program {
+            program_id: spl_token::ID,
+        },
+        Permission::ProgramScope {
+            program_id: spl_token::ID,
+            target_account: swig_ata,
+            numeric_type: 2, // U64
+            limit: Some(transfer_limit),
+            window: Some(window_size),
+            balance_field_start: Some(64),
+            balance_field_end: Some(72),
+        },
+    ];
 
     swig_wallet
         .add_authority(

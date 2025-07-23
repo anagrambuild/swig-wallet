@@ -1,4 +1,4 @@
-use solana_program::system_instruction;
+use solana_program::{system_instruction, system_program};
 use solana_sdk::signature::{Keypair, Signer};
 
 use super::*;
@@ -19,10 +19,15 @@ fn should_transfer_within_limits() {
         .add_authority(
             AuthorityType::Ed25519,
             &secondary_authority.pubkey().to_bytes(),
-            vec![Permission::Sol {
-                amount: 1_000_000_000,
-                recurring: None,
-            }],
+            vec![
+                Permission::Program {
+                    program_id: system_program::ID,
+                },
+                Permission::Sol {
+                    amount: 1_000_000_000,
+                    recurring: None,
+                },
+            ],
         )
         .unwrap();
 
@@ -69,10 +74,15 @@ fn should_fail_transfer_beyond_limits() {
         .add_authority(
             AuthorityType::Ed25519,
             &secondary_authority.pubkey().to_bytes(),
-            vec![Permission::Sol {
-                amount: 1_000_000_000,
-                recurring: None,
-            }],
+            vec![
+                Permission::Program {
+                    program_id: system_program::ID,
+                },
+                Permission::Sol {
+                    amount: 1_000_000_000,
+                    recurring: None,
+                },
+            ],
         )
         .unwrap();
 
@@ -108,10 +118,15 @@ fn should_get_role_id() {
         .add_authority(
             AuthorityType::Ed25519,
             &authority_2.pubkey().to_bytes(),
-            vec![Permission::Sol {
-                amount: 10_000_000_000,
-                recurring: None,
-            }],
+            vec![
+                Permission::Program {
+                    program_id: system_program::ID,
+                },
+                Permission::Sol {
+                    amount: 10_000_000_000,
+                    recurring: None,
+                },
+            ],
         )
         .unwrap();
 
@@ -119,10 +134,15 @@ fn should_get_role_id() {
         .add_authority(
             AuthorityType::Ed25519,
             &authority_3.pubkey().to_bytes(),
-            vec![Permission::Sol {
-                amount: 10_000_000_000,
-                recurring: None,
-            }],
+            vec![
+                Permission::Program {
+                    program_id: system_program::ID,
+                },
+                Permission::Sol {
+                    amount: 10_000_000_000,
+                    recurring: None,
+                },
+            ],
         )
         .unwrap();
 

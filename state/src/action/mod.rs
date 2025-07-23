@@ -8,6 +8,8 @@
 pub mod all;
 pub mod manage_authority;
 pub mod program;
+pub mod program_all;
+pub mod program_curated;
 pub mod program_scope;
 pub mod sol_destination_limit;
 pub mod sol_limit;
@@ -26,6 +28,8 @@ use manage_authority::ManageAuthority;
 use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 use program::Program;
+use program_all::ProgramAll;
+use program_curated::ProgramCurated;
 use program_scope::ProgramScope;
 use sol_destination_limit::SolDestinationLimit;
 use sol_limit::SolLimit;
@@ -138,6 +142,10 @@ pub enum Permission {
     StakeRecurringLimit = 11,
     /// Permission to perform all stake operations
     StakeAll = 12,
+    /// Permission to interact with any program (unrestricted CPI)
+    ProgramAll = 13,
+    /// Permission to interact with curated programs only
+    ProgramCurated = 14,
     /// Permission to perform SOL token operations with limits to specific
     /// destinations
     SolDestinationLimit = 13,
@@ -220,6 +228,8 @@ impl ActionLoader {
             Permission::StakeLimit => StakeLimit::valid_layout(data),
             Permission::StakeRecurringLimit => StakeRecurringLimit::valid_layout(data),
             Permission::StakeAll => StakeAll::valid_layout(data),
+            Permission::ProgramAll => ProgramAll::valid_layout(data),
+            Permission::ProgramCurated => ProgramCurated::valid_layout(data),
             Permission::TokenDestinationLimit => TokenDestinationLimit::valid_layout(data),
             Permission::TokenRecurringDestinationLimit => {
                 TokenRecurringDestinationLimit::valid_layout(data)

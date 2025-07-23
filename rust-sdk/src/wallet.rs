@@ -37,8 +37,11 @@ use swig_state::{
 const TOKEN_22_PROGRAM_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 
 use crate::{
-    client_role::ClientRole, error::SwigError, instruction_builder::SwigInstructionBuilder,
-    types::Permission, RecurringConfig,
+    client_role::ClientRole,
+    error::SwigError,
+    instruction_builder::SwigInstructionBuilder,
+    types::{Permission, UpdateAuthorityData},
+    RecurringConfig,
 };
 
 /// Swig protocol for transaction signing and authority management.
@@ -319,7 +322,6 @@ impl<'c> SwigWallet<'c> {
         let tx_result = self.send_and_confirm_transaction(tx);
         if tx_result.is_ok() {
             self.refresh_permissions()?;
-            println!("incrementing odometer");
             self.instruction_builder.increment_odometer()?;
         }
         tx_result
@@ -337,22 +339,18 @@ impl<'c> SwigWallet<'c> {
     /// # Returns
     ///
     /// Returns a `Result` containing the transaction signature or a `SwigError`
-    pub fn replace_authority(
+    pub fn update_authority(
         &mut self,
-        authority_to_replace_id: u32,
-        new_authority_type: AuthorityType,
-        new_authority: &[u8],
-        permissions: Vec<Permission>,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
     ) -> Result<Signature, SwigError> {
         let current_slot = self.get_current_slot()?;
+        let counter = self.get_odometer()?;
 
-        let instructions = self.instruction_builder.replace_authority(
-            authority_to_replace_id,
-            new_authority_type,
-            new_authority,
-            permissions,
+        let instructions = self.instruction_builder.update_authority(
+            authority_to_update_id,
             Some(current_slot),
-            None,
+            update_data,
         )?;
 
         let msg = v0::Message::try_compile(
@@ -638,7 +636,6 @@ impl<'c> SwigWallet<'c> {
                     .authority
                     .match_data(self.instruction_builder.get_current_authority()?.as_ref())
                 {
-                    println!("Role {} matches", i);
                     if (Role::get_action::<All>(&role, &[])
                         .map_err(|_| SwigError::AuthorityNotFound)?)
                     .is_some()
@@ -1196,9 +1193,7 @@ impl<'c> SwigWallet<'c> {
             // Only add the authority keypair if it's different from the fee payer
             if authority_kp.pubkey() == self.fee_payer.pubkey() {
                 // Authority and fee payer are the same, so we already have it
-                println!("Authority and fee payer are the same, so we already have it");
             } else {
-                println!("Adding authority keypair");
                 keypairs.push(authority_kp);
             }
         }
@@ -1228,8 +1223,6 @@ impl<'c> SwigWallet<'c> {
         let associated_token_address =
             get_associated_token_address(&self.instruction_builder.get_swig_account()?, &mint);
 
-        println!("Associated Token Address: {}", associated_token_address);
-
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
         {
             // Check if the ATA already exists
@@ -1239,8 +1232,6 @@ impl<'c> SwigWallet<'c> {
                 .is_ok();
 
             if !account_exists {
-                println!("Creating associated token account...");
-
                 // Create the instruction to create the ATA
                 let create_ata_instruction = create_associated_token_account(
                     &self.fee_payer.pubkey(),                      // payer
@@ -1442,6 +1433,16 @@ impl<'c> SwigWallet<'c> {
     /// Returns a `Result` containing the authority type or a `SwigError`
     pub fn get_authority_type(&self, role_id: u32) -> Result<AuthorityType, SwigError> {
         self.with_role_data(role_id, |role| role.authority.authority_type())
+    }
+
+    /// Gets the public key for the swig account
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the public key for the swig account or a
+    /// `SwigError`
+    pub fn get_swig(&self) -> Pubkey {
+        self.instruction_builder.get_swig_account().unwrap()
     }
 
     /// Gets the authority identity for a specific role

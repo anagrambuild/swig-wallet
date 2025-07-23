@@ -159,6 +159,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedSecp256r1InvalidMessageHash,
     /// Invalid Secp256r1 message
     PermissionDeniedSecp256r1InvalidMessage,
+    /// Invalid Secp256r1 authentication kind
+    PermissionDeniedSecp256r1InvalidAuthenticationKind,
     /// SOL destination limit exceeded
     PermissionDeniedSolDestinationLimitExceeded,
     /// Token destination limit exceeded

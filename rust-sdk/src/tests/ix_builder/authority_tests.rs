@@ -14,7 +14,7 @@ use swig_state::{
 };
 
 use super::*;
-use crate::{Ed25519ClientRole, Secp256k1ClientRole};
+use crate::{types::UpdateAuthorityData, Ed25519ClientRole, Secp256k1ClientRole};
 
 #[test_log::test]
 fn test_add_authority_with_ed25519_root() {
@@ -276,4 +276,113 @@ fn test_switch_authority_and_payer() {
     builder.switch_payer(new_payer.pubkey()).unwrap();
     let ix = builder.build_swig_account().unwrap();
     assert_eq!(ix.accounts[1].pubkey, new_payer.pubkey());
+}
+
+#[test_log::test]
+fn test_update_authority_with_ed25519_root() {
+    let mut context = setup_test_context().unwrap();
+    let swig_id = [10u8; 32];
+    let authority = Keypair::new();
+    let role_id = 0;
+
+    // First create the Swig account
+    let (swig_key, _) = create_swig_ed25519(&mut context, &authority, swig_id).unwrap();
+
+    let mut builder = SwigInstructionBuilder::new(
+        swig_id,
+        Box::new(Ed25519ClientRole::new(authority.pubkey())),
+        context.default_payer.pubkey(),
+        role_id,
+    );
+
+    // Add a new authority first
+    let new_authority = Keypair::new();
+    let new_authority_bytes = new_authority.pubkey().to_bytes();
+    let permissions = vec![Permission::Sol {
+        amount: 100000 / 2,
+        recurring: None,
+    }];
+
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+
+    let add_auth_ix = builder
+        .add_authority_instruction(
+            AuthorityType::Ed25519,
+            &new_authority_bytes,
+            permissions,
+            Some(current_slot),
+        )
+        .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &add_auth_ix,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &authority],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_ok(),
+        "Failed to add authority: {:?}",
+        result.err()
+    );
+
+    // Now update the authority with new permissions
+    let update_permissions = vec![
+        Permission::Sol {
+            amount: 200000,
+            recurring: None,
+        },
+        Permission::ManageAuthority,
+    ];
+
+    let update_data = UpdateAuthorityData::ReplaceAll(update_permissions);
+
+    let update_ix = builder
+        .update_authority(1, Some(current_slot), update_data)
+        .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &update_ix,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &authority],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_ok(),
+        "Failed to update authority: {:?}",
+        result.err()
+    );
+
+    // Verify the authority was updated
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig_data = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+
+    // Check that the authority still exists
+    let role = swig_data.get_role(1).unwrap();
+    assert!(role.is_some(), "Authority should still exist after update");
+
+    let role = role.unwrap();
+    assert_eq!(role.authority.authority_type(), AuthorityType::Ed25519);
+
+    // Verify the authority identity matches
+    let authority_identity = role.authority.identity().unwrap();
+    assert_eq!(authority_identity, new_authority_bytes);
 }
