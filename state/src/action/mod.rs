@@ -148,16 +148,16 @@ pub enum Permission {
     ProgramCurated = 14,
     /// Permission to perform SOL token operations with limits to specific
     /// destinations
-    SolDestinationLimit = 13,
+    SolDestinationLimit = 15,
     /// Permission to perform recurring SOL token operations with limits to
     /// specific destinations
-    SolRecurringDestinationLimit = 14,
+    SolRecurringDestinationLimit = 16,
     /// Permission to perform token operations with limits to specific
     /// destinations
-    TokenDestinationLimit = 15,
+    TokenDestinationLimit = 17,
     /// Permission to perform recurring token operations with limits to specific
     /// destinations
-    TokenRecurringDestinationLimit = 16,
+    TokenRecurringDestinationLimit = 18,
 }
 
 impl TryFrom<u16> for Permission {
@@ -167,7 +167,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=16 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=18 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }

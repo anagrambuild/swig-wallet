@@ -22,10 +22,14 @@ pub use swig_compact_instructions::*;
 use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, program::Program, program_all::ProgramAll,
-        program_curated::ProgramCurated, program_scope::ProgramScope, sol_limit::SolLimit,
+        program_curated::ProgramCurated, program_scope::ProgramScope,
+        sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
+        sol_recurring_destination_limit::SolRecurringDestinationLimit,
         sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll, stake_limit::StakeLimit,
         stake_recurring_limit::StakeRecurringLimit, sub_account::SubAccount,
-        token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit, Action, Permission,
+        token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
+        token_recurring_destination_limit::TokenRecurringDestinationLimit,
+        token_recurring_limit::TokenRecurringLimit, Action, Permission,
     },
     authority::{
         secp256k1::{hex_encode, AccountsPayload},
