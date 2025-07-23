@@ -13,7 +13,9 @@ use solana_sdk::{
 };
 use swig_interface::{AuthorityConfig, ClientAction, SignInstruction};
 use swig_state::{
-    action::{sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit},
+    action::{
+        program_all::ProgramAll, sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
+    },
     authority::AuthorityType,
     swig::{swig_account_seeds, SwigWithRoles},
 };
@@ -62,7 +64,10 @@ fn test_sol_destination_limit_basic() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SolDestinationLimit(destination_limit)],
+        vec![
+            ClientAction::ProgramAll(ProgramAll {}),
+            ClientAction::SolDestinationLimit(destination_limit),
+        ],
     )
     .unwrap();
 
@@ -374,6 +379,7 @@ fn test_multiple_destination_limits() {
             authority: second_authority.pubkey().as_ref(),
         },
         vec![
+            ClientAction::ProgramAll(ProgramAll {}),
             ClientAction::SolDestinationLimit(destination_limit1),
             ClientAction::SolDestinationLimit(destination_limit2),
         ],
@@ -579,6 +585,7 @@ fn test_sol_destination_limit_with_general_limit() {
             authority: second_authority.pubkey().as_ref(),
         },
         vec![
+            ClientAction::ProgramAll(ProgramAll {}),
             ClientAction::SolLimit(SolLimit {
                 amount: general_limit_amount,
             }),

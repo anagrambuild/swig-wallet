@@ -18,7 +18,9 @@ use solana_sdk::{
 };
 use swig_interface::{AuthorityConfig, ClientAction, SignInstruction};
 use swig_state::{
-    action::sol_recurring_destination_limit::SolRecurringDestinationLimit,
+    action::{
+        program_all::ProgramAll, sol_recurring_destination_limit::SolRecurringDestinationLimit,
+    },
     authority::AuthorityType,
     swig::{swig_account_seeds, SwigWithRoles},
 };
@@ -69,9 +71,10 @@ fn test_sol_recurring_destination_limit_basic() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SolRecurringDestinationLimit(
-            recurring_destination_limit,
-        )],
+        vec![
+            ClientAction::ProgramAll(ProgramAll {}),
+            ClientAction::SolRecurringDestinationLimit(recurring_destination_limit),
+        ],
     )
     .unwrap();
 
@@ -165,9 +168,10 @@ fn test_sol_recurring_destination_limit_exceeds_limit() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SolRecurringDestinationLimit(
-            recurring_destination_limit,
-        )],
+        vec![
+            ClientAction::ProgramAll(ProgramAll {}),
+            ClientAction::SolRecurringDestinationLimit(recurring_destination_limit),
+        ],
     )
     .unwrap();
 
@@ -208,7 +212,7 @@ fn test_sol_recurring_destination_limit_exceeds_limit() {
         // Should get the specific destination limit exceeded error (3027)
         assert!(matches!(
             e.err,
-            TransactionError::InstructionError(_, InstructionError::Custom(3027))
+            TransactionError::InstructionError(_, InstructionError::Custom(3029))
         ));
     }
 }
@@ -258,9 +262,10 @@ fn test_sol_recurring_destination_limit_time_reset() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SolRecurringDestinationLimit(
-            recurring_destination_limit,
-        )],
+        vec![
+            ClientAction::ProgramAll(ProgramAll {}),
+            ClientAction::SolRecurringDestinationLimit(recurring_destination_limit),
+        ],
     )
     .unwrap();
 
@@ -420,6 +425,7 @@ fn test_multiple_sol_recurring_destination_limits() {
             authority: second_authority.pubkey().as_ref(),
         },
         vec![
+            ClientAction::ProgramAll(ProgramAll {}),
             ClientAction::SolRecurringDestinationLimit(recurring_destination_limit1),
             ClientAction::SolRecurringDestinationLimit(recurring_destination_limit2),
         ],
@@ -541,9 +547,10 @@ fn test_sol_recurring_destination_limit_no_reset_when_exceeds_fresh() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SolRecurringDestinationLimit(
-            recurring_destination_limit,
-        )],
+        vec![
+            ClientAction::ProgramAll(ProgramAll {}),
+            ClientAction::SolRecurringDestinationLimit(recurring_destination_limit),
+        ],
     )
     .unwrap();
 
@@ -584,7 +591,7 @@ fn test_sol_recurring_destination_limit_no_reset_when_exceeds_fresh() {
         // Should get the specific destination limit exceeded error (3027)
         assert!(matches!(
             e.err,
-            TransactionError::InstructionError(_, InstructionError::Custom(3027))
+            TransactionError::InstructionError(_, InstructionError::Custom(3029))
         ));
     }
 
