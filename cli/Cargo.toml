@@ -33,6 +33,8 @@ alloy-signer = { version = "0.14.0" }
 alloy-signer-local = { version = "0.14.0" }
 spl-token = "8.0.0"
 spl-associated-token-account = "7.0.0"
+base64 = "0.21"
+bincode = "1.3"
 
 [lints]
 workspace = true

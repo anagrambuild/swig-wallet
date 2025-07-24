@@ -8004,6 +8004,8 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "anyhow",
+ "base64 0.21.7",
+ "bincode",
  "bs58",
  "clap",
  "colored",

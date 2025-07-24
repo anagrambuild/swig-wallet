@@ -32,6 +32,7 @@ use swig_sdk::{
 
 mod commands;
 mod config;
+mod decoder;
 mod interactive;
 
 use commands::run_command_mode;
@@ -74,6 +75,13 @@ pub struct SwigCli {
 
     #[arg(short = 's', long, help = "Save current authority settings as default")]
     pub save_config: bool,
+
+    #[arg(
+        short = 'd',
+        long,
+        help = "Print transaction in base64 format for decoding"
+    )]
+    pub debug_transaction: bool,
 
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -262,6 +270,13 @@ pub enum Command {
         #[arg(short, long)]
         output_format: Option<String>,
     },
+    /// Decode a Swig transaction from base64 or hex
+    Decode {
+        #[arg(short, long)]
+        transaction: String,
+        #[arg(short, long)]
+        format: Option<String>,
+    },
 }
 
 pub struct SwigCliContext {
@@ -283,7 +298,7 @@ fn main() -> Result<()> {
         println!("{}", LOGO.bright_cyan());
         run_interactive_mode(&mut ctx)
     } else if let Some(ref cmd) = cli.command {
-        run_command_mode(&mut ctx, cmd.clone())
+        run_command_mode(&mut ctx, cmd.clone(), cli.debug_transaction)
     } else {
         println!("Please specify either --interactive or a command");
         Ok(())

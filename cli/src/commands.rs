@@ -4,6 +4,7 @@ use alloy_primitives::{Address, B256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
 use anyhow::{anyhow, Result};
+use base64::Engine;
 use colored::*;
 use hex;
 use openssl::{
@@ -25,7 +26,40 @@ use swig_sdk::{
     SwigWallet,
 };
 
+use crate::decoder::decode_swig_transaction;
 use crate::{Command, SwigCliContext};
+
+/// Helper function to serialize a transaction to base64
+fn serialize_transaction_to_base64(
+    transaction: &solana_sdk::transaction::VersionedTransaction,
+) -> Result<String> {
+    let transaction_bytes = bincode::serialize(transaction)
+        .map_err(|e| anyhow!("Failed to serialize transaction: {}", e))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&transaction_bytes))
+}
+
+/// Helper function to create and optionally print a transaction for debugging
+fn create_and_handle_transaction<F>(
+    ctx: &mut SwigCliContext,
+    operation: F,
+    debug_transaction: bool,
+) -> Result<()>
+where
+    F: FnOnce(&mut SwigCliContext) -> Result<solana_sdk::signature::Signature, swig_sdk::SwigError>,
+{
+    if debug_transaction {
+        // For now, we'll just perform the operation and get the signature
+        // In a more complete implementation, we'd need to modify the SDK to expose transaction creation
+        let signature = operation(ctx).map_err(|e| anyhow!("Wallet operation failed: {:?}", e))?;
+        println!("Transaction signature: {}", signature);
+        println!("To decode this transaction, use:");
+        println!("curl -X POST -H \"Content-Type: application/json\" -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getTransaction\",\"params\":[\"{}\",{{\"encoding\":\"base64\",\"maxSupportedTransactionVersion\":0}}]}}' https://api.mainnet-beta.solana.com", signature);
+        println!("Then use: swig decode --transaction <base64_from_response>");
+    } else {
+        operation(ctx).map_err(|e| anyhow!("Wallet operation failed: {:?}", e))?;
+    }
+    Ok(())
+}
 
 pub fn create_swig_instance(
     ctx: &mut SwigCliContext,
@@ -40,7 +74,7 @@ pub fn create_swig_instance(
         AuthorityType::Ed25519 => {
             let authority_kp = Keypair::from_base58_string(&authority_kp);
             let authority = Pubkey::from_str(&authority)?;
-
+            println!("Fee payer: {}", authority_kp.pubkey());
             (
                 Box::new(Ed25519ClientRole::new(authority)) as Box<dyn ClientRole>,
                 authority_kp,
@@ -203,7 +237,11 @@ pub fn parse_permission_from_json(permission_json: &Value) -> Result<Permission>
     }
 }
 
-pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
+pub fn run_command_mode(
+    ctx: &mut SwigCliContext,
+    cmd: Command,
+    debug_transaction: bool,
+) -> Result<()> {
     match cmd {
         Command::Create {
             authority_type,
@@ -284,13 +322,21 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
             let new_authority_type = parse_authority_type(new_authority_type)?;
             let authority_bytes = crate::format_authority(&new_authority, &new_authority_type)?;
 
-            ctx.wallet.as_mut().unwrap().add_authority(
-                new_authority_type,
-                &authority_bytes,
-                parsed_permissions,
+            create_and_handle_transaction(
+                ctx,
+                |ctx| {
+                    ctx.wallet.as_mut().unwrap().add_authority(
+                        new_authority_type,
+                        &authority_bytes,
+                        parsed_permissions,
+                    )
+                },
+                debug_transaction,
             )?;
 
-            println!("Authority added successfully!");
+            if !debug_transaction {
+                println!("Authority added successfully!");
+            }
             Ok(())
         },
         Command::RemoveAuthority {
@@ -317,11 +363,21 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
 
             let remove_authority =
                 remove_authority.ok_or_else(|| anyhow!("Remove authority is required"))?;
-            ctx.wallet
-                .as_mut()
-                .unwrap()
-                .remove_authority(remove_authority.as_bytes())?;
-            println!("Authority removed successfully!");
+
+            create_and_handle_transaction(
+                ctx,
+                |ctx| {
+                    ctx.wallet
+                        .as_mut()
+                        .unwrap()
+                        .remove_authority(remove_authority.as_bytes())
+                },
+                debug_transaction,
+            )?;
+
+            if !debug_transaction {
+                println!("Authority removed successfully!");
+            }
             Ok(())
         },
         Command::View {
@@ -425,9 +481,15 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 None,
             )?;
 
-            let signature = ctx.wallet.as_mut().unwrap().create_sub_account()?;
-            println!("Sub-account created successfully!");
-            println!("Signature: {}", signature);
+            create_and_handle_transaction(
+                ctx,
+                |ctx| ctx.wallet.as_mut().unwrap().create_sub_account(),
+                debug_transaction,
+            )?;
+
+            if !debug_transaction {
+                println!("Sub-account created successfully!");
+            }
             Ok(())
         },
         Command::TransferFromSubAccount {
@@ -456,13 +518,21 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
             if let Some(sub_account) = sub_account {
                 let recipient = Pubkey::from_str(&recipient)?;
                 let transfer_ix = system_instruction::transfer(&sub_account, &recipient, amount);
-                let signature = ctx
-                    .wallet
-                    .as_mut()
-                    .unwrap()
-                    .sign_with_sub_account(vec![transfer_ix], None)?;
-                println!("Transfer successful!");
-                println!("Signature: {}", signature);
+
+                create_and_handle_transaction(
+                    ctx,
+                    |ctx| {
+                        ctx.wallet
+                            .as_mut()
+                            .unwrap()
+                            .sign_with_sub_account(vec![transfer_ix], None)
+                    },
+                    debug_transaction,
+                )?;
+
+                if !debug_transaction {
+                    println!("Transfer successful!");
+                }
             } else {
                 println!("Sub-account does not exist!");
             }
@@ -491,14 +561,23 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
 
             let sub_account = ctx.wallet.as_ref().unwrap().get_sub_account()?;
             if let Some(sub_account) = sub_account {
-                ctx.wallet
-                    .as_mut()
-                    .unwrap()
-                    .toggle_sub_account(sub_account, enabled)?;
-                println!(
-                    "Sub-account {} successfully!",
-                    if enabled { "enabled" } else { "disabled" }
-                );
+                create_and_handle_transaction(
+                    ctx,
+                    |ctx| {
+                        ctx.wallet
+                            .as_mut()
+                            .unwrap()
+                            .toggle_sub_account(sub_account, enabled)
+                    },
+                    debug_transaction,
+                )?;
+
+                if !debug_transaction {
+                    println!(
+                        "Sub-account {} successfully!",
+                        if enabled { "enabled" } else { "disabled" }
+                    );
+                }
             } else {
                 println!("Sub-account does not exist!");
             }
@@ -527,11 +606,21 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
             )?;
 
             let sub_account = Pubkey::from_str(&sub_account)?;
-            ctx.wallet
-                .as_mut()
-                .unwrap()
-                .withdraw_from_sub_account(sub_account, amount)?;
-            println!("Successfully withdrew {} lamports from sub-account", amount);
+
+            create_and_handle_transaction(
+                ctx,
+                |ctx| {
+                    ctx.wallet
+                        .as_mut()
+                        .unwrap()
+                        .withdraw_from_sub_account(sub_account, amount)
+                },
+                debug_transaction,
+            )?;
+
+            if !debug_transaction {
+                println!("Successfully withdrew {} lamports from sub-account", amount);
+            }
             Ok(())
         },
         Command::Generate {
@@ -861,12 +950,49 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 _ => return Err(anyhow!("Invalid operation: {}. Must be one of: ReplaceAll, AddActions, RemoveActionsByType, RemoveActionsByIndex", operation)),
             };
 
-            ctx.wallet
-                .as_mut()
-                .unwrap()
-                .update_authority(authority_to_update_id, update_data)?;
+            create_and_handle_transaction(
+                ctx,
+                |ctx| {
+                    ctx.wallet
+                        .as_mut()
+                        .unwrap()
+                        .update_authority(authority_to_update_id, update_data)
+                },
+                debug_transaction,
+            )?;
 
-            println!("Authority updated successfully!");
+            if !debug_transaction {
+                println!("Authority updated successfully!");
+            }
+            Ok(())
+        },
+        Command::Decode {
+            transaction,
+            format,
+        } => {
+            let format = format.unwrap_or_else(|| "base64".to_string());
+
+            let transaction_bytes = match format.as_str() {
+                "base64" => base64::engine::general_purpose::STANDARD
+                    .decode(&transaction)
+                    .map_err(|e| anyhow!("Failed to decode base64 transaction: {}", e))?,
+                "hex" => hex::decode(&transaction)
+                    .map_err(|e| anyhow!("Failed to decode hex transaction: {}", e))?,
+                _ => {
+                    return Err(anyhow!(
+                        "Unsupported format: {}. Use 'base64' or 'hex'",
+                        format
+                    ))
+                },
+            };
+
+            let transaction: solana_sdk::transaction::Transaction =
+                bincode::deserialize(&transaction_bytes)
+                    .map_err(|e| anyhow!("Failed to deserialize transaction: {}", e))?;
+
+            let decoded = decode_swig_transaction(&transaction)?;
+            println!("{}", serde_json::to_string_pretty(&decoded)?);
+
             Ok(())
         },
     }
