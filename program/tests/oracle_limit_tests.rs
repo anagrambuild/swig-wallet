@@ -188,7 +188,6 @@ fn test_oracle_limit_sol_transfer() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
-    println!("result: {:?}", result);
     assert!(result.is_ok(), "Transfer below limit should succeed");
     println!(
         "Compute units consumed for below limit transfer: {}",
@@ -672,7 +671,6 @@ fn test_oracle_limit_token_passthrough() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
-    println!("Result: {:?}", result);
     assert!(result.is_ok(), "Transfer below limit should succeed");
     println!(
         "Compute units consumed for below limit transfer: {}",
