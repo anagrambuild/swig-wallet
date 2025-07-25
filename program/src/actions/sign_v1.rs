@@ -381,12 +381,6 @@ pub fn sign_v1(
                                         .borrow_data_unchecked()
                                 };
 
-                                // let pyth_data = unsafe {
-                                //     &all_accounts
-                                //         .get_unchecked(all_accounts.len() - 1)
-                                //         .borrow_data_unchecked()
-                                // };
-
                                 let mapping_registry = unsafe {
                                     let owner =
                                         all_accounts.get_unchecked(all_accounts.len() - 2).owner();
@@ -399,6 +393,8 @@ pub fn sign_v1(
                                         .get_unchecked(all_accounts.len() - 2)
                                         .borrow_data_unchecked()
                                 };
+
+                                msg!("mapping_registry: {:?}", mapping_registry.len());
 
                                 let (price, exp, mint_decimal) = get_price_data(
                                     mapping_registry,
@@ -494,20 +490,22 @@ pub fn sign_v1(
                                         .borrow_data_unchecked()
                                 };
 
-                                // let pyth_data = unsafe {
-                                //     &all_accounts
-                                //         .get_unchecked(all_accounts.len() - 1)
-                                //         .borrow_data_unchecked()
-                                // };
-
                                 let mapping_data = unsafe {
                                     &all_accounts
                                         .get_unchecked(all_accounts.len() - 2)
                                         .borrow_data_unchecked()
                                 };
 
-                                let (price, exp, mint_decimal) =
-                                    get_price_data(mapping_data, scope_data, None, mint, &clock)?;
+                                let mint_bytes =
+                                    mint.try_into().map_err(|_| SwigError::OracleMintNotFound)?;
+
+                                let (price, exp, mint_decimal) = get_price_data(
+                                    mapping_data,
+                                    scope_data,
+                                    None,
+                                    &mint_bytes,
+                                    &clock,
+                                )?;
 
                                 let token_value_in_base = calculate_token_value(
                                     price,

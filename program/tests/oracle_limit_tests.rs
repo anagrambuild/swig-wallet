@@ -167,7 +167,7 @@ fn test_oracle_limit_sol_transfer() {
 
     sign_ix.accounts.extend(vec![
         AccountMeta::new_readonly(
-            Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap(),
+            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
             false,
         ),
         AccountMeta::new_readonly(
@@ -209,7 +209,7 @@ fn test_oracle_limit_sol_transfer() {
 
     sign_ix.accounts.extend(vec![
         AccountMeta::new_readonly(
-            Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap(),
+            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
             false,
         ),
         AccountMeta::new_readonly(
@@ -333,7 +333,7 @@ fn test_oracle_limit_token_transfer() {
 
     sign_ix.accounts.extend(vec![
         AccountMeta::new_readonly(
-            Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap(),
+            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
             false,
         ),
         AccountMeta::new_readonly(
@@ -382,7 +382,7 @@ fn test_oracle_limit_token_transfer() {
 
     sign_ix.accounts.extend(vec![
         AccountMeta::new_readonly(
-            Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap(),
+            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
             false,
         ),
         AccountMeta::new_readonly(
@@ -479,7 +479,7 @@ fn test_oracle_limit_sol_passthrough() {
 
     sign_ix.accounts.extend(vec![
         AccountMeta::new_readonly(
-            Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap(),
+            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
             false,
         ),
         AccountMeta::new_readonly(
@@ -520,7 +520,7 @@ fn test_oracle_limit_sol_passthrough() {
 
     sign_ix.accounts.extend(vec![
         AccountMeta::new_readonly(
-            Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap(),
+            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
             false,
         ),
         AccountMeta::new_readonly(
@@ -554,7 +554,7 @@ fn test_oracle_limit_sol_passthrough() {
 
 /// Test 5: Test token transfers with oracle limits and passthrough enabled
 #[test_log::test]
-fn test_oracle_limit_passthrough() {
+fn test_oracle_limit_token_passthrough() {
     let mut context = setup_test_context().unwrap();
     let mint = load_sample_scope_data(&mut context.svm, &context.default_payer).unwrap();
     let swig_authority = Keypair::new();
@@ -651,7 +651,7 @@ fn test_oracle_limit_passthrough() {
 
     sign_ix.accounts.extend(vec![
         AccountMeta::new_readonly(
-            Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap(),
+            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
             false,
         ),
         AccountMeta::new_readonly(
@@ -701,7 +701,7 @@ fn test_oracle_limit_passthrough() {
 
     sign_ix.accounts.extend(vec![
         AccountMeta::new_readonly(
-            Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap(),
+            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
             false,
         ),
         AccountMeta::new_readonly(

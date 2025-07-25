@@ -419,85 +419,7 @@ pub fn hash_except(
     data_payload_hash
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ScopeMappingRegistry {
-    pub is_initialized: u8,
-    pub owner: [u8; 32],
-    pub total_mappings: u32,
-    pub version: u8,
-    pub bump: u8,
-    // Remove the fixed array and we'll handle mappings separately
-}
-
-impl ScopeMappingRegistry {
-    pub const LEN: usize = core::mem::size_of::<ScopeMappingRegistry>();
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MintMapping {
-    pub mint: [u8; 32],
-    pub price_chain: [u16; 4], // Conversion chain (e.g., [32, 0, u16::MAX, u16::MAX])
-    pub decimals: u8,          // Mint decimals for price calculations
-    pub is_active: bool,
-    pub pyth_account: [u8; 33], // 0 = None, 1 = Some + 32 bytes
-    pub switch_board: [u8; 33], // 0 = None, 1 = Some + 32 bytes
-}
-
-impl MintMapping {
-    pub const LEN: usize = core::mem::size_of::<MintMapping>();
-}
-
-pub fn get_mint_mapping(
-    mapping_registry: &[u8],
-    target_mint: &[u8],
-) -> Result<MintMapping, SwigError> {
-    let is_initialized = unsafe { *mapping_registry.get_unchecked(0) };
-    if is_initialized == 0 {
-        return Err(SwigError::OracleMappingRegistryNotInitialized);
-    }
-
-    let authority = &mapping_registry[1..33];
-
-    let total_mappings_u16 = u16::from_le_bytes(mapping_registry[33..35].try_into().unwrap());
-
-    let mut mapping_count = 0;
-
-    for i in (ScopeMappingRegistry::LEN..mapping_registry.len()).step_by(MintMapping::LEN) {
-        if unsafe { mapping_registry.get_unchecked(i..i + 32) } == target_mint {
-            let mapping_data = unsafe { mapping_registry.get_unchecked(i..i + MintMapping::LEN) };
-
-            return Ok(MintMapping {
-                mint: unsafe { mapping_data.get_unchecked(0..32).try_into().unwrap() },
-                price_chain: [
-                    u16::from_le_bytes(unsafe {
-                        mapping_data.get_unchecked(32..34).try_into().unwrap()
-                    }),
-                    u16::from_le_bytes(unsafe {
-                        mapping_data.get_unchecked(34..36).try_into().unwrap()
-                    }),
-                    u16::from_le_bytes(unsafe {
-                        mapping_data.get_unchecked(36..38).try_into().unwrap()
-                    }),
-                    u16::from_le_bytes(unsafe {
-                        mapping_data.get_unchecked(38..40).try_into().unwrap()
-                    }),
-                ],
-                decimals: u8::from_le_bytes(unsafe {
-                    mapping_data.get_unchecked(40..41).try_into().unwrap()
-                }),
-                is_active: u8::from_le_bytes(unsafe {
-                    mapping_data.get_unchecked(41..42).try_into().unwrap()
-                }) == 1,
-                pyth_account: unsafe { mapping_data.get_unchecked(42..75).try_into().unwrap() },
-                switch_board: unsafe { mapping_data.get_unchecked(75..108).try_into().unwrap() },
-            });
-        }
-    }
-
-    Err(SwigError::OracleMintNotFound)
-}
+use oracle_mapping_state::{DataLen, MintMapping, ScopeMappingRegistry};
 
 /// Calculate token value with configurable precision
 ///
@@ -550,16 +472,32 @@ pub fn get_price_data(
     mapping_registry: &[u8],
     scope_data: &[u8],
     pyth_data: Option<&[u8]>,
-    mint: &[u8],
+    mint: &[u8; 32],
     clock: &Clock,
 ) -> Result<(u64, u8, u8), SwigError> {
-    let mapping = get_mint_mapping(mapping_registry, mint)?;
-    let (scope_price, scope_exp) = get_scope_price_data(scope_data, mapping.price_chain)?;
+    msg!("mint: {:?}", mint);
+    msg!(
+        "data[offset..offset + 32]: {:?}",
+        &ScopeMappingRegistry::from_bytes(
+            &mapping_registry[..ScopeMappingRegistry::LEN]
+                .try_into()
+                .unwrap()
+        )
+    );
+    let mapping = MintMapping::get_mapping_details(&mapping_registry, mint)
+        .map_err(|_| SwigError::OracleMintNotFound)?;
+
+    msg!("mapping: {:?}", mapping);
+    let (scope_price, scope_exp) = get_scope_price_data(
+        scope_data,
+        mapping.scope_details.ok_or(SwigError::OracleMintNotFound)?,
+    )?;
 
     let mut _pyth_price = None;
     if let Some(pyth_oracle_data) = pyth_data {
-        if mapping.pyth_account[0] == 1 {
-            let pyth_address = unsafe { mapping.pyth_account.get_unchecked(1..33) };
+        if mapping.pyth_account.is_some() {
+            let pyth_account = mapping.pyth_account.unwrap();
+            let pyth_address = unsafe { pyth_account.get_unchecked(1..33) };
             _pyth_price = Some(get_pyth_price_data(
                 pyth_oracle_data,
                 clock.unix_timestamp,
@@ -605,13 +543,13 @@ pub fn get_price_data(
 //     Ok(())
 // }
 
-fn get_scope_price_data(data: &[u8], price_chain: [u16; 4]) -> Result<(u64, u8), SwigError> {
+fn get_scope_price_data(data: &[u8], price_chain: [u16; 3]) -> Result<(u64, u8), SwigError> {
     let prices_start = 8 + 32;
 
     const SCOPE_PRICE_FEED_LEN: usize = 56;
 
     // Check if price_chain is valid
-    if price_chain == [u16::MAX, u16::MAX, u16::MAX, u16::MAX] {
+    if price_chain == [u16::MAX, u16::MAX, u16::MAX] {
         return Err(SwigError::OracleInvalidPriceChain);
     }
     let mut price_chain_raw = Vec::new();

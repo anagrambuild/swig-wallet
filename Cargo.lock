@@ -3680,6 +3680,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
+name = "oracle-mapping-state"
+version = "0.1.0"
+source = "git+https://github.com/anagrambuild/scope-oracle-mapper?branch=santhosh%2Fstate-crate#5547c0d6c5cd97656a1c704e5c6a4d204d0ce0b4"
+dependencies = [
+ "pinocchio 0.9.0",
+ "shank 0.4.3",
+]
+
+[[package]]
 name = "overload"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3815,6 +3824,11 @@ name = "pinocchio"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "530596fa307103e53257f2cf064815919ee7fbc4c7ab999f6f13cc7067c3aff1"
+
+[[package]]
+name = "pinocchio"
+version = "0.9.0"
+source = "git+https://github.com/anza-xyz/pinocchio.git#5565bebe90c02c9581190dedaa2c7ebd93f5c63b"
 
 [[package]]
 name = "pinocchio-pubkey"
@@ -4906,7 +4920,16 @@ name = "shank"
 version = "0.4.2"
 source = "git+https://github.com/anagrambuild/shank.git#d4f046b22b87c896fdb77e55256d74dad6a13a68"
 dependencies = [
- "shank_macro",
+ "shank_macro 0.4.2",
+]
+
+[[package]]
+name = "shank"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b886438a24e923491c6e0f55fef7a414262e8b6bc3a69e055f591d5106959f6e"
+dependencies = [
+ "shank_macro 0.4.3",
 ]
 
 [[package]]
@@ -4916,8 +4939,21 @@ source = "git+https://github.com/anagrambuild/shank.git#d4f046b22b87c896fdb77e55
 dependencies = [
  "proc-macro2 1.0.94",
  "quote 1.0.40",
- "shank_macro_impl",
- "shank_render",
+ "shank_macro_impl 0.4.2",
+ "shank_render 0.4.2",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "shank_macro"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ea4973210898ea3412d187d33a846ad79090acec61032faed89c20630c72e14"
+dependencies = [
+ "proc-macro2 1.0.94",
+ "quote 1.0.40",
+ "shank_macro_impl 0.4.3",
+ "shank_render 0.4.3",
  "syn 1.0.109",
 ]
 
@@ -4934,13 +4970,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "shank_macro_impl"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77600cea17431d53e8aa47c44d340da7ff0601eec934aca3c6676de367e5ce83"
+dependencies = [
+ "anyhow",
+ "proc-macro2 1.0.94",
+ "quote 1.0.40",
+ "serde",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "shank_render"
 version = "0.4.2"
 source = "git+https://github.com/anagrambuild/shank.git#d4f046b22b87c896fdb77e55256d74dad6a13a68"
 dependencies = [
  "proc-macro2 1.0.94",
  "quote 1.0.40",
- "shank_macro_impl",
+ "shank_macro_impl 0.4.2",
+]
+
+[[package]]
+name = "shank_render"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb0893a9854124be3e16295986df3d1a546b916d98b390212552ddf6eeba7042"
+dependencies = [
+ "proc-macro2 1.0.94",
+ "quote 1.0.40",
+ "shank_macro_impl 0.4.3",
 ]
 
 [[package]]
@@ -7966,12 +8026,13 @@ dependencies = [
  "num_enum",
  "once_cell",
  "openssl",
+ "oracle-mapping-state",
  "pinocchio 0.8.1",
  "pinocchio-pubkey",
  "pinocchio-system",
  "pinocchio-token",
  "rand 0.9.0",
- "shank",
+ "shank 0.4.2",
  "solana-client",
  "solana-clock",
  "solana-program",

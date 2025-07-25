@@ -2,6 +2,9 @@ use alloy_signer_local::{LocalSigner, PrivateKeySigner};
 use anyhow::{Ok, Result};
 use litesvm::{types::TransactionMetadata, LiteSVM};
 use litesvm_token::{spl_token, CreateAssociatedTokenAccount, CreateMint, MintTo};
+use oracle_mapping_state::{
+    error::MappingProgramError, scope_mapping_registry, DataLen, MintMapping, ScopeMappingRegistry,
+};
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
     instruction::Instruction,
@@ -407,14 +410,50 @@ pub fn load_sample_scope_data(svm: &mut LiteSVM, payer: &Keypair) -> anyhow::Res
 
     svm.set_account(pubkey, data).unwrap();
 
-    let mapping_pubkey = Pubkey::from_str("Chpu5ZgfWX5ZzVpUx9Xvv4WPM75Xd7zPJNDPsFnCpLpk").unwrap();
+    let mapping_pubkey = Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap();
     let owner_pubkey = Pubkey::from_str("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ").unwrap();
 
     let mint = setup_mint(svm, &payer).unwrap();
 
-    data = Account {
-        lamports: 200_700_000,
-        data: get_mapping_data(&mint, 9, 153),
+    let devnet_client = RpcClient::new("https://api.devnet.solana.com".to_string());
+    let scope_mapping_registry_acc = devnet_client.get_account(&mapping_pubkey).unwrap();
+
+    let mut scope_mapping_data = scope_mapping_registry_acc.data.clone();
+    let mut scope_mapping_registry = ScopeMappingRegistry::from_bytes(
+        scope_mapping_data[..ScopeMappingRegistry::LEN]
+            .try_into()
+            .unwrap(),
+    )
+    .unwrap();
+
+    // Create new mint mapping
+    let new_mint_mapping = MintMapping::new(
+        mint.to_bytes(),
+        Some([0, u16::MAX, u16::MAX]),
+        None,
+        None,
+        9,
+    );
+
+    let mapping_mint_data = new_mint_mapping.to_bytes();
+    let mapping = &mapping_mint_data[..new_mint_mapping.serialized_size() as usize];
+
+    let insertion_offset =
+        ScopeMappingRegistry::LEN + scope_mapping_registry.last_mapping_offset as usize;
+
+    scope_mapping_data.resize(insertion_offset + mapping.len(), 0);
+
+    scope_mapping_data[insertion_offset..insertion_offset + mapping.len()].copy_from_slice(mapping);
+
+    scope_mapping_registry.total_mappings += 1;
+    scope_mapping_registry.last_mapping_offset += mapping.len() as u16;
+
+    scope_mapping_data[..ScopeMappingRegistry::LEN]
+        .copy_from_slice(&scope_mapping_registry.to_bytes());
+
+    let data = Account {
+        lamports: scope_mapping_registry_acc.lamports + 10000000,
+        data: scope_mapping_data,
         owner: owner_pubkey,
         executable: false,
         rent_epoch: 18446744073709551615,
@@ -423,250 +462,6 @@ pub fn load_sample_scope_data(svm: &mut LiteSVM, payer: &Keypair) -> anyhow::Res
     svm.set_account(mapping_pubkey, data).unwrap();
 
     Ok(mint)
-}
-
-use std::str::FromStr;
-
-fn get_mapping_data(token_pubkey: &Pubkey, token_decimals: u8, token_index: u16) -> Vec<u8> {
-    let sol_pubkey = Pubkey::from_str("So11111111111111111111111111111111111111112").unwrap();
-    let mut pyth_data = [0; 33];
-    let mut pyth_account = Pubkey::from_str("7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE")
-        .unwrap()
-        .to_bytes();
-    pyth_data[0] = 1;
-    pyth_data[1..33].copy_from_slice(&pyth_account);
-
-    let mut switch_data = [0; 33];
-    let mut switch_board = Pubkey::from_str("7yyaeuJ1GGtVBLT2z2xub5ZWYKaNhF28mj1RdV4VDFVk")
-        .unwrap()
-        .to_bytes();
-    switch_data[0] = 1;
-    switch_data[1..33].copy_from_slice(&switch_board);
-
-    let sol_mapping = MintMapping {
-        mint: sol_pubkey.to_bytes(),
-        price_chain: [0, u16::MAX, u16::MAX, u16::MAX], // SOL price chain
-        decimals: 9,                                    // SOL has 9 decimals
-        is_active: true,
-        pyth_account: pyth_data,
-        switch_board: switch_data,
-    };
-
-    let token_mapping = MintMapping {
-        mint: token_pubkey.to_bytes(),
-        price_chain: [token_index, u16::MAX, u16::MAX, u16::MAX], // SOL price chain
-        decimals: token_decimals,                                 // SOL has 9 decimals
-        is_active: true,
-        pyth_account: pyth_data,
-        switch_board: switch_data,
-    };
-
-    let scope_mapping_registry = ScopeMappingRegistry {
-        is_initialized: 1,
-        owner: Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C")
-            .unwrap()
-            .to_bytes(),
-        total_mappings: 2,
-        version: 2,
-        bump: 0,
-    };
-
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(&scope_mapping_registry.to_bytes());
-    bytes.extend_from_slice(&sol_mapping.to_bytes());
-    bytes.extend_from_slice(&token_mapping.to_bytes());
-
-    bytes
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MintMapping {
-    pub mint: [u8; 32],
-    pub price_chain: [u16; 4], // Conversion chain (e.g., [32, 0, u16::MAX, u16::MAX])
-    pub decimals: u8,          // Mint decimals for price calculations
-    pub is_active: bool,
-    pub pyth_account: [u8; 33], // 0 = None, 1 = Some + 32 bytes
-    pub switch_board: [u8; 33], // 0 = None, 1 = Some + 32 bytes
-}
-
-impl Default for MintMapping {
-    fn default() -> Self {
-        Self {
-            mint: [0u8; 32],
-            price_chain: [0u16; 4],
-            decimals: 0,
-            is_active: false,
-            pyth_account: [0u8; 33],
-            switch_board: [0u8; 33],
-        }
-    }
-}
-
-impl MintMapping {
-    const LEN: usize = core::mem::size_of::<MintMapping>();
-
-    pub fn set_pyth_account(&mut self, value: Option<[u8; 32]>) {
-        match value {
-            Some(val) => {
-                self.pyth_account[0] = 1;
-                self.pyth_account[1..].copy_from_slice(&val);
-            },
-            None => {
-                self.pyth_account[0] = 0;
-                self.pyth_account[1..].fill(0);
-            },
-        }
-    }
-
-    pub fn get_pyth_account(&self) -> Option<[u8; 32]> {
-        if self.pyth_account[0] == 1 {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&self.pyth_account[1..]);
-            Some(arr)
-        } else {
-            None
-        }
-    }
-
-    pub fn set_switch_board(&mut self, value: Option<[u8; 32]>) {
-        match value {
-            Some(val) => {
-                self.switch_board[0] = 1;
-                self.switch_board[1..].copy_from_slice(&val);
-            },
-            None => {
-                self.switch_board[0] = 0;
-                self.switch_board[1..].fill(0);
-            },
-        }
-    }
-
-    pub fn get_switch_board(&self) -> Option<[u8; 32]> {
-        if self.switch_board[0] == 1 {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&self.switch_board[1..]);
-            Some(arr)
-        } else {
-            None
-        }
-    }
-
-    /// Load a MintMapping from a byte array
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, anyhow::Error> {
-        if bytes.len() != Self::LEN {
-            return Err(anyhow::anyhow!("Invalid byte length"));
-        }
-
-        // SAFETY: We've verified the byte length matches the struct size
-        // and we're using #[repr(C)] which guarantees stable memory layout
-        let mapping = unsafe { *(bytes.as_ptr() as *const Self) };
-        Ok(mapping)
-    }
-
-    /// Convert a MintMapping to a byte array
-    pub fn to_bytes(&self) -> [u8; Self::LEN] {
-        let mut bytes = [0u8; Self::LEN];
-
-        // SAFETY: We're using #[repr(C)] which guarantees stable memory layout
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                self as *const Self as *const u8,
-                bytes.as_mut_ptr(),
-                Self::LEN,
-            );
-        }
-        bytes
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, shank::ShankAccount)]
-pub struct ScopeMappingRegistry {
-    pub is_initialized: u8,
-    pub owner: [u8; 32],
-    pub total_mappings: u32,
-    pub version: u8,
-    pub bump: u8,
-    // Remove the fixed array and we'll handle mappings separately
-}
-
-impl ScopeMappingRegistry {
-    const LEN: usize = core::mem::size_of::<ScopeMappingRegistry>();
-
-    /// Load a ScopeMappingRegistry from a byte array
-    pub fn from_bytes(bytes: &[u8; Self::LEN]) -> Result<Self, anyhow::Error> {
-        if bytes.len() != Self::LEN {
-            return Err(anyhow::anyhow!("Invalid byte length"));
-        }
-
-        // SAFETY: We've verified the byte length matches the struct size
-        // and we're using #[repr(C)] which guarantees stable memory layout
-        let mapping = unsafe { *(bytes.as_ptr() as *const Self) };
-        Ok(mapping)
-    }
-
-    /// Convert a ScopeMappingRegistry to a byte array
-    pub fn to_bytes(&self) -> [u8; Self::LEN] {
-        let mut bytes = [0u8; Self::LEN];
-
-        // SAFETY: We're using #[repr(C)] which guarantees stable memory layout
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                self as *const Self as *const u8,
-                bytes.as_mut_ptr(),
-                Self::LEN,
-            );
-        }
-        bytes
-    }
-
-    /// Load a ScopeMappingRegistry from a slice of bytes
-    pub fn from_slice(bytes: &[u8]) -> Result<Self, anyhow::Error> {
-        if bytes.len() != Self::LEN {
-            return Err(anyhow::anyhow!("Invalid byte length"));
-        }
-
-        // SAFETY: We've verified the byte length matches the struct size
-        let mapping = unsafe { *(bytes.as_ptr() as *const Self) };
-        Ok(mapping)
-    }
-
-    /// Convert a ScopeMappingRegistry to a byte vector
-    pub fn to_vec(&self) -> Vec<u8> {
-        let bytes = self.to_bytes();
-        bytes.to_vec()
-    }
-
-    /// Given the full account data, split into registry and mappings vector
-    pub fn from_account_data(data: &[u8]) -> Result<Self, anyhow::Error> {
-        if data.len() < Self::LEN {
-            return Err(anyhow::anyhow!("Invalid byte length"));
-        }
-        let registry = Self::from_slice(&data[..Self::LEN])?;
-        Ok(registry)
-    }
-
-    /// Write the registry and mappings vector to the account data
-    pub fn to_account_data(
-        registry: &Self,
-        mapping: &MintMapping,
-        data: &mut [u8],
-    ) -> Result<(), anyhow::Error> {
-        let reg_bytes = registry.to_bytes();
-        data[..Self::LEN].copy_from_slice(&reg_bytes);
-        let mapping_bytes = mapping.to_bytes();
-        data[Self::LEN..Self::LEN + MintMapping::LEN].copy_from_slice(&mapping_bytes);
-        Ok(())
-    }
-
-    /// Get the mappings slice from the account data
-    pub fn get_mappings_slice(data: &[u8]) -> Result<&[u8], anyhow::Error> {
-        if data.len() < Self::LEN {
-            return Err(anyhow::anyhow!("Invalid byte length"));
-        }
-        Ok(&data[Self::LEN..])
-    }
 }
 
 pub fn setup_mint(svm: &mut LiteSVM, payer: &Keypair) -> anyhow::Result<Pubkey> {
