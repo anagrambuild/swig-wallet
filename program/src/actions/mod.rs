@@ -14,6 +14,7 @@ pub mod sign_v1;
 pub mod sol_destination_limit_v1;
 pub mod sub_account_sign_v1;
 pub mod toggle_sub_account_v1;
+pub mod token_destination_limit_v1;
 pub mod update_authority_v1;
 pub mod withdraw_from_sub_account_v1;
 
@@ -23,7 +24,8 @@ use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, Pro
 use self::{
     add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*, create_v1::*,
     remove_authority_v1::*, sign_v1::*, sol_destination_limit_v1::*, sub_account_sign_v1::*,
-    toggle_sub_account_v1::*, update_authority_v1::*, withdraw_from_sub_account_v1::*,
+    toggle_sub_account_v1::*, token_destination_limit_v1::*, update_authority_v1::*,
+    withdraw_from_sub_account_v1::*,
 };
 use crate::{
     instruction::{
@@ -78,6 +80,9 @@ pub fn process_action(
         },
         SwigInstruction::ToggleSubAccountV1 => process_toggle_sub_account_v1(accounts, data),
         SwigInstruction::SolDestinationLimitV1 => process_sol_destination_limit_v1(accounts, data),
+        SwigInstruction::TokenDestinationLimitV1 => {
+            process_token_destination_limit_v1(accounts, data)
+        },
     }
 }
 
@@ -179,4 +184,12 @@ fn process_toggle_sub_account_v1(accounts: &[AccountInfo], data: &[u8]) -> Progr
 fn process_sol_destination_limit_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = SignV1Accounts::context(accounts)?;
     sol_destination_limit_v1(account_ctx, accounts, data)
+}
+
+/// Processes a TokenDestinationLimitV1 instruction.
+///
+/// Transfers tokens with destination-specific limits applied.
+fn process_token_destination_limit_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = SignV1Accounts::context(accounts)?;
+    token_destination_limit_v1(account_ctx, accounts, data)
 }

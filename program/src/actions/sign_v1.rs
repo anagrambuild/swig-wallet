@@ -480,28 +480,8 @@ pub fn sign_v1(
                     }
 
                     if balance > &current_token_balance {
-                        let diff = balance - current_token_balance;
-                        {
-                            if let Some(action) =
-                                RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?
-                            {
-                                action.run(diff, slot)?;
-                                continue;
-                            };
-                        }
-                        {
-                            if let Some(action) =
-                                RoleMut::get_action_mut::<TokenLimit>(actions, mint)?
-                            {
-                                action.run(diff)?;
-                                continue;
-                            };
-                        }
-                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
-                    } else if balance < &current_token_balance {
                         // Tokens are being sent out from this swig-owned account
-                        let diff = current_token_balance - balance;
-
+                        let diff = balance - current_token_balance;
                         // Check token destination limits for outgoing transfers using zero-copy
                         // approach
                         let source_account_key = unsafe { all_accounts.get_unchecked(index) }.key();

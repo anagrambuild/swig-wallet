@@ -152,4 +152,17 @@ pub enum SwigInstruction {
     #[account(2, writable, name="destination", desc="the destination account")]
     #[account(3, name="system_program", desc="the system program")]
     SolDestinationLimitV1 = 11,
+
+    /// Transfers tokens with destination-specific limits.
+    ///
+    /// Required accounts:
+    /// 1. `[writable, signer]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. `[writable]` Destination account to receive tokens
+    /// 4. System program account
+    #[account(0, writable, signer, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, writable, name="destination", desc="the destination account")]
+    #[account(3, name="system_program", desc="the system program")]
+    TokenDestinationLimitV1 = 12,
 }
