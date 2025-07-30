@@ -1,3 +1,5 @@
+#![cfg(not(feature = "program_scope_test"))]
+
 //! Tests for SOL recurring destination limit functionality.
 //!
 //! This module contains comprehensive tests for the

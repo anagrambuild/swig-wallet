@@ -1,3 +1,4 @@
+#![cfg(not(feature = "program_scope_test"))]
 //! Tests for TokenDestinationLimit functionality.
 //!
 //! This module contains comprehensive tests for the TokenDestinationLimit
