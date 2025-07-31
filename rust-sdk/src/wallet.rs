@@ -38,6 +38,7 @@ const TOKEN_22_PROGRAM_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqC
 
 use crate::{
     client_role::ClientRole,
+    decoder::{DecodedInstruction, InstructionType},
     error::SwigError,
     instruction_builder::SwigInstructionBuilder,
     types::{Permission, UpdateAuthorityData},
@@ -219,25 +220,15 @@ impl<'c> SwigWallet<'c> {
         new_authority: &[u8],
         permissions: Vec<Permission>,
     ) -> Result<Signature, SwigError> {
-        let instruction = self.instruction_builder.add_authority_instruction(
-            new_authority_type,
-            new_authority,
-            permissions,
-            Some(self.get_current_slot()?),
-        )?;
-        let msg = v0::Message::try_compile(
-            &self.fee_payer.pubkey(),
-            &instruction,
-            &[],
-            self.get_current_blockhash()?,
-        )?;
+        let (tx, _) =
+            self.build_add_authority_transaction(new_authority_type, new_authority, permissions)?;
 
-        let tx = VersionedTransaction::try_new(
-            VersionedMessage::V0(msg),
-            &[self.fee_payer.insecure_clone()],
-        )?;
-
-        self.send_and_confirm_transaction(tx)
+        let tx_result = self.send_and_confirm_transaction(tx);
+        if tx_result.is_ok() {
+            self.refresh_permissions()?;
+            self.instruction_builder.increment_odometer()?;
+        }
+        tx_result
     }
 
     /// Removes an existing authority from the wallet
@@ -261,21 +252,7 @@ impl<'c> SwigWallet<'c> {
         let authority_id = swig_with_roles.lookup_role_id(authority.as_ref()).unwrap();
 
         if let Some(authority_id) = authority_id {
-            let instructions = self
-                .instruction_builder
-                .remove_authority(authority_id, Some(self.get_current_slot()?))?;
-
-            let msg = v0::Message::try_compile(
-                &self.fee_payer.pubkey(),
-                &instructions,
-                &[],
-                self.get_current_blockhash()?,
-            )?;
-
-            let tx = VersionedTransaction::try_new(
-                VersionedMessage::V0(msg),
-                &[self.fee_payer.insecure_clone()],
-            )?;
+            let (tx, _) = self.build_remove_authority_transaction(authority_id)?;
 
             let tx_result = self.send_and_confirm_transaction(tx);
             if tx_result.is_ok() {
@@ -304,20 +281,7 @@ impl<'c> SwigWallet<'c> {
         inner_instructions: Vec<Instruction>,
         alt: Option<&[AddressLookupTableAccount]>,
     ) -> Result<Signature, SwigError> {
-        let sign_ix = self
-            .instruction_builder
-            .sign_instruction(inner_instructions, Some(self.get_current_slot()?))?;
-
-        let alt = if alt.is_some() { alt.unwrap() } else { &[] };
-
-        let msg = v0::Message::try_compile(
-            &self.fee_payer.pubkey(),
-            &sign_ix,
-            alt,
-            self.get_current_blockhash()?,
-        )?;
-
-        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+        let (tx, _) = self.build_sign_transaction(inner_instructions, alt)?;
 
         let tx_result = self.send_and_confirm_transaction(tx);
         if tx_result.is_ok() {
@@ -344,23 +308,8 @@ impl<'c> SwigWallet<'c> {
         authority_to_update_id: u32,
         update_data: UpdateAuthorityData,
     ) -> Result<Signature, SwigError> {
-        let current_slot = self.get_current_slot()?;
-        let counter = self.get_odometer()?;
-
-        let instructions = self.instruction_builder.update_authority(
-            authority_to_update_id,
-            Some(current_slot),
-            update_data,
-        )?;
-
-        let msg = v0::Message::try_compile(
-            &self.fee_payer.pubkey(),
-            &instructions,
-            &[],
-            self.get_current_blockhash()?,
-        )?;
-
-        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+        let (tx, _) =
+            self.build_update_authority_transaction(authority_to_update_id, update_data)?;
 
         let tx_result = self.send_and_confirm_transaction(tx);
         if tx_result.is_ok() {
@@ -380,18 +329,7 @@ impl<'c> SwigWallet<'c> {
     ///
     /// Returns a `Result` containing the transaction signature or a `SwigError`
     pub fn create_sub_account(&mut self) -> Result<Signature, SwigError> {
-        let instructions = self
-            .instruction_builder
-            .create_sub_account(Some(self.get_current_slot()?))?;
-
-        let msg = v0::Message::try_compile(
-            &self.fee_payer.pubkey(),
-            &instructions,
-            &[],
-            self.get_current_blockhash()?,
-        )?;
-
-        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+        let tx = self.build_create_sub_account_transaction()?;
 
         let tx_result = self.send_and_confirm_transaction(tx);
         if tx_result.is_ok() {
@@ -417,22 +355,7 @@ impl<'c> SwigWallet<'c> {
         instructions: Vec<Instruction>,
         alt: Option<&[AddressLookupTableAccount]>,
     ) -> Result<Signature, SwigError> {
-        let current_slot = self.get_current_slot()?;
-        let sign_instructions = self
-            .instruction_builder
-            .sign_instruction_with_sub_account(instructions, Some(current_slot))?;
-
-        let alt = if alt.is_some() { alt.unwrap() } else { &[] };
-
-        let msg = v0::Message::try_compile(
-            &self.fee_payer.pubkey(),
-            &sign_instructions,
-            alt,
-            self.get_current_blockhash()?,
-        )?;
-
-        // We need both the fee payer and the authority to sign
-        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+        let tx = self.build_sign_with_sub_account_transaction(instructions, alt)?;
 
         let tx_result = self.send_and_confirm_transaction(tx);
         if tx_result.is_ok() {
@@ -457,21 +380,7 @@ impl<'c> SwigWallet<'c> {
         sub_account: Pubkey,
         amount: u64,
     ) -> Result<Signature, SwigError> {
-        let current_slot = self.get_current_slot()?;
-        let withdraw_instructions = self.instruction_builder.withdraw_from_sub_account(
-            sub_account,
-            amount,
-            Some(current_slot),
-        )?;
-
-        let msg = v0::Message::try_compile(
-            &self.fee_payer.pubkey(),
-            &withdraw_instructions,
-            &[],
-            self.get_current_blockhash()?,
-        )?;
-
-        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+        let tx = self.build_withdraw_from_sub_account_transaction(sub_account, amount)?;
 
         let tx_result = self.send_and_confirm_transaction(tx);
         if tx_result.is_ok() {
@@ -503,24 +412,13 @@ impl<'c> SwigWallet<'c> {
         token_program: Pubkey,
         amount: u64,
     ) -> Result<Signature, SwigError> {
-        let current_slot = self.get_current_slot()?;
-        let withdraw_instructions = self.instruction_builder.withdraw_token_from_sub_account(
+        let tx = self.build_withdraw_token_from_sub_account_transaction(
             sub_account,
             sub_account_token,
             swig_token,
             token_program,
             amount,
-            Some(current_slot),
         )?;
-
-        let msg = v0::Message::try_compile(
-            &self.fee_payer.pubkey(),
-            &withdraw_instructions,
-            &[],
-            self.get_current_blockhash()?,
-        )?;
-
-        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
         let tx_result = self.send_and_confirm_transaction(tx);
         if tx_result.is_ok() {
@@ -545,6 +443,293 @@ impl<'c> SwigWallet<'c> {
         sub_account: Pubkey,
         enabled: bool,
     ) -> Result<Signature, SwigError> {
+        let tx = self.build_toggle_sub_account_transaction(sub_account, enabled)?;
+
+        let tx_result = self.send_and_confirm_transaction(tx);
+        if tx_result.is_ok() {
+            self.refresh_permissions()?;
+            self.instruction_builder.increment_odometer()?;
+        }
+        tx_result
+    }
+
+    /// Transaction builder helper functions
+    pub fn build_add_authority_transaction(
+        &mut self,
+        new_authority_type: AuthorityType,
+        new_authority: &[u8],
+        permissions: Vec<Permission>,
+    ) -> Result<(VersionedTransaction, DecodedInstruction), SwigError> {
+        let instruction = self.instruction_builder.add_authority_instruction(
+            new_authority_type.clone(),
+            new_authority,
+            permissions.clone(),
+            Some(self.get_current_slot()?),
+        )?;
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &instruction,
+            &[],
+            self.get_current_blockhash()?,
+        )?;
+
+        let tx = VersionedTransaction::try_new(
+            VersionedMessage::V0(msg),
+            &[self.fee_payer.insecure_clone()],
+        )?;
+
+        let decoded_instruction = DecodedInstruction::new(
+            InstructionType::AddAuthority {
+                new_authority_type,
+                new_authority: new_authority.to_vec(),
+                permissions,
+            },
+            "Add authority".to_string(),
+            self.current_role.role_id,
+            self.current_role.authority_type.clone(),
+            None,
+            None,
+            self.fee_payer.pubkey().to_string(),
+        );
+
+        Ok((tx, decoded_instruction))
+    }
+
+    pub fn build_remove_authority_transaction(
+        &mut self,
+        authority_to_remove_id: u32,
+    ) -> Result<(VersionedTransaction, DecodedInstruction), SwigError> {
+        let instructions = self
+            .instruction_builder
+            .remove_authority(authority_to_remove_id, Some(self.get_current_slot()?))?;
+
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &instructions,
+            &[],
+            self.get_current_blockhash()?,
+        )?;
+
+        let tx = VersionedTransaction::try_new(
+            VersionedMessage::V0(msg),
+            &[self.fee_payer.insecure_clone()],
+        )?;
+
+        let decoded_instruction = DecodedInstruction::new(
+            InstructionType::RemoveAuthority {
+                authority_to_remove_id,
+            },
+            "Remove authority".to_string(),
+            self.current_role.role_id,
+            self.current_role.authority_type.clone(),
+            None,
+            None,
+            self.fee_payer.pubkey().to_string(),
+        );
+
+        Ok((tx, decoded_instruction))
+    }
+
+    pub fn build_update_authority_transaction(
+        &mut self,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+    ) -> Result<(VersionedTransaction, DecodedInstruction), SwigError> {
+        let current_slot = self.get_current_slot()?;
+        let instructions = self.instruction_builder.update_authority(
+            authority_to_update_id,
+            Some(current_slot),
+            update_data.clone(),
+        )?;
+
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &instructions,
+            &[],
+            self.get_current_blockhash()?,
+        )?;
+
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+
+        let decoded_instruction = DecodedInstruction::new(
+            InstructionType::UpdateAuthority {
+                authority_to_replace_id: authority_to_update_id,
+                update_data,
+            },
+            "Update authority".to_string(),
+            self.current_role.role_id,
+            self.current_role.authority_type.clone(),
+            None,
+            None,
+            self.fee_payer.pubkey().to_string(),
+        );
+
+        Ok((tx, decoded_instruction))
+    }
+
+    pub fn build_sign_transaction(
+        &mut self,
+        inner_instructions: Vec<Instruction>,
+        alt: Option<&[AddressLookupTableAccount]>,
+    ) -> Result<(VersionedTransaction, DecodedInstruction), SwigError> {
+        let sign_ix = self
+            .instruction_builder
+            .sign_instruction(inner_instructions.clone(), Some(self.get_current_slot()?))?;
+
+        let alt = if alt.is_some() { alt.unwrap() } else { &[] };
+
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &sign_ix,
+            alt,
+            self.get_current_blockhash()?,
+        )?;
+
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+
+        let decoded_instruction = DecodedInstruction::new(
+            InstructionType::Sign { inner_instructions },
+            "Sign a transaction".to_string(),
+            self.current_role.role_id,
+            self.current_role.authority_type.clone(),
+            None,
+            None,
+            self.fee_payer.pubkey().to_string(),
+        );
+
+        Ok((tx, decoded_instruction))
+    }
+
+    pub fn build_create_session_transaction(
+        &mut self,
+        session_key: Pubkey,
+        duration: u64,
+    ) -> Result<VersionedTransaction, SwigError> {
+        let current_slot = self.get_current_slot()?;
+        let create_session_instructions = self.instruction_builder.create_session_instruction(
+            session_key,
+            duration,
+            Some(current_slot),
+            None,
+        )?;
+
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &create_session_instructions,
+            &[],
+            self.get_current_blockhash()?,
+        )?;
+
+        let tx = VersionedTransaction::try_new(
+            VersionedMessage::V0(msg),
+            &[&self.fee_payer.insecure_clone()],
+        )?;
+
+        Ok(tx)
+    }
+
+    pub fn build_create_sub_account_transaction(
+        &mut self,
+    ) -> Result<VersionedTransaction, SwigError> {
+        let instructions = self
+            .instruction_builder
+            .create_sub_account(Some(self.get_current_slot()?))?;
+
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &instructions,
+            &[],
+            self.get_current_blockhash()?,
+        )?;
+
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+
+        Ok(tx)
+    }
+
+    pub fn build_sign_with_sub_account_transaction(
+        &mut self,
+        instructions: Vec<Instruction>,
+        alt: Option<&[AddressLookupTableAccount]>,
+    ) -> Result<VersionedTransaction, SwigError> {
+        let current_slot = self.get_current_slot()?;
+        let sign_instructions = self
+            .instruction_builder
+            .sign_instruction_with_sub_account(instructions, Some(current_slot))?;
+
+        let alt = if alt.is_some() { alt.unwrap() } else { &[] };
+
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &sign_instructions,
+            alt,
+            self.get_current_blockhash()?,
+        )?;
+
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+
+        Ok(tx)
+    }
+
+    pub fn build_withdraw_from_sub_account_transaction(
+        &mut self,
+        sub_account: Pubkey,
+        amount: u64,
+    ) -> Result<VersionedTransaction, SwigError> {
+        let current_slot = self.get_current_slot()?;
+        let withdraw_instructions = self.instruction_builder.withdraw_from_sub_account(
+            sub_account,
+            amount,
+            Some(current_slot),
+        )?;
+
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &withdraw_instructions,
+            &[],
+            self.get_current_blockhash()?,
+        )?;
+
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+
+        Ok(tx)
+    }
+
+    pub fn build_withdraw_token_from_sub_account_transaction(
+        &mut self,
+        sub_account: Pubkey,
+        sub_account_token: Pubkey,
+        swig_token: Pubkey,
+        token_program: Pubkey,
+        amount: u64,
+    ) -> Result<VersionedTransaction, SwigError> {
+        let current_slot = self.get_current_slot()?;
+        let withdraw_instructions = self.instruction_builder.withdraw_token_from_sub_account(
+            sub_account,
+            sub_account_token,
+            swig_token,
+            token_program,
+            amount,
+            Some(current_slot),
+        )?;
+
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &withdraw_instructions,
+            &[],
+            self.get_current_blockhash()?,
+        )?;
+
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+
+        Ok(tx)
+    }
+
+    pub fn build_toggle_sub_account_transaction(
+        &mut self,
+        sub_account: Pubkey,
+        enabled: bool,
+    ) -> Result<VersionedTransaction, SwigError> {
         let current_slot = self.get_current_slot()?;
         let toggle_instructions = self.instruction_builder.toggle_sub_account(
             sub_account,
@@ -561,12 +746,7 @@ impl<'c> SwigWallet<'c> {
 
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
-        let tx_result = self.send_and_confirm_transaction(tx);
-        if tx_result.is_ok() {
-            self.refresh_permissions()?;
-            self.instruction_builder.increment_odometer()?;
-        }
-        tx_result
+        Ok(tx)
     }
 
     /// Sends and confirms a transaction on the Solana network
@@ -593,6 +773,37 @@ impl<'c> SwigWallet<'c> {
                 logs: e.meta.logs,
             })?
             .signature;
+
+        Ok(signature)
+    }
+
+    /// Sends and confirms a transaction on the Solana network
+    ///
+    /// # Arguments
+    ///
+    /// * `tx` - The versioned transaction to send
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the transaction signature or a `SwigError`
+    fn send_transaction_and_refresh_permissions(
+        &mut self,
+        tx: VersionedTransaction,
+    ) -> Result<Signature, SwigError> {
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let signature = self.rpc_client.send_and_confirm_transaction(&tx)?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let signature = self
+            .litesvm
+            .send_transaction(tx)
+            .map_err(|e| SwigError::TransactionFailedWithLogs {
+                error: e.err.to_string(),
+                logs: e.meta.logs,
+            })?
+            .signature;
+
+        self.refresh_permissions()?;
+        self.instruction_builder.increment_odometer()?;
 
         Ok(signature)
     }
@@ -1090,25 +1301,7 @@ impl<'c> SwigWallet<'c> {
     ///
     /// Returns a `Result` containing unit type or a `SwigError`
     pub fn create_session(&mut self, session_key: Pubkey, duration: u64) -> Result<(), SwigError> {
-        let current_slot = self.get_current_slot()?;
-        let create_session_instructions = self.instruction_builder.create_session_instruction(
-            session_key,
-            duration,
-            Some(current_slot),
-            None,
-        )?;
-
-        let msg = v0::Message::try_compile(
-            &self.fee_payer.pubkey(),
-            &create_session_instructions,
-            &[],
-            self.get_current_blockhash()?,
-        )?;
-
-        let tx = VersionedTransaction::try_new(
-            VersionedMessage::V0(msg),
-            &[&self.fee_payer.insecure_clone()],
-        )?;
+        let tx = self.build_create_session_transaction(session_key, duration)?;
 
         self.send_and_confirm_transaction(tx)?;
         Ok(())
