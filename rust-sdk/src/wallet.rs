@@ -34,11 +34,11 @@ use swig_state::{
     role::Role,
     swig::{sub_account_seeds, Swig, SwigWithRoles},
 };
-const TOKEN_22_PROGRAM_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+pub const TOKEN_22_PROGRAM_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 
 use crate::{
     client_role::ClientRole,
-    decoder::{DecodedInstruction, InstructionType},
+    decoder::{DecodedTransaction, InstructionType},
     error::SwigError,
     instruction_builder::SwigInstructionBuilder,
     types::{Permission, UpdateAuthorityData},
@@ -459,7 +459,7 @@ impl<'c> SwigWallet<'c> {
         new_authority_type: AuthorityType,
         new_authority: &[u8],
         permissions: Vec<Permission>,
-    ) -> Result<(VersionedTransaction, DecodedInstruction), SwigError> {
+    ) -> Result<(VersionedTransaction, DecodedTransaction), SwigError> {
         let instruction = self.instruction_builder.add_authority_instruction(
             new_authority_type.clone(),
             new_authority,
@@ -478,27 +478,26 @@ impl<'c> SwigWallet<'c> {
             &[self.fee_payer.insecure_clone()],
         )?;
 
-        let decoded_instruction = DecodedInstruction::new(
+        let decoded_tx = DecodedTransaction::new(
             InstructionType::AddAuthority {
                 new_authority_type,
                 new_authority: new_authority.to_vec(),
                 permissions,
             },
             "Add authority".to_string(),
-            self.current_role.role_id,
-            self.current_role.authority_type.clone(),
-            None,
-            None,
-            self.fee_payer.pubkey().to_string(),
+            self,
+            tx.clone(),
         );
 
-        Ok((tx, decoded_instruction))
+        println!("decoded_tx: {}", decoded_tx);
+
+        Ok((tx, decoded_tx))
     }
 
     pub fn build_remove_authority_transaction(
         &mut self,
         authority_to_remove_id: u32,
-    ) -> Result<(VersionedTransaction, DecodedInstruction), SwigError> {
+    ) -> Result<(VersionedTransaction, DecodedTransaction), SwigError> {
         let instructions = self
             .instruction_builder
             .remove_authority(authority_to_remove_id, Some(self.get_current_slot()?))?;
@@ -515,26 +514,23 @@ impl<'c> SwigWallet<'c> {
             &[self.fee_payer.insecure_clone()],
         )?;
 
-        let decoded_instruction = DecodedInstruction::new(
+        let decoded_tx = DecodedTransaction::new(
             InstructionType::RemoveAuthority {
                 authority_to_remove_id,
             },
             "Remove authority".to_string(),
-            self.current_role.role_id,
-            self.current_role.authority_type.clone(),
-            None,
-            None,
-            self.fee_payer.pubkey().to_string(),
+            self,
+            tx.clone(),
         );
 
-        Ok((tx, decoded_instruction))
+        Ok((tx, decoded_tx))
     }
 
     pub fn build_update_authority_transaction(
         &mut self,
         authority_to_update_id: u32,
         update_data: UpdateAuthorityData,
-    ) -> Result<(VersionedTransaction, DecodedInstruction), SwigError> {
+    ) -> Result<(VersionedTransaction, DecodedTransaction), SwigError> {
         let current_slot = self.get_current_slot()?;
         let instructions = self.instruction_builder.update_authority(
             authority_to_update_id,
@@ -551,27 +547,26 @@ impl<'c> SwigWallet<'c> {
 
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
-        let decoded_instruction = DecodedInstruction::new(
+        let decoded_tx = DecodedTransaction::new(
             InstructionType::UpdateAuthority {
                 authority_to_replace_id: authority_to_update_id,
                 update_data,
             },
             "Update authority".to_string(),
-            self.current_role.role_id,
-            self.current_role.authority_type.clone(),
-            None,
-            None,
-            self.fee_payer.pubkey().to_string(),
+            self,
+            tx.clone(),
         );
 
-        Ok((tx, decoded_instruction))
+        println!("decoded_tx: {}", decoded_tx);
+
+        Ok((tx, decoded_tx))
     }
 
     pub fn build_sign_transaction(
         &mut self,
         inner_instructions: Vec<Instruction>,
         alt: Option<&[AddressLookupTableAccount]>,
-    ) -> Result<(VersionedTransaction, DecodedInstruction), SwigError> {
+    ) -> Result<(VersionedTransaction, DecodedTransaction), SwigError> {
         let sign_ix = self
             .instruction_builder
             .sign_instruction(inner_instructions.clone(), Some(self.get_current_slot()?))?;
@@ -587,17 +582,14 @@ impl<'c> SwigWallet<'c> {
 
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
-        let decoded_instruction = DecodedInstruction::new(
+        let decoded_tx = DecodedTransaction::new(
             InstructionType::Sign { inner_instructions },
             "Sign a transaction".to_string(),
-            self.current_role.role_id,
-            self.current_role.authority_type.clone(),
-            None,
-            None,
-            self.fee_payer.pubkey().to_string(),
+            self,
+            tx.clone(),
         );
 
-        Ok((tx, decoded_instruction))
+        Ok((tx, decoded_tx))
     }
 
     pub fn build_create_session_transaction(

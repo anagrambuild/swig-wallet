@@ -1,5 +1,6 @@
 use super::*;
 use crate::types::UpdateAuthorityData;
+use solana_sdk::account::ReadableAccount;
 
 #[test_log::test]
 fn should_decode_create_swig_instruction() {
@@ -23,15 +24,14 @@ fn should_decode_create_swig_instruction() {
         .unwrap();
 
     let secondary_authority = Keypair::new();
-    let (tx, decoded_instruction) = swig_wallet
-        .build_add_authority_transaction(
+
+    swig_wallet
+        .add_authority(
             AuthorityType::Ed25519,
             &secondary_authority.pubkey().to_bytes(),
             vec![Permission::All {}],
         )
         .unwrap();
-
-    println!("added decoded_instruction: {:?}", decoded_instruction);
 
     // update the authority
     let update_data = UpdateAuthorityData::ReplaceAll(vec![Permission::Sol {
@@ -39,16 +39,12 @@ fn should_decode_create_swig_instruction() {
         recurring: None,
     }]);
 
-    let (tx, decoded_instruction) = swig_wallet
-        .build_update_authority_transaction(1, update_data)
-        .unwrap();
-
-    println!("updated decoded_instruction: {:?}", decoded_instruction);
+    let tx = swig_wallet.update_authority(1, update_data).unwrap();
 
     // Remove the authority
-    let (tx, decoded_instruction) = swig_wallet.build_remove_authority_transaction(1).unwrap();
-
-    println!("removed decoded_instruction: {:?}", decoded_instruction);
+    let tx = swig_wallet
+        .remove_authority(&secondary_authority.pubkey().to_bytes())
+        .unwrap();
 
     // Sign a transaction
     use solana_sdk::system_instruction;
@@ -58,12 +54,9 @@ fn should_decode_create_swig_instruction() {
         100_000_000,
     );
 
-    let (tx, decoded_instruction) = swig_wallet
+    let (tx, decoded_tx) = swig_wallet
         .build_sign_transaction(vec![inner_ix], None)
         .unwrap();
 
-    println!("signed decoded_instruction: {:?}", decoded_instruction);
-
-    let result = swig_wallet.litesvm().simulate_transaction(tx);
-    println!("result: {:?}", result);
+    println!("signed decoded_tx: {}", decoded_tx);
 }
