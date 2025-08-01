@@ -367,7 +367,7 @@ fn test_token_recurring_destination_limit_exceeds_limit() {
         // Should get the specific destination limit exceeded error (3030)
         assert!(matches!(
             e.err,
-            TransactionError::InstructionError(_, InstructionError::Custom(3030))
+            TransactionError::InstructionError(_, InstructionError::Custom(3032))
         ));
     }
 }
@@ -876,7 +876,7 @@ fn test_token_recurring_destination_limit_no_reset_when_exceeds_fresh() {
         // Should get the specific destination limit exceeded error (3030)
         assert!(matches!(
             e.err,
-            TransactionError::InstructionError(_, InstructionError::Custom(3030))
+            TransactionError::InstructionError(_, InstructionError::Custom(3032))
         ));
     }
 

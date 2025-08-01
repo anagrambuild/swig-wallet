@@ -313,7 +313,7 @@ fn test_token_destination_limit_exceeds_limit() {
         res.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3030)
+            solana_sdk::instruction::InstructionError::Custom(3031)
         ),
         "Expected error code 3030"
     );

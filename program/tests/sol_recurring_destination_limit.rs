@@ -214,7 +214,7 @@ fn test_sol_recurring_destination_limit_exceeds_limit() {
         // Should get the specific destination limit exceeded error (3027)
         assert!(matches!(
             e.err,
-            TransactionError::InstructionError(_, InstructionError::Custom(3029))
+            TransactionError::InstructionError(_, InstructionError::Custom(3030))
         ));
     }
 }
@@ -593,7 +593,7 @@ fn test_sol_recurring_destination_limit_no_reset_when_exceeds_fresh() {
         // Should get the specific destination limit exceeded error (3027)
         assert!(matches!(
             e.err,
-            TransactionError::InstructionError(_, InstructionError::Custom(3029))
+            TransactionError::InstructionError(_, InstructionError::Custom(3030))
         ));
     }
 
