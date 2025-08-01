@@ -367,39 +367,31 @@ pub fn sign_v1(
                                 RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
                             {
                                 let scope_data = unsafe {
+                                    let scope_account =
+                                        &all_accounts.get_unchecked(all_accounts.len() - 1);
                                     // also check if owner matches
-                                    let owner =
-                                        all_accounts.get_unchecked(all_accounts.len() - 1).owner();
-                                    if owner.as_ref()
+                                    if scope_account.owner().as_ref()
                                         != &pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ")
                                     {
                                         return Err(SwigError::WrongOracleProgramAccount.into());
                                     }
-
-                                    &all_accounts
-                                        .get_unchecked(all_accounts.len() - 1)
-                                        .borrow_data_unchecked()
+                                    scope_account.borrow_data_unchecked()
                                 };
 
                                 let mapping_registry = unsafe {
-                                    let owner =
-                                        all_accounts.get_unchecked(all_accounts.len() - 2).owner();
-                                    if owner.as_ref()
+                                    let mapping_account =
+                                        &all_accounts.get_unchecked(all_accounts.len() - 2);
+                                    if mapping_account.owner().as_ref()
                                         != &pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ")
                                     {
                                         return Err(SwigError::WrongOracleMappingAccount.into());
                                     }
-                                    &all_accounts
-                                        .get_unchecked(all_accounts.len() - 2)
-                                        .borrow_data_unchecked()
+                                    mapping_account.borrow_data_unchecked()
                                 };
-
-                                msg!("mapping_registry: {:?}", mapping_registry.len());
 
                                 let (price, exp, mint_decimal) = get_price_data(
                                     mapping_registry,
                                     scope_data,
-                                    None,
                                     &pubkey!("So11111111111111111111111111111111111111112"),
                                     &clock,
                                 )?;
@@ -499,13 +491,8 @@ pub fn sign_v1(
                                 let mint_bytes =
                                     mint.try_into().map_err(|_| SwigError::OracleMintNotFound)?;
 
-                                let (price, exp, mint_decimal) = get_price_data(
-                                    mapping_data,
-                                    scope_data,
-                                    None,
-                                    &mint_bytes,
-                                    &clock,
-                                )?;
+                                let (price, exp, mint_decimal) =
+                                    get_price_data(mapping_data, scope_data, &mint_bytes, &clock)?;
 
                                 let token_value_in_base = calculate_token_value(
                                     price,

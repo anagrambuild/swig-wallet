@@ -471,77 +471,19 @@ pub const NULL_PUBKEY: [u8; 32] = [
 pub fn get_price_data(
     mapping_registry: &[u8],
     scope_data: &[u8],
-    pyth_data: Option<&[u8]>,
     mint: &[u8; 32],
     clock: &Clock,
 ) -> Result<(u64, u8, u8), SwigError> {
-    msg!("mint: {:?}", mint);
-    msg!(
-        "data[offset..offset + 32]: {:?}",
-        &ScopeMappingRegistry::from_bytes(
-            &mapping_registry[..ScopeMappingRegistry::LEN]
-                .try_into()
-                .unwrap()
-        )
-    );
     let mapping = MintMapping::get_mapping_details(&mapping_registry, mint)
         .map_err(|_| SwigError::OracleMintNotFound)?;
 
-    msg!("mapping: {:?}", mapping);
-    let (scope_price, scope_exp) = get_scope_price_data(
+    let (mut scope_price, mut scope_exp) = get_scope_price_data(
         scope_data,
         mapping.scope_details.ok_or(SwigError::OracleMintNotFound)?,
     )?;
 
-    let mut _pyth_price = None;
-    if let Some(pyth_oracle_data) = pyth_data {
-        if mapping.pyth_account.is_some() {
-            let pyth_account = mapping.pyth_account.unwrap();
-            let pyth_address = unsafe { pyth_account.get_unchecked(1..33) };
-            _pyth_price = Some(get_pyth_price_data(
-                pyth_oracle_data,
-                clock.unix_timestamp,
-                0,
-                &pyth_address,
-            )?);
-        }
-    }
-
-    // compare_price_difference(&scope_price, &pyth_price)?;
-
     Ok((scope_price, scope_exp, mapping.decimals))
 }
-
-// Function checks the price difference between the scope price and the pyth price
-// If the price difference is greater than 10%, return an error
-// If the price difference is less than 10%, return the scope price
-// If the pyth price is None, return the scope price
-// fn compare_price_difference(
-//     scope_price: &DatedPrice,
-//     pyth_price: &Option<(u64, u64, i32)>,
-// ) -> Result<(), SwigError> {
-//     if let Some((price, confidence, exponent)) = pyth_price {
-//         let scope_price_value = scope_price.price.value;
-//         let pyth_price_value = price;
-//         let scope_price_exp = scope_price.price.exp;
-//         let pyth_price_exp = exponent;
-
-//         if scope_price_exp != pyth_price_exp {
-//             return Err(SwigError::OracleExponentMismatch);
-//         }
-
-//         let scope_price_value_f64 = scope_price_value as f64 / 10_u64.pow(scope_price_exp as u32);
-//         let pyth_price_value_f64 = pyth_price_value as f64 / 10_u64.pow(pyth_price_exp as u32);
-
-//         let price_difference = (scope_price_value_f64 - pyth_price_value_f64).abs();
-//         let price_difference_percentage = (price_difference / pyth_price_value_f64) * 100.0;
-
-//         if price_difference_percentage > 10.0 {
-//             return Err(SwigError::OraclePriceDifferenceExceedsThreshold);
-//         }
-//     }
-//     Ok(())
-// }
 
 fn get_scope_price_data(data: &[u8], price_chain: [u16; 3]) -> Result<(u64, u8), SwigError> {
     let prices_start = 8 + 32;
@@ -550,7 +492,7 @@ fn get_scope_price_data(data: &[u8], price_chain: [u16; 3]) -> Result<(u64, u8),
 
     // Check if price_chain is valid
     if price_chain == [u16::MAX, u16::MAX, u16::MAX] {
-        return Err(SwigError::OracleInvalidPriceChain);
+        return Err(SwigError::OraclePriceChainEmpty);
     }
     let mut price_chain_raw = Vec::new();
     let mut oldest_timestamp = u64::MAX;
@@ -564,7 +506,7 @@ fn get_scope_price_data(data: &[u8], price_chain: [u16; 3]) -> Result<(u64, u8),
         let end_offset = start_offset + SCOPE_PRICE_FEED_LEN;
 
         if end_offset > data.len() {
-            return Err(SwigError::OracleDataBoundsError);
+            return Err(SwigError::OraclePriceChainEmpty);
         }
 
         let price_data = unsafe { data.get_unchecked(start_offset..end_offset) };
@@ -582,7 +524,7 @@ fn get_scope_price_data(data: &[u8], price_chain: [u16; 3]) -> Result<(u64, u8),
     }
 
     if price_chain_raw.is_empty() {
-        return Err(SwigError::OracleEmptyPriceChain);
+        return Err(SwigError::OraclePriceChainEmpty);
     }
 
     let last_updated_slot: u64 = u64::from_le_bytes(unsafe {
@@ -607,23 +549,42 @@ fn get_scope_price_data(data: &[u8], price_chain: [u16; 3]) -> Result<(u64, u8),
     for (value, exp, _) in price_chain_raw {
         let value_u128 = value as u128;
 
-        // Multiply the values
-        chained_value = chained_value
-            .checked_mul(value_u128)
-            .ok_or(SwigError::OracleMultiplicationOverflow)?;
+        // Pre-scale values if they're too large to prevent overflow
+        let mut scaled_value = value_u128;
+        let mut scaled_exp = exp;
 
-        // Add the exponents
-        chained_exp = chained_exp
-            .checked_add(exp)
-            .ok_or(SwigError::OracleAdditionOverflow)?;
+        // Scale down the input value if it's too large
+        while scaled_value > u64::MAX as u128 && scaled_exp > 0 {
+            scaled_value /= 10;
+            scaled_exp = scaled_exp
+                .checked_sub(1)
+                .ok_or(SwigError::OraclePriceChainEmpty)?;
+        }
 
-        // Handle potential overflow by reducing precision if needed
-        // This is a simplified version - you might want more sophisticated overflow handling
+        // Also scale down the current chained value if it's too large
         while chained_value > u64::MAX as u128 && chained_exp > 0 {
             chained_value /= 10;
             chained_exp = chained_exp
                 .checked_sub(1)
-                .ok_or(SwigError::OracleSubtractionOverflow)?;
+                .ok_or(SwigError::OraclePriceChainEmpty)?;
+        }
+
+        // Now perform the multiplication with scaled values
+        chained_value = chained_value
+            .checked_mul(scaled_value)
+            .ok_or(SwigError::OraclePriceChainEmpty)?;
+
+        // Add the exponents
+        chained_exp = chained_exp
+            .checked_add(scaled_exp)
+            .ok_or(SwigError::OraclePriceChainEmpty)?;
+
+        // Scale down if the value is too large to fit in u64
+        while chained_value > u64::MAX as u128 && chained_exp > 0 {
+            chained_value /= 10;
+            chained_exp = chained_exp
+                .checked_sub(1)
+                .ok_or(SwigError::OraclePriceChainEmpty)?;
         }
     }
 
@@ -631,6 +592,16 @@ fn get_scope_price_data(data: &[u8], price_chain: [u16; 3]) -> Result<(u64, u8),
         chained_value as u64
     } else {
         return Err(SwigError::OracleValueOverflow);
+    };
+
+    // Ensure the exponent is within reasonable bounds to prevent overflow in pow operations
+    let (final_value, final_exp) = if chained_exp > 18 {
+        // If exponent is too large, scale down the value and reduce exponent
+        let scale_factor = chained_exp - 18;
+        let scaled_value = final_value / 10_u64.pow(scale_factor as u32);
+        (scaled_value, (chained_exp - scale_factor) as u8)
+    } else {
+        (final_value, chained_exp as u8)
     };
 
     let last_updated_slot: u64 = u64::from_le_bytes(unsafe {
@@ -643,44 +614,5 @@ fn get_scope_price_data(data: &[u8], price_chain: [u16; 3]) -> Result<(u64, u8),
     });
     let unix_timestamp: u64 = oldest_timestamp;
 
-    Ok((final_value, chained_exp as u8))
-}
-
-pub fn get_pyth_price_data(
-    price_update_data: &[u8],
-    current_timestamp: i64,
-    maximum_age: u64,
-    feed_id: &[u8],
-) -> Result<(u64, u64, i32), SwigError> {
-    let verification_level = unsafe { *price_update_data.get_unchecked(40) };
-    if verification_level != 1 {
-        return Err(SwigError::OracleVerficationLevelFailed);
-    }
-
-    // Feed id
-    if unsafe { price_update_data.get_unchecked(41..73) } != feed_id {
-        return Err(SwigError::InvalidOraclePriceData);
-    }
-
-    // price (8 bytes) [73..81]
-    let price =
-        i64::from_le_bytes(unsafe { price_update_data.get_unchecked(73..81).try_into().unwrap() });
-
-    // conf (8 bytes) [81..89]
-    let confidence =
-        u64::from_le_bytes(unsafe { price_update_data.get_unchecked(81..89).try_into().unwrap() });
-
-    // exponent (4 bytes) [89..93]
-    let exponent =
-        i32::from_le_bytes(unsafe { price_update_data.get_unchecked(89..93).try_into().unwrap() });
-
-    // publish_time (8 bytes) [93..101]
-    let publish_time =
-        i64::from_le_bytes(unsafe { price_update_data.get_unchecked(93..101).try_into().unwrap() });
-
-    if publish_time.saturating_add(maximum_age.try_into().unwrap()) < current_timestamp {
-        return Err(SwigError::OraclePriceTooOld);
-    }
-
-    Ok((price as u64, confidence, exponent))
+    Ok((final_value, final_exp))
 }

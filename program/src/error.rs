@@ -146,6 +146,8 @@ pub enum SwigError {
     OraclePriceDifferenceExceedsThreshold,
     /// Oracle mapping registry is not initialized
     OracleMappingRegistryNotInitialized,
+    /// Oracle price chain empty
+    OraclePriceChainEmpty,
 }
 
 /// Implements conversion from SwigError to ProgramError.
