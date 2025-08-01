@@ -459,7 +459,7 @@ impl<'c> SwigWallet<'c> {
         new_authority_type: AuthorityType,
         new_authority: &[u8],
         permissions: Vec<Permission>,
-    ) -> Result<(VersionedTransaction, DecodedTransaction), SwigError> {
+    ) -> Result<(VersionedTransaction, Option<DecodedTransaction>), SwigError> {
         let instruction = self.instruction_builder.add_authority_instruction(
             new_authority_type.clone(),
             new_authority,
@@ -489,7 +489,10 @@ impl<'c> SwigWallet<'c> {
             tx.clone(),
         );
 
-        println!("decoded_tx: {}", decoded_tx);
+        let decoded_tx = match decoded_tx {
+            Ok(decoded_tx) => Some(decoded_tx),
+            Err(e) => None,
+        };
 
         Ok((tx, decoded_tx))
     }
@@ -497,7 +500,7 @@ impl<'c> SwigWallet<'c> {
     pub fn build_remove_authority_transaction(
         &mut self,
         authority_to_remove_id: u32,
-    ) -> Result<(VersionedTransaction, DecodedTransaction), SwigError> {
+    ) -> Result<(VersionedTransaction, Option<DecodedTransaction>), SwigError> {
         let instructions = self
             .instruction_builder
             .remove_authority(authority_to_remove_id, Some(self.get_current_slot()?))?;
@@ -523,6 +526,11 @@ impl<'c> SwigWallet<'c> {
             tx.clone(),
         );
 
+        let decoded_tx = match decoded_tx {
+            Ok(decoded_tx) => Some(decoded_tx),
+            Err(e) => None,
+        };
+
         Ok((tx, decoded_tx))
     }
 
@@ -530,7 +538,7 @@ impl<'c> SwigWallet<'c> {
         &mut self,
         authority_to_update_id: u32,
         update_data: UpdateAuthorityData,
-    ) -> Result<(VersionedTransaction, DecodedTransaction), SwigError> {
+    ) -> Result<(VersionedTransaction, Option<DecodedTransaction>), SwigError> {
         let current_slot = self.get_current_slot()?;
         let instructions = self.instruction_builder.update_authority(
             authority_to_update_id,
@@ -557,7 +565,10 @@ impl<'c> SwigWallet<'c> {
             tx.clone(),
         );
 
-        println!("decoded_tx: {}", decoded_tx);
+        let decoded_tx = match decoded_tx {
+            Ok(decoded_tx) => Some(decoded_tx),
+            Err(e) => None,
+        };
 
         Ok((tx, decoded_tx))
     }
@@ -566,7 +577,7 @@ impl<'c> SwigWallet<'c> {
         &mut self,
         inner_instructions: Vec<Instruction>,
         alt: Option<&[AddressLookupTableAccount]>,
-    ) -> Result<(VersionedTransaction, DecodedTransaction), SwigError> {
+    ) -> Result<(VersionedTransaction, Option<DecodedTransaction>), SwigError> {
         let sign_ix = self
             .instruction_builder
             .sign_instruction(inner_instructions.clone(), Some(self.get_current_slot()?))?;
@@ -588,6 +599,11 @@ impl<'c> SwigWallet<'c> {
             self,
             tx.clone(),
         );
+
+        let decoded_tx = match decoded_tx {
+            Ok(decoded_tx) => Some(decoded_tx),
+            Err(e) => None,
+        };
 
         Ok((tx, decoded_tx))
     }

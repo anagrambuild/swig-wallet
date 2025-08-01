@@ -103,10 +103,10 @@ impl DecodedTransaction {
         description: String,
         swig_wallet: &mut SwigWallet,
         tx: VersionedTransaction,
-    ) -> Self {
-        let account_summary = get_account_summary(swig_wallet, tx).unwrap();
+    ) -> Result<Self, SwigError> {
+        let account_summary = get_account_summary(swig_wallet, tx)?;
 
-        Self {
+        let decoded_tx = Self {
             instruction_type,
             description,
             role_id: swig_wallet.current_role.role_id,
@@ -114,7 +114,9 @@ impl DecodedTransaction {
             data: None,
             fee_payer: swig_wallet.get_fee_payer().to_string(),
             account_summary: Some(account_summary),
-        }
+        };
+
+        Ok(decoded_tx)
     }
 }
 
@@ -175,7 +177,7 @@ pub fn get_account_summary(
     let initial_accounts = capture_pre_accounts(swig_wallet, &tx)?;
     let post_accounts = capture_post_accounts(swig_wallet, &tx)?;
 
-    let account_summary = compare_account_balances(&initial_accounts, &post_accounts);
+    let account_summary = compare_account_balances(&initial_accounts, &post_accounts)?;
     Ok(account_summary)
 }
 
@@ -187,10 +189,7 @@ fn capture_post_accounts(
 
     #[cfg(not(all(feature = "rust_sdk_test", test)))]
     {
-        let simulation_result = swig_wallet
-            .rpc_client
-            .simulate_transaction(&tx.clone())
-            .unwrap();
+        let simulation_result = swig_wallet.rpc_client.simulate_transaction(&tx.clone())?;
 
         // Extract account keys from the transaction
         let account_keys = match &tx.message {
@@ -212,9 +211,14 @@ fn capture_post_accounts(
                                 encoding,
                             ) => {
                                 if UiAccountEncoding::Base58 == *encoding && data.len() >= 72 {
-                                    let base58_data = bs58::decode(data).into_vec().unwrap();
-                                    let balance =
-                                        u64::from_le_bytes(base58_data[64..72].try_into().unwrap());
+                                    let base58_data = bs58::decode(data)
+                                        .into_vec()
+                                        .map_err(|_| SwigError::DecoderError)?;
+                                    let balance = u64::from_le_bytes(
+                                        base58_data[64..72]
+                                            .try_into()
+                                            .map_err(|_| SwigError::DecoderError)?,
+                                    );
                                     balances.push((pubkey, balance, false));
                                 }
                             },
@@ -236,12 +240,16 @@ fn capture_post_accounts(
         let result = swig_wallet
             .litesvm()
             .simulate_transaction(tx.clone())
-            .unwrap();
+            .map_err(|_| SwigError::DecodeSimulationError)?;
         let post_accounts = result.post_accounts;
 
         for (pubkey, final_account) in post_accounts {
             if *final_account.owner() == TOKEN_PROGRAM_ID {
-                let balance = u64::from_le_bytes(final_account.data()[64..72].try_into().unwrap());
+                let balance = u64::from_le_bytes(
+                    final_account.data()[64..72]
+                        .try_into()
+                        .map_err(|_| SwigError::DecoderError)?,
+                );
                 balances.push((pubkey, balance, false));
             } else {
                 balances.push((pubkey, final_account.lamports(), false));
@@ -286,7 +294,11 @@ fn capture_pre_accounts(
             match swig_wallet.rpc_client.get_account(&pubkey) {
                 Ok(account) => {
                     if account.owner == TOKEN_PROGRAM_ID {
-                        let balance = u64::from_le_bytes(account.data[64..72].try_into().unwrap());
+                        let balance = u64::from_le_bytes(
+                            account.data[64..72]
+                                .try_into()
+                                .map_err(|_| SwigError::DecoderError)?,
+                        );
                         balances.push((*pubkey, balance, writable_accounts.contains(pubkey)));
                     } else {
                         balances.push((
@@ -308,7 +320,11 @@ fn capture_pre_accounts(
             match swig_wallet.litesvm().get_account(&pubkey) {
                 Some(account) => {
                     if account.owner == TOKEN_PROGRAM_ID {
-                        let balance = u64::from_le_bytes(account.data[64..72].try_into().unwrap());
+                        let balance = u64::from_le_bytes(
+                            account.data[64..72]
+                                .try_into()
+                                .map_err(|_| SwigError::DecoderError)?,
+                        );
                         balances.push((*pubkey, balance, writable_accounts.contains(pubkey)));
                     } else {
                         balances.push((
@@ -333,7 +349,7 @@ fn capture_pre_accounts(
 fn compare_account_balances(
     initial_balances: &[(solana_sdk::pubkey::Pubkey, u64, bool)],
     final_balances: &[(solana_sdk::pubkey::Pubkey, u64, bool)],
-) -> Vec<AccountChange> {
+) -> Result<Vec<AccountChange>, SwigError> {
     let mut account_changes = Vec::new();
 
     // Create a map of initial balances for quick lookup
@@ -343,7 +359,10 @@ fn compare_account_balances(
         .collect();
 
     for (pubkey, final_balance, writable) in final_balances {
-        let (initial_balance, _) = initial_map.get(pubkey).copied().unwrap_or((0, false));
+        let (initial_balance, _) = initial_map
+            .get(pubkey)
+            .copied()
+            .ok_or(SwigError::DecoderError)?;
         let change = *final_balance as i64 - initial_balance as i64;
 
         account_changes.push(AccountChange {
@@ -355,5 +374,5 @@ fn compare_account_balances(
         });
     }
 
-    account_changes
+    Ok(account_changes)
 }

@@ -58,5 +58,7 @@ fn should_decode_create_swig_instruction() {
         .build_sign_transaction(vec![inner_ix], None)
         .unwrap();
 
-    println!("signed decoded_tx: {}", decoded_tx);
+    if let Some(decoded_tx) = decoded_tx {
+        println!("signed decoded_tx: {}", decoded_tx);
+    }
 }
