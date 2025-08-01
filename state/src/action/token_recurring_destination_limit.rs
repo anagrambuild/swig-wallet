@@ -62,7 +62,8 @@ impl TokenRecurringDestinationLimit {
         // Check if the operation exceeds the current available amount
         if token_diff > self.current_amount {
             return Err(
-                SwigAuthenticateError::PermissionDeniedTokenDestinationLimitExceeded.into(),
+                SwigAuthenticateError::PermissionDeniedRecurringTokenDestinationLimitExceeded
+                    .into(),
             );
         }
 

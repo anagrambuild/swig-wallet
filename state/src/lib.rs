@@ -163,8 +163,12 @@ pub enum SwigAuthenticateError {
     PermissionDeniedSecp256r1InvalidAuthenticationKind,
     /// SOL destination limit exceeded
     PermissionDeniedSolDestinationLimitExceeded,
+    /// SOL destination recurring limit exceeded
+    PermissionDeniedSolDestinationRecurringLimitExceeded,
     /// Token destination limit exceeded
     PermissionDeniedTokenDestinationLimitExceeded,
+    /// Token destination recurring limit exceeded
+    PermissionDeniedRecurringTokenDestinationLimitExceeded,
 }
 
 impl From<SwigStateError> for ProgramError {

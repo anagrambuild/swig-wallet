@@ -56,7 +56,9 @@ impl SolRecurringDestinationLimit {
 
         // Check if the operation exceeds the current available amount
         if lamport_diff > self.current_amount {
-            return Err(SwigAuthenticateError::PermissionDeniedSolDestinationLimitExceeded.into());
+            return Err(
+                SwigAuthenticateError::PermissionDeniedSolDestinationRecurringLimitExceeded.into(),
+            );
         }
 
         // Deduct the amount from the current limit
