@@ -148,6 +148,8 @@ pub enum SwigError {
     OracleMappingRegistryNotInitialized,
     /// Oracle price chain empty
     OraclePriceChainEmpty,
+    /// Oracle price is stale
+    OraclePriceStale,
 }
 
 /// Implements conversion from SwigError to ProgramError.

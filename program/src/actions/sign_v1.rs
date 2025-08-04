@@ -378,7 +378,7 @@ pub fn sign_v1(
                             {
                                 let scope_data = unsafe {
                                     let scope_account =
-                                        &all_accounts.get_unchecked(all_accounts.len() - 1);
+                                        all_accounts.get_unchecked(all_accounts.len() - 1);
                                     // also check if owner matches
                                     if scope_account.owner().as_ref()
                                         != &pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ")
@@ -390,7 +390,7 @@ pub fn sign_v1(
 
                                 let mapping_registry = unsafe {
                                     let mapping_account =
-                                        &all_accounts.get_unchecked(all_accounts.len() - 2);
+                                        all_accounts.get_unchecked(all_accounts.len() - 2);
                                     if mapping_account.owner().as_ref()
                                         != &pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ")
                                     {

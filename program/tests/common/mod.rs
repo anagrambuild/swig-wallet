@@ -473,7 +473,19 @@ pub fn load_sample_scope_data(svm: &mut LiteSVM, payer: &Keypair) -> anyhow::Res
 
     svm.set_account(mapping_pubkey, data).unwrap();
 
+    // sync litesvm slot to mainnet slot
+    let slot = client.get_slot().unwrap();
+    svm.warp_to_slot(slot);
+
     Ok(mint)
+}
+
+pub fn advance_slot(context: &mut SwigTestContext, slots: u64) {
+    use solana_client::rpc_client::RpcClient;
+
+    let client = RpcClient::new("https://api.mainnet-beta.solana.com".to_string());
+    let slot = client.get_slot().unwrap();
+    context.svm.warp_to_slot(slot + slots);
 }
 
 pub fn setup_mint(svm: &mut LiteSVM, payer: &Keypair) -> anyhow::Result<Pubkey> {

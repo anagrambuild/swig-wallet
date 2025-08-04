@@ -169,8 +169,6 @@ pub enum SwigAuthenticateError {
     PermissionDeniedSecp256r1InvalidAuthenticationKind,
     /// Missing oracle account
     PermissionDeniedOracleLimitReached,
-    /// Invalid oracle price data
-    InvalidOraclePriceData,
 }
 
 impl From<SwigStateError> for ProgramError {

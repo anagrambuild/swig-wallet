@@ -234,9 +234,9 @@ fn test_oracle_limit_sol_transfer() {
         result.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3028)
+            solana_sdk::instruction::InstructionError::Custom(3029)
         ),
-        "Expected error code 3028"
+        "Expected error code 3029"
     );
 }
 
@@ -284,17 +284,17 @@ fn test_oracle_limit_token_transfer() {
     )
     .unwrap();
 
-    let mint_pubkey = mint;
+    let oracle_mint = mint;
     let swig_ata = setup_ata(
         &mut context.svm,
-        &mint_pubkey,
+        &oracle_mint,
         &swig_key,
         &context.default_payer,
     )
     .unwrap();
     let recipient_ata = setup_ata(
         &mut context.svm,
-        &mint_pubkey,
+        &oracle_mint,
         &secondary_authority.pubkey(),
         &context.default_payer,
     )
@@ -303,7 +303,7 @@ fn test_oracle_limit_token_transfer() {
     // Fund swig's token account with 10 tokens
     mint_to(
         &mut context.svm,
-        &mint_pubkey,
+        &oracle_mint,
         &context.default_payer,
         &swig_ata,
         100_000_000_000, // 10 tokens with 9 decimals
@@ -407,9 +407,9 @@ fn test_oracle_limit_token_transfer() {
         result.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3028)
+            solana_sdk::instruction::InstructionError::Custom(3029)
         ),
-        "Expected error code 3028"
+        "Expected error code 3029"
     );
 }
 
@@ -499,6 +499,7 @@ fn test_oracle_limit_sol_passthrough() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
+    println!("result: {:?}", result);
     assert!(result.is_ok(), "Transfer below limit should succeed");
     println!(
         "Compute units consumed for below limit transfer: {}",
@@ -545,9 +546,9 @@ fn test_oracle_limit_sol_passthrough() {
         result.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3028)
+            solana_sdk::instruction::InstructionError::Custom(3029)
         ),
-        "Expected error code 3028"
+        "Expected error code 3029"
     );
 }
 
@@ -579,25 +580,25 @@ fn test_oracle_limit_token_passthrough() {
         true,
     );
 
-    let mint_pubkey = mint;
+    let oracle_mint = mint;
 
     // Setup token accounts
     let swig_ata = setup_ata(
         &mut context.svm,
-        &mint_pubkey,
+        &oracle_mint,
         &swig_key,
         &context.default_payer,
     )
     .unwrap();
     let recipient_ata = setup_ata(
         &mut context.svm,
-        &mint_pubkey,
+        &oracle_mint,
         &secondary_authority.pubkey(),
         &context.default_payer,
     )
     .unwrap();
 
-    let mint_bytes = mint_pubkey.to_bytes();
+    let mint_bytes = oracle_mint.to_bytes();
 
     add_authority_with_ed25519_root(
         &mut context,
@@ -621,7 +622,7 @@ fn test_oracle_limit_token_passthrough() {
     // Fund swig's token account with 10 tokens
     mint_to(
         &mut context.svm,
-        &mint_pubkey,
+        &oracle_mint,
         &context.default_payer,
         &swig_ata,
         10_000_000_000, // 10 tokens with 9 decimals
@@ -725,52 +726,657 @@ fn test_oracle_limit_token_passthrough() {
         result.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3028)
+            solana_sdk::instruction::InstructionError::Custom(3029)
         ),
-        "Expected error code 3028"
+        "Expected error code 3029"
     );
 }
 
-// fn create_alt_and_add(context: &mut SwigTestContext) -> Result<Pubkey, anyhow::Error> {
-//     // Create the lookup table
-//     let (create_lookup_table_ix, lookup_table_address) =
-//         solana_sdk::address_lookup_table::instruction::create_lookup_table(
-//             context.default_payer.pubkey(),
-//             context.default_payer.pubkey(),
-//             0,
-//         );
+#[test_log::test]
+fn test_oracle_stale_price() {
+    let mut context = setup_test_context().unwrap();
+    load_sample_scope_data(&mut context.svm, &context.default_payer).unwrap();
 
-//     let tx = Transaction::new_signed_with_payer(
-//         &[create_lookup_table_ix],
-//         Some(&context.default_payer.pubkey()),
-//         &[&context.default_payer],
-//         context.svm.latest_blockhash(),
-//     );
+    let swig_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
 
-//     context.svm.send_transaction(tx).unwrap();
+    // Create wallet and setup
+    let id = rand::random::<[u8; 32]>();
+    let oracle_program = Keypair::new();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
 
-//     // Add addresses to the lookup table
-//     let addresses_to_add = vec![
-//         Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
-//         Pubkey::from_str("AxaxyeDT8JnWERSaTKvFXvPKkEdxnamKSqpWbsSjYg1g").unwrap(),
-//     ];
+    let secondary_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
+        .unwrap();
 
-//     let extend_lookup_table_ix = solana_sdk::address_lookup_table::instruction::extend_lookup_table(
-//         lookup_table_address,
-//         context.default_payer.pubkey(),
-//         Some(context.default_payer.pubkey()),
-//         addresses_to_add,
-//     );
+    // Add oracle limit permission (200 USDC limit)
+    let oracle_limit = OracleTokenLimit::new(
+        BaseAsset::USDC,
+        200_000_000, // 200 USDC limit
+        false,
+    );
 
-//     let tx = Transaction::new_signed_with_payer(
-//         &[extend_lookup_table_ix],
-//         Some(&context.default_payer.pubkey()),
-//         &[&context.default_payer],
-//         context.svm.latest_blockhash(),
-//     );
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: secondary_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::OracleTokenLimit(oracle_limit),
+            ClientAction::ProgramAll(ProgramAll {}),
+        ],
+    )
+    .unwrap();
 
-//     context.svm.send_transaction(tx).unwrap();
+    // Fund swig wallet
+    context.svm.airdrop(&swig_key, 20_000_000_000).unwrap();
 
-//     println!("ALT address: {:?}", lookup_table_address);
-//     Ok(lookup_table_address)
-// }
+    // Test 1: Transfer with stale price
+    advance_slot(&mut context, 150);
+
+    let transfer_ix =
+        system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 1_000_000_000);
+    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig_key,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        transfer_ix,
+        1,
+    )
+    .unwrap();
+
+    sign_ix.accounts.extend(vec![
+        AccountMeta::new_readonly(
+            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
+            false,
+        ),
+        AccountMeta::new_readonly(
+            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
+            false,
+        ),
+    ]);
+
+    let message = v0::Message::try_compile(
+        &secondary_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&secondary_authority])
+        .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    assert!(result.is_err(), "Transfer with stale price should fail");
+    assert_eq!(
+        result.unwrap_err().err,
+        solana_sdk::transaction::TransactionError::InstructionError(
+            0,
+            solana_sdk::instruction::InstructionError::Custom(63)
+        ),
+        "Expected error code 63"
+    );
+}
+
+/// This test compares the baseline performance of:
+/// 1. A regular SOL transfer (outside of swig)
+/// 2. A SOL transfer using swig without oracle
+/// 3. A SOL transfer using swig with oracle limit
+/// It measures and compares compute units consumption and accounts used
+#[test_log::test]
+fn test_oracle_sol_transfer_performance_comparison() {
+    let mut context = setup_test_context().unwrap();
+
+    // Setup oracle data
+    load_sample_scope_data(&mut context.svm, &context.default_payer).unwrap();
+
+    // Setup payers and recipients
+    let swig_authority = Keypair::new();
+    let secondary_authority = Keypair::new();
+    let regular_sender = Keypair::new();
+    let recipient = Keypair::new();
+
+    // Airdrop to participants
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&regular_sender.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Setup swig account
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    // Fund swig wallet with SOL
+    context.svm.airdrop(&swig, 20_000_000_000).unwrap();
+
+    // Add secondary authority with oracle limit permission (1000 USDC limit)
+    let oracle_limit = OracleTokenLimit::new(
+        BaseAsset::USDC,
+        1_000_000_000, // 1000 USDC with 6 decimals
+        false,
+    );
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: secondary_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::OracleTokenLimit(oracle_limit),
+            ClientAction::ProgramAll(ProgramAll {}),
+        ],
+    )
+    .unwrap();
+
+    // Measure regular SOL transfer performance
+    let transfer_amount = 1_000_000_000; // 1 SOL
+
+    let regular_transfer_ix = system_instruction::transfer(
+        &regular_sender.pubkey(),
+        &recipient.pubkey(),
+        transfer_amount,
+    );
+
+    let regular_transfer_message = v0::Message::try_compile(
+        &regular_sender.pubkey(),
+        &[regular_transfer_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let regular_tx_accounts = regular_transfer_message.account_keys.len();
+
+    let regular_transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(regular_transfer_message),
+        &[regular_sender],
+    )
+    .unwrap();
+
+    let regular_transfer_result = context.svm.send_transaction(regular_transfer_tx).unwrap();
+    let regular_transfer_cu = regular_transfer_result.compute_units_consumed;
+
+    println!("Regular SOL transfer CU: {}", regular_transfer_cu);
+    println!("Regular SOL transfer accounts: {}", regular_tx_accounts);
+
+    // Measure swig SOL transfer performance (without oracle)
+    let swig_transfer_ix =
+        system_instruction::transfer(&swig, &recipient.pubkey(), transfer_amount);
+
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        swig_authority.pubkey(),
+        swig_authority.pubkey(),
+        swig_transfer_ix,
+        0, // authority role id
+    )
+    .unwrap();
+
+    let swig_transfer_message = v0::Message::try_compile(
+        &swig_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let swig_tx_accounts = swig_transfer_message.account_keys.len();
+
+    let swig_transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(swig_transfer_message),
+        &[swig_authority],
+    )
+    .unwrap();
+
+    let swig_transfer_result = context.svm.send_transaction(swig_transfer_tx).unwrap();
+    let swig_transfer_cu = swig_transfer_result.compute_units_consumed;
+    println!("Swig SOL transfer CU: {}", swig_transfer_cu);
+    println!("Swig SOL transfer accounts: {}", swig_tx_accounts);
+
+    // Measure swig SOL transfer performance (with oracle)
+    let swig_oracle_transfer_ix =
+        system_instruction::transfer(&swig, &recipient.pubkey(), transfer_amount);
+
+    let mut swig_oracle_sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        swig_oracle_transfer_ix,
+        1, // secondary authority role id
+    )
+    .unwrap();
+
+    // Add oracle accounts
+    swig_oracle_sign_ix.accounts.extend(vec![
+        AccountMeta::new_readonly(
+            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
+            false,
+        ),
+        AccountMeta::new_readonly(
+            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
+            false,
+        ),
+    ]);
+
+    let swig_oracle_transfer_message = v0::Message::try_compile(
+        &secondary_authority.pubkey(),
+        &[swig_oracle_sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let swig_oracle_tx_accounts = swig_oracle_transfer_message.account_keys.len();
+
+    let swig_oracle_transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(swig_oracle_transfer_message),
+        &[secondary_authority],
+    )
+    .unwrap();
+
+    let swig_oracle_transfer_result = context
+        .svm
+        .send_transaction(swig_oracle_transfer_tx)
+        .unwrap();
+    println!(
+        "swig_oracle_transfer_result: {:?}",
+        swig_oracle_transfer_result
+    );
+    let swig_oracle_transfer_cu = swig_oracle_transfer_result.compute_units_consumed;
+    println!("Swig oracle SOL transfer CU: {}", swig_oracle_transfer_cu);
+    println!(
+        "Swig oracle SOL transfer accounts: {}",
+        swig_oracle_tx_accounts
+    );
+
+    // Compare results
+    let swig_cu_difference = swig_transfer_cu as i64 - regular_transfer_cu as i64;
+    let swig_account_difference = swig_tx_accounts as i64 - regular_tx_accounts as i64;
+    let oracle_cu_difference = swig_oracle_transfer_cu as i64 - regular_transfer_cu as i64;
+    let oracle_account_difference = swig_oracle_tx_accounts as i64 - regular_tx_accounts as i64;
+    let oracle_overhead = swig_oracle_transfer_cu as i64 - swig_transfer_cu as i64;
+
+    println!("\n=== SOL Transfer Performance Comparison ===");
+    println!("Regular SOL transfer:");
+    println!(
+        "  CU: {} | Accounts: {}",
+        regular_transfer_cu, regular_tx_accounts
+    );
+
+    println!("\nSwig SOL transfer (without oracle):");
+    println!(
+        "  CU: {} | Accounts: {}",
+        swig_transfer_cu, swig_tx_accounts
+    );
+    println!(
+        "  Overhead: {} CU ({:.2}%) | {} accounts",
+        swig_cu_difference,
+        (swig_cu_difference as f64 / regular_transfer_cu as f64) * 100.0,
+        swig_account_difference
+    );
+
+    println!("\nSwig SOL transfer (with oracle):");
+    println!(
+        "  CU: {} | Accounts: {}",
+        swig_oracle_transfer_cu, swig_oracle_tx_accounts
+    );
+    println!(
+        "  Total overhead: {} CU ({:.2}%) | {} accounts",
+        oracle_cu_difference,
+        (oracle_cu_difference as f64 / regular_transfer_cu as f64) * 100.0,
+        oracle_account_difference
+    );
+    println!(
+        "  Oracle overhead: {} CU ({:.2}%) | 2 accounts",
+        oracle_overhead,
+        (oracle_overhead as f64 / regular_transfer_cu as f64) * 100.0
+    );
+
+    // Assertions for performance limits
+    // Swig overhead should be reasonable
+    assert!(
+        swig_transfer_cu - regular_transfer_cu <= 3777,
+        "Swig overhead too high"
+    );
+
+    // Oracle overhead should be reasonable (additional oracle processing)
+    assert!(
+        swig_oracle_transfer_cu - swig_transfer_cu <= 12000,
+        "Oracle overhead too high"
+    );
+
+    // Total oracle overhead should be reasonable
+    assert!(
+        swig_oracle_transfer_cu - regular_transfer_cu <= 12000,
+        "Total oracle overhead too high"
+    );
+}
+
+/// This test compares the baseline performance of:
+/// 1. A regular token transfer (outside of swig)
+/// 2. A token transfer using swig with oracle limit
+/// It measures and compares compute units consumption and accounts used
+#[test_log::test]
+fn test_oracle_token_transfer_performance_comparison() {
+    let mut context = setup_test_context().unwrap();
+
+    // Setup oracle data
+    let oracle_mint = load_sample_scope_data(&mut context.svm, &context.default_payer).unwrap();
+
+    // Setup payers and recipients
+    let swig_authority = Keypair::new();
+    let secondary_authority = Keypair::new();
+    let regular_sender = Keypair::new();
+    let recipient = Keypair::new();
+
+    // Airdrop to participants
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&regular_sender.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Setup swig account
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    // Add secondary authority with oracle limit permission (1000 USDC limit)
+    let oracle_limit = OracleTokenLimit::new(
+        BaseAsset::USDC,
+        1_000_000_000, // 1000 USDC with 6 decimals
+        false,
+    );
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: secondary_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::OracleTokenLimit(oracle_limit),
+            ClientAction::ProgramAll(ProgramAll {}),
+        ],
+    )
+    .unwrap();
+
+    // Setup token accounts
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &oracle_mint,
+        &swig,
+        &context.default_payer,
+    )
+    .unwrap();
+
+    let regular_sender_ata = setup_ata(
+        &mut context.svm,
+        &oracle_mint,
+        &regular_sender.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+
+    let recipient_ata = setup_ata(
+        &mut context.svm,
+        &oracle_mint,
+        &recipient.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+
+    // Mint tokens to both sending accounts
+    let initial_token_amount = 1000;
+    mint_to(
+        &mut context.svm,
+        &oracle_mint,
+        &context.default_payer,
+        &swig_ata,
+        initial_token_amount,
+    )
+    .unwrap();
+
+    mint_to(
+        &mut context.svm,
+        &oracle_mint,
+        &context.default_payer,
+        &regular_sender_ata,
+        initial_token_amount,
+    )
+    .unwrap();
+
+    // Measure regular token transfer performance
+    let transfer_amount = 100;
+    let token_program_id = spl_token::ID;
+
+    let regular_transfer_ix = spl_token::instruction::transfer(
+        &token_program_id,
+        &regular_sender_ata,
+        &recipient_ata,
+        &regular_sender.pubkey(),
+        &[],
+        transfer_amount,
+    )
+    .unwrap();
+
+    let regular_transfer_message = v0::Message::try_compile(
+        &regular_sender.pubkey(),
+        &[regular_transfer_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let regular_tx_accounts = regular_transfer_message.account_keys.len();
+
+    let regular_transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(regular_transfer_message),
+        &[regular_sender],
+    )
+    .unwrap();
+
+    let regular_transfer_result = context.svm.send_transaction(regular_transfer_tx).unwrap();
+    let regular_transfer_cu = regular_transfer_result.compute_units_consumed;
+
+    println!("Regular token transfer CU: {}", regular_transfer_cu);
+    println!("Regular token transfer accounts: {}", regular_tx_accounts);
+
+    // Measure swig token transfer performance (without oracle)
+    let swig_transfer_ix = spl_token::instruction::transfer(
+        &token_program_id,
+        &swig_ata,
+        &recipient_ata,
+        &swig,
+        &[],
+        transfer_amount,
+    )
+    .unwrap();
+
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        swig_authority.pubkey(),
+        swig_authority.pubkey(),
+        swig_transfer_ix,
+        0, // authority role id
+    )
+    .unwrap();
+
+    let swig_transfer_message = v0::Message::try_compile(
+        &swig_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let swig_tx_accounts = swig_transfer_message.account_keys.len();
+
+    let swig_transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(swig_transfer_message),
+        &[swig_authority],
+    )
+    .unwrap();
+
+    let swig_transfer_result = context.svm.send_transaction(swig_transfer_tx).unwrap();
+    let swig_transfer_cu = swig_transfer_result.compute_units_consumed;
+    println!("Swig token transfer CU: {}", swig_transfer_cu);
+    println!("Swig token transfer accounts: {}", swig_tx_accounts);
+
+    // Measure swig token transfer performance (with oracle)
+    let swig_oracle_transfer_ix = spl_token::instruction::transfer(
+        &token_program_id,
+        &swig_ata,
+        &recipient_ata,
+        &swig,
+        &[],
+        transfer_amount,
+    )
+    .unwrap();
+
+    let mut swig_oracle_sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        swig_oracle_transfer_ix,
+        1, // secondary authority role id
+    )
+    .unwrap();
+
+    // Add oracle accounts
+    swig_oracle_sign_ix.accounts.extend(vec![
+        AccountMeta::new_readonly(
+            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
+            false,
+        ),
+        AccountMeta::new_readonly(
+            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
+            false,
+        ),
+    ]);
+
+    let swig_oracle_transfer_message = v0::Message::try_compile(
+        &secondary_authority.pubkey(),
+        &[swig_oracle_sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let swig_oracle_tx_accounts = swig_oracle_transfer_message.account_keys.len();
+
+    let swig_oracle_transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(swig_oracle_transfer_message),
+        &[secondary_authority],
+    )
+    .unwrap();
+
+    let swig_oracle_transfer_result = context
+        .svm
+        .send_transaction(swig_oracle_transfer_tx)
+        .unwrap();
+    let swig_oracle_transfer_cu = swig_oracle_transfer_result.compute_units_consumed;
+    println!("Swig oracle token transfer CU: {}", swig_oracle_transfer_cu);
+    println!(
+        "Swig oracle token transfer accounts: {}",
+        swig_oracle_tx_accounts
+    );
+
+    // Compare results
+    let swig_cu_difference = swig_transfer_cu as i64 - regular_transfer_cu as i64;
+    let swig_account_difference = swig_tx_accounts as i64 - regular_tx_accounts as i64;
+    let oracle_cu_difference = swig_oracle_transfer_cu as i64 - regular_transfer_cu as i64;
+    let oracle_account_difference = swig_oracle_tx_accounts as i64 - regular_tx_accounts as i64;
+    let oracle_overhead = swig_oracle_transfer_cu as i64 - swig_transfer_cu as i64;
+
+    println!("\n=== Performance Comparison ===");
+    println!("Regular token transfer:");
+    println!(
+        "  CU: {} | Accounts: {}",
+        regular_transfer_cu, regular_tx_accounts
+    );
+
+    println!("\nSwig token transfer (without oracle):");
+    println!(
+        "  CU: {} | Accounts: {}",
+        swig_transfer_cu, swig_tx_accounts
+    );
+    println!(
+        "  Overhead: {} CU ({:.2}%) | {} accounts",
+        swig_cu_difference,
+        (swig_cu_difference as f64 / regular_transfer_cu as f64) * 100.0,
+        swig_account_difference
+    );
+
+    println!("\nSwig token transfer (with oracle):");
+    println!(
+        "  CU: {} | Accounts: {}",
+        swig_oracle_transfer_cu, swig_oracle_tx_accounts
+    );
+    println!(
+        "  Total overhead: {} CU ({:.2}%) | {} accounts",
+        oracle_cu_difference,
+        (oracle_cu_difference as f64 / regular_transfer_cu as f64) * 100.0,
+        oracle_account_difference
+    );
+    println!(
+        "  Oracle overhead: {} CU ({:.2}%) | 2 accounts",
+        oracle_overhead,
+        (oracle_overhead as f64 / regular_transfer_cu as f64) * 100.0
+    );
+
+    // Assertions for performance limits
+    // Swig overhead should be reasonable
+    assert!(
+        swig_transfer_cu - regular_transfer_cu <= 3777,
+        "Swig overhead too high"
+    );
+
+    // Oracle overhead should be reasonable (additional oracle processing)
+    assert!(
+        swig_oracle_transfer_cu - swig_transfer_cu <= 5000,
+        "Oracle overhead too high"
+    );
+
+    // Total oracle overhead should be reasonable
+    assert!(
+        swig_oracle_transfer_cu - regular_transfer_cu <= 8777,
+        "Total oracle overhead too high"
+    );
+}

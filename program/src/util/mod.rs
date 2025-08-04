@@ -480,12 +480,17 @@ pub fn get_price_data(
     let (mut scope_price, mut scope_exp) = get_scope_price_data(
         scope_data,
         mapping.scope_details.ok_or(SwigError::OracleMintNotFound)?,
+        clock.slot,
     )?;
 
     Ok((scope_price, scope_exp, mapping.decimals))
 }
 
-fn get_scope_price_data(data: &[u8], price_chain: [u16; 3]) -> Result<(u64, u8), SwigError> {
+fn get_scope_price_data(
+    data: &[u8],
+    price_chain: [u16; 3],
+    current_slot: u64,
+) -> Result<(u64, u8), SwigError> {
     let prices_start = 8 + 32;
 
     const SCOPE_PRICE_FEED_LEN: usize = 56;
@@ -495,7 +500,6 @@ fn get_scope_price_data(data: &[u8], price_chain: [u16; 3]) -> Result<(u64, u8),
         return Err(SwigError::OraclePriceChainEmpty);
     }
     let mut price_chain_raw = Vec::new();
-    let mut oldest_timestamp = u64::MAX;
 
     for &token_id in &price_chain {
         if token_id == u16::MAX {
@@ -519,8 +523,12 @@ fn get_scope_price_data(data: &[u8], price_chain: [u16; 3]) -> Result<(u64, u8),
         let unix_timestamp =
             u64::from_le_bytes(unsafe { price_data.get_unchecked(24..32).try_into().unwrap() });
 
+        // time to allow: 60 seconds = 60 seconds / 0.4ms per slot = 150 slots
+        if last_updated_slot < current_slot - 150 {
+            return Err(SwigError::OraclePriceStale);
+        }
+
         price_chain_raw.push((value, exp, unix_timestamp));
-        oldest_timestamp = oldest_timestamp.min(unix_timestamp);
     }
 
     if price_chain_raw.is_empty() {
@@ -603,16 +611,6 @@ fn get_scope_price_data(data: &[u8], price_chain: [u16; 3]) -> Result<(u64, u8),
     } else {
         (final_value, chained_exp as u8)
     };
-
-    let last_updated_slot: u64 = u64::from_le_bytes(unsafe {
-        data.get_unchecked(
-            prices_start + (price_chain[0] as usize * SCOPE_PRICE_FEED_LEN) + 16
-                ..prices_start + (price_chain[0] as usize * SCOPE_PRICE_FEED_LEN) + 24,
-        )
-        .try_into()
-        .unwrap()
-    });
-    let unix_timestamp: u64 = oldest_timestamp;
 
     Ok((final_value, final_exp))
 }
