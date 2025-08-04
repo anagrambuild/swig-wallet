@@ -7,6 +7,7 @@
 
 pub mod all;
 pub mod manage_authority;
+pub mod oracle_limits;
 pub mod program;
 pub mod program_all;
 pub mod program_curated;
@@ -19,9 +20,11 @@ pub mod stake_recurring_limit;
 pub mod sub_account;
 pub mod token_limit;
 pub mod token_recurring_limit;
+use crate::{IntoBytes, SwigStateError, Transmutable, TransmutableMut};
 use all::All;
 use manage_authority::ManageAuthority;
 use no_padding::NoPadding;
+use oracle_limits::OracleTokenLimit;
 use pinocchio::program_error::ProgramError;
 use program::Program;
 use program_all::ProgramAll;
@@ -35,8 +38,6 @@ use stake_recurring_limit::StakeRecurringLimit;
 use sub_account::SubAccount;
 use token_limit::TokenLimit;
 use token_recurring_limit::TokenRecurringLimit;
-
-use crate::{IntoBytes, SwigStateError, Transmutable, TransmutableMut};
 
 /// Represents an action in the Swig wallet system.
 ///
@@ -138,6 +139,8 @@ pub enum Permission {
     ProgramAll = 13,
     /// Permission to interact with curated programs only
     ProgramCurated = 14,
+    /// Permission to perform token operations with oracle-based limits
+    OracleTokenLimit = 15,
 }
 
 impl TryFrom<u16> for Permission {
@@ -147,7 +150,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=14 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=15 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -206,6 +209,7 @@ impl ActionLoader {
             Permission::StakeAll => StakeAll::valid_layout(data),
             Permission::ProgramAll => ProgramAll::valid_layout(data),
             Permission::ProgramCurated => ProgramCurated::valid_layout(data),
+            Permission::OracleTokenLimit => OracleTokenLimit::valid_layout(data),
             _ => Ok(false),
         }
     }

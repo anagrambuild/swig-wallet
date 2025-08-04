@@ -99,6 +99,12 @@ pub enum SwigStateError {
     PermissionLoadError,
     /// Adding an authority requires at least one action
     InvalidAuthorityMustHaveAtLeastOneAction,
+    /// Oracle not available for mint
+    InvalidOracleTokenMint,
+    /// Feed Id non hex char
+    FeedIdNonHexCharacter,
+    /// Feed id must be 32 bytes
+    FeedIdMustBe32Bytes,
 }
 
 /// Error types related to authentication operations.
@@ -161,6 +167,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedSecp256r1InvalidMessage,
     /// Invalid Secp256r1 authentication kind
     PermissionDeniedSecp256r1InvalidAuthenticationKind,
+    /// Missing oracle account
+    PermissionDeniedOracleLimitReached,
 }
 
 impl From<SwigStateError> for ProgramError {

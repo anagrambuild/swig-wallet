@@ -4,6 +4,7 @@
 //! - Program scope caching and lookup
 //! - Account balance reading
 //! - Token transfer operations
+//! - Oracle Program for token price fetch
 //! The utilities are optimized for performance and safety.
 
 use std::mem::MaybeUninit;
@@ -14,10 +15,12 @@ use pinocchio::{
     instruction::{AccountMeta, Instruction, Signer},
     msg,
     program_error::ProgramError,
-    pubkey::Pubkey,
+    pubkey::{self, Pubkey},
     syscalls::sol_sha256,
+    sysvars::{clock::Clock, Sysvar},
     ProgramResult,
 };
+use pinocchio_pubkey::pubkey;
 use swig_state::{
     action::{
         program_scope::{NumericType, ProgramScope},
@@ -414,4 +417,200 @@ pub fn hash_except(
     let res = 0;
 
     data_payload_hash
+}
+
+use oracle_mapping_state::{DataLen, MintMapping, ScopeMappingRegistry};
+
+/// Calculate token value with configurable precision
+///
+/// # Arguments
+/// * `base_price` - Oracle price value
+/// * `base_exponent` - Oracle price exponent
+/// * `oracle_base_decimal` - Oracle decimal places
+/// * `mint_amount` - Token amount in mint decimals
+/// * `mint_decimal` - Token decimal places
+/// * `target_precision` - Target precision for result
+///
+/// # Returns
+/// Token value in target precision
+pub fn calculate_token_value(
+    base_price: u64,
+    base_exponent: u8,
+    oracle_base_decimal: u8,
+    mint_amount: u64,
+    mint_decimal: u8,
+    target_precision: u8,
+) -> Result<u64, SwigError> {
+    let price = base_price as u128;
+    let amount = mint_amount as u128;
+    let base_exp = base_exponent as u32;
+    let mint_dec = mint_decimal as u32;
+    let target_prec = target_precision as u32;
+
+    // value = (amount * price * 10^target_precision) / (10^mint_decimal * 10^base_exponent)
+    let numerator = amount
+        .saturating_mul(price)
+        .saturating_mul(10u128.pow(target_prec));
+    let denominator = 10u128.pow(mint_dec).saturating_mul(10u128.pow(base_exp));
+
+    if denominator == 0 {
+        return Ok(0);
+    }
+    let value = numerator / denominator;
+    if value > u64::MAX as u128 {
+        return Err(SwigError::OracleValueOverflow);
+    }
+    Ok(value as u64)
+}
+
+pub const NULL_PUBKEY: [u8; 32] = [
+    11, 193, 238, 216, 208, 116, 241, 195, 55, 212, 76, 22, 75, 202, 40, 216, 76, 206, 27, 169,
+    138, 64, 177, 28, 19, 90, 156, 0, 0, 0, 0, 0,
+];
+
+pub fn get_price_data(
+    mapping_registry: &[u8],
+    scope_data: &[u8],
+    mint: &[u8; 32],
+    clock: &Clock,
+) -> Result<(u64, u8, u8), SwigError> {
+    let mapping = MintMapping::get_mapping_details(&mapping_registry, mint)
+        .map_err(|_| SwigError::OracleMintNotFound)?;
+
+    let (mut scope_price, mut scope_exp) = get_scope_price_data(
+        scope_data,
+        mapping.scope_details.ok_or(SwigError::OracleMintNotFound)?,
+        clock.slot,
+    )?;
+
+    Ok((scope_price, scope_exp, mapping.decimals))
+}
+
+fn get_scope_price_data(
+    data: &[u8],
+    price_chain: [u16; 3],
+    current_slot: u64,
+) -> Result<(u64, u8), SwigError> {
+    let prices_start = 8 + 32;
+
+    const SCOPE_PRICE_FEED_LEN: usize = 56;
+
+    // Check if price_chain is valid
+    if price_chain == [u16::MAX, u16::MAX, u16::MAX] {
+        return Err(SwigError::OraclePriceChainEmpty);
+    }
+    let mut price_chain_raw = Vec::new();
+
+    for &token_id in &price_chain {
+        if token_id == u16::MAX {
+            break;
+        }
+
+        let start_offset = prices_start + (token_id as usize * SCOPE_PRICE_FEED_LEN);
+        let end_offset = start_offset + SCOPE_PRICE_FEED_LEN;
+
+        if end_offset > data.len() {
+            return Err(SwigError::OraclePriceChainEmpty);
+        }
+
+        let price_data = unsafe { data.get_unchecked(start_offset..end_offset) };
+        let value =
+            u64::from_le_bytes(unsafe { price_data.get_unchecked(0..8).try_into().unwrap() });
+        let exp =
+            u64::from_le_bytes(unsafe { price_data.get_unchecked(8..16).try_into().unwrap() });
+        let last_updated_slot =
+            u64::from_le_bytes(unsafe { price_data.get_unchecked(16..24).try_into().unwrap() });
+        let unix_timestamp =
+            u64::from_le_bytes(unsafe { price_data.get_unchecked(24..32).try_into().unwrap() });
+
+        // time to allow: 60 seconds = 60 seconds / 0.4ms per slot = 150 slots
+        if last_updated_slot < current_slot - 150 {
+            return Err(SwigError::OraclePriceStale);
+        }
+
+        price_chain_raw.push((value, exp, unix_timestamp));
+    }
+
+    if price_chain_raw.is_empty() {
+        return Err(SwigError::OraclePriceChainEmpty);
+    }
+
+    let last_updated_slot: u64 = u64::from_le_bytes(unsafe {
+        data.get_unchecked(
+            prices_start + (price_chain[0] as usize * SCOPE_PRICE_FEED_LEN) + 16
+                ..prices_start + (price_chain[0] as usize * SCOPE_PRICE_FEED_LEN) + 24,
+        )
+        .try_into()
+        .unwrap()
+    });
+
+    // If only one price in chain, return it directly
+    if price_chain_raw.len() == 1 {
+        let (value, exp, unix_timestamp) = price_chain_raw[0];
+        return Ok((value, exp as u8));
+    }
+
+    // Chain multiple prices together by multiplying them
+    let mut chained_value: u128 = 1;
+    let mut chained_exp: u64 = 0;
+
+    for (value, exp, _) in price_chain_raw {
+        let value_u128 = value as u128;
+
+        // Pre-scale values if they're too large to prevent overflow
+        let mut scaled_value = value_u128;
+        let mut scaled_exp = exp;
+
+        // Scale down the input value if it's too large
+        while scaled_value > u64::MAX as u128 && scaled_exp > 0 {
+            scaled_value /= 10;
+            scaled_exp = scaled_exp
+                .checked_sub(1)
+                .ok_or(SwigError::OraclePriceChainEmpty)?;
+        }
+
+        // Also scale down the current chained value if it's too large
+        while chained_value > u64::MAX as u128 && chained_exp > 0 {
+            chained_value /= 10;
+            chained_exp = chained_exp
+                .checked_sub(1)
+                .ok_or(SwigError::OraclePriceChainEmpty)?;
+        }
+
+        // Now perform the multiplication with scaled values
+        chained_value = chained_value
+            .checked_mul(scaled_value)
+            .ok_or(SwigError::OraclePriceChainEmpty)?;
+
+        // Add the exponents
+        chained_exp = chained_exp
+            .checked_add(scaled_exp)
+            .ok_or(SwigError::OraclePriceChainEmpty)?;
+
+        // Scale down if the value is too large to fit in u64
+        while chained_value > u64::MAX as u128 && chained_exp > 0 {
+            chained_value /= 10;
+            chained_exp = chained_exp
+                .checked_sub(1)
+                .ok_or(SwigError::OraclePriceChainEmpty)?;
+        }
+    }
+
+    let final_value = if chained_value <= u64::MAX as u128 {
+        chained_value as u64
+    } else {
+        return Err(SwigError::OracleValueOverflow);
+    };
+
+    // Ensure the exponent is within reasonable bounds to prevent overflow in pow operations
+    let (final_value, final_exp) = if chained_exp > 18 {
+        // If exponent is too large, scale down the value and reduce exponent
+        let scale_factor = chained_exp - 18;
+        let scaled_value = final_value / 10_u64.pow(scale_factor as u32);
+        (scaled_value, (chained_exp - scale_factor) as u8)
+    } else {
+        (final_value, chained_exp as u8)
+    };
+
+    Ok((final_value, final_exp))
 }

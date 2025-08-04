@@ -12,6 +12,7 @@ pinocchio-pubkey = { version = "0.2.4" }
 swig-assertions = { path = "../assertions" }
 no-padding = { path = "../no-padding" }
 libsecp256k1 = { version = "0.7.2", default-features = false }
+hex = "0.4.3"
 
 [target.'cfg(not(feature = "static_syscalls"))'.dependencies]
 murmur3 = "0.5.2"
