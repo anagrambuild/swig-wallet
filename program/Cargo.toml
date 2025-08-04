@@ -27,7 +27,7 @@ bytemuck = { version = "1.13.1", features = ["derive"] }
 no-padding = { path = "../no-padding" }
 solana-security-txt = "=1.1.1"
 default-env = "=0.1.1"
-oracle-mapping-state = { git = "https://github.com/anagrambuild/scope-oracle-mapper", branch = "santhosh/state-crate" }
+oracle-mapping-state = { git = "https://github.com/anagrambuild/scope-oracle-mapper" }
 
 
 [dev-dependencies]
