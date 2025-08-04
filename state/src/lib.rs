@@ -165,6 +165,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedSecp256r1InvalidMessageHash,
     /// Invalid Secp256r1 message
     PermissionDeniedSecp256r1InvalidMessage,
+    /// Invalid Secp256r1 authentication kind
+    PermissionDeniedSecp256r1InvalidAuthenticationKind,
     /// Missing oracle account
     PermissionDeniedOracleLimitReached,
     /// Invalid oracle price data

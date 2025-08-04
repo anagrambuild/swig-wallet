@@ -237,6 +237,8 @@ pub fn sign_v1(
     const UNINIT_HASH: MaybeUninit<[u8; 32]> = MaybeUninit::uninit();
     let mut account_snapshots: [MaybeUninit<[u8; 32]>; 100] = [UNINIT_HASH; 100];
 
+    let mut total_sol_spent: u64 = 0;
+
     // Build exclusion ranges for each account type for snapshots
     for (index, account_classifier) in account_classifiers.iter().enumerate() {
         let account = unsafe { all_accounts.get_unchecked(index) };
@@ -327,7 +329,15 @@ pub fn sign_v1(
                 }
             }
 
+            let swig_balance_before = ctx.accounts.swig.lamports();
+
             instruction.execute(all_accounts, ctx.accounts.swig.key(), &[signer.into()])?;
+
+            let swig_balance_after = ctx.accounts.swig.lamports();
+            if swig_balance_after < swig_balance_before {
+                let amount_spent = swig_balance_before.saturating_sub(swig_balance_after);
+                total_sol_spent = total_sol_spent.saturating_add(amount_spent);
+            }
         } else {
             return Err(SwigError::InstructionExecutionError.into());
         }
@@ -360,8 +370,8 @@ pub fn sign_v1(
                             SwigAuthenticateError::PermissionDeniedInsufficientBalance.into()
                         );
                     }
-                    if lamports > &current_lamports {
-                        let amount_diff = lamports - current_lamports;
+
+                    if total_sol_spent > 0 {
                         {
                             if let Some(action) =
                                 RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
@@ -400,7 +410,7 @@ pub fn sign_v1(
                                     price,
                                     exp,
                                     action.get_base_asset_decimals(),
-                                    amount_diff,
+                                    total_sol_spent,
                                     mint_decimal,
                                     action.get_base_asset_decimals(),
                                 )?;
@@ -412,20 +422,14 @@ pub fn sign_v1(
                                 }
                             };
                         }
+                        if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])? {
+                            action.run(total_sol_spent)?;
+                            continue;
+                        } else if let Some(action) =
+                            RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])?
                         {
-                            if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])?
-                            {
-                                action.run(amount_diff)?;
-                                continue;
-                            };
-                        }
-                        {
-                            if let Some(action) =
-                                RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])?
-                            {
-                                action.run(amount_diff, slot)?;
-                                continue;
-                            };
+                            action.run(total_sol_spent, slot)?;
+                            continue;
                         }
                         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                     }

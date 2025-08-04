@@ -7,8 +7,10 @@ mod common;
 use common::*;
 use litesvm_token::spl_token::{self, instruction::TokenInstruction};
 use solana_sdk::{
+    account::Account,
     instruction::{AccountMeta, Instruction, InstructionError},
     message::{v0, VersionedMessage},
+    native_token::LAMPORTS_PER_SOL,
     program_pack::Pack,
     pubkey::Pubkey,
     signature::Keypair,
@@ -17,7 +19,8 @@ use solana_sdk::{
     sysvar::clock::Clock,
     transaction::{TransactionError, VersionedTransaction},
 };
-use swig_interface::{AuthorityConfig, ClientAction};
+use swig::actions::sign_v1::SignV1Args;
+use swig_interface::{compact_instructions, AuthorityConfig, ClientAction};
 use swig_state::{
     action::{
         all::All, program::Program, sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
@@ -1057,4 +1060,319 @@ fn test_transfer_between_swig_accounts() {
         "Successfully transferred {} lamports from Swig {} to Swig {}",
         transfer_amount, sender_swig, recipient_swig
     );
+}
+
+#[test_log::test]
+fn test_sol_limit_cpi_enforcement() {
+    use swig_state::IntoBytes;
+    let mut context = setup_test_context().unwrap();
+
+    let swig_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let funding_account = Keypair::new();
+    context
+        .svm
+        .airdrop(&funding_account.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::SolLimit(SolLimit {
+                amount: LAMPORTS_PER_SOL,
+            }),
+            ClientAction::Program(Program {
+                program_id: solana_sdk::system_program::ID.to_bytes(),
+            }),
+        ],
+    )
+    .unwrap();
+
+    context.svm.airdrop(&swig, 5 * LAMPORTS_PER_SOL).unwrap();
+
+    let transfer_amount: u64 = 2 * LAMPORTS_PER_SOL; // 2 SOL (exceeds the 1 SOL limit)
+
+    // Instruction 1: Transfer funds TO the Swig wallet
+    let fund_swig_ix =
+        system_instruction::transfer(&funding_account.pubkey(), &swig, transfer_amount);
+
+    // Instruction 2: Transfer funds FROM Swig to the authority's wallet
+    let withdraw_ix =
+        system_instruction::transfer(&swig, &second_authority.pubkey(), transfer_amount);
+
+    let initial_accounts = vec![
+        AccountMeta::new(swig, false),
+        AccountMeta::new(context.default_payer.pubkey(), true),
+        AccountMeta::new(second_authority.pubkey(), true),
+        AccountMeta::new(funding_account.pubkey(), true),
+    ];
+
+    let (final_accounts, compact_ixs) =
+        compact_instructions(swig, initial_accounts, vec![fund_swig_ix, withdraw_ix]);
+
+    let instruction_payload = compact_ixs.into_bytes();
+
+    // Prepare the `sign_v1` instruction manually
+    let sign_args = SignV1Args::new(1, instruction_payload.len() as u16); // Role ID 1 for limited_authority
+    let mut sign_ix_data = Vec::new();
+    sign_ix_data.extend_from_slice(sign_args.into_bytes().unwrap());
+    sign_ix_data.extend_from_slice(&instruction_payload);
+    sign_ix_data.push(2);
+
+    let sign_ix = Instruction {
+        program_id: swig::ID.into(),
+        accounts: final_accounts,
+        data: sign_ix_data,
+    };
+
+    // 3. EXECUTE AND ASSERT
+    let initial_authority_balance = context.svm.get_balance(&second_authority.pubkey()).unwrap();
+    let initial_swig_balance = context.svm.get_balance(&swig).unwrap();
+
+    println!(
+        "Initial Swig balance: {} SOL",
+        initial_swig_balance / LAMPORTS_PER_SOL
+    );
+    println!(
+        "Initial Authority external wallet balance: {} SOL",
+        initial_authority_balance / LAMPORTS_PER_SOL
+    );
+    println!(
+        "Testing {} SOL limit enforcement with funding+withdrawing {} SOL...",
+        LAMPORTS_PER_SOL / LAMPORTS_PER_SOL,
+        transfer_amount / LAMPORTS_PER_SOL
+    );
+
+    // Build the transaction
+    let test_message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let test_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(test_message),
+        &[&context.default_payer, &second_authority, &funding_account], // All required signers
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(test_tx);
+
+    // Transaction should fail due to spending limit validation
+    if (!result.is_err()) {
+        let unwrapped_result = result.clone().unwrap();
+        println!("unwrapped_result: {}", unwrapped_result.pretty_logs());
+    }
+
+    assert!(
+        result.is_err(),
+        "Transaction should fail due to spending limit validation"
+    );
+    let error = result.unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(0, InstructionError::Custom(3011))
+    );
+
+    println!("✅ SOL limit properly enforced: Transaction failed with spending limit error!");
+    println!("Error: {:?}", error.err);
+
+    // Verify that no funds were transferred
+    let final_authority_balance = context.svm.get_balance(&second_authority.pubkey()).unwrap();
+    let final_swig_balance = context.svm.get_balance(&swig).unwrap();
+
+    println!(
+        "After Swig balance: {} SOL",
+        final_swig_balance / LAMPORTS_PER_SOL
+    );
+    println!(
+        "After Authority external wallet balance: {} SOL",
+        final_authority_balance / LAMPORTS_PER_SOL
+    );
+
+    // Authority balance should be unchanged
+    assert_eq!(final_authority_balance, initial_authority_balance);
+
+    // SWIG balance should be unchanged (no net transfer occurred due to failed
+    // transaction)
+    assert_eq!(final_swig_balance, initial_swig_balance);
+
+    println!("✅ Balances verified: No funds were transferred due to spending limit enforcement");
+}
+
+#[test_log::test]
+fn test_sol_limit_cpi_enforcement_no_sol_limit() {
+    use swig_state::IntoBytes;
+    let mut context = setup_test_context().unwrap();
+
+    let swig_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let funding_account = Keypair::new();
+    context
+        .svm
+        .airdrop(&funding_account.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::Program(Program {
+            program_id: solana_sdk::system_program::ID.to_bytes(),
+        })],
+    )
+    .unwrap();
+
+    context.svm.airdrop(&swig, 5 * LAMPORTS_PER_SOL).unwrap();
+
+    let transfer_amount: u64 = 2 * LAMPORTS_PER_SOL; // 2 SOL (exceeds the 1 SOL limit)
+
+    // Instruction 1: Transfer funds TO the Swig wallet
+    let fund_swig_ix =
+        system_instruction::transfer(&funding_account.pubkey(), &swig, transfer_amount);
+
+    // Instruction 2: Transfer funds FROM Swig to the authority's wallet
+    let withdraw_ix =
+        system_instruction::transfer(&swig, &second_authority.pubkey(), transfer_amount);
+
+    let initial_accounts = vec![
+        AccountMeta::new(swig, false),
+        AccountMeta::new(context.default_payer.pubkey(), true),
+        AccountMeta::new(second_authority.pubkey(), true),
+        AccountMeta::new(funding_account.pubkey(), true),
+    ];
+
+    let (final_accounts, compact_ixs) =
+        compact_instructions(swig, initial_accounts, vec![fund_swig_ix, withdraw_ix]);
+
+    let instruction_payload = compact_ixs.into_bytes();
+
+    // Prepare the `sign_v1` instruction manually
+    let sign_args = SignV1Args::new(1, instruction_payload.len() as u16); // Role ID 1 for limited_authority
+    let mut sign_ix_data = Vec::new();
+    sign_ix_data.extend_from_slice(sign_args.into_bytes().unwrap());
+    sign_ix_data.extend_from_slice(&instruction_payload);
+    sign_ix_data.push(2);
+
+    let sign_ix = Instruction {
+        program_id: swig::ID.into(),
+        accounts: final_accounts,
+        data: sign_ix_data,
+    };
+
+    // 3. EXECUTE AND ASSERT
+    let initial_authority_balance = context.svm.get_balance(&second_authority.pubkey()).unwrap();
+    let initial_swig_balance = context.svm.get_balance(&swig).unwrap();
+
+    println!(
+        "Initial Swig balance: {} SOL",
+        initial_swig_balance / LAMPORTS_PER_SOL
+    );
+    println!(
+        "Initial Authority external wallet balance: {} SOL",
+        initial_authority_balance / LAMPORTS_PER_SOL
+    );
+    println!(
+        "Testing {} SOL limit enforcement with funding+withdrawing {} SOL...",
+        LAMPORTS_PER_SOL / LAMPORTS_PER_SOL,
+        transfer_amount / LAMPORTS_PER_SOL
+    );
+
+    // Build the transaction
+    let test_message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let test_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(test_message),
+        &[&context.default_payer, &second_authority, &funding_account], // All required signers
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(test_tx);
+
+    // Transaction should fail due to spending limit validation
+    if !result.is_err() {
+        let unwrapped_result = result.clone().unwrap();
+        println!("unwrapped_result: {}", unwrapped_result.pretty_logs());
+    }
+
+    assert!(
+        result.is_err(),
+        "Transaction should fail due to spending limit validation"
+    );
+    let error = result.unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(0, InstructionError::Custom(3006))
+    );
+
+    println!("✅ SOL limit properly enforced: Transaction failed with spending limit error!");
+    println!("Error: {:?}", error.err);
+
+    // Verify that no funds were transferred
+    let final_authority_balance = context.svm.get_balance(&second_authority.pubkey()).unwrap();
+    let final_swig_balance = context.svm.get_balance(&swig).unwrap();
+
+    println!(
+        "After Swig balance: {} SOL",
+        final_swig_balance / LAMPORTS_PER_SOL
+    );
+    println!(
+        "After Authority external wallet balance: {} SOL",
+        final_authority_balance / LAMPORTS_PER_SOL
+    );
+
+    // Authority balance should be unchanged
+    assert_eq!(final_authority_balance, initial_authority_balance);
+
+    // SWIG balance should be unchanged (no net transfer occurred due to failed
+    // transaction)
+    assert_eq!(final_swig_balance, initial_swig_balance);
+
+    println!("✅ Balances verified: No funds were transferred due to spending limit enforcement");
 }
