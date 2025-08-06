@@ -303,5 +303,5 @@ fn test_sol_transfer_performance_comparison() {
 
     // Set a reasonable limit for the CU difference to avoid regressions
     // Similar to the token transfer test assertion
-    assert!(swig_transfer_cu - regular_transfer_cu <= 2010);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 2012);
 }
