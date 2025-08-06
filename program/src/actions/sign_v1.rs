@@ -254,21 +254,21 @@ pub fn sign_v1(
                 // unexpected modifications. Lamports are handled separately in
                 // the permission check, but we still need to verify
                 // that the account data itself and ownership hasn't been tampered with
-                let hash = hash_except(&data, unsafe { account.owner() }, NO_EXCLUDE_RANGES);
+                let hash = hash_except(&data, account.owner(), NO_EXCLUDE_RANGES);
                 Some(hash)
             },
             AccountClassification::SwigTokenAccount { .. } => {
                 let data = unsafe { account.borrow_data_unchecked() };
                 // Exclude token balance field (bytes 64-72) but include owner
                 let exclude_ranges = [TOKEN_BALANCE_EXCLUDE_RANGE];
-                let hash = hash_except(&data, unsafe { account.owner() }, &exclude_ranges);
+                let hash = hash_except(&data, account.owner(), &exclude_ranges);
                 Some(hash)
             },
             AccountClassification::SwigStakeAccount { .. } => {
                 let data = unsafe { account.borrow_data_unchecked() };
                 // Exclude stake balance field (bytes 184-192) but include owner
                 let exclude_ranges = [STAKE_BALANCE_EXCLUDE_RANGE];
-                let hash = hash_except(&data, unsafe { account.owner() }, &exclude_ranges);
+                let hash = hash_except(&data, account.owner(), &exclude_ranges);
                 Some(hash)
             },
             AccountClassification::ProgramScope { .. } => {
@@ -283,7 +283,7 @@ pub fn sign_v1(
                     let end = program_scope.balance_field_end as usize;
                     if start < end && end <= data.len() {
                         let exclude_ranges = [start..end];
-                        let hash = hash_except(&data, unsafe { account.owner() }, &exclude_ranges);
+                        let hash = hash_except(&data, account.owner(), &exclude_ranges);
                         Some(hash)
                     } else {
                         None
@@ -354,8 +354,7 @@ pub fn sign_v1(
                     // Only validate snapshots for writable accounts
                     if account.is_writable() {
                         let data = unsafe { &account.borrow_data_unchecked() };
-                        let current_hash =
-                            hash_except(&data, unsafe { account.owner() }, NO_EXCLUDE_RANGES);
+                        let current_hash = hash_except(&data, account.owner(), NO_EXCLUDE_RANGES);
                         let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
                         if *snapshot_hash != current_hash {
                             return Err(SwigError::AccountDataModifiedUnexpectedly.into());
@@ -390,8 +389,7 @@ pub fn sign_v1(
                     if account.is_writable() {
                         let data = unsafe { &account.borrow_data_unchecked() };
                         let exclude_ranges = [TOKEN_BALANCE_EXCLUDE_RANGE];
-                        let current_hash =
-                            hash_except(&data, unsafe { account.owner() }, &exclude_ranges);
+                        let current_hash = hash_except(&data, account.owner(), &exclude_ranges);
                         let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
                         if *snapshot_hash != current_hash {
                             return Err(SwigError::AccountDataModifiedUnexpectedly.into());
@@ -450,8 +448,7 @@ pub fn sign_v1(
                     if account.is_writable() {
                         let data = unsafe { &account.borrow_data_unchecked() };
                         let exclude_ranges = [STAKE_BALANCE_EXCLUDE_RANGE];
-                        let current_hash =
-                            hash_except(&data, unsafe { account.owner() }, &exclude_ranges);
+                        let current_hash = hash_except(&data, account.owner(), &exclude_ranges);
                         let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
                         if *snapshot_hash != current_hash {
                             return Err(SwigError::AccountDataModifiedUnexpectedly.into());
@@ -544,11 +541,8 @@ pub fn sign_v1(
                                     let exclude_ranges =
                                         [program_scope.balance_field_start as usize
                                             ..program_scope.balance_field_end as usize];
-                                    let current_hash = hash_except(
-                                        &data,
-                                        unsafe { account.owner() },
-                                        &exclude_ranges,
-                                    );
+                                    let current_hash =
+                                        hash_except(&data, account.owner(), &exclude_ranges);
                                     let snapshot_hash =
                                         unsafe { account_snapshots[index].assume_init_ref() };
                                     if *snapshot_hash != current_hash {
