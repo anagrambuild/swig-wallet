@@ -7,8 +7,8 @@ authors.workspace = true
 documentation.workspace = true
 
 [dependencies]
-pinocchio = { version = "=0.8.1", features = ["std"] }
-pinocchio-pubkey = { version = "0.2.4" }
+pinocchio = { version = "0.9", features = ["std"] }
+pinocchio-pubkey = { version = "0.3" }
 swig-assertions = { path = "../assertions" }
 no-padding = { path = "../no-padding" }
 libsecp256k1 = { version = "0.7.2", default-features = false }

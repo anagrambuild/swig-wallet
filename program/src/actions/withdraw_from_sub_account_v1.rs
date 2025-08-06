@@ -186,8 +186,8 @@ pub fn withdraw_from_sub_account_v1(
             return Err(SwigError::InvalidSwigTokenAccountOwner.into());
         }
         let token_program = &all_accounts[action_accounts_index + 2];
-        let token_account_program_owner = unsafe { token_account.owner() };
-        let destination_program_owner = unsafe { swig_token_account.owner() };
+        let token_account_program_owner = token_account.owner();
+        let destination_program_owner = swig_token_account.owner();
         if token_account_program_owner != &SPL_TOKEN_ID
             && token_account_program_owner != &SPL_TOKEN_2022_ID
         {
