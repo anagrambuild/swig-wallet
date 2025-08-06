@@ -1,5 +1,6 @@
 // Public modules
 pub mod client_role;
+pub mod decoder;
 pub mod error;
 pub mod instruction_builder;
 pub mod types;
