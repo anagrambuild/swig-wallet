@@ -16,6 +16,9 @@ use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
 use secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority};
 use secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
 
 /// Trait for authority data structures.
@@ -113,6 +116,7 @@ pub trait AuthorityInfo: IntoBytes {
 
 /// Represents different types of authorities supported by the system.
 #[derive(Debug, PartialEq, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[repr(u16)]
 pub enum AuthorityType {
     /// No authority (invalid state)

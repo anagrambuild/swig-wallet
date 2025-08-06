@@ -3,6 +3,9 @@ use crate::{
     wallet::TOKEN_22_PROGRAM_ID,
     Ed25519ClientRole, SwigInstructionBuilder, SwigWallet,
 };
+use bs58;
+use hex;
+use serde::{Deserialize, Serialize};
 use solana_account_decoder_client_types::{UiAccount, UiAccountData, UiAccountEncoding};
 use solana_client::rpc_request::TokenAccountsFilter;
 use solana_program::{
@@ -15,17 +18,17 @@ use swig_state::authority::AuthorityType;
 
 use crate::SwigError;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum InstructionType {
     CreateSwig {
         swig_id: [u8; 32],
         new_authority_type: AuthorityType,
-        new_authority: Vec<u8>,
+        new_authority: String, // Formatted as human-readable address
         permissions: Vec<Permission>,
     },
     AddAuthority {
         new_authority_type: AuthorityType,
-        new_authority: Vec<u8>,
+        new_authority: String, // Formatted as human-readable address
         permissions: Vec<Permission>,
     },
     RemoveAuthority {
@@ -35,9 +38,7 @@ pub enum InstructionType {
         authority_to_replace_id: u32,
         update_data: UpdateAuthorityData,
     },
-    Sign {
-        inner_instructions: Vec<Instruction>,
-    },
+    Sign, // Removed inner_instructions for cleaner JSON
     CreateSubAccount,
     CreateSession,
     SignWithSubAccount,
@@ -50,15 +51,27 @@ pub enum InstructionType {
 
 impl fmt::Display for InstructionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let InstructionType::Sign { .. } = self {
-            write!(f, "Sign")
-        } else {
-            write!(f, "{:?}", self)
+        match self {
+            InstructionType::Sign => write!(f, "Sign"),
+            InstructionType::AddAuthority { .. } => write!(f, "AddAuthority"),
+            InstructionType::RemoveAuthority { .. } => write!(f, "RemoveAuthority"),
+            InstructionType::UpdateAuthority { .. } => write!(f, "UpdateAuthority"),
+            InstructionType::CreateSwig { .. } => write!(f, "CreateSwig"),
+            InstructionType::CreateSubAccount => write!(f, "CreateSubAccount"),
+            InstructionType::CreateSession => write!(f, "CreateSession"),
+            InstructionType::SignWithSubAccount => write!(f, "SignWithSubAccount"),
+            InstructionType::WithdrawFromSubAccount => write!(f, "WithdrawFromSubAccount"),
+            InstructionType::WithdrawTokenFromSubAccount => {
+                write!(f, "WithdrawTokenFromSubAccount")
+            },
+            InstructionType::ToggleSubAccount => write!(f, "ToggleSubAccount"),
+            InstructionType::WithdrawSol => write!(f, "WithdrawSol"),
+            InstructionType::WithdrawToken => write!(f, "WithdrawToken"),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DecodedTransaction {
     /// The type of SWIG instruction
     pub instruction_type: InstructionType,
@@ -76,7 +89,7 @@ pub struct DecodedTransaction {
     pub account_summary: Option<Vec<AccountChange>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AccountChange {
     pub account_id: String,
     pub account_name: Option<String>,
@@ -104,7 +117,7 @@ impl DecodedTransaction {
         swig_wallet: &mut SwigWallet,
         tx: VersionedTransaction,
     ) -> Result<Self, SwigError> {
-        let account_summary = get_account_summary(swig_wallet, tx)?;
+        let account_summary: Option<Vec<AccountChange>> = get_account_summary(swig_wallet, tx).ok();
 
         let decoded_tx = Self {
             instruction_type,
@@ -113,14 +126,44 @@ impl DecodedTransaction {
             authority_type: swig_wallet.current_role.authority_type.clone(),
             data: None,
             fee_payer: swig_wallet.get_fee_payer().to_string(),
-            account_summary: Some(account_summary),
+            account_summary,
         };
 
         Ok(decoded_tx)
     }
+
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+
+    pub fn to_json_compact(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
 }
 
 use std::fmt;
+
+/// Formats an authority address in human-readable format based on the authority type
+pub fn format_authority_address(authority_type: AuthorityType, authority: &[u8]) -> String {
+    match authority_type {
+        AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
+            bs58::encode(authority).into_string()
+        },
+        AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
+            let mut authority_hex = vec![0x4];
+            authority_hex.extend_from_slice(authority);
+            let authority_hex = hex::encode(authority_hex);
+            let mut hasher = solana_sdk::keccak::Hasher::default();
+            hasher.hash(authority_hex.as_bytes());
+            let hash = hasher.result();
+            format!("0x{}", hex::encode(&hash.0[12..32]))
+        },
+        AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
+            format!("0x{}", hex::encode(authority))
+        },
+        _ => format!("0x{}", hex::encode(authority)),
+    }
+}
 
 impl fmt::Display for DecodedTransaction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

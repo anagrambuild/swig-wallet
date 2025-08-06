@@ -12,6 +12,7 @@ pinocchio-pubkey = { version = "0.2.4" }
 swig-assertions = { path = "../assertions" }
 no-padding = { path = "../no-padding" }
 libsecp256k1 = { version = "0.7.2", default-features = false }
+serde = { version = "1", features = ["derive"], optional = true }
 
 [target.'cfg(not(feature = "static_syscalls"))'.dependencies]
 murmur3 = "0.5.2"
@@ -28,3 +29,6 @@ solana-secp256r1-program = "2.2.1"
 unexpected_cfgs = "allow"
 unused_mut = "allow"
 unused_variables = "allow"
+
+[features]
+serde = ["dep:serde"]

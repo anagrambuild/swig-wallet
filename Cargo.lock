@@ -8091,6 +8091,7 @@ dependencies = [
  "pinocchio 0.8.1",
  "pinocchio-pubkey",
  "rand 0.9.0",
+ "serde",
  "solana-secp256r1-program",
  "swig-assertions",
 ]

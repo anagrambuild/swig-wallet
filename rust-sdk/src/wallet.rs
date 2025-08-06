@@ -329,7 +329,7 @@ impl<'c> SwigWallet<'c> {
     ///
     /// Returns a `Result` containing the transaction signature or a `SwigError`
     pub fn create_sub_account(&mut self) -> Result<Signature, SwigError> {
-        let tx = self.build_create_sub_account_transaction()?;
+        let (tx, _) = self.build_create_sub_account_transaction()?;
 
         let tx_result = self.send_and_confirm_transaction(tx);
         if tx_result.is_ok() {
@@ -355,7 +355,7 @@ impl<'c> SwigWallet<'c> {
         instructions: Vec<Instruction>,
         alt: Option<&[AddressLookupTableAccount]>,
     ) -> Result<Signature, SwigError> {
-        let tx = self.build_sign_with_sub_account_transaction(instructions, alt)?;
+        let (tx, _) = self.build_sign_with_sub_account_transaction(instructions, alt)?;
 
         let tx_result = self.send_and_confirm_transaction(tx);
         if tx_result.is_ok() {
@@ -380,7 +380,7 @@ impl<'c> SwigWallet<'c> {
         sub_account: Pubkey,
         amount: u64,
     ) -> Result<Signature, SwigError> {
-        let tx = self.build_withdraw_from_sub_account_transaction(sub_account, amount)?;
+        let (tx, _) = self.build_withdraw_from_sub_account_transaction(sub_account, amount)?;
 
         let tx_result = self.send_and_confirm_transaction(tx);
         if tx_result.is_ok() {
@@ -412,7 +412,7 @@ impl<'c> SwigWallet<'c> {
         token_program: Pubkey,
         amount: u64,
     ) -> Result<Signature, SwigError> {
-        let tx = self.build_withdraw_token_from_sub_account_transaction(
+        let (tx, _) = self.build_withdraw_token_from_sub_account_transaction(
             sub_account,
             sub_account_token,
             swig_token,
@@ -443,7 +443,7 @@ impl<'c> SwigWallet<'c> {
         sub_account: Pubkey,
         enabled: bool,
     ) -> Result<Signature, SwigError> {
-        let tx = self.build_toggle_sub_account_transaction(sub_account, enabled)?;
+        let (tx, _) = self.build_toggle_sub_account_transaction(sub_account, enabled)?;
 
         let tx_result = self.send_and_confirm_transaction(tx);
         if tx_result.is_ok() {
@@ -480,8 +480,11 @@ impl<'c> SwigWallet<'c> {
 
         let decoded_tx = DecodedTransaction::new(
             InstructionType::AddAuthority {
-                new_authority_type,
-                new_authority: new_authority.to_vec(),
+                new_authority_type: new_authority_type.clone(),
+                new_authority: crate::decoder::format_authority_address(
+                    new_authority_type,
+                    new_authority,
+                ),
                 permissions,
             },
             "Add authority".to_string(),
@@ -594,7 +597,7 @@ impl<'c> SwigWallet<'c> {
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
         let decoded_tx = DecodedTransaction::new(
-            InstructionType::Sign { inner_instructions },
+            InstructionType::Sign,
             "Sign a transaction".to_string(),
             self,
             tx.clone(),
@@ -612,7 +615,7 @@ impl<'c> SwigWallet<'c> {
         &mut self,
         session_key: Pubkey,
         duration: u64,
-    ) -> Result<VersionedTransaction, SwigError> {
+    ) -> Result<(VersionedTransaction, Option<DecodedTransaction>), SwigError> {
         let current_slot = self.get_current_slot()?;
         let create_session_instructions = self.instruction_builder.create_session_instruction(
             session_key,
@@ -633,12 +636,20 @@ impl<'c> SwigWallet<'c> {
             &[&self.fee_payer.insecure_clone()],
         )?;
 
-        Ok(tx)
+        // Create decoded transaction
+        let decoded_tx = DecodedTransaction::new(
+            InstructionType::CreateSession,
+            "Create session".to_string(),
+            self,
+            tx.clone(),
+        )?;
+
+        Ok((tx, Some(decoded_tx)))
     }
 
     pub fn build_create_sub_account_transaction(
         &mut self,
-    ) -> Result<VersionedTransaction, SwigError> {
+    ) -> Result<(VersionedTransaction, Option<DecodedTransaction>), SwigError> {
         let instructions = self
             .instruction_builder
             .create_sub_account(Some(self.get_current_slot()?))?;
@@ -652,14 +663,22 @@ impl<'c> SwigWallet<'c> {
 
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
-        Ok(tx)
+        // Create decoded transaction
+        let decoded_tx = DecodedTransaction::new(
+            InstructionType::CreateSubAccount,
+            "Create sub account".to_string(),
+            self,
+            tx.clone(),
+        )?;
+
+        Ok((tx, Some(decoded_tx)))
     }
 
     pub fn build_sign_with_sub_account_transaction(
         &mut self,
         instructions: Vec<Instruction>,
         alt: Option<&[AddressLookupTableAccount]>,
-    ) -> Result<VersionedTransaction, SwigError> {
+    ) -> Result<(VersionedTransaction, Option<DecodedTransaction>), SwigError> {
         let current_slot = self.get_current_slot()?;
         let sign_instructions = self
             .instruction_builder
@@ -676,14 +695,22 @@ impl<'c> SwigWallet<'c> {
 
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
-        Ok(tx)
+        // Create decoded transaction
+        let decoded_tx = DecodedTransaction::new(
+            InstructionType::SignWithSubAccount,
+            "Sign with sub account".to_string(),
+            self,
+            tx.clone(),
+        )?;
+
+        Ok((tx, Some(decoded_tx)))
     }
 
     pub fn build_withdraw_from_sub_account_transaction(
         &mut self,
         sub_account: Pubkey,
         amount: u64,
-    ) -> Result<VersionedTransaction, SwigError> {
+    ) -> Result<(VersionedTransaction, Option<DecodedTransaction>), SwigError> {
         let current_slot = self.get_current_slot()?;
         let withdraw_instructions = self.instruction_builder.withdraw_from_sub_account(
             sub_account,
@@ -700,7 +727,15 @@ impl<'c> SwigWallet<'c> {
 
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
-        Ok(tx)
+        // Create decoded transaction
+        let decoded_tx = DecodedTransaction::new(
+            InstructionType::WithdrawFromSubAccount,
+            "Withdraw from sub account".to_string(),
+            self,
+            tx.clone(),
+        )?;
+
+        Ok((tx, Some(decoded_tx)))
     }
 
     pub fn build_withdraw_token_from_sub_account_transaction(
@@ -710,7 +745,7 @@ impl<'c> SwigWallet<'c> {
         swig_token: Pubkey,
         token_program: Pubkey,
         amount: u64,
-    ) -> Result<VersionedTransaction, SwigError> {
+    ) -> Result<(VersionedTransaction, Option<DecodedTransaction>), SwigError> {
         let current_slot = self.get_current_slot()?;
         let withdraw_instructions = self.instruction_builder.withdraw_token_from_sub_account(
             sub_account,
@@ -730,14 +765,22 @@ impl<'c> SwigWallet<'c> {
 
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
-        Ok(tx)
+        // Create decoded transaction
+        let decoded_tx = DecodedTransaction::new(
+            InstructionType::WithdrawTokenFromSubAccount,
+            "Withdraw token from sub account".to_string(),
+            self,
+            tx.clone(),
+        )?;
+
+        Ok((tx, Some(decoded_tx)))
     }
 
     pub fn build_toggle_sub_account_transaction(
         &mut self,
         sub_account: Pubkey,
         enabled: bool,
-    ) -> Result<VersionedTransaction, SwigError> {
+    ) -> Result<(VersionedTransaction, Option<DecodedTransaction>), SwigError> {
         let current_slot = self.get_current_slot()?;
         let toggle_instructions = self.instruction_builder.toggle_sub_account(
             sub_account,
@@ -754,7 +797,15 @@ impl<'c> SwigWallet<'c> {
 
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
 
-        Ok(tx)
+        // Create decoded transaction
+        let decoded_tx = DecodedTransaction::new(
+            InstructionType::ToggleSubAccount,
+            "Toggle sub account".to_string(),
+            self,
+            tx.clone(),
+        )?;
+
+        Ok((tx, Some(decoded_tx)))
     }
 
     /// Sends and confirms a transaction on the Solana network
@@ -1309,7 +1360,7 @@ impl<'c> SwigWallet<'c> {
     ///
     /// Returns a `Result` containing unit type or a `SwigError`
     pub fn create_session(&mut self, session_key: Pubkey, duration: u64) -> Result<(), SwigError> {
-        let tx = self.build_create_session_transaction(session_key, duration)?;
+        let (tx, _) = self.build_create_session_transaction(session_key, duration)?;
 
         self.send_and_confirm_transaction(tx)?;
         Ok(())
