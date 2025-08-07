@@ -28,7 +28,10 @@ use swig_interface::{swig, swig_key};
 use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, program_scope::ProgramScope,
-        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
+        sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
+        sol_recurring_destination_limit::SolRecurringDestinationLimit,
+        sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount, token_limit::TokenLimit,
+        token_recurring_limit::TokenRecurringLimit,
     },
     authority::{self, secp256k1::Secp256k1Authority, AuthorityType},
     role::Role,
@@ -858,15 +861,94 @@ impl<'c> SwigWallet<'c> {
                     println!("║ │  │  └─ Last Reset: Slot {}", action.last_reset);
                 }
 
-                // Check Program Scope
-                if let Some(action) =
-                    Role::get_action::<ProgramScope>(&role, &spl_token::ID.to_bytes())
-                        .map_err(|_| SwigError::AuthorityNotFound)?
-                {
+                // Check Token Limits
+                let token_limits = Role::get_all_actions_of_type::<TokenLimit>(&role)
+                    .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in token_limits.iter().enumerate() {
+                    if index == 0 {
+                        println!("║ │  ├─ Token Limits");
+                    }
+                    println!(
+                        "║ │  │  ├─ Token {}: {}",
+                        index + 1,
+                        Pubkey::from(action.token_mint)
+                    );
+                    println!("║ │  │  ├─ Amount: {} tokens", action.current_amount);
+                }
+
+                // Check Token Recurring Limits
+                let token_recurring_limits =
+                    Role::get_all_actions_of_type::<TokenRecurringLimit>(&role)
+                        .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in token_recurring_limits.iter().enumerate() {
+                    if index == 0 {
+                        println!("║ │  ├─ Token Recurring Limits");
+                    }
+                    println!(
+                        "║ │  │  ├─ Token {}: {}",
+                        index + 1,
+                        Pubkey::from(action.token_mint)
+                    );
+                    println!("║ │  │  ├─ Amount: {} tokens", action.limit);
+                    println!("║ │  │  ├─ Window: {} slots", action.window);
+                    println!("║ │  │  ├─ Last Reset: Slot {}", action.last_reset);
+                    println!("║ │  │  └─ Current Usage: {} tokens", action.current);
+                }
+
+                // Check Sol Destination Limits
+                let sol_destination_limits =
+                    Role::get_all_actions_of_type::<SolDestinationLimit>(&role)
+                        .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in sol_destination_limits.iter().enumerate() {
+                    if index == 0 {
+                        println!("║ │  ├─ SOL Destination Limits");
+                    }
+                    println!(
+                        "║ │  │  ├─ Destination {}: {}",
+                        index + 1,
+                        Pubkey::from(action.destination)
+                    );
+                    println!(
+                        "║ │  │  ├─ Amount: {} SOL",
+                        action.amount as f64 / 1_000_000_000.0
+                    );
+                }
+
+                // Check Sol Recurring Destination Limits
+                let sol_recurring_destination_limits =
+                    Role::get_all_actions_of_type::<SolRecurringDestinationLimit>(&role)
+                        .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in sol_recurring_destination_limits.iter().enumerate() {
+                    if index == 0 {
+                        println!("║ │  ├─ SOL Recurring Destination Limits");
+                    }
+                    println!(
+                        "║ │  │  ├─ Destination {}: {}",
+                        index + 1,
+                        Pubkey::from(action.destination)
+                    );
+                    println!(
+                        "║ │  │  ├─ Amount: {} SOL",
+                        action.recurring_amount as f64 / 1_000_000_000.0
+                    );
+                    println!("║ │  │  ├─ Window: {} slots", action.window);
+                    println!("║ │  │  ├─ Last Reset: Slot {}", action.last_reset);
+                    println!(
+                        "║ │  │  └─ Current Usage: {} SOL",
+                        action.current_amount as f64 / 1_000_000_000.0
+                    );
+                }
+
+                // Check Program Scopes
+                let program_scopes = Role::get_all_actions_of_type::<ProgramScope>(&role)
+                    .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in program_scopes.iter().enumerate() {
                     let program_id = Pubkey::from(action.program_id);
                     let target_account = Pubkey::from(action.target_account);
-                    println!("║ │  ├─ Program Scope");
-                    println!("║ │  │  ├─ Program ID: {}", program_id);
+                    if index == 0 {
+                        println!("║ │  ├─ Program Scopes");
+                    }
+                    println!("║ │  │  ├─ Scope {}: Program ID: {}", index + 1, program_id);
                     println!("║ │  │  ├─ Target Account: {}", target_account);
                     println!(
                         "║ │  │  ├─ Scope Type: {}",
@@ -897,10 +979,10 @@ impl<'c> SwigWallet<'c> {
                     println!("║ │  │  ");
                 }
 
-                // Check Sub Account
-                if let Some(action) = Role::get_action::<SubAccount>(&role, &[])
-                    .map_err(|_| SwigError::AuthorityNotFound)?
-                {
+                // Check Sub Accounts
+                let sub_accounts = Role::get_all_actions_of_type::<SubAccount>(&role)
+                    .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in sub_accounts.iter().enumerate() {
                     let (sub_account, _) = Pubkey::find_program_address(
                         &sub_account_seeds(
                             self.instruction_builder.get_swig_id(),
@@ -908,8 +990,10 @@ impl<'c> SwigWallet<'c> {
                         ),
                         &swig_interface::program_id(),
                     );
-                    println!("║ │  ├─ Sub Account");
-                    println!("║ │  │  ├─ Sub Account: {:?}", sub_account);
+                    if index == 0 {
+                        println!("║ │  ├─ Sub Accounts");
+                    }
+                    println!("║ │  │  ├─ Sub Account {}: {:?}", index + 1, sub_account);
                 }
 
                 println!("║ │  ");

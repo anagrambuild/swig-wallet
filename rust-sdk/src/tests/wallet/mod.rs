@@ -2,6 +2,7 @@ pub mod authority_tests;
 pub mod creation_tests;
 pub mod destination_tests;
 pub mod helper_tests;
+pub mod program_all_tests;
 pub mod program_scope_test;
 pub mod secp256r1_test;
 pub mod secp_tests;
