@@ -30,7 +30,9 @@ use swig_state::{
         all::All, manage_authority::ManageAuthority, program_scope::ProgramScope,
         sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
         sol_recurring_destination_limit::SolRecurringDestinationLimit,
-        sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount, token_limit::TokenLimit,
+        sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
+        token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
+        token_recurring_destination_limit::TokenRecurringDestinationLimit,
         token_recurring_limit::TokenRecurringLimit,
     },
     authority::{self, secp256k1::Secp256k1Authority, AuthorityType},
@@ -937,6 +939,41 @@ impl<'c> SwigWallet<'c> {
                         "║ │  │  └─ Current Usage: {} SOL",
                         action.current_amount as f64 / 1_000_000_000.0
                     );
+                }
+
+                // Check Token Destination Limits
+                let token_destination_limits =
+                    Role::get_all_actions_of_type::<TokenDestinationLimit>(&role)
+                        .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in token_destination_limits.iter().enumerate() {
+                    if index == 0 {
+                        println!("║ │  ├─ Token Destination Limits");
+                    }
+                    println!(
+                        "║ │  │  ├─ Destination {}: {}",
+                        index + 1,
+                        Pubkey::from(action.destination)
+                    );
+                    println!("║ │  │  ├─ Amount: {} tokens", action.amount);
+                }
+
+                // Check Token Recurring Destination Limits
+                let token_recurring_destination_limits =
+                    Role::get_all_actions_of_type::<TokenRecurringDestinationLimit>(&role)
+                        .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in token_recurring_destination_limits.iter().enumerate() {
+                    if index == 0 {
+                        println!("║ │  ├─ Token Recurring Destination Limits");
+                    }
+                    println!(
+                        "║ │  │  ├─ Destination {}: {}",
+                        index + 1,
+                        Pubkey::from(action.destination)
+                    );
+                    println!("║ │  │  ├─ Amount: {} tokens", action.recurring_amount);
+                    println!("║ │  │  ├─ Window: {} slots", action.window);
+                    println!("║ │  │  ├─ Last Reset: Slot {}", action.last_reset);
+                    println!("║ │  │  └─ Current Usage: {} tokens", action.current_amount);
                 }
 
                 // Check Program Scopes
