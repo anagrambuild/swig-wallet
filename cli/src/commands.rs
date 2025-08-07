@@ -167,6 +167,7 @@ pub fn parse_permission_from_json(permission_json: &Value) -> Result<Permission>
                 program_id: Pubkey::from_str(program_id)?,
             })
         },
+        Some("programAll") => Ok(Permission::ProgramAll),
         Some("programScope") => {
             let program_id = permission_json["programId"]
                 .as_str()
@@ -196,6 +197,44 @@ pub fn parse_permission_from_json(permission_json: &Value) -> Result<Permission>
                 .ok_or_else(|| anyhow!("Sub-account is required for sub-account permission"))?;
             Ok(Permission::SubAccount {
                 sub_account: sub_account.as_bytes().try_into().unwrap(),
+            })
+        },
+        Some("solDestination") => {
+            let destination = permission_json["destination"]
+                .as_str()
+                .ok_or_else(|| anyhow!("Destination is required for SOL destination permission"))?;
+            let amount = permission_json["amount"].as_u64().unwrap_or(1_000_000_000);
+            let recurring = if let Some(recurring) = permission_json.get("recurring") {
+                let window = recurring["window"].as_u64().unwrap_or(86400);
+                Some(swig_sdk::RecurringConfig::new(window))
+            } else {
+                None
+            };
+            Ok(Permission::SolDestination {
+                destination: Pubkey::from_str(destination)?,
+                amount,
+                recurring,
+            })
+        },
+        Some("tokenDestination") => {
+            let mint = permission_json["mint"]
+                .as_str()
+                .ok_or_else(|| anyhow!("Mint is required for token destination permission"))?;
+            let destination = permission_json["destination"].as_str().ok_or_else(|| {
+                anyhow!("Destination is required for token destination permission")
+            })?;
+            let amount = permission_json["amount"].as_u64().unwrap_or(1_000_000_000);
+            let recurring = if let Some(recurring) = permission_json.get("recurring") {
+                let window = recurring["window"].as_u64().unwrap_or(86400);
+                Some(swig_sdk::RecurringConfig::new(window))
+            } else {
+                None
+            };
+            Ok(Permission::TokenDestination {
+                mint: Pubkey::from_str(mint)?,
+                destination: Pubkey::from_str(destination)?,
+                amount,
+                recurring,
             })
         },
         Some(unknown) => Err(anyhow!("Invalid permission type: {}", unknown)),
@@ -834,6 +873,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                                     recurring: None
                                 }),
                                 "Program" => Ok(Permission::Program { program_id: Pubkey::default() }),
+                                "ProgramAll" => Ok(Permission::ProgramAll),
                                 "ProgramScope" => Ok(Permission::ProgramScope {
                                     program_id: Pubkey::default(),
                                     target_account: Pubkey::default(),
@@ -846,6 +886,17 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                                 "SubAccount" => Ok(Permission::SubAccount { sub_account: [0; 32] }),
                                 "Stake" => Ok(Permission::Stake { amount: 0, recurring: None }),
                                 "StakeAll" => Ok(Permission::StakeAll),
+                                "SolDestination" => Ok(Permission::SolDestination {
+                                    destination: Pubkey::default(),
+                                    amount: 0,
+                                    recurring: None,
+                                }),
+                                "TokenDestination" => Ok(Permission::TokenDestination {
+                                    mint: Pubkey::default(),
+                                    destination: Pubkey::default(),
+                                    amount: 0,
+                                    recurring: None,
+                                }),
                                 _ => Err(anyhow!("Invalid action type: {}", action_type)),
                             }
                         })
