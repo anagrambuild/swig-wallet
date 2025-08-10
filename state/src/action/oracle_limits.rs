@@ -123,7 +123,6 @@ impl OracleTokenLimit {
     pub fn run_for_token(&mut self, price: u64) -> Result<(), ProgramError> {
         // Check if operation would exceed limit
         if price > self.value_limit {
-            msg!("Operation denied: Would exceed value limit");
             return Err(SwigAuthenticateError::PermissionDeniedOracleLimitReached.into());
         }
 

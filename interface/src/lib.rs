@@ -22,6 +22,7 @@ pub use swig_compact_instructions::*;
 use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, oracle_limits::OracleTokenLimit,
+        oracle_recurring_limit::OracleRecurringLimit,
         program::Program, program_all::ProgramAll, program_curated::ProgramCurated,
         program_scope::ProgramScope, sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
         stake_all::StakeAll, stake_limit::StakeLimit, stake_recurring_limit::StakeRecurringLimit,
@@ -52,6 +53,7 @@ pub enum ClientAction {
     StakeRecurringLimit(StakeRecurringLimit),
     StakeAll(StakeAll),
     OracleTokenLimit(OracleTokenLimit),
+    OracleRecurringLimit(OracleRecurringLimit),
 }
 
 impl ClientAction {
@@ -80,6 +82,9 @@ impl ClientAction {
             ClientAction::OracleTokenLimit(_) => {
                 (Permission::OracleTokenLimit, OracleTokenLimit::LEN)
             },
+            ClientAction::OracleRecurringLimit(_) => {
+                (Permission::OracleRecurringLimit, OracleRecurringLimit::LEN)
+            },
         };
         let offset = data.len() as u32;
         let header = Action::new(
@@ -107,6 +112,7 @@ impl ClientAction {
             ClientAction::StakeRecurringLimit(action) => action.into_bytes(),
             ClientAction::StakeAll(action) => action.into_bytes(),
             ClientAction::OracleTokenLimit(action) => action.into_bytes(),
+            ClientAction::OracleRecurringLimit(action) => action.into_bytes(),
         };
         data.extend_from_slice(
             bytes_res.map_err(|e| anyhow::anyhow!("Failed to serialize action {:?}", e))?,

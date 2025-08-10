@@ -20,6 +20,7 @@ use swig_state::{
     action::{
         all::All,
         oracle_limits::OracleTokenLimit,
+        oracle_recurring_limit::OracleRecurringLimit,
         program::Program,
         program_all::ProgramAll,
         program_curated::ProgramCurated,
@@ -372,8 +373,58 @@ pub fn sign_v1(
                     }
 
                     if total_sol_spent > 0 {
+                        // Check oracle recurring limit
                         {
                             if let Some(action) =
+                                RoleMut::get_action_mut::<OracleRecurringLimit>(actions, &[0u8])?
+                            {
+                                let scope_data = unsafe {
+                                    let scope_account =
+                                        all_accounts.get_unchecked(all_accounts.len() - 1);
+                                    // also check if owner matches
+                                    if scope_account.owner().as_ref()
+                                        != &pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ")
+                                    {
+                                        return Err(SwigError::WrongOracleProgramAccount.into());
+                                    }
+                                    scope_account.borrow_data_unchecked()
+                                };
+
+                                let mapping_registry = unsafe {
+                                    let mapping_account =
+                                        all_accounts.get_unchecked(all_accounts.len() - 2);
+                                    if mapping_account.owner().as_ref()
+                                        != &pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ")
+                                    {
+                                        return Err(SwigError::WrongOracleMappingAccount.into());
+                                    }
+                                    mapping_account.borrow_data_unchecked()
+                                };
+
+                                let (price, exp, mint_decimal) = get_price_data(
+                                    mapping_registry,
+                                    scope_data,
+                                    &pubkey!("So11111111111111111111111111111111111111112"),
+                                    &clock,
+                                )?;
+
+                                let token_value_in_base = calculate_token_value(
+                                    price,
+                                    exp,
+                                    action.get_base_asset_decimals(),
+                                    total_sol_spent,
+                                    mint_decimal,
+                                    action.get_base_asset_decimals(),
+                                )?;
+
+                                msg!("token_value_in_base: {}", token_value_in_base);
+                                msg!("action spent: {}", action.current_amount);
+                                action.run_for_sol(token_value_in_base, slot)?;
+
+                                if action.passthrough_check == 0 {
+                                    continue;
+                                }
+                            } else if let Some(action) =
                                 RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
                             {
                                 let scope_data = unsafe {
@@ -422,14 +473,22 @@ pub fn sign_v1(
                                 }
                             };
                         }
-                        if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])? {
-                            action.run(total_sol_spent)?;
-                            continue;
-                        } else if let Some(action) =
-                            RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])?
+                        // Check sol recurring limit
                         {
-                            action.run(total_sol_spent, slot)?;
-                            continue;
+                            if let Some(action) =
+                                RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])?
+                            {
+                                action.run(total_sol_spent, slot)?;
+                                continue;
+                            }
+                        }
+                        // Check sol limit
+                        {
+                            if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])?
+                            {
+                                action.run(total_sol_spent)?;
+                                continue;
+                            }
                         }
                         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                     }
@@ -478,6 +537,41 @@ pub fn sign_v1(
                         // Check oracle token limit
                         {
                             if let Some(action) =
+                                RoleMut::get_action_mut::<OracleRecurringLimit>(actions, &[0u8])?
+                            {
+                                let scope_data = unsafe {
+                                    &all_accounts
+                                        .get_unchecked(all_accounts.len() - 1)
+                                        .borrow_data_unchecked()
+                                };
+
+                                let mapping_data = unsafe {
+                                    &all_accounts
+                                        .get_unchecked(all_accounts.len() - 2)
+                                        .borrow_data_unchecked()
+                                };
+
+                                let mint_bytes =
+                                    mint.try_into().map_err(|_| SwigError::OracleMintNotFound)?;
+
+                                let (price, exp, mint_decimal) =
+                                    get_price_data(mapping_data, scope_data, &mint_bytes, &clock)?;
+
+                                let token_value_in_base = calculate_token_value(
+                                    price,
+                                    exp,
+                                    action.get_base_asset_decimals(),
+                                    diff,
+                                    mint_decimal,
+                                    action.get_base_asset_decimals(),
+                                )?;
+
+                                action.run_for_token(token_value_in_base, slot)?;
+
+                                if action.passthrough_check == 0 {
+                                    continue;
+                                }
+                            } else if let Some(action) =
                                 RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
                             {
                                 let scope_data = unsafe {
@@ -514,6 +608,7 @@ pub fn sign_v1(
                                 }
                             };
                         }
+                        // Check token recurring limit
                         {
                             if let Some(action) =
                                 RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?
@@ -522,6 +617,7 @@ pub fn sign_v1(
                                 continue;
                             };
                         }
+                        // Check token limit
                         {
                             if let Some(action) =
                                 RoleMut::get_action_mut::<TokenLimit>(actions, mint)?

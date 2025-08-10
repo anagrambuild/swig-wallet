@@ -24,8 +24,8 @@ use swig_interface::{
 use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, oracle_limits::OracleTokenLimit,
-        program_scope::ProgramScope, sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
-        sub_account::SubAccount,
+        oracle_recurring_limit::OracleRecurringLimit, program_scope::ProgramScope,
+        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
     },
     authority::{
         ed25519::{CreateEd25519SessionAuthority, ED25519Authority, Ed25519SessionAuthority},
@@ -480,12 +480,14 @@ pub fn load_sample_scope_data(svm: &mut LiteSVM, payer: &Keypair) -> anyhow::Res
     Ok(mint)
 }
 
-pub fn advance_slot(context: &mut SwigTestContext, slots: u64) {
+pub fn advance_slot(context: &mut SwigTestContext, slots: u64) -> u64 {
     use solana_client::rpc_client::RpcClient;
 
     let client = RpcClient::new("https://api.mainnet-beta.solana.com".to_string());
     let slot = client.get_slot().unwrap();
-    context.svm.warp_to_slot(slot + slots);
+    let new_slot = slot + slots;
+    context.svm.warp_to_slot(new_slot);
+    new_slot
 }
 
 pub fn setup_mint(svm: &mut LiteSVM, payer: &Keypair) -> anyhow::Result<Pubkey> {
@@ -936,6 +938,7 @@ pub fn display_swig(swig_pubkey: Pubkey, data: &[u8], lamports: u64) -> Result<(
             if let Some(action) = Role::get_action::<OracleTokenLimit>(&role, &[0u8])
                 .map_err(|_| anyhow::anyhow!("Failed to get action"))?
             {
+                println!("║ │  ├─ Oracle Token Limit:");
                 println!(
                     "║ │  ├─ Oracle Base Asset: {}",
                     match action.base_asset_type {
@@ -953,6 +956,24 @@ pub fn display_swig(swig_pubkey: Pubkey, data: &[u8], lamports: u64) -> Result<(
                     "║ │  │  ├─ Passthrough Check Enabled: {}",
                     action.passthrough_check
                 );
+            }
+
+            if let Some(action) = Role::get_action::<OracleRecurringLimit>(&role, &[0u8])
+                .map_err(|_| anyhow::anyhow!("Failed to get action"))?
+            {
+                println!("║ │  ├─ Oracle Recurring Limit:");
+                println!(
+                    "║ │  ├─ Oracle Base Asset: {}",
+                    match action.base_asset_type {
+                        0 => "USDC",
+                        1 => "EURC",
+                        _ => "Unknown",
+                    }
+                );
+                println!("║ │  │  ├─ Value Limit: {}", action.recurring_value_limit);
+                println!("║ │  │  ├─ Window: {} slots", action.window);
+                println!("║ │  │  ├─ Current Usage: {}", action.current_amount);
+                println!("║ │  │  └─ Last Reset: Slot {}", action.last_reset);
             }
 
             // Check Sol Limit
