@@ -608,6 +608,81 @@ pub fn sign_v1(
                     }
 
                     if total_token_spent > 0 {
+                        // Check oracle token limit
+                        {
+                            msg!("total_token_spent: {}", total_token_spent);
+                            if let Some(action) =
+                                RoleMut::get_action_mut::<OracleRecurringLimit>(actions, &[0u8])?
+                            {
+                                let scope_data = unsafe {
+                                    &all_accounts
+                                        .get_unchecked(all_accounts.len() - 1)
+                                        .borrow_data_unchecked()
+                                };
+
+                                let mapping_data = unsafe {
+                                    &all_accounts
+                                        .get_unchecked(all_accounts.len() - 2)
+                                        .borrow_data_unchecked()
+                                };
+
+                                let mint_bytes =
+                                    mint.try_into().map_err(|_| SwigError::OracleMintNotFound)?;
+
+                                let (price, exp, mint_decimal) =
+                                    get_price_data(mapping_data, scope_data, &mint_bytes, &clock)?;
+
+                                let token_value_in_base = calculate_token_value(
+                                    price,
+                                    exp,
+                                    action.get_base_asset_decimals(),
+                                    total_token_spent,
+                                    mint_decimal,
+                                    action.get_base_asset_decimals(),
+                                )?;
+
+                                action.run_for_token(token_value_in_base, slot)?;
+
+                                if action.passthrough_check == 0 {
+                                    continue;
+                                }
+                            } else if let Some(action) =
+                                RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
+                            {
+                                let scope_data = unsafe {
+                                    &all_accounts
+                                        .get_unchecked(all_accounts.len() - 1)
+                                        .borrow_data_unchecked()
+                                };
+
+                                let mapping_data = unsafe {
+                                    &all_accounts
+                                        .get_unchecked(all_accounts.len() - 2)
+                                        .borrow_data_unchecked()
+                                };
+
+                                let mint_bytes =
+                                    mint.try_into().map_err(|_| SwigError::OracleMintNotFound)?;
+
+                                let (price, exp, mint_decimal) =
+                                    get_price_data(mapping_data, scope_data, &mint_bytes, &clock)?;
+
+                                let token_value_in_base = calculate_token_value(
+                                    price,
+                                    exp,
+                                    action.get_base_asset_decimals(),
+                                    total_token_spent,
+                                    mint_decimal,
+                                    action.get_base_asset_decimals(),
+                                )?;
+
+                                action.run_for_token(token_value_in_base)?;
+
+                                if !action.passthrough_check {
+                                    continue;
+                                }
+                            };
+                        }
                         if let Some(action) = RoleMut::get_action_mut::<TokenLimit>(actions, mint)?
                         {
                             action.run(total_token_spent)?;

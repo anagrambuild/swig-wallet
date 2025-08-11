@@ -1370,7 +1370,7 @@ fn test_oracle_token_transfer_performance_comparison() {
 
     // Oracle overhead should be reasonable (additional oracle processing)
     assert!(
-        swig_oracle_transfer_cu - swig_transfer_cu <= 5000,
+        swig_oracle_transfer_cu - swig_transfer_cu <= 8000,
         "Oracle overhead too high"
     );
 

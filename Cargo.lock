@@ -3684,7 +3684,7 @@ name = "oracle-mapping-state"
 version = "0.1.0"
 source = "git+https://github.com/anagrambuild/scope-oracle-mapper#128e8cfbde71ec17aa00fe123251495a681a4f2e"
 dependencies = [
- "pinocchio 0.9.0",
+ "pinocchio 0.9.0 (git+https://github.com/anza-xyz/pinocchio.git)",
  "shank 0.4.3",
 ]
 
@@ -3826,6 +3826,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5123fe61ac87a327d434d530eaddaaf65069a37e33e5c9f798feaed29e4974c8"
 
 [[package]]
+name = "pinocchio"
+version = "0.9.0"
+source = "git+https://github.com/anza-xyz/pinocchio.git#55ecb47a4faeaacdc28b08ffd1158ff3c18b2bad"
+
+[[package]]
 name = "pinocchio-pubkey"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3842,7 +3847,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb0225638cadcbebae8932cb7f49cb5da7c15c21beb19f048f05a5ca7d93f065"
 dependencies = [
  "five8_const",
- "pinocchio 0.9.0",
+ "pinocchio 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "sha2-const-stable",
 ]
 
@@ -3852,7 +3857,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "141ed5eafb4ab04568bb0e224e3dc9a9de13c933de4c004e0d1a553498be3a7c"
 dependencies = [
- "pinocchio 0.9.0",
+ "pinocchio 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "pinocchio-pubkey 0.3.0",
 ]
 
@@ -8039,7 +8044,7 @@ dependencies = [
  "once_cell",
  "openssl",
  "oracle-mapping-state",
- "pinocchio 0.9.0",
+ "pinocchio 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "pinocchio-pubkey 0.3.0",
  "pinocchio-system",
  "pinocchio-token",
@@ -8065,7 +8070,7 @@ dependencies = [
 name = "swig-assertions"
 version = "1.1.2"
 dependencies = [
- "pinocchio 0.9.0",
+ "pinocchio 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "pinocchio-pubkey 0.3.0",
  "pinocchio-system",
 ]
@@ -8104,7 +8109,7 @@ name = "swig-compact-instructions"
 version = "1.1.2"
 dependencies = [
  "bs58",
- "pinocchio 0.9.0",
+ "pinocchio 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "pinocchio-system",
  "solana-program",
 ]
@@ -8160,7 +8165,7 @@ dependencies = [
  "murmur3",
  "no-padding",
  "openssl",
- "pinocchio 0.9.0",
+ "pinocchio 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "pinocchio-pubkey 0.3.0",
  "rand 0.9.0",
  "solana-secp256r1-program",
