@@ -1126,7 +1126,11 @@ fn test_program_scope_balance_underflow_check() {
     .unwrap();
     let tx = VersionedTransaction::try_new(
         VersionedMessage::V0(message),
-        &[&context.default_payer, &swig_authority, &external_funding_account],
+        &[
+            &context.default_payer,
+            &swig_authority,
+            &external_funding_account,
+        ],
     )
     .unwrap();
     let result = context.svm.send_transaction(tx);

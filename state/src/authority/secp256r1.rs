@@ -476,8 +476,10 @@ fn secp256r1_authenticate(
     let mut message_buf: MaybeUninit<[u8; WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE + 32]> =
         MaybeUninit::uninit();
 
-    // if there is no additional payload attatched to the auth payload, use base r1 authentication with computed hash
-    // if there is addtional payload, detect the r1 authentication kind using the discriminator, and derived the signed message
+    // if there is no additional payload attatched to the auth payload, use base r1
+    // authentication with computed hash if there is addtional payload, detect
+    // the r1 authentication kind using the discriminator, and derived the signed
+    // message
     let message = if additional_paylaod.is_empty() {
         &computed_hash
     } else {
