@@ -21,11 +21,12 @@ use swig::actions::{
 pub use swig_compact_instructions::*;
 use swig_state::{
     action::{
-        all::All, manage_authority::ManageAuthority, program::Program, program_all::ProgramAll,
-        program_curated::ProgramCurated, program_scope::ProgramScope, sol_limit::SolLimit,
-        sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll, stake_limit::StakeLimit,
-        stake_recurring_limit::StakeRecurringLimit, sub_account::SubAccount,
-        token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit, Action, Permission,
+        all::All, blacklist::Blacklist, manage_authority::ManageAuthority, program::Program,
+        program_all::ProgramAll, program_curated::ProgramCurated, program_scope::ProgramScope,
+        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll,
+        stake_limit::StakeLimit, stake_recurring_limit::StakeRecurringLimit,
+        sub_account::SubAccount, token_limit::TokenLimit,
+        token_recurring_limit::TokenRecurringLimit, Action, Permission,
     },
     authority::{
         secp256k1::{hex_encode, AccountsPayload},
@@ -50,6 +51,7 @@ pub enum ClientAction {
     StakeLimit(StakeLimit),
     StakeRecurringLimit(StakeRecurringLimit),
     StakeAll(StakeAll),
+    Blacklist(Blacklist),
 }
 
 impl ClientAction {
@@ -75,6 +77,7 @@ impl ClientAction {
                 (Permission::StakeRecurringLimit, StakeRecurringLimit::LEN)
             },
             ClientAction::StakeAll(_) => (Permission::StakeAll, StakeAll::LEN),
+            ClientAction::Blacklist(_) => (Permission::Blacklist, Blacklist::LEN),
         };
         let offset = data.len() as u32;
         let header = Action::new(
@@ -101,6 +104,7 @@ impl ClientAction {
             ClientAction::StakeLimit(action) => action.into_bytes(),
             ClientAction::StakeRecurringLimit(action) => action.into_bytes(),
             ClientAction::StakeAll(action) => action.into_bytes(),
+            ClientAction::Blacklist(action) => action.into_bytes(),
         };
         data.extend_from_slice(
             bytes_res.map_err(|e| anyhow::anyhow!("Failed to serialize action {:?}", e))?,
