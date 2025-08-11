@@ -42,14 +42,14 @@ impl SolRecurringLimit {
     /// * `Ok(())` - If the operation is within limits
     /// * `Err(ProgramError)` - If the operation would exceed the limit
     pub fn run(&mut self, lamport_diff: u64, current_slot: u64) -> Result<(), ProgramError> {
-        if current_slot - self.last_reset > self.window && lamport_diff <= self.recurring_amount {
+        if current_slot.saturating_sub(self.last_reset) > self.window && lamport_diff <= self.recurring_amount {
             self.current_amount = self.recurring_amount;
             self.last_reset = current_slot;
         }
         if lamport_diff > self.current_amount {
             return Err(ProgramError::InsufficientFunds);
         }
-        self.current_amount -= lamport_diff;
+        self.current_amount = self.current_amount.saturating_sub(lamport_diff);
         Ok(())
     }
 }
