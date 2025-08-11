@@ -33,7 +33,7 @@ impl SolLimit {
         if lamport_diff > self.amount {
             return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
         }
-        self.amount -= lamport_diff;
+        self.amount = self.amount.saturating_sub(lamport_diff);
         Ok(())
     }
 }

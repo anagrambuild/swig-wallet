@@ -310,7 +310,7 @@ impl ProgramScope {
                 let current_slot = current_slot.ok_or(ProgramError::InvalidArgument)?;
 
                 // Check if window has passed and reset the spent amount if needed
-                if current_slot - self.last_reset > self.window {
+                if current_slot.saturating_sub(self.last_reset) > self.window {
                     // Reset the spent amount to zero for the new window
                     self.current_amount = 0;
                     self.last_reset = current_slot;
