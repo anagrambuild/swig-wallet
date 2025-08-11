@@ -59,7 +59,7 @@ jobs:
 
       - name: Build Solana Program
         run: |
-          cargo build-sbf
+          cargo build-sbf --arch v1
 
       - name: Run Rust Tests with nextest
         run: |
@@ -69,7 +69,7 @@ jobs:
 
       - name: Build Solana Program with program_scope_test feature
         run: |
-          cargo build-sbf --features=program_scope_test
+          cargo build-sbf --arch v1 --features=program_scope_test
 
       - name: Run Program Scope Tests with nextest
         run: |
