@@ -178,7 +178,7 @@ unsafe fn execute(
     let instruction = unsafe { ctx.instruction_data_unchecked() };
     process_action(
         core::slice::from_raw_parts(accounts.as_ptr() as _, index),
-        core::slice::from_raw_parts(account_classification.as_ptr() as _, index),
+        core::slice::from_raw_parts_mut(account_classification.as_mut_ptr() as _, index),
         instruction,
     )?;
     Ok(())
@@ -289,6 +289,7 @@ unsafe fn classify_account(
                     return Ok(AccountClassification::SwigStakeAccount {
                         state,
                         balance: stake_amount,
+                        spent: 0,
                     });
                 }
             }
@@ -312,6 +313,7 @@ unsafe fn classify_account(
                             .try_into()
                             .map_err(|_| ProgramError::InvalidAccountData)?,
                     ),
+                    spent: 0,
                 })
             } else {
                 Ok(AccountClassification::None)
@@ -329,6 +331,7 @@ unsafe fn classify_account(
                         return Ok(AccountClassification::ProgramScope {
                             role_index: role_id,
                             balance,
+                            spent: 0,
                         });
                     }
                 }

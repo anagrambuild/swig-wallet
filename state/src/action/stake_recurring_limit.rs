@@ -44,7 +44,7 @@ impl StakeRecurringLimit {
     /// * `Ok(())` - If the operation is within limits
     /// * `Err(ProgramError)` - If the operation would exceed the limit
     pub fn run(&mut self, stake_amount_diff: u64, current_slot: u64) -> Result<(), ProgramError> {
-        if current_slot - self.last_reset > self.window
+        if current_slot.saturating_sub(self.last_reset) > self.window
             && stake_amount_diff <= self.recurring_amount
         {
             self.current_amount = self.recurring_amount;
@@ -53,7 +53,7 @@ impl StakeRecurringLimit {
         if stake_amount_diff > self.current_amount {
             return Err(ProgramError::InsufficientFunds);
         }
-        self.current_amount -= stake_amount_diff;
+        self.current_amount = self.current_amount.saturating_sub(stake_amount_diff);
         Ok(())
     }
 }

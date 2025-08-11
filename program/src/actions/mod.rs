@@ -53,7 +53,7 @@ use crate::{
 #[inline(always)]
 pub fn process_action(
     accounts: &[AccountInfo],
-    account_classification: &[AccountClassification],
+    account_classification: &mut [AccountClassification],
     data: &[u8],
 ) -> ProgramResult {
     if data.len() < 2 {
@@ -92,7 +92,7 @@ fn process_create_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
 /// Signs and executes a transaction using the wallet's authority.
 fn process_sign_v1(
     accounts: &[AccountInfo],
-    account_classification: &[AccountClassification],
+    account_classification: &mut [AccountClassification],
     data: &[u8],
 ) -> ProgramResult {
     let account_ctx = SignV1Accounts::context(accounts)?;

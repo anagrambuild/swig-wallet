@@ -39,7 +39,7 @@ impl StakeLimit {
         if stake_amount_diff > self.amount {
             return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
         }
-        self.amount -= stake_amount_diff;
+        self.amount = self.amount.saturating_sub(stake_amount_diff);
         Ok(())
     }
 }
