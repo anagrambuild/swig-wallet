@@ -37,7 +37,7 @@ impl TokenLimit {
         if amount > self.current_amount {
             return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
         }
-        self.current_amount -= amount;
+        self.current_amount = self.current_amount.saturating_sub(amount);
         Ok(())
     }
 }

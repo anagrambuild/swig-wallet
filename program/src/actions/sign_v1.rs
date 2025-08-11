@@ -172,7 +172,7 @@ pub fn sign_v1(
     ctx: Context<SignV1Accounts>,
     all_accounts: &[AccountInfo],
     data: &[u8],
-    account_classifiers: &[AccountClassification],
+    account_classifiers: &mut [AccountClassification],
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
     // KEEP remove since we enfoce swig is owned in lib.rs
@@ -256,21 +256,21 @@ pub fn sign_v1(
                 // unexpected modifications. Lamports are handled separately in
                 // the permission check, but we still need to verify
                 // that the account data itself and ownership hasn't been tampered with
-                let hash = hash_except(&data, unsafe { account.owner() }, NO_EXCLUDE_RANGES);
+                let hash = hash_except(&data, account.owner(), NO_EXCLUDE_RANGES);
                 Some(hash)
             },
             AccountClassification::SwigTokenAccount { .. } => {
                 let data = unsafe { account.borrow_data_unchecked() };
                 // Exclude token balance field (bytes 64-72) but include owner
                 let exclude_ranges = [TOKEN_BALANCE_EXCLUDE_RANGE];
-                let hash = hash_except(&data, unsafe { account.owner() }, &exclude_ranges);
+                let hash = hash_except(&data, account.owner(), &exclude_ranges);
                 Some(hash)
             },
             AccountClassification::SwigStakeAccount { .. } => {
                 let data = unsafe { account.borrow_data_unchecked() };
                 // Exclude stake balance field (bytes 184-192) but include owner
                 let exclude_ranges = [STAKE_BALANCE_EXCLUDE_RANGE];
-                let hash = hash_except(&data, unsafe { account.owner() }, &exclude_ranges);
+                let hash = hash_except(&data, account.owner(), &exclude_ranges);
                 Some(hash)
             },
             AccountClassification::ProgramScope { .. } => {
@@ -285,7 +285,7 @@ pub fn sign_v1(
                     let end = program_scope.balance_field_end as usize;
                     if start < end && end <= data.len() {
                         let exclude_ranges = [start..end];
-                        let hash = hash_except(&data, unsafe { account.owner() }, &exclude_ranges);
+                        let hash = hash_except(&data, account.owner(), &exclude_ranges);
                         Some(hash)
                     } else {
                         None
@@ -331,13 +331,82 @@ pub fn sign_v1(
             }
 
             let swig_balance_before = ctx.accounts.swig.lamports();
-
             instruction.execute(all_accounts, ctx.accounts.swig.key(), &[signer.into()])?;
 
             let swig_balance_after = ctx.accounts.swig.lamports();
             if swig_balance_after < swig_balance_before {
                 let amount_spent = swig_balance_before.saturating_sub(swig_balance_after);
                 total_sol_spent = total_sol_spent.saturating_add(amount_spent);
+            }
+
+            // After execution, scan writable accounts once and update spent in-place
+            for (account_index, classifier) in account_classifiers.iter_mut().enumerate() {
+                let account = unsafe { all_accounts.get_unchecked(account_index) };
+                if !account.is_writable() {
+                    continue;
+                }
+                match classifier {
+                    AccountClassification::SwigTokenAccount { balance, spent } => {
+                        let data = unsafe { account.borrow_data_unchecked() };
+                        if data.len() >= 72 {
+                            let current = u64::from_le_bytes(unsafe {
+                                data.get_unchecked(TOKEN_BALANCE_RANGE)
+                                    .try_into()
+                                    .unwrap_or([0; 8])
+                            });
+                            if current < *balance {
+                                let delta = (*balance).saturating_sub(current);
+                                *spent = spent.saturating_add(delta);
+                                *balance = current;
+                            } else if current > *balance {
+                                *balance = current;
+                            }
+                        }
+                    },
+                    AccountClassification::SwigStakeAccount {
+                        state: _,
+                        balance,
+                        spent,
+                    } => {
+                        let data = unsafe { account.borrow_data_unchecked() };
+                        if data.len() >= 192 {
+                            let current = u64::from_le_bytes(unsafe {
+                                data.get_unchecked(STAKE_BALANCE_RANGE)
+                                    .try_into()
+                                    .unwrap_or([0; 8])
+                            });
+                            if current < *balance {
+                                let delta = (*balance).saturating_sub(current);
+                                *spent = spent.saturating_add(delta);
+                                *balance = current;
+                            } else if current > *balance {
+                                *balance = current;
+                            }
+                        }
+                    },
+                    AccountClassification::ProgramScope {
+                        role_index: _,
+                        balance,
+                        spent,
+                    } => {
+                        let owner = unsafe { account.owner() };
+                        if let Some(program_scope) =
+                            RoleMut::get_action_mut::<ProgramScope>(role.actions, owner.as_ref())?
+                        {
+                            let data = unsafe { account.borrow_data_unchecked() };
+                            if let Ok(current) = program_scope.read_account_balance(data) {
+                                if current < *balance {
+                                    let delta = (*balance).saturating_sub(current);
+                                    *spent = spent.saturating_add(delta);
+                                    *balance = current;
+                                } else if current > *balance {
+                                    *balance = current;
+                                }
+                            }
+                        }
+                    },
+                    _ => {},
+                }
             }
         } else {
             return Err(SwigError::InstructionExecutionError.into());
@@ -348,23 +417,23 @@ pub fn sign_v1(
     if has_all_permission {
         return Ok(());
     } else {
-        for (index, account) in account_classifiers.iter().enumerate() {
+        for (index, account) in account_classifiers.iter_mut().enumerate() {
             match account {
                 AccountClassification::ThisSwig { lamports } => {
-                    let account = unsafe { all_accounts.get_unchecked(index) };
+                    let account_info = unsafe { all_accounts.get_unchecked(index) };
 
                     // Only validate snapshots for writable accounts
-                    if account.is_writable() {
-                        let data = unsafe { &account.borrow_data_unchecked() };
+                    if account_info.is_writable() {
+                        let data = unsafe { &account_info.borrow_data_unchecked() };
                         let current_hash =
-                            hash_except(&data, unsafe { account.owner() }, NO_EXCLUDE_RANGES);
+                            hash_except(&data, account_info.owner(), NO_EXCLUDE_RANGES);
                         let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
                         if *snapshot_hash != current_hash {
                             return Err(SwigError::AccountDataModifiedUnexpectedly.into());
                         }
                     }
 
-                    let current_lamports = account.lamports();
+                    let current_lamports = account_info.lamports();
                     let mut matched = false;
                     if current_lamports < swig.reserved_lamports {
                         return Err(
@@ -493,22 +562,22 @@ pub fn sign_v1(
                         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                     }
                 },
-                AccountClassification::SwigTokenAccount { balance } => {
-                    let account = unsafe { all_accounts.get_unchecked(index) };
+                AccountClassification::SwigTokenAccount { balance, .. } => {
+                    let account_info = unsafe { all_accounts.get_unchecked(index) };
 
                     // Only validate snapshots for writable accounts
-                    if account.is_writable() {
-                        let data = unsafe { &account.borrow_data_unchecked() };
+                    if account_info.is_writable() {
+                        let data = unsafe { &account_info.borrow_data_unchecked() };
                         let exclude_ranges = [TOKEN_BALANCE_EXCLUDE_RANGE];
                         let current_hash =
-                            hash_except(&data, unsafe { account.owner() }, &exclude_ranges);
+                            hash_except(&data, account_info.owner(), &exclude_ranges);
                         let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
                         if *snapshot_hash != current_hash {
                             return Err(SwigError::AccountDataModifiedUnexpectedly.into());
                         }
                     }
 
-                    let data = unsafe { &account.borrow_data_unchecked() };
+                    let data = unsafe { &account_info.borrow_data_unchecked() };
                     let mint = unsafe { data.get_unchecked(TOKEN_MINT_RANGE) };
                     let state = unsafe { *data.get_unchecked(TOKEN_STATE_INDEX) };
 
@@ -532,172 +601,67 @@ pub fn sign_v1(
                         );
                     }
 
-                    if balance > &current_token_balance {
-                        let diff = balance - current_token_balance;
-                        // Check oracle token limit
+                    // Find the cumulative amount spent for this token account
+                    let mut total_token_spent: u64 = 0;
+                    if let AccountClassification::SwigTokenAccount { balance: _, spent } = account {
+                        total_token_spent = *spent;
+                    }
+
+                    if total_token_spent > 0 {
+                        if let Some(action) = RoleMut::get_action_mut::<TokenLimit>(actions, mint)?
                         {
-                            if let Some(action) =
-                                RoleMut::get_action_mut::<OracleRecurringLimit>(actions, &[0u8])?
-                            {
-                                let scope_data = unsafe {
-                                    &all_accounts
-                                        .get_unchecked(all_accounts.len() - 1)
-                                        .borrow_data_unchecked()
-                                };
-
-                                let mapping_data = unsafe {
-                                    &all_accounts
-                                        .get_unchecked(all_accounts.len() - 2)
-                                        .borrow_data_unchecked()
-                                };
-
-                                let mint_bytes =
-                                    mint.try_into().map_err(|_| SwigError::OracleMintNotFound)?;
-
-                                let (price, exp, mint_decimal) =
-                                    get_price_data(mapping_data, scope_data, &mint_bytes, &clock)?;
-
-                                let token_value_in_base = calculate_token_value(
-                                    price,
-                                    exp,
-                                    action.get_base_asset_decimals(),
-                                    diff,
-                                    mint_decimal,
-                                    action.get_base_asset_decimals(),
-                                )?;
-
-                                action.run_for_token(token_value_in_base, slot)?;
-
-                                if action.passthrough_check == 0 {
-                                    continue;
-                                }
-                            } else if let Some(action) =
-                                RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
-                            {
-                                let scope_data = unsafe {
-                                    &all_accounts
-                                        .get_unchecked(all_accounts.len() - 1)
-                                        .borrow_data_unchecked()
-                                };
-
-                                let mapping_data = unsafe {
-                                    &all_accounts
-                                        .get_unchecked(all_accounts.len() - 2)
-                                        .borrow_data_unchecked()
-                                };
-
-                                let mint_bytes =
-                                    mint.try_into().map_err(|_| SwigError::OracleMintNotFound)?;
-
-                                let (price, exp, mint_decimal) =
-                                    get_price_data(mapping_data, scope_data, &mint_bytes, &clock)?;
-
-                                let token_value_in_base = calculate_token_value(
-                                    price,
-                                    exp,
-                                    action.get_base_asset_decimals(),
-                                    diff,
-                                    mint_decimal,
-                                    action.get_base_asset_decimals(),
-                                )?;
-
-                                action.run_for_token(token_value_in_base)?;
-
-                                if !action.passthrough_check {
-                                    continue;
-                                }
-                            };
-                        }
-                        // Check token recurring limit
+                            action.run(total_token_spent)?;
+                            continue;
+                        } else if let Some(action) =
+                            RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?
                         {
-                            if let Some(action) =
-                                RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?
-                            {
-                                action.run(diff, slot)?;
-                                continue;
-                            };
-                        }
-                        // Check token limit
-                        {
-                            if let Some(action) =
-                                RoleMut::get_action_mut::<TokenLimit>(actions, mint)?
-                            {
-                                action.run(diff)?;
-                                continue;
-                            };
+                            action.run(total_token_spent, slot)?;
+                            continue;
                         }
                         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                     }
                 },
-                AccountClassification::SwigStakeAccount { state, balance } => {
-                    let account = unsafe { all_accounts.get_unchecked(index) };
+                AccountClassification::SwigStakeAccount {
+                    state: _,
+                    balance,
+                    spent,
+                } => {
+                    let account_info = unsafe { all_accounts.get_unchecked(index) };
 
                     // Only validate snapshots for writable accounts
-                    if account.is_writable() {
-                        let data = unsafe { &account.borrow_data_unchecked() };
+                    if account_info.is_writable() {
+                        let data = unsafe { &account_info.borrow_data_unchecked() };
                         let exclude_ranges = [STAKE_BALANCE_EXCLUDE_RANGE];
                         let current_hash =
-                            hash_except(&data, unsafe { account.owner() }, &exclude_ranges);
+                            hash_except(&data, account_info.owner(), &exclude_ranges);
                         let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
                         if *snapshot_hash != current_hash {
                             return Err(SwigError::AccountDataModifiedUnexpectedly.into());
                         }
                     }
 
-                    // Get current stake balance from account data
-                    let data = unsafe { &account.borrow_data_unchecked() };
-
-                    // Extract current stake balance from account
-                    let current_stake_balance = u64::from_le_bytes(unsafe {
-                        data.get_unchecked(STAKE_BALANCE_RANGE)
-                            .try_into()
-                            .map_err(|_| ProgramError::InvalidAccountData)?
-                    });
-
-                    // Calculate the absolute difference in stake amount, regardless of direction
-                    let diff = if balance > &current_stake_balance {
-                        balance - current_stake_balance // Staking
-                    } else if balance < &current_stake_balance {
-                        current_stake_balance - balance // Unstaking
-                    } else {
-                        0 // No change
-                    };
-
-                    // Skip further checks if there's no change in stake amount
-                    if diff == 0 {
-                        continue;
+                    // Validate stake spending permissions if any stake was spent
+                    if *spent > 0 {
+                        if let Some(action) = RoleMut::get_action_mut::<StakeLimit>(actions, &[])? {
+                            action.run(*spent)?;
+                            continue;
+                        } else if let Some(action) =
+                            RoleMut::get_action_mut::<StakeRecurringLimit>(actions, &[])?
+                        {
+                            action.run(*spent, slot)?;
+                            continue;
+                        }
+                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                     }
 
-                    // Both staking and unstaking operations use the same permission system
-                    // We check permissions using the absolute difference calculated above
-
-                    // First check if we have unlimited staking permission
-                    if RoleMut::get_action_mut::<StakeAll>(actions, &[])?.is_some() {
-                        continue;
-                    }
-
-                    // Check for fixed limit
-                    if let Some(action) = RoleMut::get_action_mut::<StakeLimit>(actions, &[])? {
-                        action.run(diff)?;
-                        continue;
-                    }
-
-                    // Check for recurring limit
-                    if let Some(action) =
-                        RoleMut::get_action_mut::<StakeRecurringLimit>(actions, &[])?
-                    {
-                        action.run(diff, slot)?;
-                        continue;
-                    }
-
-                    // No matching permission found
-                    return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+                    continue;
                 },
                 AccountClassification::ProgramScope {
                     role_index,
                     balance,
+                    ..
                 } => {
-                    let account = unsafe { all_accounts.get_unchecked(index) };
+                    let account_info = unsafe { all_accounts.get_unchecked(index) };
 
                     // Get the role with the ProgramScope action
                     let owner = unsafe { all_accounts.get_unchecked(index).owner() };
@@ -717,7 +681,7 @@ pub fn sign_v1(
 
                             // Get the current balance by using the program_scope's
                             // read_account_balance method
-                            let data = unsafe { account.borrow_data_unchecked() };
+                            let data = unsafe { account_info.borrow_data_unchecked() };
 
                             // Check if balance field range is valid
                             if program_scope.balance_field_end - program_scope.balance_field_start
@@ -725,16 +689,13 @@ pub fn sign_v1(
                                 && program_scope.balance_field_end as usize <= data.len()
                             {
                                 // Only validate snapshots for writable accounts
-                                if account.is_writable() {
+                                if account_info.is_writable() {
                                     // Hash the data excluding the balance field but including owner
                                     let exclude_ranges =
                                         [program_scope.balance_field_start as usize
                                             ..program_scope.balance_field_end as usize];
-                                    let current_hash = hash_except(
-                                        &data,
-                                        unsafe { account.owner() },
-                                        &exclude_ranges,
-                                    );
+                                    let current_hash =
+                                        hash_except(&data, account_info.owner(), &exclude_ranges);
                                     let snapshot_hash =
                                         unsafe { account_snapshots[index].assume_init_ref() };
                                     if *snapshot_hash != current_hash {
@@ -744,22 +705,17 @@ pub fn sign_v1(
                                     }
                                 }
 
-                                // Read the current balance from the account data
-                                let current_balance = match program_scope.read_account_balance(data)
+                                let mut total_program_scope_spent: u128 = 0;
+                                if let AccountClassification::ProgramScope {
+                                    role_index: _,
+                                    balance: _,
+                                    spent,
+                                } = account
                                 {
-                                    Ok(bal) => bal,
-                                    Err(err) => {
-                                        msg!("Error reading balance from account data: {:?}", err);
-                                        return Err(
-                                            SwigError::InvalidProgramScopeBalanceFields.into()
-                                        );
-                                    },
-                                };
+                                    total_program_scope_spent = *spent;
+                                }
 
-                                let amount_spent = balance - current_balance;
-
-                                // Execute the program scope run with proper amount and slot
-                                program_scope.run(amount_spent, Some(slot))?;
+                                program_scope.run(total_program_scope_spent, Some(slot))?;
                             } else {
                                 return Err(SwigError::InvalidProgramScopeBalanceFields.into());
                             }

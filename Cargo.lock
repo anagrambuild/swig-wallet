@@ -3396,7 +3396,7 @@ dependencies = [
 
 [[package]]
 name = "no-padding"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "proc-macro2 1.0.94",
  "quote 1.0.40",
@@ -3815,12 +3815,6 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pinocchio"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43a8a77bf74e1c4050a2bad53648acfcfbf22b1806473f9c9334a58ef3b38ec4"
-
-[[package]]
-name = "pinocchio"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "530596fa307103e53257f2cf064815919ee7fbc4c7ab999f6f13cc7067c3aff1"
@@ -3828,7 +3822,8 @@ checksum = "530596fa307103e53257f2cf064815919ee7fbc4c7ab999f6f13cc7067c3aff1"
 [[package]]
 name = "pinocchio"
 version = "0.9.0"
-source = "git+https://github.com/anza-xyz/pinocchio.git#5565bebe90c02c9581190dedaa2c7ebd93f5c63b"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5123fe61ac87a327d434d530eaddaaf65069a37e33e5c9f798feaed29e4974c8"
 
 [[package]]
 name = "pinocchio-pubkey"
@@ -3841,23 +3836,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "pinocchio-system"
-version = "0.2.3"
+name = "pinocchio-pubkey"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f75423420ae70aa748cf611cab14cfd00af08d0d2d3d258cb0cf5e2880ec19c"
+checksum = "cb0225638cadcbebae8932cb7f49cb5da7c15c21beb19f048f05a5ca7d93f065"
 dependencies = [
- "pinocchio 0.8.1",
- "pinocchio-pubkey",
+ "five8_const",
+ "pinocchio 0.9.0",
+ "sha2-const-stable",
+]
+
+[[package]]
+name = "pinocchio-system"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "141ed5eafb4ab04568bb0e224e3dc9a9de13c933de4c004e0d1a553498be3a7c"
+dependencies = [
+ "pinocchio 0.9.0",
+ "pinocchio-pubkey 0.3.0",
 ]
 
 [[package]]
 name = "pinocchio-token"
-version = "0.2.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d94c71afd8ddf3d2befc8c64e6efc58ede172bb98051c0faa02db8a737c958cd"
+checksum = "7d037f645db5ed4df9163362f1716932feb987a82f70caf15d0259cfeef82f4c"
 dependencies = [
- "pinocchio 0.7.1",
- "pinocchio-pubkey",
+ "pinocchio 0.8.1",
+ "pinocchio-pubkey 0.2.4",
 ]
 
 [[package]]
@@ -4894,6 +4900,12 @@ dependencies = [
  "cpufeatures",
  "digest 0.10.7",
 ]
+
+[[package]]
+name = "sha2-const-stable"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f179d4e11094a893b82fff208f74d448a7512f99f5a0acbd5c679b705f83ed9"
 
 [[package]]
 name = "sha3"
@@ -8007,7 +8019,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "swig"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "alloy-primitives",
  "alloy-signer",
@@ -8027,8 +8039,8 @@ dependencies = [
  "once_cell",
  "openssl",
  "oracle-mapping-state",
- "pinocchio 0.8.1",
- "pinocchio-pubkey",
+ "pinocchio 0.9.0",
+ "pinocchio-pubkey 0.3.0",
  "pinocchio-system",
  "pinocchio-token",
  "rand 0.9.0",
@@ -8051,16 +8063,16 @@ dependencies = [
 
 [[package]]
 name = "swig-assertions"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
- "pinocchio 0.8.1",
- "pinocchio-pubkey",
+ "pinocchio 0.9.0",
+ "pinocchio-pubkey 0.3.0",
  "pinocchio-system",
 ]
 
 [[package]]
 name = "swig-cli"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "alloy-primitives",
  "alloy-signer",
@@ -8089,17 +8101,17 @@ dependencies = [
 
 [[package]]
 name = "swig-compact-instructions"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "bs58",
- "pinocchio 0.8.1",
+ "pinocchio 0.9.0",
  "pinocchio-system",
  "solana-program",
 ]
 
 [[package]]
 name = "swig-interface"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -8112,7 +8124,7 @@ dependencies = [
 
 [[package]]
 name = "swig-sdk"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "alloy-primitives",
  "alloy-signer",
@@ -8140,7 +8152,7 @@ dependencies = [
 
 [[package]]
 name = "swig-state"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "agave-precompiles",
  "hex",
@@ -8148,8 +8160,8 @@ dependencies = [
  "murmur3",
  "no-padding",
  "openssl",
- "pinocchio 0.8.1",
- "pinocchio-pubkey",
+ "pinocchio 0.9.0",
+ "pinocchio-pubkey 0.3.0",
  "rand 0.9.0",
  "solana-secp256r1-program",
  "swig-assertions",

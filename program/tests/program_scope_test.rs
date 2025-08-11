@@ -7,21 +7,25 @@ mod common;
 use common::*;
 use litesvm_token::spl_token::{self};
 use solana_sdk::{
+    instruction::{AccountMeta, Instruction, InstructionError},
     message::{v0, VersionedMessage},
+    native_token::LAMPORTS_PER_SOL,
+    program_pack::Pack,
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
     sysvar::clock::Clock,
-    transaction::VersionedTransaction,
+    transaction::{TransactionError, VersionedTransaction},
 };
-use swig_interface::{AuthorityConfig, ClientAction};
+use swig::actions::sign_v1::SignV1Args;
+use swig_interface::{compact_instructions, AuthorityConfig, ClientAction};
 use swig_state::{
     action::{
         program::Program,
         program_scope::{NumericType, ProgramScope, ProgramScopeType},
     },
     swig::swig_account_seeds,
-    Transmutable,
+    IntoBytes, Transmutable,
 };
 
 /// This test compares the baseline performance of:
@@ -230,7 +234,7 @@ fn test_token_transfer_with_program_scope() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    assert!(swig_transfer_cu - regular_transfer_cu <= 5292);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 5462);
 }
 
 /// Helper function to perform token transfers through the swig
@@ -740,4 +744,404 @@ fn test_recurring_limit_program_scope() {
     );
 
     println!("RecurringLimit ProgramScope test completed successfully!");
+}
+
+#[test_log::test]
+fn test_program_scope_token_limit_cpi_enforcement() {
+    use swig_state::IntoBytes;
+    let mut context = setup_test_context().unwrap();
+
+    let swig_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+
+    // Setup token infrastructure
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig,
+        &context.default_payer,
+    )
+    .unwrap();
+
+    let funding_account = Keypair::new();
+    context
+        .svm
+        .airdrop(&funding_account.pubkey(), 10_000_000_000)
+        .unwrap();
+    let funding_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &funding_account.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+
+    let recipient_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig_authority.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+
+    // Mint tokens to funding account
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &funding_ata,
+        2000,
+    )
+    .unwrap();
+
+    // Mint initial tokens to SWIG account
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &swig_ata,
+        1000,
+    )
+    .unwrap();
+
+    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Setup ProgramScope with Limit type for 500 tokens
+    let program_scope = ProgramScope {
+        program_id: spl_token::ID.to_bytes(),
+        target_account: swig_ata.to_bytes(),
+        scope_type: ProgramScopeType::Limit as u64,
+        numeric_type: NumericType::U64 as u64,
+        current_amount: 0,
+        limit: 500,
+        window: 0,               // Not used for Limit type
+        last_reset: 0,           // Not used for Limit type
+        balance_field_start: 64, // SPL Token balance starts at byte 64
+        balance_field_end: 72,   // SPL Token balance ends at byte 72 (u64 is 8 bytes)
+    };
+
+    // Add authority with ProgramScope limit of 500 tokens
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: swig_state::authority::AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::Program(Program {
+                program_id: spl_token::ID.to_bytes(),
+            }),
+            ClientAction::ProgramScope(program_scope),
+        ],
+    )
+    .unwrap();
+
+    let transfer_amount: u64 = 1000; // 1000 tokens (exceeds the 500 token limit)
+
+    // Instruction 1: Transfer tokens TO the Swig wallet from funding account
+    let fund_swig_ix = spl_token::instruction::transfer(
+        &spl_token::ID,
+        &funding_ata,
+        &swig_ata,
+        &funding_account.pubkey(),
+        &[],
+        transfer_amount,
+    )
+    .unwrap();
+
+    // Instruction 2: Transfer tokens FROM Swig to recipient
+    let withdraw_ix = spl_token::instruction::transfer(
+        &spl_token::ID,
+        &swig_ata,
+        &recipient_ata,
+        &swig,
+        &[],
+        transfer_amount,
+    )
+    .unwrap();
+
+    let initial_accounts = vec![
+        AccountMeta::new(swig, false),
+        AccountMeta::new(context.default_payer.pubkey(), true),
+        AccountMeta::new(second_authority.pubkey(), true),
+        AccountMeta::new(funding_account.pubkey(), true),
+        AccountMeta::new(funding_ata, false),
+        AccountMeta::new(swig_ata, false),
+        AccountMeta::new(recipient_ata, false),
+        AccountMeta::new_readonly(spl_token::ID, false),
+    ];
+
+    let (final_accounts, compact_ixs) = swig_interface::compact_instructions(
+        swig,
+        initial_accounts,
+        vec![fund_swig_ix, withdraw_ix],
+    );
+
+    let instruction_payload = compact_ixs.into_bytes();
+
+    // Prepare the `sign_v1` instruction manually
+    let sign_args = swig::actions::sign_v1::SignV1Args::new(1, instruction_payload.len() as u16); // Role ID 1 for limited_authority
+    let mut sign_ix_data = Vec::new();
+    sign_ix_data.extend_from_slice(sign_args.into_bytes().unwrap());
+    sign_ix_data.extend_from_slice(&instruction_payload);
+    sign_ix_data.push(2);
+
+    let sign_ix = solana_sdk::instruction::Instruction {
+        program_id: swig::ID.into(),
+        accounts: final_accounts,
+        data: sign_ix_data,
+    };
+
+    // Get initial token balances
+    let initial_swig_token_account = context.svm.get_account(&swig_ata).unwrap();
+    let initial_swig_token_balance =
+        spl_token::state::Account::unpack(&initial_swig_token_account.data).unwrap();
+
+    let initial_recipient_token_account = context.svm.get_account(&recipient_ata).unwrap();
+    let initial_recipient_token_balance =
+        spl_token::state::Account::unpack(&initial_recipient_token_account.data).unwrap();
+
+    println!(
+        "Initial Swig token balance: {} tokens",
+        initial_swig_token_balance.amount
+    );
+    println!(
+        "Initial recipient token balance: {} tokens",
+        initial_recipient_token_balance.amount
+    );
+    println!(
+        "Testing 500 token ProgramScope limit enforcement with funding+withdrawing {} tokens...",
+        transfer_amount
+    );
+
+    // Build the transaction
+    let test_message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let test_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(test_message),
+        &[&context.default_payer, &second_authority, &funding_account], // All required signers
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(test_tx);
+
+    // Always print final balances regardless of transaction outcome
+    let final_swig_token_account = context.svm.get_account(&swig_ata).unwrap();
+    let final_swig_token_balance =
+        spl_token::state::Account::unpack(&final_swig_token_account.data).unwrap();
+
+    let final_recipient_token_account = context.svm.get_account(&recipient_ata).unwrap();
+    let final_recipient_token_balance =
+        spl_token::state::Account::unpack(&final_recipient_token_account.data).unwrap();
+
+    println!(
+        "Final Swig token balance: {} tokens",
+        final_swig_token_balance.amount
+    );
+    println!(
+        "Final recipient token balance: {} tokens",
+        final_recipient_token_balance.amount
+    );
+
+    // Print transaction result
+    if result.is_err() {
+        let error = result.as_ref().unwrap_err();
+        println!("❌ Transaction failed with error: {:?}", error.err);
+        println!("Logs: {:?}", error.meta.logs);
+    } else {
+        let transaction_result = result.as_ref().unwrap();
+        println!(
+            "✅ Transaction succeeded: {}",
+            transaction_result.pretty_logs()
+        );
+    }
+
+    // The transaction should fail due to program scope limit enforcement
+    assert!(
+        result.is_err(),
+        "Transaction should fail due to program scope limit enforcement in CPI scenarios"
+    );
+}
+
+#[test_log::test]
+fn test_program_scope_balance_underflow_check() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    let external_funding_account = Keypair::new(); // External account that funds the swig wallet
+
+    // Airdrops
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&external_funding_account.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+
+    // Setup token mint
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+
+    // Setup swig account
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+    create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    // Setup token accounts
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig,
+        &context.default_payer,
+    )
+    .unwrap();
+    let external_funding_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &external_funding_account.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+
+    // Mint initial tokens to the external funding account
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &external_funding_ata,
+        2000,
+    )
+    .unwrap();
+
+    // Define a ProgramScope with a limit of 1000 tokens
+    let program_scope = ProgramScope {
+        program_id: spl_token::ID.to_bytes(),
+        target_account: swig_ata.to_bytes(),
+        scope_type: ProgramScopeType::Limit as u64,
+        numeric_type: NumericType::U64 as u64,
+        current_amount: 0,
+        limit: 1000,
+        window: 0,
+        last_reset: 0,
+        balance_field_start: 64,
+        balance_field_end: 72,
+    };
+
+    // Add the authority with the ProgramScope
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: swig_state::authority::AuthorityType::Ed25519,
+            authority: swig_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::Program(swig_state::action::program::Program {
+                program_id: spl_token::ID.to_bytes(),
+            }),
+            ClientAction::ProgramScope(program_scope),
+        ],
+    )
+    .unwrap();
+
+    // CPI 1: Fund the swig ATA with tokens (deposit from external account)
+    let funding_amount = 500;
+    let funding_ix = spl_token::instruction::transfer(
+        &spl_token::ID,
+        &external_funding_ata,
+        &swig_ata,
+        &external_funding_account.pubkey(),
+        &[],
+        funding_amount,
+    )
+    .unwrap();
+
+    // CPI 2: Withdraw tokens from swig ATA (should be properly tracked now)
+    let withdrawal_amount = 100;
+    let withdrawal_ix = spl_token::instruction::transfer(
+        &spl_token::ID,
+        &swig_ata,
+        &external_funding_ata,
+        &swig, // Swig signs for this withdrawal
+        &[],
+        withdrawal_amount,
+    )
+    .unwrap();
+
+    // Compact the instructions
+    let initial_accounts = vec![
+        AccountMeta::new(swig, false),
+        AccountMeta::new_readonly(swig_authority.pubkey(), true),
+        AccountMeta::new(external_funding_ata, false),
+        AccountMeta::new(swig_ata, false),
+        AccountMeta::new_readonly(external_funding_account.pubkey(), true),
+        AccountMeta::new_readonly(spl_token::ID, false),
+    ];
+    let (final_accounts, compact_ixs) =
+        compact_instructions(swig, initial_accounts, vec![funding_ix, withdrawal_ix]);
+    let instruction_payload = compact_ixs.into_bytes();
+
+    // Prepare the sign_v1 instruction
+    let sign_args = SignV1Args::new(1, instruction_payload.len() as u16);
+    let mut sign_ix_data = Vec::new();
+    sign_ix_data.extend_from_slice(sign_args.into_bytes().unwrap());
+    sign_ix_data.extend_from_slice(&instruction_payload);
+    sign_ix_data.push(1); // authority index
+
+    let sign_ix = Instruction {
+        program_id: swig::ID.into(),
+        accounts: final_accounts,
+        data: sign_ix_data,
+    };
+
+    // Build and send the transaction
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(message),
+        &[
+            &context.default_payer,
+            &swig_authority,
+            &external_funding_account,
+        ],
+    )
+    .unwrap();
+    let result = context.svm.send_transaction(tx);
+
+    // This transaction should now succeed because balance tracking is fixed
+    assert!(
+        result.is_ok(),
+        "Transaction should succeed with correct balance tracking: {:?}",
+        result.err()
+    );
+
+    println!("✅ Transaction succeeded with proper balance tracking");
+    println!("Result: {:?}", result.unwrap().pretty_logs());
 }

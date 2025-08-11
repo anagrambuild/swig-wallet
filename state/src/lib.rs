@@ -59,6 +59,8 @@ pub enum AccountClassification {
     SwigTokenAccount {
         /// The token balance in the account
         balance: u64,
+        /// Amount spent from this account during this transaction
+        spent: u64,
     },
     /// A Swig stake account with its state and balance
     SwigStakeAccount {
@@ -66,6 +68,8 @@ pub enum AccountClassification {
         state: StakeAccountState,
         /// The staked balance
         balance: u64,
+        /// Amount staked/unstaked during this transaction
+        spent: u64,
     },
     /// A program scope account with role information
     ProgramScope {
@@ -73,6 +77,8 @@ pub enum AccountClassification {
         role_index: u8,
         /// Balance in the program scope
         balance: u128,
+        /// Amount spent from this program scope during this transaction
+        spent: u128,
     },
     /// A Swig sub-account with its lamport balance
     SwigSubAccount {
