@@ -615,6 +615,7 @@ fn test_oracle_recurring_limit_window_reset() {
             .unwrap();
 
     let result3 = context.svm.send_transaction(tx3);
+    println!("result3: {:?}", result3);
     assert!(
         result3.is_ok(),
         "Transfer should succeed after window reset"
