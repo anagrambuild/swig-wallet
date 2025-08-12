@@ -23,6 +23,7 @@ use pinocchio::{
 use pinocchio_pubkey::pubkey;
 use swig_state::{
     action::{
+        oracle_limits::BaseAsset,
         program_scope::{NumericType, ProgramScope},
         Action, Permission,
     },
@@ -473,9 +474,21 @@ pub fn get_price_data(
     scope_data: &[u8],
     mint: &[u8; 32],
     clock: &Clock,
+    base_asset: BaseAsset,
 ) -> Result<(u64, u8, u8), SwigError> {
-    let mapping = MintMapping::get_mapping_details(&mapping_registry, mint)
+    let mut mapping = MintMapping::get_mapping_details(&mapping_registry, mint)
         .map_err(|_| SwigError::OracleMintNotFound)?;
+
+    // Inject the base asset scope index if it exists
+    if let Some(base_asset_scope_index) = base_asset.get_scope_index() {
+        // Replace the first u16::MAX with the base asset scope index
+        mapping.scope_details = mapping.scope_details.map(|mut scope_details| {
+            if let Some(pos) = scope_details.iter().position(|&x| x == u16::MAX) {
+                scope_details[pos] = base_asset_scope_index;
+            }
+            scope_details
+        });
+    }
 
     let (mut scope_price, mut scope_exp) = get_scope_price_data(
         scope_data,
@@ -577,15 +590,42 @@ fn get_scope_price_data(
                 .ok_or(SwigError::OraclePriceChainEmpty)?;
         }
 
-        // Now perform the multiplication with scaled values
-        chained_value = chained_value
-            .checked_mul(scaled_value)
-            .ok_or(SwigError::OraclePriceChainEmpty)?;
+        // For the first value (SOL/USD), multiply
+        // For subsequent values (exchange rates), divide to get the final currency
+        if chained_value == 1 && chained_exp == 0 {
+            // First value: multiply directly
+            chained_value = chained_value
+                .checked_mul(scaled_value)
+                .ok_or(SwigError::OraclePriceChainEmpty)?;
+            chained_exp = chained_exp
+                .checked_add(scaled_exp)
+                .ok_or(SwigError::OraclePriceChainEmpty)?;
+        } else {
+            // Subsequent values: divide to convert to target currency
+            // We need to handle division with proper scaling
+            let target_exp = chained_exp
+                .checked_sub(scaled_exp)
+                .ok_or(SwigError::OraclePriceChainEmpty)?;
 
-        // Add the exponents
-        chained_exp = chained_exp
-            .checked_add(scaled_exp)
-            .ok_or(SwigError::OraclePriceChainEmpty)?;
+            // Scale up the numerator if needed for precision
+            let mut scaled_chained = chained_value;
+            let mut working_exp = chained_exp;
+            while scaled_chained < scaled_value && working_exp < u16::MAX as u64 {
+                scaled_chained = scaled_chained
+                    .checked_mul(10)
+                    .ok_or(SwigError::OraclePriceChainEmpty)?;
+                working_exp = working_exp
+                    .checked_add(1)
+                    .ok_or(SwigError::OraclePriceChainEmpty)?;
+            }
+
+            chained_value = scaled_chained
+                .checked_div(scaled_value)
+                .ok_or(SwigError::OraclePriceChainEmpty)?;
+            chained_exp = working_exp
+                .checked_sub(scaled_exp)
+                .ok_or(SwigError::OraclePriceChainEmpty)?;
+        }
 
         // Scale down if the value is too large to fit in u64
         while chained_value > u64::MAX as u128 && chained_exp > 0 {

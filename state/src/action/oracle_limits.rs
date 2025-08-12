@@ -20,6 +20,11 @@ use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
 use no_padding::NoPadding;
 use pinocchio::msg;
 use pinocchio::program_error::ProgramError;
+use pinocchio_pubkey::pubkey;
+
+pub const ORACLE_MAPPING_OWNER: [u8; 32] = pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ");
+pub const SCOPE_OWNER: [u8; 32] = pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ");
+pub const SOL_MINT: [u8; 32] = pubkey!("So11111111111111111111111111111111111111112");
 
 /// Represents the base asset type for value denomination.
 ///
@@ -29,9 +34,9 @@ use pinocchio::program_error::ProgramError;
 #[repr(u8)]
 pub enum BaseAsset {
     /// USDC stablecoin with 6 decimal places precision
-    USDC = 0,
+    USD = 0,
     /// EURC stablecoin with 6 decimal places precision
-    EURC = 1,
+    EUR = 1,
 }
 
 impl TryFrom<u8> for BaseAsset {
@@ -39,9 +44,18 @@ impl TryFrom<u8> for BaseAsset {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0 => Ok(BaseAsset::USDC),
-            // 1 => Ok(BaseAsset::EURC),
+            0 => Ok(BaseAsset::USD),
+            1 => Ok(BaseAsset::EUR),
             _ => Err(SwigAuthenticateError::InvalidDataPayload.into()),
+        }
+    }
+}
+
+impl BaseAsset {
+    pub fn get_scope_index(&self) -> Option<u16> {
+        match self {
+            BaseAsset::USD => None,
+            BaseAsset::EUR => Some(173),
         }
     }
 }
@@ -96,8 +110,8 @@ impl OracleTokenLimit {
     /// The number of decimal places for the base asset (e.g. 6 for USDC)
     pub fn get_base_asset_decimals(&self) -> u8 {
         match BaseAsset::try_from(self.base_asset_type).unwrap() {
-            BaseAsset::USDC => 6,
-            BaseAsset::EURC => 6,
+            BaseAsset::USD => 6,
+            BaseAsset::EUR => 6,
         }
     }
 
@@ -188,16 +202,5 @@ impl<'a> Actionable<'a> for OracleTokenLimit {
     /// This action represents the OracleTokenLimit permission type
     const TYPE: Permission = Permission::OracleTokenLimit;
     /// Multiple oracle token limits can exist per role (one per base asset)
-    const REPEATABLE: bool = true;
-
-    /// Checks if this token limit matches the provided base asset type.
-    ///
-    /// # Arguments
-    /// * `data` - The base asset type to check against (first byte)
-    ///
-    /// # Returns
-    /// `true` if the base asset type matches, `false` otherwise
-    fn match_data(&self, data: &[u8]) -> bool {
-        !data.is_empty() && data[0] == self.base_asset_type
-    }
+    const REPEATABLE: bool = false;
 }

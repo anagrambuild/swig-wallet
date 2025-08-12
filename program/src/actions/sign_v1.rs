@@ -19,7 +19,7 @@ use swig_compact_instructions::InstructionIterator;
 use swig_state::{
     action::{
         all::All,
-        oracle_limits::OracleTokenLimit,
+        oracle_limits::{BaseAsset, OracleTokenLimit, ORACLE_MAPPING_OWNER, SCOPE_OWNER, SOL_MINT},
         oracle_recurring_limit::OracleRecurringLimit,
         program::Program,
         program_all::ProgramAll,
@@ -445,15 +445,13 @@ pub fn sign_v1(
                         // Check oracle recurring limit
                         {
                             if let Some(action) =
-                                RoleMut::get_action_mut::<OracleRecurringLimit>(actions, &[0u8])?
+                                RoleMut::get_action_mut::<OracleRecurringLimit>(actions, &[])?
                             {
                                 let scope_data = unsafe {
                                     let scope_account =
                                         all_accounts.get_unchecked(all_accounts.len() - 1);
                                     // also check if owner matches
-                                    if scope_account.owner().as_ref()
-                                        != &pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ")
-                                    {
+                                    if scope_account.owner().as_ref() != &SCOPE_OWNER {
                                         return Err(SwigError::WrongOracleProgramAccount.into());
                                     }
                                     scope_account.borrow_data_unchecked()
@@ -462,9 +460,7 @@ pub fn sign_v1(
                                 let mapping_registry = unsafe {
                                     let mapping_account =
                                         all_accounts.get_unchecked(all_accounts.len() - 2);
-                                    if mapping_account.owner().as_ref()
-                                        != &pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ")
-                                    {
+                                    if mapping_account.owner().as_ref() != &ORACLE_MAPPING_OWNER {
                                         return Err(SwigError::WrongOracleMappingAccount.into());
                                     }
                                     mapping_account.borrow_data_unchecked()
@@ -473,8 +469,9 @@ pub fn sign_v1(
                                 let (price, exp, mint_decimal) = get_price_data(
                                     mapping_registry,
                                     scope_data,
-                                    &pubkey!("So11111111111111111111111111111111111111112"),
+                                    &SOL_MINT,
                                     &clock,
+                                    BaseAsset::try_from(action.base_asset_type)?,
                                 )?;
 
                                 let token_value_in_base = calculate_token_value(
@@ -486,23 +483,19 @@ pub fn sign_v1(
                                     action.get_base_asset_decimals(),
                                 )?;
 
-                                msg!("token_value_in_base: {}", token_value_in_base);
-                                msg!("action spent: {}", action.current_amount);
                                 action.run_for_sol(token_value_in_base, slot)?;
 
                                 if action.passthrough_check == 0 {
                                     continue;
                                 }
                             } else if let Some(action) =
-                                RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
+                                RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[])?
                             {
                                 let scope_data = unsafe {
                                     let scope_account =
                                         all_accounts.get_unchecked(all_accounts.len() - 1);
                                     // also check if owner matches
-                                    if scope_account.owner().as_ref()
-                                        != &pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ")
-                                    {
+                                    if scope_account.owner().as_ref() != &SCOPE_OWNER {
                                         return Err(SwigError::WrongOracleProgramAccount.into());
                                     }
                                     scope_account.borrow_data_unchecked()
@@ -511,9 +504,8 @@ pub fn sign_v1(
                                 let mapping_registry = unsafe {
                                     let mapping_account =
                                         all_accounts.get_unchecked(all_accounts.len() - 2);
-                                    if mapping_account.owner().as_ref()
-                                        != &pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ")
-                                    {
+                                    let owner = ORACLE_MAPPING_OWNER;
+                                    if mapping_account.owner().as_ref() != &owner {
                                         return Err(SwigError::WrongOracleMappingAccount.into());
                                     }
                                     mapping_account.borrow_data_unchecked()
@@ -522,8 +514,9 @@ pub fn sign_v1(
                                 let (price, exp, mint_decimal) = get_price_data(
                                     mapping_registry,
                                     scope_data,
-                                    &pubkey!("So11111111111111111111111111111111111111112"),
+                                    &SOL_MINT,
                                     &clock,
+                                    BaseAsset::try_from(action.base_asset_type)?,
                                 )?;
 
                                 let token_value_in_base = calculate_token_value(
@@ -610,27 +603,37 @@ pub fn sign_v1(
                     if total_token_spent > 0 {
                         // Check oracle token limit
                         {
-                            msg!("total_token_spent: {}", total_token_spent);
                             if let Some(action) =
-                                RoleMut::get_action_mut::<OracleRecurringLimit>(actions, &[0u8])?
+                                RoleMut::get_action_mut::<OracleRecurringLimit>(actions, &[])?
                             {
                                 let scope_data = unsafe {
-                                    &all_accounts
-                                        .get_unchecked(all_accounts.len() - 1)
-                                        .borrow_data_unchecked()
+                                    let scope_account =
+                                        all_accounts.get_unchecked(all_accounts.len() - 1);
+                                    if scope_account.owner().as_ref() != &SCOPE_OWNER {
+                                        return Err(SwigError::WrongOracleProgramAccount.into());
+                                    }
+                                    scope_account.borrow_data_unchecked()
                                 };
 
                                 let mapping_data = unsafe {
-                                    &all_accounts
-                                        .get_unchecked(all_accounts.len() - 2)
-                                        .borrow_data_unchecked()
+                                    let mapping_account =
+                                        all_accounts.get_unchecked(all_accounts.len() - 2);
+                                    if mapping_account.owner().as_ref() != &ORACLE_MAPPING_OWNER {
+                                        return Err(SwigError::WrongOracleMappingAccount.into());
+                                    }
+                                    mapping_account.borrow_data_unchecked()
                                 };
 
                                 let mint_bytes =
                                     mint.try_into().map_err(|_| SwigError::OracleMintNotFound)?;
 
-                                let (price, exp, mint_decimal) =
-                                    get_price_data(mapping_data, scope_data, &mint_bytes, &clock)?;
+                                let (price, exp, mint_decimal) = get_price_data(
+                                    mapping_data,
+                                    scope_data,
+                                    &mint_bytes,
+                                    &clock,
+                                    BaseAsset::try_from(action.base_asset_type)?,
+                                )?;
 
                                 let token_value_in_base = calculate_token_value(
                                     price,
@@ -647,25 +650,36 @@ pub fn sign_v1(
                                     continue;
                                 }
                             } else if let Some(action) =
-                                RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[0u8])?
+                                RoleMut::get_action_mut::<OracleTokenLimit>(actions, &[])?
                             {
                                 let scope_data = unsafe {
-                                    &all_accounts
-                                        .get_unchecked(all_accounts.len() - 1)
-                                        .borrow_data_unchecked()
+                                    let scope_account =
+                                        all_accounts.get_unchecked(all_accounts.len() - 1);
+                                    if scope_account.owner().as_ref() != &SCOPE_OWNER {
+                                        return Err(SwigError::WrongOracleProgramAccount.into());
+                                    }
+                                    scope_account.borrow_data_unchecked()
                                 };
 
                                 let mapping_data = unsafe {
-                                    &all_accounts
-                                        .get_unchecked(all_accounts.len() - 2)
-                                        .borrow_data_unchecked()
+                                    let mapping_account =
+                                        all_accounts.get_unchecked(all_accounts.len() - 2);
+                                    if mapping_account.owner().as_ref() != &ORACLE_MAPPING_OWNER {
+                                        return Err(SwigError::WrongOracleMappingAccount.into());
+                                    }
+                                    mapping_account.borrow_data_unchecked()
                                 };
 
                                 let mint_bytes =
                                     mint.try_into().map_err(|_| SwigError::OracleMintNotFound)?;
 
-                                let (price, exp, mint_decimal) =
-                                    get_price_data(mapping_data, scope_data, &mint_bytes, &clock)?;
+                                let (price, exp, mint_decimal) = get_price_data(
+                                    mapping_data,
+                                    scope_data,
+                                    &mint_bytes,
+                                    &clock,
+                                    BaseAsset::try_from(action.base_asset_type)?,
+                                )?;
 
                                 let token_value_in_base = calculate_token_value(
                                     price,

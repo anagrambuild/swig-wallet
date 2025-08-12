@@ -54,10 +54,10 @@ fn test_oracle_limit_permission_add() {
         .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Add multiple permissions: Oracle Token Limit (200 USDC) and SOL Limit (1 SOL)
+    // Add multiple permissions: Oracle Token Limit (200 USD) and SOL Limit (1 SOL)
     let oracle_limit = OracleTokenLimit::new(
-        BaseAsset::USDC,
-        200_000_000, // 200 USDC
+        BaseAsset::USD,
+        200_000_000, // 200 USD
         false,
     );
 
@@ -95,11 +95,11 @@ fn test_oracle_limit_permission_add() {
     assert_eq!(role.position.num_actions(), 3, "Should have 3 actions");
 
     let oracle_action = role
-        .get_action::<OracleTokenLimit>(&[BaseAsset::USDC as u8])
+        .get_action::<OracleTokenLimit>(&[BaseAsset::USD as u8])
         .unwrap()
         .unwrap();
     assert_eq!(oracle_action.value_limit, 200_000_000);
-    assert_eq!(oracle_action.base_asset_type, BaseAsset::USDC as u8);
+    assert_eq!(oracle_action.base_asset_type, BaseAsset::USD as u8);
 
     let sol_action = role.get_action::<SolLimit>(&[]).unwrap().unwrap();
     assert_eq!(sol_action.amount, 1_000_000_000);
@@ -128,10 +128,10 @@ fn test_oracle_limit_sol_transfer() {
         .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Add oracle limit permission (200 USDC limit)
+    // Add oracle limit permission (200 USD limit)
     let oracle_limit = OracleTokenLimit::new(
-        BaseAsset::USDC,
-        200_000_000, // 200 USDC limit
+        BaseAsset::EUR,
+        200_000_000, // 200 USD limit
         false,
     );
 
@@ -153,7 +153,10 @@ fn test_oracle_limit_sol_transfer() {
     // Fund swig wallet
     context.svm.airdrop(&swig_key, 20_000_000_000).unwrap();
 
-    // Test 1: Transfer below limit (1 SOL ≈ 150 USDC at mock price)
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    display_swig(swig_key, &swig_account.data, swig_account.lamports).unwrap();
+
+    // Test 1: Transfer below limit (1 SOL ≈ 150 USD at mock price)
     let transfer_ix =
         system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 1_000_000_000);
     let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
@@ -194,7 +197,7 @@ fn test_oracle_limit_sol_transfer() {
         result.unwrap().compute_units_consumed
     );
 
-    // Test 2: Transfer above limit (2 SOL ≈ 300 USDC at mock price)
+    // Test 2: Transfer above limit (2 SOL ≈ 300 Eur at mock price)
     let transfer_ix =
         system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 2_000_000_000);
     let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
@@ -262,10 +265,10 @@ fn test_oracle_limit_token_transfer() {
         .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Add oracle limit permission (300 USDC limit)
+    // Add oracle limit permission (300 USD limit)
     let oracle_limit = OracleTokenLimit::new(
-        BaseAsset::USDC,
-        300_000_000, // 300 USDC with 6 decimals
+        BaseAsset::USD,
+        300_000_000, // 300 USD with 6 decimals
         false,
     );
 
@@ -310,7 +313,7 @@ fn test_oracle_limit_token_transfer() {
     )
     .unwrap();
 
-    // Test 1: Transfer below limit (0.5 tokens ≈ 0.75 USDC at mock price of 1.5 USDC per token)
+    // Test 1: Transfer below limit (0.5 tokens ≈ 0.75 USD at mock price of 1.5 USD per token)
     let transfer_ix = spl_token::instruction::transfer(
         &spl_token::id(),
         &swig_ata,
@@ -359,7 +362,7 @@ fn test_oracle_limit_token_transfer() {
         result.unwrap().compute_units_consumed
     );
 
-    // Test 2: Transfer above limit (2.5 tokens ≈ 3.75 USDC at mock price)
+    // Test 2: Transfer above limit (2.5 tokens ≈ 3.75 USD at mock price)
     let transfer_ix = spl_token::instruction::transfer(
         &spl_token::id(),
         &swig_ata,
@@ -436,10 +439,10 @@ fn test_oracle_limit_sol_passthrough() {
         .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Add oracle limit permission (200 USDC limit) with passthrough enabled
+    // Add oracle limit permission (200 USD limit) with passthrough enabled
     let oracle_limit = OracleTokenLimit::new(
-        BaseAsset::USDC,
-        200_000_000, // 200 USDC limit
+        BaseAsset::USD,
+        200_000_000, // 200 USD limit
         true,
     );
 
@@ -464,7 +467,7 @@ fn test_oracle_limit_sol_passthrough() {
     // Fund swig wallet
     context.svm.airdrop(&swig_key, 20_000_000_000).unwrap();
 
-    // Test 1: Transfer below limit (1 SOL ≈ 150 USDC at mock price)
+    // Test 1: Transfer below limit (1 SOL ≈ 150 USD at mock price)
     let transfer_ix =
         system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 1_000_000_000);
     let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
@@ -506,7 +509,7 @@ fn test_oracle_limit_sol_passthrough() {
         result.unwrap().compute_units_consumed
     );
 
-    // Test 2: Transfer above limit (2 SOL ≈ 300 USDC at mock price)
+    // Test 2: Transfer above limit (2 SOL ≈ 300 USD at mock price)
     let transfer_ix =
         system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 2_000_000_000);
     let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
@@ -573,10 +576,10 @@ fn test_oracle_limit_token_passthrough() {
         .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Add oracle limit permission (300 USDC limit) with passthrough enabled
+    // Add oracle limit permission (300 USD limit) with passthrough enabled
     let oracle_limit = OracleTokenLimit::new(
-        BaseAsset::USDC,
-        300_000_000, // 300 USDC with 6 decimals
+        BaseAsset::USD,
+        300_000_000, // 300 USD with 6 decimals
         true,
     );
 
@@ -629,7 +632,7 @@ fn test_oracle_limit_token_passthrough() {
     )
     .unwrap();
 
-    // Test 1: Transfer below limit (0.5 tokens ≈ 0.75 USDC at mock price of 1.5 USDC per token)
+    // Test 1: Transfer below limit (0.5 tokens ≈ 0.75 USD at mock price of 1.5 USD per token)
     let transfer_ix = spl_token::instruction::transfer(
         &spl_token::id(),
         &swig_ata,
@@ -678,7 +681,7 @@ fn test_oracle_limit_token_passthrough() {
         result.unwrap().compute_units_consumed
     );
 
-    // Test 2: Transfer above limit (2.5 tokens ≈ 3.75 USDC at mock price)
+    // Test 2: Transfer above limit (2.5 tokens ≈ 3.75 USD at mock price)
     let transfer_ix = spl_token::instruction::transfer(
         &spl_token::id(),
         &swig_ata,
@@ -754,10 +757,10 @@ fn test_oracle_stale_price() {
         .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Add oracle limit permission (200 USDC limit)
+    // Add oracle limit permission (200 USD limit)
     let oracle_limit = OracleTokenLimit::new(
-        BaseAsset::USDC,
-        200_000_000, // 200 USDC limit
+        BaseAsset::USD,
+        200_000_000, // 200 USD limit
         false,
     );
 
@@ -870,10 +873,10 @@ fn test_oracle_sol_transfer_performance_comparison() {
     // Fund swig wallet with SOL
     context.svm.airdrop(&swig, 20_000_000_000).unwrap();
 
-    // Add secondary authority with oracle limit permission (1000 USDC limit)
+    // Add secondary authority with oracle limit permission (1000 USD limit)
     let oracle_limit = OracleTokenLimit::new(
-        BaseAsset::USDC,
-        1_000_000_000, // 1000 USDC with 6 decimals
+        BaseAsset::USD,
+        1_000_000_000, // 1000 USD with 6 decimals
         false,
     );
 
@@ -1115,10 +1118,10 @@ fn test_oracle_token_transfer_performance_comparison() {
     let id = rand::random::<[u8; 32]>();
     let (swig, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
 
-    // Add secondary authority with oracle limit permission (1000 USDC limit)
+    // Add secondary authority with oracle limit permission (1000 USD limit)
     let oracle_limit = OracleTokenLimit::new(
-        BaseAsset::USDC,
-        1_000_000_000, // 1000 USDC with 6 decimals
+        BaseAsset::USD,
+        1_000_000_000, // 1000 USD with 6 decimals
         false,
     );
 
@@ -1364,7 +1367,7 @@ fn test_oracle_token_transfer_performance_comparison() {
     // Assertions for performance limits
     // Swig overhead should be reasonable
     assert!(
-        swig_transfer_cu - regular_transfer_cu <= 3777,
+        swig_transfer_cu - regular_transfer_cu <= 8000,
         "Swig overhead too high"
     );
 

@@ -93,8 +93,8 @@ impl OracleRecurringLimit {
     /// The number of decimal places for the base asset (e.g. 6 for USDC)
     pub fn get_base_asset_decimals(&self) -> u8 {
         match super::oracle_limits::BaseAsset::try_from(self.base_asset_type).unwrap() {
-            super::oracle_limits::BaseAsset::USDC => 6,
-            super::oracle_limits::BaseAsset::EURC => 6,
+            super::oracle_limits::BaseAsset::USD => 6,
+            super::oracle_limits::BaseAsset::EUR => 6,
         }
     }
 
@@ -155,9 +155,6 @@ impl OracleRecurringLimit {
     /// * `Err(ProgramError)` - If the operation would exceed the limit or encounters an error
     pub fn run_for_sol(&mut self, price: u64, current_slot: u64) -> Result<(), ProgramError> {
         // Check if time window has expired and reset if needed
-        msg!("current_slot: {}", current_slot);
-        msg!("last_reset: {}", self.last_reset);
-        msg!("window: {}", self.window);
         if current_slot - self.last_reset > self.window {
             self.current_amount = self.recurring_value_limit;
             self.last_reset = current_slot;
@@ -198,7 +195,7 @@ impl<'a> Actionable<'a> for OracleRecurringLimit {
     /// This action represents the OracleRecurringLimit permission type
     const TYPE: Permission = Permission::OracleRecurringLimit;
     /// Multiple oracle recurring limits can exist per role (one per base asset)
-    const REPEATABLE: bool = true;
+    const REPEATABLE: bool = false;
 
     /// Checks if this token limit matches the provided base asset type.
     ///
@@ -208,7 +205,7 @@ impl<'a> Actionable<'a> for OracleRecurringLimit {
     /// # Returns
     /// `true` if the base asset type matches, `false` otherwise
     fn match_data(&self, data: &[u8]) -> bool {
-        !data.is_empty() && data[0] == self.base_asset_type
+        !data.is_empty()
     }
 
     /// Validates the layout of the action data.

@@ -57,10 +57,10 @@ fn test_oracle_recurring_limit_permission_add() {
         .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Add multiple permissions: Oracle Recurring Limit (200 USDC per window) and SOL Limit (1 SOL)
+    // Add multiple permissions: Oracle Recurring Limit (200 USD per window) and SOL Limit (1 SOL)
     let oracle_recurring_limit = OracleRecurringLimit::new(
-        BaseAsset::USDC,
-        200_000_000, // 200 USDC
+        BaseAsset::USD,
+        200_000_000, // 200 USD
         1000,        // 1000 slots window
         false,
     );
@@ -99,13 +99,13 @@ fn test_oracle_recurring_limit_permission_add() {
     assert_eq!(role.position.num_actions(), 3, "Should have 3 actions");
 
     let oracle_recurring_action = role
-        .get_action::<OracleRecurringLimit>(&[BaseAsset::USDC as u8])
+        .get_action::<OracleRecurringLimit>(&[BaseAsset::USD as u8])
         .unwrap()
         .unwrap();
 
     assert_eq!(
         oracle_recurring_action.recurring_value_limit, 200_000_000,
-        "Oracle recurring limit should be 200 USDC"
+        "Oracle recurring limit should be 200 USD"
     );
     assert_eq!(
         oracle_recurring_action.window, 1000,
@@ -142,10 +142,10 @@ fn test_oracle_recurring_limit_sol_transfer() {
         .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Add oracle recurring limit permission (100 USDC per window)
+    // Add oracle recurring limit permission (100 USD per window)
     let oracle_recurring_limit = OracleRecurringLimit::new(
-        BaseAsset::USDC,
-        100_000_000, // 100 USDC
+        BaseAsset::USD,
+        100_000_000, // 100 USD
         1000,        // 1000 slots window
         false,
     );
@@ -172,7 +172,7 @@ fn test_oracle_recurring_limit_sol_transfer() {
     // Fund swig wallet
     context.svm.airdrop(&swig_key, 20_000_000_000).unwrap();
 
-    // Test SOL transfer within limit (0.1 SOL ≈ 15 USDC at mock price)
+    // Test SOL transfer within limit (0.1 SOL ≈ 15 USD at mock price)
     let transfer_ix = system_instruction::transfer(
         &swig_key,
         &secondary_authority.pubkey(),
@@ -217,7 +217,7 @@ fn test_oracle_recurring_limit_sol_transfer() {
         "SOL transfer should succeed within oracle recurring limit"
     );
 
-    // Test SOL transfer that exceeds the limit (1 SOL ≈ 150 USDC at mock price)
+    // Test SOL transfer that exceeds the limit (1 SOL ≈ 150 USD at mock price)
     let transfer_ix2 = system_instruction::transfer(
         &swig_key,
         &secondary_authority.pubkey(),
@@ -285,10 +285,10 @@ fn test_oracle_recurring_limit_token_transfer() {
         .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Add oracle recurring limit permission (50 USDC per window)
+    // Add oracle recurring limit permission (50 USD per window)
     let oracle_recurring_limit = OracleRecurringLimit::new(
-        BaseAsset::USDC,
-        50_000_000, // 50 USDC
+        BaseAsset::USD,
+        50_000_000, // 50 USD
         100,        // 100 slots window
         false,
     );
@@ -332,7 +332,7 @@ fn test_oracle_recurring_limit_token_transfer() {
     )
     .unwrap();
 
-    // Test token transfer within limit (100 tokens ≈ 150 USDC at mock price of 1.5 USDC per token)
+    // Test token transfer within limit (100 tokens ≈ 150 USD at mock price of 1.5 USD per token)
     let transfer_ix = spl_token::instruction::transfer(
         &spl_token::id(),
         &swig_ata,
@@ -383,7 +383,7 @@ fn test_oracle_recurring_limit_token_transfer() {
 
     // Move slot forward
 
-    // Test token transfer that exceeds the limit (1000 tokens ≈ 1500 USDC at mock price)
+    // Test token transfer that exceeds the limit (1000 tokens ≈ 1500 USD at mock price)
     let transfer_ix2 = spl_token::instruction::transfer(
         &spl_token::id(),
         &swig_ata,
@@ -455,10 +455,10 @@ fn test_oracle_recurring_limit_window_reset() {
         .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Add oracle recurring limit permission (100 USDC per window, 100 slots window)
+    // Add oracle recurring limit permission (100 USD per window, 100 slots window)
     let oracle_recurring_limit = OracleRecurringLimit::new(
-        BaseAsset::USDC,
-        100_000_000, // 100 USDC
+        BaseAsset::USD,
+        100_000_000, // 100 USD
         3,           // 3 slots window (smaller to avoid stale price)
         false,
     );
@@ -489,7 +489,7 @@ fn test_oracle_recurring_limit_window_reset() {
     let transfer_ix = system_instruction::transfer(
         &swig_key,
         &secondary_authority.pubkey(),
-        500_000_000, // 0.5 SOL (should use up most of 100 USDC limit)
+        500_000_000, // 0.5 SOL (should use up most of 100 USD limit)
     );
 
     let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
@@ -523,6 +523,11 @@ fn test_oracle_recurring_limit_window_reset() {
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&secondary_authority])
         .unwrap();
 
+    display_swig(
+        swig_key,
+        context.svm.get_account(&swig_key).unwrap().data.as_ref(),
+        context.svm.get_account(&swig_key).unwrap().lamports,
+    );
     let result = context.svm.send_transaction(tx);
     assert!(result.is_ok(), "First SOL transfer should succeed");
 
@@ -530,7 +535,7 @@ fn test_oracle_recurring_limit_window_reset() {
     let transfer_ix2 = system_instruction::transfer(
         &swig_key,
         &secondary_authority.pubkey(),
-        50_000_000, // 0.05 SOL (should exceed remaining limit)
+        500_000_001, // 0.5 SOL (should exceed remaining limit)
     );
 
     let mut sign_ix2 = swig_interface::SignInstruction::new_ed25519(
@@ -610,7 +615,6 @@ fn test_oracle_recurring_limit_window_reset() {
             .unwrap();
 
     let result3 = context.svm.send_transaction(tx3);
-    println!("result3: {:?}", result3);
     assert!(
         result3.is_ok(),
         "Transfer should succeed after window reset"
@@ -640,8 +644,8 @@ fn test_oracle_recurring_limit_passthrough() {
 
     // Add oracle recurring limit permission with passthrough enabled
     let oracle_recurring_limit = OracleRecurringLimit::new(
-        BaseAsset::USDC,
-        100_000_000, // 100 USDC
+        BaseAsset::USD,
+        100_000_000, // 100 USD
         1000,        // 1000 slots window
         true,        // passthrough enabled
     );

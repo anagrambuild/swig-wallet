@@ -935,45 +935,57 @@ pub fn display_swig(swig_pubkey: Pubkey, data: &[u8], lamports: u64) -> Result<(
             }
 
             // Check Oracle limit
-            if let Some(action) = Role::get_action::<OracleTokenLimit>(&role, &[0u8])
+            if let Some(actions) = Role::get_all_actions_of_type::<OracleTokenLimit>(&role)
                 .map_err(|_| anyhow::anyhow!("Failed to get action"))?
             {
                 println!("║ │  ├─ Oracle Token Limit:");
-                println!(
-                    "║ │  ├─ Oracle Base Asset: {}",
-                    match action.base_asset_type {
-                        0 => "USDC",
-                        1 => "EURC",
-                        _ => "Unknown",
-                    }
-                );
-                println!(
-                    "║ │  │  ├─ Value Limit: {}",
-                    action.value_limit as f64
-                        / 10_f64.powf(action.get_base_asset_decimals() as f64)
-                );
-                println!(
-                    "║ │  │  ├─ Passthrough Check Enabled: {}",
-                    action.passthrough_check
-                );
+                for action in actions {
+                    println!(
+                        "║ │  │  ├─ Oracle Base Asset: {}",
+                        match action.base_asset_type {
+                            0 => "USD",
+                            1 => "EUR",
+                            _ => "Unknown",
+                        }
+                    );
+                    println!(
+                        "║ │  │  ├─ Value Limit: {}",
+                        action.value_limit as f64
+                            / 10_f64.powf(action.get_base_asset_decimals() as f64)
+                    );
+                    println!(
+                        "║ │  │  ├─ Passthrough Check Enabled: {}",
+                        action.passthrough_check
+                    );
+                }
             }
 
-            if let Some(action) = Role::get_action::<OracleRecurringLimit>(&role, &[0u8])
+            if let Some(actions) = Role::get_all_actions_of_type::<OracleRecurringLimit>(&role)
                 .map_err(|_| anyhow::anyhow!("Failed to get action"))?
             {
                 println!("║ │  ├─ Oracle Recurring Limit:");
-                println!(
-                    "║ │  ├─ Oracle Base Asset: {}",
-                    match action.base_asset_type {
-                        0 => "USDC",
-                        1 => "EURC",
-                        _ => "Unknown",
-                    }
-                );
-                println!("║ │  │  ├─ Value Limit: {}", action.recurring_value_limit);
-                println!("║ │  │  ├─ Window: {} slots", action.window);
-                println!("║ │  │  ├─ Current Usage: {}", action.current_amount);
-                println!("║ │  │  └─ Last Reset: Slot {}", action.last_reset);
+                for action in actions {
+                    println!(
+                        "║ │  ├─ Oracle Base Asset: {}",
+                        match action.base_asset_type {
+                            0 => "USD",
+                            1 => "EUR",
+                            _ => "Unknown",
+                        }
+                    );
+                    println!(
+                        "║ │  │  ├─ Value Limit: {}",
+                        action.recurring_value_limit as f64
+                            / 10_f64.powf(action.get_base_asset_decimals() as f64)
+                    );
+                    println!("║ │  │  ├─ Window: {} slots", action.window);
+                    println!(
+                        "║ │  │  ├─ Current Usage: {}",
+                        action.current_amount as f64
+                            / 10_f64.powf(action.get_base_asset_decimals() as f64)
+                    );
+                    println!("║ │  │  └─ Last Reset: Slot {}", action.last_reset);
+                }
             }
 
             // Check Sol Limit
