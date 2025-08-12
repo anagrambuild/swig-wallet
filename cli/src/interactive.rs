@@ -511,6 +511,7 @@ fn update_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                         recurring: None,
                     },
                     8 => Permission::StakeAll,
+                    9 => Permission::AllButManageAuthority,
                     _ => unreachable!(),
                 };
 
@@ -843,7 +844,8 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
         let permission = match permission_type_idx {
             0 => Permission::All,
             1 => Permission::ManageAuthority,
-            2 => {
+            2 => Permission::AllButManageAuthority,
+            3 => {
                 // Get token mint address
                 let mint_str: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter token mint address")
@@ -876,7 +878,7 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
                     recurring,
                 }
             },
-            3 => {
+            4 => {
                 // Get SOL amount
                 let amount: u64 = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter SOL amount limit (in lamports)")
@@ -899,7 +901,7 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
 
                 Permission::Sol { amount, recurring }
             },
-            4 => {
+            5 => {
                 // Get program ID
                 let program_id_str: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter program ID")
@@ -908,7 +910,7 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
 
                 Permission::Program { program_id }
             },
-            5 => {
+            6 => {
                 // Program Scope for Token Programs
                 let token_programs = vec!["SPL Token", "Token2022"];
                 let program_idx = Select::with_theme(&ColorfulTheme::default())
@@ -959,7 +961,7 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
                     balance_field_end: Some(72),   // Fixed for SPL token accounts
                 }
             },
-            6 => Permission::SubAccount {
+            7 => Permission::SubAccount {
                 sub_account: [0; 32],
             },
             _ => unreachable!(),

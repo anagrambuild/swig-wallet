@@ -434,7 +434,8 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
         let permission = match permission_type_idx {
             0 => Permission::All,
             1 => Permission::ManageAuthority,
-            2 => {
+            2 => Permission::AllButManageAuthority,
+            3 => {
                 // Get token mint address
                 let mint_str: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter token mint address")
@@ -467,7 +468,7 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
                     recurring,
                 }
             },
-            3 => {
+            4 => {
                 // Get SOL amount
                 let amount: u64 = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter SOL amount limit (in lamports)")
@@ -490,7 +491,7 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
 
                 Permission::Sol { amount, recurring }
             },
-            4 => {
+            5 => {
                 // Get program ID
                 let program_id_str: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter program ID")
@@ -499,7 +500,7 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
 
                 Permission::Program { program_id }
             },
-            5 => {
+            6 => {
                 // Get sub-account address
                 let sub_account_str: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter sub-account address")
