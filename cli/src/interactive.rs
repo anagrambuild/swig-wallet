@@ -844,8 +844,7 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
         let permission = match permission_type_idx {
             0 => Permission::All,
             1 => Permission::ManageAuthority,
-            2 => Permission::AllButManageAuthority,
-            3 => {
+            2 => {
                 // Get token mint address
                 let mint_str: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter token mint address")
@@ -878,7 +877,7 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
                     recurring,
                 }
             },
-            4 => {
+            3 => {
                 // Get SOL amount
                 let amount: u64 = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter SOL amount limit (in lamports)")
@@ -901,7 +900,7 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
 
                 Permission::Sol { amount, recurring }
             },
-            5 => {
+            4 => {
                 // Get program ID
                 let program_id_str: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter program ID")
@@ -910,7 +909,7 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
 
                 Permission::Program { program_id }
             },
-            6 => {
+            5 => {
                 // Program Scope for Token Programs
                 let token_programs = vec!["SPL Token", "Token2022"];
                 let program_idx = Select::with_theme(&ColorfulTheme::default())
@@ -961,9 +960,10 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
                     balance_field_end: Some(72),   // Fixed for SPL token accounts
                 }
             },
-            7 => Permission::SubAccount {
+            6 => Permission::SubAccount {
                 sub_account: [0; 32],
             },
+            7 => Permission::AllButManageAuthority,
             _ => unreachable!(),
         };
 
