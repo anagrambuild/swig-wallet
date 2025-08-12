@@ -158,6 +158,7 @@ pub fn parse_permission_from_json(permission_json: &Value) -> Result<Permission>
             };
             Ok(Permission::Sol { amount, recurring })
         },
+        Some("allButManageAuthority") => Ok(Permission::AllButManageAuthority),
         Some("manageAuthority") => Ok(Permission::ManageAuthority),
         Some("program") => {
             let program_id = permission_json["programId"]
@@ -827,6 +828,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                         .iter()
                         .map(|action_type| match action_type.as_str() {
                             "All" => Ok(Permission::All),
+                            "AllButManageAuthority" => Ok(Permission::AllButManageAuthority),
                             "ManageAuthority" => Ok(Permission::ManageAuthority),
                             "Sol" => Ok(Permission::Sol {
                                 amount: 0,

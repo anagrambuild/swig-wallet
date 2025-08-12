@@ -510,6 +510,7 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
                     sub_account: [0; 32],
                 }
             },
+            6 => Permission::AllButManageAuthority,
             _ => unreachable!(),
         };
 

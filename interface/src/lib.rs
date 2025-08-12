@@ -21,7 +21,8 @@ use swig::actions::{
 pub use swig_compact_instructions::*;
 use swig_state::{
     action::{
-        all::All, manage_authority::ManageAuthority, program::Program, program_all::ProgramAll,
+        all::All, all_but_manage_authority::AllButManageAuthority,
+        manage_authority::ManageAuthority, program::Program, program_all::ProgramAll,
         program_curated::ProgramCurated, program_scope::ProgramScope, sol_limit::SolLimit,
         sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll, stake_limit::StakeLimit,
         stake_recurring_limit::StakeRecurringLimit, sub_account::SubAccount,
@@ -45,6 +46,7 @@ pub enum ClientAction {
     ProgramCurated(ProgramCurated),
     ProgramScope(ProgramScope),
     All(All),
+    AllButManageAuthority(AllButManageAuthority),
     ManageAuthority(ManageAuthority),
     SubAccount(SubAccount),
     StakeLimit(StakeLimit),
@@ -68,6 +70,10 @@ impl ClientAction {
             ClientAction::ProgramCurated(_) => (Permission::ProgramCurated, ProgramCurated::LEN),
             ClientAction::ProgramScope(_) => (Permission::ProgramScope, ProgramScope::LEN),
             ClientAction::All(_) => (Permission::All, All::LEN),
+            ClientAction::AllButManageAuthority(_) => (
+                Permission::AllButManageAuthority,
+                AllButManageAuthority::LEN,
+            ),
             ClientAction::ManageAuthority(_) => (Permission::ManageAuthority, ManageAuthority::LEN),
             ClientAction::SubAccount(_) => (Permission::SubAccount, SubAccount::LEN),
             ClientAction::StakeLimit(_) => (Permission::StakeLimit, StakeLimit::LEN),
@@ -96,6 +102,7 @@ impl ClientAction {
             ClientAction::ProgramCurated(action) => action.into_bytes(),
             ClientAction::ProgramScope(action) => action.into_bytes(),
             ClientAction::All(action) => action.into_bytes(),
+            ClientAction::AllButManageAuthority(action) => action.into_bytes(),
             ClientAction::ManageAuthority(action) => action.into_bytes(),
             ClientAction::SubAccount(action) => action.into_bytes(),
             ClientAction::StakeLimit(action) => action.into_bytes(),

@@ -3,6 +3,7 @@ use swig_interface::ClientAction;
 use swig_state::{
     action::{
         all::All,
+        all_but_manage_authority::AllButManageAuthority,
         manage_authority::ManageAuthority,
         program::Program,
         program_scope::{NumericType, ProgramScope, ProgramScopeType},
@@ -113,6 +114,11 @@ pub enum Permission {
 
     /// Permission to manage all stake-related operations without limits
     StakeAll,
+
+    /// Permission to perform all actions except authority management.
+    /// This grants access to all wallet operations but excludes the ability
+    /// to add, remove, or modify authorities/subaccounts.
+    AllButManageAuthority,
 }
 
 impl Permission {
@@ -219,6 +225,11 @@ impl Permission {
                 },
                 Permission::StakeAll => {
                     actions.push(ClientAction::StakeAll(StakeAll {}));
+                },
+                Permission::AllButManageAuthority => {
+                    actions.push(ClientAction::AllButManageAuthority(
+                        AllButManageAuthority {},
+                    ));
                 },
             }
         }
@@ -395,6 +406,14 @@ impl Permission {
             permissions.push(Permission::StakeAll);
         }
 
+        // Check for AllButManageAuthority permission
+        if swig_state::role::Role::get_action::<AllButManageAuthority>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .is_some()
+        {
+            permissions.push(Permission::AllButManageAuthority);
+        }
+
         Ok(permissions)
     }
 
@@ -445,6 +464,7 @@ impl Permission {
                 }
             },
             Permission::StakeAll => 0x0C,
+            Permission::AllButManageAuthority => 0x0F,
         }
     }
 }
