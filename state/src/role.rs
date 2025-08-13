@@ -96,6 +96,38 @@ impl<'a> Role<'a> {
     pub fn authority_type(&self) -> Result<AuthorityType, ProgramError> {
         self.position.authority_type()
     }
+
+    /// Retrieves all actions of a specific type from the role's action list.
+    ///
+    /// This method is useful for repeatable actions where multiple instances
+    /// of the same action type can exist (e.g., multiple destination limits).
+    pub fn get_all_actions_of_type<A: Actionable<'a>>(
+        &'a self,
+    ) -> Result<Option<Vec<&'a A>>, ProgramError> {
+        let mut actions = Vec::new();
+        let mut cursor = 0;
+        if self.actions.len() < Action::LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        while cursor < self.actions.len() {
+            let action = unsafe {
+                Action::load_unchecked(self.actions.get_unchecked(cursor..cursor + Action::LEN))?
+            };
+            cursor += Action::LEN;
+            if action.permission()? == A::TYPE {
+                let action_obj = unsafe {
+                    A::load_unchecked(self.actions.get_unchecked(cursor..cursor + A::LEN))?
+                };
+                actions.push(action_obj);
+            }
+            cursor = action.boundary() as usize;
+        }
+        Ok(if actions.is_empty() {
+            None
+        } else {
+            Some(actions)
+        })
+    }
 }
 
 /// Represents a role with mutable access to its components.
