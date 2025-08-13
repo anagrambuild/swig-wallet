@@ -511,6 +511,7 @@ fn update_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                         recurring: None,
                     },
                     8 => Permission::StakeAll,
+                    9 => Permission::AllButManageAuthority,
                     _ => unreachable!(),
                 };
 
@@ -962,6 +963,7 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
             6 => Permission::SubAccount {
                 sub_account: [0; 32],
             },
+            7 => Permission::AllButManageAuthority,
             _ => unreachable!(),
         };
 

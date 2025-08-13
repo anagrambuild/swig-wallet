@@ -19,6 +19,7 @@ use swig_compact_instructions::InstructionIterator;
 use swig_state::{
     action::{
         all::All,
+        all_but_manage_authority::AllButManageAuthority,
         oracle_limits::{BaseAsset, OracleTokenLimit, ORACLE_MAPPING_OWNER, SCOPE_OWNER, SOL_MINT},
         oracle_recurring_limit::OracleRecurringLimit,
         program::Program,
@@ -231,8 +232,10 @@ pub fn sign_v1(
     let seeds = swig_account_signer(&swig.id, &b);
     let signer = seeds.as_slice();
 
-    // Check if we have All permission to skip CPI validation
-    let has_all_permission = RoleMut::get_action_mut::<All>(role.actions, &[])?.is_some();
+    // Check if we have All or AllButManageAuthority permission to skip CPI
+    // validation
+    let has_all_permission = RoleMut::get_action_mut::<All>(role.actions, &[])?.is_some()
+        || RoleMut::get_action_mut::<AllButManageAuthority>(role.actions, &[])?.is_some();
 
     // Capture account snapshots before instruction execution
     const UNINIT_HASH: MaybeUninit<[u8; 32]> = MaybeUninit::uninit();
