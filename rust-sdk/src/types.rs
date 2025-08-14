@@ -7,6 +7,7 @@ use swig_state::{
         manage_authority::ManageAuthority,
         program::Program,
         program_all::ProgramAll,
+        program_curated::ProgramCurated,
         program_scope::{NumericType, ProgramScope, ProgramScopeType},
         sol_destination_limit::SolDestinationLimit,
         sol_limit::SolLimit,
@@ -135,6 +136,9 @@ pub enum Permission {
         balance_field_start: Option<u64>,
         balance_field_end: Option<u64>,
     },
+
+    /// Permission to interact with curated programs only
+    ProgramCurated,
 
     /// Permission to manage sub-accounts. This allows creating and managing
     /// hierarchical wallet structures through sub-accounts.
@@ -265,6 +269,11 @@ impl Permission {
                 },
                 Permission::ProgramAll => {
                     actions.push(ClientAction::ProgramAll(ProgramAll {}));
+                },
+                Permission::ProgramCurated => {
+                    actions.push(ClientAction::ProgramCurated(ProgramCurated {
+                        _reserved: [0; 32],
+                    }));
                 },
                 Permission::ProgramScope {
                     program_id,
@@ -575,16 +584,16 @@ impl Permission {
 
     pub fn to_action_type(&self) -> u8 {
         match self {
-            Permission::All => 0x07,
-            Permission::ManageAuthority => 0x08,
+            Permission::All => 7,
+            Permission::ManageAuthority => 8,
             Permission::Sol {
                 amount: _,
                 recurring,
             } => {
                 if recurring.is_some() {
-                    0x02 // SolRecurringLimit
+                    2 // SolRecurringLimit
                 } else {
-                    0x01 // SolLimit
+                    1 // SolLimit
                 }
             },
             Permission::SolDestination {
@@ -593,9 +602,9 @@ impl Permission {
                 recurring,
             } => {
                 if recurring.is_some() {
-                    0x0D // SolRecurringDestinationLimit
+                    17 // SolRecurringDestinationLimit
                 } else {
-                    0x0C // SolDestinationLimit
+                    16 // SolDestinationLimit
                 }
             },
             Permission::Token {
@@ -604,9 +613,9 @@ impl Permission {
                 recurring,
             } => {
                 if recurring.is_some() {
-                    0x06 // TokenRecurringLimit
+                    6 // TokenRecurringLimit
                 } else {
-                    0x05 // TokenLimit
+                    5 // TokenLimit
                 }
             },
             Permission::TokenDestination {
@@ -616,13 +625,14 @@ impl Permission {
                 recurring,
             } => {
                 if recurring.is_some() {
-                    0x0F // TokenRecurringDestinationLimit
+                    19 // TokenRecurringDestinationLimit
                 } else {
-                    0x0E // TokenDestinationLimit
+                    18 // TokenDestinationLimit
                 }
             },
-            Permission::Program { program_id: _ } => 0x03,
-            Permission::ProgramAll => 0x0D,
+            Permission::Program { program_id: _ } => 3,
+            Permission::ProgramAll => 13,
+            Permission::ProgramCurated => 14,
             Permission::ProgramScope {
                 program_id: _,
                 target_account: _,
@@ -631,20 +641,20 @@ impl Permission {
                 window: _,
                 balance_field_start: _,
                 balance_field_end: _,
-            } => 0x04,
-            Permission::SubAccount { sub_account: _ } => 0x09,
+            } => 4,
+            Permission::SubAccount { sub_account: _ } => 9,
             Permission::Stake {
                 amount: _,
                 recurring,
             } => {
                 if recurring.is_some() {
-                    0x0B // StakeRecurringLimit
+                    11 // StakeRecurringLimit
                 } else {
-                    0x0A // StakeLimit
+                    10 // StakeLimit
                 }
             },
-            Permission::StakeAll => 0x0C,
-            Permission::AllButManageAuthority => 0x0F,
+            Permission::StakeAll => 12,
+            Permission::AllButManageAuthority => 15,
         }
     }
 }

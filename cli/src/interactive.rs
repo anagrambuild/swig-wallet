@@ -843,14 +843,18 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
     let permission_types = vec![
         "All (Full access to all operations)",
         "Manage Authority (Add/remove authorities)",
+        "All But Manage Authority (All permissions except authority management)",
         "Token (Token-specific permissions)",
         "SOL (SOL transfer permissions)",
-        "SOL Destination (SOL transfer permissions to specific destinations)",
         "Token Destination (Token transfer permissions to specific destinations)",
+        "SOL Destination (SOL transfer permissions to specific destinations)",
         "Program (Program interaction permissions)",
         "Program All (Unrestricted program access)",
         "Program Scope (Token program scope permissions)",
+        "Program Curated (Curated program permissions)",
         "Sub Account (Sub-account management)",
+        "Stake (Stake management permissions)",
+        "Stake All (All stake management permissions)",
     ];
 
     let mut permissions = Vec::new();
@@ -865,7 +869,8 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
         let permission = match permission_type_idx {
             0 => Permission::All,
             1 => Permission::ManageAuthority,
-            2 => {
+            2 => Permission::AllButManageAuthority,
+            3 => {
                 // Get token mint address
                 let mint_str: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter token mint address")
@@ -898,7 +903,7 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
                     recurring,
                 }
             },
-            3 => {
+            4 => {
                 // Get SOL amount
                 let amount: u64 = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter SOL amount limit (in lamports)")
@@ -920,39 +925,6 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
                 };
 
                 Permission::Sol { amount, recurring }
-            },
-            4 => {
-                // Get SOL destination
-                let destination_str: String = Input::with_theme(&ColorfulTheme::default())
-                    .with_prompt("Enter destination address")
-                    .interact_text()?;
-                let destination = Pubkey::from_str(&destination_str)?;
-
-                // Get SOL amount
-                let amount: u64 = Input::with_theme(&ColorfulTheme::default())
-                    .with_prompt("Enter SOL amount limit (in lamports)")
-                    .interact_text()?;
-
-                // Check if recurring
-                let is_recurring = Confirm::with_theme(&ColorfulTheme::default())
-                    .with_prompt("Make this a recurring limit?")
-                    .default(false)
-                    .interact()?;
-
-                let recurring = if is_recurring {
-                    let window: u64 = Input::with_theme(&ColorfulTheme::default())
-                        .with_prompt("Enter time window in slots")
-                        .interact_text()?;
-                    Some(RecurringConfig::new(window))
-                } else {
-                    None
-                };
-
-                Permission::SolDestination {
-                    destination,
-                    amount,
-                    recurring,
-                }
             },
             5 => {
                 // Get token mint address
@@ -995,6 +967,39 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
                 }
             },
             6 => {
+                // Get SOL destination
+                let destination_str: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter destination address")
+                    .interact_text()?;
+                let destination = Pubkey::from_str(&destination_str)?;
+
+                // Get SOL amount
+                let amount: u64 = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter SOL amount limit (in lamports)")
+                    .interact_text()?;
+
+                // Check if recurring
+                let is_recurring = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Make this a recurring limit?")
+                    .default(false)
+                    .interact()?;
+
+                let recurring = if is_recurring {
+                    let window: u64 = Input::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Enter time window in slots")
+                        .interact_text()?;
+                    Some(RecurringConfig::new(window))
+                } else {
+                    None
+                };
+
+                Permission::SolDestination {
+                    destination,
+                    amount,
+                    recurring,
+                }
+            },
+            7 => {
                 // Get program ID
                 let program_id_str: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter program ID")
@@ -1003,8 +1008,8 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
 
                 Permission::Program { program_id }
             },
-            7 => Permission::ProgramAll,
-            8 => {
+            8 => Permission::ProgramAll,
+            9 => {
                 // Program Scope for Token Programs
                 let token_programs = vec!["SPL Token", "Token2022"];
                 let program_idx = Select::with_theme(&ColorfulTheme::default())
@@ -1055,10 +1060,15 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
                     balance_field_end: Some(72),   // Fixed for SPL token accounts
                 }
             },
-            9 => Permission::SubAccount {
+            10 => Permission::ProgramCurated,
+            11 => Permission::SubAccount {
                 sub_account: [0; 32],
             },
-            7 => Permission::AllButManageAuthority,
+            12 => Permission::Stake {
+                amount: 0,
+                recurring: None,
+            },
+            13 => Permission::StakeAll,
             _ => unreachable!(),
         };
 
