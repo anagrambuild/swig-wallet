@@ -167,6 +167,10 @@ pub enum SwigAuthenticateError {
     PermissionDeniedSecp256r1InvalidMessage,
     /// Invalid Secp256r1 authentication kind
     PermissionDeniedSecp256r1InvalidAuthenticationKind,
+    /// External kill switch has been triggered
+    PermissionDeniedExternalKillSwitchTriggered,
+    /// Invalid kill switch account
+    PermissionDeniedInvalidExternalKillSwitch,
 }
 
 impl From<SwigStateError> for ProgramError {

@@ -20,6 +20,7 @@ use swig_state::{
     action::{
         all::All,
         all_but_manage_authority::AllButManageAuthority,
+        external_kill_switch::ExternalKillSwitch,
         program::Program,
         program_all::ProgramAll,
         program_curated::ProgramCurated,
@@ -44,7 +45,7 @@ use crate::{
         accounts::{Context, SignV1Accounts},
         SwigInstruction,
     },
-    util::{build_restricted_keys, hash_except},
+    util::{build_restricted_keys, hash_except, validate_external_kill_switch},
     AccountClassification,
 };
 // use swig_instructions::InstructionIterator;
@@ -187,7 +188,7 @@ pub fn sign_v1(
     if role.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
-    let role = role.unwrap();
+    let mut role = role.unwrap();
     let clock = Clock::get()?;
     let slot = clock.slot;
     if role.authority.session_based() {
@@ -229,6 +230,9 @@ pub fn sign_v1(
     let b = [swig.bump];
     let seeds = swig_account_signer(&swig.id, &b);
     let signer = seeds.as_slice();
+
+    // Validate external kill switch if present
+    validate_external_kill_switch(&mut role, all_accounts)?;
 
     // Check if we have All or AllButManageAuthority permission to skip CPI
     // validation
