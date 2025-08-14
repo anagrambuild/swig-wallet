@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use solana_program::pubkey::Pubkey;
 use swig_interface::ClientAction;
 use swig_state::{
@@ -23,7 +24,7 @@ use swig_state::{
 use crate::SwigError;
 
 /// Configuration for recurring limits that reset after a specified time window
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecurringConfig {
     /// The time window in slots after which the limit resets
     pub window: u64,
@@ -44,7 +45,7 @@ impl RecurringConfig {
 /// Represents the permissions that can be granted to a wallet authority.
 /// Each permission type maps to specific actions that can be performed on the
 /// wallet.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Permission {
     /// Full permissions for all actions. This is the highest level of
     /// permission that grants unrestricted access to all wallet operations.
@@ -470,7 +471,7 @@ impl Permission {
 }
 
 /// Stores all details about the current role for a wallet session
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CurrentRole {
     pub role_id: u32,
     pub authority_type: swig_state::authority::AuthorityType,
@@ -480,7 +481,7 @@ pub struct CurrentRole {
 }
 
 /// Represents the data that can be updated for an authority
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UpdateAuthorityData {
     ReplaceAll(Vec<Permission>),
     AddActions(Vec<Permission>),
