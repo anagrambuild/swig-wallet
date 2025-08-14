@@ -46,6 +46,8 @@ const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5D
 const SPL_TOKEN_2022_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 /// Program ID for the Solana Staking program
 const STAKING_ID: Pubkey = pubkey!("Stake11111111111111111111111111111111111111");
+/// Program ID for the Solana System program
+const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111");
 
 pinocchio::default_allocator!();
 pinocchio::default_panic_handler!();
