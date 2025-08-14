@@ -502,7 +502,7 @@ fn test_external_kill_switch_missing_account() {
     let error = result.unwrap_err();
     assert_eq!(
         error.err,
-        TransactionError::InstructionError(0, InstructionError::Custom(3029))
+        TransactionError::InstructionError(0, InstructionError::Custom(3030))
     );
 
     println!(

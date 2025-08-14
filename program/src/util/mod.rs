@@ -447,7 +447,7 @@ pub fn validate_external_kill_switch(
     if let Some(kill_switch) = RoleMut::get_action_mut::<ExternalKillSwitch>(role.actions, &[])? {
         // The external account must be the last account in the transaction
         if all_accounts.is_empty() {
-            return Err(SwigAuthenticateError::PermissionDeniedExternalKillSwitchTriggered.into());
+            return Err(SwigAuthenticateError::PermissionDeniedInvalidExternalKillSwitch.into());
         }
 
         let last_account_index = all_accounts.len() - 1;
@@ -455,7 +455,7 @@ pub fn validate_external_kill_switch(
 
         // Verify the last account matches the expected external account key
         if external_account.key().as_ref() != &kill_switch.external_account {
-            return Err(SwigAuthenticateError::PermissionDeniedExternalKillSwitchTriggered.into());
+            return Err(SwigAuthenticateError::PermissionDeniedInvalidExternalKillSwitch.into());
         }
 
         // Validate the external account data
