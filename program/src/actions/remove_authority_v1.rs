@@ -22,6 +22,7 @@ use crate::{
         accounts::{Context, RemoveAuthorityV1Accounts},
         SwigInstruction,
     },
+    util::validate_external_kill_switch,
 };
 
 /// Struct representing the complete remove authority instruction data.
@@ -167,7 +168,10 @@ pub fn remove_authority_v1(
             if acting_role.is_none() {
                 return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
             }
-            let acting_role = acting_role.unwrap();
+            let mut acting_role = acting_role.unwrap();
+
+            // Validate external kill switch if present
+            validate_external_kill_switch(&mut acting_role, all_accounts)?;
 
             // Authenticate the caller
             let clock = Clock::get()?;

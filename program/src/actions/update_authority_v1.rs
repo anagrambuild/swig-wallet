@@ -25,6 +25,7 @@ use crate::{
         accounts::{Context, UpdateAuthorityV1Accounts},
         SwigInstruction,
     },
+    util::validate_external_kill_switch,
 };
 
 /// Calculates the actual number of actions in the provided actions data.
@@ -581,7 +582,10 @@ pub fn update_authority_v1(
     if acting_role.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
-    let acting_role = acting_role.unwrap();
+    let mut acting_role = acting_role.unwrap();
+
+    // Validate external kill switch if present
+    validate_external_kill_switch(&mut acting_role, all_accounts)?;
 
     // Authenticate the caller
     let clock = Clock::get()?;
