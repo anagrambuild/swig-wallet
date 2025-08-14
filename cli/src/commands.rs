@@ -158,6 +158,7 @@ pub fn parse_permission_from_json(permission_json: &Value) -> Result<Permission>
             };
             Ok(Permission::Sol { amount, recurring })
         },
+        Some("allButManageAuthority") => Ok(Permission::AllButManageAuthority),
         Some("manageAuthority") => Ok(Permission::ManageAuthority),
         Some("program") => {
             let program_id = permission_json["programId"]
@@ -858,58 +859,78 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 },
                 "RemoveActionsByType" => {
                     if action_types.is_empty() {
-                        return Err(anyhow!("Action types are required for RemoveActionsByType operation"));
+                        return Err(anyhow!(
+                            "Action types are required for RemoveActionsByType operation"
+                        ));
                     }
                     let parsed_permissions = action_types
                         .iter()
-                        .map(|action_type| {
-                            match action_type.as_str() {
-                                "All" => Ok(Permission::All),
-                                "ManageAuthority" => Ok(Permission::ManageAuthority),
-                                "Sol" => Ok(Permission::Sol { amount: 0, recurring: None }),
-                                "Token" => Ok(Permission::Token { 
-                                    mint: Pubkey::default(),
-                                    amount: 0,
-                                    recurring: None
-                                }),
-                                "Program" => Ok(Permission::Program { program_id: Pubkey::default() }),
-                                "ProgramAll" => Ok(Permission::ProgramAll),
-                                "ProgramScope" => Ok(Permission::ProgramScope {
-                                    program_id: Pubkey::default(),
-                                    target_account: Pubkey::default(),
-                                    numeric_type: 0,
-                                    limit: None,
-                                    window: None,
-                                    balance_field_start: None,
-                                    balance_field_end: None,
-                                }),
-                                "SubAccount" => Ok(Permission::SubAccount { sub_account: [0; 32] }),
-                                "Stake" => Ok(Permission::Stake { amount: 0, recurring: None }),
-                                "StakeAll" => Ok(Permission::StakeAll),
-                                "SolDestination" => Ok(Permission::SolDestination {
-                                    destination: Pubkey::default(),
-                                    amount: 0,
-                                    recurring: None,
-                                }),
-                                "TokenDestination" => Ok(Permission::TokenDestination {
-                                    mint: Pubkey::default(),
-                                    destination: Pubkey::default(),
-                                    amount: 0,
-                                    recurring: None,
-                                }),
-                                _ => Err(anyhow!("Invalid action type: {}", action_type)),
-                            }
+                        .map(|action_type| match action_type.as_str() {
+                            "All" => Ok(Permission::All),
+                            "AllButManageAuthority" => Ok(Permission::AllButManageAuthority),
+                            "ManageAuthority" => Ok(Permission::ManageAuthority),
+                            "Sol" => Ok(Permission::Sol {
+                                amount: 0,
+                                recurring: None,
+                            }),
+                            "Token" => Ok(Permission::Token {
+                                mint: Pubkey::default(),
+                                amount: 0,
+                                recurring: None,
+                            }),
+                            "Program" => Ok(Permission::Program {
+                                program_id: Pubkey::default(),
+                            }),
+                            "ProgramAll" => Ok(Permission::ProgramAll),
+                            "ProgramCurated" => Ok(Permission::ProgramCurated),
+                            "ProgramScope" => Ok(Permission::ProgramScope {
+                                program_id: Pubkey::default(),
+                                target_account: Pubkey::default(),
+                                numeric_type: 0,
+                                limit: None,
+                                window: None,
+                                balance_field_start: None,
+                                balance_field_end: None,
+                            }),
+                            "SubAccount" => Ok(Permission::SubAccount {
+                                sub_account: [0; 32],
+                            }),
+                            "Stake" => Ok(Permission::Stake {
+                                amount: 0,
+                                recurring: None,
+                            }),
+                            "StakeAll" => Ok(Permission::StakeAll),
+                            "SolDestination" => Ok(Permission::SolDestination {
+                                destination: Pubkey::default(),
+                                amount: 0,
+                                recurring: None,
+                            }),
+                            "TokenDestination" => Ok(Permission::TokenDestination {
+                                mint: Pubkey::default(),
+                                destination: Pubkey::default(),
+                                amount: 0,
+                                recurring: None,
+                            }),
+                            _ => Err(anyhow!("Invalid action type: {}", action_type)),
                         })
                         .collect::<Result<Vec<_>>>()?;
                     UpdateAuthorityData::RemoveActionsByType(parsed_permissions)
                 },
                 "RemoveActionsByIndex" => {
                     if indices.is_empty() {
-                        return Err(anyhow!("Indices are required for RemoveActionsByIndex operation"));
+                        return Err(anyhow!(
+                            "Indices are required for RemoveActionsByIndex operation"
+                        ));
                     }
                     UpdateAuthorityData::RemoveActionsByIndex(indices)
                 },
-                _ => return Err(anyhow!("Invalid operation: {}. Must be one of: ReplaceAll, AddActions, RemoveActionsByType, RemoveActionsByIndex", operation)),
+                _ => {
+                    return Err(anyhow!(
+                        "Invalid operation: {}. Must be one of: ReplaceAll, AddActions, \
+                         RemoveActionsByType, RemoveActionsByIndex",
+                        operation
+                    ))
+                },
             };
 
             ctx.wallet

@@ -472,6 +472,8 @@ fn update_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                 "Sub Account",
                 "Stake",
                 "Stake All",
+                "All But Manage Authority",
+                "Program Curated",
             ];
 
             let mut selected_types = Vec::new();
@@ -526,6 +528,8 @@ fn update_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                         recurring: None,
                     },
                     11 => Permission::StakeAll,
+                    12 => Permission::AllButManageAuthority,
+                    13 => Permission::ProgramCurated,
                     _ => unreachable!(),
                 };
 
@@ -1054,6 +1058,7 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
             9 => Permission::SubAccount {
                 sub_account: [0; 32],
             },
+            7 => Permission::AllButManageAuthority,
             _ => unreachable!(),
         };
 
