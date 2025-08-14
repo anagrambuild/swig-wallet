@@ -167,6 +167,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedSecp256r1InvalidMessage,
     /// Invalid Secp256r1 authentication kind
     PermissionDeniedSecp256r1InvalidAuthenticationKind,
+    /// Operation blocked by blacklist
+    PermissionDeniedBlacklisted,
 }
 
 impl From<SwigStateError> for ProgramError {
