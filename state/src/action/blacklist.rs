@@ -14,19 +14,19 @@ use crate::{IntoBytes, Transmutable, TransmutableMut};
 /// This struct contains the entity ID (program ID or wallet address) that is
 /// blacklisted from interacting with the system. Multiple Blacklist actions can
 /// exist in a role to blacklist different entities.
-#[derive(NoPadding)]
 #[repr(C, align(8))]
+#[derive(Debug, NoPadding)]
 pub struct Blacklist {
     /// The entity ID that is blacklisted (program ID or wallet address)
     pub entity_id: [u8; 32],
     /// The type of entity being blacklisted (0 = program, 1 = wallet)
     pub entity_type: u8,
-    /// Reserved field for future use
-    pub reserved: [u8; 7],
+    /// Reserved bytes for future use
+    pub _reserved: [u8; 7],
 }
 
 impl Transmutable for Blacklist {
-    /// Size of the Blacklist struct in bytes (32 bytes for entity_id + 1 for entity_type + 7 reserved)
+    /// Size of the Blacklist struct in bytes (32 bytes for entity_id + 1 for entity_type )
     const LEN: usize = 40;
 }
 
@@ -62,7 +62,7 @@ impl Blacklist {
         Self {
             entity_id: program_id,
             entity_type: 0,
-            reserved: [0; 7],
+            _reserved: [0; 7],
         }
     }
 
@@ -74,7 +74,7 @@ impl Blacklist {
         Self {
             entity_id: wallet_address,
             entity_type: 1,
-            reserved: [0; 7],
+            _reserved: [0; 7],
         }
     }
 

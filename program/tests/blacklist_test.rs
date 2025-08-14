@@ -459,3 +459,247 @@ fn test_multiple_blacklist_entries() {
         )
     );
 }
+
+#[test_log::test]
+fn test_add_multiple_blacklists() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+
+    let amount = 1_000_000_000;
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), amount)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let secondary_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&secondary_authority.pubkey(), amount)
+        .unwrap();
+
+    // Create multiple blacklist actions for different entities
+    let blacklisted_program1 = solana_sdk::system_program::ID;
+    let blacklisted_program2 = spl_token::id();
+    let blacklisted_program3 = solana_sdk::sysvar::rent::ID;
+    let blacklisted_wallet1 = Keypair::new().pubkey();
+    let blacklisted_wallet2 = Keypair::new().pubkey();
+
+    let blacklist_actions = vec![
+        ClientAction::Blacklist(Blacklist::new_program(blacklisted_program1.to_bytes())),
+        ClientAction::Blacklist(Blacklist::new_program(blacklisted_program2.to_bytes())),
+        ClientAction::Blacklist(Blacklist::new_program(blacklisted_program3.to_bytes())),
+        ClientAction::Blacklist(Blacklist::new_wallet(blacklisted_wallet1.to_bytes())),
+        ClientAction::Blacklist(Blacklist::new_wallet(blacklisted_wallet2.to_bytes())),
+        ClientAction::SolLimit(SolLimit { amount: amount / 2 }),
+    ];
+
+    let bench = add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: secondary_authority.pubkey().as_ref(),
+        },
+        blacklist_actions,
+    )
+    .unwrap();
+
+    // Verify all blacklist actions were added
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+
+    let role_id = swig
+        .lookup_role_id(secondary_authority.pubkey().as_ref())
+        .unwrap()
+        .unwrap();
+
+    let role = swig.get_role(role_id).unwrap().unwrap();
+
+    // Should have 6 actions total (5 blacklists + 1 sol limit)
+    assert_eq!(role.position.num_actions(), 6);
+
+    // Verify that we can retrieve all blacklist actions
+    let mut blacklist_count = 0;
+    let mut program_blacklist_count = 0;
+    let mut wallet_blacklist_count = 0;
+
+    let actions = role.get_all_actions().unwrap();
+
+    use swig_state::action::Permission;
+    for action in actions {
+        let permission = action.permission().unwrap();
+        if permission == Permission::Blacklist {
+            blacklist_count += 1;
+            // Load the actual Blacklist action data to check entity type
+            let blacklist_data = &role.actions
+                [action.boundary() as usize - Blacklist::LEN..action.boundary() as usize];
+            let blacklist = unsafe { Blacklist::load_unchecked(blacklist_data).unwrap() };
+            if blacklist.is_program() {
+                program_blacklist_count += 1;
+            } else if blacklist.is_wallet() {
+                wallet_blacklist_count += 1;
+            }
+        }
+    }
+
+    // Verify counts
+    assert_eq!(blacklist_count, 5);
+    assert_eq!(program_blacklist_count, 3);
+    assert_eq!(wallet_blacklist_count, 2);
+
+    // Test that all blacklisted programs are blocked
+    let recipient = Keypair::new();
+    context.svm.airdrop(&recipient.pubkey(), amount).unwrap();
+
+    // Test system program (blacklisted_program1)
+    let transfer_ix1 = system_instruction::transfer(&swig_key, &recipient.pubkey(), amount / 4);
+    let sign_ix1 = SignInstruction::new_ed25519(
+        swig_key,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        transfer_ix1,
+        role_id,
+    )
+    .unwrap();
+
+    let transfer_message1 = v0::Message::try_compile(
+        &secondary_authority.pubkey(),
+        &[sign_ix1],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx1 = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message1),
+        &[&secondary_authority],
+    )
+    .unwrap();
+
+    let result1 = context.svm.send_transaction(transfer_tx1);
+    assert!(result1.is_err());
+    assert_eq!(
+        result1.unwrap_err().err,
+        solana_sdk::transaction::TransactionError::InstructionError(
+            0,
+            solana_sdk::instruction::InstructionError::Custom(3029)
+        )
+    );
+
+    // Test blacklisted wallet 1
+    let transfer_ix2 = system_instruction::transfer(&swig_key, &blacklisted_wallet1, amount / 4);
+    let sign_ix2 = SignInstruction::new_ed25519(
+        swig_key,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        transfer_ix2,
+        role_id,
+    )
+    .unwrap();
+
+    let transfer_message2 = v0::Message::try_compile(
+        &secondary_authority.pubkey(),
+        &[sign_ix2],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx2 = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message2),
+        &[&secondary_authority],
+    )
+    .unwrap();
+
+    let result2 = context.svm.send_transaction(transfer_tx2);
+    assert!(result2.is_err());
+    assert_eq!(
+        result2.unwrap_err().err,
+        solana_sdk::transaction::TransactionError::InstructionError(
+            0,
+            solana_sdk::instruction::InstructionError::Custom(3029)
+        )
+    );
+
+    // Test blacklisted wallet 2
+    let transfer_ix3 = system_instruction::transfer(&swig_key, &blacklisted_wallet2, amount / 4);
+    let sign_ix3 = SignInstruction::new_ed25519(
+        swig_key,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        transfer_ix3,
+        role_id,
+    )
+    .unwrap();
+
+    let transfer_message3 = v0::Message::try_compile(
+        &secondary_authority.pubkey(),
+        &[sign_ix3],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx3 = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message3),
+        &[&secondary_authority],
+    )
+    .unwrap();
+
+    let result3 = context.svm.send_transaction(transfer_tx3);
+    assert!(result3.is_err());
+    assert_eq!(
+        result3.unwrap_err().err,
+        solana_sdk::transaction::TransactionError::InstructionError(
+            0,
+            solana_sdk::instruction::InstructionError::Custom(3029)
+        )
+    );
+
+    // Verify that non-blacklisted entities can still be used
+    let non_blacklisted_wallet = Keypair::new().pubkey();
+    context
+        .svm
+        .airdrop(&non_blacklisted_wallet, amount)
+        .unwrap();
+
+    let transfer_ix4 = system_instruction::transfer(&swig_key, &non_blacklisted_wallet, amount / 4);
+    let sign_ix4 = SignInstruction::new_ed25519(
+        swig_key,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        transfer_ix4,
+        role_id,
+    )
+    .unwrap();
+
+    let transfer_message4 = v0::Message::try_compile(
+        &secondary_authority.pubkey(),
+        &[sign_ix4],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx4 = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message4),
+        &[&secondary_authority],
+    )
+    .unwrap();
+
+    let result4 = context.svm.send_transaction(transfer_tx4);
+    // This should fail due to missing program permission, not blacklist
+    assert!(result4.is_err());
+    // Should fail with wrong resource (3006) not blacklist (3029)
+    assert_eq!(
+        result4.unwrap_err().err,
+        solana_sdk::transaction::TransactionError::InstructionError(
+            0,
+            solana_sdk::instruction::InstructionError::Custom(3029)
+        )
+    );
+}
