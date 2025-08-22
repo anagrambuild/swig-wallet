@@ -696,8 +696,8 @@ pub fn add_sub_account_permission(
 
 #[test_log::test]
 fn test_compressed_key_generation() {
-    use alloy_signer_local::LocalSigner;
     use alloy_primitives::B256;
+    use alloy_signer_local::LocalSigner;
 
     let wallet = LocalSigner::random();
 
@@ -719,17 +719,30 @@ fn test_compressed_key_generation() {
     println!("Uncompressed key length: {} bytes", uncompressed_key.len());
 
     // Verify compressed key is 33 bytes
-    assert_eq!(compressed_key.len(), 33, "Compressed key should be 33 bytes");
+    assert_eq!(
+        compressed_key.len(),
+        33,
+        "Compressed key should be 33 bytes"
+    );
 
     // Verify uncompressed key is 65 bytes
-    assert_eq!(uncompressed_key.len(), 65, "Uncompressed key should be 65 bytes");
+    assert_eq!(
+        uncompressed_key.len(),
+        65,
+        "Uncompressed key should be 65 bytes"
+    );
 
     // Verify the compressed key starts with 0x02 or 0x03
-    assert!(compressed_key[0] == 0x02 || compressed_key[0] == 0x03,
-        "Compressed key should start with 0x02 or 0x03");
+    assert!(
+        compressed_key[0] == 0x02 || compressed_key[0] == 0x03,
+        "Compressed key should start with 0x02 or 0x03"
+    );
 
     // Verify the uncompressed key starts with 0x04
-    assert_eq!(uncompressed_key[0], 0x04, "Uncompressed key should start with 0x04");
+    assert_eq!(
+        uncompressed_key[0], 0x04,
+        "Uncompressed key should start with 0x04"
+    );
 
     println!("✓ Compressed key generation test passed");
 }

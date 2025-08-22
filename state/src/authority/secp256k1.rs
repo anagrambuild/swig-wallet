@@ -105,20 +105,21 @@ impl Authority for Secp256k1Authority {
         match create_data.len() {
             33 => {
                 // Handle compressed input (33 bytes)
-                // For compressed input, we can store it directly since we already store compressed keys
+                // For compressed input, we can store it directly since we already store
+                // compressed keys
                 let compressed_key: &[u8; 33] = create_data.try_into().unwrap();
                 authority.public_key = *compressed_key;
                 authority.signature_odometer = 0;
-            }
+            },
             64 => {
                 // Handle uncompressed input (64 bytes) - existing behavior
                 let compressed = compress(create_data.try_into().unwrap());
                 authority.public_key = compressed;
                 authority.signature_odometer = 0;
-            }
+            },
             _ => {
                 return Err(SwigStateError::InvalidRoleData.into());
-            }
+            },
         }
 
         Ok(())
@@ -151,13 +152,13 @@ impl AuthorityInfo for Secp256k1Authority {
             33 => {
                 // Direct comparison with stored compressed key
                 sol_assert_bytes_eq(&self.public_key, data.try_into().unwrap(), 33)
-            }
+            },
             64 => {
                 // Compress input and compare with stored compressed key
                 let compressed = compress(data.try_into().unwrap());
                 sol_assert_bytes_eq(&self.public_key, &compressed, 33)
-            }
-            _ => false
+            },
+            _ => false,
         }
     }
 
@@ -219,8 +220,8 @@ impl Authority for Secp256k1SessionAuthority {
         let create = unsafe { CreateSecp256k1SessionAuthority::load_unchecked(create_data)? };
         let authority = unsafe { Secp256k1SessionAuthority::load_mut_unchecked(bytes)? };
 
-        // The create.public_key is always 64 bytes (uncompressed) in CreateSecp256k1SessionAuthority
-        // We need to compress it for storage
+        // The create.public_key is always 64 bytes (uncompressed) in
+        // CreateSecp256k1SessionAuthority We need to compress it for storage
         let compressed = compress(&create.public_key);
         authority.public_key = compressed;
         authority.signature_odometer = 0;
@@ -248,13 +249,13 @@ impl AuthorityInfo for Secp256k1SessionAuthority {
             33 => {
                 // Direct comparison with stored compressed key
                 sol_assert_bytes_eq(&self.public_key, data.try_into().unwrap(), 33)
-            }
+            },
             64 => {
                 // Compress input and compare with stored compressed key
                 let compressed = compress(data.try_into().unwrap());
                 sol_assert_bytes_eq(&self.public_key, &compressed, 33)
-            }
-            _ => false
+            },
+            _ => false,
         }
     }
 
@@ -630,7 +631,8 @@ fn decompress(compressed: &[u8; 33]) -> Option<[u8; 64]> {
 
     if current_parity != target_parity {
         // Flip the parity by adding p (the field prime)
-        // This is a simplified approach - in reality you'd use proper modular arithmetic
+        // This is a simplified approach - in reality you'd use proper modular
+        // arithmetic
         if y_bytes[31] == 0 {
             y_bytes[31] = 1;
         } else {

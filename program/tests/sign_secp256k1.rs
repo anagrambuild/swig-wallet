@@ -329,7 +329,8 @@ fn test_secp256k1_compressed_key_creation() {
     let id = rand::random::<[u8; 32]>();
 
     // Test that we can create a swig with a compressed key
-    let (swig_key, _) = create_swig_secp256k1_with_key_type(&mut context, &wallet, id, true).unwrap();
+    let (swig_key, _) =
+        create_swig_secp256k1_with_key_type(&mut context, &wallet, id, true).unwrap();
 
     // If we get here, the compressed key creation succeeded
     assert!(true, "Compressed key creation should succeed");
@@ -344,7 +345,8 @@ fn test_secp256k1_compressed_key_full_signing_flow() {
 
     // Create a new swig with a compressed secp256k1 authority
     let id = rand::random::<[u8; 32]>();
-    let (swig_key, _) = create_swig_secp256k1_with_key_type(&mut context, &wallet, id, true).unwrap();
+    let (swig_key, _) =
+        create_swig_secp256k1_with_key_type(&mut context, &wallet, id, true).unwrap();
     context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
 
     // Set up a recipient and transaction
@@ -393,12 +395,17 @@ fn test_secp256k1_compressed_key_full_signing_flow() {
     )
     .unwrap();
 
-    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
-        .unwrap();
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
 
     // Transaction should succeed with compressed key
     let result = context.svm.send_transaction(tx);
-    assert!(result.is_ok(), "Transaction with compressed key failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Transaction with compressed key failed: {:?}",
+        result.err()
+    );
 
     println!("✓ Compressed key signing transaction succeeded");
     let logs = result.unwrap().logs;
@@ -410,7 +417,10 @@ fn test_secp256k1_compressed_key_full_signing_flow() {
 
     // Verify the counter was incremented
     let updated_counter = get_secp256k1_counter(&context, &swig_key, &wallet).unwrap();
-    assert_eq!(updated_counter, next_counter, "Counter should be incremented after successful transaction");
+    assert_eq!(
+        updated_counter, next_counter,
+        "Counter should be incremented after successful transaction"
+    );
 
     println!("✓ Compressed key full signing flow test completed successfully");
 }
