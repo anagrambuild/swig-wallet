@@ -88,15 +88,35 @@ pub fn create_swig_secp256k1(
     wallet: &PrivateKeySigner,
     id: [u8; 32],
 ) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
+    create_swig_secp256k1_with_key_type(context, wallet, id, false)
+}
+
+pub fn create_swig_secp256k1_with_key_type(
+    context: &mut SwigTestContext,
+    wallet: &PrivateKeySigner,
+    id: [u8; 32],
+    use_compressed: bool,
+) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
     let payer_pubkey = context.default_payer.pubkey();
     let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
 
-    // Get the Ethereum public key
-    let eth_pubkey = wallet
-        .credential()
-        .verifying_key()
-        .to_encoded_point(false)
-        .to_bytes();
+    let authority_bytes = if use_compressed {
+        // Get compressed key (33 bytes) directly
+        wallet
+            .credential()
+            .verifying_key()
+            .to_encoded_point(true)
+            .to_bytes()
+            .to_vec()
+    } else {
+        // Get uncompressed key (64 bytes) - skip the first byte (format indicator)
+        let eth_pubkey = wallet
+            .credential()
+            .verifying_key()
+            .to_encoded_point(false)
+            .to_bytes();
+        eth_pubkey[1..].to_vec()
+    };
 
     let create_ix = CreateInstruction::new(
         swig,
@@ -104,7 +124,7 @@ pub fn create_swig_secp256k1(
         payer_pubkey,
         AuthorityConfig {
             authority_type: AuthorityType::Secp256k1,
-            authority: &eth_pubkey[1..],
+            authority: &authority_bytes,
         },
         vec![ClientAction::All(All {})],
         id,
@@ -643,7 +663,7 @@ pub fn add_sub_account_permission(
             sub_account: [0; 32],
         })],
     )
-    .map_err(|e| anyhow::anyhow!("Failed to create add authority instruction: {:?}", e))?;
+    .map_err(|e| anyhow::anyhow!("Failed to create add authority instruction {:?}", e))?;
 
     // Send the transaction
     let message = v0::Message::try_compile(
@@ -672,4 +692,44 @@ pub fn add_sub_account_permission(
         .map_err(|e| anyhow::anyhow!("Failed to add SubAccount permission: {:?}", e))?;
 
     Ok(bench)
+}
+
+#[test_log::test]
+fn test_compressed_key_generation() {
+    use alloy_signer_local::LocalSigner;
+    use alloy_primitives::B256;
+
+    let wallet = LocalSigner::random();
+
+    // Test compressed key generation
+    let compressed_key = wallet
+        .credential()
+        .verifying_key()
+        .to_encoded_point(true)
+        .to_bytes();
+
+    // Test uncompressed key generation
+    let uncompressed_key = wallet
+        .credential()
+        .verifying_key()
+        .to_encoded_point(false)
+        .to_bytes();
+
+    println!("Compressed key length: {} bytes", compressed_key.len());
+    println!("Uncompressed key length: {} bytes", uncompressed_key.len());
+
+    // Verify compressed key is 33 bytes
+    assert_eq!(compressed_key.len(), 33, "Compressed key should be 33 bytes");
+
+    // Verify uncompressed key is 65 bytes
+    assert_eq!(uncompressed_key.len(), 65, "Uncompressed key should be 65 bytes");
+
+    // Verify the compressed key starts with 0x02 or 0x03
+    assert!(compressed_key[0] == 0x02 || compressed_key[0] == 0x03,
+        "Compressed key should start with 0x02 or 0x03");
+
+    // Verify the uncompressed key starts with 0x04
+    assert_eq!(uncompressed_key[0], 0x04, "Uncompressed key should start with 0x04");
+
+    println!("✓ Compressed key generation test passed");
 }

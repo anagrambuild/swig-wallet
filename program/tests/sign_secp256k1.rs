@@ -320,6 +320,22 @@ fn test_secp256k1_direct_signature_reuse() {
 }
 
 #[test_log::test]
+fn test_secp256k1_compressed_key_creation() {
+    let mut context = setup_test_context().unwrap();
+
+    // Generate a random Ethereum wallet
+    let wallet = LocalSigner::random();
+
+    let id = rand::random::<[u8; 32]>();
+
+    // Test that we can create a swig with a compressed key
+    let (swig_key, _) = create_swig_secp256k1_with_key_type(&mut context, &wallet, id, true).unwrap();
+
+    // If we get here, the compressed key creation succeeded
+    assert!(true, "Compressed key creation should succeed");
+}
+
+#[test_log::test]
 fn test_secp256k1_old_signature() {
     let mut context = setup_test_context().unwrap();
 
