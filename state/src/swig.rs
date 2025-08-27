@@ -43,6 +43,27 @@ pub fn swig_account_signer<'a>(id: &'a [u8], bump: &'a [u8; 1]) -> [Seed<'a>; 3]
     ]
 }
 
+/// Generates the seeds for a Swig wallet address account.
+#[inline(always)]
+pub fn swig_wallet_address_seeds(swig_key: &[u8]) -> [&[u8]; 2] {
+    [b"swig-wallet-address".as_ref(), swig_key]
+}
+
+/// Generates the seeds for a Swig wallet address account with bump seed.
+#[inline(always)]
+pub fn swig_wallet_address_seeds_with_bump<'a>(swig_key: &'a [u8], bump: &'a [u8]) -> [&'a [u8]; 3] {
+    [b"swig-wallet-address".as_ref(), swig_key, bump]
+}
+
+/// Creates a signer seeds array for a Swig wallet address account.
+pub fn swig_wallet_address_signer<'a>(swig_key: &'a [u8], bump: &'a [u8; 1]) -> [Seed<'a>; 3] {
+    [
+        b"swig-wallet-address".as_ref().into(),
+        swig_key.into(),
+        bump.as_ref().into(),
+    ]
+}
+
 /// Generates the seeds for a sub-account.
 #[inline(always)]
 pub fn sub_account_seeds<'a>(swig_id: &'a [u8], role_id: &'a [u8]) -> [&'a [u8]; 3] {

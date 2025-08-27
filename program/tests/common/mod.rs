@@ -22,7 +22,7 @@ use swig_state::{
         ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
         secp256r1::CreateSecp256r1SessionAuthority, AuthorityType,
     },
-    swig::{sub_account_seeds, swig_account_seeds, SwigWithRoles},
+    swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
     IntoBytes, Transmutable,
 };
 pub type Context = SwigTestContext;
@@ -98,10 +98,14 @@ pub fn create_swig_secp256k1(
         .to_encoded_point(false)
         .to_bytes();
 
+    let (swig_wallet_address, wallet_address_bump) = 
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
         bump,
         payer_pubkey,
+        swig_wallet_address,
+        wallet_address_bump,
         AuthorityConfig {
             authority_type: AuthorityType::Secp256k1,
             authority: &eth_pubkey[1..],
@@ -135,10 +139,14 @@ pub fn create_swig_ed25519(
 ) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
     let payer_pubkey = context.default_payer.pubkey();
     let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+    let (swig_wallet_address, wallet_address_bump) = 
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
         bump,
         payer_pubkey,
+        swig_wallet_address,
+        wallet_address_bump,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
             authority: authority.pubkey().as_ref(),
@@ -193,10 +201,14 @@ pub fn create_swig_ed25519_session(
         authority: authority_data_bytes,
     };
 
+    let (swig_wallet_address, wallet_address_bump) = 
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
         bump,
         payer_pubkey,
+        swig_wallet_address,
+        wallet_address_bump,
         initial_authority,
         vec![ClientAction::All(All {})],
         id,
@@ -252,10 +264,14 @@ pub fn create_swig_secp256k1_session(
             .map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?,
     };
 
+    let (swig_wallet_address, wallet_address_bump) = 
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
         bump,
         payer_pubkey,
+        swig_wallet_address,
+        wallet_address_bump,
         initial_authority,
         vec![ClientAction::All(All {})],
         id,
@@ -306,10 +322,14 @@ pub fn create_swig_secp256r1_session(
             .map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?,
     };
 
+    let (swig_wallet_address, wallet_address_bump) = 
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
         bump,
         payer_pubkey,
+        swig_wallet_address,
+        wallet_address_bump,
         initial_authority,
         vec![ClientAction::All(All {})],
         id,

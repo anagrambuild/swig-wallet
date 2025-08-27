@@ -25,10 +25,12 @@ pub enum SwigInstruction {
     /// Required accounts:
     /// 1. `[writable]` Swig wallet account to create
     /// 2. `[writable, signer]` Payer account for rent
-    /// 3. `[writable]` System program account
+    /// 3. `[writable]` Swig wallet address account to create
+    /// 4. `[writable]` System program account
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
     #[account(1, writable, signer, name="payer", desc="the payer")]
-    #[account(2, name="system_program", desc="the system program")]
+    #[account(2, writable, name="swig_wallet_address", desc="the swig wallet address account")]
+    #[account(3, name="system_program", desc="the system program")]
     #[num_enum(default)]
     CreateV1 = 0,
 
@@ -80,6 +82,22 @@ pub enum SwigInstruction {
     #[account(1, writable, signer, name="payer", desc="the payer")]
     #[account(2, name="system_program", desc="the system program")]
     SignV1 = 4,
+     /// Signs and executes a transaction.
+    ///
+    /// The instruction data includes:
+    /// - Instruction payload with offset and length
+    /// - Authority payload with offset and length
+    /// Additional accounts may be required for CPI calls.
+    ///
+    /// Required accounts:
+    /// 1. `[writable, signer]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. System program account
+    #[account(0, writable, signer, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="swig_wallet_address", desc="the swig smart wallet address")]
+    #[account(2, writable, signer, name="payer", desc="the payer")]
+    #[account(3, name="system_program", desc="the system program")]
+    SignV2 = 11,
 
     /// Creates a new session for temporary authority.
     ///

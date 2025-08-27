@@ -9,12 +9,12 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_system::instructions::CreateAccount;
-use swig_assertions::*;
+use swig_assertions::{check_self_pda, check_system_owner, check_zero_data};
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, ActionLoader, Actionable},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
-    swig::{swig_account_seeds_with_bump, swig_account_signer, Swig, SwigBuilder},
+    swig::{swig_account_seeds_with_bump, swig_account_signer, swig_wallet_address_seeds_with_bump, swig_wallet_address_signer, Swig, SwigBuilder},
     IntoBytes, Transmutable,
 };
 
@@ -33,6 +33,7 @@ use crate::{
 /// * `authority_type` - Type of authority to be created
 /// * `authority_data_len` - Length of the authority data
 /// * `bump` - Bump seed for PDA derivation
+/// * `wallet_address_bump` - Bump seed for wallet address PDA derivation
 /// * `id` - Unique identifier for the wallet
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
@@ -41,7 +42,7 @@ pub struct CreateV1Args {
     pub authority_type: u16,
     pub authority_data_len: u16,
     pub bump: u8,
-    _padding: u8,
+    pub wallet_address_bump: u8,
     pub id: [u8; 32],
 }
 
@@ -51,6 +52,7 @@ impl CreateV1Args {
     /// # Arguments
     /// * `id` - Unique identifier for the wallet
     /// * `bump` - Bump seed for PDA derivation
+    /// * `wallet_address_bump` - Bump seed for wallet address PDA derivation
     /// * `authority_type` - Type of authority to create
     /// * `authority_data_len` - Length of the authority data
     pub fn new(
@@ -58,6 +60,7 @@ impl CreateV1Args {
         bump: u8,
         authority_type: AuthorityType,
         authority_data_len: u16,
+        wallet_address_bump: u8,
     ) -> Self {
         Self {
             discriminator: SwigInstruction::CreateV1,
@@ -65,7 +68,7 @@ impl CreateV1Args {
             bump,
             authority_type: authority_type as u16,
             authority_data_len,
-            _padding: 0,
+            wallet_address_bump,
         }
     }
 }
@@ -147,6 +150,23 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
         SwigError::InvalidSeedSwigAccount,
     )?;
 
+    // Validate swig wallet address account
+    check_system_owner(ctx.accounts.swig_wallet_address, SwigError::OwnerMismatchSwigAccount)?;
+    check_zero_data(ctx.accounts.swig_wallet_address, SwigError::AccountNotEmptySwigAccount)?;
+    
+    let wallet_address_bump = check_self_pda(
+        &swig_wallet_address_seeds_with_bump(ctx.accounts.swig.key().as_ref(), &[create_v1.args.wallet_address_bump]),
+        ctx.accounts.swig_wallet_address.key(),
+        SwigError::InvalidSeedSwigAccount,
+    )?;
+    
+    // Validate swig wallet address PDA
+    let wallet_address_bump = check_self_pda(
+        &swig_wallet_address_seeds_with_bump(ctx.accounts.swig.key().as_ref(), &[create_v1.args.wallet_address_bump]),
+        ctx.accounts.swig_wallet_address.key(),
+        SwigError::InvalidSeedSwigAccount,
+    )?;
+
     let manage_authority_action = create_v1.get_action::<ManageAuthority>()?;
     let all_action = create_v1.get_action::<All>()?;
     if manage_authority_action.is_none() && all_action.is_none() {
@@ -163,7 +183,7 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
     .pad_to_align()
     .size();
     let lamports_needed = Rent::get()?.minimum_balance(account_size);
-    let swig = Swig::new(create_v1.args.id, bump, 0);
+    let swig = Swig::new(create_v1.args.id, bump, wallet_address_bump);
 
     // Get current lamports in the account
     let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
