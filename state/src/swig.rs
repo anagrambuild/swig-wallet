@@ -412,19 +412,22 @@ pub struct Swig {
     /// Counter for generating unique role IDs
     pub role_counter: u32,
     /// Amount of lamports reserved for rent
-    pub reserved_lamports: u64,
+    // pub reserved_lamports: u64,
+    pub wallet_bump: u8,
+    pub _padding: [u8; 7],
 }
 
 impl Swig {
     /// Creates a new Swig account.
-    pub fn new(id: [u8; 32], bump: u8, reserved_lamports: u64) -> Self {
+    pub fn new(id: [u8; 32], bump: u8, wallet_bump: u8) -> Self {
         Self {
             discriminator: Discriminator::SwigAccount as u8,
             id,
             bump,
             roles: 0,
             role_counter: 0,
-            reserved_lamports,
+            wallet_bump,
+            _padding: [0; 7],
         }
     }
 
@@ -746,15 +749,17 @@ mod tests {
     #[test]
     fn test_swig_creation() {
         let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump, 0);
+        let (mut _account_buffer_2, id, bump_2) = setup_test_buffer();
+        let swig = Swig::new(id, bump, bump_2);
 
         // Test all fields of the Swig struct
         assert_eq!(swig.discriminator, 1);
         assert_eq!(swig.id, id);
         assert_eq!(swig.bump, bump);
+        assert_eq!(swig.wallet_bump, bump_2);
         assert_eq!(swig.roles, 0);
         assert_eq!(swig.role_counter, 0);
-        assert_eq!(swig.reserved_lamports, 0);
+        // assert_eq!(swig.reserved_lamports, 0);
 
         // Test builder creation and verify buffer state
         let builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();

@@ -13,6 +13,7 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::{Keypair, Signature},
     signer::Signer,
+    sysvar::rent::Rent,
     system_instruction,
     transaction::VersionedTransaction,
 };
@@ -476,7 +477,10 @@ fn test_non_root_authority_cannot_withdraw_from_sub_account() {
     let sub_account_state =
         unsafe { SwigSubAccount::load_unchecked(&sub_account_data.data).unwrap() };
     assert_eq!(sub_account_state.enabled, true);
-    let sub_account_balance = sub_account_data.lamports - sub_account_state.reserved_lamports;
+    // Calculate the rent-exempt minimum for the sub-account
+    let rent = context.svm.get_sysvar::<Rent>();
+    let rent_exempt_minimum = rent.minimum_balance(sub_account_data.data.len());
+    let sub_account_balance = sub_account_data.lamports - rent_exempt_minimum;
     assert_eq!(
         sub_account_balance, initial_balance,
         "Sub-account balance should not have changed"

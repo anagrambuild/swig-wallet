@@ -17,6 +17,7 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
+    sysvar::rent::Rent,
     system_instruction,
     transaction::VersionedTransaction,
 };
@@ -233,8 +234,11 @@ fn test_create_and_sign_secp256k1() {
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    // Calculate rent-exempt minimum for the account
+    let rent = context.svm.get_sysvar::<Rent>();
+    let rent_exempt_minimum = rent.minimum_balance(swig_account.data.len());
     assert_eq!(
         swig_account.lamports,
-        swig_state.state.reserved_lamports + 10_000_000_000 - transfer_amount
+        rent_exempt_minimum + 10_000_000_000 - transfer_amount
     );
 }

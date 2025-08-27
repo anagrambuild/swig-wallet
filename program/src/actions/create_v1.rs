@@ -163,7 +163,7 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
     .pad_to_align()
     .size();
     let lamports_needed = Rent::get()?.minimum_balance(account_size);
-    let swig = Swig::new(create_v1.args.id, bump, lamports_needed);
+    let swig = Swig::new(create_v1.args.id, bump, 0);
 
     // Get current lamports in the account
     let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };

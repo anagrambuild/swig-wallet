@@ -15,6 +15,7 @@ use solana_sdk::{
     signature::Keypair,
     signer::Signer,
     system_instruction,
+    sysvar::rent::Rent,
     transaction::VersionedTransaction,
 };
 use swig_interface::{CreateSessionInstruction, SignInstruction};
@@ -474,8 +475,12 @@ fn test_transfer_sol_with_session() {
     );
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
 
+    // Calculate rent-exempt minimum for the account
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let rent = context.svm.get_sysvar::<Rent>();
+    let rent_exempt_minimum = rent.minimum_balance(swig_account.data.len());
     assert_eq!(
-        swig_final_balance - swig.state.reserved_lamports,
+        swig_final_balance - rent_exempt_minimum,
         initial_swig_balance - transfer_amount,
         "Swig balance did not decrease by the correct amount"
     );

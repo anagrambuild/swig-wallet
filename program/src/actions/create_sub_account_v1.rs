@@ -241,8 +241,7 @@ pub fn create_sub_account_v1(
     sub_account.role_id = create_sub_account.args.role_id;
     sub_account.swig_id = swig.id;
     sub_account.enabled = true;
-    // Set reserved lamports to the minimum rent-exempt amount
-    sub_account.reserved_lamports = lamports_needed;
+
 
     // Update the SubAccount action to store the newly created sub-account's public
     // key
