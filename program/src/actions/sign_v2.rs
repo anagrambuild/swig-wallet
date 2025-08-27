@@ -447,6 +447,8 @@ pub fn sign_v2(
                         );
                     }
 
+                    // For ThisSwig accounts, check if total_sol_spent (tracked from swig_wallet_address balance changes)
+                    // exceeds the allowed SOL limits
                     if total_sol_spent > 0 {
                         if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])? {
                             action.run(total_sol_spent)?;

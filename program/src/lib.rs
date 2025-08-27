@@ -121,11 +121,20 @@ unsafe fn execute(
 ) -> Result<(), ProgramError> {
     let mut index: usize = 0;
 
+    // Get instruction discriminator so we can classify based on SignV1 vs SignV2
+    let instruction_discriminator =
+        if let Some(&first_byte) = ctx.instruction_data_unchecked().get(0) {
+            Some(first_byte)
+        } else {
+            None
+        };
+
     // First account must be processed to get SwigWithRoles
     if let Ok(acc) = ctx.next_account() {
         match acc {
             MaybeAccount::Account(account) => {
-                let classification = classify_account(0, &account, accounts, None)?;
+                let classification =
+                    classify_account(0, &account, accounts, None, instruction_discriminator)?;
                 account_classification[0].write(classification);
                 accounts[0].write(account);
             },
@@ -157,12 +166,22 @@ unsafe fn execute(
     // Process remaining accounts using the cache
     while let Ok(acc) = ctx.next_account() {
         let classification = match &acc {
-            MaybeAccount::Account(account) => {
-                classify_account(index, account, accounts, program_scope_cache.as_ref())?
-            },
+            MaybeAccount::Account(account) => classify_account(
+                index,
+                account,
+                accounts,
+                program_scope_cache.as_ref(),
+                instruction_discriminator,
+            )?,
             MaybeAccount::Duplicated(account_index) => {
                 let account = accounts[*account_index as usize].assume_init_ref().clone();
-                classify_account(index, &account, accounts, program_scope_cache.as_ref())?
+                classify_account(
+                    index,
+                    &account,
+                    accounts,
+                    program_scope_cache.as_ref(),
+                    instruction_discriminator,
+                )?
             },
         };
         account_classification[index].write(classification);
@@ -175,11 +194,10 @@ unsafe fn execute(
         index += 1;
     }
 
-    let instruction = unsafe { ctx.instruction_data_unchecked() };
     process_action(
         core::slice::from_raw_parts(accounts.as_ptr() as _, index),
         core::slice::from_raw_parts_mut(account_classification.as_mut_ptr() as _, index),
-        instruction,
+        ctx.instruction_data_unchecked(),
     )?;
     Ok(())
 }
@@ -216,6 +234,7 @@ unsafe fn classify_account(
     account: &AccountInfo,
     accounts: &[MaybeUninit<AccountInfo>],
     program_scope_cache: Option<&ProgramScopeCache>,
+    instruction_discriminator: Option<u8>,
 ) -> Result<AccountClassification, ProgramError> {
     let mut target_index: usize = 0;
     match account.owner() {
@@ -301,12 +320,30 @@ unsafe fn classify_account(
         #[cfg(not(feature = "program_scope_test"))]
         &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if account.data_len() >= 165 && index > 0 => unsafe {
             let data = account.borrow_data_unchecked();
-            if sol_memcmp(
+            let token_authority = data.get_unchecked(32..64);
+
+            // Check if token authority matches account[0] (swig account) - for SignV1
+            let matches_swig_account = sol_memcmp(
                 accounts.get_unchecked(0).assume_init_ref().key(),
-                data.get_unchecked(32..64),
+                token_authority,
                 32,
-            ) == 0
-            {
+            ) == 0;
+
+            // Check if token authority matches account[1] (swig_wallet_address) - for
+            // SignV2 Note: We only check account[1] if this is a SignV2-style
+            // account layout where account[1] exists and is expected to be
+            // swig_wallet_address
+            let matches_swig_wallet_address = if index > 1 && accounts.len() > 1 {
+                sol_memcmp(
+                    accounts.get_unchecked(1).assume_init_ref().key(),
+                    token_authority,
+                    32,
+                ) == 0
+            } else {
+                false
+            };
+
+            if matches_swig_account || matches_swig_wallet_address {
                 Ok(AccountClassification::SwigTokenAccount {
                     balance: u64::from_le_bytes(
                         data.get_unchecked(64..72)
