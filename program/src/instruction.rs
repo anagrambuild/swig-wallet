@@ -93,7 +93,7 @@ pub enum SwigInstruction {
     /// 1. `[writable, signer]` Swig wallet account
     /// 2. `[writable, signer]` Payer account
     /// 3. System program account
-    #[account(0, writable, signer, name="swig", desc="the swig smart wallet")]
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
     #[account(1, writable, signer, name="swig_wallet_address", desc="the swig smart wallet address")]
     #[account(2, writable, signer, name="payer", desc="the payer")]
     #[account(3, name="system_program", desc="the system program")]

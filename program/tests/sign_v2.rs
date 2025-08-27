@@ -33,22 +33,37 @@ fn test_sign_v2_transfer_sol() {
         .unwrap();
     context
         .svm
-        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .airdrop(&swig_authority.pubkey(), 20_000_000_000)
         .unwrap();
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
     let (swig_wallet_address, _) = Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     
-    // Create the swig account
+    // Create the swig account (this now also creates the empty swig_wallet_address PDA)
     let (_, _transaction_metadata) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
     
-    // Add some funds to the swig account
-    context.svm.airdrop(&swig, 10_000_000_000).unwrap();
+    // Transfer additional funds to the swig_wallet_address PDA
+    // The PDA is already created as system-owned by the create_v1 function
+    let transfer_to_wallet_ix = system_instruction::transfer(&swig_authority.pubkey(), &swig_wallet_address, 1_000_000_000);
     
-    // Create a simple transfer instruction
+    let transfer_message = v0::Message::try_compile(
+        &swig_authority.pubkey(),
+        &[transfer_to_wallet_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    ).unwrap();
+    
+    let transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message), 
+        &[&swig_authority]
+    ).unwrap();
+    
+    context.svm.send_transaction(transfer_tx).unwrap();
+    
+    // Create a simple transfer instruction from swig_wallet_address 
     let transfer_amount = 100_000_000; // 0.1 SOL
-    let transfer_ix = system_instruction::transfer(&swig, &recipient.pubkey(), transfer_amount);
+    let transfer_ix = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
     
     // Create SignV2 instruction with the swig_wallet_address
     let sign_v2_ix = SignV2Instruction::new_ed25519(
@@ -77,7 +92,7 @@ fn test_sign_v2_transfer_sol() {
     .unwrap();
     
     let initial_recipient_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
-    let initial_swig_balance = context.svm.get_account(&swig).unwrap().lamports;
+    let initial_swig_wallet_address_balance = context.svm.get_account(&swig_wallet_address).unwrap().lamports;
     
     // Execute the transaction
     let result = context.svm.send_transaction(transfer_tx);
@@ -93,7 +108,7 @@ fn test_sign_v2_transfer_sol() {
     
     // Verify the transfer was successful
     let final_recipient_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
-    let final_swig_balance = context.svm.get_account(&swig).unwrap().lamports;
+    let final_swig_wallet_address_balance = context.svm.get_account(&swig_wallet_address).unwrap().lamports;
     
     assert_eq!(
         final_recipient_balance, 
@@ -102,9 +117,9 @@ fn test_sign_v2_transfer_sol() {
     );
     
     assert_eq!(
-        final_swig_balance,
-        initial_swig_balance - transfer_amount,
-        "Swig account should have the transfer amount deducted"
+        final_swig_wallet_address_balance,
+        initial_swig_wallet_address_balance - transfer_amount,
+        "Swig wallet address account should have the transfer amount deducted"
     );
     
     println!("✅ SignV2 test passed: Successfully transferred {} lamports", transfer_amount);

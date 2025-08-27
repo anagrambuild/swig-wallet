@@ -34,7 +34,7 @@ use swig_state::{
     },
     authority::AuthorityType,
     role::RoleMut,
-    swig::{swig_account_signer, Swig},
+    swig::{swig_account_signer, swig_wallet_address_signer, Swig},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -223,11 +223,11 @@ pub fn sign_v2(
     let ix_iter = InstructionIterator::new(
         all_accounts,
         sign_v2.instruction_payload,
-        ctx.accounts.swig.key(),
+        ctx.accounts.swig_wallet_address.key(),
         rkeys,
     )?;
-    let b = [swig.bump];
-    let seeds = swig_account_signer(&swig.id, &b);
+    let b = [swig.wallet_bump];
+    let seeds = swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &b);
     let signer = seeds.as_slice();
 
     // Check if we have All or AllButManageAuthority permission to skip CPI
@@ -307,13 +307,13 @@ pub fn sign_v2(
         if let Ok(instruction) = ix {
             // Check CPI signing permissions if not All permission
             if !has_all_permission {
-                // Check if swig account is being used as a signer for this instruction
-                let swig_is_signer = instruction.accounts.iter().any(|account_meta| {
-                    account_meta.pubkey == ctx.accounts.swig.key() && account_meta.is_signer
+                // Check if swig_wallet_address account is being used as a signer for this instruction
+                let swig_wallet_address_is_signer = instruction.accounts.iter().any(|account_meta| {
+                    account_meta.pubkey == ctx.accounts.swig_wallet_address.key() && account_meta.is_signer
                 });
 
-                if swig_is_signer {
-                    // This is a CPI call where swig is signing - check Program permissions
+                if swig_wallet_address_is_signer {
+                    // This is a CPI call where swig_wallet_address is signing - check Program permissions
                     let program_id_bytes = instruction.program_id.as_ref();
 
                     // Check if we have any program permission that allows this program
@@ -331,12 +331,12 @@ pub fn sign_v2(
                 }
             }
 
-            let swig_balance_before = ctx.accounts.swig.lamports();
-            instruction.execute(all_accounts, ctx.accounts.swig.key(), &[signer.into()])?;
+            let swig_wallet_address_balance_before = ctx.accounts.swig_wallet_address.lamports();
+            instruction.execute(all_accounts, ctx.accounts.swig_wallet_address.key(), &[signer.into()])?;
 
-            let swig_balance_after = ctx.accounts.swig.lamports();
-            if swig_balance_after < swig_balance_before {
-                let amount_spent = swig_balance_before.saturating_sub(swig_balance_after);
+            let swig_wallet_address_balance_after = ctx.accounts.swig_wallet_address.lamports();
+            if swig_wallet_address_balance_after < swig_wallet_address_balance_before {
+                let amount_spent = swig_wallet_address_balance_before.saturating_sub(swig_wallet_address_balance_after);
                 total_sol_spent = total_sol_spent.saturating_add(amount_spent);
             }
 
@@ -486,7 +486,7 @@ pub fn sign_v2(
                             .map_err(|_| ProgramError::InvalidAccountData)?
                     });
 
-                    if authority != ctx.accounts.swig.key() {
+                    if authority != ctx.accounts.swig_wallet_address.key() {
                         return Err(
                             SwigAuthenticateError::PermissionDeniedTokenAccountAuthorityNotSwig
                                 .into(),

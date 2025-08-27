@@ -14,7 +14,10 @@ use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, ActionLoader, Actionable},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
-    swig::{swig_account_seeds_with_bump, swig_account_signer, swig_wallet_address_seeds_with_bump, swig_wallet_address_signer, Swig, SwigBuilder},
+    swig::{
+        swig_account_seeds_with_bump, swig_account_signer, swig_wallet_address_seeds_with_bump,
+        swig_wallet_address_signer, Swig, SwigBuilder,
+    },
     IntoBytes, Transmutable,
 };
 
@@ -151,18 +154,30 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
     )?;
 
     // Validate swig wallet address account
-    check_system_owner(ctx.accounts.swig_wallet_address, SwigError::OwnerMismatchSwigAccount)?;
-    check_zero_data(ctx.accounts.swig_wallet_address, SwigError::AccountNotEmptySwigAccount)?;
-    
+    check_system_owner(
+        ctx.accounts.swig_wallet_address,
+        SwigError::OwnerMismatchSwigAccount,
+    )?;
+    check_zero_data(
+        ctx.accounts.swig_wallet_address,
+        SwigError::AccountNotEmptySwigAccount,
+    )?;
+
     let wallet_address_bump = check_self_pda(
-        &swig_wallet_address_seeds_with_bump(ctx.accounts.swig.key().as_ref(), &[create_v1.args.wallet_address_bump]),
+        &swig_wallet_address_seeds_with_bump(
+            ctx.accounts.swig.key().as_ref(),
+            &[create_v1.args.wallet_address_bump],
+        ),
         ctx.accounts.swig_wallet_address.key(),
         SwigError::InvalidSeedSwigAccount,
     )?;
-    
+
     // Validate swig wallet address PDA
     let wallet_address_bump = check_self_pda(
-        &swig_wallet_address_seeds_with_bump(ctx.accounts.swig.key().as_ref(), &[create_v1.args.wallet_address_bump]),
+        &swig_wallet_address_seeds_with_bump(
+            ctx.accounts.swig.key().as_ref(),
+            &[create_v1.args.wallet_address_bump],
+        ),
         ctx.accounts.swig_wallet_address.key(),
         SwigError::InvalidSeedSwigAccount,
     )?;
@@ -205,6 +220,26 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
     .invoke_signed(&[swig_account_signer(&swig.id, &[swig.bump])
         .as_slice()
         .into()])?;
+    
+    // Create the swig_wallet_address PDA as a program-owned account with minimal data
+    // The account needs to be program-owned so the program can spend from it
+    let wallet_address_space = 1; // Just store a discriminator
+    let wallet_address_rent_exemption = Rent::get()?.minimum_balance(wallet_address_space);
+    CreateAccount {
+        from: ctx.accounts.payer,
+        to: ctx.accounts.swig_wallet_address,
+        lamports: wallet_address_rent_exemption,
+        space: wallet_address_space as u64,
+        owner: &crate::ID, // Swig program owns it
+    }
+    .invoke_signed(&[swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &[wallet_address_bump])
+        .as_slice()
+        .into()])?;
+    
+    // Initialize the wallet address account with the SwigWalletAddress discriminator
+    let mut wallet_address_data = unsafe { ctx.accounts.swig_wallet_address.borrow_mut_data_unchecked() };
+    wallet_address_data[0] = swig_state::Discriminator::SwigWalletAddress as u8;
+    
     let swig_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let mut swig_builder = SwigBuilder::create(swig_data, swig)?;
 
