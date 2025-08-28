@@ -278,9 +278,6 @@ impl AuthorityInfo for Secp256k1SessionAuthority {
         current_slot: u64,
         duration: u64,
     ) -> Result<(), ProgramError> {
-        if sol_assert_bytes_eq(&self.session_key, &session_key, 32) {
-            return Err(SwigAuthenticateError::InvalidSessionKeyCannotReuseSessionKey.into());
-        }
         if duration > self.max_session_age {
             return Err(SwigAuthenticateError::InvalidSessionDuration.into());
         }
