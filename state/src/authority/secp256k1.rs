@@ -25,12 +25,16 @@ const MAX_SIGNATURE_AGE_IN_SLOTS: u64 = 60;
 #[derive(Debug, no_padding::NoPadding)]
 #[repr(C, align(8))]
 pub struct CreateSecp256k1SessionAuthority {
-    /// The uncompressed Secp256k1 public key (64 bytes)
+    /// The Secp256k1 public key data (33/64 bytes)
     pub public_key: [u8; 64],
     /// The session key for temporary authentication
     pub session_key: [u8; 32],
     /// Maximum duration a session can be valid for
     pub max_session_length: u64,
+    /// compressed: boolean
+    pub compressed: bool,
+    /// padding
+    pub _padding: [u8; 7],
 }
 
 impl CreateSecp256k1SessionAuthority {
@@ -40,17 +44,24 @@ impl CreateSecp256k1SessionAuthority {
     /// * `public_key` - The uncompressed Secp256k1 public key
     /// * `session_key` - The initial session key
     /// * `max_session_length` - Maximum allowed session duration
-    pub fn new(public_key: [u8; 64], session_key: [u8; 32], max_session_length: u64) -> Self {
+    pub fn new(
+        public_key: [u8; 64],
+        session_key: [u8; 32],
+        max_session_length: u64,
+        compressed: bool,
+    ) -> Self {
         Self {
             public_key,
             session_key,
             max_session_length,
+            compressed,
+            _padding: [0; 7],
         }
     }
 }
 
 impl Transmutable for CreateSecp256k1SessionAuthority {
-    const LEN: usize = 64 + 32 + 8;
+    const LEN: usize = 64 + 32 + 8 + 8;
 }
 
 impl TransmutableMut for CreateSecp256k1SessionAuthority {}
@@ -219,10 +230,13 @@ impl Authority for Secp256k1SessionAuthority {
     fn set_into_bytes(create_data: &[u8], bytes: &mut [u8]) -> Result<(), ProgramError> {
         let create = unsafe { CreateSecp256k1SessionAuthority::load_unchecked(create_data)? };
         let authority = unsafe { Secp256k1SessionAuthority::load_mut_unchecked(bytes)? };
-
-        // The create.public_key is always 64 bytes (uncompressed) in
-        // CreateSecp256k1SessionAuthority We need to compress it for storage
-        let compressed = compress(&create.public_key);
+        let compressed = if create.compressed {
+            let mut compressed_key = [0u8; 33];
+            compressed_key.copy_from_slice(&create.public_key[..33]);
+            compressed_key
+        } else {
+            compress(&create.public_key)
+        };
         authority.public_key = compressed;
         authority.signature_odometer = 0;
         authority.session_key = create.session_key;

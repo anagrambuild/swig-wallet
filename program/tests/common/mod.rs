@@ -251,18 +251,28 @@ pub fn create_swig_secp256k1_session(
     let payer_pubkey = context.default_payer.pubkey();
     let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
 
+    let compressed = true;
+
     // Get the Ethereum public key
     let eth_pubkey = wallet
         .credential()
         .verifying_key()
-        .to_encoded_point(false)
+        .to_encoded_point(compressed)
         .to_bytes();
+
+    let compressed_offset = if compressed { 0 } else { 1 };
+
+    let mut pubkey: [u8; 64] = [0; 64];
+    pubkey[..eth_pubkey.len() - compressed_offset]
+        .copy_from_slice(eth_pubkey[compressed_offset..].try_into().unwrap());
 
     // Create the session authority data
     let mut authority_data = CreateSecp256k1SessionAuthority {
-        public_key: eth_pubkey[1..].try_into().unwrap(),
+        public_key: pubkey,
         session_key: initial_session_key,
         max_session_length: session_max_length,
+        compressed,
+        _padding: [0; 7],
     };
 
     let initial_authority = AuthorityConfig {
