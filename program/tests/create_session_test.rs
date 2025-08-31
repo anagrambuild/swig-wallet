@@ -342,9 +342,9 @@ fn test_session_key_refresh_ed25519() {
         swig_key,
         context.default_payer.pubkey(),
         swig_authority.pubkey(),
-        role_id, // Use the same role ID
+        role_id,              // Use the same role ID
         session_key.pubkey(), // Same session key
-        80, // New duration: 80 slots
+        80,                   // New duration: 80 slots
     )
     .unwrap();
 
@@ -699,7 +699,7 @@ fn test_secp256k1_session() {
 #[test_log::test]
 fn test_session_key_refresh_secp256k1() {
     let mut context = setup_test_context().unwrap();
-    
+
     // Generate a random Ethereum wallet
     let wallet = LocalSigner::random();
     let id = rand::random::<[u8; 32]>();
@@ -744,11 +744,8 @@ fn test_session_key_refresh_secp256k1() {
     )
     .unwrap();
 
-    let tx1 = VersionedTransaction::try_new(
-        VersionedMessage::V0(msg1),
-        &[&context.default_payer],
-    )
-    .unwrap();
+    let tx1 = VersionedTransaction::try_new(VersionedMessage::V0(msg1), &[&context.default_payer])
+        .unwrap();
 
     let result1 = context.svm.send_transaction(tx1);
     assert!(
@@ -766,18 +763,20 @@ fn test_session_key_refresh_secp256k1() {
     assert_eq!(auth.signature_odometer, 1);
 
     // Advance time and refresh session with same session key
-    context.svm.warp_to_slot(context.svm.get_sysvar::<Clock>().slot + 10);
-    
+    context
+        .svm
+        .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + 10);
+
     let refresh_slot = context.svm.get_sysvar::<Clock>().slot;
     let create_session_ix2 = CreateSessionInstruction::new_with_secp256k1_authority(
         swig_key,
         context.default_payer.pubkey(),
         signing_fn,
         refresh_slot,
-        2, // Increment counter for second signature
-        0, // Role ID 0
+        2,                    // Increment counter for second signature
+        0,                    // Role ID 0
         session_key.pubkey(), // Same session key - this should work now
-        80, // New duration: 80 slots
+        80,                   // New duration: 80 slots
     )
     .unwrap();
 
@@ -790,11 +789,8 @@ fn test_session_key_refresh_secp256k1() {
     )
     .unwrap();
 
-    let tx2 = VersionedTransaction::try_new(
-        VersionedMessage::V0(msg2),
-        &[&context.default_payer],
-    )
-    .unwrap();
+    let tx2 = VersionedTransaction::try_new(VersionedMessage::V0(msg2), &[&context.default_payer])
+        .unwrap();
 
     let result2 = context.svm.send_transaction(tx2);
     assert!(
@@ -873,7 +869,7 @@ fn test_session_extension_before_expiration() {
         swig_authority.pubkey(),
         0,
         session_key.pubkey(), // Same session key
-        50, // Much longer duration
+        50,                   // Much longer duration
     )
     .unwrap();
 
@@ -970,30 +966,35 @@ fn test_multiple_session_refreshes() {
             0,
             session_key.pubkey(),
             duration,
-        ).unwrap();
+        )
+        .unwrap();
 
         let msg = v0::Message::try_compile(
             &context.default_payer.pubkey(),
             &[create_session_ix],
             &[],
             context.svm.latest_blockhash(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let tx = VersionedTransaction::try_new(
             VersionedMessage::V0(msg),
             &[&context.default_payer, &swig_authority],
-        ).unwrap();
+        )
+        .unwrap();
 
         context.svm.send_transaction(tx).unwrap();
     };
 
     // Create initial session
     create_session(&mut context, 20);
-    
+
     // Refresh multiple times with different durations
     for i in 1..=5 {
-        context.svm.warp_to_slot(context.svm.get_sysvar::<Clock>().slot + 3);
-        
+        context
+            .svm
+            .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + 3);
+
         create_session(&mut context, 30 + (i * 10));
 
         // Verify the session expiration updated correctly
