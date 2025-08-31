@@ -271,8 +271,6 @@ pub fn create_swig_secp256k1_session(
         public_key: pubkey,
         session_key: initial_session_key,
         max_session_length: session_max_length,
-        compressed,
-        _padding: [0; 7],
     };
 
     let initial_authority = AuthorityConfig {

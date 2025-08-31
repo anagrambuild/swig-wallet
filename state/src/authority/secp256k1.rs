@@ -31,10 +31,6 @@ pub struct CreateSecp256k1SessionAuthority {
     pub session_key: [u8; 32],
     /// Maximum duration a session can be valid for
     pub max_session_length: u64,
-    /// compressed: boolean
-    pub compressed: bool,
-    /// padding
-    pub _padding: [u8; 7],
 }
 
 impl CreateSecp256k1SessionAuthority {
@@ -44,18 +40,11 @@ impl CreateSecp256k1SessionAuthority {
     /// * `public_key` - The uncompressed Secp256k1 public key
     /// * `session_key` - The initial session key
     /// * `max_session_length` - Maximum allowed session duration
-    pub fn new(
-        public_key: [u8; 64],
-        session_key: [u8; 32],
-        max_session_length: u64,
-        compressed: bool,
-    ) -> Self {
+    pub fn new(public_key: [u8; 64], session_key: [u8; 32], max_session_length: u64) -> Self {
         Self {
             public_key,
             session_key,
             max_session_length,
-            compressed,
-            _padding: [0; 7],
         }
     }
 }
@@ -230,7 +219,7 @@ impl Authority for Secp256k1SessionAuthority {
     fn set_into_bytes(create_data: &[u8], bytes: &mut [u8]) -> Result<(), ProgramError> {
         let create = unsafe { CreateSecp256k1SessionAuthority::load_unchecked(create_data)? };
         let authority = unsafe { Secp256k1SessionAuthority::load_mut_unchecked(bytes)? };
-        let compressed = if create.compressed {
+        let compressed = if create.public_key[33..] == [0; 31] {
             let mut compressed_key = [0u8; 33];
             compressed_key.copy_from_slice(&create.public_key[..33]);
             compressed_key
