@@ -23,10 +23,14 @@ use swig_state::{
     action::{
         all::All, all_but_manage_authority::AllButManageAuthority,
         manage_authority::ManageAuthority, program::Program, program_all::ProgramAll,
-        program_curated::ProgramCurated, program_scope::ProgramScope, sol_limit::SolLimit,
+        program_curated::ProgramCurated, program_scope::ProgramScope,
+        sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
+        sol_recurring_destination_limit::SolRecurringDestinationLimit,
         sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll, stake_limit::StakeLimit,
         stake_recurring_limit::StakeRecurringLimit, sub_account::SubAccount,
-        token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit, Action, Permission,
+        token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
+        token_recurring_destination_limit::TokenRecurringDestinationLimit,
+        token_recurring_limit::TokenRecurringLimit, Action, Permission,
     },
     authority::{
         secp256k1::{hex_encode, AccountsPayload},
@@ -38,9 +42,13 @@ use swig_state::{
 
 pub enum ClientAction {
     TokenLimit(TokenLimit),
+    TokenDestinationLimit(TokenDestinationLimit),
     TokenRecurringLimit(TokenRecurringLimit),
+    TokenRecurringDestinationLimit(TokenRecurringDestinationLimit),
     SolLimit(SolLimit),
     SolRecurringLimit(SolRecurringLimit),
+    SolDestinationLimit(SolDestinationLimit),
+    SolRecurringDestinationLimit(SolRecurringDestinationLimit),
     Program(Program),
     ProgramAll(ProgramAll),
     ProgramCurated(ProgramCurated),
@@ -58,13 +66,28 @@ impl ClientAction {
     pub fn write(&self, data: &mut Vec<u8>) -> Result<(), anyhow::Error> {
         let (permission, length) = match self {
             ClientAction::TokenLimit(_) => (Permission::TokenLimit, TokenLimit::LEN),
+            ClientAction::TokenDestinationLimit(_) => (
+                Permission::TokenDestinationLimit,
+                TokenDestinationLimit::LEN,
+            ),
             ClientAction::TokenRecurringLimit(_) => {
                 (Permission::TokenRecurringLimit, TokenRecurringLimit::LEN)
             },
+            ClientAction::TokenRecurringDestinationLimit(_) => (
+                Permission::TokenRecurringDestinationLimit,
+                TokenRecurringDestinationLimit::LEN,
+            ),
             ClientAction::SolLimit(_) => (Permission::SolLimit, SolLimit::LEN),
             ClientAction::SolRecurringLimit(_) => {
                 (Permission::SolRecurringLimit, SolRecurringLimit::LEN)
             },
+            ClientAction::SolDestinationLimit(_) => {
+                (Permission::SolDestinationLimit, SolDestinationLimit::LEN)
+            },
+            ClientAction::SolRecurringDestinationLimit(_) => (
+                Permission::SolRecurringDestinationLimit,
+                SolRecurringDestinationLimit::LEN,
+            ),
             ClientAction::Program(_) => (Permission::Program, Program::LEN),
             ClientAction::ProgramAll(_) => (Permission::ProgramAll, ProgramAll::LEN),
             ClientAction::ProgramCurated(_) => (Permission::ProgramCurated, ProgramCurated::LEN),
@@ -94,9 +117,13 @@ impl ClientAction {
         data.extend_from_slice(header_bytes);
         let bytes_res = match self {
             ClientAction::TokenLimit(action) => action.into_bytes(),
+            ClientAction::TokenDestinationLimit(action) => action.into_bytes(),
             ClientAction::TokenRecurringLimit(action) => action.into_bytes(),
+            ClientAction::TokenRecurringDestinationLimit(action) => action.into_bytes(),
             ClientAction::SolLimit(action) => action.into_bytes(),
             ClientAction::SolRecurringLimit(action) => action.into_bytes(),
+            ClientAction::SolDestinationLimit(action) => action.into_bytes(),
+            ClientAction::SolRecurringDestinationLimit(action) => action.into_bytes(),
             ClientAction::Program(action) => action.into_bytes(),
             ClientAction::ProgramAll(action) => action.into_bytes(),
             ClientAction::ProgramCurated(action) => action.into_bytes(),
