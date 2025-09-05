@@ -670,29 +670,30 @@ pub fn update_authority_v1(
         ctx.accounts.swig.realloc(aligned_size, false)?;
 
         let cost = Rent::get()?
-            .minimum_balance(aligned_size)
-            .checked_sub(swig.reserved_lamports)
-            .unwrap_or_default();
+            .minimum_balance(aligned_size);
+        let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
+        
+        let additional_cost = cost.saturating_sub(current_lamports);
 
-        if cost > 0 {
+        if additional_cost > 0 {
             Transfer {
                 from: ctx.accounts.payer,
                 to: ctx.accounts.swig,
-                lamports: cost,
+                lamports: additional_cost,
             }
             .invoke()?;
         }
 
-        swig.reserved_lamports + cost
+        cost
     } else {
-        swig.reserved_lamports
+        // No size change, so no need to transfer additional funds
+        0
     };
 
-    // Update the swig account with new reserved lamports and get fresh references
+    // Get fresh references to the swig account data after reallocation
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
-    let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
-    swig.reserved_lamports = new_reserved_lamports;
+    let _swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
 
     // Now perform the operation with the reallocated account
     match operation {

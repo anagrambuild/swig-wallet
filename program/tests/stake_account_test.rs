@@ -706,11 +706,17 @@ fn create_swig_ed25519(
     // Calculate PDA for swig account
     let (swig, bump) = SolanaPubkey::find_program_address(&swig_account_seeds(&id), &program_id);
 
+    // Create the swig wallet address
+    let (swig_wallet_address, wallet_address_bump) = 
+        SolanaPubkey::find_program_address(&swig_state::swig::swig_wallet_address_seeds(swig.as_ref()), &program_id);
+
     // Create the instruction
     let create_ix = swig_interface::CreateInstruction::new(
         swig,
         bump,
         context.payer.pubkey(),
+        swig_wallet_address,
+        wallet_address_bump,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
             authority: authority.pubkey().as_ref(),

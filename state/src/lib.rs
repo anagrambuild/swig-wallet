@@ -15,10 +15,9 @@ pub mod util;
 /// Represents the type discriminator for different account types in the system.
 #[repr(u8)]
 pub enum Discriminator {
-    /// Represents a main Swig account
     SwigAccount = 1,
-    /// Represents a sub-account within a Swig account
     SwigSubAccount,
+    SwigWalletAddress,
 }
 
 impl From<u8> for Discriminator {
@@ -26,6 +25,7 @@ impl From<u8> for Discriminator {
         match discriminator {
             1 => Discriminator::SwigAccount,
             2 => Discriminator::SwigSubAccount,
+            3 => Discriminator::SwigWalletAddress,
             _ => panic!("Invalid discriminator"),
         }
     }
