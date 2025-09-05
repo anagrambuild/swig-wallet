@@ -604,7 +604,7 @@ impl SignV2Instruction {
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [arg_bytes, &ix_bytes, &[2]].concat(),
+            data: [arg_bytes, &ix_bytes, &[3]].concat(),
         })
     }
 
