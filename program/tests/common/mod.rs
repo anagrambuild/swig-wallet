@@ -357,6 +357,48 @@ pub fn create_swig_secp256r1_session(
     Ok((swig, bench))
 }
 
+pub fn create_swig_secp256r1(
+    context: &mut SwigTestContext,
+    public_key: &[u8; 33],
+    id: [u8; 32],
+) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
+    let payer_pubkey = context.default_payer.pubkey();
+    let (swig_address, swig_bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+
+    let (swig_wallet_address, wallet_address_bump) = 
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_address.as_ref()), &program_id());
+    
+    let create_ix = CreateInstruction::new(
+        swig_address,
+        swig_bump,
+        payer_pubkey,
+        swig_wallet_address,
+        wallet_address_bump,
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256r1,
+            authority: public_key,
+        },
+        vec![ClientAction::All(All {})],
+        id,
+    )?;
+
+    let message = v0::Message::try_compile(
+        &payer_pubkey,
+        &[create_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])?;
+
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+
+    Ok((swig_address, bench))
+}
+
 pub struct SwigTestContext {
     pub svm: LiteSVM,
     pub default_payer: Keypair,

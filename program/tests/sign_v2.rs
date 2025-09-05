@@ -1011,3 +1011,281 @@ fn test_sign_v2_transfer_with_different_payer_and_authority() {
              different_payer.pubkey().to_string()[..8].to_string(),
              swig_authority.pubkey().to_string()[..8].to_string());
 }
+
+#[test_log::test]
+fn test_sign_v2_secp256k1_transfer() {
+    let mut context = setup_test_context().unwrap();
+    
+    // Import required dependencies for secp256k1
+    use alloy_primitives::B256;
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::{LocalSigner, PrivateKeySigner};
+    
+    // Generate a random Ethereum wallet for secp256k1 authority
+    let secp_wallet = LocalSigner::random();
+    let recipient = Keypair::new();
+    
+    // Setup accounts
+    context.svm.airdrop(&recipient.pubkey(), 10_000_000_000).unwrap();
+    
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) = Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    
+    // Create the swig account with secp256k1 authority
+    let (_, _transaction_metadata) = create_swig_secp256k1(&mut context, &secp_wallet, id).unwrap();
+    
+    // Fund the swig_wallet_address PDA
+    context.svm.airdrop(&swig_wallet_address, 1_000_000_000).unwrap();
+    
+    // Create a simple transfer instruction from swig_wallet_address 
+    let transfer_amount = 100_000_000; // 0.1 SOL
+    let transfer_ix = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    
+    // Create signing function for secp256k1
+    let signing_fn = |payload: &[u8]| -> [u8; 65] {
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&payload[..32]);
+        let hash = B256::from(hash);
+        secp_wallet.sign_hash_sync(&hash).unwrap().as_bytes()
+    };
+    
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    
+    // Create SignV2 instruction with secp256k1
+    let sign_v2_ix = SignV2Instruction::new_secp256k1(
+        swig,
+        swig_wallet_address,
+        context.default_payer.pubkey(),
+        signing_fn,
+        current_slot,
+        1, // counter = 1 (first secp256k1 transaction)
+        transfer_ix,
+        0, // role_id 0 for root authority
+    )
+    .unwrap();
+    
+    // Build and execute transaction
+    let transfer_message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[sign_v2_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    
+    let transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message), 
+        &[&context.default_payer]
+    )
+    .unwrap();
+    
+    let initial_recipient_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
+    let initial_swig_wallet_address_balance = context.svm.get_account(&swig_wallet_address).unwrap().lamports;
+    
+    // Execute the transaction
+    let result = context.svm.send_transaction(transfer_tx);
+    
+    if result.is_err() {
+        println!("Transaction failed: {:?}", result.err());
+        assert!(false, "SignV2 secp256k1 transaction should succeed");
+    } else {
+        let txn = result.unwrap();
+        println!("SignV2 secp256k1 Transfer successful - CU consumed: {:?}", txn.compute_units_consumed);
+        println!("Logs: {}", txn.pretty_logs());
+    }
+    
+    // Verify the transfer was successful
+    let final_recipient_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
+    let final_swig_wallet_address_balance = context.svm.get_account(&swig_wallet_address).unwrap().lamports;
+    
+    assert_eq!(
+        final_recipient_balance, 
+        initial_recipient_balance + transfer_amount,
+        "Recipient should have received the transfer amount"
+    );
+    
+    assert_eq!(
+        final_swig_wallet_address_balance,
+        initial_swig_wallet_address_balance - transfer_amount,
+        "Swig wallet address account should have the transfer amount deducted"
+    );
+    
+    println!("✅ SignV2 secp256k1 test passed: Successfully transferred {} lamports using secp256k1 authority", transfer_amount);
+}
+
+/// Helper to generate a real secp256r1 key pair for testing
+fn create_test_secp256r1_keypair() -> (openssl::ec::EcKey<openssl::pkey::Private>, [u8; 33]) {
+    use openssl::{
+        bn::BigNumContext,
+        ec::{EcGroup, EcKey, PointConversionForm},
+        nid::Nid,
+    };
+
+    let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+    let signing_key = EcKey::generate(&group).unwrap();
+
+    let mut ctx = BigNumContext::new().unwrap();
+    let pubkey_bytes = signing_key
+        .public_key()
+        .to_bytes(&group, PointConversionForm::COMPRESSED, &mut ctx)
+        .unwrap();
+
+    let pubkey_array: [u8; 33] = pubkey_bytes.try_into().unwrap();
+    (signing_key, pubkey_array)
+}
+
+/// Helper function to get the current signature counter for a secp256r1 authority
+fn get_secp256r1_counter(
+    context: &SwigTestContext,
+    swig_key: &solana_sdk::pubkey::Pubkey,
+    public_key: &[u8; 33],
+) -> Result<u32, String> {
+    // Get the swig account data
+    let swig_account = context
+        .svm
+        .get_account(swig_key)
+        .ok_or("Swig account not found")?;
+    let swig = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| format!("Failed to parse swig data: {:?}", e))?;
+
+    // Look up the role ID for this authority
+    let role_id = swig
+        .lookup_role_id(public_key)
+        .map_err(|e| format!("Failed to lookup role: {:?}", e))?
+        .ok_or("Authority not found in swig account")?;
+
+    // Get the role
+    let role = swig
+        .get_role(role_id)
+        .map_err(|e| format!("Failed to get role: {:?}", e))?
+        .ok_or("Role not found")?;
+
+    // The authority should be a Secp256r1Authority
+    if matches!(role.authority.authority_type(), AuthorityType::Secp256r1) {
+        // Get the authority from the any() interface
+        use swig_state::authority::secp256r1::Secp256r1Authority;
+        let secp_authority = role
+            .authority
+            .as_any()
+            .downcast_ref::<Secp256r1Authority>()
+            .ok_or("Failed to downcast to Secp256r1Authority")?;
+
+        Ok(secp_authority.signature_odometer)
+    } else {
+        Err("Authority is not a Secp256r1Authority".to_string())
+    }
+}
+
+#[test_log::test]
+fn test_sign_v2_secp256r1_transfer() {
+    let mut context = setup_test_context().unwrap();
+    
+    // Create a real secp256r1 key pair for testing
+    let (signing_key, public_key) = create_test_secp256r1_keypair();
+    let recipient = Keypair::new();
+    
+    // Setup accounts
+    context.svm.airdrop(&recipient.pubkey(), 10_000_000_000).unwrap();
+    
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) = Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    
+    // Create the swig account with secp256r1 authority
+    let (_, _transaction_metadata) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
+    
+    // Fund the swig_wallet_address PDA
+    context.svm.airdrop(&swig_wallet_address, 1_000_000_000).unwrap();
+    
+    // Create a simple transfer instruction from swig_wallet_address 
+    let transfer_amount = 100_000_000; // 0.1 SOL
+    let transfer_ix = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    
+    // Get current slot and counter
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    let current_counter = get_secp256r1_counter(&context, &swig, &public_key).unwrap();
+    let next_counter = current_counter + 1;
+
+    println!(
+        "Current counter: {}, using next counter: {}",
+        current_counter, next_counter
+    );
+
+    // Create authority function that signs the message hash
+    let authority_fn = |message_hash: &[u8]| -> [u8; 64] {
+        use solana_secp256r1_program::sign_message;
+        let signature =
+            sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap();
+        signature
+    };
+    
+    // Create SignV2 instruction with secp256r1 (returns Vec<Instruction>)
+    let sign_v2_instructions = SignV2Instruction::new_secp256r1(
+        swig,
+        swig_wallet_address,
+        context.default_payer.pubkey(),
+        authority_fn,
+        current_slot,
+        next_counter,
+        transfer_ix,
+        0, // role_id 0 for root authority
+        &public_key,
+    )
+    .unwrap();
+    
+    // Build and execute transaction
+    let transfer_message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &sign_v2_instructions, // Use the Vec<Instruction> directly
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    
+    let transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message), 
+        &[&context.default_payer]
+    )
+    .unwrap();
+    
+    let initial_recipient_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
+    let initial_swig_wallet_address_balance = context.svm.get_account(&swig_wallet_address).unwrap().lamports;
+    
+    // Execute the transaction
+    let result = context.svm.send_transaction(transfer_tx);
+    
+    if result.is_err() {
+        println!("Transaction failed: {:?}", result.err());
+        assert!(false, "SignV2 secp256r1 transaction should succeed");
+    } else {
+        let txn = result.unwrap();
+        println!("SignV2 secp256r1 Transfer successful - CU consumed: {:?}", txn.compute_units_consumed);
+        println!("Logs: {}", txn.pretty_logs());
+    }
+    
+    // Verify the transfer was successful
+    let final_recipient_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
+    let final_swig_wallet_address_balance = context.svm.get_account(&swig_wallet_address).unwrap().lamports;
+    
+    assert_eq!(
+        final_recipient_balance, 
+        initial_recipient_balance + transfer_amount,
+        "Recipient should have received the transfer amount"
+    );
+    
+    assert_eq!(
+        final_swig_wallet_address_balance,
+        initial_swig_wallet_address_balance - transfer_amount,
+        "Swig wallet address account should have the transfer amount deducted"
+    );
+
+    // Verify the counter was incremented
+    let new_counter = get_secp256r1_counter(&context, &swig, &public_key).unwrap();
+    assert_eq!(
+        new_counter, next_counter,
+        "Counter should be incremented after successful transaction"
+    );
+    
+    println!("✅ SignV2 secp256r1 test passed: Successfully transferred {} lamports using secp256r1 authority with real cryptography", transfer_amount);
+}
