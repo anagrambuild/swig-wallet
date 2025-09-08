@@ -1191,7 +1191,7 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
     let (swig_wallet_address, _) = Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
-    // Setup token infrastructure
+    // Setup token infrastructure - only create swig ATA, recipient ATA will be created in transaction
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_wallet_address_ata = setup_ata(
         &mut context.svm,
@@ -1199,12 +1199,20 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
         &swig_wallet_address,
         &context.default_payer,
     ).unwrap();
-    let recipient_ata = setup_ata(
-        &mut context.svm,
-        &mint_pubkey,
-        &recipient.pubkey(),
-        &context.default_payer,
-    ).unwrap();
+    
+    // Calculate recipient ATA address but don't create it yet
+    // Use the standard associated token account derivation
+    use solana_sdk::pubkey::Pubkey;
+    const ASSOCIATED_TOKEN_PROGRAM_ID: &str = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+    let associated_token_program_id = ASSOCIATED_TOKEN_PROGRAM_ID.parse::<Pubkey>().unwrap();
+    let recipient_ata = Pubkey::find_program_address(
+        &[
+            &recipient.pubkey().to_bytes(),
+            &spl_token::id().to_bytes(),
+            &mint_pubkey.to_bytes(),
+        ],
+        &associated_token_program_id,
+    ).0;
 
     // Mint initial tokens to the swig_wallet_address token account
     mint_to(
@@ -1215,7 +1223,7 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
         1000,
     ).unwrap();
     
-    // Create the swig account with All permission to allow both SOL and token transfers
+    // Create the swig account with All permission to allow all operations
     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
     
     // Fund the swig_wallet_address with SOL
@@ -1231,11 +1239,29 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
     ).unwrap();
     context.svm.send_transaction(transfer_tx).unwrap();
 
-    // Create both SOL and token transfer instructions
+    // Create instructions for ATA creation, SOL transfer, and token transfer
     let sol_amount = 500_000_000; // 0.5 SOL
     let token_amount = 250; // 250 tokens
     
+    // 1. Create ATA instruction for recipient
+    // Manually create the ATA creation instruction since spl_associated_token_account isn't available
+    let create_ata_ix = Instruction {
+        program_id: associated_token_program_id,
+        accounts: vec![
+            AccountMeta::new(swig_wallet_address, true), // payer (swig wallet pays for ATA creation)
+            AccountMeta::new(recipient_ata, false),      // associated token account
+            AccountMeta::new_readonly(recipient.pubkey(), false), // owner
+            AccountMeta::new_readonly(mint_pubkey, false), // mint
+            AccountMeta::new_readonly(solana_sdk::system_program::ID, false), // system program
+            AccountMeta::new_readonly(spl_token::id(), false), // token program
+        ],
+        data: vec![], // create_associated_token_account has no instruction data
+    };
+    
+    // 2. SOL transfer instruction
     let sol_transfer_ix = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), sol_amount);
+    
+    // 3. Token transfer instruction
     let token_transfer_ix = Instruction {
         program_id: spl_token::id(),
         accounts: vec![
@@ -1246,7 +1272,16 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
         data: TokenInstruction::Transfer { amount: token_amount }.pack(),
     };
 
-    // Create two separate SignV2 instructions - one for SOL transfer, one for token transfer
+    // Create three separate SignV2 instructions
+    let create_ata_sign_v2_ix = SignV2Instruction::new_ed25519(
+        swig,
+        swig_wallet_address,
+        swig_authority.pubkey(),
+        swig_authority.pubkey(),
+        create_ata_ix,
+        0, // role_id 0 for root authority (has All permission)
+    ).unwrap();
+
     let sol_sign_v2_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
@@ -1265,10 +1300,10 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
         0, // role_id 0 for root authority (has All permission)
     ).unwrap();
     
-    // Build and execute transaction with both SignV2 instructions
+    // Build and execute transaction with all three SignV2 instructions
     let transfer_message = v0::Message::try_compile(
         &swig_authority.pubkey(),
-        &[sol_sign_v2_ix, token_sign_v2_ix], // Both SignV2 instructions in one transaction
+        &[create_ata_sign_v2_ix, sol_sign_v2_ix, token_sign_v2_ix], // All three SignV2 instructions in one transaction
         &[],
         context.svm.latest_blockhash(),
     ).unwrap();
@@ -1281,21 +1316,20 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
     // Capture initial balances
     let initial_recipient_sol_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
     let initial_swig_wallet_sol_balance = context.svm.get_account(&swig_wallet_address).unwrap().lamports;
-    let initial_recipient_token_balance = {
-        let account = context.svm.get_account(&recipient_ata).unwrap();
-        spl_token::state::Account::unpack(&account.data).unwrap().amount
-    };
     let initial_swig_token_balance = {
         let account = context.svm.get_account(&swig_wallet_address_ata).unwrap();
         spl_token::state::Account::unpack(&account.data).unwrap().amount
     };
+    
+    // Verify recipient ATA doesn't exist yet
+    assert!(context.svm.get_account(&recipient_ata).is_none(), "Recipient ATA should not exist yet");
     
     // Execute the transaction
     let result = context.svm.send_transaction(transfer_tx);
     
     if result.is_err() {
         println!("Transaction failed: {:?}", result.err());
-        assert!(false, "Combined SOL and token transfer should succeed");
+        assert!(false, "Combined ATA creation, SOL and token transfer should succeed");
     } else {
         let txn = result.unwrap();
         println!("Combined SignV2 Transfer successful - CU consumed: {:?}", txn.compute_units_consumed);
@@ -1312,27 +1346,23 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
         "Recipient should have received the SOL transfer amount"
     );
     
-    assert_eq!(
-        final_swig_wallet_sol_balance,
-        initial_swig_wallet_sol_balance - sol_amount,
-        "Swig wallet address should have the SOL transfer amount deducted"
+    // Note: SOL balance will also include the cost of ATA creation
+    assert!(
+        final_swig_wallet_sol_balance < initial_swig_wallet_sol_balance - sol_amount,
+        "Swig wallet address should have the SOL transfer amount plus ATA creation cost deducted"
     );
     
-    // Verify token transfer was successful
-    let final_recipient_token_balance = {
-        let account = context.svm.get_account(&recipient_ata).unwrap();
-        spl_token::state::Account::unpack(&account.data).unwrap().amount
-    };
+    // Verify ATA was created and token transfer was successful
+    let recipient_ata_account = context.svm.get_account(&recipient_ata).unwrap();
+    let recipient_token_balance = spl_token::state::Account::unpack(&recipient_ata_account.data).unwrap();
+    assert_eq!(recipient_token_balance.amount, token_amount, "Recipient should have received the token transfer amount");
+    assert_eq!(recipient_token_balance.owner, recipient.pubkey(), "ATA should be owned by recipient");
+    assert_eq!(recipient_token_balance.mint, mint_pubkey, "ATA should be for the correct mint");
+    
     let final_swig_token_balance = {
         let account = context.svm.get_account(&swig_wallet_address_ata).unwrap();
         spl_token::state::Account::unpack(&account.data).unwrap().amount
     };
-    
-    assert_eq!(
-        final_recipient_token_balance,
-        initial_recipient_token_balance + token_amount,
-        "Recipient should have received the token transfer amount"
-    );
     
     assert_eq!(
         final_swig_token_balance,
@@ -1340,7 +1370,7 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
         "Swig wallet should have the token transfer amount deducted"
     );
     
-    println!("✅ Combined SignV2 test passed: Successfully transferred {} lamports and {} tokens in one transaction using two SignV2 instructions", sol_amount, token_amount);
+    println!("✅ Combined SignV2 test passed: Successfully created ATA, transferred {} lamports and {} tokens in one transaction using three SignV2 instructions", sol_amount, token_amount);
 }
 
 #[test_log::test]
