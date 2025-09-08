@@ -221,24 +221,29 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
         .as_slice()
         .into()])?;
     
-    // Create the swig_wallet_address PDA as a program-owned account with minimal data
-    // The account needs to be program-owned so the program can spend from it
-    let wallet_address_space = 1; // Just store a discriminator
-    let wallet_address_rent_exemption = Rent::get()?.minimum_balance(wallet_address_space);
-    CreateAccount {
-        from: ctx.accounts.payer,
-        to: ctx.accounts.swig_wallet_address,
-        lamports: wallet_address_rent_exemption,
-        space: wallet_address_space as u64,
-        owner: &crate::ID, // Swig program owns it
-    }
-    .invoke_signed(&[swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &[wallet_address_bump])
-        .as_slice()
-        .into()])?;
+    // Transfer lamports to the swig_wallet_address via CPI to system program
+    // This creates a system program owned account by transferring SOL to it
+    let wallet_address_rent_exemption = Rent::get()?.minimum_balance(0); // 0 space for system account
     
-    // Initialize the wallet address account with the SwigWalletAddress discriminator
-    let mut wallet_address_data = unsafe { ctx.accounts.swig_wallet_address.borrow_mut_data_unchecked() };
-    wallet_address_data[0] = swig_state::Discriminator::SwigWalletAddress as u8;
+    // Get current lamports in wallet address account
+    let current_wallet_lamports = unsafe { *ctx.accounts.swig_wallet_address.borrow_lamports_unchecked() };
+    
+    // Only transfer if the account needs more lamports for rent exemption
+    let wallet_lamports_to_transfer = if current_wallet_lamports >= wallet_address_rent_exemption {
+        0
+    } else {
+        wallet_address_rent_exemption - current_wallet_lamports
+    };
+    
+    if wallet_lamports_to_transfer > 0 {
+        // Use CPI to system program for clean lamport transfer
+        pinocchio_system::instructions::Transfer {
+            from: ctx.accounts.payer,
+            to: ctx.accounts.swig_wallet_address,
+            lamports: wallet_lamports_to_transfer,
+        }
+        .invoke()?;
+    }
     
     let swig_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let mut swig_builder = SwigBuilder::create(swig_data, swig)?;

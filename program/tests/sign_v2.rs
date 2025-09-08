@@ -1178,6 +1178,172 @@ fn get_secp256r1_counter(
 }
 
 #[test_log::test]
+fn test_sign_v2_combined_sol_and_token_transfer() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    let recipient = Keypair::new();
+    
+    // Setup accounts
+    context.svm.airdrop(&recipient.pubkey(), 10_000_000_000).unwrap();
+    context.svm.airdrop(&swig_authority.pubkey(), 20_000_000_000).unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) = Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+
+    // Setup token infrastructure
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let swig_wallet_address_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig_wallet_address,
+        &context.default_payer,
+    ).unwrap();
+    let recipient_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &recipient.pubkey(),
+        &context.default_payer,
+    ).unwrap();
+
+    // Mint initial tokens to the swig_wallet_address token account
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &swig_wallet_address_ata,
+        1000,
+    ).unwrap();
+    
+    // Create the swig account with All permission to allow both SOL and token transfers
+    let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    
+    // Fund the swig_wallet_address with SOL
+    let transfer_to_wallet_ix = system_instruction::transfer(&swig_authority.pubkey(), &swig_wallet_address, 2_000_000_000);
+    let transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(v0::Message::try_compile(
+            &swig_authority.pubkey(),
+            &[transfer_to_wallet_ix],
+            &[],
+            context.svm.latest_blockhash(),
+        ).unwrap()), 
+        &[&swig_authority]
+    ).unwrap();
+    context.svm.send_transaction(transfer_tx).unwrap();
+
+    // Create both SOL and token transfer instructions
+    let sol_amount = 500_000_000; // 0.5 SOL
+    let token_amount = 250; // 250 tokens
+    
+    let sol_transfer_ix = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), sol_amount);
+    let token_transfer_ix = Instruction {
+        program_id: spl_token::id(),
+        accounts: vec![
+            AccountMeta::new(swig_wallet_address_ata, false),
+            AccountMeta::new(recipient_ata, false),
+            AccountMeta::new(swig_wallet_address, false),
+        ],
+        data: TokenInstruction::Transfer { amount: token_amount }.pack(),
+    };
+
+    // Create two separate SignV2 instructions - one for SOL transfer, one for token transfer
+    let sol_sign_v2_ix = SignV2Instruction::new_ed25519(
+        swig,
+        swig_wallet_address,
+        swig_authority.pubkey(),
+        swig_authority.pubkey(),
+        sol_transfer_ix,
+        0, // role_id 0 for root authority (has All permission)
+    ).unwrap();
+
+    let token_sign_v2_ix = SignV2Instruction::new_ed25519(
+        swig,
+        swig_wallet_address,
+        swig_authority.pubkey(),
+        swig_authority.pubkey(),
+        token_transfer_ix,
+        0, // role_id 0 for root authority (has All permission)
+    ).unwrap();
+    
+    // Build and execute transaction with both SignV2 instructions
+    let transfer_message = v0::Message::try_compile(
+        &swig_authority.pubkey(),
+        &[sol_sign_v2_ix, token_sign_v2_ix], // Both SignV2 instructions in one transaction
+        &[],
+        context.svm.latest_blockhash(),
+    ).unwrap();
+    
+    let transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message), 
+        &[&swig_authority]
+    ).unwrap();
+    
+    // Capture initial balances
+    let initial_recipient_sol_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
+    let initial_swig_wallet_sol_balance = context.svm.get_account(&swig_wallet_address).unwrap().lamports;
+    let initial_recipient_token_balance = {
+        let account = context.svm.get_account(&recipient_ata).unwrap();
+        spl_token::state::Account::unpack(&account.data).unwrap().amount
+    };
+    let initial_swig_token_balance = {
+        let account = context.svm.get_account(&swig_wallet_address_ata).unwrap();
+        spl_token::state::Account::unpack(&account.data).unwrap().amount
+    };
+    
+    // Execute the transaction
+    let result = context.svm.send_transaction(transfer_tx);
+    
+    if result.is_err() {
+        println!("Transaction failed: {:?}", result.err());
+        assert!(false, "Combined SOL and token transfer should succeed");
+    } else {
+        let txn = result.unwrap();
+        println!("Combined SignV2 Transfer successful - CU consumed: {:?}", txn.compute_units_consumed);
+        println!("Logs: {}", txn.pretty_logs());
+    }
+    
+    // Verify SOL transfer was successful
+    let final_recipient_sol_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
+    let final_swig_wallet_sol_balance = context.svm.get_account(&swig_wallet_address).unwrap().lamports;
+    
+    assert_eq!(
+        final_recipient_sol_balance, 
+        initial_recipient_sol_balance + sol_amount,
+        "Recipient should have received the SOL transfer amount"
+    );
+    
+    assert_eq!(
+        final_swig_wallet_sol_balance,
+        initial_swig_wallet_sol_balance - sol_amount,
+        "Swig wallet address should have the SOL transfer amount deducted"
+    );
+    
+    // Verify token transfer was successful
+    let final_recipient_token_balance = {
+        let account = context.svm.get_account(&recipient_ata).unwrap();
+        spl_token::state::Account::unpack(&account.data).unwrap().amount
+    };
+    let final_swig_token_balance = {
+        let account = context.svm.get_account(&swig_wallet_address_ata).unwrap();
+        spl_token::state::Account::unpack(&account.data).unwrap().amount
+    };
+    
+    assert_eq!(
+        final_recipient_token_balance,
+        initial_recipient_token_balance + token_amount,
+        "Recipient should have received the token transfer amount"
+    );
+    
+    assert_eq!(
+        final_swig_token_balance,
+        initial_swig_token_balance - token_amount,
+        "Swig wallet should have the token transfer amount deducted"
+    );
+    
+    println!("✅ Combined SignV2 test passed: Successfully transferred {} lamports and {} tokens in one transaction using two SignV2 instructions", sol_amount, token_amount);
+}
+
+#[test_log::test]
 fn test_sign_v2_secp256r1_transfer() {
     let mut context = setup_test_context().unwrap();
     
