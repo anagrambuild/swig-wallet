@@ -1374,6 +1374,156 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
 }
 
 #[test_log::test]
+fn test_sign_v2_fail_using_another_swig_wallet_address() {
+    let mut context = setup_test_context().unwrap();
+    
+    // Create first swig wallet
+    let swig1_authority = Keypair::new();
+    context.svm.airdrop(&swig1_authority.pubkey(), 10_000_000_000).unwrap();
+    let swig1_id = rand::random::<[u8; 32]>();
+    let swig1 = Pubkey::find_program_address(&swig_account_seeds(&swig1_id), &program_id()).0;
+    let (swig1_wallet_address, _) = Pubkey::find_program_address(&swig_wallet_address_seeds(swig1.as_ref()), &program_id());
+    
+    // Create second swig wallet  
+    let swig2_authority = Keypair::new();
+    context.svm.airdrop(&swig2_authority.pubkey(), 10_000_000_000).unwrap();
+    let swig2_id = rand::random::<[u8; 32]>();
+    let swig2 = Pubkey::find_program_address(&swig_account_seeds(&swig2_id), &program_id()).0;
+    let (swig2_wallet_address, _) = Pubkey::find_program_address(&swig_wallet_address_seeds(swig2.as_ref()), &program_id());
+    
+    let recipient = Keypair::new();
+    context.svm.airdrop(&recipient.pubkey(), 1_000_000_000).unwrap();
+    
+    // Create both swig accounts
+    let (_, _) = create_swig_ed25519(&mut context, &swig1_authority, swig1_id).unwrap();
+    let (_, _) = create_swig_ed25519(&mut context, &swig2_authority, swig2_id).unwrap();
+    
+    // Fund both swig wallet addresses
+    let fund_swig1_ix = system_instruction::transfer(&swig1_authority.pubkey(), &swig1_wallet_address, 5_000_000_000);
+    let fund_swig2_ix = system_instruction::transfer(&swig2_authority.pubkey(), &swig2_wallet_address, 5_000_000_000);
+    
+    // Fund swig1 wallet address
+    let fund_tx1 = VersionedTransaction::try_new(
+        VersionedMessage::V0(v0::Message::try_compile(
+            &swig1_authority.pubkey(),
+            &[fund_swig1_ix],
+            &[],
+            context.svm.latest_blockhash(),
+        ).unwrap()), 
+        &[&swig1_authority]
+    ).unwrap();
+    context.svm.send_transaction(fund_tx1).unwrap();
+    
+    // Fund swig2 wallet address
+    let fund_tx2 = VersionedTransaction::try_new(
+        VersionedMessage::V0(v0::Message::try_compile(
+            &swig2_authority.pubkey(),
+            &[fund_swig2_ix],
+            &[],
+            context.svm.latest_blockhash(),
+        ).unwrap()), 
+        &[&swig2_authority]
+    ).unwrap();
+    context.svm.send_transaction(fund_tx2).unwrap();
+    
+    // Verify both wallet addresses are funded
+    let swig1_wallet_balance = context.svm.get_account(&swig1_wallet_address).unwrap().lamports;
+    let swig2_wallet_balance = context.svm.get_account(&swig2_wallet_address).unwrap().lamports;
+    assert!(swig1_wallet_balance >= 5_000_000_000, "Swig1 wallet should be funded");
+    assert!(swig2_wallet_balance >= 5_000_000_000, "Swig2 wallet should be funded");
+    
+    // Attempt: swig1 tries to transfer from swig2's wallet address
+    // This should fail because swig1 doesn't own swig2's wallet address PDA
+    let malicious_transfer_amount = 1_000_000_000; // 1 SOL
+    let malicious_transfer_ix = system_instruction::transfer(&swig2_wallet_address, &recipient.pubkey(), malicious_transfer_amount);
+    
+    let malicious_sign_v2_ix = SignV2Instruction::new_ed25519(
+        swig1,                    // swig1 account
+        swig2_wallet_address,     // trying to use swig2's wallet address!
+        swig1_authority.pubkey(), // swig1's authority
+        swig1_authority.pubkey(),
+        malicious_transfer_ix,
+        0, // role_id 0 for root authority
+    ).unwrap();
+    
+    let malicious_message = v0::Message::try_compile(
+        &swig1_authority.pubkey(),
+        &[malicious_sign_v2_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    ).unwrap();
+    
+    let malicious_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(malicious_message), 
+        &[&swig1_authority]
+    ).unwrap();
+    
+    let initial_recipient_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
+    let initial_swig2_wallet_balance = context.svm.get_account(&swig2_wallet_address).unwrap().lamports;
+    
+    // This transaction should fail
+    let result = context.svm.send_transaction(malicious_tx);
+    
+    assert!(result.is_err(), "Transaction should fail when trying to use another swig's wallet address");
+    
+    // Verify no funds were transferred
+    let final_recipient_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
+    let final_swig2_wallet_balance = context.svm.get_account(&swig2_wallet_address).unwrap().lamports;
+    
+    assert_eq!(
+        final_recipient_balance,
+        initial_recipient_balance,
+        "Recipient balance should not have changed"
+    );
+    
+    assert_eq!(
+        final_swig2_wallet_balance,
+        initial_swig2_wallet_balance,
+        "Swig2 wallet balance should not have changed"
+    );
+    
+    println!("✅ Security test passed: Swig1 cannot use Swig2's wallet address for transfers");
+    
+    // Verify that legitimate transfers still work
+    // swig1 should be able to transfer from its own wallet address
+    let legitimate_transfer_ix = system_instruction::transfer(&swig1_wallet_address, &recipient.pubkey(), malicious_transfer_amount);
+    
+    let legitimate_sign_v2_ix = SignV2Instruction::new_ed25519(
+        swig1,
+        swig1_wallet_address,     // using its own wallet address
+        swig1_authority.pubkey(),
+        swig1_authority.pubkey(),
+        legitimate_transfer_ix,
+        0,
+    ).unwrap();
+    
+    let legitimate_message = v0::Message::try_compile(
+        &swig1_authority.pubkey(),
+        &[legitimate_sign_v2_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    ).unwrap();
+    
+    let legitimate_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(legitimate_message), 
+        &[&swig1_authority]
+    ).unwrap();
+    
+    let legitimate_result = context.svm.send_transaction(legitimate_tx);
+    assert!(legitimate_result.is_ok(), "Legitimate transfer from own wallet address should succeed");
+    
+    // Verify the legitimate transfer worked
+    let final_recipient_balance_after_legitimate = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
+    assert_eq!(
+        final_recipient_balance_after_legitimate,
+        initial_recipient_balance + malicious_transfer_amount,
+        "Legitimate transfer should have succeeded"
+    );
+    
+    println!("✅ Verified: Legitimate transfers from own wallet address still work");
+}
+
+#[test_log::test]
 fn test_sign_v2_secp256r1_transfer() {
     let mut context = setup_test_context().unwrap();
     
