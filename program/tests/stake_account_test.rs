@@ -707,8 +707,10 @@ fn create_swig_ed25519(
     let (swig, bump) = SolanaPubkey::find_program_address(&swig_account_seeds(&id), &program_id);
 
     // Create the swig wallet address
-    let (swig_wallet_address, wallet_address_bump) = 
-        SolanaPubkey::find_program_address(&swig_state::swig::swig_wallet_address_seeds(swig.as_ref()), &program_id);
+    let (swig_wallet_address, wallet_address_bump) = SolanaPubkey::find_program_address(
+        &swig_state::swig::swig_wallet_address_seeds(swig.as_ref()),
+        &program_id,
+    );
 
     // Create the instruction
     let create_ix = swig_interface::CreateInstruction::new(

@@ -669,10 +669,9 @@ pub fn update_authority_v1(
 
         ctx.accounts.swig.realloc(aligned_size, false)?;
 
-        let cost = Rent::get()?
-            .minimum_balance(aligned_size);
+        let cost = Rent::get()?.minimum_balance(aligned_size);
         let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
-        
+
         let additional_cost = cost.saturating_sub(current_lamports);
 
         if additional_cost > 0 {

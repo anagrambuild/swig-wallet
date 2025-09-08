@@ -98,7 +98,7 @@ pub fn create_swig_secp256k1(
         .to_encoded_point(false)
         .to_bytes();
 
-    let (swig_wallet_address, wallet_address_bump) = 
+    let (swig_wallet_address, wallet_address_bump) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
@@ -139,7 +139,7 @@ pub fn create_swig_ed25519(
 ) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
     let payer_pubkey = context.default_payer.pubkey();
     let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
-    let (swig_wallet_address, wallet_address_bump) = 
+    let (swig_wallet_address, wallet_address_bump) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
@@ -201,7 +201,7 @@ pub fn create_swig_ed25519_session(
         authority: authority_data_bytes,
     };
 
-    let (swig_wallet_address, wallet_address_bump) = 
+    let (swig_wallet_address, wallet_address_bump) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
@@ -264,7 +264,7 @@ pub fn create_swig_secp256k1_session(
             .map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?,
     };
 
-    let (swig_wallet_address, wallet_address_bump) = 
+    let (swig_wallet_address, wallet_address_bump) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
@@ -322,7 +322,7 @@ pub fn create_swig_secp256r1_session(
             .map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?,
     };
 
-    let (swig_wallet_address, wallet_address_bump) = 
+    let (swig_wallet_address, wallet_address_bump) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
@@ -363,11 +363,14 @@ pub fn create_swig_secp256r1(
     id: [u8; 32],
 ) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
     let payer_pubkey = context.default_payer.pubkey();
-    let (swig_address, swig_bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+    let (swig_address, swig_bump) =
+        Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
 
-    let (swig_wallet_address, wallet_address_bump) = 
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_address.as_ref()), &program_id());
-    
+    let (swig_wallet_address, wallet_address_bump) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(swig_address.as_ref()),
+        &program_id(),
+    );
+
     let create_ix = CreateInstruction::new(
         swig_address,
         swig_bump,
@@ -389,7 +392,8 @@ pub fn create_swig_secp256r1(
         context.svm.latest_blockhash(),
     )?;
 
-    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])?;
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])?;
 
     let bench = context
         .svm

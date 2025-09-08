@@ -242,7 +242,6 @@ pub fn create_sub_account_v1(
     sub_account.swig_id = swig.id;
     sub_account.enabled = true;
 
-
     // Update the SubAccount action to store the newly created sub-account's public
     // key
     if let Some(sub_account_action_mut) = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?

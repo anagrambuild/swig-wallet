@@ -84,8 +84,10 @@ impl SwigInstructionBuilder {
         let (swig_account, swig_bump_seed) =
             Pubkey::find_program_address(&swig_account_seeds(&self.swig_id), &program_id);
 
-        let (swig_wallet_address, wallet_address_bump) = 
-            Pubkey::find_program_address(&swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()), &program_id);
+        let (swig_wallet_address, wallet_address_bump) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &program_id,
+        );
 
         let authority_type = self.client_role.authority_type();
         let auth_bytes = self.client_role.authority_bytes()?;

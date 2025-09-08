@@ -4,8 +4,9 @@
 //! transfers, CPI calls) but prohibit authority management operations
 //! (add/remove/update authorities) and sub-account operations.
 //!
-//! SignV2 VERSION: This is the SignV2 version of all_but_manage_authority_test.rs
-//! The tests use SignV2Instruction and swig_wallet_address PDA for transactions.
+//! SignV2 VERSION: This is the SignV2 version of
+//! all_but_manage_authority_test.rs The tests use SignV2Instruction and
+//! swig_wallet_address PDA for transactions.
 
 #![cfg(not(feature = "program_scope_test"))]
 
@@ -25,11 +26,10 @@ use solana_sdk::{
     sysvar::clock::Clock,
     transaction::{TransactionError, VersionedTransaction},
 };
-
 use swig_interface::{
-    AuthorityConfig, ClientAction, CreateSubAccountInstruction,
-    RemoveAuthorityInstruction, SignV2Instruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
-    UpdateAuthorityData, UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
+    AuthorityConfig, ClientAction, CreateSubAccountInstruction, RemoveAuthorityInstruction,
+    SignV2Instruction, SubAccountSignInstruction, ToggleSubAccountInstruction, UpdateAuthorityData,
+    UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
     action::{
@@ -126,8 +126,16 @@ fn test_all_but_manage_authority_can_transfer_sol() {
             .unwrap();
 
     // Capture initial balances right before the transaction
-    let initial_recipient_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
-    let initial_swig_wallet_address_balance = context.svm.get_account(&swig_wallet_address).unwrap().lamports;
+    let initial_recipient_balance = context
+        .svm
+        .get_account(&recipient.pubkey())
+        .unwrap()
+        .lamports;
+    let initial_swig_wallet_address_balance = context
+        .svm
+        .get_account(&swig_wallet_address)
+        .unwrap()
+        .lamports;
 
     let res = context.svm.send_transaction(transfer_tx);
     let res_clone = res.clone();
@@ -137,11 +145,19 @@ fn test_all_but_manage_authority_can_transfer_sol() {
         "AllButManageAuthority should be able to transfer SOL"
     );
 
-    let final_recipient_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
-    let final_swig_wallet_address_balance = context.svm.get_account(&swig_wallet_address).unwrap().lamports;
-    
+    let final_recipient_balance = context
+        .svm
+        .get_account(&recipient.pubkey())
+        .unwrap()
+        .lamports;
+    let final_swig_wallet_address_balance = context
+        .svm
+        .get_account(&swig_wallet_address)
+        .unwrap()
+        .lamports;
+
     assert_eq!(
-        final_recipient_balance, 
+        final_recipient_balance,
         initial_recipient_balance + amount,
         "Recipient should have received the transfer amount"
     );
@@ -371,7 +387,8 @@ fn test_all_but_manage_authority_can_do_cpi_calls() {
 
     context.svm.warp_to_slot(100);
 
-    // Create multiple instructions to test CPI capabilities - both use swig_wallet_address
+    // Create multiple instructions to test CPI capabilities - both use
+    // swig_wallet_address
     let sol_ix =
         system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), sol_amount);
     let token_ix = Instruction {
@@ -422,7 +439,11 @@ fn test_all_but_manage_authority_can_do_cpi_calls() {
             .unwrap();
 
     // Capture initial balances right before the transaction
-    let initial_recipient_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
+    let initial_recipient_balance = context
+        .svm
+        .get_account(&recipient.pubkey())
+        .unwrap()
+        .lamports;
 
     let res = context.svm.send_transaction(transfer_tx);
     assert!(
@@ -431,9 +452,13 @@ fn test_all_but_manage_authority_can_do_cpi_calls() {
     );
 
     // Verify both SOL and token transfers succeeded
-    let final_recipient_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
+    let final_recipient_balance = context
+        .svm
+        .get_account(&recipient.pubkey())
+        .unwrap()
+        .lamports;
     assert_eq!(
-        final_recipient_balance, 
+        final_recipient_balance,
         initial_recipient_balance + sol_amount,
         "Recipient should have received the SOL transfer amount"
     );

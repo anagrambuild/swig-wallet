@@ -220,21 +220,22 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
     .invoke_signed(&[swig_account_signer(&swig.id, &[swig.bump])
         .as_slice()
         .into()])?;
-    
+
     // Transfer lamports to the swig_wallet_address via CPI to system program
     // This creates a system program owned account by transferring SOL to it
     let wallet_address_rent_exemption = Rent::get()?.minimum_balance(0); // 0 space for system account
-    
+
     // Get current lamports in wallet address account
-    let current_wallet_lamports = unsafe { *ctx.accounts.swig_wallet_address.borrow_lamports_unchecked() };
-    
+    let current_wallet_lamports =
+        unsafe { *ctx.accounts.swig_wallet_address.borrow_lamports_unchecked() };
+
     // Only transfer if the account needs more lamports for rent exemption
     let wallet_lamports_to_transfer = if current_wallet_lamports >= wallet_address_rent_exemption {
         0
     } else {
         wallet_address_rent_exemption - current_wallet_lamports
     };
-    
+
     if wallet_lamports_to_transfer > 0 {
         // Use CPI to system program for clean lamport transfer
         pinocchio_system::instructions::Transfer {
@@ -244,7 +245,7 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
         }
         .invoke()?;
     }
-    
+
     let swig_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let mut swig_builder = SwigBuilder::create(swig_data, swig)?;
 

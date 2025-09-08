@@ -307,13 +307,17 @@ pub fn sign_v2(
         if let Ok(instruction) = ix {
             // Check CPI signing permissions if not All permission
             if !has_all_permission {
-                // Check if swig_wallet_address account is being used as a signer for this instruction
-                let swig_wallet_address_is_signer = instruction.accounts.iter().any(|account_meta| {
-                    account_meta.pubkey == ctx.accounts.swig_wallet_address.key() && account_meta.is_signer
-                });
+                // Check if swig_wallet_address account is being used as a signer for this
+                // instruction
+                let swig_wallet_address_is_signer =
+                    instruction.accounts.iter().any(|account_meta| {
+                        account_meta.pubkey == ctx.accounts.swig_wallet_address.key()
+                            && account_meta.is_signer
+                    });
 
                 if swig_wallet_address_is_signer {
-                    // This is a CPI call where swig_wallet_address is signing - check Program permissions
+                    // This is a CPI call where swig_wallet_address is signing - check Program
+                    // permissions
                     let program_id_bytes = instruction.program_id.as_ref();
 
                     // Check if we have any program permission that allows this program
@@ -332,11 +336,16 @@ pub fn sign_v2(
             }
 
             let swig_wallet_address_balance_before = ctx.accounts.swig_wallet_address.lamports();
-            instruction.execute(all_accounts, ctx.accounts.swig_wallet_address.key(), &[signer.into()])?;
+            instruction.execute(
+                all_accounts,
+                ctx.accounts.swig_wallet_address.key(),
+                &[signer.into()],
+            )?;
 
             let swig_wallet_address_balance_after = ctx.accounts.swig_wallet_address.lamports();
             if swig_wallet_address_balance_after < swig_wallet_address_balance_before {
-                let amount_spent = swig_wallet_address_balance_before.saturating_sub(swig_wallet_address_balance_after);
+                let amount_spent = swig_wallet_address_balance_before
+                    .saturating_sub(swig_wallet_address_balance_after);
                 total_sol_spent = total_sol_spent.saturating_add(amount_spent);
             }
 
@@ -447,8 +456,9 @@ pub fn sign_v2(
                         );
                     }
 
-                    // For ThisSwig accounts, check if total_sol_spent (tracked from swig_wallet_address balance changes)
-                    // exceeds the allowed SOL limits
+                    // For ThisSwig accounts, check if total_sol_spent (tracked from
+                    // swig_wallet_address balance changes) exceeds the allowed
+                    // SOL limits
                     if total_sol_spent > 0 {
                         if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])? {
                             action.run(total_sol_spent)?;

@@ -32,7 +32,6 @@ use swig_state::{
     IntoBytes, Transmutable,
 };
 
-
 #[test_log::test]
 fn test_multiple_actions_with_multiple_actions() {
     let mut context = setup_test_context().unwrap();

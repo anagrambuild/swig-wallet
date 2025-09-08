@@ -68,12 +68,16 @@ impl<'a> InstructionHolder<'a> {
             // Check if the "from" account (swig_key) is system-owned or program-owned
             let from_account_index = unsafe { *self.indexes.get_unchecked(0) };
             let from_account = unsafe { all_accounts.get_unchecked(from_account_index) };
-            
+
             if from_account.owner() == &pinocchio_system::ID {
                 // For system-owned PDAs (new swig_wallet_address accounts),
                 // use proper CPI with signer seeds
                 unsafe {
-                    invoke_signed_unchecked(&self.borrow(), self.cpi_accounts.as_slice(), swig_signer)
+                    invoke_signed_unchecked(
+                        &self.borrow(),
+                        self.cpi_accounts.as_slice(),
+                        swig_signer,
+                    )
                 }
             } else {
                 // For program-owned accounts (old swig accounts),

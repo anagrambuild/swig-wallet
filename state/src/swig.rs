@@ -51,7 +51,10 @@ pub fn swig_wallet_address_seeds(swig_key: &[u8]) -> [&[u8]; 2] {
 
 /// Generates the seeds for a Swig wallet address account with bump seed.
 #[inline(always)]
-pub fn swig_wallet_address_seeds_with_bump<'a>(swig_key: &'a [u8], bump: &'a [u8]) -> [&'a [u8]; 3] {
+pub fn swig_wallet_address_seeds_with_bump<'a>(
+    swig_key: &'a [u8],
+    bump: &'a [u8],
+) -> [&'a [u8]; 3] {
     [b"swig-wallet-address".as_ref(), swig_key, bump]
 }
 

@@ -17,8 +17,8 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    sysvar::{clock::Clock, rent::Rent},
     system_instruction,
+    sysvar::{clock::Clock, rent::Rent},
     transaction::VersionedTransaction,
 };
 use swig_interface::SignV2Instruction;
@@ -63,8 +63,9 @@ fn test_create_basic_token_transfer_v2() {
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
-    let (swig_wallet_address, _) = Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
-    
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_wallet_address_ata = setup_ata(
         &mut context.svm,
@@ -80,7 +81,7 @@ fn test_create_basic_token_transfer_v2() {
         &recipient,
     )
     .unwrap();
-    
+
     // Mint tokens to the swig_wallet_address token account
     mint_to(
         &mut context.svm,
@@ -99,7 +100,8 @@ fn test_create_basic_token_transfer_v2() {
         accounts: vec![
             AccountMeta::new(swig_wallet_address_ata, false),
             AccountMeta::new(recipient_ata, false),
-            AccountMeta::new(swig_wallet_address, false), // Use swig_wallet_address as the authority
+            AccountMeta::new(swig_wallet_address, false), /* Use swig_wallet_address as the
+                                                           * authority */
         ],
         data: TokenInstruction::Transfer { amount: 100 }.pack(),
     };
@@ -114,7 +116,7 @@ fn test_create_basic_token_transfer_v2() {
         0, // role_id 0 for root authority
     )
     .unwrap();
-    
+
     let transfer_message = v0::Message::try_compile(
         &swig_authority.pubkey(),
         &[sign_v2_ix],
@@ -134,14 +136,15 @@ fn test_create_basic_token_transfer_v2() {
         println!("logs {:?}", res.logs);
         println!("Sign Transfer V2 CU {:?}", res.compute_units_consumed);
     }
-    
+
     // Verify the token transfer was successful
     let account = context.svm.get_account(&swig_wallet_address_ata).unwrap();
     let token_account = spl_token::state::Account::unpack(&account.data).unwrap();
     assert_eq!(token_account.amount, 900);
-    
+
     let recipient_account = context.svm.get_account(&recipient_ata).unwrap();
-    let recipient_token_account = spl_token::state::Account::unpack(&recipient_account.data).unwrap();
+    let recipient_token_account =
+        spl_token::state::Account::unpack(&recipient_account.data).unwrap();
     assert_eq!(recipient_token_account.amount, 100);
 }
 
@@ -180,7 +183,8 @@ fn test_create_and_sign_secp256k1_v2() {
     }
 
     // Get the swig_wallet_address PDA for SignV2
-    let (swig_wallet_address, _) = Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
 
     // Sign a SOL transfer with the secp256k1 authority using SignV2
     let recipient = Keypair::new();
@@ -188,14 +192,18 @@ fn test_create_and_sign_secp256k1_v2() {
         .svm
         .airdrop(&recipient.pubkey(), 10_000_000_000)
         .unwrap();
-    context.svm.airdrop(&swig_wallet_address, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Get current slot and counter
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
     let transfer_amount = 5_000_000_000; // 5 SOL
 
     // Create SOL transfer instruction from swig_wallet_address to recipient
-    let transfer_ix = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     // Create the signing function that will use our Ethereum wallet
     let signing_fn = |payload: &[u8]| -> [u8; 65] {
@@ -238,7 +246,11 @@ fn test_create_and_sign_secp256k1_v2() {
     .unwrap();
 
     let res = context.svm.send_transaction(transfer_tx);
-    assert!(res.is_ok(), "SignV2 secp256k1 transaction failed: {:?}", res.err());
+    assert!(
+        res.is_ok(),
+        "SignV2 secp256k1 transaction failed: {:?}",
+        res.err()
+    );
 
     let transaction_result = res.unwrap();
     println!(
@@ -252,29 +264,34 @@ fn test_create_and_sign_secp256k1_v2() {
     assert_eq!(recipient_account.lamports, 10_000_000_000 + transfer_amount);
 
     let swig_wallet_address_account = context.svm.get_account(&swig_wallet_address).unwrap();
-    
-    // Just verify that the balance is approximately what we expect 
+
+    // Just verify that the balance is approximately what we expect
     // (the exact amount will depend on rent calculations and system overhead)
-    // We'll just check that it's in a reasonable range: has most of the funds but not more than we started with
+    // We'll just check that it's in a reasonable range: has most of the funds but
+    // not more than we started with
     let initial_funds = 10_000_000_000u64;
     let remaining_balance = swig_wallet_address_account.lamports;
-    
-    println!("swig_wallet_address remaining balance: {}", remaining_balance);
+
+    println!(
+        "swig_wallet_address remaining balance: {}",
+        remaining_balance
+    );
     println!("transfer amount: {}", transfer_amount);
-    
+
     // Balance should be less than initial funds (since we transferred some out)
     assert!(
         remaining_balance < initial_funds,
-        "Remaining balance {} should be less than initial funds {}", 
-        remaining_balance, 
+        "Remaining balance {} should be less than initial funds {}",
+        remaining_balance,
         initial_funds
     );
-    
-    // Balance should be greater than initial funds minus transfer minus reasonable overhead (1M lamports)
+
+    // Balance should be greater than initial funds minus transfer minus reasonable
+    // overhead (1M lamports)
     assert!(
         remaining_balance >= initial_funds - transfer_amount - 1_000_000,
-        "Remaining balance {} should be at least {} (initial {} - transfer {} - overhead)", 
-        remaining_balance, 
+        "Remaining balance {} should be at least {} (initial {} - transfer {} - overhead)",
+        remaining_balance,
         initial_funds - transfer_amount - 1_000_000,
         initial_funds,
         transfer_amount

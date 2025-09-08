@@ -227,8 +227,8 @@ pub fn sub_account_sign_v1(
     let lamports_after = unsafe { *ctx.accounts.sub_account.borrow_lamports_unchecked() };
     // Check that the sub-account maintains sufficient lamports for rent exemption
     let account_data = unsafe { ctx.accounts.sub_account.borrow_data_unchecked() };
-    let rent_exempt_minimum = pinocchio::sysvars::rent::Rent::get()?
-        .minimum_balance(account_data.len());
+    let rent_exempt_minimum =
+        pinocchio::sysvars::rent::Rent::get()?.minimum_balance(account_data.len());
     if lamports_after < rent_exempt_minimum {
         return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
     }
