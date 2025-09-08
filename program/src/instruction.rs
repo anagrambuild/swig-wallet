@@ -157,4 +157,23 @@ pub enum SwigInstruction {
     #[account(1, signer, name="payer", desc="the payer")]
     #[account(2, writable, name="sub_account", desc="the sub account to toggle enabled state")]
     ToggleSubAccountV1 = 10,
+
+    /// Migrates a Swig account to support wallet address feature.
+    ///
+    /// This instruction updates the Swig account structure from the old format
+    /// (with reserved_lamports) to the new format (with wallet_bump + padding)
+    /// and creates the associated wallet address account.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account to migrate
+    /// 2. `[writable, signer]` Authority with ManageAuthority permission or hardcoded admin
+    /// 3. `[writable, signer]` Payer account for rent
+    /// 4. `[writable]` Swig wallet address account to create
+    /// 5. System program account
+    #[account(0, writable, name="swig", desc="the swig smart wallet to migrate")]
+    #[account(1, writable, signer, name="authority", desc="authority with manage authority permission or admin")]
+    #[account(2, writable, signer, name="payer", desc="the payer")]
+    #[account(3, writable, name="swig_wallet_address", desc="the swig wallet address account to create")]
+    #[account(4, name="system_program", desc="the system program")]
+    MigrateToWalletAddressV1 = 12,
 }

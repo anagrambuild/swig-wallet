@@ -9,6 +9,7 @@ pub mod add_authority_v1;
 pub mod create_session_v1;
 pub mod create_sub_account_v1;
 pub mod create_v1;
+pub mod migrate_to_wallet_address_v1;
 pub mod remove_authority_v1;
 pub mod sign_v1;
 pub mod sign_v2;
@@ -22,14 +23,14 @@ use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, Pro
 
 use self::{
     add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*, create_v1::*,
-    remove_authority_v1::*, sign_v1::*, sign_v2::*, sub_account_sign_v1::*,
+    migrate_to_wallet_address_v1::*, remove_authority_v1::*, sign_v1::*, sign_v2::*, sub_account_sign_v1::*,
     toggle_sub_account_v1::*, update_authority_v1::*, withdraw_from_sub_account_v1::*,
 };
 use crate::{
     instruction::{
         accounts::{
             AddAuthorityV1Accounts, CreateSessionV1Accounts, CreateSubAccountV1Accounts,
-            CreateV1Accounts, RemoveAuthorityV1Accounts, SignV1Accounts, SignV2Accounts,
+            CreateV1Accounts, MigrateToWalletAddressV1Accounts, RemoveAuthorityV1Accounts, SignV1Accounts, SignV2Accounts,
             SubAccountSignV1Accounts, ToggleSubAccountV1Accounts, UpdateAuthorityV1Accounts,
             WithdrawFromSubAccountV1Accounts,
         },
@@ -78,6 +79,7 @@ pub fn process_action(
             process_sub_account_sign_v1(accounts, account_classification, data)
         },
         SwigInstruction::ToggleSubAccountV1 => process_toggle_sub_account_v1(accounts, data),
+        SwigInstruction::MigrateToWalletAddressV1 => process_migrate_to_wallet_address_v1(accounts, data),
     }
 }
 
@@ -183,4 +185,12 @@ fn process_sub_account_sign_v1(
 fn process_toggle_sub_account_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = ToggleSubAccountV1Accounts::context(accounts)?;
     toggle_sub_account_v1(account_ctx, data, accounts)
+}
+
+/// Processes a MigrateToWalletAddressV1 instruction.
+///
+/// Migrates a Swig account to support wallet address feature.
+fn process_migrate_to_wallet_address_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = MigrateToWalletAddressV1Accounts::context(accounts)?;
+    migrate_to_wallet_address_v1(account_ctx, data)
 }
