@@ -27,8 +27,8 @@ use solana_sdk::{
 };
 
 use swig_interface::{
-    compact_instructions, AuthorityConfig, ClientAction, CreateSubAccountInstruction,
-    RemoveAuthorityInstruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
+    AuthorityConfig, ClientAction, CreateSubAccountInstruction,
+    RemoveAuthorityInstruction, SignV2Instruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
     UpdateAuthorityData, UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
@@ -39,37 +39,12 @@ use swig_state::{
         token_recurring_limit::TokenRecurringLimit,
     },
     authority::AuthorityType,
-    swig::{sub_account_seeds, swig_account_seeds, SwigSubAccount, SwigWithRoles},
+    swig::{
+        sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, SwigSubAccount,
+        SwigWithRoles,
+    },
     Transmutable,
 };
-
-// Simple SignV2Args struct for manual instruction creation
-// since the import path has issues
-#[derive(Debug)]
-#[repr(C, align(8))]
-struct SignV2Args {
-    instruction: u8,       // SwigInstruction::SignV2
-    instruction_payload_len: u16,
-    role_id: u32,
-}
-
-impl SignV2Args {
-    pub fn new(role_id: u32, instruction_payload_len: u16) -> Self {
-        Self {
-            instruction: 3, // SignV2 instruction type
-            instruction_payload_len,
-            role_id,
-        }
-    }
-    
-    pub fn into_bytes(&self) -> Result<&[u8], ProgramError> {
-        Ok(unsafe { 
-            std::slice::from_raw_parts(self as *const Self as *const u8, std::mem::size_of::<Self>()) 
-        })
-    }
-}
-
-use solana_program::program_error::ProgramError;
 
 #[test_log::test]
 fn test_all_but_manage_authority_can_transfer_sol() {
@@ -116,38 +91,27 @@ fn test_all_but_manage_authority_can_transfer_sol() {
     assert!(swig_create_txn.is_ok());
 
     // For SignV2, derive swig_wallet_address and fund it for transfers
-    let swig_wallet_address = {
-        let seed_str = b"wallet_address";
-        let swig_seeds = swig_account_seeds(&id);
-        let mut seeds = Vec::new();
-        seeds.push(seed_str.as_slice());
-        for seed in &swig_seeds {
-            seeds.push(seed);
-        }
-        Pubkey::find_program_address(&seeds, &program_id()).0
-    };
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let initial_swig_wallet_balance = 10_000_000_000;
-    context.svm.airdrop(&swig_wallet_address, initial_swig_wallet_balance).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, initial_swig_wallet_balance)
+        .unwrap();
 
     let amount = 5_000_000_000; // 5 SOL
     let ixd = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), amount);
-    
-    // Manually create SignV2 instruction since the interface import has issues
-    let sign_v2_accounts = vec![
-        AccountMeta::new(swig, false),
-        AccountMeta::new(swig_wallet_address, false),
-        AccountMeta::new(second_authority.pubkey(), true),
-        AccountMeta::new_readonly(second_authority.pubkey(), true),
-    ];
-    let (accounts, ixs) = swig_interface::compact_instructions(swig, sign_v2_accounts, vec![ixd]);
-    let ix_bytes = ixs.into_bytes();
-    let args = SignV2Args::new(1, ix_bytes.len() as u16); // AllButManageAuthority role
-    let arg_bytes = args.into_bytes().unwrap();
-    let sign_ix = Instruction {
-        program_id: Pubkey::from(swig::ID),
-        accounts,
-        data: [arg_bytes, &ix_bytes, &[3]].concat(),
-    };
+
+    // Create SignV2 instruction using the interface
+    let sign_ix = SignV2Instruction::new_ed25519(
+        swig,
+        swig_wallet_address,
+        second_authority.pubkey(),
+        second_authority.pubkey(),
+        ixd,
+        1, // AllButManageAuthority role
+    )
+    .unwrap();
 
     let transfer_message = v0::Message::try_compile(
         &second_authority.pubkey(),
@@ -161,19 +125,31 @@ fn test_all_but_manage_authority_can_transfer_sol() {
         VersionedTransaction::try_new(VersionedMessage::V0(transfer_message), &[&second_authority])
             .unwrap();
 
+    // Capture initial balances right before the transaction
+    let initial_recipient_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
+    let initial_swig_wallet_address_balance = context.svm.get_account(&swig_wallet_address).unwrap().lamports;
+
     let res = context.svm.send_transaction(transfer_tx);
+    let res_clone = res.clone();
+    println!("{:?}", res_clone.unwrap().pretty_logs());
     assert!(
         res.is_ok(),
         "AllButManageAuthority should be able to transfer SOL"
     );
 
-    let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
-    let swig_wallet_account_after = context.svm.get_account(&swig_wallet_address).unwrap();
-    assert_eq!(recipient_account.lamports, 10_000_000_000 + amount);
+    let final_recipient_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
+    let final_swig_wallet_address_balance = context.svm.get_account(&swig_wallet_address).unwrap().lamports;
+    
+    assert_eq!(
+        final_recipient_balance, 
+        initial_recipient_balance + amount,
+        "Recipient should have received the transfer amount"
+    );
 
     assert_eq!(
-        swig_wallet_account_after.lamports,
-        initial_swig_wallet_balance - amount
+        final_swig_wallet_address_balance,
+        initial_swig_wallet_address_balance - amount,
+        "Swig wallet address should have the transfer amount deducted"
     );
 
     let swig_account_after = context.svm.get_account(&swig).unwrap();
@@ -204,16 +180,8 @@ fn test_all_but_manage_authority_can_transfer_tokens() {
     context.svm.warp_to_slot(10);
 
     // For SignV2, derive swig_wallet_address for token operations
-    let swig_wallet_address = {
-        let seed_str = b"wallet_address";
-        let swig_seeds = swig_account_seeds(&id);
-        let mut seeds = Vec::new();
-        seeds.push(seed_str.as_slice());
-        for seed in &swig_seeds {
-            seeds.push(seed);
-        }
-        Pubkey::find_program_address(&seeds, &program_id()).0
-    };
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     // Setup token infrastructure - use swig_wallet_address as token authority
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
@@ -265,7 +233,10 @@ fn test_all_but_manage_authority_can_transfer_tokens() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig_wallet_address, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
     let token_amount = 500;
 
     context.svm.warp_to_slot(100);
@@ -282,22 +253,16 @@ fn test_all_but_manage_authority_can_transfer_tokens() {
         .pack(),
     };
 
-    // Manually create SignV2 instruction for token transfer
-    let sign_v2_accounts = vec![
-        AccountMeta::new(swig, false),
-        AccountMeta::new(swig_wallet_address, false),
-        AccountMeta::new(second_authority.pubkey(), true),
-        AccountMeta::new_readonly(second_authority.pubkey(), true),
-    ];
-    let (accounts, ixs) = swig_interface::compact_instructions(swig, sign_v2_accounts, vec![token_ix]);
-    let ix_bytes = ixs.into_bytes();
-    let args = SignV2Args::new(1, ix_bytes.len() as u16); // AllButManageAuthority role
-    let arg_bytes = args.into_bytes().unwrap();
-    let sign_ix = Instruction {
-        program_id: Pubkey::from(swig::ID),
-        accounts,
-        data: [arg_bytes, &ix_bytes, &[3]].concat(),
-    };
+    // Create SignV2 instruction for token transfer using the interface
+    let sign_ix = SignV2Instruction::new_ed25519(
+        swig,
+        swig_wallet_address,
+        second_authority.pubkey(),
+        second_authority.pubkey(),
+        token_ix,
+        1, // AllButManageAuthority role
+    )
+    .unwrap();
 
     let transfer_message = v0::Message::try_compile(
         &second_authority.pubkey(),
@@ -344,16 +309,8 @@ fn test_all_but_manage_authority_can_do_cpi_calls() {
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
 
     // For SignV2, derive swig_wallet_address for operations
-    let swig_wallet_address = {
-        let seed_str = b"wallet_address";
-        let swig_seeds = swig_account_seeds(&id);
-        let mut seeds = Vec::new();
-        seeds.push(seed_str.as_slice());
-        for seed in &swig_seeds {
-            seeds.push(seed);
-        }
-        Pubkey::find_program_address(&seeds, &program_id()).0
-    };
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     // Setup token infrastructure - use swig_wallet_address as token authority
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
@@ -405,14 +362,18 @@ fn test_all_but_manage_authority_can_do_cpi_calls() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig_wallet_address, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
     let sol_amount = 50;
     let token_amount = 500;
 
     context.svm.warp_to_slot(100);
 
     // Create multiple instructions to test CPI capabilities - both use swig_wallet_address
-    let sol_ix = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), sol_amount);
+    let sol_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), sol_amount);
     let token_ix = Instruction {
         program_id: spl_token::id(),
         accounts: vec![
@@ -426,39 +387,27 @@ fn test_all_but_manage_authority_can_do_cpi_calls() {
         .pack(),
     };
 
-    // Create SignV2 instruction for token transfer
-    let sign_v2_accounts1 = vec![
-        AccountMeta::new(swig, false),
-        AccountMeta::new(swig_wallet_address, false),
-        AccountMeta::new(second_authority.pubkey(), true),
-        AccountMeta::new_readonly(second_authority.pubkey(), true),
-    ];
-    let (accounts1, ixs1) = swig_interface::compact_instructions(swig, sign_v2_accounts1, vec![token_ix]);
-    let ix_bytes1 = ixs1.into_bytes();
-    let args1 = SignV2Args::new(1, ix_bytes1.len() as u16); // AllButManageAuthority role
-    let arg_bytes1 = args1.into_bytes().unwrap();
-    let sign_ix = Instruction {
-        program_id: Pubkey::from(swig::ID),
-        accounts: accounts1,
-        data: [arg_bytes1, &ix_bytes1, &[3]].concat(),
-    };
+    // Create SignV2 instruction for token transfer using the interface
+    let sign_ix = SignV2Instruction::new_ed25519(
+        swig,
+        swig_wallet_address,
+        second_authority.pubkey(),
+        second_authority.pubkey(),
+        token_ix,
+        1, // AllButManageAuthority role
+    )
+    .unwrap();
 
-    // Create SignV2 instruction for SOL transfer
-    let sign_v2_accounts2 = vec![
-        AccountMeta::new(swig, false),
-        AccountMeta::new(swig_wallet_address, false),
-        AccountMeta::new(second_authority.pubkey(), true),
-        AccountMeta::new_readonly(second_authority.pubkey(), true),
-    ];
-    let (accounts2, ixs2) = swig_interface::compact_instructions(swig, sign_v2_accounts2, vec![sol_ix]);
-    let ix_bytes2 = ixs2.into_bytes();
-    let args2 = SignV2Args::new(1, ix_bytes2.len() as u16); // AllButManageAuthority role
-    let arg_bytes2 = args2.into_bytes().unwrap();
-    let sign_ix2 = Instruction {
-        program_id: Pubkey::from(swig::ID),
-        accounts: accounts2,
-        data: [arg_bytes2, &ix_bytes2, &[3]].concat(),
-    };
+    // Create SignV2 instruction for SOL transfer using the interface
+    let sign_ix2 = SignV2Instruction::new_ed25519(
+        swig,
+        swig_wallet_address,
+        second_authority.pubkey(),
+        second_authority.pubkey(),
+        sol_ix,
+        1, // AllButManageAuthority role
+    )
+    .unwrap();
 
     let transfer_message = v0::Message::try_compile(
         &second_authority.pubkey(),
@@ -472,6 +421,9 @@ fn test_all_but_manage_authority_can_do_cpi_calls() {
         VersionedTransaction::try_new(VersionedMessage::V0(transfer_message), &[&second_authority])
             .unwrap();
 
+    // Capture initial balances right before the transaction
+    let initial_recipient_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
+
     let res = context.svm.send_transaction(transfer_tx);
     assert!(
         res.is_ok(),
@@ -479,8 +431,12 @@ fn test_all_but_manage_authority_can_do_cpi_calls() {
     );
 
     // Verify both SOL and token transfers succeeded
-    let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
-    assert_eq!(recipient_account.lamports, 10_000_000_000 + sol_amount);
+    let final_recipient_balance = context.svm.get_account(&recipient.pubkey()).unwrap().lamports;
+    assert_eq!(
+        final_recipient_balance, 
+        initial_recipient_balance + sol_amount,
+        "Recipient should have received the SOL transfer amount"
+    );
 
     let recipient_token_account = context.svm.get_account(&recipient_ata).unwrap();
     let token_account = spl_token::state::Account::unpack(&recipient_token_account.data).unwrap();
