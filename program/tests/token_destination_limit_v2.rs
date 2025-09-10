@@ -328,7 +328,8 @@ fn test_token_destination_limit_exceeds_limit_v2() {
     }
 }
 
-/// Test multiple token destination limits for different destinations with SignV2
+/// Test multiple token destination limits for different destinations with
+/// SignV2
 #[test_log::test]
 fn test_multiple_token_destination_limits_v2() {
     let mut context = setup_test_context().unwrap();

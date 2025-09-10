@@ -597,16 +597,19 @@ pub fn sub_account_sign_v2(
     instructions: Vec<Instruction>,
 ) -> anyhow::Result<TransactionMetadata> {
     // Create the instruction to sign with a sub-account using V2 architecture
-    let sub_account_sign_ix = swig_interface::SubAccountSignV2Instruction::new_with_ed25519_authority(
-        *swig_account,
-        *swig_wallet_address,
-        *sub_account,
-        authority.pubkey(),
-        authority.pubkey(),
-        role_id,
-        instructions,
-    )
-    .map_err(|e| anyhow::anyhow!("Failed to create sub-account sign V2 instruction: {:?}", e))?;
+    let sub_account_sign_ix =
+        swig_interface::SubAccountSignV2Instruction::new_with_ed25519_authority(
+            *swig_account,
+            *swig_wallet_address,
+            *sub_account,
+            authority.pubkey(),
+            authority.pubkey(),
+            role_id,
+            instructions,
+        )
+        .map_err(|e| {
+            anyhow::anyhow!("Failed to create sub-account sign V2 instruction: {:?}", e)
+        })?;
 
     // Send the transaction
     let message = v0::Message::try_compile(

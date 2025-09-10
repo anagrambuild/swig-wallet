@@ -19,9 +19,8 @@ use swig_state::{
     swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
 };
 
-
-
-/// Test that CPI signing requires a Program action with the correct program ID (SignV2)
+/// Test that CPI signing requires a Program action with the correct program ID
+/// (SignV2)
 #[test_log::test]
 fn test_cpi_signing_requires_program_permission_v2() {
     let mut context = setup_test_context().unwrap();
@@ -75,14 +74,19 @@ fn test_cpi_signing_requires_program_permission_v2() {
     context.svm.warp_to_slot(100);
 
     // Get swig_wallet_address for SignV2
-    let swig_wallet_address = Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
 
     // Airdrop to swig_wallet_address since that's what SignV2 uses for transfers
-    context.svm.airdrop(&swig_wallet_address, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Test 1: CPI signing with correct Program permission should succeed (SignV2)
     let transfer_amount = 1_000_000;
-    let transfer_ix = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,
@@ -145,7 +149,8 @@ fn test_cpi_signing_requires_program_permission_v2() {
     .unwrap();
 
     // Test 3: CPI signing with wrong Program permission should fail (SignV2)
-    let transfer_ix2 = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix2 =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let sign_ix2 = swig_interface::SignV2Instruction::new_ed25519(
         swig,
@@ -185,7 +190,8 @@ fn test_cpi_signing_requires_program_permission_v2() {
     }
 }
 
-/// Test that authorities without any Program permission cannot CPI sign (SignV2)
+/// Test that authorities without any Program permission cannot CPI sign
+/// (SignV2)
 #[test_log::test]
 fn test_cpi_signing_without_program_permission_fails_v2() {
     let mut context = setup_test_context().unwrap();
@@ -234,14 +240,19 @@ fn test_cpi_signing_without_program_permission_fails_v2() {
     context.svm.warp_to_slot(100);
 
     // Get swig_wallet_address for SignV2
-    let swig_wallet_address = Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
 
     // Airdrop to swig_wallet_address since that's what SignV2 uses for transfers
-    context.svm.airdrop(&swig_wallet_address, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Test: CPI signing without Program permission should fail (SignV2)
     let transfer_amount = 1_000_000;
-    let transfer_ix = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,
@@ -333,14 +344,20 @@ fn test_cpi_signing_with_program_all_permission_v2() {
     context.svm.warp_to_slot(100);
 
     // Get swig_wallet_address for SignV2
-    let swig_wallet_address = Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
 
     // Airdrop to swig_wallet_address since that's what SignV2 uses for transfers
-    context.svm.airdrop(&swig_wallet_address, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
-    // Test: CPI signing with ProgramAll permission should work for any program (SignV2)
+    // Test: CPI signing with ProgramAll permission should work for any program
+    // (SignV2)
     let transfer_amount = 1_000_000;
-    let transfer_ix = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,
@@ -429,15 +446,20 @@ fn test_cpi_signing_with_program_curated_permission_v2() {
     context.svm.warp_to_slot(100);
 
     // Get swig_wallet_address for SignV2
-    let swig_wallet_address = Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
 
     // Airdrop to swig_wallet_address since that's what SignV2 uses for transfers
-    context.svm.airdrop(&swig_wallet_address, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Test 1: CPI signing with ProgramCurated permission should work for system
     // program (curated) (SignV2)
     let transfer_amount = 1_000_000;
-    let transfer_ix = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,

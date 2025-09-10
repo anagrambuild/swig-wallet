@@ -1,8 +1,9 @@
 /// Module for migrating Swig accounts to support wallet address feature.
 ///
 /// This module implements the migration from the old Swig account structure
-/// (with reserved_lamports field) to the new structure (with wallet_bump + padding).
-/// It also creates the associated wallet address account for each migrated Swig account.
+/// (with reserved_lamports field) to the new structure (with wallet_bump +
+/// padding). It also creates the associated wallet address account for each
+/// migrated Swig account.
 use no_padding::NoPadding;
 use pinocchio::{
     msg,
@@ -29,8 +30,8 @@ use crate::{
     },
 };
 
-/// Hardcoded admin pubkey that can perform migrations without ManageAuthority permission
-/// TODO: Replace with actual admin pubkey
+/// Hardcoded admin pubkey that can perform migrations without ManageAuthority
+/// permission TODO: Replace with actual admin pubkey
 const MIGRATION_ADMIN: [u8; 32] = [0; 32]; // Use zeros for now, replace with actual admin pubkey
 
 /// Arguments for migrating a Swig account to wallet address feature.
@@ -76,7 +77,8 @@ pub struct MigrateToWalletAddressV1<'a> {
 }
 
 impl<'a> MigrateToWalletAddressV1<'a> {
-    /// Parses the instruction data bytes into a MigrateToWalletAddressV1 instance.
+    /// Parses the instruction data bytes into a MigrateToWalletAddressV1
+    /// instance.
     ///
     /// # Arguments
     /// * `bytes` - Raw instruction data bytes
@@ -151,8 +153,8 @@ pub fn migrate_to_wallet_address_v1(
     }
 
     // Check if this account is already migrated (has wallet_bump field)
-    // We can detect this by checking if reserved_lamports field is 0 and if the 41st byte
-    // (wallet_bump position) is non-zero
+    // We can detect this by checking if reserved_lamports field is 0 and if the
+    // 41st byte (wallet_bump position) is non-zero
     let old_swig = unsafe { OldSwig::load_unchecked(&swig_data[..OldSwig::LEN])? };
     let potential_wallet_bump = swig_data[40]; // Position where wallet_bump would be
 
@@ -187,7 +189,8 @@ pub fn migrate_to_wallet_address_v1(
             },
             None => {
                 msg!("Authority not found in wallet roles");
-                // return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+                // return Err(SwigError::InvalidAuthorityNotFoundByRoleId.
+                // into());
             },
         }
     } else {
@@ -223,7 +226,8 @@ pub fn migrate_to_wallet_address_v1(
     new_swig_with_preserved_data.role_counter = old_swig.role_counter;
 
     // Update the Swig account data in-place
-    // Only modify the first 48 bytes (Swig struct), leaving all role/action data intact
+    // Only modify the first 48 bytes (Swig struct), leaving all role/action data
+    // intact
     drop(swig_data); // Release the borrow
     let mut swig_data_mut = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let new_swig_bytes = new_swig_with_preserved_data.into_bytes()?;

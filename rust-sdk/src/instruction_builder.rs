@@ -138,13 +138,15 @@ impl SwigInstructionBuilder {
 
     /// Creates a SignV2 instruction for signing transactions
     ///
-    /// SignV2 instructions use the swig_wallet_address PDA as the transaction authority,
-    /// which is different from the regular sign instruction that uses the swig account directly.
+    /// SignV2 instructions use the swig_wallet_address PDA as the transaction
+    /// authority, which is different from the regular sign instruction that
+    /// uses the swig account directly.
     ///
     /// # Arguments
     ///
     /// * `instructions` - Vector of instructions to be signed
-    /// * `current_slot` - Optional current slot number (required for Secp256k1/Secp256r1)
+    /// * `current_slot` - Optional current slot number (required for
+    ///   Secp256k1/Secp256r1)
     ///
     /// # Returns
     ///
@@ -429,14 +431,16 @@ impl SwigInstructionBuilder {
 
     /// Signs instructions with a sub-account using V2 architecture
     ///
-    /// SubAccountSignV2 uses the swig_wallet_address as the unified signer while maintaining
-    /// sub-account permission validation. This is part of the V2 instruction set that provides
-    /// a consistent transaction authority pattern.
+    /// SubAccountSignV2 uses the swig_wallet_address as the unified signer
+    /// while maintaining sub-account permission validation. This is part of
+    /// the V2 instruction set that provides a consistent transaction
+    /// authority pattern.
     ///
     /// # Arguments
     ///
     /// * `instructions` - Vector of instructions to sign with the sub-account
-    /// * `current_slot` - Optional current slot number (required for Secp256k1/Secp256r1)
+    /// * `current_slot` - Optional current slot number (required for
+    ///   Secp256k1/Secp256r1)
     ///
     /// # Returns
     ///

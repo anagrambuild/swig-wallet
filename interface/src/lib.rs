@@ -2089,9 +2089,9 @@ impl SubAccountSignV2Instruction {
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
-        // For SubAccountSignV2, we use swig_wallet_address as the signer in compact_instructions
-        let (accounts, ixs) =
-            compact_instructions(swig_wallet_address, accounts, instructions);
+        // For SubAccountSignV2, we use swig_wallet_address as the signer in
+        // compact_instructions
+        let (accounts, ixs) = compact_instructions(swig_wallet_address, accounts, instructions);
         let ix_bytes = ixs.into_bytes();
         let args = SubAccountSignV2Args::new(role_id, ix_bytes.len() as u16);
         let args_bytes = args
@@ -2125,9 +2125,9 @@ impl SubAccountSignV2Instruction {
             AccountMeta::new_readonly(system_program::ID, false),
         ];
 
-        // For SubAccountSignV2, we use swig_wallet_address as the signer in compact_instructions
-        let (accounts, ixs) =
-            compact_instructions(swig_wallet_address, accounts, instructions);
+        // For SubAccountSignV2, we use swig_wallet_address as the signer in
+        // compact_instructions
+        let (accounts, ixs) = compact_instructions(swig_wallet_address, accounts, instructions);
         let ix_bytes = ixs.into_bytes();
         let args = SubAccountSignV2Args::new(role_id, ix_bytes.len() as u16);
         let args_bytes = args
@@ -2183,9 +2183,9 @@ impl SubAccountSignV2Instruction {
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
 
-        // For SubAccountSignV2, we use swig_wallet_address as the signer in compact_instructions
-        let (accounts, ixs) =
-            compact_instructions(swig_wallet_address, accounts, instructions);
+        // For SubAccountSignV2, we use swig_wallet_address as the signer in
+        // compact_instructions
+        let (accounts, ixs) = compact_instructions(swig_wallet_address, accounts, instructions);
         let ix_bytes = ixs.into_bytes();
         let args = SubAccountSignV2Args::new(role_id, ix_bytes.len() as u16);
         let args_bytes = args

@@ -49,7 +49,8 @@ fn test_token_transfer_performance_comparison_v2() {
     // Setup swig account
     let id = rand::random::<[u8; 32]>();
     let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
-    let (swig_wallet_address, _) = Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_result.is_ok());
 
@@ -219,12 +220,16 @@ fn test_sol_transfer_performance_comparison_v2() {
     // Setup swig account
     let id = rand::random::<[u8; 32]>();
     let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
-    let (swig_wallet_address, _) = Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_result.is_ok());
 
     // For SignV2, airdrop to swig_wallet_address instead of swig
-    context.svm.airdrop(&swig_wallet_address, initial_sol_amount).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, initial_sol_amount)
+        .unwrap();
     let transfer_amount = 1_000_000;
 
     let regular_transfer_ix = solana_sdk::system_instruction::transfer(
@@ -256,8 +261,11 @@ fn test_sol_transfer_performance_comparison_v2() {
     println!("Regular SOL transfer accounts: {}", regular_tx_accounts);
 
     // Measure swig SOL transfer performance using SignV2
-    let swig_transfer_ix =
-        solana_sdk::system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let swig_transfer_ix = solana_sdk::system_instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
 
     let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,

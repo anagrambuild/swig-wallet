@@ -327,7 +327,8 @@ impl<'c> SwigWallet<'c> {
         tx_result
     }
 
-    /// Signs instructions using the SignV2 instruction (which uses swig_wallet_address as authority)
+    /// Signs instructions using the SignV2 instruction (which uses
+    /// swig_wallet_address as authority)
     ///
     /// # Arguments
     ///

@@ -1,5 +1,6 @@
 #![cfg(not(feature = "program_scope_test"))]
-// Test for migrating Swig accounts from old structure to new wallet address feature
+// Test for migrating Swig accounts from old structure to new wallet address
+// feature
 
 mod common;
 
@@ -16,6 +17,7 @@ use solana_sdk::{
     sysvar::rent::Rent,
     transaction::VersionedTransaction,
 };
+use swig_interface::swig;
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
     authority::{ed25519::ED25519Authority, AuthorityType},
@@ -24,7 +26,6 @@ use swig_state::{
     },
     Discriminator, IntoBytes, Transmutable,
 };
-use swig_interface::swig;
 
 /// Old Swig account structure with reserved_lamports field.
 /// This mirrors the structure before migration.
@@ -60,9 +61,7 @@ impl OldSwig {
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
-        unsafe {
-            std::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN).to_vec()
-        }
+        unsafe { std::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN).to_vec() }
     }
 }
 
@@ -78,18 +77,19 @@ fn create_migration_instruction(
         &program_id(),
     );
 
-    // Create instruction data: discriminator (u16) + wallet_address_bump (u8) + padding to 8-byte alignment
+    // Create instruction data: discriminator (u16) + wallet_address_bump (u8) +
+    // padding to 8-byte alignment
     let mut instruction_data = Vec::new();
     instruction_data.extend_from_slice(&12u16.to_le_bytes()); // MigrateToWalletAddressV1 = 12
-    instruction_data.push(wallet_address_bump);               // wallet_address_bump (u8)
-    instruction_data.extend_from_slice(&[0u8; 5]);            // padding to 8-byte alignment
+    instruction_data.push(wallet_address_bump); // wallet_address_bump (u8)
+    instruction_data.extend_from_slice(&[0u8; 5]); // padding to 8-byte alignment
 
     Instruction {
         program_id: program_id(),
         accounts: vec![
-            AccountMeta::new(swig_pubkey, false),        // swig account (writable, not signer)
-            AccountMeta::new(authority_pubkey, true),    // authority (writable, signer)
-            AccountMeta::new(payer_pubkey, true),        // payer (writable, signer)
+            AccountMeta::new(swig_pubkey, false), // swig account (writable, not signer)
+            AccountMeta::new(authority_pubkey, true), // authority (writable, signer)
+            AccountMeta::new(payer_pubkey, true), // payer (writable, signer)
             AccountMeta::new(wallet_address_pubkey, false), // wallet address (writable)
             AccountMeta::new_readonly(solana_sdk::system_program::ID, false), // system program
         ],
@@ -116,7 +116,7 @@ fn test_migrate_swig_to_wallet_address_basic() {
 
     // Create old swig structure manually by reading the current structure
     let current_swig = unsafe { Swig::load_unchecked(&old_account_data[..Swig::LEN]).unwrap() };
-    
+
     let old_swig = OldSwig {
         discriminator: current_swig.discriminator,
         bump: current_swig.bump,
@@ -129,20 +129,26 @@ fn test_migrate_swig_to_wallet_address_basic() {
     // Replace the swig struct part with old structure
     let mut modified_account_data = old_account_data;
     modified_account_data[..OldSwig::LEN].copy_from_slice(&old_swig.to_bytes());
-    
+
     // Update account in SVM
     let mut account = context.svm.get_account(&swig_pubkey).unwrap();
     account.data = modified_account_data;
     let _ = context.svm.set_account(swig_pubkey, account);
 
-    println!("Old account structure created with reserved_lamports: {}", old_swig.reserved_lamports);
+    println!(
+        "Old account structure created with reserved_lamports: {}",
+        old_swig.reserved_lamports
+    );
 
     // Step 3: Derive wallet address PDA
     let (wallet_address_pubkey, wallet_address_bump) = Pubkey::find_program_address(
         &[b"swig-wallet-address", &swig_pubkey.to_bytes()],
         &program_id(),
     );
-    println!("Wallet address PDA: {}, bump: {}", wallet_address_pubkey, wallet_address_bump);
+    println!(
+        "Wallet address PDA: {}, bump: {}",
+        wallet_address_pubkey, wallet_address_bump
+    );
 
     // Step 4: Execute migration
     println!("Executing migration...");
@@ -163,7 +169,8 @@ fn test_migrate_swig_to_wallet_address_basic() {
         ],
         &[],
         context.svm.latest_blockhash(),
-    ).expect("Failed to compile migration message");
+    )
+    .expect("Failed to compile migration message");
 
     let tx = VersionedTransaction::try_new(
         VersionedMessage::V0(msg),
@@ -171,22 +178,24 @@ fn test_migrate_swig_to_wallet_address_basic() {
             context.default_payer.insecure_clone(),
             authority.insecure_clone(),
         ],
-    ).expect("Failed to create migration transaction");
+    )
+    .expect("Failed to create migration transaction");
 
     let result = context.svm.send_transaction(tx);
-    
+
     if let Err(e) = result {
         println!("Migration failed: {:?}", e);
-        
-        // Check if we got past the instruction data parsing (which was the original issue)
+
+        // Check if we got past the instruction data parsing (which was the original
+        // issue)
         let logs = match &e {
             litesvm::types::FailedTransactionMetadata { meta, .. } => &meta.logs,
         };
-        
-        let has_migration_start_log = logs.iter().any(|log| {
-            log.contains("Starting Swig account migration to wallet address feature")
-        });
-        
+
+        let has_migration_start_log = logs
+            .iter()
+            .any(|log| log.contains("Starting Swig account migration to wallet address feature"));
+
         if has_migration_start_log {
             println!("✅ SUCCESS: Instruction data parsing works correctly!");
             println!("   Migration instruction started but failed due to implementation issues.");
@@ -205,14 +214,17 @@ fn test_migrate_swig_to_wallet_address_basic() {
 
     let metadata = result.unwrap();
     println!("Migration successful!");
-    println!("Compute units consumed: {}", metadata.compute_units_consumed);
+    println!(
+        "Compute units consumed: {}",
+        metadata.compute_units_consumed
+    );
     println!("Logs: {:?}", metadata.logs);
 
     // Step 5: Verify migration results
     println!("Verifying migration results...");
 
     let migrated_account = context.svm.get_account(&swig_pubkey).unwrap();
-    
+
     // Parse as new structure
     let new_swig = unsafe { Swig::load_unchecked(&migrated_account.data[..Swig::LEN]) }
         .expect("Failed to parse new Swig structure");
@@ -227,15 +239,22 @@ fn test_migrate_swig_to_wallet_address_basic() {
     assert_eq!(new_swig._padding, [0; 7]);
 
     println!("✅ Migration test structure validated successfully!");
-    println!("   - Old reserved_lamports: {} replaced with wallet_bump: {}", 
-             old_swig.reserved_lamports, new_swig.wallet_bump);
+    println!(
+        "   - Old reserved_lamports: {} replaced with wallet_bump: {}",
+        old_swig.reserved_lamports, new_swig.wallet_bump
+    );
     println!("   - All other fields preserved");
-    
+
     // Check that wallet address account was created
     if let Some(wallet_account) = context.svm.get_account(&wallet_address_pubkey) {
-        println!("✅ Wallet address account created with {} lamports", wallet_account.lamports);
+        println!(
+            "✅ Wallet address account created with {} lamports",
+            wallet_account.lamports
+        );
     } else {
-        println!("❌ Wallet address account not created (expected if migration instruction has issues)");
+        println!(
+            "❌ Wallet address account not created (expected if migration instruction has issues)"
+        );
     }
 
     println!("🎉 Test completed - validates migration test structure and expected behavior!");
@@ -244,21 +263,25 @@ fn test_migrate_swig_to_wallet_address_basic() {
 #[test_log::test]
 fn test_validate_old_vs_new_swig_structure() {
     println!("Validating Swig structure size compatibility...");
-    
+
     // Verify that both old and new structures are the same size (48 bytes)
     assert_eq!(OldSwig::LEN, 48, "Old Swig structure should be 48 bytes");
     assert_eq!(Swig::LEN, 48, "New Swig structure should be 48 bytes");
-    assert_eq!(OldSwig::LEN, Swig::LEN, "Old and new structures must be the same size");
-    
+    assert_eq!(
+        OldSwig::LEN,
+        Swig::LEN,
+        "Old and new structures must be the same size"
+    );
+
     println!("✅ Structure size compatibility verified:");
     println!("   - Old Swig: {} bytes", OldSwig::LEN);
     println!("   - New Swig: {} bytes", Swig::LEN);
-    
+
     // Test data conversion
     let test_id = [42u8; 32];
     let test_bump = 255;
     let test_reserved_lamports = 1000000;
-    
+
     let old_swig = OldSwig {
         discriminator: 1,
         bump: test_bump,
@@ -267,26 +290,34 @@ fn test_validate_old_vs_new_swig_structure() {
         role_counter: 3,
         reserved_lamports: test_reserved_lamports,
     };
-    
+
     let old_bytes = old_swig.to_bytes();
-    assert_eq!(old_bytes.len(), 48, "Serialized old structure should be 48 bytes");
-    
+    assert_eq!(
+        old_bytes.len(),
+        48,
+        "Serialized old structure should be 48 bytes"
+    );
+
     // Simulate migration by creating new structure
     let new_swig = Swig::new(test_id, test_bump, 200); // wallet_bump = 200
     let mut new_swig_updated = new_swig;
     new_swig_updated.roles = old_swig.roles;
     new_swig_updated.role_counter = old_swig.role_counter;
-    
+
     let new_bytes = new_swig_updated.into_bytes().unwrap();
-    assert_eq!(new_bytes.len(), 48, "Serialized new structure should be 48 bytes");
-    
+    assert_eq!(
+        new_bytes.len(),
+        48,
+        "Serialized new structure should be 48 bytes"
+    );
+
     // Verify field preservation
     assert_eq!(new_swig_updated.discriminator, old_swig.discriminator);
     assert_eq!(new_swig_updated.bump, old_swig.bump);
     assert_eq!(new_swig_updated.id, old_swig.id);
     assert_eq!(new_swig_updated.roles, old_swig.roles);
     assert_eq!(new_swig_updated.role_counter, old_swig.role_counter);
-    
+
     println!("✅ Field preservation validated");
     println!("✅ Migration compatibility test passed!");
 }

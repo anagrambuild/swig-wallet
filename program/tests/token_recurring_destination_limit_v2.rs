@@ -2,8 +2,9 @@
 //! Tests for TokenRecurringDestinationLimit functionality with SignV2.
 //!
 //! This module contains comprehensive tests for the
-//! TokenRecurringDestinationLimit action type, including basic functionality, time
-//! window resets, edge cases, and integration with other limit types using SignV2 instructions.
+//! TokenRecurringDestinationLimit action type, including basic functionality,
+//! time window resets, edge cases, and integration with other limit types using
+//! SignV2 instructions.
 
 mod common;
 use common::*;
@@ -110,7 +111,10 @@ fn test_token_recurring_destination_limit_basic_v2() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig_wallet_address, 2_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
     context.svm.warp_to_slot(100);
 
     let recipient_initial_balance: u64 = u64::from_le_bytes(
@@ -249,7 +253,8 @@ fn test_token_recurring_destination_limit_basic_v2() {
     );
 }
 
-/// Test token recurring destination limit exceeding the current limit with SignV2
+/// Test token recurring destination limit exceeding the current limit with
+/// SignV2
 #[test_log::test]
 fn test_token_recurring_destination_limit_exceeds_limit_v2() {
     let mut context = setup_test_context().unwrap();
@@ -329,7 +334,10 @@ fn test_token_recurring_destination_limit_exceeds_limit_v2() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig_wallet_address, 2_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
     context.svm.warp_to_slot(100);
 
     // Try to transfer more than the limit
@@ -460,7 +468,10 @@ fn test_token_recurring_destination_limit_time_reset_v2() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig_wallet_address, 2_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
     context.svm.warp_to_slot(100);
 
     // First transfer - use most of the limit
@@ -570,10 +581,12 @@ fn test_token_recurring_destination_limit_time_reset_v2() {
         dest_limit_final.current_amount,
         recurring_amount - transfer_amount2
     );
-    assert_eq!(dest_limit_final.last_reset, 200); // Should be updated to current slot
+    assert_eq!(dest_limit_final.last_reset, 200); // Should be updated to
+                                                  // current slot
 }
 
-/// Test multiple recurring destination limits for different recipients with SignV2
+/// Test multiple recurring destination limits for different recipients with
+/// SignV2
 #[test_log::test]
 fn test_multiple_token_recurring_destination_limits_v2() {
     let mut context = setup_test_context().unwrap();
@@ -677,7 +690,10 @@ fn test_multiple_token_recurring_destination_limits_v2() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig_wallet_address, 2_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
     context.svm.warp_to_slot(100);
 
     // Test transfer to recipient1 within limit
@@ -849,7 +865,10 @@ fn test_token_recurring_destination_limit_no_reset_when_exceeds_fresh_v2() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig_wallet_address, 2_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
     context.svm.warp_to_slot(100); // Move past the window
 
     // Try to transfer more than the fresh limit would allow
@@ -912,7 +931,8 @@ fn test_token_recurring_destination_limit_no_reset_when_exceeds_fresh_v2() {
     assert_eq!(dest_limit.last_reset, 0); // Should not be updated
 }
 
-/// Test token recurring destination limit with different token mints with SignV2
+/// Test token recurring destination limit with different token mints with
+/// SignV2
 #[test_log::test]
 fn test_token_recurring_destination_limit_different_mints_v2() {
     let mut context = setup_test_context().unwrap();
@@ -1031,7 +1051,10 @@ fn test_token_recurring_destination_limit_different_mints_v2() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig_wallet_address, 2_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
     context.svm.warp_to_slot(100);
 
     // Test that limits are enforced per mint/destination combination

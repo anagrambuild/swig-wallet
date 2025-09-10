@@ -2,8 +2,8 @@ use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
     AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateSessionInstruction,
     CreateSubAccountInstruction, RemoveAuthorityInstruction, SignInstruction, SignV2Instruction,
-    SubAccountSignInstruction, SubAccountSignV2Instruction, ToggleSubAccountInstruction, UpdateAuthorityData,
-    UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
+    SubAccountSignInstruction, SubAccountSignV2Instruction, ToggleSubAccountInstruction,
+    UpdateAuthorityData, UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
     authority::{
@@ -453,15 +453,17 @@ impl ClientRole for Ed25519ClientRole {
         instructions: Vec<Instruction>,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        Ok(vec![SubAccountSignV2Instruction::new_with_ed25519_authority(
-            swig_account,
-            swig_wallet_address,
-            sub_account,
-            self.authority,
-            payer,
-            role_id,
-            instructions,
-        )?])
+        Ok(vec![
+            SubAccountSignV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                swig_wallet_address,
+                sub_account,
+                self.authority,
+                payer,
+                role_id,
+                instructions,
+            )?,
+        ])
     }
 }
 
@@ -825,16 +827,18 @@ impl ClientRole for Secp256k1ClientRole {
     ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
 
-        Ok(vec![SubAccountSignV2Instruction::new_with_secp256k1_authority(
-            swig_account,
-            swig_wallet_address,
-            sub_account,
-            payer,
-            &self.signing_fn,
-            current_slot,
-            role_id,
-            instructions,
-        )?])
+        Ok(vec![
+            SubAccountSignV2Instruction::new_with_secp256k1_authority(
+                swig_account,
+                swig_wallet_address,
+                sub_account,
+                payer,
+                &self.signing_fn,
+                current_slot,
+                role_id,
+                instructions,
+            )?,
+        ])
     }
 }
 

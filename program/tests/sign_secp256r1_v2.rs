@@ -104,16 +104,21 @@ fn test_secp256r1_basic_signing_v2() {
     // Create a new swig with the secp256r1 authority
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
-    let (swig_wallet_address, _) = Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
-    
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
     // For SignV2, fund the swig_wallet_address instead of swig
-    context.svm.airdrop(&swig_wallet_address, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Set up a recipient and transaction
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 5_000_000;
-    let transfer_ix = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     // Get current slot and counter
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
@@ -133,7 +138,8 @@ fn test_secp256r1_basic_signing_v2() {
         signature
     };
 
-    // Create the secp256r1 signing instructions using SignV2 (returns Vec<Instruction>)
+    // Create the secp256r1 signing instructions using SignV2 (returns
+    // Vec<Instruction>)
     let instructions = swig_interface::SignV2Instruction::new_secp256r1(
         swig_key,
         swig_wallet_address,
@@ -203,10 +209,14 @@ fn test_secp256r1_counter_increment_v2() {
     // Create a new swig with the secp256r1 authority
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
-    let (swig_wallet_address, _) = Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
-    
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
     // For SignV2, fund the swig_wallet_address instead of swig
-    context.svm.airdrop(&swig_wallet_address, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Verify initial counter is 0
     let initial_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();
@@ -226,16 +236,21 @@ fn test_secp256r1_replay_protection_v2() {
     // Create a new swig with the secp256r1 authority
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
-    let (swig_wallet_address, _) = Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
-    
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
     // For SignV2, fund the swig_wallet_address instead of swig
-    context.svm.airdrop(&swig_wallet_address, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Set up transfer instruction
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 1_000_000;
-    let transfer_ix = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
 
@@ -345,10 +360,14 @@ fn test_secp256r1_add_authority_v2() {
 
     // Create a new swig with Ed25519 authority
     let (swig_key, _) = create_swig_ed25519(&mut context, &primary_authority, id).unwrap();
-    let (swig_wallet_address, _) = Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
-    
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
     // For SignV2, fund the swig_wallet_address instead of swig
-    context.svm.airdrop(&swig_wallet_address, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Create a real secp256r1 public key to add as second authority
     let (_, secp256r1_pubkey) = create_test_secp256r1_keypair();
@@ -549,10 +568,14 @@ fn test_secp256r1_add_authority_with_secp256r1_v2() {
 
     // Create a new swig with secp256r1 authority
     let (swig_key, _) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
-    let (swig_wallet_address, _) = Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
-    
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
     // For SignV2, fund the swig_wallet_address instead of swig
-    context.svm.airdrop(&swig_wallet_address, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Create a second secp256r1 public key to add as a new authority
     let (_, new_public_key) = create_test_secp256r1_keypair();

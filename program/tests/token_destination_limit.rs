@@ -308,7 +308,29 @@ fn test_token_destination_limit_exceeds_limit() {
     assert!(res.is_err());
 
     // assert that the error code is 3030
-    // res: Err(FailedTransactionMetadata { err: InstructionError(0, Custom(3030)), meta: TransactionMetadata { signature: 4mXmuEdc4HQZVuhWtcESGxZtTm4i15bTnDeyaZUH6QgYEf8aA6ms1MtgFs29powLaVutuNBVgaZEhry6Yzk1uEVb, logs: ["Program swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB invoke [1]", "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]", "Program log: Instruction: Transfer", "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4644 of 196170 compute units", "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success", "Program log: here in this swig!", "Program log: here in swig token account!", "Program log: here in process_token_destinations", "Program log: here in source account", "Program log: combined_key: [119, 79, 123, 130, 4, 117, 249, 16, 187, 174, 119, 154, 215, 23, 44, 213, 148, 54, 170, 108, 185, 24, 51, 115, 103, 26, 168, 230, 41, 213, 59, 214, 187, 3, 138, 147, 56, 162, 40, 215, 40, 205, 240, 127, 110, 143, 127, 117, 234, 107, 231, 59, 67, 250, 227, 232, 24, 83, 41, 77, 111, 25, 55, 184]", "Program log: here in TokenRecurringDestinationLimit", "Program log: TokenDestinationLimit diff: 300", "Program swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB consumed 24973 of 200000 compute units", "Program swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB failed: custom program error: 0xbd6"], inner_instructions: [[InnerInstruction { instruction: CompiledInstruction { program_id_index: 4, accounts: [1, 2, 3], data: [3, 44, 1, 0, 0, 0, 0, 0, 0] }, stack_height: 2 }]], compute_units_consumed: 24973, return_data: TransactionReturnData { program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, data: [] } } })
+    // res: Err(FailedTransactionMetadata { err: InstructionError(0, Custom(3030)),
+    // meta: TransactionMetadata { signature:
+    // 4mXmuEdc4HQZVuhWtcESGxZtTm4i15bTnDeyaZUH6QgYEf8aA6ms1MtgFs29powLaVutuNBVgaZEhry6Yzk1uEVb,
+    // logs: ["Program swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB invoke [1]",
+    // "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]", "Program
+    // log: Instruction: Transfer", "Program
+    // TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4644 of 196170 compute
+    // units", "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success",
+    // "Program log: here in this swig!", "Program log: here in swig token
+    // account!", "Program log: here in process_token_destinations", "Program log:
+    // here in source account", "Program log: combined_key: [119, 79, 123, 130, 4,
+    // 117, 249, 16, 187, 174, 119, 154, 215, 23, 44, 213, 148, 54, 170, 108, 185,
+    // 24, 51, 115, 103, 26, 168, 230, 41, 213, 59, 214, 187, 3, 138, 147, 56, 162,
+    // 40, 215, 40, 205, 240, 127, 110, 143, 127, 117, 234, 107, 231, 59, 67, 250,
+    // 227, 232, 24, 83, 41, 77, 111, 25, 55, 184]", "Program log: here in
+    // TokenRecurringDestinationLimit", "Program log: TokenDestinationLimit diff:
+    // 300", "Program swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB consumed 24973 of
+    // 200000 compute units", "Program swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB
+    // failed: custom program error: 0xbd6"], inner_instructions: [[InnerInstruction
+    // { instruction: CompiledInstruction { program_id_index: 4, accounts: [1, 2,
+    // 3], data: [3, 44, 1, 0, 0, 0, 0, 0, 0] }, stack_height: 2 }]],
+    // compute_units_consumed: 24973, return_data: TransactionReturnData {
+    // program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, data: [] } } })
     assert_eq!(
         res.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(

@@ -2,8 +2,8 @@
 //! Tests for TokenRecurringDestinationLimit functionality.
 //!
 //! This module contains comprehensive tests for the
-//! TokenRecurringDestinationLimit action type, including basic functionality, time
-//! window resets, edge cases, and integration with other limit types.
+//! TokenRecurringDestinationLimit action type, including basic functionality,
+//! time window resets, edge cases, and integration with other limit types.
 
 mod common;
 use common::*;
@@ -558,7 +558,8 @@ fn test_token_recurring_destination_limit_time_reset() {
         dest_limit_final.current_amount,
         recurring_amount - transfer_amount2
     );
-    assert_eq!(dest_limit_final.last_reset, 200); // Should be updated to current slot
+    assert_eq!(dest_limit_final.last_reset, 200); // Should be updated to
+                                                  // current slot
 }
 
 /// Test multiple recurring destination limits for different recipients

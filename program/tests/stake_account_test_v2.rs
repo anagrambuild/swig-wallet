@@ -1,8 +1,15 @@
 #![cfg(feature = "stake_tests")]
 
 mod common;
+use std::{
+    process::{Child, Command},
+    str::FromStr,
+    sync::{Mutex, MutexGuard},
+    thread,
+    time::Duration,
+};
+
 use common::*;
-use std::{thread, time::Duration, process::{Child, Command}, sync::{Mutex, MutexGuard}, str::FromStr};
 use once_cell::sync::Lazy;
 use solana_client::{
     rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig, rpc_response::RpcVoteAccountInfo,
@@ -111,10 +118,10 @@ impl TestContext {
                     if let Ok(_) = client.confirm_transaction(&signature) {
                         break;
                     }
-                }
+                },
                 Err(_) => {
                     thread::sleep(Duration::from_millis(500));
-                }
+                },
             }
         }
 
@@ -136,10 +143,8 @@ fn create_swig_ed25519_v2(
     let (swig, bump) = SolanaPubkey::find_program_address(&swig_account_seeds(&id), &program_id);
 
     // Create the swig wallet address
-    let (swig_wallet_address, wallet_address_bump) = SolanaPubkey::find_program_address(
-        &swig_wallet_address_seeds(swig.as_ref()),
-        &program_id,
-    );
+    let (swig_wallet_address, wallet_address_bump) =
+        SolanaPubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id);
 
     // Create the instruction
     let create_ix = swig_interface::CreateInstruction::new(
@@ -219,32 +224,40 @@ fn test_stake_with_unlimited_permission_v2() {
     // Airdrop funds
     for keypair in [&owner, &delegate, &swig_authority] {
         for _ in 0..5 {
-            match context.client.request_airdrop(&keypair.pubkey(), 10_000_000_000) {
+            match context
+                .client
+                .request_airdrop(&keypair.pubkey(), 10_000_000_000)
+            {
                 Ok(signature) => {
                     if context.client.confirm_transaction(&signature).is_ok() {
                         break;
                     }
-                }
+                },
                 Err(_) => thread::sleep(Duration::from_millis(500)),
             }
         }
     }
 
     let id = rand::random::<[u8; 32]>();
-    
+
     // Create Swig account with StakeAll permission
     let swig_wallet_address = create_swig_ed25519_v2(
         &context,
         &swig_authority,
         vec![ClientAction::StakeAll(StakeAll {})],
         id,
-    ).expect("Failed to create swig account");
+    )
+    .expect("Failed to create swig account");
 
     let program_id = SolanaPubkey::from_str("swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB").unwrap();
-    let (swig_account, _) = SolanaPubkey::find_program_address(&swig_account_seeds(&id), &program_id);
+    let (swig_account, _) =
+        SolanaPubkey::find_program_address(&swig_account_seeds(&id), &program_id);
 
     // Create stake account
-    let rent = context.client.get_minimum_balance_for_rent_exemption(200).unwrap();
+    let rent = context
+        .client
+        .get_minimum_balance_for_rent_exemption(200)
+        .unwrap();
     let create_tx = Transaction::new_signed_with_payer(
         &[system_instruction::create_account(
             &context.payer.pubkey(),
@@ -257,7 +270,10 @@ fn test_stake_with_unlimited_permission_v2() {
         &[&context.payer, &stake_account],
         context.client.get_latest_blockhash().unwrap(),
     );
-    context.client.send_and_confirm_transaction(&create_tx).unwrap();
+    context
+        .client
+        .send_and_confirm_transaction(&create_tx)
+        .unwrap();
 
     // Initialize stake account
     let authorized = Authorized {
@@ -265,11 +281,7 @@ fn test_stake_with_unlimited_permission_v2() {
         withdrawer: owner.pubkey(),
     };
 
-    let initialize_ix = stake_initialize(
-        &stake_account.pubkey(),
-        &authorized,
-        &Lockup::default(),
-    );
+    let initialize_ix = stake_initialize(&stake_account.pubkey(), &authorized, &Lockup::default());
 
     let initialize_tx = Transaction::new_signed_with_payer(
         &[initialize_ix],
@@ -277,7 +289,10 @@ fn test_stake_with_unlimited_permission_v2() {
         &[&context.payer],
         context.client.get_latest_blockhash().unwrap(),
     );
-    context.client.send_and_confirm_transaction(&initialize_tx).unwrap();
+    context
+        .client
+        .send_and_confirm_transaction(&initialize_tx)
+        .unwrap();
 
     // Create delegate instruction
     let delegate_ix = delegate_stake(
@@ -293,7 +308,8 @@ fn test_stake_with_unlimited_permission_v2() {
         &swig_wallet_address,
         &swig_authority,
         delegate_ix,
-    ).expect("Failed to sign with swig v2");
+    )
+    .expect("Failed to sign with swig v2");
 
     println!("Stake delegation successful: {}", signature);
 }
@@ -309,32 +325,42 @@ fn test_stake_with_fixed_limit_v2() {
     // Airdrop funds
     for keypair in [&owner, &delegate, &swig_authority] {
         for _ in 0..5 {
-            match context.client.request_airdrop(&keypair.pubkey(), 10_000_000_000) {
+            match context
+                .client
+                .request_airdrop(&keypair.pubkey(), 10_000_000_000)
+            {
                 Ok(signature) => {
                     if context.client.confirm_transaction(&signature).is_ok() {
                         break;
                     }
-                }
+                },
                 Err(_) => thread::sleep(Duration::from_millis(500)),
             }
         }
     }
 
     let id = rand::random::<[u8; 32]>();
-    
+
     // Create Swig account with StakeLimit permission
     let swig_wallet_address = create_swig_ed25519_v2(
         &context,
         &swig_authority,
-        vec![ClientAction::StakeLimit(StakeLimit { amount: 500_000_000 })],
+        vec![ClientAction::StakeLimit(StakeLimit {
+            amount: 500_000_000,
+        })],
         id,
-    ).expect("Failed to create swig account");
+    )
+    .expect("Failed to create swig account");
 
     let program_id = SolanaPubkey::from_str("swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB").unwrap();
-    let (swig_account, _) = SolanaPubkey::find_program_address(&swig_account_seeds(&id), &program_id);
+    let (swig_account, _) =
+        SolanaPubkey::find_program_address(&swig_account_seeds(&id), &program_id);
 
     // Create stake account
-    let rent = context.client.get_minimum_balance_for_rent_exemption(200).unwrap();
+    let rent = context
+        .client
+        .get_minimum_balance_for_rent_exemption(200)
+        .unwrap();
     let create_tx = Transaction::new_signed_with_payer(
         &[system_instruction::create_account(
             &context.payer.pubkey(),
@@ -347,7 +373,10 @@ fn test_stake_with_fixed_limit_v2() {
         &[&context.payer, &stake_account],
         context.client.get_latest_blockhash().unwrap(),
     );
-    context.client.send_and_confirm_transaction(&create_tx).unwrap();
+    context
+        .client
+        .send_and_confirm_transaction(&create_tx)
+        .unwrap();
 
     // Initialize stake account
     let authorized = Authorized {
@@ -355,11 +384,7 @@ fn test_stake_with_fixed_limit_v2() {
         withdrawer: owner.pubkey(),
     };
 
-    let initialize_ix = stake_initialize(
-        &stake_account.pubkey(),
-        &authorized,
-        &Lockup::default(),
-    );
+    let initialize_ix = stake_initialize(&stake_account.pubkey(), &authorized, &Lockup::default());
 
     let initialize_tx = Transaction::new_signed_with_payer(
         &[initialize_ix],
@@ -367,7 +392,10 @@ fn test_stake_with_fixed_limit_v2() {
         &[&context.payer],
         context.client.get_latest_blockhash().unwrap(),
     );
-    context.client.send_and_confirm_transaction(&initialize_tx).unwrap();
+    context
+        .client
+        .send_and_confirm_transaction(&initialize_tx)
+        .unwrap();
 
     // Test successful delegation within limit
     let delegate_ix = delegate_stake(
@@ -382,7 +410,8 @@ fn test_stake_with_fixed_limit_v2() {
         &swig_wallet_address,
         &swig_authority,
         delegate_ix,
-    ).expect("Failed to sign with swig v2");
+    )
+    .expect("Failed to sign with swig v2");
 
     println!("Stake delegation within limit successful: {}", signature);
 }
@@ -398,37 +427,45 @@ fn test_stake_with_recurring_limit_v2() {
     // Airdrop funds
     for keypair in [&owner, &delegate, &swig_authority] {
         for _ in 0..5 {
-            match context.client.request_airdrop(&keypair.pubkey(), 10_000_000_000) {
+            match context
+                .client
+                .request_airdrop(&keypair.pubkey(), 10_000_000_000)
+            {
                 Ok(signature) => {
                     if context.client.confirm_transaction(&signature).is_ok() {
                         break;
                     }
-                }
+                },
                 Err(_) => thread::sleep(Duration::from_millis(500)),
             }
         }
     }
 
     let id = rand::random::<[u8; 32]>();
-    
+
     // Create Swig account with StakeRecurringLimit permission
     let swig_wallet_address = create_swig_ed25519_v2(
         &context,
         &swig_authority,
-        vec![ClientAction::StakeRecurringLimit(StakeRecurringLimit { 
+        vec![ClientAction::StakeRecurringLimit(StakeRecurringLimit {
             recurring_amount: 300_000_000,
             window: 10, // 10 slots window
             last_reset: 0,
             current_amount: 300_000_000,
         })],
         id,
-    ).expect("Failed to create swig account");
+    )
+    .expect("Failed to create swig account");
 
     let program_id = SolanaPubkey::from_str("swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB").unwrap();
-    let (swig_account, _) = SolanaPubkey::find_program_address(&swig_account_seeds(&id), &program_id);
+    let (swig_account, _) =
+        SolanaPubkey::find_program_address(&swig_account_seeds(&id), &program_id);
 
     // Create stake account
-    let rent = context.client.get_minimum_balance_for_rent_exemption(200).unwrap();
+    let rent = context
+        .client
+        .get_minimum_balance_for_rent_exemption(200)
+        .unwrap();
     let create_tx = Transaction::new_signed_with_payer(
         &[system_instruction::create_account(
             &context.payer.pubkey(),
@@ -441,7 +478,10 @@ fn test_stake_with_recurring_limit_v2() {
         &[&context.payer, &stake_account],
         context.client.get_latest_blockhash().unwrap(),
     );
-    context.client.send_and_confirm_transaction(&create_tx).unwrap();
+    context
+        .client
+        .send_and_confirm_transaction(&create_tx)
+        .unwrap();
 
     // Initialize stake account
     let authorized = Authorized {
@@ -449,11 +489,7 @@ fn test_stake_with_recurring_limit_v2() {
         withdrawer: owner.pubkey(),
     };
 
-    let initialize_ix = stake_initialize(
-        &stake_account.pubkey(),
-        &authorized,
-        &Lockup::default(),
-    );
+    let initialize_ix = stake_initialize(&stake_account.pubkey(), &authorized, &Lockup::default());
 
     let initialize_tx = Transaction::new_signed_with_payer(
         &[initialize_ix],
@@ -461,7 +497,10 @@ fn test_stake_with_recurring_limit_v2() {
         &[&context.payer],
         context.client.get_latest_blockhash().unwrap(),
     );
-    context.client.send_and_confirm_transaction(&initialize_tx).unwrap();
+    context
+        .client
+        .send_and_confirm_transaction(&initialize_tx)
+        .unwrap();
 
     // Test first delegation within limit
     let delegate_ix_1 = delegate_stake(
@@ -476,7 +515,8 @@ fn test_stake_with_recurring_limit_v2() {
         &swig_wallet_address,
         &swig_authority,
         delegate_ix_1,
-    ).expect("Failed to sign with swig v2");
+    )
+    .expect("Failed to sign with swig v2");
 
     println!("First stake delegation successful: {}", signature_1);
 
@@ -496,9 +536,13 @@ fn test_stake_with_recurring_limit_v2() {
         &swig_wallet_address,
         &swig_authority,
         delegate_ix_2,
-    ).expect("Failed to sign with swig v2");
+    )
+    .expect("Failed to sign with swig v2");
 
-    println!("Second stake delegation after reset successful: {}", signature_2);
+    println!(
+        "Second stake delegation after reset successful: {}",
+        signature_2
+    );
 }
 
 #[test]
@@ -512,32 +556,42 @@ fn test_both_stake_and_unstake_affect_limit_v2() {
     // Airdrop funds
     for keypair in [&owner, &delegate, &swig_authority] {
         for _ in 0..5 {
-            match context.client.request_airdrop(&keypair.pubkey(), 10_000_000_000) {
+            match context
+                .client
+                .request_airdrop(&keypair.pubkey(), 10_000_000_000)
+            {
                 Ok(signature) => {
                     if context.client.confirm_transaction(&signature).is_ok() {
                         break;
                     }
-                }
+                },
                 Err(_) => thread::sleep(Duration::from_millis(500)),
             }
         }
     }
 
     let id = rand::random::<[u8; 32]>();
-    
+
     // Create Swig account with StakeLimit permission
     let swig_wallet_address = create_swig_ed25519_v2(
         &context,
         &swig_authority,
-        vec![ClientAction::StakeLimit(StakeLimit { amount: 1_000_000_000 })],
+        vec![ClientAction::StakeLimit(StakeLimit {
+            amount: 1_000_000_000,
+        })],
         id,
-    ).expect("Failed to create swig account");
+    )
+    .expect("Failed to create swig account");
 
     let program_id = SolanaPubkey::from_str("swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB").unwrap();
-    let (swig_account, _) = SolanaPubkey::find_program_address(&swig_account_seeds(&id), &program_id);
+    let (swig_account, _) =
+        SolanaPubkey::find_program_address(&swig_account_seeds(&id), &program_id);
 
     // Create stake account
-    let rent = context.client.get_minimum_balance_for_rent_exemption(200).unwrap();
+    let rent = context
+        .client
+        .get_minimum_balance_for_rent_exemption(200)
+        .unwrap();
     let create_tx = Transaction::new_signed_with_payer(
         &[system_instruction::create_account(
             &context.payer.pubkey(),
@@ -550,7 +604,10 @@ fn test_both_stake_and_unstake_affect_limit_v2() {
         &[&context.payer, &stake_account],
         context.client.get_latest_blockhash().unwrap(),
     );
-    context.client.send_and_confirm_transaction(&create_tx).unwrap();
+    context
+        .client
+        .send_and_confirm_transaction(&create_tx)
+        .unwrap();
 
     // Initialize stake account with swig as both staker and withdrawer
     let authorized = Authorized {
@@ -558,11 +615,7 @@ fn test_both_stake_and_unstake_affect_limit_v2() {
         withdrawer: swig_wallet_address,
     };
 
-    let initialize_ix = stake_initialize(
-        &stake_account.pubkey(),
-        &authorized,
-        &Lockup::default(),
-    );
+    let initialize_ix = stake_initialize(&stake_account.pubkey(), &authorized, &Lockup::default());
 
     let initialize_tx = Transaction::new_signed_with_payer(
         &[initialize_ix],
@@ -570,7 +623,10 @@ fn test_both_stake_and_unstake_affect_limit_v2() {
         &[&context.payer],
         context.client.get_latest_blockhash().unwrap(),
     );
-    context.client.send_and_confirm_transaction(&initialize_tx).unwrap();
+    context
+        .client
+        .send_and_confirm_transaction(&initialize_tx)
+        .unwrap();
 
     // Test stake delegation
     let delegate_ix = delegate_stake(
@@ -585,7 +641,8 @@ fn test_both_stake_and_unstake_affect_limit_v2() {
         &swig_wallet_address,
         &swig_authority,
         delegate_ix,
-    ).expect("Failed to sign stake delegation");
+    )
+    .expect("Failed to sign stake delegation");
 
     println!("Stake delegation successful: {}", signature_1);
 
@@ -598,7 +655,8 @@ fn test_both_stake_and_unstake_affect_limit_v2() {
         None,
     );
 
-    // This should fail because it would exceed the total limit when combined with the stake
+    // This should fail because it would exceed the total limit when combined with
+    // the stake
     let result = sign_with_swig_v2(
         &context,
         &swig_account,
@@ -611,6 +669,9 @@ fn test_both_stake_and_unstake_affect_limit_v2() {
     if result.is_ok() {
         println!("Warning: Withdraw succeeded when it should have failed due to limit");
     } else {
-        println!("Withdraw correctly failed due to stake limit: {:?}", result.err());
+        println!(
+            "Withdraw correctly failed due to stake limit: {:?}",
+            result.err()
+        );
     }
 }

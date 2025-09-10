@@ -1,5 +1,5 @@
 /// Module for handling transaction signing through sub-accounts in a Swig
-/// wallet using the V2 architecture. This module implements functionality to 
+/// wallet using the V2 architecture. This module implements functionality to
 /// authenticate and execute transactions using sub-account authorities with the
 /// swig wallet address as the signer, maintaining proper validation and
 /// permission checks.
@@ -33,7 +33,8 @@ use crate::{
     AccountClassification,
 };
 
-/// Arguments for signing a transaction with a sub-account using V2 architecture.
+/// Arguments for signing a transaction with a sub-account using V2
+/// architecture.
 ///
 /// # Fields
 /// * `instruction` - The instruction type identifier
@@ -111,7 +112,8 @@ impl<'a> SubAccountSignV2<'a> {
     }
 }
 
-/// Signs and executes a transaction using a sub-account authority with V2 architecture.
+/// Signs and executes a transaction using a sub-account authority with V2
+/// architecture.
 ///
 /// This function handles the complete flow of sub-account transaction signing:
 /// 1. Validates the sub-account and parent wallet relationship
@@ -121,7 +123,7 @@ impl<'a> SubAccountSignV2<'a> {
 /// 5. Ensures sufficient balance is maintained in the sub-account
 ///
 /// Key V2 differences:
-/// - Enhanced authorization flow through V2 architecture patterns 
+/// - Enhanced authorization flow through V2 architecture patterns
 /// - Maintains sub-account as signer (same as V1) for backwards compatibility
 /// - Integrates with V2 permission and account classification system
 /// - swig_wallet_address provides unified authentication context
@@ -144,16 +146,16 @@ pub fn sub_account_sign_v2(
     check_stack_height(1, SwigError::Cpi)?;
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSubAccount)?;
     check_self_owned(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
-    
+
     let sign_v2 = SubAccountSignV2::from_instruction_bytes(data)?;
-    
+
     // Validate sub-account structure and discriminator
     let sub_account_data = unsafe { ctx.accounts.sub_account.borrow_data_unchecked() };
     if unsafe { *sub_account_data.get_unchecked(0) } != Discriminator::SwigSubAccount as u8 {
         return Err(SwigError::InvalidSwigSubAccountDiscriminator.into());
     }
     let sub_account = unsafe { SwigSubAccount::load_unchecked(sub_account_data)? };
-    
+
     // Validate swig account structure and discriminator
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigAccount as u8 {
@@ -216,21 +218,22 @@ pub fn sub_account_sign_v2(
             core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 2)
         }
     };
-    
-    // V2 maintains sub-account as signer (same as V1) - the V2 change is in authorization flow
+
+    // V2 maintains sub-account as signer (same as V1) - the V2 change is in
+    // authorization flow
     let ix_iter = InstructionIterator::new(
         all_accounts,
         sign_v2.instruction_payload,
         ctx.accounts.sub_account.key(), // Keep sub_account as signer like V1
         rkeys,
     )?;
-    
+
     // V2 maintains sub-account signing pattern (same as V1)
     let role_id_bytes = sub_account.role_id.to_le_bytes();
     let bump_byte = [sub_account.bump];
     let seeds = sub_account_signer(&sub_account.swig_id, &role_id_bytes, &bump_byte);
     let signer = seeds.as_slice();
-    
+
     // Execute instructions with sub_account as signer (same as V1)
     for ix in ix_iter {
         if let Ok(instruction) = ix {
@@ -255,6 +258,6 @@ pub fn sub_account_sign_v2(
     if lamports_after < rent_exempt_minimum {
         return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
     }
-    
+
     Ok(())
 }

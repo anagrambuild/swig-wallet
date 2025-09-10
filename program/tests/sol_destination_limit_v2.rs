@@ -767,7 +767,8 @@ fn test_sol_destination_limit_cpi_enforcement_v2() {
         transfer_amount,
     );
 
-    // Instruction 2: Transfer funds FROM Swig wallet address to the authority's wallet
+    // Instruction 2: Transfer funds FROM Swig wallet address to the authority's
+    // wallet
     let withdraw_ix = system_instruction::transfer(
         &swig_wallet_address,
         &second_authority.pubkey(),
@@ -782,11 +783,8 @@ fn test_sol_destination_limit_cpi_enforcement_v2() {
         AccountMeta::new(funding_account.pubkey(), true),
     ];
 
-    let (final_accounts, compact_ixs) = compact_instructions(
-        swig,
-        initial_accounts,
-        vec![fund_swig_ix, withdraw_ix],
-    );
+    let (final_accounts, compact_ixs) =
+        compact_instructions(swig, initial_accounts, vec![fund_swig_ix, withdraw_ix]);
 
     let instruction_payload = compact_ixs.into_bytes();
 
@@ -875,8 +873,8 @@ fn test_sol_destination_limit_cpi_enforcement_v2() {
     // Authority balance should be unchanged
     assert_eq!(final_authority_balance, initial_authority_balance);
 
-    // SWIG wallet address balance should be unchanged (no net transfer occurred due to failed
-    // transaction)
+    // SWIG wallet address balance should be unchanged (no net transfer occurred due
+    // to failed transaction)
     assert_eq!(final_swig_wallet_balance, initial_swig_wallet_balance);
 
     println!("✅ Balances verified: No funds were transferred due to spending limit enforcement");
