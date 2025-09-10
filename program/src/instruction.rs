@@ -176,4 +176,24 @@ pub enum SwigInstruction {
     #[account(3, writable, name="swig_wallet_address", desc="the swig wallet address account to create")]
     #[account(4, name="system_program", desc="the system program")]
     MigrateToWalletAddressV1 = 12,
+
+    /// Signs and executes a transaction from a sub-account using V2 architecture.
+    ///
+    /// The instruction data includes:
+    /// - Instruction payload with offset and length
+    /// - Authority payload with offset and length
+    /// Additional accounts may be required for CPI calls.
+    ///
+    /// Required accounts:
+    /// 1. Swig wallet account
+    /// 2. `[writable, signer]` Swig wallet address account
+    /// 3. `[writable, signer]` Payer account
+    /// 4. `[writable]` Sub-account
+    /// 5. System program account
+    #[account(0, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="swig_wallet_address", desc="the swig wallet address")]
+    #[account(2, writable, signer, name="payer", desc="the payer")]
+    #[account(3, writable, name="sub_account", desc="the sub account")]
+    #[account(4, name="system_program", desc="the system program")]
+    SubAccountSignV2 = 13,
 }

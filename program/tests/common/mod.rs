@@ -587,6 +587,48 @@ pub fn sub_account_sign(
     Ok(bench)
 }
 
+pub fn sub_account_sign_v2(
+    context: &mut SwigTestContext,
+    swig_account: &Pubkey,
+    swig_wallet_address: &Pubkey,
+    sub_account: &Pubkey,
+    authority: &Keypair,
+    role_id: u32,
+    instructions: Vec<Instruction>,
+) -> anyhow::Result<TransactionMetadata> {
+    // Create the instruction to sign with a sub-account using V2 architecture
+    let sub_account_sign_ix = swig_interface::SubAccountSignV2Instruction::new_with_ed25519_authority(
+        *swig_account,
+        *swig_wallet_address,
+        *sub_account,
+        authority.pubkey(),
+        authority.pubkey(),
+        role_id,
+        instructions,
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to create sub-account sign V2 instruction: {:?}", e))?;
+
+    // Send the transaction
+    let message = v0::Message::try_compile(
+        &authority.pubkey(),
+        &[sub_account_sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[authority.insecure_clone()])
+            .unwrap();
+
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to sign with sub-account V2: {:?}", e))?;
+
+    Ok(bench)
+}
+
 // Helper to withdraw from a sub-account
 pub fn withdraw_from_sub_account(
     context: &mut SwigTestContext,

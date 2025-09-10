@@ -2,8 +2,9 @@ use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
     program_id, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
     CreateSessionInstruction, CreateSubAccountInstruction, RemoveAuthorityInstruction,
-    SignInstruction, SignV2Instruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
-    UpdateAuthorityData as InterfaceUpdateAuthorityData, WithdrawFromSubAccountInstruction,
+    SignInstruction, SignV2Instruction, SubAccountSignInstruction, SubAccountSignV2Instruction,
+    ToggleSubAccountInstruction, UpdateAuthorityData as InterfaceUpdateAuthorityData,
+    WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
     authority::{
@@ -418,6 +419,50 @@ impl SwigInstructionBuilder {
 
         self.client_role.sub_account_sign_instruction(
             self.swig_account,
+            sub_account,
+            self.payer,
+            self.role_id,
+            instructions,
+            current_slot,
+        )
+    }
+
+    /// Signs instructions with a sub-account using V2 architecture
+    ///
+    /// SubAccountSignV2 uses the swig_wallet_address as the unified signer while maintaining
+    /// sub-account permission validation. This is part of the V2 instruction set that provides
+    /// a consistent transaction authority pattern.
+    ///
+    /// # Arguments
+    ///
+    /// * `instructions` - Vector of instructions to sign with the sub-account
+    /// * `current_slot` - Optional current slot number (required for Secp256k1/Secp256r1)
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the signed instruction or a `SwigError`
+    pub fn sign_v2_instruction_with_sub_account(
+        &self,
+        instructions: Vec<Instruction>,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let role_id_bytes = self.role_id.to_le_bytes();
+        let swig_id_bytes = self.swig_id;
+        let (sub_account, _) = Pubkey::find_program_address(
+            &sub_account_seeds(&swig_id_bytes, &role_id_bytes),
+            &swig_interface::program_id(),
+        );
+
+        // Derive the swig_wallet_address from the swig account
+        use swig_state::swig::swig_wallet_address_seeds;
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_wallet_address_seeds(self.swig_account.as_ref()),
+            &program_id(),
+        );
+
+        self.client_role.sub_account_sign_v2_instruction(
+            self.swig_account,
+            swig_wallet_address,
             sub_account,
             self.payer,
             self.role_id,
