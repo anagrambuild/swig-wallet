@@ -1,9 +1,10 @@
 #![cfg(not(feature = "program_scope_test"))]
-//! Tests for TokenRecurringDestinationLimit functionality.
+//! Tests for TokenRecurringDestinationLimit functionality with SignV2.
 //!
 //! This module contains comprehensive tests for the
 //! TokenRecurringDestinationLimit action type, including basic functionality,
-//! time window resets, edge cases, and integration with other limit types.
+//! time window resets, edge cases, and integration with other limit types using
+//! SignV2 instructions.
 
 mod common;
 use common::*;
@@ -17,19 +18,20 @@ use solana_sdk::{
     signer::Signer,
     transaction::{TransactionError, VersionedTransaction},
 };
-use swig_interface::{AuthorityConfig, ClientAction, SignInstruction};
+use swig::actions::sign_v2::SignV2Args;
+use swig_interface::{AuthorityConfig, ClientAction, SignV2Instruction};
 use swig_state::{
     action::{
         program_all::ProgramAll, token_recurring_destination_limit::TokenRecurringDestinationLimit,
     },
     authority::AuthorityType,
-    swig::{swig_account_seeds, SwigWithRoles},
+    swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
 };
 use test_log;
 
-/// Test basic token recurring destination limit functionality
+/// Test basic token recurring destination limit functionality with SignV2
 #[test_log::test]
-fn test_token_recurring_destination_limit_basic() {
+fn test_token_recurring_destination_limit_basic_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
     let recipient = Keypair::new();
@@ -45,13 +47,15 @@ fn test_token_recurring_destination_limit_basic() {
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     // Setup token infrastructure
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
         &mut context.svm,
         &mint_pubkey,
-        &swig,
+        &swig_wallet_address,
         &context.default_payer,
     )
     .unwrap();
@@ -107,7 +111,10 @@ fn test_token_recurring_destination_limit_basic() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig, 2_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
     context.svm.warp_to_slot(100);
 
     let recipient_initial_balance: u64 = u64::from_le_bytes(
@@ -129,14 +136,15 @@ fn test_token_recurring_destination_limit_basic() {
         &spl_token::ID,
         &swig_ata,
         &recipient_ata,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount,
     )
     .unwrap();
 
-    let sign_ix = SignInstruction::new_ed25519(
+    let sign_ix = SignV2Instruction::new_ed25519(
         swig,
+        swig_wallet_address,
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix,
@@ -199,14 +207,15 @@ fn test_token_recurring_destination_limit_basic() {
         &spl_token::ID,
         &swig_ata,
         &recipient_ata,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount2,
     )
     .unwrap();
 
-    let sign_ix2 = SignInstruction::new_ed25519(
+    let sign_ix2 = SignV2Instruction::new_ed25519(
         swig,
+        swig_wallet_address,
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix2,
@@ -244,9 +253,10 @@ fn test_token_recurring_destination_limit_basic() {
     );
 }
 
-/// Test token recurring destination limit exceeding the current limit
+/// Test token recurring destination limit exceeding the current limit with
+/// SignV2
 #[test_log::test]
-fn test_token_recurring_destination_limit_exceeds_limit() {
+fn test_token_recurring_destination_limit_exceeds_limit_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
     let recipient = Keypair::new();
@@ -262,12 +272,14 @@ fn test_token_recurring_destination_limit_exceeds_limit() {
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
         &mut context.svm,
         &mint_pubkey,
-        &swig,
+        &swig_wallet_address,
         &context.default_payer,
     )
     .unwrap();
@@ -322,7 +334,10 @@ fn test_token_recurring_destination_limit_exceeds_limit() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig, 2_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
     context.svm.warp_to_slot(100);
 
     // Try to transfer more than the limit
@@ -332,14 +347,15 @@ fn test_token_recurring_destination_limit_exceeds_limit() {
         &spl_token::ID,
         &swig_ata,
         &recipient_ata,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount,
     )
     .unwrap();
 
-    let sign_ix = SignInstruction::new_ed25519(
+    let sign_ix = SignV2Instruction::new_ed25519(
         swig,
+        swig_wallet_address,
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix,
@@ -364,7 +380,7 @@ fn test_token_recurring_destination_limit_exceeds_limit() {
     // Should fail due to insufficient destination limit
     assert!(res.is_err());
     if let Err(e) = res {
-        // Should get the specific destination limit exceeded error (3030)
+        // Should get the specific destination limit exceeded error (3032)
         assert!(matches!(
             e.err,
             TransactionError::InstructionError(_, InstructionError::Custom(3032))
@@ -372,9 +388,9 @@ fn test_token_recurring_destination_limit_exceeds_limit() {
     }
 }
 
-/// Test token recurring destination limit time window reset
+/// Test token recurring destination limit time window reset with SignV2
 #[test_log::test]
-fn test_token_recurring_destination_limit_time_reset() {
+fn test_token_recurring_destination_limit_time_reset_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
     let recipient = Keypair::new();
@@ -390,12 +406,14 @@ fn test_token_recurring_destination_limit_time_reset() {
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
         &mut context.svm,
         &mint_pubkey,
-        &swig,
+        &swig_wallet_address,
         &context.default_payer,
     )
     .unwrap();
@@ -450,7 +468,10 @@ fn test_token_recurring_destination_limit_time_reset() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig, 2_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
     context.svm.warp_to_slot(100);
 
     // First transfer - use most of the limit
@@ -460,14 +481,15 @@ fn test_token_recurring_destination_limit_time_reset() {
         &spl_token::ID,
         &swig_ata,
         &recipient_ata,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount1,
     )
     .unwrap();
 
-    let sign_ix1 = SignInstruction::new_ed25519(
+    let sign_ix1 = SignV2Instruction::new_ed25519(
         swig,
+        swig_wallet_address,
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix1,
@@ -515,14 +537,15 @@ fn test_token_recurring_destination_limit_time_reset() {
         &spl_token::ID,
         &swig_ata,
         &recipient_ata,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount2,
     )
     .unwrap();
 
-    let sign_ix2 = SignInstruction::new_ed25519(
+    let sign_ix2 = SignV2Instruction::new_ed25519(
         swig,
+        swig_wallet_address,
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix2,
@@ -562,9 +585,10 @@ fn test_token_recurring_destination_limit_time_reset() {
                                                   // current slot
 }
 
-/// Test multiple recurring destination limits for different recipients
+/// Test multiple recurring destination limits for different recipients with
+/// SignV2
 #[test_log::test]
-fn test_multiple_token_recurring_destination_limits() {
+fn test_multiple_token_recurring_destination_limits_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
     let recipient1 = Keypair::new();
@@ -585,12 +609,14 @@ fn test_multiple_token_recurring_destination_limits() {
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
         &mut context.svm,
         &mint_pubkey,
-        &swig,
+        &swig_wallet_address,
         &context.default_payer,
     )
     .unwrap();
@@ -664,7 +690,10 @@ fn test_multiple_token_recurring_destination_limits() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig, 2_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
     context.svm.warp_to_slot(100);
 
     // Test transfer to recipient1 within limit
@@ -674,14 +703,15 @@ fn test_multiple_token_recurring_destination_limits() {
         &spl_token::ID,
         &swig_ata,
         &recipient1_ata,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount1,
     )
     .unwrap();
 
-    let sign_ix1 = SignInstruction::new_ed25519(
+    let sign_ix1 = SignV2Instruction::new_ed25519(
         swig,
+        swig_wallet_address,
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix1,
@@ -696,14 +726,15 @@ fn test_multiple_token_recurring_destination_limits() {
         &spl_token::ID,
         &swig_ata,
         &recipient2_ata,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount2,
     )
     .unwrap();
 
-    let sign_ix2 = SignInstruction::new_ed25519(
+    let sign_ix2 = SignV2Instruction::new_ed25519(
         swig,
+        swig_wallet_address,
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix2,
@@ -754,9 +785,9 @@ fn test_multiple_token_recurring_destination_limits() {
 }
 
 /// Test recurring destination limit that doesn't reset because transfer exceeds
-/// fresh limit
+/// fresh limit with SignV2
 #[test_log::test]
-fn test_token_recurring_destination_limit_no_reset_when_exceeds_fresh() {
+fn test_token_recurring_destination_limit_no_reset_when_exceeds_fresh_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
     let recipient = Keypair::new();
@@ -772,12 +803,14 @@ fn test_token_recurring_destination_limit_no_reset_when_exceeds_fresh() {
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
         &mut context.svm,
         &mint_pubkey,
-        &swig,
+        &swig_wallet_address,
         &context.default_payer,
     )
     .unwrap();
@@ -832,7 +865,10 @@ fn test_token_recurring_destination_limit_no_reset_when_exceeds_fresh() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig, 2_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
     context.svm.warp_to_slot(100); // Move past the window
 
     // Try to transfer more than the fresh limit would allow
@@ -842,14 +878,15 @@ fn test_token_recurring_destination_limit_no_reset_when_exceeds_fresh() {
         &spl_token::ID,
         &swig_ata,
         &recipient_ata,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount,
     )
     .unwrap();
 
-    let sign_ix = SignInstruction::new_ed25519(
+    let sign_ix = SignV2Instruction::new_ed25519(
         swig,
+        swig_wallet_address,
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix,
@@ -874,7 +911,7 @@ fn test_token_recurring_destination_limit_no_reset_when_exceeds_fresh() {
     // Should fail because transfer exceeds even the fresh limit
     assert!(res.is_err());
     if let Err(e) = res {
-        // Should get the specific destination limit exceeded error (3030)
+        // Should get the specific destination limit exceeded error (3032)
         assert!(matches!(
             e.err,
             TransactionError::InstructionError(_, InstructionError::Custom(3032))
@@ -894,9 +931,10 @@ fn test_token_recurring_destination_limit_no_reset_when_exceeds_fresh() {
     assert_eq!(dest_limit.last_reset, 0); // Should not be updated
 }
 
-/// Test token recurring destination limit with different token mints
+/// Test token recurring destination limit with different token mints with
+/// SignV2
 #[test_log::test]
-fn test_token_recurring_destination_limit_different_mints() {
+fn test_token_recurring_destination_limit_different_mints_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
     let recipient = Keypair::new();
@@ -912,6 +950,8 @@ fn test_token_recurring_destination_limit_different_mints() {
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     // Setup two different token mints
     let mint1_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
@@ -920,14 +960,14 @@ fn test_token_recurring_destination_limit_different_mints() {
     let swig_ata1 = setup_ata(
         &mut context.svm,
         &mint1_pubkey,
-        &swig,
+        &swig_wallet_address,
         &context.default_payer,
     )
     .unwrap();
     let swig_ata2 = setup_ata(
         &mut context.svm,
         &mint2_pubkey,
-        &swig,
+        &swig_wallet_address,
         &context.default_payer,
     )
     .unwrap();
@@ -1011,7 +1051,10 @@ fn test_token_recurring_destination_limit_different_mints() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig, 2_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
     context.svm.warp_to_slot(100);
 
     // Test that limits are enforced per mint/destination combination
@@ -1021,14 +1064,15 @@ fn test_token_recurring_destination_limit_different_mints() {
         &spl_token::ID,
         &swig_ata1,
         &recipient_ata1,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount1,
     )
     .unwrap();
 
-    let sign_ix1 = SignInstruction::new_ed25519(
+    let sign_ix1 = SignV2Instruction::new_ed25519(
         swig,
+        swig_wallet_address,
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix1,
@@ -1058,14 +1102,15 @@ fn test_token_recurring_destination_limit_different_mints() {
         &spl_token::ID,
         &swig_ata2,
         &recipient_ata2,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount2,
     )
     .unwrap();
 
-    let sign_ix2 = SignInstruction::new_ed25519(
+    let sign_ix2 = SignV2Instruction::new_ed25519(
         swig,
+        swig_wallet_address,
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix2,
@@ -1116,9 +1161,9 @@ fn test_token_recurring_destination_limit_different_mints() {
     );
 }
 
-/// Test token recurring destination limit validation
+/// Test token recurring destination limit validation with SignV2
 #[test_log::test]
-fn test_token_recurring_destination_limit_validation() {
+fn test_token_recurring_destination_limit_validation_v2() {
     // Test the TokenRecurringDestinationLimit struct validation
     use swig_state::action::token_recurring_destination_limit::TokenRecurringDestinationLimit;
 

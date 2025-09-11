@@ -1,34 +1,35 @@
 #![cfg(not(feature = "program_scope_test"))]
-//! Tests for TokenDestinationLimit functionality.
+//! Tests for TokenDestinationLimit functionality with SignV2.
 //!
 //! This module contains comprehensive tests for the TokenDestinationLimit
 //! action type, which enforces limits on token transfers to specific
-//! destination accounts.
+//! destination accounts using SignV2 instructions.
 
 mod common;
 use common::*;
 use litesvm_token::spl_token::{self, instruction::TokenInstruction};
 use solana_sdk::{
-    instruction::{AccountMeta, Instruction},
+    instruction::{AccountMeta, Instruction, InstructionError},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    transaction::VersionedTransaction,
+    transaction::{TransactionError, VersionedTransaction},
 };
-use swig_interface::{program_id, AuthorityConfig, ClientAction, SignInstruction};
+use swig::actions::sign_v2::SignV2Args;
+use swig_interface::{compact_instructions, AuthorityConfig, ClientAction, SignV2Instruction};
 use swig_state::{
     action::{
         program_all::ProgramAll, sol_destination_limit::SolDestinationLimit,
         token_destination_limit::TokenDestinationLimit, Actionable,
     },
     authority::AuthorityType,
-    swig::{swig_account_seeds, SwigWithRoles},
+    swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
 };
 
-/// Test basic token destination limit functionality
+/// Test basic token destination limit functionality with SignV2
 #[test_log::test]
-fn test_token_destination_limit_basic() {
+fn test_token_destination_limit_basic_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
     let recipient = Keypair::new();
@@ -45,13 +46,15 @@ fn test_token_destination_limit_basic() {
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     // Setup token infrastructure
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
         &mut context.svm,
         &mint_pubkey,
-        &swig,
+        &swig_wallet_address,
         &context.default_payer,
     )
     .unwrap();
@@ -104,7 +107,11 @@ fn test_token_destination_limit_basic() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig, 2_000_000_000).unwrap();
+    // Fund the SWIG wallet address (not the swig account itself)
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
 
     let recipient_initial_balance: u64 = u64::from_le_bytes(
         context
@@ -118,21 +125,22 @@ fn test_token_destination_limit_basic() {
             .unwrap(),
     );
 
-    // Transfer within limit should succeed (when full implementation is complete)
+    // Transfer within limit should succeed
     let transfer_amount = 300u64;
 
     let transfer_ix = spl_token::instruction::transfer(
         &spl_token::ID,
         &swig_ata,
         &recipient_ata,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount,
     )
     .unwrap();
 
-    let sign_ix = SignInstruction::new_ed25519(
+    let sign_ix = SignV2Instruction::new_ed25519(
         swig,
+        swig_wallet_address,
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix,
@@ -152,9 +160,8 @@ fn test_token_destination_limit_basic() {
         VersionedTransaction::try_new(VersionedMessage::V0(transfer_message), &[&second_authority])
             .unwrap();
 
-    // Note: This test will currently fail because the full token destination limit
-    // implementation is not yet complete. The test demonstrates the expected API.
     let res = context.svm.send_transaction(transfer_tx);
+    println!("Transfer logs: {}", res.as_ref().unwrap().pretty_logs());
 
     assert!(res.is_ok());
 
@@ -191,9 +198,9 @@ fn test_token_destination_limit_basic() {
     );
 }
 
-/// Test token destination limit exceeded
+/// Test token destination limit exceeded with SignV2
 #[test_log::test]
-fn test_token_destination_limit_exceeds_limit() {
+fn test_token_destination_limit_exceeds_limit_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
     let recipient = Keypair::new();
@@ -209,12 +216,14 @@ fn test_token_destination_limit_exceeds_limit() {
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
         &mut context.svm,
         &mint_pubkey,
-        &swig,
+        &swig_wallet_address,
         &context.default_payer,
     )
     .unwrap();
@@ -265,24 +274,27 @@ fn test_token_destination_limit_exceeds_limit() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig, 2_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
 
-    // Try to transfer more than the limit (should fail when implementation is
-    // complete)
+    // Try to transfer more than the limit (should fail)
     let transfer_amount = 300u64; // Exceeds the 200 token limit
 
     let transfer_ix = spl_token::instruction::transfer(
         &spl_token::ID,
         &swig_ata,
         &recipient_ata,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount,
     )
     .unwrap();
 
-    let sign_ix = SignInstruction::new_ed25519(
+    let sign_ix = SignV2Instruction::new_ed25519(
         swig,
+        swig_wallet_address,
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix,
@@ -304,46 +316,22 @@ fn test_token_destination_limit_exceeds_limit() {
 
     let res = context.svm.send_transaction(transfer_tx);
 
-    // Should fail (currently fails for different reason - missing implementation)
+    // Should fail due to destination limit exceeded
     assert!(res.is_err());
-
-    // assert that the error code is 3030
-    // res: Err(FailedTransactionMetadata { err: InstructionError(0, Custom(3030)),
-    // meta: TransactionMetadata { signature:
-    // 4mXmuEdc4HQZVuhWtcESGxZtTm4i15bTnDeyaZUH6QgYEf8aA6ms1MtgFs29powLaVutuNBVgaZEhry6Yzk1uEVb,
-    // logs: ["Program swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB invoke [1]",
-    // "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]", "Program
-    // log: Instruction: Transfer", "Program
-    // TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 4644 of 196170 compute
-    // units", "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success",
-    // "Program log: here in this swig!", "Program log: here in swig token
-    // account!", "Program log: here in process_token_destinations", "Program log:
-    // here in source account", "Program log: combined_key: [119, 79, 123, 130, 4,
-    // 117, 249, 16, 187, 174, 119, 154, 215, 23, 44, 213, 148, 54, 170, 108, 185,
-    // 24, 51, 115, 103, 26, 168, 230, 41, 213, 59, 214, 187, 3, 138, 147, 56, 162,
-    // 40, 215, 40, 205, 240, 127, 110, 143, 127, 117, 234, 107, 231, 59, 67, 250,
-    // 227, 232, 24, 83, 41, 77, 111, 25, 55, 184]", "Program log: here in
-    // TokenRecurringDestinationLimit", "Program log: TokenDestinationLimit diff:
-    // 300", "Program swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB consumed 24973 of
-    // 200000 compute units", "Program swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB
-    // failed: custom program error: 0xbd6"], inner_instructions: [[InnerInstruction
-    // { instruction: CompiledInstruction { program_id_index: 4, accounts: [1, 2,
-    // 3], data: [3, 44, 1, 0, 0, 0, 0, 0, 0] }, stack_height: 2 }]],
-    // compute_units_consumed: 24973, return_data: TransactionReturnData {
-    // program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, data: [] } } })
-    assert_eq!(
-        res.unwrap_err().err,
-        solana_sdk::transaction::TransactionError::InstructionError(
-            0,
-            solana_sdk::instruction::InstructionError::Custom(3031)
-        ),
-        "Expected error code 3030"
-    );
+    if let Err(e) = res {
+        println!("Expected error (destination limit exceeded): {:?}", e);
+        // Should get the token destination limit exceeded error
+        assert!(matches!(
+            e.err,
+            TransactionError::InstructionError(_, InstructionError::Custom(3031))
+        ));
+    }
 }
 
-/// Test multiple token destination limits for different destinations
+/// Test multiple token destination limits for different destinations with
+/// SignV2
 #[test_log::test]
-fn test_multiple_token_destination_limits() {
+fn test_multiple_token_destination_limits_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
     let recipient1 = Keypair::new();
@@ -364,12 +352,14 @@ fn test_multiple_token_destination_limits() {
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let swig_ata = setup_ata(
         &mut context.svm,
         &mint_pubkey,
-        &swig,
+        &swig_wallet_address,
         &context.default_payer,
     )
     .unwrap();
@@ -458,7 +448,10 @@ fn test_multiple_token_destination_limits() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig, 2_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
 
     let transfer_amount1 = 250u64; // Within 300 limit
 
@@ -466,14 +459,15 @@ fn test_multiple_token_destination_limits() {
         &spl_token::ID,
         &swig_ata,
         &recipient1_ata,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount1,
     )
     .unwrap();
 
-    let sign_ix1 = SignInstruction::new_ed25519(
+    let sign_ix1 = SignV2Instruction::new_ed25519(
         swig,
+        swig_wallet_address,
         second_authority.pubkey(),
         second_authority.pubkey(),
         token_ix1,
@@ -522,14 +516,15 @@ fn test_multiple_token_destination_limits() {
         &spl_token::ID,
         &swig_ata,
         &recipient2_ata,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount2,
     )
     .unwrap();
 
-    let sign_ix2 = SignInstruction::new_ed25519(
+    let sign_ix2 = SignV2Instruction::new_ed25519(
         swig,
+        swig_wallet_address,
         second_authority.pubkey(),
         second_authority.pubkey(),
         token_ix2,
@@ -592,9 +587,9 @@ fn test_multiple_token_destination_limits() {
     assert_eq!(dest_limit2.amount, 500 - transfer_amount2);
 }
 
-/// Test token destination limit with different token mints
+/// Test token destination limit with different token mints with SignV2
 #[test_log::test]
-fn test_token_destination_limit_different_mints() {
+fn test_token_destination_limit_different_mints_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
     let recipient = Keypair::new();
@@ -610,6 +605,8 @@ fn test_token_destination_limit_different_mints() {
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     // Setup two different token mints
     let mint1_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
@@ -618,14 +615,14 @@ fn test_token_destination_limit_different_mints() {
     let swig_ata1 = setup_ata(
         &mut context.svm,
         &mint1_pubkey,
-        &swig,
+        &swig_wallet_address,
         &context.default_payer,
     )
     .unwrap();
     let swig_ata2 = setup_ata(
         &mut context.svm,
         &mint2_pubkey,
-        &swig,
+        &swig_wallet_address,
         &context.default_payer,
     )
     .unwrap();
@@ -723,10 +720,12 @@ fn test_token_destination_limit_different_mints() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig, 2_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
 
     // Test that limits are enforced per mint/destination combination
-    // This test demonstrates the expected behavior once implementation is complete
 
     let transfer_amount1 = 250u64; // Within 300 limit
 
@@ -734,14 +733,15 @@ fn test_token_destination_limit_different_mints() {
         &spl_token::ID,
         &swig_ata1,
         &recipient_ata1,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount1,
     )
     .unwrap();
 
-    let sign_ix1 = SignInstruction::new_ed25519(
+    let sign_ix1 = SignV2Instruction::new_ed25519(
         swig,
+        swig_wallet_address,
         second_authority.pubkey(),
         second_authority.pubkey(),
         token_ix1,
@@ -773,14 +773,15 @@ fn test_token_destination_limit_different_mints() {
         &spl_token::ID,
         &swig_ata2,
         &recipient_ata2,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount2,
     )
     .unwrap();
 
-    let sign_ix2 = SignInstruction::new_ed25519(
+    let sign_ix2 = SignV2Instruction::new_ed25519(
         swig,
+        swig_wallet_address,
         second_authority.pubkey(),
         second_authority.pubkey(),
         token_ix2,
@@ -862,7 +863,7 @@ fn test_token_destination_limit_different_mints() {
 
 /// Test token destination limit validation
 #[test_log::test]
-fn test_token_destination_limit_validation() {
+fn test_token_destination_limit_validation_v2() {
     // Test the TokenDestinationLimit struct validation
     use swig_state::action::token_destination_limit::TokenDestinationLimit;
 

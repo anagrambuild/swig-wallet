@@ -491,10 +491,17 @@ fn create_swig_secp256r1(
         &common::program_id(),
     );
 
+    let (swig_wallet_address, wallet_address_bump) =
+        solana_sdk::pubkey::Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_address.as_ref()),
+            &common::program_id(),
+        );
     let create_ix = swig_interface::CreateInstruction::new(
         swig_address,
         swig_bump,
         payer_pubkey,
+        swig_wallet_address,
+        wallet_address_bump,
         AuthorityConfig {
             authority_type: AuthorityType::Secp256r1,
             authority: public_key,

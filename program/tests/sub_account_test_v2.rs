@@ -2,6 +2,16 @@
 // This feature flag ensures these tests are only run when the
 // "program_scope_test" feature is not enabled. This allows us to isolate
 // and run only program_scope tests or only the regular tests.
+
+//! Tests for Sub-account functionality with SignV2 architecture.
+//!
+//! This module contains comprehensive tests for sub-account operations
+//! using SignV2 instruction architecture where applicable. Note that
+//! most sub-account operations use dedicated instruction types
+//! (CreateSubAccountInstruction, SubAccountSignInstruction, etc.) that
+//! don't currently have SignV2 versions, so this port focuses on
+//! the testing patterns and any operations that can use SignV2.
+
 mod common;
 
 use common::*;
@@ -18,8 +28,9 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::{
-    AuthorityConfig, ClientAction, CreateSubAccountInstruction, SignInstruction,
-    SubAccountSignInstruction, ToggleSubAccountInstruction, WithdrawFromSubAccountInstruction,
+    AuthorityConfig, ClientAction, CreateSubAccountInstruction, SignV2Instruction,
+    SubAccountSignInstruction, SubAccountSignV2Instruction, ToggleSubAccountInstruction,
+    WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
     action::{
@@ -29,15 +40,18 @@ use swig_state::{
         sub_account::{self, SubAccount},
     },
     authority::AuthorityType,
-    swig::{sub_account_seeds, swig_account_seeds, SwigSubAccount, SwigWithRoles},
+    swig::{
+        sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, SwigSubAccount,
+        SwigWithRoles,
+    },
     IntoBytes, Transmutable, TransmutableMut,
 };
 
 // Helper function to set up a test with a root authority and a sub-account
-// authority
-fn setup_test_with_sub_account_authority(
+// authority using SignV2 architecture
+fn setup_test_with_sub_account_authority_v2(
     context: &mut SwigTestContext,
-) -> anyhow::Result<(Pubkey, Keypair, Keypair, [u8; 32])> {
+) -> anyhow::Result<(Pubkey, Pubkey, Keypair, Keypair, [u8; 32])> {
     let root_authority = Keypair::new();
     let sub_account_authority = Keypair::new();
 
@@ -55,6 +69,10 @@ fn setup_test_with_sub_account_authority(
 
     // Create a swig account with the root authority
     let (swig_key, _) = create_swig_ed25519(context, &root_authority, id)?;
+
+    // Derive the swig wallet address for SignV2 architecture
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
 
     // Add the sub-account authority with SubAccount permission
     add_authority_with_ed25519_root(
@@ -70,59 +88,27 @@ fn setup_test_with_sub_account_authority(
         })],
     )?;
 
-    Ok((swig_key, root_authority, sub_account_authority, id))
+    Ok((
+        swig_key,
+        swig_wallet_address,
+        root_authority,
+        sub_account_authority,
+        id,
+    ))
 }
 
-fn setup_test_with_sub_account_authority_fail_with_invalid_layout(
-    context: &mut SwigTestContext,
-) -> anyhow::Result<()> {
-    let root_authority = Keypair::new();
-    let sub_account_authority = Keypair::new();
-
-    // Airdrop to both authorities
-    context
-        .svm
-        .airdrop(&root_authority.pubkey(), 10_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&sub_account_authority.pubkey(), 10_000_000_000)
-        .unwrap();
-
-    let id = rand::random::<[u8; 32]>();
-
-    // Create a swig account with the root authority
-    let (swig_key, _) = create_swig_ed25519(context, &root_authority, id)?;
-
-    // Add the sub-account authority with SubAccount permission
-    let res = add_authority_with_ed25519_root(
-        context,
-        &swig_key,
-        &root_authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::Ed25519,
-            authority: sub_account_authority.pubkey().as_ref(),
-        },
-        vec![ClientAction::SubAccount(SubAccount {
-            sub_account: [1; 32],
-        })],
-    );
-
-    assert!(res.is_err());
-    println!("res: {:?}", res);
-    Ok(())
-}
-
-// Test creating a sub-account with the proper permissions
+// Test creating a sub-account with SignV2 architecture
 #[test_log::test]
-fn test_create_sub_account() {
+fn test_create_sub_account_v2() {
     let mut context = setup_test_context().unwrap();
 
-    // Set up the test environment
-    let (swig_key, _, sub_account_authority, id) =
-        setup_test_with_sub_account_authority(&mut context).unwrap();
+    // Set up the test environment with SignV2 architecture
+    let (swig_key, swig_wallet_address, _, sub_account_authority, id) =
+        setup_test_with_sub_account_authority_v2(&mut context).unwrap();
 
     // Create the sub-account with the sub-account authority
+    // Note: CreateSubAccountInstruction doesn't have a SignV2 version yet,
+    // so we use the existing V1 instruction
     let role_id = 1; // The sub-account authority has role_id 1
     let sub_account =
         create_sub_account(&mut context, &swig_key, &sub_account_authority, role_id, id).unwrap();
@@ -140,14 +126,15 @@ fn test_create_sub_account() {
     assert!(sub_account_state.enabled);
 }
 
-// Test the withdrawal from a sub-account back to the main swig account
+// Test the withdrawal from a sub-account back to the main swig account with
+// SignV2
 #[test_log::test]
-fn test_withdraw_sol_from_sub_account() {
+fn test_withdraw_sol_from_sub_account_v2() {
     let mut context = setup_test_context().unwrap();
 
-    // Set up the test environment
-    let (swig_key, root_authority, sub_account_authority, id) =
-        setup_test_with_sub_account_authority(&mut context).unwrap();
+    // Set up the test environment with SignV2 architecture
+    let (swig_key, swig_wallet_address, root_authority, sub_account_authority, id) =
+        setup_test_with_sub_account_authority_v2(&mut context).unwrap();
 
     // Create the sub-account with the sub-account authority
     let role_id = 1; // The sub-account authority has role_id 1
@@ -163,7 +150,8 @@ fn test_withdraw_sol_from_sub_account() {
     let swig_initial_balance = context.svm.get_account(&swig_key).unwrap().lamports;
     let sub_account_initial_balance = context.svm.get_account(&sub_account).unwrap().lamports;
 
-    // Withdraw some SOL from the sub-account using the sub-account authority
+    // Withdraw some SOL from the sub-account using the root authority
+    // Note: WithdrawFromSubAccountInstruction doesn't have a SignV2 version yet
     let withdraw_amount = 1_000_000_000;
     let withdraw_result = withdraw_from_sub_account(
         &mut context,
@@ -191,15 +179,15 @@ fn test_withdraw_sol_from_sub_account() {
     );
 }
 
-// Test signing transactions with a sub-account
+// Test signing transactions with a sub-account using SignV2 architecture
 #[test_log::test]
-fn test_sub_account_sign() {
+fn test_sub_account_sign_v2() {
     let mut context = setup_test_context().unwrap();
     let recipient = Keypair::new();
 
-    // Set up the test environment
-    let (swig_key, root_authority, sub_account_authority, id) =
-        setup_test_with_sub_account_authority(&mut context).unwrap();
+    // Set up the test environment with SignV2 architecture
+    let (swig_key, swig_wallet_address, root_authority, sub_account_authority, id) =
+        setup_test_with_sub_account_authority_v2(&mut context).unwrap();
 
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
 
@@ -217,10 +205,12 @@ fn test_sub_account_sign() {
     let transfer_ix =
         system_instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
 
-    // Sign and execute with the sub-account using the sub-account authority
-    let sign_result = sub_account_sign(
+    // Sign and execute with the sub-account using the sub-account authority with V2
+    // architecture
+    let sign_result = sub_account_sign_v2(
         &mut context,
         &swig_key,
+        &swig_wallet_address,
         &sub_account,
         &sub_account_authority,
         role_id,
@@ -241,15 +231,16 @@ fn test_sub_account_sign() {
     );
 }
 
-// Test toggling a sub-account on and off
+// Test toggling a sub-account on and off with SignV2 architecture
 #[test_log::test]
-fn test_toggle_sub_account() {
+fn test_toggle_sub_account_v2() {
     let mut context = setup_test_context().unwrap();
     let recipient = Keypair::new();
     context.svm.warp_to_slot(1);
-    // Set up the test environment
-    let (swig_key, root_authority, sub_account_authority, id) =
-        setup_test_with_sub_account_authority(&mut context).unwrap();
+
+    // Set up the test environment with SignV2 architecture
+    let (swig_key, swig_wallet_address, root_authority, sub_account_authority, id) =
+        setup_test_with_sub_account_authority_v2(&mut context).unwrap();
 
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
 
@@ -264,6 +255,7 @@ fn test_toggle_sub_account() {
     context.svm.airdrop(&sub_account, initial_balance).unwrap();
 
     // Disable the sub-account using the root authority
+    // Note: ToggleSubAccountInstruction doesn't have a SignV2 version yet
     let disable_result = toggle_sub_account(
         &mut context,
         &swig_key,
@@ -285,9 +277,10 @@ fn test_toggle_sub_account() {
     let transfer_ix =
         system_instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
 
-    let sign_result = sub_account_sign(
+    let sign_result = sub_account_sign_v2(
         &mut context,
         &swig_key,
+        &swig_wallet_address,
         &sub_account,
         &sub_account_authority,
         role_id,
@@ -298,9 +291,11 @@ fn test_toggle_sub_account() {
         sign_result.is_err(),
         "Transaction should fail with disabled sub-account"
     );
+
     // warp ahead 10 slots
     context.svm.warp_to_slot(10);
-    // Re-enable the sub-account using the sub-account authority
+
+    // Re-enable the sub-account using the root authority
     let enable_result = toggle_sub_account(
         &mut context,
         &swig_key,
@@ -316,16 +311,19 @@ fn test_toggle_sub_account() {
     let sub_account_state =
         unsafe { SwigSubAccount::load_unchecked(&sub_account_data.data).unwrap() };
     assert!(sub_account_state.enabled, "Sub-account should be enabled");
+
     context.svm.warp_to_slot(1000);
     context.svm.expire_blockhash();
+
     // Now the transaction should succeed with the enabled sub-account
     let transfer_amount = 1_000_000;
     let transfer_ix =
         system_instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
 
-    let sign_result = sub_account_sign(
+    let sign_result = sub_account_sign_v2(
         &mut context,
         &swig_key,
+        &swig_wallet_address,
         &sub_account,
         &sub_account_authority,
         role_id,
@@ -347,14 +345,14 @@ fn test_toggle_sub_account() {
 }
 
 // Test that a non-root authority without proper permissions cannot disable a
-// sub-account
+// sub-account with SignV2 architecture
 #[test_log::test]
-fn test_non_root_authority_cannot_disable_sub_account() {
+fn test_non_root_authority_cannot_disable_sub_account_v2() {
     let mut context = setup_test_context().unwrap();
 
-    // Set up the test environment
-    let (swig_key, root_authority, sub_account_authority, id) =
-        setup_test_with_sub_account_authority(&mut context).unwrap();
+    // Set up the test environment with SignV2 architecture
+    let (swig_key, swig_wallet_address, root_authority, sub_account_authority, id) =
+        setup_test_with_sub_account_authority_v2(&mut context).unwrap();
 
     // Create a new authority with some permissions but NOT the ManageAuthority
     // permission
@@ -415,14 +413,14 @@ fn test_non_root_authority_cannot_disable_sub_account() {
 }
 
 // Test that a non-root authority without proper permissions cannot withdraw
-// from a sub-account
+// from a sub-account with SignV2 architecture
 #[test_log::test]
-fn test_non_root_authority_cannot_withdraw_from_sub_account() {
+fn test_non_root_authority_cannot_withdraw_from_sub_account_v2() {
     let mut context = setup_test_context().unwrap();
 
-    // Set up the test environment
-    let (swig_key, root_authority, sub_account_authority, id) =
-        setup_test_with_sub_account_authority(&mut context).unwrap();
+    // Set up the test environment with SignV2 architecture
+    let (swig_key, swig_wallet_address, root_authority, sub_account_authority, id) =
+        setup_test_with_sub_account_authority_v2(&mut context).unwrap();
 
     // Create a new authority with some permissions but NOT the withdrawal
     // permission
@@ -477,6 +475,7 @@ fn test_non_root_authority_cannot_withdraw_from_sub_account() {
     let sub_account_state =
         unsafe { SwigSubAccount::load_unchecked(&sub_account_data.data).unwrap() };
     assert_eq!(sub_account_state.enabled, true);
+
     // Calculate the rent-exempt minimum for the sub-account
     let rent = context.svm.get_sysvar::<Rent>();
     let rent_exempt_minimum = rent.minimum_balance(sub_account_data.data.len());
@@ -487,11 +486,14 @@ fn test_non_root_authority_cannot_withdraw_from_sub_account() {
     );
 }
 
+// Test token withdrawal from sub-account with SignV2 architecture
 #[test_log::test]
-fn test_withdraw_token_from_sub_account() {
+fn test_withdraw_token_from_sub_account_v2() {
     let mut context = setup_test_context().unwrap();
-    let (swig_key, root_authority, sub_account_authority, authority_id) =
-        setup_test_with_sub_account_authority(&mut context).unwrap();
+
+    let (swig_key, swig_wallet_address, root_authority, sub_account_authority, authority_id) =
+        setup_test_with_sub_account_authority_v2(&mut context).unwrap();
+
     let role_id = 1;
     let sub_account = create_sub_account(
         &mut context,
@@ -501,7 +503,12 @@ fn test_withdraw_token_from_sub_account() {
         authority_id,
     )
     .unwrap();
+
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+
+    // Note: In SignV2 architecture, token accounts would typically be associated
+    // with the swig_wallet_address, but for sub-account token operations,
+    // we still use the actual account addresses
     let swig_ata = setup_ata(
         &mut context.svm,
         &mint_pubkey,
@@ -517,6 +524,7 @@ fn test_withdraw_token_from_sub_account() {
         &context.default_payer,
     )
     .unwrap();
+
     let initial_token_amount = 1000;
     mint_to(
         &mut context.svm,
@@ -526,6 +534,9 @@ fn test_withdraw_token_from_sub_account() {
         initial_token_amount,
     )
     .unwrap();
+
+    // Note: WithdrawFromSubAccountInstruction token operations don't have SignV2
+    // versions yet
     let withdraw_result = withdraw_token_from_sub_account(
         &mut context,
         &swig_key,

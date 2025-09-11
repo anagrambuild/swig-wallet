@@ -14,6 +14,7 @@ use swig::actions::{
     create_v1::CreateV1Args,
     remove_authority_v1::RemoveAuthorityV1Args,
     sub_account_sign_v1::SubAccountSignV1Args,
+    sub_account_sign_v2::SubAccountSignV2Args,
     toggle_sub_account_v1::ToggleSubAccountV1Args,
     update_authority_v1::{AuthorityUpdateOperation, UpdateAuthorityV1Args},
     withdraw_from_sub_account_v1::WithdrawFromSubAccountV1Args,
@@ -188,6 +189,8 @@ impl CreateInstruction {
         swig_account: Pubkey,
         swig_bump_seed: u8,
         payer: Pubkey,
+        swig_wallet_address: Pubkey,
+        wallet_address_bump: u8,
         initial_authority: AuthorityConfig,
         actions: Vec<ClientAction>,
         id: [u8; 32],
@@ -197,6 +200,7 @@ impl CreateInstruction {
             swig_bump_seed,
             initial_authority.authority_type,
             initial_authority.authority.len() as u16,
+            wallet_address_bump,
         );
         let mut write = Vec::new();
         write.extend_from_slice(
@@ -217,6 +221,7 @@ impl CreateInstruction {
             accounts: vec![
                 AccountMeta::new(swig_account, false),
                 AccountMeta::new(payer, true),
+                AccountMeta::new(swig_wallet_address, false),
                 AccountMeta::new(system_program::ID, false),
             ],
             data: write,
@@ -586,6 +591,174 @@ impl SignInstruction {
         // index, and padding Must be at least 17 bytes to satisfy
         // secp256r1_authority_authenticate() requirements
         let instruction_sysvar_index = 3; // Try hardcoded index 3 for debugging
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
+        authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
+        authority_payload.push(instruction_sysvar_index as u8); // 1 byte: index of instruction sysvar
+        authority_payload.extend_from_slice(&[0u8; 4]); // 4 bytes padding to meet 17 byte minimum
+
+        let main_ix = Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [arg_bytes, &ix_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![secp256r1_verify_ix, main_ix])
+    }
+}
+
+pub struct SignV2Instruction;
+impl SignV2Instruction {
+    pub fn new_ed25519(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        payer: Pubkey,
+        authority: Pubkey,
+        inner_instruction: Instruction,
+        role_id: u32,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(authority, true),
+        ];
+        let (accounts, ixs) = compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        let ix_bytes = ixs.into_bytes();
+        let args = swig::actions::sign_v2::SignV2Args::new(role_id, ix_bytes.len() as u16);
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [arg_bytes, &ix_bytes, &[3]].concat(),
+        })
+    }
+
+    pub fn new_secp256k1<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        inner_instruction: Instruction,
+        role_id: u32,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ];
+        let (accounts, ixs) = compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        let ix_bytes = ixs.into_bytes();
+        let args = swig::actions::sign_v2::SignV2Args::new(role_id, ix_bytes.len() as u16);
+
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let mut signature_bytes = Vec::new();
+        signature_bytes.extend_from_slice(&ix_bytes);
+
+        let nonced_payload = prepare_secp256k1_payload(
+            current_slot,
+            counter,
+            &signature_bytes,
+            &account_payload_bytes,
+            &[],
+        );
+        let signature = authority_payload_fn(&nonced_payload);
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&counter.to_le_bytes());
+        authority_payload.extend_from_slice(&signature);
+
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [arg_bytes, &ix_bytes, &authority_payload].concat(),
+        })
+    }
+
+    pub fn new_secp256r1<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        inner_instruction: Instruction,
+        role_id: u32,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+        let (accounts, ixs) = compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        let ix_bytes = ixs.into_bytes();
+        let args = swig::actions::sign_v2::SignV2Args::new(role_id, ix_bytes.len() as u16);
+
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Create the message hash for secp256r1 authentication
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        // Compute message hash (keccak for secp256r1 compatibility)
+        let slot_bytes = current_slot.to_le_bytes();
+        let counter_bytes = counter.to_le_bytes();
+        let message_hash = keccak::hash(
+            &[
+                &ix_bytes,
+                &account_payload_bytes,
+                &slot_bytes[..],
+                &counter_bytes[..],
+            ]
+            .concat(),
+        )
+        .to_bytes();
+
+        // Get signature from authority function
+        let signature = authority_payload_fn(&message_hash);
+
+        // Create secp256r1 verify instruction
+        let secp256r1_verify_ix =
+            new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
+
+        // For secp256r1, the authority payload includes slot, counter, instruction
+        // index, and padding Must be at least 17 bytes to satisfy
+        // secp256r1_authority_authenticate() requirements
+        let instruction_sysvar_index = 4; // Instructions sysvar is at index 4 for SignV2
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
         authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
@@ -1885,6 +2058,180 @@ impl SubAccountSignInstruction {
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
         authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
         authority_payload.push(4); // this is the index of the instruction sysvar
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &ix_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![secp256r1_verify_ix, main_ix])
+    }
+}
+
+pub struct SubAccountSignV2Instruction;
+
+impl SubAccountSignV2Instruction {
+    pub fn new_with_ed25519_authority(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        sub_account: Pubkey,
+        authority: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        instructions: Vec<Instruction>,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new_readonly(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(authority, true),
+        ];
+        // For SubAccountSignV2, we use swig_wallet_address as the signer in
+        // compact_instructions
+        let (accounts, ixs) = compact_instructions(swig_wallet_address, accounts, instructions);
+        let ix_bytes = ixs.into_bytes();
+        let args = SubAccountSignV2Args::new(role_id, ix_bytes.len() as u16);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &ix_bytes, &[5]].concat(), // Ed25519 authority index
+        })
+    }
+
+    pub fn new_with_secp256k1_authority<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        sub_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        role_id: u32,
+        instructions: Vec<Instruction>,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let accounts = vec![
+            AccountMeta::new_readonly(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ];
+
+        // For SubAccountSignV2, we use swig_wallet_address as the signer in
+        // compact_instructions
+        let (accounts, ixs) = compact_instructions(swig_wallet_address, accounts, instructions);
+        let ix_bytes = ixs.into_bytes();
+        let args = SubAccountSignV2Args::new(role_id, ix_bytes.len() as u16);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        // Sign the payload
+        let nonced_payload =
+            prepare_secp256k1_payload(current_slot, 0u32, &ix_bytes, &account_payload_bytes, &[]);
+        let signature = authority_payload_fn(&nonced_payload);
+
+        // Add authority payload
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&signature);
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &ix_bytes, &authority_payload].concat(),
+        })
+    }
+
+    pub fn new_with_secp256r1_authority<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        sub_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        role_id: u32,
+        instructions: Vec<Instruction>,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let accounts = vec![
+            AccountMeta::new_readonly(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+
+        // For SubAccountSignV2, we use swig_wallet_address as the signer in
+        // compact_instructions
+        let (accounts, ixs) = compact_instructions(swig_wallet_address, accounts, instructions);
+        let ix_bytes = ixs.into_bytes();
+        let args = SubAccountSignV2Args::new(role_id, ix_bytes.len() as u16);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Create the message hash for secp256r1 authentication
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let mut data_to_be_signed_bytes = Vec::new();
+        data_to_be_signed_bytes.extend_from_slice(&ix_bytes);
+
+        // Compute message hash (keccak for secp256r1 compatibility)
+        let slot_bytes = current_slot.to_le_bytes();
+        let counter_bytes = counter.to_le_bytes();
+        let message_hash = keccak::hash(
+            &[
+                &data_to_be_signed_bytes,
+                &account_payload_bytes,
+                &slot_bytes[..],
+                &counter_bytes[..],
+            ]
+            .concat(),
+        )
+        .to_bytes();
+
+        // Get signature from authority function
+        let signature = authority_payload_fn(&message_hash);
+
+        // Create secp256r1 verify instruction
+        let secp256r1_verify_ix =
+            new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
+
+        // For secp256r1, the authority payload includes slot, counter, instruction
+        // index, and padding
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
+        authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
+        authority_payload.push(5); // this is the index of the instruction sysvar
 
         let main_ix = Instruction {
             program_id: program_id(),

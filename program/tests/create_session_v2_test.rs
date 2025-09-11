@@ -12,22 +12,23 @@ use common::*;
 use solana_sdk::{
     clock::Clock,
     message::{v0, VersionedMessage},
+    pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
     system_instruction,
     sysvar::rent::Rent,
     transaction::VersionedTransaction,
 };
-use swig_interface::{CreateSessionInstruction, SignInstruction};
+use swig_interface::{CreateSessionInstruction, SignV2Instruction};
 use swig_state::{
     authority::{
         ed25519::Ed25519SessionAuthority, secp256k1::Secp256k1SessionAuthority, AuthorityType,
     },
-    swig::SwigWithRoles,
+    swig::{swig_wallet_address_seeds, SwigWithRoles},
 };
 
 #[test_log::test]
-fn test_create_session() {
+fn test_create_session_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
 
@@ -43,8 +44,17 @@ fn test_create_session() {
         create_swig_ed25519_session(&mut context, &swig_authority, id, 100, [0; 32]).unwrap();
 
     println!("res: {:?}", res.logs);
-    // Airdrop funds to the swig account so it can transfer SOL
-    context.svm.airdrop(&swig_key, 50_000_000_000).unwrap();
+
+    // Get swig_wallet_address for SignV2
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id())
+            .0;
+
+    // Airdrop funds to the swig_wallet_address so it can transfer SOL
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 50_000_000_000)
+        .unwrap();
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
@@ -119,16 +129,18 @@ fn test_create_session() {
     // Create a receiver keypair
     let receiver = Keypair::new();
 
-    // Create a real SOL transfer instruction with swig_key as sender
+    // Create a real SOL transfer instruction with swig_wallet_address as sender
+    // (SignV2)
     let dummy_ix = system_instruction::transfer(
-        &swig_key,
+        &swig_wallet_address,
         &receiver.pubkey(),
         1000000, // 0.001 SOL in lamports
     );
 
-    // Create a sign instruction using the session key
-    let sign_ix = SignInstruction::new_ed25519(
+    // Create a sign instruction using the session key (SignV2)
+    let sign_ix = SignV2Instruction::new_ed25519(
         swig_key,
+        swig_wallet_address,
         context.default_payer.pubkey(),
         session_key.pubkey(),
         dummy_ix,
@@ -159,7 +171,7 @@ fn test_create_session() {
 }
 
 #[test_log::test]
-fn test_expired_session() {
+fn test_expired_session_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
 
@@ -174,8 +186,16 @@ fn test_expired_session() {
     let (swig_key, _) =
         create_swig_ed25519_session(&mut context, &swig_authority, id, 100, [0; 32]).unwrap();
 
-    // Airdrop funds to the swig account so it can transfer SOL
-    context.svm.airdrop(&swig_key, 50_000_000_000).unwrap();
+    // Get swig_wallet_address for SignV2
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id())
+            .0;
+
+    // Airdrop funds to the swig_wallet_address so it can transfer SOL
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 50_000_000_000)
+        .unwrap();
 
     // Create a session key
     let session_key = Keypair::new();
@@ -222,16 +242,18 @@ fn test_expired_session() {
     // Create a receiver keypair
     let receiver = Keypair::new();
 
-    // Create a real SOL transfer instruction with swig_key as sender
+    // Create a real SOL transfer instruction with swig_wallet_address as sender
+    // (SignV2)
     let dummy_ix = system_instruction::transfer(
-        &swig_key,
+        &swig_wallet_address,
         &receiver.pubkey(),
         1000000, // 0.001 SOL in lamports
     );
 
-    // Try to use the expired session key
-    let sign_ix = SignInstruction::new_ed25519(
+    // Try to use the expired session key (SignV2)
+    let sign_ix = SignV2Instruction::new_ed25519(
         swig_key,
+        swig_wallet_address,
         context.default_payer.pubkey(),
         session_key.pubkey(),
         dummy_ix,
@@ -261,7 +283,7 @@ fn test_expired_session() {
 }
 
 #[test_log::test]
-fn test_session_key_refresh_ed25519() {
+fn test_session_key_refresh_ed25519_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
 
@@ -276,8 +298,16 @@ fn test_session_key_refresh_ed25519() {
     let (swig_key, _) =
         create_swig_ed25519_session(&mut context, &swig_authority, id, 100, [0; 32]).unwrap();
 
-    // Airdrop funds to the swig account so it can transfer SOL
-    context.svm.airdrop(&swig_key, 50_000_000_000).unwrap();
+    // Get swig_wallet_address for SignV2
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id())
+            .0;
+
+    // Airdrop funds to the swig_wallet_address so it can transfer SOL
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 50_000_000_000)
+        .unwrap();
 
     // Create a session key
     let session_key = Keypair::new();
@@ -384,13 +414,14 @@ fn test_session_key_refresh_ed25519() {
     // Test that the refreshed session is still functional
     let receiver = Keypair::new();
     let dummy_ix = system_instruction::transfer(
-        &swig_key,
+        &swig_wallet_address,
         &receiver.pubkey(),
         1000000, // 0.001 SOL in lamports
     );
 
-    let sign_ix = SignInstruction::new_ed25519(
+    let sign_ix = SignV2Instruction::new_ed25519(
         swig_key,
+        swig_wallet_address,
         context.default_payer.pubkey(),
         session_key.pubkey(),
         dummy_ix,
@@ -421,7 +452,7 @@ fn test_session_key_refresh_ed25519() {
 }
 
 #[test_log::test]
-fn test_transfer_sol_with_session() {
+fn test_transfer_sol_with_session_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
 
@@ -436,11 +467,16 @@ fn test_transfer_sol_with_session() {
     let (swig_key, _) =
         create_swig_ed25519_session(&mut context, &swig_authority, id, 100, [0; 32]).unwrap();
 
-    // Airdrop funds to the swig account so it can transfer SOL
-    let initial_swig_balance = 50_000_000_000;
+    // Get swig_wallet_address for SignV2
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id())
+            .0;
+
+    // Airdrop funds to the swig_wallet_address so it can transfer SOL
+    let initial_swig_wallet_address_balance = 50_000_000_000;
     context
         .svm
-        .airdrop(&swig_key, initial_swig_balance)
+        .airdrop(&swig_wallet_address, initial_swig_wallet_address_balance)
         .unwrap();
 
     // Create a session key
@@ -490,12 +526,15 @@ fn test_transfer_sol_with_session() {
         .map(|acc| acc.lamports)
         .unwrap_or(0);
 
-    // Create a SOL transfer instruction from swig to receiver
-    let transfer_ix = system_instruction::transfer(&swig_key, &receiver.pubkey(), transfer_amount);
+    // Create a SOL transfer instruction from swig_wallet_address to receiver
+    // (SignV2)
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &receiver.pubkey(), transfer_amount);
 
-    // Create a sign instruction using the session key
-    let sign_ix = SignInstruction::new_ed25519(
+    // Create a sign instruction using the session key (SignV2)
+    let sign_ix = SignV2Instruction::new_ed25519(
         swig_key,
+        swig_wallet_address,
         context.default_payer.pubkey(),
         session_key.pubkey(),
         transfer_ix,
@@ -532,29 +571,27 @@ fn test_transfer_sol_with_session() {
         .map(|acc| acc.lamports)
         .unwrap_or(0);
 
-    let swig_account = context.svm.get_account(&swig_key).unwrap();
-    let swig_final_balance = swig_account.lamports;
+    let swig_wallet_address_account = context.svm.get_account(&swig_wallet_address).unwrap();
+    let swig_wallet_address_final_balance = swig_wallet_address_account.lamports;
 
     assert_eq!(
         receiver_final_balance,
         receiver_initial_balance + transfer_amount,
         "Receiver balance did not increase by the correct amount"
     );
-    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
 
-    // Calculate rent-exempt minimum for the account
-    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    // Calculate rent-exempt minimum for the swig_wallet_address account
     let rent = context.svm.get_sysvar::<Rent>();
-    let rent_exempt_minimum = rent.minimum_balance(swig_account.data.len());
+    let rent_exempt_minimum = rent.minimum_balance(swig_wallet_address_account.data.len());
     assert_eq!(
-        swig_final_balance - rent_exempt_minimum,
-        initial_swig_balance - transfer_amount,
-        "Swig balance did not decrease by the correct amount"
+        swig_wallet_address_final_balance - rent_exempt_minimum,
+        initial_swig_wallet_address_balance - transfer_amount,
+        "Swig wallet address balance did not decrease by the correct amount"
     );
 }
 
 #[test_log::test]
-fn test_secp256k1_session() {
+fn test_secp256k1_session_v2() {
     let mut context = setup_test_context().unwrap();
 
     // Generate a random Ethereum wallet
@@ -567,8 +604,17 @@ fn test_secp256k1_session() {
         create_swig_secp256k1_session(&mut context, &wallet, id, 100, [0; 32]).unwrap();
 
     println!("res: {:?}", res.logs);
-    // Airdrop funds to the swig account so it can transfer SOL
-    context.svm.airdrop(&swig_key, 50_000_000_000).unwrap();
+
+    // Get swig_wallet_address for SignV2
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id())
+            .0;
+
+    // Airdrop funds to the swig_wallet_address so it can transfer SOL
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 50_000_000_000)
+        .unwrap();
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
@@ -662,16 +708,18 @@ fn test_secp256k1_session() {
     // Create a receiver keypair
     let receiver = Keypair::new();
 
-    // Create a real SOL transfer instruction with swig_key as sender
+    // Create a real SOL transfer instruction with swig_wallet_address as sender
+    // (SignV2)
     let dummy_ix = system_instruction::transfer(
-        &swig_key,
+        &swig_wallet_address,
         &receiver.pubkey(),
         1000000, // 0.001 SOL in lamports
     );
 
-    // Create a sign instruction using the session key
-    let sign_ix = SignInstruction::new_ed25519(
+    // Create a sign instruction using the session key (SignV2)
+    let sign_ix = SignV2Instruction::new_ed25519(
         swig_key,
+        swig_wallet_address,
         context.default_payer.pubkey(),
         session_key.pubkey(),
         dummy_ix,
@@ -702,7 +750,7 @@ fn test_secp256k1_session() {
 }
 
 #[test_log::test]
-fn test_session_key_refresh_secp256k1() {
+fn test_session_key_refresh_secp256k1_v2() {
     let mut context = setup_test_context().unwrap();
 
     // Generate a random Ethereum wallet
@@ -713,8 +761,16 @@ fn test_session_key_refresh_secp256k1() {
     let (swig_key, _) =
         create_swig_secp256k1_session(&mut context, &wallet, id, 100, [0; 32]).unwrap();
 
-    // Airdrop funds to the swig account
-    context.svm.airdrop(&swig_key, 50_000_000_000).unwrap();
+    // Get swig_wallet_address for SignV2
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id())
+            .0;
+
+    // Airdrop funds to the swig_wallet_address
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 50_000_000_000)
+        .unwrap();
 
     // Create a session key
     let session_key = Keypair::new();
@@ -815,7 +871,7 @@ fn test_session_key_refresh_secp256k1() {
 }
 
 #[test_log::test]
-fn test_session_extension_before_expiration() {
+fn test_session_extension_before_expiration_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
 
@@ -830,7 +886,15 @@ fn test_session_extension_before_expiration() {
     let (swig_key, _) =
         create_swig_ed25519_session(&mut context, &swig_authority, id, 100, [0; 32]).unwrap();
 
-    context.svm.airdrop(&swig_key, 50_000_000_000).unwrap();
+    // Get swig_wallet_address for SignV2
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id())
+            .0;
+
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 50_000_000_000)
+        .unwrap();
 
     let session_key = Keypair::new();
 
@@ -912,10 +976,11 @@ fn test_session_extension_before_expiration() {
     context.svm.warp_to_slot(initial_slot + 15); // Past original expiration
 
     let receiver = Keypair::new();
-    let dummy_ix = system_instruction::transfer(&swig_key, &receiver.pubkey(), 1000000);
+    let dummy_ix = system_instruction::transfer(&swig_wallet_address, &receiver.pubkey(), 1000000);
 
-    let sign_ix = SignInstruction::new_ed25519(
+    let sign_ix = SignV2Instruction::new_ed25519(
         swig_key,
+        swig_wallet_address,
         context.default_payer.pubkey(),
         session_key.pubkey(),
         dummy_ix,
@@ -946,7 +1011,7 @@ fn test_session_extension_before_expiration() {
 }
 
 #[test_log::test]
-fn test_multiple_session_refreshes() {
+fn test_multiple_session_refreshes_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
 
@@ -958,7 +1023,16 @@ fn test_multiple_session_refreshes() {
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) =
         create_swig_ed25519_session(&mut context, &swig_authority, id, 100, [0; 32]).unwrap();
-    context.svm.airdrop(&swig_key, 50_000_000_000).unwrap();
+
+    // Get swig_wallet_address for SignV2
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id())
+            .0;
+
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 50_000_000_000)
+        .unwrap();
 
     let session_key = Keypair::new();
 
@@ -1018,10 +1092,11 @@ fn test_multiple_session_refreshes() {
 
     // Verify the session is still functional after all refreshes
     let receiver = Keypair::new();
-    let dummy_ix = system_instruction::transfer(&swig_key, &receiver.pubkey(), 1000000);
+    let dummy_ix = system_instruction::transfer(&swig_wallet_address, &receiver.pubkey(), 1000000);
 
-    let sign_ix = SignInstruction::new_ed25519(
+    let sign_ix = SignV2Instruction::new_ed25519(
         swig_key,
+        swig_wallet_address,
         context.default_payer.pubkey(),
         session_key.pubkey(),
         dummy_ix,

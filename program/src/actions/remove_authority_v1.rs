@@ -220,7 +220,6 @@ pub fn remove_authority_v1(
     let old_rent_lamports = rent.minimum_balance(data_len);
     let new_rent_lamports = rent.minimum_balance(new_size);
     let diff = old_rent_lamports - new_rent_lamports;
-    swig_builder.swig.reserved_lamports = new_rent_lamports;
     unsafe {
         *ctx.accounts.swig.borrow_mut_lamports_unchecked() = swig_lamports - diff;
         *ctx.accounts.payer.borrow_mut_lamports_unchecked() = ctx.accounts.payer.lamports() + diff;

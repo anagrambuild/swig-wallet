@@ -65,19 +65,37 @@ impl<'a> InstructionHolder<'a> {
             && unsafe { self.data.get_unchecked(0..4) == [2, 0, 0, 0] }
             && unsafe { self.accounts.get_unchecked(0).pubkey == swig_key }
         {
-            let amount = u64::from_le_bytes(
-                unsafe { self.data.get_unchecked(4..12) }
-                    .try_into()
-                    .map_err(|_| ProgramError::InvalidInstructionData)?,
-            );
-            unsafe {
-                let index = self.indexes.get_unchecked(0);
-                let index2 = self.indexes.get_unchecked(1);
-                let account1 = all_accounts.get_unchecked(*index);
-                let account2 = all_accounts.get_unchecked(*index2);
+            // Check if the "from" account (swig_key) is system-owned or program-owned
+            let from_account_index = unsafe { *self.indexes.get_unchecked(0) };
+            let from_account = unsafe { all_accounts.get_unchecked(from_account_index) };
 
-                *account1.borrow_mut_lamports_unchecked() -= amount;
-                *account2.borrow_mut_lamports_unchecked() += amount;
+            if from_account.owner() == &pinocchio_system::ID {
+                // For system-owned PDAs (new swig_wallet_address accounts),
+                // use proper CPI with signer seeds
+                unsafe {
+                    invoke_signed_unchecked(
+                        &self.borrow(),
+                        self.cpi_accounts.as_slice(),
+                        swig_signer,
+                    )
+                }
+            } else {
+                // For program-owned accounts (old swig accounts),
+                // use direct lamport manipulation for backwards compatibility
+                let amount = u64::from_le_bytes(
+                    unsafe { self.data.get_unchecked(4..12) }
+                        .try_into()
+                        .map_err(|_| ProgramError::InvalidInstructionData)?,
+                );
+                unsafe {
+                    let index = self.indexes.get_unchecked(0);
+                    let index2 = self.indexes.get_unchecked(1);
+                    let account1 = all_accounts.get_unchecked(*index);
+                    let account2 = all_accounts.get_unchecked(*index2);
+
+                    *account1.borrow_mut_lamports_unchecked() -= amount;
+                    *account2.borrow_mut_lamports_unchecked() += amount;
+                }
             }
         } else {
             unsafe {
