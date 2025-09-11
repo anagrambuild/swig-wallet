@@ -30,10 +30,6 @@ use crate::{
     },
 };
 
-/// Hardcoded admin pubkey that can perform migrations without ManageAuthority
-/// permission TODO: Replace with actual admin pubkey
-const MIGRATION_ADMIN: [u8; 32] = [0; 32]; // Use zeros for now, replace with actual admin pubkey
-
 /// Arguments for migrating a Swig account to wallet address feature.
 ///
 /// # Fields
@@ -165,36 +161,31 @@ pub fn migrate_to_wallet_address_v1(
 
     // Validate authority - either admin or has ManageAuthority permission
     let authority_pubkey = ctx.accounts.authority.key();
-    let is_admin = authority_pubkey == &MIGRATION_ADMIN;
 
-    if !is_admin {
-        // Check if authority has ManageAuthority permission
-        let swig_with_roles = SwigWithRoles::from_bytes(&swig_data)?;
-        let authority_data = authority_pubkey;
-        let role_id = swig_with_roles.lookup_role_id(authority_data)?;
+    // Check if authority has ManageAuthority permission
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_data)?;
+    let authority_data = authority_pubkey;
+    let role_id = swig_with_roles.lookup_role_id(authority_data)?;
 
-        match role_id {
-            Some(id) => {
-                let role = swig_with_roles
-                    .get_role(id)?
-                    .ok_or(SwigStateError::RoleNotFound)?;
+    match role_id {
+        Some(id) => {
+            let role = swig_with_roles
+                .get_role(id)?
+                .ok_or(SwigStateError::RoleNotFound)?;
 
-                // Check if this role has ManageAuthority action
-                let has_manage_authority =
-                    ActionLoader::find_action::<ManageAuthority>(role.actions)?.is_some();
-                if !has_manage_authority {
-                    msg!("Authority does not have ManageAuthority permission");
-                    // return Err(SwigError::InvalidAuthorityType.into());
-                }
-            },
-            None => {
-                msg!("Authority not found in wallet roles");
-                // return Err(SwigError::InvalidAuthorityNotFoundByRoleId.
-                // into());
-            },
-        }
-    } else {
-        msg!("Migration authorized by admin override");
+            // Check if this role has ManageAuthority action
+            let has_manage_authority =
+                ActionLoader::find_action::<ManageAuthority>(role.actions)?.is_some();
+            if !has_manage_authority {
+                msg!("Authority does not have ManageAuthority permission");
+                // return Err(SwigError::InvalidAuthorityType.into());
+            }
+        },
+        None => {
+            msg!("Authority not found in wallet roles");
+            // return Err(SwigError::InvalidAuthorityNotFoundByRoleId.
+            // into());
+        },
     }
 
     // Validate wallet address account
