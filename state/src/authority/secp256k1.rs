@@ -50,7 +50,7 @@ impl CreateSecp256k1SessionAuthority {
 }
 
 impl Transmutable for CreateSecp256k1SessionAuthority {
-    const LEN: usize = 64 + 32 + 8 + 8;
+    const LEN: usize = 64 + 32 + 8;
 }
 
 impl TransmutableMut for CreateSecp256k1SessionAuthority {}
