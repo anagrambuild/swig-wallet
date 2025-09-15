@@ -196,4 +196,22 @@ pub enum SwigInstruction {
     #[account(3, writable, name="sub_account", desc="the sub account")]
     #[account(4, name="system_program", desc="the system program")]
     SubAccountSignV2 = 13,
+
+    /// Transfers assets from the swig account to the swig wallet address.
+    ///
+    /// This instruction transfers all assets (SOL and SPL tokens) held by the
+    /// swig account to the swig wallet address account. This is useful after
+    /// migration where assets need to be moved from the old swig account to
+    /// the new wallet address structure.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account (source)
+    /// 2. `[writable]` Swig wallet address account (destination)
+    /// 3. `[writable, signer]` Payer account
+    /// 4. System program account
+    #[account(0, writable, name="swig", desc="the swig smart wallet (source)")]
+    #[account(1, writable, name="swig_wallet_address", desc="the swig wallet address (destination)")]
+    #[account(2, writable, signer, name="payer", desc="the payer")]
+    #[account(3, name="system_program", desc="the system program")]
+    TransferAssetsV1 = 14,
 }
