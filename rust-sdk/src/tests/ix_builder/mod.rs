@@ -46,6 +46,8 @@ use crate::{
 };
 
 pub mod authority_tests;
+pub mod destination_tests;
+pub mod program_all_tests;
 pub mod program_scope_tests;
 pub mod secp256r1_tests;
 pub mod session_tests;
