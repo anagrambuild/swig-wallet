@@ -561,11 +561,6 @@ pub fn update_authority_v1(
         ProgramError::InvalidInstructionData
     })?;
 
-    // Cannot update root authority (ID 0)
-    if update_authority_v1.args.authority_to_update_id == 0 {
-        return Err(SwigAuthenticateError::PermissionDeniedCannotUpdateRootAuthority.into());
-    }
-
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let swig_data_len = swig_account_data.len();
 

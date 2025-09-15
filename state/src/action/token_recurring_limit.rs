@@ -48,7 +48,8 @@ impl TokenRecurringLimit {
     pub fn run(&mut self, amount: u64, current_slot: u64) -> Result<(), ProgramError> {
         if current_slot.saturating_sub(self.last_reset) > self.window && amount <= self.limit {
             self.current = self.limit;
-            self.last_reset = current_slot;
+            // reset the last reset to the start of the current window
+            self.last_reset = (current_slot / self.window) * self.window;
         }
         if amount > self.current {
             return Err(ProgramError::InsufficientFunds);
