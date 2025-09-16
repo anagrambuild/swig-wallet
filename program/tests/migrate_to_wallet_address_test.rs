@@ -230,7 +230,10 @@ fn test_migrate_swig_to_wallet_address_basic() {
         .expect("Failed to parse new Swig structure");
 
     // Verify the new structure
-    assert_eq!(new_swig.discriminator, Discriminator::SwigConfigAccount as u8);
+    assert_eq!(
+        new_swig.discriminator,
+        Discriminator::SwigConfigAccount as u8
+    );
     assert_eq!(new_swig.bump, old_swig.bump);
     assert_eq!(new_swig.id, old_swig.id);
     assert_eq!(new_swig.roles, old_swig.roles);
