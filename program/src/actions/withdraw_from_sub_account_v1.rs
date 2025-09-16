@@ -112,7 +112,8 @@ pub fn withdraw_from_sub_account_v1(
     account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
     msg!("withdraw_from_sub_account_v1 called");
-    // Verify that the swig account is owned by our program and sub_account is system owned
+    // Verify that the swig account is owned by our program and sub_account is
+    // system owned
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     msg!("swig ownership check passed");
     check_system_owner(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
@@ -128,7 +129,8 @@ pub fn withdraw_from_sub_account_v1(
     let swig = unsafe { Swig::load_unchecked(&swig_header)? };
 
     let swig_wallet_address_seeds = swig_wallet_address_seeds(ctx.accounts.swig.key().as_ref());
-    // Validate that the swig wallet address is the correct PDA derived from the swig account
+    // Validate that the swig wallet address is the correct PDA derived from the
+    // swig account
     let (expected_swig_wallet_address, _swig_wallet_bump) =
         pinocchio::pubkey::find_program_address(&swig_wallet_address_seeds, &crate::ID);
     if expected_swig_wallet_address != *ctx.accounts.swig_wallet_address.key() {
@@ -141,7 +143,8 @@ pub fn withdraw_from_sub_account_v1(
     if unsafe { *swig_header.get_unchecked(0) } != Discriminator::SwigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
-    // We'll get sub-account metadata from the SubAccount action later after authentication
+    // We'll get sub-account metadata from the SubAccount action later after
+    // authentication
     let role_opt = Swig::get_mut_role(withdraw.args.role_id, swig_roles)?;
     if role_opt.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
@@ -212,10 +215,14 @@ pub fn withdraw_from_sub_account_v1(
             permission_type
         );
 
-        // For All permission, allow withdrawal from any sub-account (no validation needed)
-        // For ManageAuthority permission, restrict to sub-accounts created by the withdrawing role
+        // For All permission, allow withdrawal from any sub-account (no validation
+        // needed) For ManageAuthority permission, restrict to sub-accounts
+        // created by the withdrawing role
         if manage_authority_action.is_some() {
-            msg!("ManageAuthority permission - validating sub-account was created by withdrawing role");
+            msg!(
+                "ManageAuthority permission - validating sub-account was created by withdrawing \
+                 role"
+            );
 
             let role_id_bytes = withdraw.args.role_id.to_le_bytes();
             let sub_account_seeds = swig_state::swig::sub_account_seeds(&swig.id, &role_id_bytes);
@@ -223,11 +230,17 @@ pub fn withdraw_from_sub_account_v1(
                 pinocchio::pubkey::find_program_address(&sub_account_seeds, &crate::ID);
 
             if expected_sub_account != *ctx.accounts.sub_account.key() {
-                msg!("Sub-account was not created by the withdrawing role. ManageAuthority can only withdraw from sub-accounts created by the same role.");
+                msg!(
+                    "Sub-account was not created by the withdrawing role. ManageAuthority can \
+                     only withdraw from sub-accounts created by the same role."
+                );
                 return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
             }
 
-            msg!("ManageAuthority permission validated - sub-account was created by withdrawing role");
+            msg!(
+                "ManageAuthority permission validated - sub-account was created by withdrawing \
+                 role"
+            );
         } else {
             msg!("All permission - allowing withdrawal from any sub-account");
         }
@@ -246,12 +259,14 @@ pub fn withdraw_from_sub_account_v1(
 
     // For signing, we need the correct role_id and bump
     // If we have a SubAccount action, use its metadata
-    // If we have All/ManageAuthority permission, we need to find which role created this sub-account
+    // If we have All/ManageAuthority permission, we need to find which role created
+    // this sub-account
     let (signing_role_id, signing_bump) = if let Some(action) = sub_account_action {
         (action.role_id, action.bump)
     } else {
-        // For All/ManageAuthority cases without SubAccount action, we need to find the role that created this sub-account
-        // We'll try different role IDs to see which one matches the given sub-account address
+        // For All/ManageAuthority cases without SubAccount action, we need to find the
+        // role that created this sub-account We'll try different role IDs to
+        // see which one matches the given sub-account address
         let mut found_role_id = None;
         let mut found_bump = None;
 

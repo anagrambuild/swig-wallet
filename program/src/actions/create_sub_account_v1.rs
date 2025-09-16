@@ -197,7 +197,8 @@ pub fn create_sub_account_v1(
     if !has_all_permission && !has_sub_account_permission {
         return Err(SwigError::AuthorityCannotCreateSubAccount.into());
     }
-    // Derive the sub-account address using the authority index as seed (keeping PDA for deterministic addressing)
+    // Derive the sub-account address using the authority index as seed (keeping PDA
+    // for deterministic addressing)
     let role_id_bytes = create_sub_account.args.role_id.to_le_bytes();
     let bump_byte = [create_sub_account.args.sub_account_bump];
     let sub_account_seeds = sub_account_seeds_with_bump(&swig.id, &role_id_bytes, &bump_byte);
@@ -217,11 +218,12 @@ pub fn create_sub_account_v1(
         unsafe { *ctx.accounts.sub_account.borrow_lamports_unchecked() };
 
     // Only transfer if the account needs more lamports for rent exemption
-    let sub_account_lamports_to_transfer = if current_sub_account_lamports >= sub_account_rent_exemption {
-        0
-    } else {
-        sub_account_rent_exemption - current_sub_account_lamports
-    };
+    let sub_account_lamports_to_transfer =
+        if current_sub_account_lamports >= sub_account_rent_exemption {
+            0
+        } else {
+            sub_account_rent_exemption - current_sub_account_lamports
+        };
 
     if sub_account_lamports_to_transfer > 0 {
         // Use CPI to system program for clean lamport transfer
@@ -232,11 +234,13 @@ pub fn create_sub_account_v1(
         }
         .invoke()?;
     }
-    
+
     // Update the SubAccount action to store all sub-account metadata
     if let Some(sub_account_action_mut) = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?
     {
-        sub_account_action_mut.sub_account.copy_from_slice(ctx.accounts.sub_account.key().as_ref());
+        sub_account_action_mut
+            .sub_account
+            .copy_from_slice(ctx.accounts.sub_account.key().as_ref());
         sub_account_action_mut.bump = create_sub_account.args.sub_account_bump;
         sub_account_action_mut.enabled = true; // Default to enabled
         sub_account_action_mut.role_id = create_sub_account.args.role_id;

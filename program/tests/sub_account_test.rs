@@ -124,11 +124,13 @@ fn test_create_sub_account() {
     let sub_account =
         create_sub_account(&mut context, &swig_key, &sub_account_authority, role_id, id).unwrap();
 
-    // Verify the sub-account was created as a system program owned account (not program owned)
+    // Verify the sub-account was created as a system program owned account (not
+    // program owned)
     let sub_account_data = context.svm.get_account(&sub_account).unwrap();
     assert_eq!(sub_account_data.owner, solana_sdk::system_program::id());
 
-    // Verify the sub-account data is now stored in the SubAccount action instead of the account
+    // Verify the sub-account data is now stored in the SubAccount action instead of
+    // the account
     let swig_account_data = context.svm.get_account(&swig_key).unwrap();
     let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data.data).unwrap();
     let role = swig_with_roles.get_role(role_id).unwrap().unwrap();
@@ -332,7 +334,8 @@ fn test_toggle_sub_account() {
     let initial_balance = 5_000_000_000;
     context.svm.airdrop(&sub_account, initial_balance).unwrap();
 
-    // Disable the sub-account using the sub-account authority (which owns the SubAccount action)
+    // Disable the sub-account using the sub-account authority (which owns the
+    // SubAccount action)
     let disable_result = toggle_sub_account(
         &mut context,
         &swig_key,

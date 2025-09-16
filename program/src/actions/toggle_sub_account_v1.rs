@@ -174,7 +174,8 @@ pub fn toggle_sub_account_v1(
         )?;
     }
 
-    // Get mutable reference to the SubAccount action to check permissions and update state
+    // Get mutable reference to the SubAccount action to check permissions and
+    // update state
     let sub_account_action_mut = RoleMut::get_action_mut::<SubAccount>(
         role.actions,
         ctx.accounts.sub_account.key().as_ref(),
@@ -200,7 +201,8 @@ pub fn toggle_sub_account_v1(
         if !has_all_permission {
             return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
         }
-        // If has All permission but no SubAccount action, this is an error for toggle operation
+        // If has All permission but no SubAccount action, this is an error for toggle
+        // operation
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
 

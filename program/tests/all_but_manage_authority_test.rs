@@ -1154,7 +1154,10 @@ fn test_all_but_manage_authority_cannot_toggle_sub_account() {
     // Verify the sub-account is initially enabled by checking the SubAccount action
     let swig_account_data = context.svm.get_account(&swig).unwrap();
     let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data.data).unwrap();
-    let role = swig_with_roles.get_role(sub_account_role_id).unwrap().unwrap();
+    let role = swig_with_roles
+        .get_role(sub_account_role_id)
+        .unwrap()
+        .unwrap();
 
     // Find the SubAccount action and verify it's enabled
     let mut cursor = 0;
@@ -1228,7 +1231,10 @@ fn test_all_but_manage_authority_cannot_toggle_sub_account() {
     // Verify the sub-account is still enabled (no change occurred)
     let swig_account_data_after = context.svm.get_account(&swig).unwrap();
     let swig_with_roles_after = SwigWithRoles::from_bytes(&swig_account_data_after.data).unwrap();
-    let role_after = swig_with_roles_after.get_role(sub_account_role_id).unwrap().unwrap();
+    let role_after = swig_with_roles_after
+        .get_role(sub_account_role_id)
+        .unwrap()
+        .unwrap();
 
     // Find the SubAccount action and verify it's still enabled
     let mut cursor = 0;
@@ -1236,7 +1242,8 @@ fn test_all_but_manage_authority_cannot_toggle_sub_account() {
 
     for _i in 0..role_after.position.num_actions() {
         let action_header =
-            unsafe { Action::load_unchecked(&role_after.actions[cursor..cursor + Action::LEN]) }.unwrap();
+            unsafe { Action::load_unchecked(&role_after.actions[cursor..cursor + Action::LEN]) }
+                .unwrap();
         cursor += Action::LEN;
 
         if action_header.permission().unwrap() == Permission::SubAccount {

@@ -34,7 +34,8 @@ pub struct SubAccount {
 
 impl Transmutable for SubAccount {
     /// Size of the SubAccount struct in bytes
-    /// 32 (sub_account) + 1 (bump) + 1 (enabled) + 2 (padding) + 4 (role_id) + 32 (swig_id) = 72
+    /// 32 (sub_account) + 1 (bump) + 1 (enabled) + 2 (padding) + 4 (role_id) +
+    /// 32 (swig_id) = 72
     const LEN: usize = 72;
 }
 
@@ -50,7 +51,8 @@ impl SubAccount {
     /// Creates a new SubAccount action with default values.
     ///
     /// # Arguments
-    /// * `sub_account` - The sub-account's public key (32 bytes, initially zeroed)
+    /// * `sub_account` - The sub-account's public key (32 bytes, initially
+    ///   zeroed)
     ///
     /// # Returns
     /// A new SubAccount instance with default values
@@ -65,7 +67,8 @@ impl SubAccount {
         }
     }
 
-    /// Creates a new SubAccount action for initial creation (with zeroed sub_account).
+    /// Creates a new SubAccount action for initial creation (with zeroed
+    /// sub_account).
     ///
     /// # Returns
     /// A new SubAccount instance suitable for role creation
@@ -106,13 +109,15 @@ impl<'a> Actionable<'a> for SubAccount {
         }
     }
 
-    /// Validates that the data has the correct length and the sub_account field is zeroed.
+    /// Validates that the data has the correct length and the sub_account field
+    /// is zeroed.
     ///
     /// # Arguments
     /// * `data` - The data to validate
     ///
     /// # Returns
-    /// * `Ok(true)` - If the data is valid (correct size, sub_account field zeroed)
+    /// * `Ok(true)` - If the data is valid (correct size, sub_account field
+    ///   zeroed)
     /// * `Ok(false)` - If the data is invalid
     fn valid_layout(data: &'a [u8]) -> Result<bool, ProgramError> {
         if data.len() == Self::LEN {
@@ -133,7 +138,7 @@ mod tests {
         // Test that the SubAccount struct has the correct size (72 bytes)
         assert_eq!(SubAccount::LEN, 72);
         assert_eq!(core::mem::size_of::<SubAccount>(), 72);
-        
+
         // Test that new() works correctly
         let sub_account = SubAccount::new([1u8; 32]);
         assert_eq!(sub_account.sub_account, [1u8; 32]);
@@ -141,7 +146,7 @@ mod tests {
         assert_eq!(sub_account.enabled, false);
         assert_eq!(sub_account.role_id, 0);
         assert_eq!(sub_account.swig_id, [0u8; 32]);
-        
+
         // Test that new_for_creation() works correctly
         let sub_account = SubAccount::new_for_creation();
         assert_eq!(sub_account.sub_account, [0u8; 32]);
@@ -149,44 +154,45 @@ mod tests {
         assert_eq!(sub_account.enabled, false);
         assert_eq!(sub_account.role_id, 0);
         assert_eq!(sub_account.swig_id, [0u8; 32]);
-        
+
         // Test serialization
         let bytes = sub_account.into_bytes().unwrap();
         assert_eq!(bytes.len(), 72);
     }
-    
+
     #[test]
     fn test_sub_account_no_reserved_lamports() {
         // Verify that the old reserved_lamports field is no longer part of the struct
         let sub_account = SubAccount::new_for_creation();
         let bytes = sub_account.into_bytes().unwrap();
-        
+
         // The struct should be 72 bytes, not the old 80 bytes
         assert_eq!(bytes.len(), 72);
-        
+
         // Verify struct layout:
-        // 32 (sub_account) + 1 (bump) + 1 (enabled) + 2 (padding) + 4 (role_id) + 32 (swig_id) = 72
+        // 32 (sub_account) + 1 (bump) + 1 (enabled) + 2 (padding) + 4 (role_id) + 32
+        // (swig_id) = 72
         let expected_size = 32 + 1 + 1 + 2 + 4 + 32;
         assert_eq!(expected_size, 72);
         assert_eq!(SubAccount::LEN, expected_size);
     }
-    
+
     #[test]
     fn test_sub_account_valid_layout() {
         // Test the valid_layout function with correct size
         let sub_account = SubAccount::new_for_creation();
         let bytes = sub_account.into_bytes().unwrap();
-        
+
         // Should return true for correct size with zeroed sub_account
         assert!(SubAccount::valid_layout(bytes).unwrap());
-        
+
         // Should return false for incorrect size
         let too_short = &bytes[..71];
         assert!(!SubAccount::valid_layout(too_short).unwrap());
-        
+
         let too_long = &[bytes, &[0u8; 1]].concat();
         assert!(!SubAccount::valid_layout(&too_long).unwrap());
-        
+
         // Should return false for non-zeroed sub_account field
         let mut non_zero_data = bytes.to_vec();
         non_zero_data[0] = 1; // Make first byte of sub_account non-zero

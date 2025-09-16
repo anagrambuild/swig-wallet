@@ -1,9 +1,9 @@
 /// Module for transferring assets from swig account to swig wallet address.
 ///
-/// This module implements functionality to transfer all assets (SOL and SPL tokens)
-/// held by the swig account to the swig wallet address account. This is particularly
-/// useful after migration where assets need to be moved from the old swig account
-/// to the new wallet address structure.
+/// This module implements functionality to transfer all assets (SOL and SPL
+/// tokens) held by the swig account to the swig wallet address account. This is
+/// particularly useful after migration where assets need to be moved from the
+/// old swig account to the new wallet address structure.
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
@@ -39,7 +39,8 @@ use crate::{
 /// # Fields
 /// * `discriminator` - The instruction type identifier
 /// * `_padding` - Padding bytes for alignment
-/// * `role_id` - ID of the role performing the transfer (must have All permissions)
+/// * `role_id` - ID of the role performing the transfer (must have All
+///   permissions)
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct TransferAssetsV1Args {
@@ -127,7 +128,7 @@ pub fn transfer_assets_v1(
 ) -> ProgramResult {
     // Verify the swig account is owned by this program
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
-    
+
     let transfer_ix = TransferAssetsV1::from_instruction_bytes(data)?;
 
     // Load and validate swig account
@@ -147,10 +148,7 @@ pub fn transfer_assets_v1(
 
     // Verify swig wallet address derivation using PDA check
     check_self_pda(
-        &swig_wallet_address_seeds_with_bump(
-            ctx.accounts.swig.key().as_ref(),
-            &[swig.wallet_bump],
-        ),
+        &swig_wallet_address_seeds_with_bump(ctx.accounts.swig.key().as_ref(), &[swig.wallet_bump]),
         ctx.accounts.swig_wallet_address.key(),
         SwigError::InvalidSeedSwigAccount,
     )?;
@@ -165,7 +163,7 @@ pub fn transfer_assets_v1(
 
     // Authenticate the authority
     let current_slot = Clock::get()?.slot;
-    
+
     if role.authority.session_based() {
         role.authority.authenticate_session(
             accounts,
@@ -200,20 +198,25 @@ pub fn transfer_assets_v1(
 
     if swig_lamports > min_rent {
         let transfer_amount = swig_lamports - min_rent;
-        
-        msg!("Transferring {} lamports from swig to wallet address", transfer_amount);
-        
+
+        msg!(
+            "Transferring {} lamports from swig to wallet address",
+            transfer_amount
+        );
+
         // Transfer SOL by directly manipulating lamports
         unsafe {
             *ctx.accounts.swig.borrow_mut_lamports_unchecked() -= transfer_amount;
-            *ctx.accounts.swig_wallet_address.borrow_mut_lamports_unchecked() += transfer_amount;
+            *ctx.accounts
+                .swig_wallet_address
+                .borrow_mut_lamports_unchecked() += transfer_amount;
         }
     }
 
     // Transfer SPL tokens
     // We need to iterate through the remaining accounts to find token accounts
     let base_account_count = 4; // swig, swig_wallet_address, payer, system_program
-    
+
     if accounts.len() > base_account_count {
         for i in (base_account_count..accounts.len()).step_by(3) {
             // Each token transfer requires 3 accounts: source, destination, token_program
@@ -235,7 +238,7 @@ pub fn transfer_assets_v1(
             if source_data.len() < 72 {
                 continue;
             }
-            
+
             let owner_bytes = &source_data[32..64];
             if unsafe { sol_memcmp(owner_bytes, ctx.accounts.swig.key().as_ref(), 32) } != 0 {
                 continue;
@@ -245,15 +248,25 @@ pub fn transfer_assets_v1(
             let amount_bytes = &source_data[64..72];
             let amount = unsafe {
                 u64::from_le_bytes([
-                    amount_bytes[0], amount_bytes[1], amount_bytes[2], amount_bytes[3],
-                    amount_bytes[4], amount_bytes[5], amount_bytes[6], amount_bytes[7],
+                    amount_bytes[0],
+                    amount_bytes[1],
+                    amount_bytes[2],
+                    amount_bytes[3],
+                    amount_bytes[4],
+                    amount_bytes[5],
+                    amount_bytes[6],
+                    amount_bytes[7],
                 ])
             };
 
             if amount > 0 {
                 drop(source_data); // Release borrow
 
-                msg!("Transferring {} tokens from swig token account to wallet address token account", amount);
+                msg!(
+                    "Transferring {} tokens from swig token account to wallet address token \
+                     account",
+                    amount
+                );
 
                 // Transfer tokens using CPI
                 let token_transfer = TokenTransfer {
