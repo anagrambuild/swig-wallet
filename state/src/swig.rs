@@ -98,35 +98,35 @@ pub fn sub_account_signer<'a>(
 }
 
 /// Represents a Swig sub-account with its associated metadata.
-#[repr(C, align(8))]
-#[derive(Debug, PartialEq, NoPadding)]
-pub struct SwigSubAccount {
-    /// Account type discriminator
-    pub discriminator: u8,
-    /// PDA bump seed
-    pub bump: u8,
-    /// Whether the sub-account is enabled
-    pub enabled: bool,
-    _padding: [u8; 1],
-    /// ID of the role associated with this sub-account
-    pub role_id: u32,
-    /// ID of the parent Swig account
-    pub swig_id: [u8; 32],
-    /// Amount of lamports reserved for rent
-    pub reserved_lamports: u64,
-}
+// #[repr(C, align(8))]
+// #[derive(Debug, PartialEq, NoPadding)]
+// pub struct SwigSubAccount {
+//     /// Account type discriminator
+//     pub discriminator: u8,
+//     /// PDA bump seed
+//     pub bump: u8,
+//     /// Whether the sub-account is enabled
+//     pub enabled: bool,
+//     _padding: [u8; 1],
+//     /// ID of the role associated with this sub-account
+//     pub role_id: u32,
+//     /// ID of the parent Swig account
+//     pub swig_id: [u8; 32],
+//     /// Amount of lamports reserved for rent
+//     pub reserved_lamports: u64,
+// }
 
-impl Transmutable for SwigSubAccount {
-    const LEN: usize = core::mem::size_of::<Self>();
-}
+// impl Transmutable for SwigSubAccount {
+//     const LEN: usize = core::mem::size_of::<Self>();
+// }
 
-impl TransmutableMut for SwigSubAccount {}
+// impl TransmutableMut for SwigSubAccount {}
 
-impl IntoBytes for SwigSubAccount {
-    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
-        Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
-    }
-}
+// impl IntoBytes for SwigSubAccount {
+//     fn into_bytes(&self) -> Result<&[u8], ProgramError> {
+//         Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
+//     }
+// }
 
 /// Builder for constructing and modifying Swig accounts.
 pub struct SwigBuilder<'a> {

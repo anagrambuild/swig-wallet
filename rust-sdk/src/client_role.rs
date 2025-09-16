@@ -157,18 +157,6 @@ pub trait ClientRole {
         instructions: Vec<Instruction>,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError>;
-
-    /// Creates a SubAccountSignV2 instruction for the given inner instructions
-    fn sub_account_sign_v2_instruction(
-        &self,
-        swig_account: Pubkey,
-        swig_wallet_address: Pubkey,
-        sub_account: Pubkey,
-        payer: Pubkey,
-        role_id: u32,
-        instructions: Vec<Instruction>,
-        current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError>;
 }
 
 /// Ed25519 authority implementation
@@ -455,29 +443,6 @@ impl ClientRole for Ed25519ClientRole {
             signed_instructions.push(swig_signed_instruction);
         }
         Ok(signed_instructions)
-    }
-
-    fn sub_account_sign_v2_instruction(
-        &self,
-        swig_account: Pubkey,
-        swig_wallet_address: Pubkey,
-        sub_account: Pubkey,
-        payer: Pubkey,
-        role_id: u32,
-        instructions: Vec<Instruction>,
-        _current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError> {
-        Ok(vec![
-            SubAccountSignV2Instruction::new_with_ed25519_authority(
-                swig_account,
-                swig_wallet_address,
-                sub_account,
-                self.authority,
-                payer,
-                role_id,
-                instructions,
-            )?,
-        ])
     }
 }
 
@@ -841,32 +806,6 @@ impl ClientRole for Secp256k1ClientRole {
             signed_instructions.push(swig_signed_instruction);
         }
         Ok(signed_instructions)
-    }
-
-    fn sub_account_sign_v2_instruction(
-        &self,
-        swig_account: Pubkey,
-        swig_wallet_address: Pubkey,
-        sub_account: Pubkey,
-        payer: Pubkey,
-        role_id: u32,
-        instructions: Vec<Instruction>,
-        current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError> {
-        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
-
-        Ok(vec![
-            SubAccountSignV2Instruction::new_with_secp256k1_authority(
-                swig_account,
-                swig_wallet_address,
-                sub_account,
-                payer,
-                &self.signing_fn,
-                current_slot,
-                role_id,
-                instructions,
-            )?,
-        ])
     }
 }
 
@@ -1238,35 +1177,6 @@ impl ClientRole for Secp256r1ClientRole {
         }
         Ok(signed_instructions)
     }
-
-    fn sub_account_sign_v2_instruction(
-        &self,
-        swig_account: Pubkey,
-        swig_wallet_address: Pubkey,
-        sub_account: Pubkey,
-        payer: Pubkey,
-        role_id: u32,
-        instructions: Vec<Instruction>,
-        current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError> {
-        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
-        let new_odometer = self.odometer.wrapping_add(1);
-
-        let swig_instructions = SubAccountSignV2Instruction::new_with_secp256r1_authority(
-            swig_account,
-            swig_wallet_address,
-            sub_account,
-            payer,
-            &self.signing_fn,
-            current_slot,
-            new_odometer,
-            role_id,
-            instructions,
-            &self.authority,
-        )?;
-
-        Ok(swig_instructions)
-    }
 }
 
 /// Ed25519 Session authority implementation
@@ -1496,19 +1406,6 @@ impl ClientRole for Ed25519SessionClientRole {
             signed_instructions.push(swig_signed_instruction);
         }
         Ok(signed_instructions)
-    }
-
-    fn sub_account_sign_v2_instruction(
-        &self,
-        _swig_account: Pubkey,
-        _swig_wallet_address: Pubkey,
-        _sub_account: Pubkey,
-        _payer: Pubkey,
-        _role_id: u32,
-        _instructions: Vec<Instruction>,
-        _current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError> {
-        todo!("Session authorities don't support sub-account v2 signing")
     }
 }
 
@@ -1786,19 +1683,6 @@ impl ClientRole for Secp256k1SessionClientRole {
             signed_instructions.push(swig_signed_instruction);
         }
         Ok(signed_instructions)
-    }
-
-    fn sub_account_sign_v2_instruction(
-        &self,
-        _swig_account: Pubkey,
-        _swig_wallet_address: Pubkey,
-        _sub_account: Pubkey,
-        _payer: Pubkey,
-        _role_id: u32,
-        _instructions: Vec<Instruction>,
-        _current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError> {
-        todo!("Session authorities don't support sub-account v2 signing")
     }
 }
 
@@ -2079,18 +1963,5 @@ impl ClientRole for Secp256r1SessionClientRole {
             signed_instructions.extend(swig_signed_instructions);
         }
         Ok(signed_instructions)
-    }
-
-    fn sub_account_sign_v2_instruction(
-        &self,
-        _swig_account: Pubkey,
-        _swig_wallet_address: Pubkey,
-        _sub_account: Pubkey,
-        _payer: Pubkey,
-        _role_id: u32,
-        _instructions: Vec<Instruction>,
-        _current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError> {
-        todo!("Session authorities don't support sub-account v2 signing")
     }
 }

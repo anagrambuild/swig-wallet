@@ -449,8 +449,7 @@ pub fn sign_v2(
 
                     let current_lamports = account_info.lamports();
                     let mut matched = false;
-                    // Note: We removed reserved_lamports field tracking, so we just ensure
-                    // the account has some minimum balance for rent exemption
+                    // Ensure the account has some minimum balance for rent exemption
                     let account_data = unsafe { account_info.borrow_data_unchecked() };
                     let rent_exempt_minimum =
                         pinocchio::sysvars::rent::Rent::get()?.minimum_balance(account_data.len());

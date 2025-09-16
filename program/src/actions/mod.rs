@@ -14,7 +14,6 @@ pub mod remove_authority_v1;
 pub mod sign_v1;
 pub mod sign_v2;
 pub mod sub_account_sign_v1;
-pub mod sub_account_sign_v2;
 pub mod toggle_sub_account_v1;
 pub mod transfer_assets_v1;
 pub mod update_authority_v1;
@@ -26,17 +25,16 @@ use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, Pro
 use self::{
     add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*, create_v1::*,
     migrate_to_wallet_address_v1::*, remove_authority_v1::*, sign_v1::*, sign_v2::*,
-    sub_account_sign_v1::*, sub_account_sign_v2::*, toggle_sub_account_v1::*,
-    transfer_assets_v1::*, update_authority_v1::*, withdraw_from_sub_account_v1::*,
+    sub_account_sign_v1::*, toggle_sub_account_v1::*, transfer_assets_v1::*,
+    update_authority_v1::*, withdraw_from_sub_account_v1::*,
 };
 use crate::{
     instruction::{
         accounts::{
             AddAuthorityV1Accounts, CreateSessionV1Accounts, CreateSubAccountV1Accounts,
             CreateV1Accounts, MigrateToWalletAddressV1Accounts, RemoveAuthorityV1Accounts,
-            SignV1Accounts, SignV2Accounts, SubAccountSignV1Accounts, SubAccountSignV2Accounts,
-            ToggleSubAccountV1Accounts, TransferAssetsV1Accounts, UpdateAuthorityV1Accounts,
-            WithdrawFromSubAccountV1Accounts,
+            SignV1Accounts, SignV2Accounts, SubAccountSignV1Accounts, ToggleSubAccountV1Accounts,
+            TransferAssetsV1Accounts, UpdateAuthorityV1Accounts, WithdrawFromSubAccountV1Accounts,
         },
         SwigInstruction,
     },
@@ -81,9 +79,6 @@ pub fn process_action(
         },
         SwigInstruction::SubAccountSignV1 => {
             process_sub_account_sign_v1(accounts, account_classification, data)
-        },
-        SwigInstruction::SubAccountSignV2 => {
-            process_sub_account_sign_v2(accounts, account_classification, data)
         },
         SwigInstruction::ToggleSubAccountV1 => process_toggle_sub_account_v1(accounts, data),
         SwigInstruction::MigrateToWalletAddressV1 => {
@@ -193,19 +188,6 @@ fn process_sub_account_sign_v1(
     let account_ctx = SubAccountSignV1Accounts::context(accounts)?;
     sub_account_sign_v1(account_ctx, accounts, data, account_classification)
 }
-
-/// Processes a SubAccountSignV2 instruction.
-///
-/// Signs and executes a transaction from a sub-account using V2 architecture.
-fn process_sub_account_sign_v2(
-    accounts: &[AccountInfo],
-    account_classification: &[AccountClassification],
-    data: &[u8],
-) -> ProgramResult {
-    let account_ctx = SubAccountSignV2Accounts::context(accounts)?;
-    sub_account_sign_v2(account_ctx, accounts, data, account_classification)
-}
-
 /// Processes a ToggleSubAccountV1 instruction.
 ///
 /// Enables or disables a sub-account.

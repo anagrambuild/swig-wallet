@@ -176,7 +176,8 @@ pub fn sub_account_sign_v1(
     }
 
     // Find the SubAccount action to get sub-account metadata (after authentication)
-    let sub_account_action = role.get_action::<SubAccount>(ctx.accounts.sub_account.key().as_ref())?;
+    let sub_account_action =
+        role.get_action::<SubAccount>(ctx.accounts.sub_account.key().as_ref())?;
     if sub_account_action.is_none() {
         return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
     }
@@ -238,8 +239,7 @@ pub fn sub_account_sign_v1(
     }
 
     // Check that the sub-account maintains sufficient lamports for rent exemption
-    // Note: We removed reserved_lamports field tracking, so we just ensure
-    // the account has some minimum balance for rent exemption
+    // Ensure the account has some minimum balance for rent exemption
     let account_data = unsafe { ctx.accounts.sub_account.borrow_data_unchecked() };
     let rent_exempt_minimum =
         pinocchio::sysvars::rent::Rent::get()?.minimum_balance(account_data.len());
