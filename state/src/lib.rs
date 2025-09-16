@@ -16,16 +16,12 @@ pub mod util;
 #[repr(u8)]
 pub enum Discriminator {
     SwigAccount = 1,
-    SwigSubAccount,
-    SwigWalletAddress,
 }
 
 impl From<u8> for Discriminator {
     fn from(discriminator: u8) -> Self {
         match discriminator {
             1 => Discriminator::SwigAccount,
-            2 => Discriminator::SwigSubAccount,
-            3 => Discriminator::SwigWalletAddress,
             _ => panic!("Invalid discriminator"),
         }
     }
