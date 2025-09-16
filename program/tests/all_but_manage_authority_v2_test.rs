@@ -39,10 +39,7 @@ use swig_state::{
         token_recurring_limit::TokenRecurringLimit,
     },
     authority::AuthorityType,
-    swig::{
-        sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, SwigSubAccount,
-        SwigWithRoles,
-    },
+    swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
     Transmutable,
 };
 
