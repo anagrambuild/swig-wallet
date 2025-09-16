@@ -144,7 +144,7 @@ pub fn migrate_to_wallet_address_v1(
     }
 
     let discriminator = swig_data[0];
-    if discriminator != Discriminator::SwigAccount as u8 {
+    if discriminator != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 

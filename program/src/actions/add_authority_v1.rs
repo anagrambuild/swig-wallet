@@ -172,7 +172,7 @@ pub fn add_authority_v1(
     let swig_data_len = swig_account_data.len();
     let new_authority_type = AuthorityType::try_from(add_authority_v1.args.new_authority_type)?;
     {
-        if swig_account_data[0] != Discriminator::SwigAccount as u8 {
+        if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
         let (swig_header, swig_roles) =

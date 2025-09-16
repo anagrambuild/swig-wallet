@@ -138,7 +138,7 @@ pub fn toggle_sub_account_v1(
 
     // Verify the swig account data
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigAccount as u8 {
+    if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 

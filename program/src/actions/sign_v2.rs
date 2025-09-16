@@ -182,7 +182,7 @@ pub fn sign_v2(
     // check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     let sign_v2 = SignV2::from_instruction_bytes(data)?;
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigAccount as u8 {
+    if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };

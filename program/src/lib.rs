@@ -152,7 +152,8 @@ unsafe fn execute(
         let first_account = accounts[0].assume_init_ref();
         if first_account.owner() == &crate::ID {
             let data = first_account.borrow_data_unchecked();
-            if data.len() >= Swig::LEN && *data.get_unchecked(0) == Discriminator::SwigAccount as u8
+            if data.len() >= Swig::LEN
+                && *data.get_unchecked(0) == Discriminator::SwigConfigAccount as u8
             {
                 ProgramScopeCache::load_from_swig(data)
             } else {
@@ -244,10 +245,12 @@ unsafe fn classify_account(
             let data = account.borrow_data_unchecked();
             let first_byte = unsafe { *data.get_unchecked(0) }.into();
             match first_byte {
-                Discriminator::SwigAccount if index == 0 => Ok(AccountClassification::ThisSwig {
-                    lamports: account.lamports(),
-                }),
-                Discriminator::SwigAccount if index != 0 => {
+                Discriminator::SwigConfigAccount if index == 0 => {
+                    Ok(AccountClassification::ThisSwig {
+                        lamports: account.lamports(),
+                    })
+                },
+                Discriminator::SwigConfigAccount if index != 0 => {
                     // Additional Swig accounts are only allowed if the first account is also a Swig
                     // account
                     let first_account = accounts.get_unchecked(0).assume_init_ref();
@@ -255,7 +258,7 @@ unsafe fn classify_account(
 
                     if first_account.owner() == &crate::ID
                         && first_data.len() >= 8
-                        && *first_data.get_unchecked(0) == Discriminator::SwigAccount as u8
+                        && *first_data.get_unchecked(0) == Discriminator::SwigConfigAccount as u8
                     {
                         Ok(AccountClassification::None)
                     } else {

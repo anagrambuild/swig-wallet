@@ -564,7 +564,7 @@ pub fn update_authority_v1(
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let swig_data_len = swig_account_data.len();
 
-    if swig_account_data[0] != Discriminator::SwigAccount as u8 {
+    if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 

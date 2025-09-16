@@ -140,7 +140,7 @@ pub fn withdraw_from_sub_account_v1(
     msg!("swig wallet address PDA validation passed");
 
     // Verify the swig account has the correct discriminator
-    if unsafe { *swig_header.get_unchecked(0) } != Discriminator::SwigAccount as u8 {
+    if unsafe { *swig_header.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
     // We'll get sub-account metadata from the SubAccount action later after

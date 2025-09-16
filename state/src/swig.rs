@@ -445,7 +445,7 @@ impl Swig {
     /// Creates a new Swig account.
     pub fn new(id: [u8; 32], bump: u8, wallet_bump: u8) -> Self {
         Self {
-            discriminator: Discriminator::SwigAccount as u8,
+            discriminator: Discriminator::SwigConfigAccount as u8,
             id,
             bump,
             roles: 0,
