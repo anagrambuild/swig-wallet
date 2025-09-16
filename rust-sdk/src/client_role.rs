@@ -2,8 +2,8 @@ use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
     AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateSessionInstruction,
     CreateSubAccountInstruction, RemoveAuthorityInstruction, SignInstruction, SignV2Instruction,
-    SubAccountSignInstruction, SubAccountSignV2Instruction, ToggleSubAccountInstruction,
-    UpdateAuthorityData, UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
+    SubAccountSignInstruction, ToggleSubAccountInstruction, UpdateAuthorityData,
+    UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
     authority::{
