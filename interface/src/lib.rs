@@ -1581,6 +1581,7 @@ impl WithdrawFromSubAccountInstruction {
         authority: Pubkey,
         payer: Pubkey,
         sub_account: Pubkey,
+        swig_wallet_address: Pubkey,
         role_id: u32,
         amount: u64,
     ) -> anyhow::Result<Instruction> {
@@ -1589,6 +1590,8 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
             AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(system_program::ID, false),
         ];
 
         let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
@@ -1609,6 +1612,7 @@ impl WithdrawFromSubAccountInstruction {
         mut authority_payload_fn: F,
         current_slot: u64,
         sub_account: Pubkey,
+        swig_wallet_address: Pubkey,
         role_id: u32,
         amount: u64,
     ) -> anyhow::Result<Instruction>
@@ -1619,6 +1623,8 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(system_program::ID, false),
         ];
 
         let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
@@ -1658,6 +1664,7 @@ impl WithdrawFromSubAccountInstruction {
         authority: Pubkey,
         payer: Pubkey,
         sub_account: Pubkey,
+        swig_wallet_address: Pubkey,
         sub_account_token: Pubkey,
         swig_token: Pubkey,
         token_program: Pubkey,
@@ -1669,6 +1676,8 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
             AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new(sub_account_token, false),
             AccountMeta::new(swig_token, false),
             AccountMeta::new_readonly(token_program, false),
@@ -1692,6 +1701,7 @@ impl WithdrawFromSubAccountInstruction {
         mut authority_payload_fn: F,
         current_slot: u64,
         sub_account: Pubkey,
+        swig_wallet_address: Pubkey,
         sub_account_token: Pubkey,
         swig_token: Pubkey,
         token_program: Pubkey,
@@ -1705,9 +1715,11 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
+            AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(sub_account_token, false),
             AccountMeta::new(swig_token, false),
             AccountMeta::new_readonly(token_program, false),
+            AccountMeta::new_readonly(system_program::ID, false),
         ];
 
         let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
@@ -1749,6 +1761,7 @@ impl WithdrawFromSubAccountInstruction {
         current_slot: u64,
         counter: u32,
         sub_account: Pubkey,
+        swig_wallet_address: Pubkey,
         role_id: u32,
         amount: u64,
         public_key: &[u8; 33],
@@ -1760,6 +1773,7 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
+            AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
@@ -1828,6 +1842,7 @@ impl WithdrawFromSubAccountInstruction {
         current_slot: u64,
         counter: u32,
         sub_account: Pubkey,
+        swig_wallet_address: Pubkey,
         sub_account_token: Pubkey,
         swig_token: Pubkey,
         token_program: Pubkey,
@@ -1842,6 +1857,7 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
+            AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(sub_account_token, false),
             AccountMeta::new(swig_token, false),
             AccountMeta::new_readonly(token_program, false),

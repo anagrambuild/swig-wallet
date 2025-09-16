@@ -338,12 +338,19 @@ impl ClientRole for Ed25519ClientRole {
         amount: u64,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
+        // Derive the swig wallet address
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+
         Ok(vec![
             WithdrawFromSubAccountInstruction::new_with_ed25519_authority(
                 swig_account,
                 self.authority,
                 payer,
                 sub_account,
+                swig_wallet_address,
                 role_id,
                 amount,
             )?,
@@ -362,12 +369,19 @@ impl ClientRole for Ed25519ClientRole {
         amount: u64,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
+        // Derive the swig wallet address
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+
         Ok(vec![
             WithdrawFromSubAccountInstruction::new_token_with_ed25519_authority(
                 swig_account,
                 self.authority,
                 payer,
                 sub_account,
+                swig_wallet_address,
                 sub_account_token,
                 swig_token,
                 token_program,
@@ -686,6 +700,12 @@ impl ClientRole for Secp256k1ClientRole {
     ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
 
+        // Derive the swig wallet address
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+
         Ok(vec![
             WithdrawFromSubAccountInstruction::new_with_secp256k1_authority(
                 swig_account,
@@ -693,6 +713,7 @@ impl ClientRole for Secp256k1ClientRole {
                 &self.signing_fn,
                 current_slot,
                 sub_account,
+                swig_wallet_address,
                 role_id,
                 amount,
             )?,
@@ -713,6 +734,12 @@ impl ClientRole for Secp256k1ClientRole {
     ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
 
+        // Derive the swig wallet address
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+
         Ok(vec![
             WithdrawFromSubAccountInstruction::new_token_with_secp256k1_authority(
                 swig_account,
@@ -720,6 +747,7 @@ impl ClientRole for Secp256k1ClientRole {
                 &self.signing_fn,
                 current_slot,
                 sub_account,
+                swig_wallet_address,
                 sub_account_token,
                 swig_token,
                 token_program,
@@ -1072,6 +1100,12 @@ impl ClientRole for Secp256r1ClientRole {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
         let new_odometer = self.odometer.wrapping_add(1);
 
+        // Derive the swig wallet address
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+
         let instructions = WithdrawFromSubAccountInstruction::new_with_secp256r1_authority(
             swig_account,
             payer,
@@ -1079,6 +1113,7 @@ impl ClientRole for Secp256r1ClientRole {
             current_slot,
             new_odometer,
             sub_account,
+            swig_wallet_address,
             role_id,
             amount,
             &self.authority,
@@ -1102,6 +1137,12 @@ impl ClientRole for Secp256r1ClientRole {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
         let new_odometer = self.odometer.wrapping_add(1);
 
+        // Derive the swig wallet address
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+
         let instructions = WithdrawFromSubAccountInstruction::new_token_with_secp256r1_authority(
             swig_account,
             payer,
@@ -1109,6 +1150,7 @@ impl ClientRole for Secp256r1ClientRole {
             current_slot,
             new_odometer,
             sub_account,
+            swig_wallet_address,
             sub_account_token,
             swig_token,
             token_program,

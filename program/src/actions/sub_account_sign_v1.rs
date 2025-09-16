@@ -18,7 +18,7 @@ use swig_state::{
     action::{all::All, sub_account::SubAccount, ActionLoader, Actionable},
     authority::AuthorityType,
     role::RoleMut,
-    swig::{sub_account_signer, Swig, SwigSubAccount},
+    swig::{sub_account_signer, Swig},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
@@ -136,13 +136,8 @@ pub fn sub_account_sign_v1(
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSubAccount)?;
-    check_self_owned(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
+    check_system_owner(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
     let sign_v1 = SubAccountSignV1::from_instruction_bytes(data)?;
-    let sub_account_data = unsafe { ctx.accounts.sub_account.borrow_data_unchecked() };
-    if unsafe { *sub_account_data.get_unchecked(0) } != Discriminator::SwigSubAccount as u8 {
-        return Err(SwigError::InvalidSwigSubAccountDiscriminator.into());
-    }
-    let sub_account = unsafe { SwigSubAccount::load_unchecked(sub_account_data)? };
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
@@ -150,28 +145,21 @@ pub fn sub_account_sign_v1(
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_unchecked(swig_header)? };
 
-    if sub_account.swig_id != swig.id {
-        return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
-    }
-    if sub_account.role_id != sign_v1.args.role_id {
-        return Err(SwigError::InvalidSwigSubAccountRoleIdMismatch.into());
-    }
-    if !sub_account.enabled {
-        // All/Manageauthority authorities can disable the sub account which means
-        // current auth can't sign
-        return Err(SwigError::InvalidSwigSubAccountDisabled.into());
-    }
-
     let role_opt = Swig::get_mut_role(sign_v1.args.role_id, swig_roles)?;
     if role_opt.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
 
     let role = role_opt.unwrap();
+
+    // Store authority info before authentication (to avoid borrow checker issues)
+    let authority_type = role.position.authority_type()?;
+    let is_session_based = role.authority.session_based();
+
     let clock = Clock::get()?;
     let slot = clock.slot;
 
-    if role.authority.session_based() {
+    if is_session_based {
         role.authority.authenticate_session(
             all_accounts,
             sign_v1.authority_payload,
@@ -186,10 +174,35 @@ pub fn sub_account_sign_v1(
             slot,
         )?;
     }
+
+    // Find the SubAccount action to get sub-account metadata (after authentication)
+    let sub_account_action = role.get_action::<SubAccount>(ctx.accounts.sub_account.key().as_ref())?;
+    if sub_account_action.is_none() {
+        return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
+    }
+    let sub_account = sub_account_action.unwrap();
+
+    // Validate sub-account relationship
+    if sub_account.swig_id != swig.id {
+        return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
+    }
+    if sub_account.role_id != sign_v1.args.role_id {
+        return Err(SwigError::InvalidSwigSubAccountRoleIdMismatch.into());
+    }
+    if !sub_account.enabled {
+        // All/Manageauthority authorities can disable the sub account which means
+        // current auth can't sign
+        return Err(SwigError::InvalidSwigSubAccountDisabled.into());
+    }
+
+    // Store sub_account info for later use
+    let sub_account_bump = sub_account.bump;
+    let sub_account_role_id = sub_account.role_id;
+    let sub_account_swig_id = sub_account.swig_id;
     const UNINIT_KEY: MaybeUninit<&Pubkey> = MaybeUninit::uninit();
     let mut restricted_keys: [MaybeUninit<&Pubkey>; 2] = [UNINIT_KEY; 2];
     let rkeys: &[&Pubkey] = unsafe {
-        if role.position.authority_type()? == AuthorityType::Secp256k1 {
+        if authority_type == AuthorityType::Secp256k1 {
             restricted_keys[0].write(ctx.accounts.payer.key());
             core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 1)
         } else {
@@ -205,9 +218,9 @@ pub fn sub_account_sign_v1(
         ctx.accounts.sub_account.key(),
         rkeys,
     )?;
-    let role_id_bytes = sub_account.role_id.to_le_bytes();
-    let bump_byte = [sub_account.bump];
-    let seeds = sub_account_signer(&sub_account.swig_id, &role_id_bytes, &bump_byte);
+    let role_id_bytes = sub_account_role_id.to_le_bytes();
+    let bump_byte = [sub_account_bump];
+    let seeds = sub_account_signer(&sub_account_swig_id, &role_id_bytes, &bump_byte);
     let signer = seeds.as_slice();
     for ix in ix_iter {
         if let Ok(instruction) = ix {
@@ -224,12 +237,14 @@ pub fn sub_account_sign_v1(
         }
     }
 
-    let lamports_after = unsafe { *ctx.accounts.sub_account.borrow_lamports_unchecked() };
     // Check that the sub-account maintains sufficient lamports for rent exemption
+    // Note: We removed reserved_lamports field tracking, so we just ensure
+    // the account has some minimum balance for rent exemption
     let account_data = unsafe { ctx.accounts.sub_account.borrow_data_unchecked() };
     let rent_exempt_minimum =
         pinocchio::sysvars::rent::Rent::get()?.minimum_balance(account_data.len());
-    if lamports_after < rent_exempt_minimum {
+    let current_lamports = unsafe { *ctx.accounts.sub_account.borrow_lamports_unchecked() };
+    if current_lamports < rent_exempt_minimum {
         return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
     }
     Ok(())

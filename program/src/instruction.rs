@@ -129,9 +129,14 @@ pub enum SwigInstruction {
     /// 1. `[writable]` Swig wallet account
     /// 2. `[writable, signer]` Payer account
     /// 3. `[writable]` Sub-account to withdraw from
+    /// 4. `[writable]` Swig wallet address account (destination)
+    /// 5. System program account
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
     #[account(1, writable, signer, name="payer", desc="the payer")]
     #[account(2, writable, name="sub_account", desc="the sub account to withdraw from")]
+    #[account(3, writable, signer, name="authority", desc="the swig authority")]
+    #[account(4, writable, name="swig_wallet_address", desc="the swig wallet address (destination)")]
+    #[account(5, name="system_program", desc="the system program")]
     WithdrawFromSubAccountV1 = 7,
 
     /// Signs and executes a transaction from a sub-account.
