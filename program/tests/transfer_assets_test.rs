@@ -419,7 +419,8 @@ fn test_transfer_assets_spl_token_invalid_destination() {
     )
     .unwrap();
 
-    // Create malicious destination token account owned by someone else (not swig wallet address)
+    // Create malicious destination token account owned by someone else (not swig
+    // wallet address)
     let malicious_dest_ata = setup_ata(
         &mut context.svm,
         &mint_pubkey,
@@ -482,8 +483,7 @@ fn test_transfer_assets_spl_token_invalid_destination() {
         .unwrap(),
     );
 
-    let transfer_tx = VersionedTransaction::try_new(transfer_message, &[&authority])
-        .unwrap();
+    let transfer_tx = VersionedTransaction::try_new(transfer_message, &[&authority]).unwrap();
 
     let transfer_result = context.svm.send_transaction(transfer_tx);
 
@@ -493,13 +493,14 @@ fn test_transfer_assets_spl_token_invalid_destination() {
         transfer_result.is_err(),
         "Transaction should fail due to invalid destination ownership"
     );
-    
+
     println!("✅ Expected failure occurred: {:?}", transfer_result.err());
 
     // Since the transaction failed, verify that no tokens were transferred
     let final_source_account_data = context.svm.get_account(&source_ata).unwrap().data;
-    let final_source_token_data = spl_token::state::Account::unpack(&final_source_account_data).unwrap();
-    
+    let final_source_token_data =
+        spl_token::state::Account::unpack(&final_source_account_data).unwrap();
+
     // Source should still have all 1000 tokens since transfer was rejected
     assert_eq!(
         final_source_token_data.amount, initial_token_amount,
