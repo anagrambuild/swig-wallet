@@ -170,10 +170,7 @@ fn process_withdraw_from_sub_account_v1(
     account_classification: &[AccountClassification],
     data: &[u8],
 ) -> ProgramResult {
-    msg!("process_withdraw_from_sub_account_v1 called");
-    msg!("Creating account context for WithdrawFromSubAccountV1");
     let account_ctx = WithdrawFromSubAccountV1Accounts::context(accounts)?;
-    msg!("Account context created successfully");
     withdraw_from_sub_account_v1(account_ctx, accounts, data, account_classification)
 }
 

@@ -128,7 +128,6 @@ pub fn toggle_sub_account_v1(
     data: &[u8],
     all_accounts: &[AccountInfo],
 ) -> ProgramResult {
-    msg!("toggle_sub_account_v1 called");
     // Check that the swig account is owned by our program
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     // Check that the sub_account is system owned (it holds assets)
@@ -187,14 +186,8 @@ pub fn toggle_sub_account_v1(
             return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
         }
 
-        msg!(
-            "Sub-account matches, updating enabled state from {} to: {}",
-            action.enabled,
-            toggle_sub_account.args.enabled
-        );
         // Update the enabled state
         action.enabled = toggle_sub_account.args.enabled;
-        msg!("Updated enabled state to: {}", action.enabled);
     } else {
         // Check if has All permission as fallback
         let has_all_permission = role.get_action::<All>(&[])?.is_some();
@@ -205,7 +198,5 @@ pub fn toggle_sub_account_v1(
         // operation
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
-
-    msg!("toggle_sub_account_v1 completed successfully");
     Ok(())
 }

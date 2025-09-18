@@ -724,18 +724,12 @@ fn webauthn_message<'a>(
     let huffman_encoded_origin =
         &auth_payload[offset + huffman_tree_len..offset + huffman_tree_len + huffman_encoded_len];
 
-    // Log the huffman input for monitoring
-    pinocchio::msg!(
-        "WebAuthn Huffman input: {} bytes encoded",
-        huffman_encoded_len
-    );
-
     // Decode the huffman-encoded origin URL
     let decoded_origin = decode_huffman_origin(huffman_tree, huffman_encoded_origin, origin_len)?;
 
     // Log the decoded origin for monitoring
-    let origin_str = core::str::from_utf8(&decoded_origin).unwrap_or("<invalid utf8>");
-    pinocchio::msg!("WebAuthn Huffman decoded origin: '{}'", origin_str);
+    // let origin_str = core::str::from_utf8(&decoded_origin).unwrap_or("<invalid utf8>");
+    // pinocchio::msg!("WebAuthn Huffman decoded origin: '{}'", origin_str);
 
     // Reconstruct the client data JSON using the decoded origin and reconstructed
     // challenge

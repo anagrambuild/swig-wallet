@@ -133,8 +133,6 @@ pub fn migrate_to_wallet_address_v1(
     ctx: Context<MigrateToWalletAddressV1Accounts>,
     migrate_data: &[u8],
 ) -> ProgramResult {
-    msg!("Starting Swig account migration to wallet address feature");
-
     let migrate = MigrateToWalletAddressV1::from_instruction_bytes(migrate_data)?;
 
     // Validate that the swig account has the correct discriminator
@@ -178,13 +176,12 @@ pub fn migrate_to_wallet_address_v1(
                 ActionLoader::find_action::<ManageAuthority>(role.actions)?.is_some();
             if !has_manage_authority {
                 msg!("Authority does not have ManageAuthority permission");
-                // return Err(SwigError::InvalidAuthorityType.into());
+                return Err(SwigError::InvalidAuthorityType.into());
             }
         },
         None => {
             msg!("Authority not found in wallet roles");
-            // return Err(SwigError::InvalidAuthorityNotFoundByRoleId.
-            // into());
+            return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         },
     }
 
@@ -248,10 +245,6 @@ pub fn migrate_to_wallet_address_v1(
         }
         .invoke()?;
     }
-
-    msg!("Migration completed successfully");
-    msg!("Old reserved_lamports: {}", old_swig.reserved_lamports);
-    msg!("New wallet_bump: {}", wallet_address_bump);
 
     Ok(())
 }

@@ -111,18 +111,14 @@ pub fn withdraw_from_sub_account_v1(
     data: &[u8],
     account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
-    msg!("withdraw_from_sub_account_v1 called");
     // Verify that the swig account is owned by our program and sub_account is
     // system owned
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
-    msg!("swig ownership check passed");
     check_system_owner(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
-    msg!("sub_account ownership check passed");
     check_system_owner(
         ctx.accounts.swig_wallet_address,
         SwigError::OwnerMismatchSwigAccount,
     )?;
-    msg!("swig_wallet_address ownership check passed");
     let withdraw = WithdrawFromSubAccountV1::from_instruction_bytes(data)?;
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
@@ -137,7 +133,6 @@ pub fn withdraw_from_sub_account_v1(
         msg!("Invalid swig wallet address PDA for sub account");
         return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
     }
-    msg!("swig wallet address PDA validation passed");
 
     // Verify the swig account has the correct discriminator
     if unsafe { *swig_header.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
@@ -177,22 +172,13 @@ pub fn withdraw_from_sub_account_v1(
     let sub_account_action =
         role.get_action::<SubAccount>(ctx.accounts.sub_account.key().as_ref())?;
 
-    msg!(
-        "all_action: {}, manage_authority_action: {}, sub_account_action: {}",
-        all_action.is_some(),
-        manage_authority_action.is_some(),
-        sub_account_action.is_some()
-    );
-
     if all_action.is_none() && manage_authority_action.is_none() && sub_account_action.is_none() {
-        msg!("No All, ManageAuthority, or SubAccount action found - permission denied");
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
 
     // Get sub-account metadata from the SubAccount action
     // Validate permissions and sub-account relationship
     if let Some(action) = sub_account_action {
-        msg!("Found SubAccount action in current role, validating sub-account relationship");
         // Validate sub-account relationship
         if action.swig_id != swig.id {
             return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
@@ -203,49 +189,27 @@ pub fn withdraw_from_sub_account_v1(
         if !action.enabled {
             return Err(SwigError::InvalidSwigSubAccountDisabled.into());
         }
-        msg!("Sub-account validation passed");
     } else if all_action.is_some() || manage_authority_action.is_some() {
         let permission_type = if all_action.is_some() {
             "All"
         } else {
             "ManageAuthority"
         };
-        msg!(
-            "No SubAccount action in current role, but has {} permission - allowing withdrawal",
-            permission_type
-        );
 
         // For All permission, allow withdrawal from any sub-account (no validation
         // needed) For ManageAuthority permission, restrict to sub-accounts
         // created by the withdrawing role
         if manage_authority_action.is_some() {
-            msg!(
-                "ManageAuthority permission - validating sub-account was created by withdrawing \
-                 role"
-            );
-
             let role_id_bytes = withdraw.args.role_id.to_le_bytes();
             let sub_account_seeds = swig_state::swig::sub_account_seeds(&swig.id, &role_id_bytes);
             let (expected_sub_account, _expected_bump) =
                 pinocchio::pubkey::find_program_address(&sub_account_seeds, &crate::ID);
 
             if expected_sub_account != *ctx.accounts.sub_account.key() {
-                msg!(
-                    "Sub-account was not created by the withdrawing role. ManageAuthority can \
-                     only withdraw from sub-accounts created by the same role."
-                );
                 return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
             }
-
-            msg!(
-                "ManageAuthority permission validated - sub-account was created by withdrawing \
-                 role"
-            );
-        } else {
-            msg!("All permission - allowing withdrawal from any sub-account");
         }
     } else {
-        msg!("No SubAccount action and no All/ManageAuthority permission");
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
 
@@ -280,10 +244,6 @@ pub fn withdraw_from_sub_account_v1(
             if derived_address == *ctx.accounts.sub_account.key() {
                 found_role_id = Some(potential_role_id);
                 found_bump = Some(bump);
-                msg!(
-                    "Found matching role_id: {} for sub-account",
-                    potential_role_id
-                );
                 break;
             }
         }
@@ -297,15 +257,7 @@ pub fn withdraw_from_sub_account_v1(
         }
     };
 
-    msg!("all_accounts.len(): {:?}", all_accounts.len());
-    msg!("action_accounts_len: {:?}", action_accounts_len);
-    msg!("action_accounts_index: {:?}", action_accounts_index);
-    for account in all_accounts.iter() {
-        msg!("account: {:?}", account.key());
-    }
-
     if all_accounts.len() >= action_accounts_len {
-        msg!("all_accounts.len() >= action_accounts_len");
         let token_account = &all_accounts[action_accounts_index + 2];
         let token_account_data = unsafe { token_account.borrow_data_unchecked() };
         // we dont need to check the owner of the token account because the token
@@ -314,11 +266,6 @@ pub fn withdraw_from_sub_account_v1(
         let swig_token_account = &all_accounts[action_accounts_index + 3];
         let swig_token_account_data = unsafe { swig_token_account.borrow_data_unchecked() };
         let swig_token_account_owner = unsafe { swig_token_account_data.get_unchecked(32..64) };
-        msg!(
-            "swig_wallet_address: {:?}",
-            ctx.accounts.swig_wallet_address.key()
-        );
-        msg!("swig_token_account_owner: {:?}", swig_token_account_owner);
         if unsafe {
             sol_memcmp(
                 ctx.accounts.swig_wallet_address.key(),
@@ -348,7 +295,6 @@ pub fn withdraw_from_sub_account_v1(
             amount,
             token_program: token_account_program_owner,
         };
-        msg!("amount: {}", amount);
 
         let role_id_bytes = signing_role_id.to_le_bytes();
         let bump_byte = [signing_bump];
@@ -361,7 +307,6 @@ pub fn withdraw_from_sub_account_v1(
         if amount > ctx.accounts.sub_account.lamports() {
             return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
         }
-        msg!("sol amount: {:?}", amount);
 
         // Use the signing parameters we already discovered above
         // Create system transfer instruction using PDA as signer
@@ -375,12 +320,6 @@ pub fn withdraw_from_sub_account_v1(
             to: ctx.accounts.swig_wallet_address,
             lamports: amount,
         };
-        msg!("----------------");
-
-        msg!("{:?}", transfer_instruction.from.key());
-        msg!("{:?}", transfer_instruction.to.key());
-        msg!("{:?}", ctx.accounts.sub_account.key());
-        msg!("{:?}", ctx.accounts.swig_wallet_address.key());
 
         transfer_instruction.invoke_signed(&[signer.into()])?;
     }

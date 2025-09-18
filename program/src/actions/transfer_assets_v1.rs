@@ -198,12 +198,6 @@ pub fn transfer_assets_v1(
 
     if swig_lamports > min_rent {
         let transfer_amount = swig_lamports - min_rent;
-
-        msg!(
-            "Transferring {} lamports from swig to wallet address",
-            transfer_amount
-        );
-
         // Transfer SOL by directly manipulating lamports
         unsafe {
             *ctx.accounts.swig.borrow_mut_lamports_unchecked() -= transfer_amount;
@@ -240,7 +234,8 @@ pub fn transfer_assets_v1(
             }
 
             let source_owner_bytes = &source_data[32..64];
-            if unsafe { sol_memcmp(source_owner_bytes, ctx.accounts.swig.key().as_ref(), 32) } != 0 {
+            if unsafe { sol_memcmp(source_owner_bytes, ctx.accounts.swig.key().as_ref(), 32) } != 0
+            {
                 continue;
             }
 
@@ -252,7 +247,14 @@ pub fn transfer_assets_v1(
             }
 
             let dest_owner_bytes = &dest_data[32..64];
-            if unsafe { sol_memcmp(dest_owner_bytes, ctx.accounts.swig_wallet_address.key().as_ref(), 32) } != 0 {
+            if unsafe {
+                sol_memcmp(
+                    dest_owner_bytes,
+                    ctx.accounts.swig_wallet_address.key().as_ref(),
+                    32,
+                )
+            } != 0
+            {
                 drop(source_data);
                 drop(dest_data);
                 continue;
@@ -277,12 +279,6 @@ pub fn transfer_assets_v1(
                 drop(source_data); // Release borrow
                 drop(dest_data); // Release borrow
 
-                msg!(
-                    "Transferring {} tokens from swig token account to wallet address token \
-                     account",
-                    amount
-                );
-
                 // Transfer tokens using CPI
                 let token_transfer = TokenTransfer {
                     token_program: token_program.key(),
@@ -296,6 +292,5 @@ pub fn transfer_assets_v1(
         }
     }
 
-    msg!("Successfully transferred all assets from swig to wallet address");
     Ok(())
 }
