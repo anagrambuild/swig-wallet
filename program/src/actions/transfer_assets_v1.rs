@@ -239,8 +239,22 @@ pub fn transfer_assets_v1(
                 continue;
             }
 
-            let owner_bytes = &source_data[32..64];
-            if unsafe { sol_memcmp(owner_bytes, ctx.accounts.swig.key().as_ref(), 32) } != 0 {
+            let source_owner_bytes = &source_data[32..64];
+            if unsafe { sol_memcmp(source_owner_bytes, ctx.accounts.swig.key().as_ref(), 32) } != 0 {
+                continue;
+            }
+
+            // Check if destination account is owned by swig wallet address
+            let dest_data = dest_token_account.try_borrow_data()?;
+            if dest_data.len() < 72 {
+                drop(source_data);
+                continue;
+            }
+
+            let dest_owner_bytes = &dest_data[32..64];
+            if unsafe { sol_memcmp(dest_owner_bytes, ctx.accounts.swig_wallet_address.key().as_ref(), 32) } != 0 {
+                drop(source_data);
+                drop(dest_data);
                 continue;
             }
 
@@ -261,6 +275,7 @@ pub fn transfer_assets_v1(
 
             if amount > 0 {
                 drop(source_data); // Release borrow
+                drop(dest_data); // Release borrow
 
                 msg!(
                     "Transferring {} tokens from swig token account to wallet address token \

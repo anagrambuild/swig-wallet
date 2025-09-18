@@ -5,14 +5,17 @@ mod common;
 
 use common::*;
 use litesvm::types::TransactionMetadata;
+use litesvm_token::spl_token;
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
     instruction::{AccountMeta, Instruction},
     message::{v0, VersionedMessage},
+    program_pack::Pack,
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
     system_instruction,
+    sysvar::rent::Rent,
     transaction::VersionedTransaction,
 };
 use swig_interface::{swig, TransferAssetsV1Instruction};
@@ -373,4 +376,143 @@ fn test_transfer_assets_no_excess_lamports() {
         final_wallet_balance, initial_wallet_balance,
         "Wallet balance should not change"
     );
+}
+
+#[test_log::test]
+fn test_transfer_assets_spl_token_invalid_destination() {
+    let mut context = setup_test_context().unwrap();
+    let authority = Keypair::new();
+    let malicious_owner = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+
+    // Fund the authority account
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Create a migrated swig account
+    println!("Creating migrated Swig account...");
+    let swig_created = create_swig_ed25519(&mut context, &authority, id);
+    assert!(
+        swig_created.is_ok(),
+        "Failed to create swig: {:?}",
+        swig_created.err()
+    );
+    let (swig_pubkey, _bench) = swig_created.unwrap();
+
+    // Get the wallet address
+    let (swig_wallet_address_pubkey, _) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(&swig_pubkey.to_bytes()),
+        &program_id(),
+    );
+
+    // Use existing helper functions to set up SPL token infrastructure
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+
+    // Create source token account owned by swig (legitimate)
+    let source_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig_pubkey,
+        &context.default_payer,
+    )
+    .unwrap();
+
+    // Create malicious destination token account owned by someone else (not swig wallet address)
+    let malicious_dest_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &malicious_owner.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+
+    // Mint tokens to the source account
+    let initial_token_amount = 1000;
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &source_ata,
+        initial_token_amount,
+    )
+    .unwrap();
+
+    // Verify tokens were minted correctly
+    let source_account_data = context.svm.get_account(&source_ata).unwrap().data;
+    let source_token_data = spl_token::state::Account::unpack(&source_account_data).unwrap();
+    assert_eq!(source_token_data.amount, initial_token_amount);
+
+    // Now attempt to transfer assets with the malicious destination
+    // This should succeed but skip the token transfer due to ownership validation
+    let transfer_ix = Instruction {
+        program_id: program_id(),
+        accounts: vec![
+            AccountMeta::new(swig_pubkey, false),
+            AccountMeta::new(swig_wallet_address_pubkey, false),
+            AccountMeta::new(authority.pubkey(), true), // authority is the payer
+            AccountMeta::new_readonly(solana_sdk::system_program::ID, false),
+            // Token transfer accounts: source, destination, token_program
+            AccountMeta::new(source_ata, false),
+            AccountMeta::new(malicious_dest_ata, false), // malicious destination
+            AccountMeta::new_readonly(spl_token::ID, false),
+        ],
+        data: TransferAssetsV1Instruction::new_with_ed25519_authority(
+            swig_pubkey,
+            swig_wallet_address_pubkey,
+            authority.pubkey(), // authority is the payer
+            authority.pubkey(),
+            0, // role_id
+        )
+        .unwrap()
+        .data,
+    };
+
+    let transfer_message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &authority.pubkey(), // authority pays for the transaction
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                transfer_ix,
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+
+    let transfer_tx = VersionedTransaction::try_new(transfer_message, &[&authority])
+        .unwrap();
+
+    let transfer_result = context.svm.send_transaction(transfer_tx);
+
+    // The transaction should fail because the destination account ownership check
+    // should reject the invalid destination token account
+    assert!(
+        transfer_result.is_err(),
+        "Transaction should fail due to invalid destination ownership"
+    );
+    
+    println!("✅ Expected failure occurred: {:?}", transfer_result.err());
+
+    // Since the transaction failed, verify that no tokens were transferred
+    let final_source_account_data = context.svm.get_account(&source_ata).unwrap().data;
+    let final_source_token_data = spl_token::state::Account::unpack(&final_source_account_data).unwrap();
+    
+    // Source should still have all 1000 tokens since transfer was rejected
+    assert_eq!(
+        final_source_token_data.amount, initial_token_amount,
+        "Source token account should still have all tokens since transfer was rejected"
+    );
+
+    // Verify malicious destination account has no tokens
+    let dest_account_data = context.svm.get_account(&malicious_dest_ata).unwrap().data;
+    let dest_token_data = spl_token::state::Account::unpack(&dest_account_data).unwrap();
+    assert_eq!(
+        dest_token_data.amount, 0,
+        "Malicious destination should have received no tokens"
+    );
+
+    println!("✅ Test passed: SPL token transfer with invalid destination was properly rejected");
 }
