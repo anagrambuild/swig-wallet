@@ -16,7 +16,7 @@ use solana_sdk::{
     signature::Keypair,
     signer::Signer,
     system_instruction,
-    sysvar::clock::Clock,
+    sysvar::{clock::Clock, rent::Rent},
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig::actions::sign_v1::SignV1Args;
@@ -128,9 +128,12 @@ fn test_transfer_sol_with_additional_authority() {
     println!("role {:?}", role1.position);
     let action = role1.get_action::<SolLimit>(&[]).unwrap().unwrap();
     assert_eq!(action.amount, 0);
+    // Calculate rent-exempt minimum for the account
+    let rent = context.svm.get_sysvar::<Rent>();
+    let rent_exempt_minimum = rent.minimum_balance(swig_account.data.len());
     assert_eq!(
         swig_account.lamports,
-        swig_state.state.reserved_lamports + 10_000_000_000 - amount / 2
+        rent_exempt_minimum + 10_000_000_000 - amount / 2
     );
 }
 
@@ -1180,8 +1183,8 @@ fn test_transfer_between_swig_accounts() {
     // Get initial recipient balance (should include the rent-exempt amount plus
     // transfer)
     let recipient_initial_balance = {
-        let recipient_swig_state = SwigWithRoles::from_bytes(&recipient_account.data).unwrap();
-        recipient_swig_state.state.reserved_lamports
+        let rent = context.svm.get_sysvar::<Rent>();
+        rent.minimum_balance(recipient_account.data.len())
     };
 
     assert_eq!(

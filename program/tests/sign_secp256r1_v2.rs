@@ -1,7 +1,15 @@
+#![cfg(not(feature = "program_scope_test"))]
+// This feature flag ensures these tests are only run when the
+// "program_scope_test" feature is not enabled. This allows us to isolate
+// and run only program_scope tests or only the regular tests.
+
+mod common;
+use common::*;
 use solana_sdk::{
     clock::Clock,
     instruction::InstructionError,
     message::{v0, VersionedMessage},
+    pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
     system_instruction,
@@ -14,83 +22,140 @@ use swig_state::{
         secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority},
         AuthorityType,
     },
-    swig::{swig_wallet_address_seeds, SwigWithRoles},
+    swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
 };
 
-use super::*;
-use crate::{
-    client_role::{ClientRole, Ed25519ClientRole, Secp256r1ClientRole},
-    instruction_builder::SwigInstructionBuilder,
-    types::Permission as ClientPermission,
-};
+/// Helper to generate a real secp256r1 key pair for testing
+fn create_test_secp256r1_keypair() -> (openssl::ec::EcKey<openssl::pkey::Private>, [u8; 33]) {
+    use openssl::{
+        bn::BigNumContext,
+        ec::{EcGroup, EcKey, PointConversionForm},
+        nid::Nid,
+    };
+
+    let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+    let signing_key = EcKey::generate(&group).unwrap();
+
+    let mut ctx = BigNumContext::new().unwrap();
+    let pubkey_bytes = signing_key
+        .public_key()
+        .to_bytes(&group, PointConversionForm::COMPRESSED, &mut ctx)
+        .unwrap();
+
+    let pubkey_array: [u8; 33] = pubkey_bytes.try_into().unwrap();
+    (signing_key, pubkey_array)
+}
+
+/// Helper function to create a secp256r1 authority with a test public key
+fn create_test_secp256r1_authority() -> [u8; 33] {
+    let (_, pubkey) = create_test_secp256r1_keypair();
+    pubkey
+}
+
+/// Helper function to get the current signature counter for a secp256r1
+/// authority
+fn get_secp256r1_counter(
+    context: &SwigTestContext,
+    swig_key: &solana_sdk::pubkey::Pubkey,
+    public_key: &[u8; 33],
+) -> Result<u32, String> {
+    // Get the swig account data
+    let swig_account = context
+        .svm
+        .get_account(swig_key)
+        .ok_or("Swig account not found")?;
+    let swig = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| format!("Failed to parse swig data: {:?}", e))?;
+
+    // Look up the role ID for this authority
+    let role_id = swig
+        .lookup_role_id(public_key)
+        .map_err(|e| format!("Failed to lookup role: {:?}", e))?
+        .ok_or("Authority not found in swig account")?;
+
+    // Get the role
+    let role = swig
+        .get_role(role_id)
+        .map_err(|e| format!("Failed to get role: {:?}", e))?
+        .ok_or("Role not found")?;
+
+    // The authority should be a Secp256r1Authority
+    if matches!(role.authority.authority_type(), AuthorityType::Secp256r1) {
+        // Get the authority from the any() interface
+        let secp_authority = role
+            .authority
+            .as_any()
+            .downcast_ref::<Secp256r1Authority>()
+            .ok_or("Failed to downcast to Secp256r1Authority")?;
+
+        Ok(secp_authority.signature_odometer)
+    } else {
+        Err("Authority is not a Secp256r1Authority".to_string())
+    }
+}
 
 #[test_log::test]
-fn test_secp256r1_basic_signing() {
+fn test_secp256r1_basic_signing_v2() {
     let mut context = setup_test_context().unwrap();
 
     // Create a real secp256r1 key pair for testing
     let (signing_key, public_key) = create_test_secp256r1_keypair();
 
-    // Create a new swig with the secp256r1 authority using instruction builder
+    // Create a new swig with the secp256r1 authority
     let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
 
-    // Create signing function for the client role
-    let signing_fn = Box::new(move |message_hash: &[u8]| -> [u8; 64] {
-        use solana_secp256r1_program::sign_message;
-        let signature =
-            sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap();
-        signature
-    });
-
-    let mut builder = SwigInstructionBuilder::new(
-        id,
-        Box::new(Secp256r1ClientRole::new(public_key, signing_fn)),
-        context.default_payer.pubkey(),
-        0, // role_id
-    );
-
-    // Build the create instruction
-    let create_ix = builder.build_swig_account().unwrap();
-
-    let message = v0::Message::try_compile(
-        &context.default_payer.pubkey(),
-        &[create_ix],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-
-    let tx =
-        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
-            .unwrap();
-
-    let result = context.svm.send_transaction(tx);
-    assert!(
-        result.is_ok(),
-        "Failed to create Swig account: {:?}",
-        result.err()
-    );
-
-    let swig_key = builder.get_swig_account().unwrap();
-    context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
+    // For SignV2, fund the swig_wallet_address instead of swig
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Set up a recipient and transaction
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 5_000_000;
-    let transfer_ix = system_instruction::transfer(&swig_key, &recipient.pubkey(), transfer_amount);
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
-    // Get current slot for signing
+    // Get current slot and counter
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    let current_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();
+    let next_counter = current_counter + 1;
 
-    // Create signed instructions using the instruction builder
-    let signed_instructions = builder
-        .sign_instruction(vec![transfer_ix], Some(current_slot))
-        .unwrap();
+    println!(
+        "Current counter: {}, using next counter: {}",
+        current_counter, next_counter
+    );
+
+    // Create authority function that signs the message hash
+    let mut authority_fn = |message_hash: &[u8]| -> [u8; 64] {
+        use solana_secp256r1_program::sign_message;
+        let signature =
+            sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap();
+        signature
+    };
+
+    // Create the secp256r1 signing instructions using SignV2 (returns
+    // Vec<Instruction>)
+    let instructions = swig_interface::SignV2Instruction::new_secp256r1(
+        swig_key,
+        swig_wallet_address,
+        context.default_payer.pubkey(),
+        authority_fn,
+        current_slot,
+        next_counter,
+        transfer_ix.clone(),
+        0, // Role ID 0
+        &public_key,
+    )
+    .unwrap();
 
     let message = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &signed_instructions,
+        &instructions, // Use the returned instructions directly
         &[],
         context.svm.latest_blockhash(),
     )
@@ -115,7 +180,7 @@ fn test_secp256r1_basic_signing() {
     // Verify the counter was incremented
     let new_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();
     assert_eq!(
-        new_counter, 1,
+        new_counter, next_counter,
         "Counter should be incremented after successful transaction"
     );
 
@@ -135,50 +200,23 @@ fn test_secp256r1_basic_signing() {
 }
 
 #[test_log::test]
-fn test_secp256r1_counter_increment() {
+fn test_secp256r1_counter_increment_v2() {
     let mut context = setup_test_context().unwrap();
 
     // Create a real secp256r1 key pair for testing
     let (_, public_key) = create_test_secp256r1_keypair();
 
-    // Create a new swig with the secp256r1 authority using instruction builder
+    // Create a new swig with the secp256r1 authority
     let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
 
-    // Create a dummy signing function for creation (won't be used for signing)
-    let dummy_signing_fn = Box::new(|_message_hash: &[u8]| -> [u8; 64] {
-        [0u8; 64] // Dummy signature
-    });
-
-    let builder = SwigInstructionBuilder::new(
-        id,
-        Box::new(Secp256r1ClientRole::new(public_key, dummy_signing_fn)),
-        context.default_payer.pubkey(),
-        0, // role_id
-    );
-
-    // Build the create instruction
-    let create_ix = builder.build_swig_account().unwrap();
-
-    let message = v0::Message::try_compile(
-        &context.default_payer.pubkey(),
-        &[create_ix],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-
-    let tx =
-        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
-            .unwrap();
-
-    let result = context.svm.send_transaction(tx);
-    assert!(
-        result.is_ok(),
-        "Failed to create Swig account: {:?}",
-        result.err()
-    );
-
-    let swig_key = builder.get_swig_account().unwrap();
+    // For SignV2, fund the swig_wallet_address instead of swig
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Verify initial counter is 0
     let initial_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();
@@ -189,71 +227,61 @@ fn test_secp256r1_counter_increment() {
 }
 
 #[test_log::test]
-fn test_secp256r1_replay_protection() {
+fn test_secp256r1_replay_protection_v2() {
     let mut context = setup_test_context().unwrap();
 
     // Create a real secp256r1 key pair for testing
     let (signing_key, public_key) = create_test_secp256r1_keypair();
 
-    // Create a new swig with the secp256r1 authority using instruction builder
+    // Create a new swig with the secp256r1 authority
     let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
 
-    // Create signing function for the client role
-    let signing_fn = Box::new(move |message_hash: &[u8]| -> [u8; 64] {
-        use solana_secp256r1_program::sign_message;
-        let signature =
-            sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap();
-        signature
-    });
-
-    let mut builder = SwigInstructionBuilder::new(
-        id,
-        Box::new(Secp256r1ClientRole::new(public_key, signing_fn)),
-        context.default_payer.pubkey(),
-        0, // role_id
-    );
-
-    // Build the create instruction
-    let create_ix = builder.build_swig_account().unwrap();
-
-    let message = v0::Message::try_compile(
-        &context.default_payer.pubkey(),
-        &[create_ix],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-
-    let tx =
-        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
-            .unwrap();
-
-    let result = context.svm.send_transaction(tx);
-    assert!(
-        result.is_ok(),
-        "Failed to create Swig account: {:?}",
-        result.err()
-    );
-
-    let swig_key = builder.get_swig_account().unwrap();
-    context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
+    // For SignV2, fund the swig_wallet_address instead of swig
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Set up transfer instruction
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 1_000_000;
-    let transfer_ix = system_instruction::transfer(&swig_key, &recipient.pubkey(), transfer_amount);
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
 
-    // First transaction - should succeed
-    let signed_instructions1 = builder
-        .sign_instruction(vec![transfer_ix.clone()], Some(current_slot))
-        .unwrap();
+    // First transaction with counter 1
+    let counter1 = 1;
 
+    // Create authority function that signs the message hash
+    let mut authority_fn1 = |message_hash: &[u8]| -> [u8; 64] {
+        use solana_secp256r1_program::sign_message;
+        let signature =
+            sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap();
+        signature
+    };
+
+    let instructions1 = swig_interface::SignV2Instruction::new_secp256r1(
+        swig_key,
+        swig_wallet_address,
+        context.default_payer.pubkey(),
+        authority_fn1,
+        current_slot,
+        counter1,
+        transfer_ix.clone(),
+        0,
+        &public_key,
+    )
+    .unwrap();
+
+    // Execute first transaction
     let message1 = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &signed_instructions1,
+        &instructions1,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -269,41 +297,33 @@ fn test_secp256r1_replay_protection() {
         "First transaction should succeed: {:?}",
         result1.err()
     );
-    println!("✓ First transaction succeeded");
+    println!("✓ First transaction with counter 1 succeeded");
 
     // Try second transaction with same counter (should fail due to replay
-    // protection) We need to manually set the counter to 1 to simulate replay
-    // Re-create the signing_key for the replay closure
-    let (replay_signing_key, _) = create_test_secp256r1_keypair();
-    let signing_fn_clone = Box::new(move |message_hash: &[u8]| -> [u8; 64] {
+    // protection)
+    let mut authority_fn2 = |message_hash: &[u8]| -> [u8; 64] {
         use solana_secp256r1_program::sign_message;
-        let signature = sign_message(
-            message_hash,
-            &replay_signing_key.private_key_to_der().unwrap(),
-        )
-        .unwrap();
+        let signature =
+            sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap();
         signature
-    });
+    };
 
-    // Create a new client role with odometer set to 1 to simulate replay
-    let mut replay_client_role =
-        Secp256r1ClientRole::new_without_odometer(public_key, signing_fn_clone);
-    replay_client_role.update_odometer(1).unwrap();
-
-    let mut replay_builder = SwigInstructionBuilder::new(
-        id,
-        Box::new(replay_client_role),
+    let instructions2 = swig_interface::SignV2Instruction::new_secp256r1(
+        swig_key,
+        swig_wallet_address,
         context.default_payer.pubkey(),
-        0, // role_id
-    );
-
-    let signed_instructions2 = replay_builder
-        .sign_instruction(vec![transfer_ix], Some(current_slot))
-        .unwrap();
+        authority_fn2,
+        current_slot,
+        counter1, // Same counter - should trigger replay protection
+        transfer_ix.clone(),
+        0,
+        &public_key,
+    )
+    .unwrap();
 
     let message2 = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &signed_instructions2,
+        &instructions2,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -331,61 +351,44 @@ fn test_secp256r1_replay_protection() {
 }
 
 #[test_log::test]
-fn test_secp256r1_add_authority() {
+fn test_secp256r1_add_authority_v2() {
     let mut context = setup_test_context().unwrap();
 
     // Create primary Ed25519 authority
     let primary_authority = Keypair::new();
     let id = rand::random::<[u8; 32]>();
 
-    // Create a new swig with Ed25519 authority using instruction builder
-    let mut builder = SwigInstructionBuilder::new(
-        id,
-        Box::new(Ed25519ClientRole::new(primary_authority.pubkey())),
-        context.default_payer.pubkey(),
-        0, // role_id
-    );
+    // Create a new swig with Ed25519 authority
+    let (swig_key, _) = create_swig_ed25519(&mut context, &primary_authority, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
 
-    let create_ix = builder.build_swig_account().unwrap();
-
-    let message = v0::Message::try_compile(
-        &context.default_payer.pubkey(),
-        &[create_ix],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-
-    let tx =
-        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
-            .unwrap();
-
-    let result = context.svm.send_transaction(tx);
-    assert!(
-        result.is_ok(),
-        "Failed to create Swig account: {:?}",
-        result.err()
-    );
-
-    let swig_key = builder.get_swig_account().unwrap();
-    context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
+    // For SignV2, fund the swig_wallet_address instead of swig
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Create a real secp256r1 public key to add as second authority
     let (_, secp256r1_pubkey) = create_test_secp256r1_keypair();
 
-    // Create instruction to add the Secp256r1 authority using instruction builder
-    let add_authority_ix = builder
-        .add_authority_instruction(
-            AuthorityType::Secp256r1,
-            &secp256r1_pubkey,
-            vec![ClientPermission::All],
-            None, // current_slot not needed for Ed25519
-        )
-        .unwrap();
+    // Create instruction to add the Secp256r1 authority
+    let add_authority_ix = swig_interface::AddAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        primary_authority.pubkey(),
+        0, // role_id of the primary wallet
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256r1,
+            authority: &secp256r1_pubkey,
+        },
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
 
     let message = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &add_authority_ix,
+        &[add_authority_ix],
         &[],
         context.svm.latest_blockhash(),
     )
@@ -414,7 +417,7 @@ fn test_secp256r1_add_authority() {
 }
 
 #[test_log::test]
-fn test_secp256r1_session_authority() {
+fn test_secp256r1_session_authority_v2() {
     let mut context = setup_test_context().unwrap();
 
     // Create a real secp256r1 public key for session authority
@@ -443,7 +446,7 @@ fn test_secp256r1_session_authority() {
 }
 
 #[test_log::test]
-fn test_secp256r1_session_authority_odometer() {
+fn test_secp256r1_session_authority_odometer_v2() {
     let mut context = setup_test_context().unwrap();
 
     // Create a real secp256r1 key pair for testing
@@ -515,20 +518,17 @@ fn create_swig_secp256r1(
     public_key: &[u8; 33],
     id: [u8; 32],
 ) -> Result<(solana_sdk::pubkey::Pubkey, u8), Box<dyn std::error::Error>> {
-    use swig_state::swig::swig_account_seeds;
-
     let payer_pubkey = context.default_payer.pubkey();
     let (swig_address, swig_bump) = solana_sdk::pubkey::Pubkey::find_program_address(
         &swig_account_seeds(&id),
-        &swig_interface::program_id(),
+        &common::program_id(),
     );
 
     let (swig_wallet_address, wallet_address_bump) =
         solana_sdk::pubkey::Pubkey::find_program_address(
             &swig_wallet_address_seeds(swig_address.as_ref()),
-            &swig_interface::program_id(),
+            &common::program_id(),
         );
-
     let create_ix = swig_interface::CreateInstruction::new(
         swig_address,
         swig_bump,
@@ -559,77 +559,60 @@ fn create_swig_secp256r1(
 }
 
 #[test_log::test]
-fn test_secp256r1_add_authority_with_secp256r1() {
+fn test_secp256r1_add_authority_with_secp256r1_v2() {
     let mut context = setup_test_context().unwrap();
 
     // Create a real secp256r1 key pair for the primary authority
     let (signing_key, public_key) = create_test_secp256r1_keypair();
     let id = rand::random::<[u8; 32]>();
 
-    // Create a new swig with secp256r1 authority using instruction builder
-    let signing_fn = Box::new(move |message_hash: &[u8]| -> [u8; 64] {
-        use solana_secp256r1_program::sign_message;
-        let signature =
-            sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap();
-        signature
-    });
+    // Create a new swig with secp256r1 authority
+    let (swig_key, _) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
 
-    let mut builder = SwigInstructionBuilder::new(
-        id,
-        Box::new(Secp256r1ClientRole::new(public_key, signing_fn)),
-        context.default_payer.pubkey(),
-        0, // role_id
-    );
-
-    // Build the create instruction
-    let create_ix = builder.build_swig_account().unwrap();
-
-    let message = v0::Message::try_compile(
-        &context.default_payer.pubkey(),
-        &[create_ix],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-
-    let tx =
-        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
-            .unwrap();
-
-    let result = context.svm.send_transaction(tx);
-    assert!(
-        result.is_ok(),
-        "Failed to create Swig account: {:?}",
-        result.err()
-    );
-
-    let swig_key = builder.get_swig_account().unwrap();
-    context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
-
-    let swig_account = context.svm.get_account(&swig_key).unwrap();
-
-    display_swig(swig_key, &swig_account).unwrap();
+    // For SignV2, fund the swig_wallet_address instead of swig
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Create a second secp256r1 public key to add as a new authority
     let (_, new_public_key) = create_test_secp256r1_keypair();
 
-    // Get current slot for signing
+    // Get current slot and counter for the authority
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    let current_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();
+    let next_counter = current_counter + 1;
 
-    // Create instruction to add the new Secp256r1 authority using instruction
-    // builder
-    let add_authority_ix = builder
-        .add_authority_instruction(
-            AuthorityType::Secp256r1,
-            &new_public_key,
-            vec![ClientPermission::All],
-            Some(current_slot),
-        )
-        .unwrap();
+    // Create authority function that signs the message hash
+    let mut authority_fn = |message_hash: &[u8]| -> [u8; 64] {
+        use solana_secp256r1_program::sign_message;
+        let signature =
+            sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap();
+        signature
+    };
+
+    // Create instruction to add the new Secp256r1 authority using SignV2
+    let instructions = swig_interface::AddAuthorityInstruction::new_with_secp256r1_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        authority_fn,
+        current_slot,
+        next_counter,
+        0, // role_id of the primary authority
+        &public_key,
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256r1,
+            authority: &new_public_key,
+        },
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
 
     let message = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &add_authority_ix,
+        &instructions,
         &[],
         context.svm.latest_blockhash(),
     )
@@ -640,16 +623,12 @@ fn test_secp256r1_add_authority_with_secp256r1() {
             .unwrap();
 
     let result = context.svm.send_transaction(tx);
-    println!("Transaction result: {:?}", result);
     assert!(
         result.is_ok(),
         "Failed to add Secp256r1 authority using secp256r1 signature: {:?}",
         result.err()
     );
 
-    let swig_account = context.svm.get_account(&swig_key).unwrap();
-
-    display_swig(swig_key, &swig_account).unwrap();
     // Verify the authority was added
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
@@ -658,7 +637,7 @@ fn test_secp256r1_add_authority_with_secp256r1() {
     // Verify the counter was incremented
     let new_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();
     assert_eq!(
-        new_counter, 1,
+        new_counter, next_counter,
         "Counter should be incremented after successful transaction"
     );
 
