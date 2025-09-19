@@ -38,8 +38,8 @@ use crate::{
 /// # Fields
 /// * `discriminator` - The instruction type identifier
 /// * `_padding` - Padding bytes for alignment
-/// * `role_id` - ID of the role performing the transfer (must have All
-///   or ManageAuthority permissions)
+/// * `role_id` - ID of the role performing the transfer (must have All or
+///   ManageAuthority permissions)
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct TransferAssetsV1Args {
