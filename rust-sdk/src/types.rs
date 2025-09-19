@@ -307,7 +307,7 @@ impl Permission {
                     }));
                 },
                 Permission::SubAccount { sub_account } => {
-                    actions.push(ClientAction::SubAccount(SubAccount { sub_account }));
+                    actions.push(ClientAction::SubAccount(SubAccount::new(sub_account)));
                 },
                 Permission::Stake { amount, recurring } => match recurring {
                     Some(config) => {

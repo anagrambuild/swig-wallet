@@ -4,6 +4,7 @@
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
+    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
     sysvars::{clock::Clock, Sysvar},
@@ -14,7 +15,7 @@ use swig_state::{
     action::{all::All, sub_account::SubAccount, ActionLoader, Actionable},
     authority::AuthorityType,
     role::RoleMut,
-    swig::{Swig, SwigSubAccount},
+    swig::Swig,
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -127,16 +128,16 @@ pub fn toggle_sub_account_v1(
     data: &[u8],
     all_accounts: &[AccountInfo],
 ) -> ProgramResult {
-    // Check that the accounts are owned by our program
+    // Check that the swig account is owned by our program
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
-    check_self_owned(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
-
+    // Check that the sub_account is system owned (it holds assets)
+    check_system_owner(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
     // Parse the instruction data
     let toggle_sub_account = ToggleSubAccountV1::from_instruction_bytes(data)?;
 
     // Verify the swig account data
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigAccount as u8 {
+    if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 
@@ -172,31 +173,30 @@ pub fn toggle_sub_account_v1(
         )?;
     }
 
-    // Check if the role has the required permissions
-    let all_action = role.get_action::<All>(&[])?;
-    let sub_account_action =
-        role.get_action::<SubAccount>(ctx.accounts.sub_account.key().as_ref())?;
+    // Get mutable reference to the SubAccount action to check permissions and
+    // update state
+    let sub_account_action_mut = RoleMut::get_action_mut::<SubAccount>(
+        role.actions,
+        ctx.accounts.sub_account.key().as_ref(),
+    )?;
 
-    if all_action.is_none() && sub_account_action.is_none() {
+    if let Some(action) = sub_account_action_mut {
+        // Check that the provided sub-account matches the one stored in the action
+        if action.sub_account != ctx.accounts.sub_account.key().as_ref() {
+            return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
+        }
+
+        // Update the enabled state
+        action.enabled = toggle_sub_account.args.enabled;
+    } else {
+        // Check if has All permission as fallback
+        let has_all_permission = role.get_action::<All>(&[])?.is_some();
+        if !has_all_permission {
+            return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+        }
+        // If has All permission but no SubAccount action, this is an error for toggle
+        // operation
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
-
-    // Verify the sub-account data
-    let sub_account_data = unsafe { ctx.accounts.sub_account.borrow_mut_data_unchecked() };
-    if unsafe { *sub_account_data.get_unchecked(0) } != Discriminator::SwigSubAccount as u8 {
-        return Err(SwigError::InvalidSwigSubAccountDiscriminator.into());
-    }
-
-    // Load the sub-account
-    let mut sub_account = unsafe { SwigSubAccount::load_mut_unchecked(sub_account_data)? };
-
-    // Check that the sub-account belongs to this swig account
-    if sub_account.swig_id != swig.id {
-        return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
-    }
-
-    // Toggle the enabled state
-    sub_account.enabled = toggle_sub_account.args.enabled;
-
     Ok(())
 }
