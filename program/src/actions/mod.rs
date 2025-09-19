@@ -9,10 +9,13 @@ pub mod add_authority_v1;
 pub mod create_session_v1;
 pub mod create_sub_account_v1;
 pub mod create_v1;
+pub mod migrate_to_wallet_address_v1;
 pub mod remove_authority_v1;
 pub mod sign_v1;
+pub mod sign_v2;
 pub mod sub_account_sign_v1;
 pub mod toggle_sub_account_v1;
+pub mod transfer_assets_v1;
 pub mod update_authority_v1;
 pub mod withdraw_from_sub_account_v1;
 
@@ -21,16 +24,17 @@ use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, Pro
 
 use self::{
     add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*, create_v1::*,
-    remove_authority_v1::*, sign_v1::*, sub_account_sign_v1::*, toggle_sub_account_v1::*,
+    migrate_to_wallet_address_v1::*, remove_authority_v1::*, sign_v1::*, sign_v2::*,
+    sub_account_sign_v1::*, toggle_sub_account_v1::*, transfer_assets_v1::*,
     update_authority_v1::*, withdraw_from_sub_account_v1::*,
 };
 use crate::{
     instruction::{
         accounts::{
             AddAuthorityV1Accounts, CreateSessionV1Accounts, CreateSubAccountV1Accounts,
-            CreateV1Accounts, RemoveAuthorityV1Accounts, SignV1Accounts, SubAccountSignV1Accounts,
-            ToggleSubAccountV1Accounts, UpdateAuthorityV1Accounts,
-            WithdrawFromSubAccountV1Accounts,
+            CreateV1Accounts, MigrateToWalletAddressV1Accounts, RemoveAuthorityV1Accounts,
+            SignV1Accounts, SignV2Accounts, SubAccountSignV1Accounts, ToggleSubAccountV1Accounts,
+            TransferAssetsV1Accounts, UpdateAuthorityV1Accounts, WithdrawFromSubAccountV1Accounts,
         },
         SwigInstruction,
     },
@@ -64,6 +68,7 @@ pub fn process_action(
     match ix {
         SwigInstruction::CreateV1 => process_create_v1(accounts, data),
         SwigInstruction::SignV1 => process_sign_v1(accounts, account_classification, data),
+        SwigInstruction::SignV2 => process_sign_v2(accounts, account_classification, data),
         SwigInstruction::AddAuthorityV1 => process_add_authority_v1(accounts, data),
         SwigInstruction::RemoveAuthorityV1 => process_remove_authority_v1(accounts, data),
         SwigInstruction::UpdateAuthorityV1 => process_update_authority_v1(accounts, data),
@@ -76,6 +81,12 @@ pub fn process_action(
             process_sub_account_sign_v1(accounts, account_classification, data)
         },
         SwigInstruction::ToggleSubAccountV1 => process_toggle_sub_account_v1(accounts, data),
+        SwigInstruction::MigrateToWalletAddressV1 => {
+            process_migrate_to_wallet_address_v1(accounts, data)
+        },
+        SwigInstruction::TransferAssetsV1 => {
+            process_transfer_assets_v1(accounts, account_classification, data)
+        },
     }
 }
 
@@ -97,6 +108,18 @@ fn process_sign_v1(
 ) -> ProgramResult {
     let account_ctx = SignV1Accounts::context(accounts)?;
     sign_v1(account_ctx, accounts, data, account_classification)
+}
+
+/// Processes a SignV1 instruction.
+///
+/// Signs and executes a transaction using the wallet's authority.
+fn process_sign_v2(
+    accounts: &[AccountInfo],
+    account_classification: &mut [AccountClassification],
+    data: &[u8],
+) -> ProgramResult {
+    let account_ctx = SignV2Accounts::context(accounts)?;
+    sign_v2(account_ctx, accounts, data, account_classification)
 }
 
 /// Processes an AddAuthorityV1 instruction.
@@ -162,11 +185,30 @@ fn process_sub_account_sign_v1(
     let account_ctx = SubAccountSignV1Accounts::context(accounts)?;
     sub_account_sign_v1(account_ctx, accounts, data, account_classification)
 }
-
 /// Processes a ToggleSubAccountV1 instruction.
 ///
 /// Enables or disables a sub-account.
 fn process_toggle_sub_account_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = ToggleSubAccountV1Accounts::context(accounts)?;
     toggle_sub_account_v1(account_ctx, data, accounts)
+}
+
+/// Processes a MigrateToWalletAddressV1 instruction.
+///
+/// Migrates a Swig account to support wallet address feature.
+fn process_migrate_to_wallet_address_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = MigrateToWalletAddressV1Accounts::context(accounts)?;
+    migrate_to_wallet_address_v1(account_ctx, data)
+}
+
+/// Processes a TransferAssetsV1 instruction.
+///
+/// Transfers all assets from swig account to swig wallet address.
+fn process_transfer_assets_v1(
+    accounts: &[AccountInfo],
+    account_classification: &[AccountClassification],
+    data: &[u8],
+) -> ProgramResult {
+    let account_ctx = TransferAssetsV1Accounts::context(accounts)?;
+    transfer_assets_v1(account_ctx, accounts, data, account_classification)
 }

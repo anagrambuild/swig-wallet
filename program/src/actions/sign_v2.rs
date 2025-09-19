@@ -7,7 +7,6 @@ use core::mem::MaybeUninit;
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
-    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
     sysvars::{clock::Clock, Sysvar},
@@ -39,14 +38,14 @@ use swig_state::{
     },
     authority::AuthorityType,
     role::RoleMut,
-    swig::{swig_account_signer, Swig},
+    swig::{swig_account_signer, swig_wallet_address_signer, Swig},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
 use crate::{
     error::SwigError,
     instruction::{
-        accounts::{Context, SignV1Accounts},
+        accounts::{Context, SignV2Accounts},
         SwigInstruction,
     },
     util::{build_restricted_keys, hash_except},
@@ -86,32 +85,32 @@ const NO_EXCLUDE_RANGES: &[core::ops::Range<usize>] = &[];
 /// * `role_id` - ID of the role attempting to sign
 #[derive(Debug, NoPadding)]
 #[repr(C, align(8))]
-pub struct SignV1Args {
+pub struct SignV2Args {
     instruction: SwigInstruction,
     pub instruction_payload_len: u16,
     pub role_id: u32,
 }
 
-impl SignV1Args {
-    /// Creates a new instance of SignV1Args.
+impl SignV2Args {
+    /// Creates a new instance of SignV2Args.
     ///
     /// # Arguments
     /// * `role_id` - ID of the signing role
     /// * `instruction_payload_len` - Length of the instruction payload
     pub fn new(role_id: u32, instruction_payload_len: u16) -> Self {
         Self {
-            instruction: SwigInstruction::SignV1,
+            instruction: SwigInstruction::SignV2,
             role_id,
             instruction_payload_len,
         }
     }
 }
 
-impl Transmutable for SignV1Args {
+impl Transmutable for SignV2Args {
     const LEN: usize = core::mem::size_of::<Self>();
 }
 
-impl IntoBytes for SignV1Args {
+impl IntoBytes for SignV2Args {
     fn into_bytes(&self) -> Result<&[u8], ProgramError> {
         Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
     }
@@ -123,14 +122,14 @@ impl IntoBytes for SignV1Args {
 /// * `args` - The signing arguments
 /// * `authority_payload` - Authority-specific payload data
 /// * `instruction_payload` - Transaction instruction data
-pub struct SignV1<'a> {
-    pub args: &'a SignV1Args,
+pub struct SignV2<'a> {
+    pub args: &'a SignV2Args,
     authority_payload: &'a [u8],
     instruction_payload: &'a [u8],
 }
 
-impl<'a> SignV1<'a> {
-    /// Parses the instruction data bytes into a SignV1 instance.
+impl<'a> SignV2<'a> {
+    /// Parses the instruction data bytes into a SignV2 instance.
     ///
     /// # Arguments
     /// * `data` - Raw instruction data bytes
@@ -138,11 +137,11 @@ impl<'a> SignV1<'a> {
     /// # Returns
     /// * `Result<Self, ProgramError>` - Parsed instruction or error
     pub fn from_instruction_bytes(data: &'a [u8]) -> Result<Self, ProgramError> {
-        if data.len() < SignV1Args::LEN {
+        if data.len() < SignV2Args::LEN {
             return Err(SwigError::InvalidSwigSignInstructionDataTooShort.into());
         }
-        let (inst, rest) = unsafe { data.split_at_unchecked(SignV1Args::LEN) };
-        let args = unsafe { SignV1Args::load_unchecked(inst)? };
+        let (inst, rest) = unsafe { data.split_at_unchecked(SignV2Args::LEN) };
+        let args = unsafe { SignV2Args::load_unchecked(inst)? };
 
         let (instruction_payload, authority_payload) =
             unsafe { rest.split_at_unchecked(args.instruction_payload_len as usize) };
@@ -172,8 +171,8 @@ impl<'a> SignV1<'a> {
 /// # Returns
 /// * `ProgramResult` - Success or error status
 #[inline(always)]
-pub fn sign_v1(
-    ctx: Context<SignV1Accounts>,
+pub fn sign_v2(
+    ctx: Context<SignV2Accounts>,
     all_accounts: &[AccountInfo],
     data: &[u8],
     account_classifiers: &mut [AccountClassification],
@@ -181,14 +180,14 @@ pub fn sign_v1(
     check_stack_height(1, SwigError::Cpi)?;
     // KEEP remove since we enfoce swig is owned in lib.rs
     // check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
-    let sign_v1 = SignV1::from_instruction_bytes(data)?;
+    let sign_v2 = SignV2::from_instruction_bytes(data)?;
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
-    let role = Swig::get_mut_role(sign_v1.args.role_id, swig_roles)?;
+    let role = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)?;
     if role.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
@@ -198,15 +197,15 @@ pub fn sign_v1(
     if role.authority.session_based() {
         role.authority.authenticate_session(
             all_accounts,
-            sign_v1.authority_payload,
-            sign_v1.instruction_payload,
+            sign_v2.authority_payload,
+            sign_v2.instruction_payload,
             slot,
         )?;
     } else {
         role.authority.authenticate(
             all_accounts,
-            sign_v1.authority_payload,
-            sign_v1.instruction_payload,
+            sign_v2.authority_payload,
+            sign_v2.instruction_payload,
             slot,
         )?;
     }
@@ -219,7 +218,7 @@ pub fn sign_v1(
             restricted_keys[0].write(ctx.accounts.payer.key());
             core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 1)
         } else {
-            let authority_index = *sign_v1.authority_payload.get_unchecked(0) as usize;
+            let authority_index = *sign_v2.authority_payload.get_unchecked(0) as usize;
             restricted_keys[0].write(ctx.accounts.payer.key());
             restricted_keys[1].write(all_accounts[authority_index].key());
             core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 2)
@@ -227,12 +226,12 @@ pub fn sign_v1(
     };
     let ix_iter = InstructionIterator::new(
         all_accounts,
-        sign_v1.instruction_payload,
-        ctx.accounts.swig.key(),
+        sign_v2.instruction_payload,
+        ctx.accounts.swig_wallet_address.key(),
         rkeys,
     )?;
-    let b = [swig.bump];
-    let seeds = swig_account_signer(&swig.id, &b);
+    let b = [swig.wallet_bump];
+    let seeds = swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &b);
     let signer = seeds.as_slice();
 
     // Check if we have All or AllButManageAuthority permission to skip CPI
@@ -312,13 +311,17 @@ pub fn sign_v1(
         if let Ok(instruction) = ix {
             // Check CPI signing permissions if not All permission
             if !has_all_permission {
-                // Check if swig account is being used as a signer for this instruction
-                let swig_is_signer = instruction.accounts.iter().any(|account_meta| {
-                    account_meta.pubkey == ctx.accounts.swig.key() && account_meta.is_signer
-                });
+                // Check if swig_wallet_address account is being used as a signer for this
+                // instruction
+                let swig_wallet_address_is_signer =
+                    instruction.accounts.iter().any(|account_meta| {
+                        account_meta.pubkey == ctx.accounts.swig_wallet_address.key()
+                            && account_meta.is_signer
+                    });
 
-                if swig_is_signer {
-                    // This is a CPI call where swig is signing - check Program permissions
+                if swig_wallet_address_is_signer {
+                    // This is a CPI call where swig_wallet_address is signing - check Program
+                    // permissions
                     let program_id_bytes = instruction.program_id.as_ref();
 
                     // Check if we have any program permission that allows this program
@@ -336,12 +339,17 @@ pub fn sign_v1(
                 }
             }
 
-            let swig_balance_before = ctx.accounts.swig.lamports();
-            instruction.execute(all_accounts, ctx.accounts.swig.key(), &[signer.into()])?;
+            let swig_wallet_address_balance_before = ctx.accounts.swig_wallet_address.lamports();
+            instruction.execute(
+                all_accounts,
+                ctx.accounts.swig_wallet_address.key(),
+                &[signer.into()],
+            )?;
 
-            let swig_balance_after = ctx.accounts.swig.lamports();
-            if swig_balance_after < swig_balance_before {
-                let amount_spent = swig_balance_before.saturating_sub(swig_balance_after);
+            let swig_wallet_address_balance_after = ctx.accounts.swig_wallet_address.lamports();
+            if swig_wallet_address_balance_after < swig_wallet_address_balance_before {
+                let amount_spent = swig_wallet_address_balance_before
+                    .saturating_sub(swig_wallet_address_balance_after);
                 total_sol_spent = total_sol_spent.saturating_add(amount_spent);
             }
 
@@ -441,7 +449,7 @@ pub fn sign_v1(
 
                     let current_lamports = account_info.lamports();
                     let mut matched = false;
-                    // Eensure the account has some minimum balance for rent exemption
+                    // Ensure the account has some minimum balance for rent exemption
                     let account_data = unsafe { account_info.borrow_data_unchecked() };
                     let rent_exempt_minimum =
                         pinocchio::sysvars::rent::Rent::get()?.minimum_balance(account_data.len());
@@ -467,14 +475,13 @@ pub fn sign_v1(
 
                         // Only check destination limits if they exist
                         if has_sol_destination_limits(actions)? {
-                            // Process SOL transfers using zero-copy callback approach
                             let mut destination_limit_applied = false;
-
+                            // Process SOL transfers using zero-copy callback approach
                             process_sol_transfers(
-                                sign_v1.instruction_payload,
-                                account_info.key(),
+                                sign_v2.instruction_payload,
+                                ctx.accounts.swig_wallet_address.key(),
                                 all_accounts,
-                                ctx.accounts.swig.key(),
+                                ctx.accounts.swig_wallet_address.key(),
                                 |destination_pubkey, amount| -> Result<bool, ProgramError> {
                                     let dest_pubkey = destination_pubkey.as_ref();
 
@@ -514,7 +521,7 @@ pub fn sign_v1(
                             }
                         }
 
-                        // If we have general limits OR destination limits applied, continue
+                        // If we have general limits OR destination limits exist, continue
                         if general_limit_applied || has_sol_destination_limits(actions)? {
                             continue;
                         }
@@ -548,7 +555,7 @@ pub fn sign_v1(
                             .map_err(|_| ProgramError::InvalidAccountData)?
                     });
 
-                    if authority != ctx.accounts.swig.key() {
+                    if authority != ctx.accounts.swig_wallet_address.key() {
                         return Err(
                             SwigAuthenticateError::PermissionDeniedTokenAccountAuthorityNotSwig
                                 .into(),
@@ -574,10 +581,10 @@ pub fn sign_v1(
                         let mut destination_limit_applied = false;
 
                         process_token_destinations(
-                            sign_v1.instruction_payload,
+                            sign_v2.instruction_payload,
                             source_account_key,
                             all_accounts,
-                            ctx.accounts.swig.key(),
+                            ctx.accounts.swig_wallet_address.key(),
                             |destination| -> Result<bool, ProgramError> {
                                 // Create the combined key [mint + destination] for matching
                                 let mut combined_key = [0u8; 64];

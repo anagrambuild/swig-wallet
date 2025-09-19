@@ -22,7 +22,7 @@ use swig_state::{
         ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
         secp256r1::CreateSecp256r1SessionAuthority, AuthorityType,
     },
-    swig::{sub_account_seeds, swig_account_seeds, SwigWithRoles},
+    swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
     IntoBytes, Transmutable,
 };
 pub type Context = SwigTestContext;
@@ -118,10 +118,14 @@ pub fn create_swig_secp256k1_with_key_type(
         eth_pubkey[1..].to_vec()
     };
 
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
         bump,
         payer_pubkey,
+        swig_wallet_address,
+        wallet_address_bump,
         AuthorityConfig {
             authority_type: AuthorityType::Secp256k1,
             authority: &authority_bytes,
@@ -155,10 +159,14 @@ pub fn create_swig_ed25519(
 ) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
     let payer_pubkey = context.default_payer.pubkey();
     let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
         bump,
         payer_pubkey,
+        swig_wallet_address,
+        wallet_address_bump,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
             authority: authority.pubkey().as_ref(),
@@ -213,10 +221,14 @@ pub fn create_swig_ed25519_session(
         authority: authority_data_bytes,
     };
 
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
         bump,
         payer_pubkey,
+        swig_wallet_address,
+        wallet_address_bump,
         initial_authority,
         vec![ClientAction::All(All {})],
         id,
@@ -280,10 +292,14 @@ pub fn create_swig_secp256k1_session(
             .map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?,
     };
 
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
         bump,
         payer_pubkey,
+        swig_wallet_address,
+        wallet_address_bump,
         initial_authority,
         vec![ClientAction::All(All {})],
         id,
@@ -334,10 +350,14 @@ pub fn create_swig_secp256r1_session(
             .map_err(|e| anyhow::anyhow!("Failed to serialize authority data {:?}", e))?,
     };
 
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let create_ix = CreateInstruction::new(
         swig,
         bump,
         payer_pubkey,
+        swig_wallet_address,
+        wallet_address_bump,
         initial_authority,
         vec![ClientAction::All(All {})],
         id,
@@ -363,6 +383,52 @@ pub fn create_swig_secp256r1_session(
         .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
 
     Ok((swig, bench))
+}
+
+pub fn create_swig_secp256r1(
+    context: &mut SwigTestContext,
+    public_key: &[u8; 33],
+    id: [u8; 32],
+) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
+    let payer_pubkey = context.default_payer.pubkey();
+    let (swig_address, swig_bump) =
+        Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+
+    let (swig_wallet_address, wallet_address_bump) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(swig_address.as_ref()),
+        &program_id(),
+    );
+
+    let create_ix = CreateInstruction::new(
+        swig_address,
+        swig_bump,
+        payer_pubkey,
+        swig_wallet_address,
+        wallet_address_bump,
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256r1,
+            authority: public_key,
+        },
+        vec![ClientAction::All(All {})],
+        id,
+    )?;
+
+    let message = v0::Message::try_compile(
+        &payer_pubkey,
+        &[create_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])?;
+
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+
+    Ok((swig_address, bench))
 }
 
 pub struct SwigTestContext {
@@ -430,7 +496,7 @@ pub fn create_sub_account(
     role_id: u32,
     id: [u8; 32],
 ) -> anyhow::Result<Pubkey> {
-    // Derive the sub-account address
+    // Derive the sub-account address (keeping PDA for deterministic addressing)
     let role_id_bytes = role_id.to_le_bytes();
     let (sub_account, sub_account_bump) =
         Pubkey::find_program_address(&sub_account_seeds(&id, &role_id_bytes), &program_id());
@@ -558,12 +624,23 @@ pub fn withdraw_from_sub_account(
     role_id: u32,
     amount: u64,
 ) -> anyhow::Result<TransactionMetadata> {
+    // Derive the swig wallet address
+    let (swig_wallet_address, _) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(swig_account.as_ref()),
+        &program_id(),
+    );
+    println!(
+        "withdraw_from_sub_account swig_wallet_address: {:?}",
+        swig_wallet_address.to_bytes()
+    );
+
     // Create the instruction to withdraw from a sub-account
     let withdraw_ix = WithdrawFromSubAccountInstruction::new_with_ed25519_authority(
         *swig_account,
         authority.pubkey(),
         authority.pubkey(),
         *sub_account,
+        swig_wallet_address,
         role_id,
         amount,
     )
@@ -582,10 +659,12 @@ pub fn withdraw_from_sub_account(
         VersionedTransaction::try_new(VersionedMessage::V0(message), &[authority.insecure_clone()])
             .unwrap();
 
-    let bench = context
-        .svm
-        .send_transaction(tx)
-        .map_err(|e| anyhow::anyhow!("Failed to withdraw from sub-account: {:?}", e))?;
+    let bench = context.svm.send_transaction(tx).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to withdraw from sub-account: {}",
+            e.meta.pretty_logs()
+        )
+    })?;
 
     Ok(bench)
 }
@@ -601,11 +680,17 @@ pub fn withdraw_token_from_sub_account(
     role_id: u32,
     amount: u64,
 ) -> anyhow::Result<TransactionMetadata> {
+    // Derive the swig wallet address
+    let (swig_wallet_address, _) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(swig_account.as_ref()),
+        &program_id(),
+    );
     let withdraw_ix = WithdrawFromSubAccountInstruction::new_token_with_ed25519_authority(
         *swig_account,
         authority.pubkey(),
         context.default_payer.pubkey(),
         *sub_account,
+        swig_wallet_address,
         *sub_account_ata,
         *swig_ata,
         *token_program,
@@ -667,9 +752,7 @@ pub fn add_sub_account_permission(
             authority_type: AuthorityType::Ed25519,
             authority: authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SubAccount(SubAccount {
-            sub_account: [0; 32],
-        })],
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation())],
     )
     .map_err(|e| anyhow::anyhow!("Failed to create add authority instruction {:?}", e))?;
 
