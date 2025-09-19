@@ -12,7 +12,7 @@ use core::mem::MaybeUninit;
 
 #[allow(unused_imports)]
 use pinocchio::syscalls::{sol_keccak256, sol_secp256k1_recover, sol_sha256};
-use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, pubkey::Pubkey};
+use pinocchio::{account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey};
 use swig_assertions::sol_assert_bytes_eq;
 
 use super::{ed25519::ed25519_authenticate, Authority, AuthorityInfo, AuthorityType};
@@ -25,7 +25,7 @@ const MAX_SIGNATURE_AGE_IN_SLOTS: u64 = 60;
 #[derive(Debug, no_padding::NoPadding)]
 #[repr(C, align(8))]
 pub struct CreateSecp256k1SessionAuthority {
-    /// The uncompressed Secp256k1 public key (64 bytes)
+    /// The Secp256k1 public key data (33/64 bytes)
     pub public_key: [u8; 64],
     /// The session key for temporary authentication
     pub session_key: [u8; 32],
@@ -100,13 +100,28 @@ impl Authority for Secp256k1Authority {
     const SESSION_BASED: bool = false;
 
     fn set_into_bytes(create_data: &[u8], bytes: &mut [u8]) -> Result<(), ProgramError> {
-        if create_data.len() != 64 {
-            return Err(SwigStateError::InvalidRoleData.into());
-        }
         let authority = unsafe { Secp256k1Authority::load_mut_unchecked(bytes)? };
-        let compressed = compress(create_data.try_into().unwrap());
-        authority.public_key = compressed;
-        authority.signature_odometer = 0;
+
+        match create_data.len() {
+            33 => {
+                // Handle compressed input (33 bytes)
+                // For compressed input, we can store it directly since we already store
+                // compressed keys
+                let compressed_key: &[u8; 33] = create_data.try_into().unwrap();
+                authority.public_key = *compressed_key;
+                authority.signature_odometer = 0;
+            },
+            64 => {
+                // Handle uncompressed input (64 bytes) - existing behavior
+                let compressed = compress(create_data.try_into().unwrap());
+                authority.public_key = compressed;
+                authority.signature_odometer = 0;
+            },
+            _ => {
+                return Err(SwigStateError::InvalidRoleData.into());
+            },
+        }
+
         Ok(())
     }
 }
@@ -133,11 +148,18 @@ impl AuthorityInfo for Secp256k1Authority {
     }
 
     fn match_data(&self, data: &[u8]) -> bool {
-        if data.len() != 64 {
-            return false;
+        match data.len() {
+            33 => {
+                // Direct comparison with stored compressed key
+                sol_assert_bytes_eq(&self.public_key, data.try_into().unwrap(), 33)
+            },
+            64 => {
+                // Compress input and compare with stored compressed key
+                let compressed = compress(data.try_into().unwrap());
+                sol_assert_bytes_eq(&self.public_key, &compressed, 33)
+            },
+            _ => false,
         }
-        let expanded = compress(data.try_into().unwrap());
-        sol_assert_bytes_eq(&self.public_key, &expanded, 33)
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -197,7 +219,13 @@ impl Authority for Secp256k1SessionAuthority {
     fn set_into_bytes(create_data: &[u8], bytes: &mut [u8]) -> Result<(), ProgramError> {
         let create = unsafe { CreateSecp256k1SessionAuthority::load_unchecked(create_data)? };
         let authority = unsafe { Secp256k1SessionAuthority::load_mut_unchecked(bytes)? };
-        let compressed = compress(&create.public_key);
+        let compressed = if create.public_key[33..] == [0; 31] {
+            let mut compressed_key = [0u8; 33];
+            compressed_key.copy_from_slice(&create.public_key[..33]);
+            compressed_key
+        } else {
+            compress(&create.public_key)
+        };
         authority.public_key = compressed;
         authority.signature_odometer = 0;
         authority.session_key = create.session_key;
@@ -220,11 +248,18 @@ impl AuthorityInfo for Secp256k1SessionAuthority {
     }
 
     fn match_data(&self, data: &[u8]) -> bool {
-        if data.len() != 64 {
-            return false;
+        match data.len() {
+            33 => {
+                // Direct comparison with stored compressed key
+                sol_assert_bytes_eq(&self.public_key, data.try_into().unwrap(), 33)
+            },
+            64 => {
+                // Compress input and compare with stored compressed key
+                let compressed = compress(data.try_into().unwrap());
+                sol_assert_bytes_eq(&self.public_key, &compressed, 33)
+            },
+            _ => false,
         }
-        let expanded = compress(data.try_into().unwrap());
-        sol_assert_bytes_eq(&self.public_key, &expanded, 33)
     }
 
     fn identity(&self) -> Result<&[u8], ProgramError> {
