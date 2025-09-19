@@ -17,11 +17,10 @@ use pinocchio::{
 };
 use swig_assertions::{check_self_owned, check_self_pda};
 use swig_state::{
-    action::{all::All, ActionLoader},
-    authority::AuthorityType,
+    action::{all::All, manage_authority::ManageAuthority},
     role::RoleMut,
-    swig::{swig_account_signer, swig_wallet_address_seeds_with_bump, Swig, SwigWithRoles},
-    Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable,
+    swig::{swig_account_signer, swig_wallet_address_seeds_with_bump, Swig},
+    Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
 use crate::{
@@ -40,7 +39,7 @@ use crate::{
 /// * `discriminator` - The instruction type identifier
 /// * `_padding` - Padding bytes for alignment
 /// * `role_id` - ID of the role performing the transfer (must have All
-///   permissions)
+///   or ManageAuthority permissions)
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct TransferAssetsV1Args {
@@ -108,7 +107,7 @@ impl<'a> TransferAssetsV1<'a> {
 ///
 /// This function:
 /// 1. Validates that the swig account has been migrated (has wallet_bump)
-/// 2. Authenticates the authority has All permissions
+/// 2. Authenticates the authority has All or ManageAuthority permissions
 /// 3. Transfers all SOL from swig account to swig wallet address
 /// 4. Transfers all SPL tokens from swig account to swig wallet address
 ///
@@ -180,9 +179,10 @@ pub fn transfer_assets_v1(
         )?;
     }
 
-    // Check if the role has All permissions
-    let all_action = role.get_action::<All>(&[])?;
-    if all_action.is_none() {
+    // Check if the role has All or ManageAuthority permissions
+    let has_all_permission = role.get_action::<All>(&[])?.is_some();
+    let has_manage_authority = role.get_action::<ManageAuthority>(&[])?.is_some();
+    if !has_all_permission && !has_manage_authority {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
 

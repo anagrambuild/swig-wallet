@@ -13,8 +13,7 @@ use pinocchio::{
 };
 use swig_assertions::{check_self_pda, check_system_owner, check_zero_data};
 use swig_state::{
-    action::{manage_authority::ManageAuthority, ActionLoader},
-    authority::AuthorityType,
+    action::{all::All, manage_authority::ManageAuthority},
     swig::{
         swig_account_seeds_with_bump, swig_account_signer, swig_wallet_address_seeds_with_bump,
         swig_wallet_address_signer, Swig, SwigWithRoles,
@@ -116,7 +115,7 @@ impl Transmutable for OldSwig {
 /// Migrates a Swig account to support the wallet address feature.
 ///
 /// This function:
-/// 1. Validates the authority has ManageAuthority permission or is the admin
+/// 1. Validates the authority has All or ManageAuthority permission
 /// 2. Reads the old Swig account structure
 /// 3. Creates a new Swig structure with wallet_bump field
 /// 4. Updates the account in-place (preserving all role/action data)
@@ -157,13 +156,12 @@ pub fn migrate_to_wallet_address_v1(
         return Err(SwigError::StateError.into());
     }
 
-    // Validate authority - either admin or has ManageAuthority permission
+    // Validate authority has All or ManageAuthority permission
     let authority_pubkey = ctx.accounts.authority.key();
 
-    // Check if authority has ManageAuthority permission
+    // Check if authority has All or ManageAuthority permission
     let swig_with_roles = SwigWithRoles::from_bytes(&swig_data)?;
-    let authority_data = authority_pubkey;
-    let role_id = swig_with_roles.lookup_role_id(authority_data)?;
+    let role_id = swig_with_roles.lookup_role_id(authority_pubkey.as_ref())?;
 
     match role_id {
         Some(id) => {
@@ -171,11 +169,10 @@ pub fn migrate_to_wallet_address_v1(
                 .get_role(id)?
                 .ok_or(SwigStateError::RoleNotFound)?;
 
-            // Check if this role has ManageAuthority action
-            let has_manage_authority =
-                ActionLoader::find_action::<ManageAuthority>(role.actions)?.is_some();
-            if !has_manage_authority {
-                msg!("Authority does not have ManageAuthority permission");
+            let has_all_permission = role.get_action::<All>(&[])?.is_some();
+            let has_manage_authority = role.get_action::<ManageAuthority>(&[])?.is_some();
+            if !has_all_permission && !has_manage_authority {
+                msg!("Authority lacks All or ManageAuthority permission");
                 return Err(SwigError::InvalidAuthorityType.into());
             }
         },
