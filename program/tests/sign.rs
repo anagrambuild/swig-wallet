@@ -6,10 +6,11 @@
 mod common;
 use common::*;
 use litesvm_token::spl_token::{self, instruction::TokenInstruction};
+use solana_program::nonce::state::{State as NonceState, Versions as NonceVersions};
 use solana_sdk::{
     account::Account,
     instruction::{AccountMeta, Instruction, InstructionError},
-    message::{v0, VersionedMessage},
+    message::{v0, Message, VersionedMessage},
     native_token::LAMPORTS_PER_SOL,
     program_pack::Pack,
     pubkey::Pubkey,
@@ -135,6 +136,127 @@ fn test_transfer_sol_with_additional_authority() {
         swig_account.lamports,
         rent_exempt_minimum + 10_000_000_000 - amount / 2
     );
+}
+
+#[test_log::test]
+fn test_transfer_sol_with_durable_nonce() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    let secondary_authority = Keypair::new();
+    let recipient = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&secondary_authority.pubkey(), LAMPORTS_PER_SOL)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: secondary_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
+
+    let swig_starting_lamports = context.svm.get_account(&swig).unwrap().lamports;
+    context.svm.airdrop(&swig, 5 * LAMPORTS_PER_SOL).unwrap();
+
+    let nonce_account = Keypair::new();
+    let rent = context.svm.get_sysvar::<Rent>();
+    let nonce_lamports = rent.minimum_balance(NonceState::size());
+    let nonce_ixs = system_instruction::create_nonce_account(
+        &context.default_payer.pubkey(),
+        &nonce_account.pubkey(),
+        &context.default_payer.pubkey(),
+        nonce_lamports,
+    );
+    let blockhash = context.svm.latest_blockhash();
+    let nonce_message = Message::new_with_blockhash(
+        &nonce_ixs,
+        Some(&context.default_payer.pubkey()),
+        &blockhash,
+    );
+    let payer_clone = context.default_payer.insecure_clone();
+    let nonce_clone = nonce_account.insecure_clone();
+    let nonce_tx = VersionedTransaction::try_new(
+        VersionedMessage::Legacy(nonce_message),
+        &[&payer_clone, &nonce_clone],
+    )
+    .unwrap();
+    context.svm.send_transaction(nonce_tx).unwrap();
+
+    let nonce_account_data = context.svm.get_account(&nonce_account.pubkey()).unwrap();
+    let nonce_versions: NonceVersions = bincode::deserialize(&nonce_account_data.data).unwrap();
+    let nonce_data = match nonce_versions.state() {
+        NonceState::Initialized(data) => data.clone(),
+        NonceState::Uninitialized => panic!("nonce account was not initialized"),
+    };
+
+    let amount = 5_000;
+    let transfer_ix = system_instruction::transfer(&swig, &recipient.pubkey(), amount);
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        transfer_ix,
+        1,
+    )
+    .unwrap();
+
+    let mut message = Message::new_with_nonce(
+        vec![sign_ix],
+        Some(&secondary_authority.pubkey()),
+        &nonce_account.pubkey(),
+        &context.default_payer.pubkey(),
+    );
+    message.recent_blockhash = nonce_data.blockhash();
+
+    let nonce_authority_clone = context.default_payer.insecure_clone();
+    let transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::Legacy(message),
+        &[&secondary_authority, &nonce_authority_clone],
+    )
+    .unwrap();
+
+    // Advance far beyond the normal blockhash expiration window to ensure
+    // only the durable nonce keeps the transaction valid.
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    context.svm.warp_to_slot(current_slot + 200);
+    context.svm.expire_blockhash();
+
+    let meta = context.svm.send_transaction(transfer_tx).unwrap();
+    println!("durable nonce transfer logs: {}", meta.pretty_logs());
+
+    let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
+    assert_eq!(recipient_account.lamports, amount);
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    assert_eq!(
+        swig_account.lamports,
+        swig_starting_lamports + 5 * LAMPORTS_PER_SOL - amount
+    );
+
+    let updated_nonce_data = context
+        .svm
+        .get_account(&nonce_account.pubkey())
+        .and_then(|acct| bincode::deserialize::<NonceVersions>(&acct.data).ok())
+        .and_then(|versions| match versions.state() {
+            NonceState::Initialized(data) => Some(data.clone()),
+            NonceState::Uninitialized => None,
+        })
+        .expect("nonce account should stay initialized");
+    assert_ne!(updated_nonce_data.blockhash(), nonce_data.blockhash());
 }
 
 #[test_log::test]
