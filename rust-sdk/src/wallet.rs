@@ -587,11 +587,13 @@ impl<'c> SwigWallet<'c> {
     pub fn toggle_sub_account(
         &mut self,
         sub_account: Pubkey,
+        sub_account_role_id: u32,
         enabled: bool,
     ) -> Result<Signature, SwigError> {
         let current_slot = self.get_current_slot()?;
         let toggle_instructions = self.instruction_builder.toggle_sub_account(
             sub_account,
+            sub_account_role_id,
             enabled,
             Some(current_slot),
         )?;
@@ -639,6 +641,16 @@ impl<'c> SwigWallet<'c> {
             .signature;
 
         Ok(signature)
+    }
+
+    /// Returns the public key of the Swig wallet address
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the Swig wallet address's public key or a
+    /// `SwigError`
+    pub fn get_swig_wallet_address(&self) -> Result<Pubkey, SwigError> {
+        Ok(self.instruction_builder.swig_wallet_address())
     }
 
     /// Returns the public key of the Swig account
@@ -1056,20 +1068,21 @@ impl<'c> SwigWallet<'c> {
                 }
 
                 // Check Sub Accounts
-                let sub_accounts = Role::get_all_actions_of_type::<SubAccount>(&role)
+                let actions = Role::get_all_actions_of_type::<SubAccount>(&role)
                     .map_err(|_| SwigError::AuthorityNotFound)?;
-                for (index, action) in sub_accounts.iter().enumerate() {
-                    let (sub_account, _) = Pubkey::find_program_address(
-                        &sub_account_seeds(
-                            self.instruction_builder.get_swig_id(),
-                            &i.to_le_bytes(),
-                        ),
-                        &swig_interface::program_id(),
-                    );
-                    if index == 0 {
-                        println!("║ │  ├─ Sub Accounts");
+                if !actions.is_empty() {
+                    {
+                        println!("║ │  ├─ SubAccount");
+                        for action in actions {
+                            println!(
+                                "║ │  │  ├─ SubAccount: {}",
+                                Pubkey::from(action.sub_account)
+                            );
+                            println!("║ │  │  ├─ Enabled: {}", action.enabled);
+                            println!("║ │  │  ├─ Role ID: {}", action.role_id);
+                            println!("║ │  │  └─ Swig ID: {}", Pubkey::from(action.swig_id));
+                        }
                     }
-                    println!("║ │  │  ├─ Sub Account {}: {:?}", index + 1, sub_account);
                 }
 
                 println!("║ │  ");

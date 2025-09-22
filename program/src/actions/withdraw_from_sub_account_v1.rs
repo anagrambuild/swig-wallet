@@ -266,6 +266,11 @@ pub fn withdraw_from_sub_account_v1(
         let swig_token_account = &all_accounts[action_accounts_index + 3];
         let swig_token_account_data = unsafe { swig_token_account.borrow_data_unchecked() };
         let swig_token_account_owner = unsafe { swig_token_account_data.get_unchecked(32..64) };
+        msg!("swig_token_account_owner: {:?}", swig_token_account_owner);
+        msg!(
+            "ctx.accounts.swig_wallet_address.key(): {:?}",
+            ctx.accounts.swig_wallet_address.key()
+        );
         if unsafe {
             sol_memcmp(
                 ctx.accounts.swig_wallet_address.key(),

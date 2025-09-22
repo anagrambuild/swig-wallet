@@ -514,6 +514,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
             authority_kp,
             id,
             enabled,
+            sub_account_role_id,
         } => {
             let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
 
@@ -531,10 +532,11 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
 
             let sub_account = ctx.wallet.as_ref().unwrap().get_sub_account()?;
             if let Some(sub_account) = sub_account {
-                ctx.wallet
-                    .as_mut()
-                    .unwrap()
-                    .toggle_sub_account(sub_account, enabled)?;
+                ctx.wallet.as_mut().unwrap().toggle_sub_account(
+                    sub_account,
+                    sub_account_role_id,
+                    enabled,
+                )?;
                 println!(
                     "Sub-account {} successfully!",
                     if enabled { "enabled" } else { "disabled" }

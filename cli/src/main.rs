@@ -239,6 +239,8 @@ pub enum Command {
         id: String,
         #[arg(short, long)]
         enabled: bool,
+        #[arg(short, long)]
+        sub_account_role_id: u32,
     },
     /// Withdraw from a sub-account to the SWIG wallet
     WithdrawFromSubAccount {

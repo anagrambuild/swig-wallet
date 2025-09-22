@@ -39,7 +39,8 @@ fn test_sub_account_functionality() {
         .unwrap();
 
     // First create the Swig account with root authority
-    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, swig_id).unwrap();
+    let (swig_key, swig_wallet_address, _) =
+        create_swig_ed25519(&mut context, &root_authority, swig_id).unwrap();
 
     // Create instruction builder with root authority
     let mut builder = SwigInstructionBuilder::new(
@@ -142,8 +143,6 @@ fn test_sub_account_functionality() {
         .sign_instruction_with_sub_account(vec![transfer_ix], None)
         .unwrap();
 
-    println!("Sub-account sign instruction: {:?}", sub_account_sign_ix);
-
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
         &sub_account_sign_ix,
@@ -151,8 +150,6 @@ fn test_sub_account_functionality() {
         context.svm.latest_blockhash(),
     )
     .unwrap();
-
-    println!("Message: {:?}", msg);
 
     let tx = VersionedTransaction::try_new(
         VersionedMessage::V0(msg),
@@ -192,7 +189,11 @@ fn test_sub_account_functionality() {
 
     // Get balances before withdraw
     let pre_withdraw_sub_account_balance = context.svm.get_account(&sub_account).unwrap().lamports;
-    let pre_withdraw_swig_balance = context.svm.get_account(&swig_key).unwrap().lamports;
+    let pre_withdraw_swig_balance = context
+        .svm
+        .get_account(&swig_wallet_address)
+        .unwrap()
+        .lamports;
     println!(
         "Pre-withdraw sub-account balance: {}",
         pre_withdraw_sub_account_balance
@@ -229,7 +230,11 @@ fn test_sub_account_functionality() {
 
     // Verify the withdraw was successful
     let post_withdraw_sub_account_balance = context.svm.get_account(&sub_account).unwrap().lamports;
-    let post_withdraw_swig_balance = context.svm.get_account(&swig_key).unwrap().lamports;
+    let post_withdraw_swig_balance = context
+        .svm
+        .get_account(&swig_wallet_address)
+        .unwrap()
+        .lamports;
     println!(
         "Post-withdraw sub-account balance: {}",
         post_withdraw_sub_account_balance
@@ -250,9 +255,18 @@ fn test_sub_account_functionality() {
         "Swig account balance did not increase by the correct withdraw amount"
     );
 
+    println!("root authroity:: {:?}", root_authority.pubkey().to_bytes());
+    println!(
+        "default payer:: {:?}",
+        context.default_payer.pubkey().to_bytes()
+    );
+    display_swig(swig_key, &context.svm.get_account(&swig_key).unwrap()).unwrap();
+
     // Test toggling the sub-account (disable/enable)
-    let toggle_ix = builder
-        .toggle_sub_account(sub_account, false, None)
+    // Must be performed by the sub-account authority (role_id = 1),
+    // because authenticate uses the authority associated with the provided role_id.
+    let toggle_ix = sub_account_builder
+        .toggle_sub_account(sub_account, sub_account_role_id, false, None)
         .unwrap();
 
     let msg = v0::Message::try_compile(
@@ -265,7 +279,7 @@ fn test_sub_account_functionality() {
 
     let tx = VersionedTransaction::try_new(
         VersionedMessage::V0(msg),
-        &[&context.default_payer, &root_authority],
+        &[&context.default_payer, &sub_account_authority],
     )
     .unwrap();
 
@@ -304,4 +318,6 @@ fn test_sub_account_functionality() {
         result.is_err(),
         "Transaction should fail with disabled sub-account"
     );
+
+    display_swig(swig_key, &context.svm.get_account(&swig_key).unwrap()).unwrap();
 }

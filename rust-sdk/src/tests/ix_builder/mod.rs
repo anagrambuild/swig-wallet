@@ -21,7 +21,7 @@ use swig_interface::{
 use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, program_scope::ProgramScope,
-        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
+        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
     },
     authority::{
         ed25519::{CreateEd25519SessionAuthority, ED25519Authority, Ed25519SessionAuthority},
@@ -168,6 +168,24 @@ pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), S
                     action.current_amount as f64 / 1_000_000_000.0
                 );
                 println!("║ │  │  └─ Last Reset: Slot {}", action.last_reset);
+            }
+
+            // Check SubAccount permission
+            let actions = Role::get_all_actions_of_type::<SubAccount>(&role)
+                .map_err(|_| SwigError::AuthorityNotFound)?;
+            if !actions.is_empty() {
+                {
+                    println!("║ │  ├─ SubAccount");
+                    for action in actions {
+                        println!(
+                            "║ │  │  ├─ SubAccount: {}",
+                            Pubkey::from(action.sub_account)
+                        );
+                        println!("║ │  │  ├─ Enabled: {}", action.enabled);
+                        println!("║ │  │  ├─ Role ID: {}", action.role_id);
+                        println!("║ │  │  └─ Swig ID: {}", Pubkey::from(action.swig_id));
+                    }
+                }
             }
 
             // Check Program Scope

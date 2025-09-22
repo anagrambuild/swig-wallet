@@ -7,7 +7,7 @@ use spl_token::ID as TOKEN_PROGRAM_ID;
 use swig_interface::program_id;
 use swig_state::{
     authority::AuthorityType,
-    swig::{sub_account_seeds, SwigWithRoles},
+    swig::{sub_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
 };
 
 use super::*;
@@ -211,9 +211,19 @@ fn test_sub_account_token_operations() {
     // Setup ATAs for sub-account and swig
     let sub_account_ata =
         setup_ata(swig_wallet.litesvm(), &mint, &sub_account, &main_authority).unwrap();
+    // Derive swig_wallet_address PDA using the on-chain expected seeds (swig account key)
     let swig_account = swig_wallet.get_swig_account().unwrap();
-    let swig_token =
-        setup_ata(swig_wallet.litesvm(), &mint, &swig_account, &main_authority).unwrap();
+    let (swig_wallet_address, _) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(swig_account.as_ref()),
+        &swig_interface::program_id(),
+    );
+    let swig_token = setup_ata(
+        swig_wallet.litesvm(),
+        &mint,
+        &swig_wallet_address,
+        &main_authority,
+    )
+    .unwrap();
 
     // Mint some tokens to the sub-account ATA
     mint_to(
@@ -277,19 +287,23 @@ fn test_sub_account_toggle_operations() {
         &swig_interface::program_id(),
     );
 
-    swig_wallet
-        .switch_authority(
-            0,
-            Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
-            Some(&main_authority),
-        )
-        .unwrap();
+    // swig_wallet
+    //     .switch_authority(
+    //         0,
+    //         Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
+    //         Some(&main_authority),
+    //     )
+    //     .unwrap();
 
     // Test toggle operations
-    let signature = swig_wallet.toggle_sub_account(sub_account, false).unwrap();
+    let signature = swig_wallet
+        .toggle_sub_account(sub_account, secondary_role_id, false)
+        .unwrap();
     println!("Disable signature: {:?}", signature);
 
-    let signature = swig_wallet.toggle_sub_account(sub_account, true).unwrap();
+    let signature = swig_wallet
+        .toggle_sub_account(sub_account, secondary_role_id, true)
+        .unwrap();
     println!("Enable signature: {:?}", signature);
 }
 
@@ -433,7 +447,8 @@ fn test_sub_account_error_cases() {
     println!("Created sub-account with signature: {:?}", signature);
 
     // Get sub-account address
-    let role_id_bytes = swig_wallet.get_current_role_id().unwrap().to_le_bytes();
+    let sub_account_role_id = swig_wallet.get_current_role_id().unwrap();
+    let role_id_bytes = sub_account_role_id.to_le_bytes();
     let (sub_account, _) = Pubkey::find_program_address(
         &swig_state::swig::sub_account_seeds(&[0; 32], &role_id_bytes),
         &swig_interface::program_id(),
@@ -462,7 +477,7 @@ fn test_sub_account_error_cases() {
     ));
 
     // Try to toggle with unauthorized authority
-    let result = swig_wallet.toggle_sub_account(sub_account, false);
+    let result = swig_wallet.toggle_sub_account(sub_account, sub_account_role_id, false);
     assert!(matches!(
         result.unwrap_err(),
         SwigError::TransactionFailedWithLogs { .. }

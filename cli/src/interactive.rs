@@ -1108,7 +1108,12 @@ pub fn sub_accounts_interactive(ctx: &mut SwigCliContext) -> Result<()> {
     match selection {
         0 => create_sub_account_interactive(ctx)?,
         1 => transfer_from_sub_account_interactive(ctx)?,
-        2 => toggle_sub_account_interactive(ctx)?,
+        2 => {
+            let sub_account_role_id = Input::<u32>::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter sub-account role ID")
+                .interact_text()?;
+            toggle_sub_account_interactive(ctx, sub_account_role_id)?;
+        },
         3 => withdraw_from_sub_account_interactive(ctx)?,
         _ => unreachable!(),
     }
@@ -1184,7 +1189,10 @@ pub fn withdraw_from_sub_account_interactive(ctx: &mut SwigCliContext) -> Result
     Ok(())
 }
 
-fn toggle_sub_account_interactive(ctx: &mut SwigCliContext) -> Result<()> {
+fn toggle_sub_account_interactive(
+    ctx: &mut SwigCliContext,
+    sub_account_role_id: u32,
+) -> Result<()> {
     println!("\n{}", "Toggling sub-account...".bright_blue().bold());
 
     let sub_account = ctx.wallet.as_mut().unwrap().get_sub_account()?;
@@ -1192,7 +1200,7 @@ fn toggle_sub_account_interactive(ctx: &mut SwigCliContext) -> Result<()> {
         ctx.wallet
             .as_mut()
             .unwrap()
-            .toggle_sub_account(sub_account, true)?;
+            .toggle_sub_account(sub_account, sub_account_role_id, true)?;
     }
 
     Ok(())

@@ -25,7 +25,8 @@ fn test_add_program_all_permission_with_ed25519() {
     let new_authority = Keypair::new();
 
     // Create swig account
-    let (swig, _) = create_swig_ed25519(&mut context, &authority, swig_id).unwrap();
+    let (swig, swig_wallet_address, _) =
+        create_swig_ed25519(&mut context, &authority, swig_id).unwrap();
 
     // Add a new authority with ProgramAll permission
     let add_authority_ix = AddAuthorityInstruction::new_with_ed25519_authority(
@@ -98,7 +99,8 @@ fn test_add_program_all_permission_with_secp256k1() {
     let new_secp_pubkey = &new_secp_pubkey_full[1..]; // Remove the 0x04 prefix
 
     // Create swig account
-    let (swig, _) = create_swig_ed25519(&mut context, &authority, swig_id).unwrap();
+    let (swig, swig_wallet_address, _) =
+        create_swig_ed25519(&mut context, &authority, swig_id).unwrap();
 
     // Add a new authority with ProgramAll permission
     let add_authority_ix = AddAuthorityInstruction::new_with_ed25519_authority(
@@ -159,7 +161,8 @@ fn test_program_all_combines_with_other_permissions() {
     let new_authority = Keypair::new();
 
     // Create swig account
-    let (swig, _) = create_swig_ed25519(&mut context, &authority, swig_id).unwrap();
+    let (swig, swig_wallet_address, _) =
+        create_swig_ed25519(&mut context, &authority, swig_id).unwrap();
 
     // Add a new authority with ProgramAll and SOL permissions
     let add_authority_ix = AddAuthorityInstruction::new_with_ed25519_authority(
