@@ -43,6 +43,30 @@ pub fn swig_account_signer<'a>(id: &'a [u8], bump: &'a [u8; 1]) -> [Seed<'a>; 3]
     ]
 }
 
+/// Generates the seeds for a Swig wallet address account.
+#[inline(always)]
+pub fn swig_wallet_address_seeds(swig_key: &[u8]) -> [&[u8]; 2] {
+    [b"swig-wallet-address".as_ref(), swig_key]
+}
+
+/// Generates the seeds for a Swig wallet address account with bump seed.
+#[inline(always)]
+pub fn swig_wallet_address_seeds_with_bump<'a>(
+    swig_key: &'a [u8],
+    bump: &'a [u8],
+) -> [&'a [u8]; 3] {
+    [b"swig-wallet-address".as_ref(), swig_key, bump]
+}
+
+/// Creates a signer seeds array for a Swig wallet address account.
+pub fn swig_wallet_address_signer<'a>(swig_key: &'a [u8], bump: &'a [u8; 1]) -> [Seed<'a>; 3] {
+    [
+        b"swig-wallet-address".as_ref().into(),
+        swig_key.into(),
+        bump.as_ref().into(),
+    ]
+}
+
 /// Generates the seeds for a sub-account.
 #[inline(always)]
 pub fn sub_account_seeds<'a>(swig_id: &'a [u8], role_id: &'a [u8]) -> [&'a [u8]; 3] {
@@ -74,35 +98,35 @@ pub fn sub_account_signer<'a>(
 }
 
 /// Represents a Swig sub-account with its associated metadata.
-#[repr(C, align(8))]
-#[derive(Debug, PartialEq, NoPadding)]
-pub struct SwigSubAccount {
-    /// Account type discriminator
-    pub discriminator: u8,
-    /// PDA bump seed
-    pub bump: u8,
-    /// Whether the sub-account is enabled
-    pub enabled: bool,
-    _padding: [u8; 1],
-    /// ID of the role associated with this sub-account
-    pub role_id: u32,
-    /// ID of the parent Swig account
-    pub swig_id: [u8; 32],
-    /// Amount of lamports reserved for rent
-    pub reserved_lamports: u64,
-}
+// #[repr(C, align(8))]
+// #[derive(Debug, PartialEq, NoPadding)]
+// pub struct SwigSubAccount {
+//     /// Account type discriminator
+//     pub discriminator: u8,
+//     /// PDA bump seed
+//     pub bump: u8,
+//     /// Whether the sub-account is enabled
+//     pub enabled: bool,
+//     _padding: [u8; 1],
+//     /// ID of the role associated with this sub-account
+//     pub role_id: u32,
+//     /// ID of the parent Swig account
+//     pub swig_id: [u8; 32],
+//     /// Amount of lamports reserved for rent
+//     pub reserved_lamports: u64,
+// }
 
-impl Transmutable for SwigSubAccount {
-    const LEN: usize = core::mem::size_of::<Self>();
-}
+// impl Transmutable for SwigSubAccount {
+//     const LEN: usize = core::mem::size_of::<Self>();
+// }
 
-impl TransmutableMut for SwigSubAccount {}
+// impl TransmutableMut for SwigSubAccount {}
 
-impl IntoBytes for SwigSubAccount {
-    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
-        Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
-    }
-}
+// impl IntoBytes for SwigSubAccount {
+//     fn into_bytes(&self) -> Result<&[u8], ProgramError> {
+//         Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
+//     }
+// }
 
 /// Builder for constructing and modifying Swig accounts.
 pub struct SwigBuilder<'a> {
@@ -412,19 +436,22 @@ pub struct Swig {
     /// Counter for generating unique role IDs
     pub role_counter: u32,
     /// Amount of lamports reserved for rent
-    pub reserved_lamports: u64,
+    // pub reserved_lamports: u64,
+    pub wallet_bump: u8,
+    pub _padding: [u8; 7],
 }
 
 impl Swig {
     /// Creates a new Swig account.
-    pub fn new(id: [u8; 32], bump: u8, reserved_lamports: u64) -> Self {
+    pub fn new(id: [u8; 32], bump: u8, wallet_bump: u8) -> Self {
         Self {
-            discriminator: Discriminator::SwigAccount as u8,
+            discriminator: Discriminator::SwigConfigAccount as u8,
             id,
             bump,
             roles: 0,
             role_counter: 0,
-            reserved_lamports,
+            wallet_bump,
+            _padding: [0; 7],
         }
     }
 
@@ -746,15 +773,17 @@ mod tests {
     #[test]
     fn test_swig_creation() {
         let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump, 0);
+        let (mut _account_buffer_2, id, bump_2) = setup_test_buffer();
+        let swig = Swig::new(id, bump, bump_2);
 
         // Test all fields of the Swig struct
         assert_eq!(swig.discriminator, 1);
         assert_eq!(swig.id, id);
         assert_eq!(swig.bump, bump);
+        assert_eq!(swig.wallet_bump, bump_2);
         assert_eq!(swig.roles, 0);
         assert_eq!(swig.role_counter, 0);
-        assert_eq!(swig.reserved_lamports, 0);
+        // assert_eq!(swig.reserved_lamports, 0);
 
         // Test builder creation and verify buffer state
         let builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();

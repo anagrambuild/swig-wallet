@@ -156,7 +156,7 @@ pub fn remove_authority_v1(
     // All validation and processing as a closure to avoid borrowing
     // swig_account_data for too long
     {
-        if swig_account_data[0] != Discriminator::SwigAccount as u8 {
+        if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
         let (_swig_header, swig_roles) =
@@ -220,7 +220,6 @@ pub fn remove_authority_v1(
     let old_rent_lamports = rent.minimum_balance(data_len);
     let new_rent_lamports = rent.minimum_balance(new_size);
     let diff = old_rent_lamports - new_rent_lamports;
-    swig_builder.swig.reserved_lamports = new_rent_lamports;
     unsafe {
         *ctx.accounts.swig.borrow_mut_lamports_unchecked() = swig_lamports - diff;
         *ctx.accounts.payer.borrow_mut_lamports_unchecked() = ctx.accounts.payer.lamports() + diff;
