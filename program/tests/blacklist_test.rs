@@ -114,13 +114,13 @@ fn test_blacklist_program_prevents_cpi() {
     // The transaction should fail due to blacklist
     assert!(result.is_err());
 
-    // Check if the return error is 3029 (PermissionDeniedBlacklisted)
+    // Check if the return error is 3033 (PermissionDeniedBlacklisted)
     let error = result.unwrap_err();
     assert_eq!(
         error.err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3029)
+            solana_sdk::instruction::InstructionError::Custom(3033)
         )
     );
 }
@@ -205,13 +205,13 @@ fn test_blacklist_wallet_prevents_transaction() {
     // The transaction should fail due to blacklist
     assert!(result.is_err());
 
-    // Check if the return error is 3029 (PermissionDeniedBlacklisted)
+    // Check if the return error is 3033 (PermissionDeniedBlacklisted)
     let error = result.unwrap_err();
     assert_eq!(
         error.err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3029)
+            solana_sdk::instruction::InstructionError::Custom(3033)
         )
     );
 }
@@ -308,13 +308,13 @@ fn test_blacklist_with_program_permission() {
     // The transaction should fail due to blacklist
     assert!(result.is_err());
 
-    // Check if the return error is 3029 (PermissionDeniedBlacklisted)
+    // Check if the return error is 3033 (PermissionDeniedBlacklisted)
     let error = result.unwrap_err();
     assert_eq!(
         error.err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3029)
+            solana_sdk::instruction::InstructionError::Custom(3033)
         )
     );
 }
@@ -410,13 +410,13 @@ fn test_multiple_blacklist_entries() {
     let result1 = context.svm.send_transaction(transfer_tx1);
     assert!(result1.is_err());
 
-    // Check if the return error is 3029 (PermissionDeniedBlacklisted)
+    // Check if the return error is 3033 (PermissionDeniedBlacklisted)
     let error1 = result1.unwrap_err();
     assert_eq!(
         error1.err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3029)
+            solana_sdk::instruction::InstructionError::Custom(3033)
         )
     );
 
@@ -449,13 +449,13 @@ fn test_multiple_blacklist_entries() {
     let result2 = context.svm.send_transaction(transfer_tx2);
     assert!(result2.is_err());
 
-    // Check if the return error is 3029 (PermissionDeniedBlacklisted)
+    // Check if the return error is 3033 (PermissionDeniedBlacklisted)
     let error2 = result2.unwrap_err();
     assert_eq!(
         error2.err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3029)
+            solana_sdk::instruction::InstructionError::Custom(3033)
         )
     );
 }
@@ -586,7 +586,7 @@ fn test_add_multiple_blacklists() {
         result1.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3029)
+            solana_sdk::instruction::InstructionError::Custom(3033)
         )
     );
 
@@ -621,7 +621,7 @@ fn test_add_multiple_blacklists() {
         result2.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3029)
+            solana_sdk::instruction::InstructionError::Custom(3033)
         )
     );
 
@@ -656,7 +656,7 @@ fn test_add_multiple_blacklists() {
         result3.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3029)
+            solana_sdk::instruction::InstructionError::Custom(3033)
         )
     );
 
@@ -694,12 +694,12 @@ fn test_add_multiple_blacklists() {
     let result4 = context.svm.send_transaction(transfer_tx4);
     // This should fail due to missing program permission, not blacklist
     assert!(result4.is_err());
-    // Should fail with wrong resource (3006) not blacklist (3029)
+    // Should fail with wrong resource (3006) not blacklist (3033)
     assert_eq!(
         result4.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3029)
+            solana_sdk::instruction::InstructionError::Custom(3033)
         )
     );
 }
