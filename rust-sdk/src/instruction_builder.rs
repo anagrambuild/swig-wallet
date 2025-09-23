@@ -333,7 +333,7 @@ impl SwigInstructionBuilder {
     /// Returns the derived Swig wallet address public key
     pub fn swig_wallet_address(&self) -> Pubkey {
         Pubkey::find_program_address(
-            &swig_wallet_address_seeds(self.swig_id.as_ref()),
+            &swig_wallet_address_seeds(self.swig_account.as_ref()),
             &program_id(),
         )
         .0

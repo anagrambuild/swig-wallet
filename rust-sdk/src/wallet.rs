@@ -1393,8 +1393,8 @@ impl<'c> SwigWallet<'c> {
     /// Returns a `Result` containing the associated token address or a
     /// `SwigError`
     pub fn create_ata(&mut self, mint: &Pubkey) -> Result<Pubkey, SwigError> {
-        let associated_token_address =
-            get_associated_token_address(&self.instruction_builder.get_swig_account()?, &mint);
+        let swig_wallet_address = self.instruction_builder.get_swig_account()?;
+        let associated_token_address = get_associated_token_address(&swig_wallet_address, &mint);
 
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
         {
@@ -1407,9 +1407,9 @@ impl<'c> SwigWallet<'c> {
             if !account_exists {
                 // Create the instruction to create the ATA
                 let create_ata_instruction = create_associated_token_account(
-                    &self.fee_payer.pubkey(),                      // payer
-                    &self.instruction_builder.get_swig_account()?, // owner
-                    &mint,                                         // mint
+                    &self.fee_payer.pubkey(), // payer
+                    &swig_wallet_address,     // owner
+                    &mint,                    // mint
                     &TOKEN_PROGRAM_ID,
                 );
 
@@ -1438,7 +1438,70 @@ impl<'c> SwigWallet<'c> {
 
         #[cfg(all(feature = "rust_sdk_test", test))]
         CreateAssociatedTokenAccount::new(&mut self.litesvm, self.fee_payer, &mint)
-            .owner(&self.instruction_builder.get_swig_account()?)
+            .owner(&swig_wallet_address)
+            .send()
+            .map_err(|_| anyhow::anyhow!("Failed to create associated token account"))?;
+
+        Ok(associated_token_address)
+    }
+
+    /// Creates an associated token account for the Swig wallet
+    ///
+    /// # Arguments
+    ///
+    /// * `mint` - The mint address of the token to create an ATA for
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the associated token address or a
+    /// `SwigError`
+    pub fn create_wallet_ata(&mut self, mint: &Pubkey) -> Result<Pubkey, SwigError> {
+        let swig_wallet_address = self.instruction_builder.swig_wallet_address();
+        let associated_token_address = get_associated_token_address(&swig_wallet_address, &mint);
+
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        {
+            // Check if the ATA already exists
+            let account_exists = self
+                .rpc_client
+                .get_account(&associated_token_address)
+                .is_ok();
+
+            if !account_exists {
+                // Create the instruction to create the ATA
+                let create_ata_instruction = create_associated_token_account(
+                    &self.fee_payer.pubkey(), // payer
+                    &swig_wallet_address,     // owner
+                    &mint,                    // mint
+                    &TOKEN_PROGRAM_ID,
+                );
+
+                // Get recent blockhash
+                let recent_blockhash = self.rpc_client.get_latest_blockhash()?;
+
+                // Create and sign the transaction
+                let transaction = Transaction::new_signed_with_payer(
+                    &[create_ata_instruction],
+                    Some(&self.fee_payer.pubkey()),
+                    &[&self.fee_payer.insecure_clone()],
+                    recent_blockhash,
+                );
+
+                // Send the transaction
+                let signature = self.rpc_client.send_and_confirm_transaction(&transaction)?;
+
+                println!(
+                    "Success! Associated Token Account created. Transaction Signature: {}",
+                    signature
+                );
+            } else {
+                println!("Associated Token Account already exists.");
+            }
+        }
+
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        CreateAssociatedTokenAccount::new(&mut self.litesvm, self.fee_payer, &mint)
+            .owner(&swig_wallet_address)
             .send()
             .map_err(|_| anyhow::anyhow!("Failed to create associated token account"))?;
 

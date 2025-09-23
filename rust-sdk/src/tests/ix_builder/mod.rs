@@ -51,9 +51,10 @@ pub mod program_all_tests;
 pub mod program_scope_tests;
 pub mod secp256r1_tests;
 pub mod session_tests;
+pub mod sign_v1_tests;
+pub mod sign_v2_tests;
 pub mod sub_account_test;
 pub mod swig_account_tests;
-pub mod transfer_tests;
 
 use solana_sdk::account::Account;
 pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), SwigError> {
