@@ -291,6 +291,45 @@ impl<'c> SwigWallet<'c> {
         tx_result
     }
 
+    /// Signs instructions using the SignV2 instruction (which uses
+    /// swig_wallet_address as authority)
+    ///
+    /// # Arguments
+    ///
+    /// * `inner_instructions` - Vector of instructions to sign
+    /// * `alt` - Optional slice of Address Lookup Table accounts
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the transaction signature or a `SwigError`
+    pub fn sign_v2(
+        &mut self,
+        inner_instructions: Vec<Instruction>,
+        alt: Option<&[AddressLookupTableAccount]>,
+    ) -> Result<Signature, SwigError> {
+        let sign_ix = self
+            .instruction_builder
+            .sign_v2_instruction(inner_instructions, Some(self.get_current_slot()?))?;
+
+        let alt = if alt.is_some() { alt.unwrap() } else { &[] };
+
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &sign_ix,
+            alt,
+            self.get_current_blockhash()?,
+        )?;
+
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+
+        let tx_result = self.send_and_confirm_transaction(tx);
+        if tx_result.is_ok() {
+            self.refresh_permissions()?;
+            self.instruction_builder.increment_odometer()?;
+        }
+        tx_result
+    }
+
     /// Replaces an existing authority with a new one
     ///
     /// # Arguments

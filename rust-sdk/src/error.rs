@@ -78,6 +78,10 @@ pub enum SwigError {
     #[error("Counter not set")]
     CounterNotSet,
 
+    /// Slot is required for this operation
+    #[error("Slot is required for this operation")]
+    SlotRequired,
+
     /// Decoder error
     #[error("Decoder error")]
     DecoderError,

@@ -16,7 +16,7 @@ use solana_sdk::{
     signature::Keypair,
     signer::Signer,
     system_instruction,
-    sysvar::clock::Clock,
+    sysvar::{clock::Clock, rent::Rent},
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig::actions::sign_v1::SignV1Args;
@@ -128,9 +128,12 @@ fn test_transfer_sol_with_additional_authority() {
     println!("role {:?}", role1.position);
     let action = role1.get_action::<SolLimit>(&[]).unwrap().unwrap();
     assert_eq!(action.amount, 0);
+    // Calculate rent-exempt minimum for the account
+    let rent = context.svm.get_sysvar::<Rent>();
+    let rent_exempt_minimum = rent.minimum_balance(swig_account.data.len());
     assert_eq!(
         swig_account.lamports,
-        swig_state.state.reserved_lamports + 10_000_000_000 - amount / 2
+        rent_exempt_minimum + 10_000_000_000 - amount / 2
     );
 }
 
@@ -747,6 +750,140 @@ fn test_transfer_sol_with_recurring_limit() {
 }
 
 #[test_log::test]
+fn test_transfer_sol_with_recurring_limit_window_reset() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    let recipient = Keypair::new();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Set up recurring limit: 1000 lamports per 100 slots
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::SolRecurringLimit(SolRecurringLimit {
+                recurring_amount: 500,
+                window: 100,
+                last_reset: 0,
+                current_amount: 500,
+            }),
+            ClientAction::Program(Program {
+                program_id: solana_sdk::system_program::ID.to_bytes(),
+            }),
+        ],
+    )
+    .unwrap();
+
+    context.svm.airdrop(&swig, 10_000_000_000).unwrap();
+
+    // First transfer within limit should succeed
+    let amount = 500;
+    let ixd = system_instruction::transfer(&swig, &recipient.pubkey(), amount);
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        second_authority.pubkey(),
+        second_authority.pubkey(),
+        ixd,
+        1,
+    )
+    .unwrap();
+
+    let transfer_message = v0::Message::try_compile(
+        &second_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(transfer_message), &[&second_authority])
+            .unwrap();
+
+    let res = context.svm.send_transaction(transfer_tx);
+    assert!(res.is_ok());
+
+    // Warp time forward past the window
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    context.svm.warp_to_slot(current_slot + 110);
+    context.svm.expire_blockhash();
+
+    // Third transfer should succeed after window reset
+    let amount3 = 500;
+    let ixd3 = system_instruction::transfer(&swig, &recipient.pubkey(), amount3);
+    let sign_ix3 = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        second_authority.pubkey(),
+        second_authority.pubkey(),
+        ixd3,
+        1,
+    )
+    .unwrap();
+
+    let transfer_message3 = v0::Message::try_compile(
+        &second_authority.pubkey(),
+        &[sign_ix3],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx3 = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message3),
+        &[&second_authority],
+    )
+    .unwrap();
+
+    let res3 = context.svm.send_transaction(transfer_tx3);
+
+    println!("res3 {:?}", res3);
+    assert!(res3.is_ok());
+
+    // Verify final balances
+    let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
+    assert_eq!(
+        recipient_account.lamports,
+        10_000_000_000 + amount + amount3
+    );
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let role = swig_state.get_role(1).unwrap().unwrap();
+    let action = role.get_action::<SolRecurringLimit>(&[]).unwrap().unwrap();
+    assert_eq!(action.current_amount, action.recurring_amount - amount3);
+
+    println!("action {:?}", action);
+
+    // Add checks for the last_reset field
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    assert!(action.last_reset == 100);
+    assert!(action.last_reset < current_slot);
+    assert!(action.last_reset % action.window == 0);
+}
+
+#[test_log::test]
 fn test_transfer_token_with_recurring_limit() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
@@ -1046,8 +1183,8 @@ fn test_transfer_between_swig_accounts() {
     // Get initial recipient balance (should include the rent-exempt amount plus
     // transfer)
     let recipient_initial_balance = {
-        let recipient_swig_state = SwigWithRoles::from_bytes(&recipient_account.data).unwrap();
-        recipient_swig_state.state.reserved_lamports
+        let rent = context.svm.get_sysvar::<Rent>();
+        rent.minimum_balance(recipient_account.data.len())
     };
 
     assert_eq!(

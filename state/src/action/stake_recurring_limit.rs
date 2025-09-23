@@ -48,7 +48,8 @@ impl StakeRecurringLimit {
             && stake_amount_diff <= self.recurring_amount
         {
             self.current_amount = self.recurring_amount;
-            self.last_reset = current_slot;
+            // reset the last reset to the start of the current window
+            self.last_reset = (current_slot / self.window) * self.window;
         }
         if stake_amount_diff > self.current_amount {
             return Err(ProgramError::InsufficientFunds);

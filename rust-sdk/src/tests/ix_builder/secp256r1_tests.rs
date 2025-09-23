@@ -14,7 +14,7 @@ use swig_state::{
         secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority},
         AuthorityType,
     },
-    swig::SwigWithRoles,
+    swig::{swig_wallet_address_seeds, SwigWithRoles},
 };
 
 use super::*;
@@ -523,10 +523,18 @@ fn create_swig_secp256r1(
         &swig_interface::program_id(),
     );
 
+    let (swig_wallet_address, wallet_address_bump) =
+        solana_sdk::pubkey::Pubkey::find_program_address(
+            &swig_wallet_address_seeds(swig_address.as_ref()),
+            &swig_interface::program_id(),
+        );
+
     let create_ix = swig_interface::CreateInstruction::new(
         swig_address,
         swig_bump,
         payer_pubkey,
+        swig_wallet_address,
+        wallet_address_bump,
         AuthorityConfig {
             authority_type: AuthorityType::Secp256r1,
             authority: public_key,
