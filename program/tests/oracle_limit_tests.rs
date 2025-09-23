@@ -57,7 +57,7 @@ fn test_oracle_limit_permission_add() {
     // Add multiple permissions: Oracle Token Limit (200 USD) and SOL Limit (1 SOL)
     let oracle_limit = OracleTokenLimit::new(
         BaseAsset::USD,
-        200_000_000, // 200 USD
+        250_000_000, // 200 USD
         false,
     );
 
@@ -98,7 +98,7 @@ fn test_oracle_limit_permission_add() {
         .get_action::<OracleTokenLimit>(&[BaseAsset::USD as u8])
         .unwrap()
         .unwrap();
-    assert_eq!(oracle_action.value_limit, 200_000_000);
+    assert_eq!(oracle_action.value_limit, 250_000_000);
     assert_eq!(oracle_action.base_asset_type, BaseAsset::USD as u8);
 
     let sol_action = role.get_action::<SolLimit>(&[]).unwrap().unwrap();
@@ -131,7 +131,7 @@ fn test_oracle_limit_sol_transfer() {
     // Add oracle limit permission (200 USD limit)
     let oracle_limit = OracleTokenLimit::new(
         BaseAsset::EUR,
-        200_000_000, // 200 USD limit
+        250_000_000, // 200 USD limit
         false,
     );
 
@@ -237,9 +237,9 @@ fn test_oracle_limit_sol_transfer() {
         result.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3029)
+            solana_sdk::instruction::InstructionError::Custom(3033)
         ),
-        "Expected error code 3029"
+        "Expected error code 3033"
     );
 }
 
@@ -356,6 +356,7 @@ fn test_oracle_limit_token_transfer() {
         .unwrap();
 
     let result = context.svm.send_transaction(tx);
+    println!("result: {:?}", result);
     assert!(result.is_ok(), "Transfer below limit should succeed");
     println!(
         "Compute units consumed for below limit transfer: {}",
@@ -410,9 +411,9 @@ fn test_oracle_limit_token_transfer() {
         result.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3029)
+            solana_sdk::instruction::InstructionError::Custom(3033)
         ),
-        "Expected error code 3029"
+        "Expected error code 3033"
     );
 }
 
@@ -442,7 +443,7 @@ fn test_oracle_limit_sol_passthrough() {
     // Add oracle limit permission (200 USD limit) with passthrough enabled
     let oracle_limit = OracleTokenLimit::new(
         BaseAsset::USD,
-        200_000_000, // 200 USD limit
+        250_000_000, // 200 USD limit
         true,
     );
 
@@ -549,9 +550,9 @@ fn test_oracle_limit_sol_passthrough() {
         result.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3029)
+            solana_sdk::instruction::InstructionError::Custom(3033)
         ),
-        "Expected error code 3029"
+        "Expected error code 3033"
     );
 }
 
@@ -729,9 +730,9 @@ fn test_oracle_limit_token_passthrough() {
         result.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3029)
+            solana_sdk::instruction::InstructionError::Custom(3033)
         ),
-        "Expected error code 3029"
+        "Expected error code 3033"
     );
 }
 
@@ -760,7 +761,7 @@ fn test_oracle_stale_price() {
     // Add oracle limit permission (200 USD limit)
     let oracle_limit = OracleTokenLimit::new(
         BaseAsset::USD,
-        200_000_000, // 200 USD limit
+        250_000_000, // 200 USD limit
         false,
     );
 

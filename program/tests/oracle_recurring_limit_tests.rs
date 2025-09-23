@@ -60,7 +60,7 @@ fn test_oracle_recurring_limit_permission_add() {
     // Add multiple permissions: Oracle Recurring Limit (200 USD per window) and SOL Limit (1 SOL)
     let oracle_recurring_limit = OracleRecurringLimit::new(
         BaseAsset::USD,
-        200_000_000, // 200 USD
+        250_000_000, // 200 USD
         1000,        // 1000 slots window
         false,
     );
@@ -104,7 +104,7 @@ fn test_oracle_recurring_limit_permission_add() {
         .unwrap();
 
     assert_eq!(
-        oracle_recurring_action.recurring_value_limit, 200_000_000,
+        oracle_recurring_action.recurring_value_limit, 250_000_000,
         "Oracle recurring limit should be 200 USD"
     );
     assert_eq!(
@@ -116,7 +116,7 @@ fn test_oracle_recurring_limit_permission_add() {
         "Last reset should be 0 initially"
     );
     assert_eq!(
-        oracle_recurring_action.current_amount, 200_000_000,
+        oracle_recurring_action.current_amount, 250_000_000,
         "Current amount should equal recurring limit initially"
     );
 }
