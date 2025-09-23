@@ -81,6 +81,14 @@ pub enum SwigError {
     /// Slot is required for this operation
     #[error("Slot is required for this operation")]
     SlotRequired,
+
+    /// Decoder error
+    #[error("Decoder error")]
+    DecoderError,
+
+    /// Decode simulation error
+    #[error("Decode simulation error")]
+    DecodeSimulationError,
 }
 
 impl From<anyhow::Error> for SwigError {
