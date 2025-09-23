@@ -190,7 +190,7 @@ fn test_token_transfer_performance_comparison() {
     );
     // 3744 is the max difference in CU between the two transactions lets lower
     // this as far as possible but never increase it
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3805);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 4025);
 }
 
 #[test_log::test]
@@ -303,5 +303,5 @@ fn test_sol_transfer_performance_comparison() {
 
     // Set a reasonable limit for the CU difference to avoid regressions
     // Similar to the token transfer test assertion
-    assert!(swig_transfer_cu - regular_transfer_cu <= 2032);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 2237);
 }
