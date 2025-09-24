@@ -508,6 +508,7 @@ impl SwigInstructionBuilder {
     pub fn toggle_sub_account(
         &self,
         sub_account: Pubkey,
+        auth_role_id: Option<u32>,
         enabled: bool,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
@@ -516,6 +517,7 @@ impl SwigInstructionBuilder {
             self.payer,
             sub_account,
             self.role_id,
+            auth_role_id,
             enabled,
             current_slot,
         )

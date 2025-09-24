@@ -38,9 +38,10 @@ use crate::{
 #[derive(Debug, NoPadding)]
 pub struct ToggleSubAccountV1Args {
     discriminator: SwigInstruction,
-    _padding: u8,
     pub enabled: bool,
+    _padding: u8,
     pub role_id: u32,
+    pub auth_role_id: Option<u32>,
 }
 
 impl ToggleSubAccountV1Args {
@@ -49,11 +50,12 @@ impl ToggleSubAccountV1Args {
     /// # Arguments
     /// * `role_id` - ID of the role performing the toggle
     /// * `enabled` - The desired enabled state
-    pub fn new(role_id: u32, enabled: bool) -> Self {
+    pub fn new(role_id: u32, auth_role_id: Option<u32>, enabled: bool) -> Self {
         Self {
             discriminator: SwigInstruction::ToggleSubAccountV1,
             _padding: 0,
             role_id,
+            auth_role_id,
             enabled,
         }
     }
@@ -145,13 +147,67 @@ pub fn toggle_sub_account_v1(
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_unchecked(swig_header)? };
 
-    // Get the role using the role_id from the instruction
-    let role_opt = Swig::get_mut_role(toggle_sub_account.args.role_id, swig_roles)?;
-    if role_opt.is_none() {
-        return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-    }
-    let role = role_opt.unwrap();
+    let mut sub_account_action_mut =
+        if let Some(auth_role_id) = toggle_sub_account.args.auth_role_id {
+            // 1. Check if authority role exists and authenticate
+            let role_opt = Swig::get_mut_role(auth_role_id, swig_roles)?;
+            if role_opt.is_none() {
+                return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+            }
+            let mut role = role_opt.unwrap();
+            authenticate_authority(&mut role, all_accounts, &toggle_sub_account)?;
+            let all_action = role.get_action::<All>(&[])?;
+            if all_action.is_none() {
+                return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+            }
 
+            // 2. Check if sub-account role exists and return the action
+            let sub_acc_role_opt = Swig::get_mut_role(toggle_sub_account.args.role_id, swig_roles)?;
+            if sub_acc_role_opt.is_none() {
+                return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+            }
+            let sub_account_role = sub_acc_role_opt.unwrap();
+            let sub_account_action_mut = RoleMut::get_action_mut::<SubAccount>(
+                sub_account_role.actions,
+                ctx.accounts.sub_account.key().as_ref(),
+            )?;
+            sub_account_action_mut
+        } else {
+            // 1. Check if sub-account role exists and return the action
+            let sub_acc_role_opt = Swig::get_mut_role(toggle_sub_account.args.role_id, swig_roles)?;
+            if sub_acc_role_opt.is_none() {
+                return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+            }
+            let mut sub_account_role = sub_acc_role_opt.unwrap();
+
+            authenticate_authority(&mut sub_account_role, all_accounts, &toggle_sub_account)?;
+
+            let sub_account_action_mut = RoleMut::get_action_mut::<SubAccount>(
+                sub_account_role.actions,
+                ctx.accounts.sub_account.key().as_ref(),
+            )?;
+            if sub_account_action_mut.is_none() {
+                return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+            }
+
+            sub_account_action_mut
+        };
+
+    if let Some(action) = sub_account_action_mut {
+        // Check that the provided sub-account matches the one stored in the action
+        if action.sub_account != ctx.accounts.sub_account.key().as_ref() {
+            return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
+        }
+        action.enabled = toggle_sub_account.args.enabled;
+    }
+    Ok(())
+}
+
+pub fn authenticate_authority(
+    role: &mut RoleMut<'_>,
+    all_accounts: &[AccountInfo],
+    toggle_sub_account: &ToggleSubAccountV1<'_>,
+) -> ProgramResult {
     // Authenticate the authority
     let clock = Clock::get()?;
     let slot = clock.slot;
@@ -171,32 +227,6 @@ pub fn toggle_sub_account_v1(
             toggle_sub_account.data_payload,
             slot,
         )?;
-    }
-
-    // Get mutable reference to the SubAccount action to check permissions and
-    // update state
-    let sub_account_action_mut = RoleMut::get_action_mut::<SubAccount>(
-        role.actions,
-        ctx.accounts.sub_account.key().as_ref(),
-    )?;
-
-    if let Some(action) = sub_account_action_mut {
-        // Check that the provided sub-account matches the one stored in the action
-        if action.sub_account != ctx.accounts.sub_account.key().as_ref() {
-            return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
-        }
-
-        // Update the enabled state
-        action.enabled = toggle_sub_account.args.enabled;
-    } else {
-        // Check if has All permission as fallback
-        let has_all_permission = role.get_action::<All>(&[])?.is_some();
-        if !has_all_permission {
-            return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
-        }
-        // If has All permission but no SubAccount action, this is an error for toggle
-        // operation
-        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
     Ok(())
 }

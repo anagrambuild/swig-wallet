@@ -582,11 +582,13 @@ impl<'c> SwigWallet<'c> {
     pub fn toggle_sub_account(
         &mut self,
         sub_account: Pubkey,
+        auth_role_id: Option<u32>,
         enabled: bool,
     ) -> Result<Signature, SwigError> {
         let current_slot = self.get_current_slot()?;
         let toggle_instructions = self.instruction_builder.toggle_sub_account(
             sub_account,
+            auth_role_id,
             enabled,
             Some(current_slot),
         )?;

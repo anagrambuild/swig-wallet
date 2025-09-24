@@ -1087,7 +1087,7 @@ fn toggle_sub_account_interactive(ctx: &mut SwigCliContext) -> Result<()> {
         ctx.wallet
             .as_mut()
             .unwrap()
-            .toggle_sub_account(sub_account, true)?;
+            .toggle_sub_account(sub_account, None, true)?;
     }
 
     Ok(())

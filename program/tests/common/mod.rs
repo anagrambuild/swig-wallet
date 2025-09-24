@@ -540,6 +540,7 @@ pub fn toggle_sub_account(
     sub_account: &Pubkey,
     authority: &Keypair,
     role_id: u32,
+    auth_role_id: Option<u32>,
     enabled: bool,
 ) -> anyhow::Result<TransactionMetadata> {
     // Create the instruction to toggle a sub-account
@@ -549,6 +550,7 @@ pub fn toggle_sub_account(
         authority.pubkey(),
         *sub_account,
         role_id,
+        auth_role_id,
         enabled,
     )
     .map_err(|e| anyhow::anyhow!("Failed to create toggle sub-account instruction: {:?}", e))?;

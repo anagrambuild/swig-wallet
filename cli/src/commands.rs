@@ -495,7 +495,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 ctx.wallet
                     .as_mut()
                     .unwrap()
-                    .toggle_sub_account(sub_account, enabled)?;
+                    .toggle_sub_account(sub_account, None, enabled)?;
                 println!(
                     "Sub-account {} successfully!",
                     if enabled { "enabled" } else { "disabled" }
