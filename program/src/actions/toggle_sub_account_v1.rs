@@ -12,7 +12,10 @@ use pinocchio::{
 };
 use swig_assertions::*;
 use swig_state::{
-    action::{all::All, sub_account::SubAccount, ActionLoader, Actionable},
+    action::{
+        all::All, manage_authority::ManageAuthority, sub_account::SubAccount, ActionLoader,
+        Actionable,
+    },
     authority::AuthorityType,
     role::RoleMut,
     swig::Swig,
@@ -165,8 +168,8 @@ pub fn toggle_sub_account_v1(
             }
             let mut role = role_opt.unwrap();
             authenticate_authority(&mut role, all_accounts, &toggle_sub_account)?;
-            let all_action = role.get_action::<All>(&[])?;
-            if all_action.is_none() {
+            let manage_authority_action = role.get_action::<ManageAuthority>(&[])?;
+            if manage_authority_action.is_none() {
                 return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
             }
 

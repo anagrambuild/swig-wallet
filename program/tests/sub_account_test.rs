@@ -520,9 +520,9 @@ fn test_toggle_sub_account_with_auth_role_id() {
         &mut context,
         &swig_key,
         &sub_account,
-        &root_authority,
+        &manage_authority,
         role_id,
-        root_role_id,
+        manage_authority_role_id,
         false, // disabled
     )
     .unwrap();
@@ -588,9 +588,9 @@ fn test_toggle_sub_account_with_auth_role_id() {
         &mut context,
         &swig_key,
         &sub_account,
-        &manage_authority,
+        &root_authority,
         role_id,
-        manage_authority_role_id,
+        root_role_id,
         true, // enabled
     );
 
@@ -604,9 +604,9 @@ fn test_toggle_sub_account_with_auth_role_id() {
         &mut context,
         &swig_key,
         &sub_account,
-        &root_authority,
+        &manage_authority,
         role_id,
-        root_role_id,
+        manage_authority_role_id,
         true, // enabled
     )
     .unwrap();
