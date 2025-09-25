@@ -39,9 +39,9 @@ use crate::{
 pub struct ToggleSubAccountV1Args {
     discriminator: SwigInstruction,
     pub enabled: bool,
-    _padding: u8,
+    _padding: [u8; 5],
     pub role_id: u32,
-    pub auth_role_id: Option<u32>,
+    pub auth_role_id: u32,
 }
 
 impl ToggleSubAccountV1Args {
@@ -50,10 +50,10 @@ impl ToggleSubAccountV1Args {
     /// # Arguments
     /// * `role_id` - ID of the role performing the toggle
     /// * `enabled` - The desired enabled state
-    pub fn new(role_id: u32, auth_role_id: Option<u32>, enabled: bool) -> Self {
+    pub fn new(role_id: u32, auth_role_id: u32, enabled: bool) -> Self {
         Self {
             discriminator: SwigInstruction::ToggleSubAccountV1,
-            _padding: 0,
+            _padding: [0; 5],
             role_id,
             auth_role_id,
             enabled,
@@ -147,10 +147,19 @@ pub fn toggle_sub_account_v1(
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_unchecked(swig_header)? };
 
+    msg!(
+        "toggle_sub_account_v1: auth_role_id: {}",
+        toggle_sub_account.args.auth_role_id
+    );
+    msg!(
+        "toggle_sub_account_v1: role_id: {}",
+        toggle_sub_account.args.role_id
+    );
     let mut sub_account_action_mut =
-        if let Some(auth_role_id) = toggle_sub_account.args.auth_role_id {
+        if toggle_sub_account.args.auth_role_id != toggle_sub_account.args.role_id {
+            msg!("toggle_sub_account_v1: auth_role_id != role_id");
             // 1. Check if authority role exists and authenticate
-            let role_opt = Swig::get_mut_role(auth_role_id, swig_roles)?;
+            let role_opt = Swig::get_mut_role(toggle_sub_account.args.auth_role_id, swig_roles)?;
             if role_opt.is_none() {
                 return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
             }
@@ -173,6 +182,7 @@ pub fn toggle_sub_account_v1(
             )?;
             sub_account_action_mut
         } else {
+            msg!("toggle_sub_account_v1: auth_role_id == role_id");
             // 1. Check if sub-account role exists and return the action
             let sub_acc_role_opt = Swig::get_mut_role(toggle_sub_account.args.role_id, swig_roles)?;
             if sub_acc_role_opt.is_none() {

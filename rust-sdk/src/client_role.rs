@@ -126,7 +126,7 @@ pub trait ClientRole {
         payer: Pubkey,
         sub_account: Pubkey,
         role_id: u32,
-        auth_role_id: Option<u32>,
+        auth_role_id: u32,
         enabled: bool,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError>;
@@ -386,7 +386,7 @@ impl ClientRole for Ed25519ClientRole {
         payer: Pubkey,
         sub_account: Pubkey,
         role_id: u32,
-        auth_role_id: Option<u32>,
+        auth_role_id: u32,
         enabled: bool,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
@@ -731,7 +731,7 @@ impl ClientRole for Secp256k1ClientRole {
         payer: Pubkey,
         sub_account: Pubkey,
         role_id: u32,
-        auth_role_id: Option<u32>,
+        auth_role_id: u32,
         enabled: bool,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
@@ -1112,7 +1112,7 @@ impl ClientRole for Secp256r1ClientRole {
         payer: Pubkey,
         sub_account: Pubkey,
         role_id: u32,
-        auth_role_id: Option<u32>,
+        auth_role_id: u32,
         enabled: bool,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
@@ -1363,7 +1363,7 @@ impl ClientRole for Ed25519SessionClientRole {
         _payer: Pubkey,
         _sub_account: Pubkey,
         _role_id: u32,
-        _auth_role_id: Option<u32>,
+        _auth_role_id: u32,
         _enabled: bool,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
@@ -1638,7 +1638,7 @@ impl ClientRole for Secp256k1SessionClientRole {
         _payer: Pubkey,
         _sub_account: Pubkey,
         _role_id: u32,
-        _auth_role_id: Option<u32>,
+        _auth_role_id: u32,
         _enabled: bool,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
@@ -1918,7 +1918,7 @@ impl ClientRole for Secp256r1SessionClientRole {
         _payer: Pubkey,
         _sub_account: Pubkey,
         _role_id: u32,
-        _auth_role_id: Option<u32>,
+        _auth_role_id: u32,
         _enabled: bool,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {

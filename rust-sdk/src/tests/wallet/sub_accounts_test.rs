@@ -287,12 +287,12 @@ fn test_sub_account_toggle_operations() {
 
     // Test toggle operations
     let signature = swig_wallet
-        .toggle_sub_account(sub_account, None, false)
+        .toggle_sub_account(sub_account, 1, false)
         .unwrap();
     println!("Disable signature: {:?}", signature);
 
     let signature = swig_wallet
-        .toggle_sub_account(sub_account, None, true)
+        .toggle_sub_account(sub_account, 1, true)
         .unwrap();
     println!("Enable signature: {:?}", signature);
 }
@@ -466,7 +466,7 @@ fn test_sub_account_error_cases() {
     ));
 
     // Try to toggle with unauthorized authority
-    let result = swig_wallet.toggle_sub_account(sub_account, None, false);
+    let result = swig_wallet.toggle_sub_account(sub_account, 1, false);
     assert!(matches!(
         result.unwrap_err(),
         SwigError::TransactionFailedWithLogs { .. }

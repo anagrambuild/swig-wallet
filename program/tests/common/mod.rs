@@ -540,7 +540,7 @@ pub fn toggle_sub_account(
     sub_account: &Pubkey,
     authority: &Keypair,
     role_id: u32,
-    auth_role_id: Option<u32>,
+    auth_role_id: u32,
     enabled: bool,
 ) -> anyhow::Result<TransactionMetadata> {
     // Create the instruction to toggle a sub-account

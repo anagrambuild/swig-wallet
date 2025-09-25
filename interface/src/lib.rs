@@ -2094,7 +2094,7 @@ impl ToggleSubAccountInstruction {
         payer: Pubkey,
         sub_account: Pubkey,
         role_id: u32,
-        auth_role_id: Option<u32>,
+        auth_role_id: u32,
         enabled: bool,
     ) -> anyhow::Result<Instruction> {
         let accounts = vec![
@@ -2123,7 +2123,7 @@ impl ToggleSubAccountInstruction {
         current_slot: u64,
         sub_account: Pubkey,
         role_id: u32,
-        auth_role_id: Option<u32>,
+        auth_role_id: u32,
         enabled: bool,
     ) -> anyhow::Result<Instruction>
     where
@@ -2182,7 +2182,7 @@ impl ToggleSubAccountInstruction {
         counter: u32,
         sub_account: Pubkey,
         role_id: u32,
-        auth_role_id: Option<u32>,
+        auth_role_id: u32,
         enabled: bool,
         public_key: &[u8; 33],
     ) -> anyhow::Result<Vec<Instruction>>

@@ -342,7 +342,7 @@ fn test_toggle_sub_account() {
         &sub_account,
         &sub_account_authority,
         role_id,
-        None,
+        1,
         false, // disabled
     )
     .unwrap();
@@ -410,7 +410,7 @@ fn test_toggle_sub_account() {
         &sub_account,
         &sub_account_authority,
         role_id,
-        None,
+        1,
         true, // enabled
     )
     .unwrap();
@@ -522,7 +522,7 @@ fn test_toggle_sub_account_with_auth_role_id() {
         &sub_account,
         &root_authority,
         role_id,
-        Some(root_role_id),
+        root_role_id,
         false, // disabled
     )
     .unwrap();
@@ -590,7 +590,7 @@ fn test_toggle_sub_account_with_auth_role_id() {
         &sub_account,
         &manage_authority,
         role_id,
-        Some(manage_authority_role_id),
+        manage_authority_role_id,
         true, // enabled
     );
 
@@ -606,7 +606,7 @@ fn test_toggle_sub_account_with_auth_role_id() {
         &sub_account,
         &root_authority,
         role_id,
-        Some(root_role_id),
+        root_role_id,
         true, // enabled
     )
     .unwrap();
@@ -719,7 +719,7 @@ fn test_non_root_authority_cannot_disable_sub_account() {
         &sub_account,
         &unauthorized_authority,
         2, // The authority exists but lacks permissions
-        None,
+        1,
         false, // disabled
     );
 

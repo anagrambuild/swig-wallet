@@ -1083,11 +1083,14 @@ fn toggle_sub_account_interactive(ctx: &mut SwigCliContext) -> Result<()> {
     println!("\n{}", "Toggling sub-account...".bright_blue().bold());
 
     let sub_account = ctx.wallet.as_mut().unwrap().get_sub_account()?;
+
+    let current_role_id = ctx.wallet.as_ref().unwrap().get_current_role_id()?;
+
     if let Some(sub_account) = sub_account {
         ctx.wallet
             .as_mut()
             .unwrap()
-            .toggle_sub_account(sub_account, None, true)?;
+            .toggle_sub_account(sub_account, current_role_id, true)?;
     }
 
     Ok(())
