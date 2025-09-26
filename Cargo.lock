@@ -3806,25 +3806,9 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pinocchio"
-version = "0.8.1"
+version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "530596fa307103e53257f2cf064815919ee7fbc4c7ab999f6f13cc7067c3aff1"
-
-[[package]]
-name = "pinocchio"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5123fe61ac87a327d434d530eaddaaf65069a37e33e5c9f798feaed29e4974c8"
-
-[[package]]
-name = "pinocchio-pubkey"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c6b20fcebc172c3cd3f54114b0241b48fa8e30893ced2eb4927aaba5e3a0ba5"
-dependencies = [
- "five8_const",
- "pinocchio 0.8.1",
-]
+checksum = "5b971851087bc3699b001954ad02389d50c41405ece3548cbcafc88b3e20017a"
 
 [[package]]
 name = "pinocchio-pubkey"
@@ -3833,7 +3817,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb0225638cadcbebae8932cb7f49cb5da7c15c21beb19f048f05a5ca7d93f065"
 dependencies = [
  "five8_const",
- "pinocchio 0.9.0",
+ "pinocchio",
  "sha2-const-stable",
 ]
 
@@ -3843,18 +3827,18 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "141ed5eafb4ab04568bb0e224e3dc9a9de13c933de4c004e0d1a553498be3a7c"
 dependencies = [
- "pinocchio 0.9.0",
- "pinocchio-pubkey 0.3.0",
+ "pinocchio",
+ "pinocchio-pubkey",
 ]
 
 [[package]]
 name = "pinocchio-token"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d037f645db5ed4df9163362f1716932feb987a82f70caf15d0259cfeef82f4c"
+checksum = "4eb3a10d04ea7a633c01c4fe68eb650b4606cee4a3977bd1a1259cba324abafb"
 dependencies = [
- "pinocchio 0.8.1",
- "pinocchio-pubkey 0.2.4",
+ "pinocchio",
+ "pinocchio-pubkey",
 ]
 
 [[package]]
@@ -7982,8 +7966,8 @@ dependencies = [
  "num_enum",
  "once_cell",
  "openssl",
- "pinocchio 0.9.0",
- "pinocchio-pubkey 0.3.0",
+ "pinocchio",
+ "pinocchio-pubkey",
  "pinocchio-system",
  "pinocchio-token",
  "rand 0.9.0",
@@ -8008,8 +7992,8 @@ dependencies = [
 name = "swig-assertions"
 version = "1.2.0"
 dependencies = [
- "pinocchio 0.9.0",
- "pinocchio-pubkey 0.3.0",
+ "pinocchio",
+ "pinocchio-pubkey",
  "pinocchio-system",
 ]
 
@@ -8047,7 +8031,7 @@ name = "swig-compact-instructions"
 version = "1.2.0"
 dependencies = [
  "bs58",
- "pinocchio 0.9.0",
+ "pinocchio",
  "pinocchio-system",
  "solana-program",
 ]
@@ -8103,8 +8087,8 @@ dependencies = [
  "murmur3",
  "no-padding",
  "openssl",
- "pinocchio 0.9.0",
- "pinocchio-pubkey 0.3.0",
+ "pinocchio",
+ "pinocchio-pubkey",
  "rand 0.9.0",
  "solana-secp256r1-program",
  "swig-assertions",
