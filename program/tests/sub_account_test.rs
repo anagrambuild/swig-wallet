@@ -504,6 +504,25 @@ fn test_toggle_sub_account_with_auth_role_id() {
     )
     .unwrap();
 
+    // let add a new role with sol permission
+    let sol_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&sol_authority.pubkey(), 1_000_000)
+        .unwrap();
+    let sol_authority_role_id = 3;
+    let sol_authority_role = add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: sol_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::SolLimit(SolLimit { amount: 1000 })],
+    )
+    .unwrap();
+
     // Create the sub-account with the sub-account authority
     let role_id = 1; // The sub-account authority has role_id 1
     let root_role_id = 0;
@@ -588,9 +607,9 @@ fn test_toggle_sub_account_with_auth_role_id() {
         &mut context,
         &swig_key,
         &sub_account,
-        &root_authority,
+        &sol_authority,
         role_id,
-        root_role_id,
+        sol_authority_role_id,
         true, // enabled
     );
 
