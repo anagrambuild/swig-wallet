@@ -148,6 +148,7 @@ pub fn create_swig_instance(
 pub fn parse_permission_from_json(permission_json: &Value) -> Result<Permission> {
     match permission_json["type"].as_str() {
         Some("all") => Ok(Permission::All),
+        Some("programCurated") => Ok(Permission::ProgramCurated),
         Some("sol") => {
             let amount = permission_json["amount"].as_u64().unwrap_or(1_000_000_000);
             let recurring = if let Some(recurring) = permission_json.get("recurring") {
