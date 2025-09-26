@@ -480,30 +480,21 @@ impl Permission {
             permissions.push(Permission::ProgramAll);
         }
 
+        if swig_state::role::Role::get_action::<ProgramCurated>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .is_some()
+        {
+            permissions.push(Permission::ProgramCurated);
+        }
+
         // Check for Program permissions by iterating through all actions
-        let all_actions = role
-            .get_all_actions()
+        let custom_program_actions = role
+            .get_all_actions_of_type::<Program>()
             .map_err(|_| SwigError::InvalidSwigData)?;
-        for action in all_actions {
-            match action.permission() {
-                Ok(swig_state::action::Permission::Program)
-                | Ok(swig_state::action::Permission::ProgramCurated) => {
-                    // Get the program action data
-                    let action_data = unsafe {
-                        core::slice::from_raw_parts(
-                            (action as *const _ as *const u8).add(swig_state::action::Action::LEN),
-                            action.length() as usize,
-                        )
-                    };
-                    if action_data.len() >= 32 {
-                        let program_id_bytes: [u8; 32] = action_data[0..32].try_into().unwrap();
-                        permissions.push(Permission::Program {
-                            program_id: Pubkey::new_from_array(program_id_bytes),
-                        });
-                    }
-                },
-                _ => {},
-            }
+        for program_action in custom_program_actions {
+            permissions.push(Permission::Program {
+                program_id: Pubkey::new_from_array(program_action.program_id),
+            });
         }
 
         // Check for ProgramScope permission
