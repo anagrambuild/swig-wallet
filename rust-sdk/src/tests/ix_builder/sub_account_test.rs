@@ -266,7 +266,13 @@ fn test_sub_account_functionality() {
     // Must be performed by the sub-account authority (role_id = 1),
     // because authenticate uses the authority associated with the provided role_id.
     let toggle_ix = sub_account_builder
-        .toggle_sub_account(sub_account, sub_account_role_id, false, None)
+        .toggle_sub_account(
+            sub_account,
+            sub_account_role_id,
+            sub_account_role_id,
+            false,
+            None,
+        )
         .unwrap();
 
     let msg = v0::Message::try_compile(

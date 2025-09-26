@@ -297,12 +297,12 @@ fn test_sub_account_toggle_operations() {
 
     // Test toggle operations
     let signature = swig_wallet
-        .toggle_sub_account(sub_account, secondary_role_id, false)
+        .toggle_sub_account(sub_account, secondary_role_id, secondary_role_id, false)
         .unwrap();
     println!("Disable signature: {:?}", signature);
 
     let signature = swig_wallet
-        .toggle_sub_account(sub_account, 1, true)
+        .toggle_sub_account(sub_account, 1, 1, true)
         .unwrap();
     println!("Enable signature: {:?}", signature);
 }

@@ -535,6 +535,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
             if let Some(sub_account) = sub_account {
                 ctx.wallet.as_mut().unwrap().toggle_sub_account(
                     sub_account,
+                    current_role_id,
                     sub_account_role_id,
                     enabled,
                 )?;
