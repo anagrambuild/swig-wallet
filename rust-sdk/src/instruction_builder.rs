@@ -526,6 +526,7 @@ impl SwigInstructionBuilder {
         &self,
         sub_account: Pubkey,
         sub_account_role_id: u32,
+        auth_role_id: u32,
         enabled: bool,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
@@ -534,6 +535,7 @@ impl SwigInstructionBuilder {
             self.payer,
             sub_account,
             sub_account_role_id,
+            auth_role_id,
             enabled,
             current_slot,
         )
