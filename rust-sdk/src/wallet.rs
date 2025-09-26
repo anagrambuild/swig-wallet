@@ -28,7 +28,12 @@ use swig_interface::{swig, swig_key};
 use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, program_scope::ProgramScope,
-        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
+        sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
+        sol_recurring_destination_limit::SolRecurringDestinationLimit,
+        sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
+        token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
+        token_recurring_destination_limit::TokenRecurringDestinationLimit,
+        token_recurring_limit::TokenRecurringLimit,
     },
     authority::{self, secp256k1::Secp256k1Authority, AuthorityType},
     role::Role,
@@ -583,11 +588,13 @@ impl<'c> SwigWallet<'c> {
         &mut self,
         sub_account: Pubkey,
         auth_role_id: u32,
+        sub_account_role_id: u32,
         enabled: bool,
     ) -> Result<Signature, SwigError> {
         let current_slot = self.get_current_slot()?;
         let toggle_instructions = self.instruction_builder.toggle_sub_account(
             sub_account,
+            sub_account_role_id,
             auth_role_id,
             enabled,
             Some(current_slot),
@@ -636,6 +643,16 @@ impl<'c> SwigWallet<'c> {
             .signature;
 
         Ok(signature)
+    }
+
+    /// Returns the public key of the Swig wallet address
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the Swig wallet address's public key or a
+    /// `SwigError`
+    pub fn get_swig_wallet_address(&self) -> Result<Pubkey, SwigError> {
+        Ok(self.instruction_builder.swig_wallet_address())
     }
 
     /// Returns the public key of the Swig account
@@ -899,15 +916,129 @@ impl<'c> SwigWallet<'c> {
                     println!("║ │  │  └─ Last Reset: Slot {}", action.last_reset);
                 }
 
-                // Check Program Scope
-                if let Some(action) =
-                    Role::get_action::<ProgramScope>(&role, &spl_token::ID.to_bytes())
-                        .map_err(|_| SwigError::AuthorityNotFound)?
-                {
+                // Check Token Limits
+                let token_limits = Role::get_all_actions_of_type::<TokenLimit>(&role)
+                    .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in token_limits.iter().enumerate() {
+                    if index == 0 {
+                        println!("║ │  ├─ Token Limits");
+                    }
+                    println!(
+                        "║ │  │  ├─ Token {}: {}",
+                        index + 1,
+                        Pubkey::from(action.token_mint)
+                    );
+                    println!("║ │  │  ├─ Amount: {} tokens", action.current_amount);
+                }
+
+                // Check Token Recurring Limits
+                let token_recurring_limits =
+                    Role::get_all_actions_of_type::<TokenRecurringLimit>(&role)
+                        .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in token_recurring_limits.iter().enumerate() {
+                    if index == 0 {
+                        println!("║ │  ├─ Token Recurring Limits");
+                    }
+                    println!(
+                        "║ │  │  ├─ Token {}: {}",
+                        index + 1,
+                        Pubkey::from(action.token_mint)
+                    );
+                    println!("║ │  │  ├─ Amount: {} tokens", action.limit);
+                    println!("║ │  │  ├─ Window: {} slots", action.window);
+                    println!("║ │  │  ├─ Last Reset: Slot {}", action.last_reset);
+                    println!("║ │  │  └─ Current Usage: {} tokens", action.current);
+                }
+
+                // Check Sol Destination Limits
+                let sol_destination_limits =
+                    Role::get_all_actions_of_type::<SolDestinationLimit>(&role)
+                        .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in sol_destination_limits.iter().enumerate() {
+                    if index == 0 {
+                        println!("║ │  ├─ SOL Destination Limits");
+                    }
+                    println!(
+                        "║ │  │  ├─ Destination {}: {}",
+                        index + 1,
+                        Pubkey::from(action.destination)
+                    );
+                    println!(
+                        "║ │  │  ├─ Amount: {} SOL",
+                        action.amount as f64 / 1_000_000_000.0
+                    );
+                }
+
+                // Check Sol Recurring Destination Limits
+                let sol_recurring_destination_limits =
+                    Role::get_all_actions_of_type::<SolRecurringDestinationLimit>(&role)
+                        .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in sol_recurring_destination_limits.iter().enumerate() {
+                    if index == 0 {
+                        println!("║ │  ├─ SOL Recurring Destination Limits");
+                    }
+                    println!(
+                        "║ │  │  ├─ Destination {}: {}",
+                        index + 1,
+                        Pubkey::from(action.destination)
+                    );
+                    println!(
+                        "║ │  │  ├─ Amount: {} SOL",
+                        action.recurring_amount as f64 / 1_000_000_000.0
+                    );
+                    println!("║ │  │  ├─ Window: {} slots", action.window);
+                    println!("║ │  │  ├─ Last Reset: Slot {}", action.last_reset);
+                    println!(
+                        "║ │  │  └─ Current Usage: {} SOL",
+                        action.current_amount as f64 / 1_000_000_000.0
+                    );
+                }
+
+                // Check Token Destination Limits
+                let token_destination_limits =
+                    Role::get_all_actions_of_type::<TokenDestinationLimit>(&role)
+                        .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in token_destination_limits.iter().enumerate() {
+                    if index == 0 {
+                        println!("║ │  ├─ Token Destination Limits");
+                    }
+                    println!(
+                        "║ │  │  ├─ Destination {}: {}",
+                        index + 1,
+                        Pubkey::from(action.destination)
+                    );
+                    println!("║ │  │  ├─ Amount: {} tokens", action.amount);
+                }
+
+                // Check Token Recurring Destination Limits
+                let token_recurring_destination_limits =
+                    Role::get_all_actions_of_type::<TokenRecurringDestinationLimit>(&role)
+                        .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in token_recurring_destination_limits.iter().enumerate() {
+                    if index == 0 {
+                        println!("║ │  ├─ Token Recurring Destination Limits");
+                    }
+                    println!(
+                        "║ │  │  ├─ Destination {}: {}",
+                        index + 1,
+                        Pubkey::from(action.destination)
+                    );
+                    println!("║ │  │  ├─ Amount: {} tokens", action.recurring_amount);
+                    println!("║ │  │  ├─ Window: {} slots", action.window);
+                    println!("║ │  │  ├─ Last Reset: Slot {}", action.last_reset);
+                    println!("║ │  │  └─ Current Usage: {} tokens", action.current_amount);
+                }
+
+                // Check Program Scopes
+                let program_scopes = Role::get_all_actions_of_type::<ProgramScope>(&role)
+                    .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in program_scopes.iter().enumerate() {
                     let program_id = Pubkey::from(action.program_id);
                     let target_account = Pubkey::from(action.target_account);
-                    println!("║ │  ├─ Program Scope");
-                    println!("║ │  │  ├─ Program ID: {}", program_id);
+                    if index == 0 {
+                        println!("║ │  ├─ Program Scopes");
+                    }
+                    println!("║ │  │  ├─ Scope {}: Program ID: {}", index + 1, program_id);
                     println!("║ │  │  ├─ Target Account: {}", target_account);
                     println!(
                         "║ │  │  ├─ Scope Type: {}",
@@ -938,19 +1069,22 @@ impl<'c> SwigWallet<'c> {
                     println!("║ │  │  ");
                 }
 
-                // Check Sub Account
-                if let Some(action) = Role::get_action::<SubAccount>(&role, &[])
-                    .map_err(|_| SwigError::AuthorityNotFound)?
-                {
-                    let (sub_account, _) = Pubkey::find_program_address(
-                        &sub_account_seeds(
-                            self.instruction_builder.get_swig_id(),
-                            &i.to_le_bytes(),
-                        ),
-                        &swig_interface::program_id(),
-                    );
-                    println!("║ │  ├─ Sub Account");
-                    println!("║ │  │  ├─ Sub Account: {:?}", sub_account);
+                // Check Sub Accounts
+                let actions = Role::get_all_actions_of_type::<SubAccount>(&role)
+                    .map_err(|_| SwigError::AuthorityNotFound)?;
+                if !actions.is_empty() {
+                    {
+                        println!("║ │  ├─ SubAccount");
+                        for action in actions {
+                            println!(
+                                "║ │  │  ├─ SubAccount: {}",
+                                Pubkey::from(action.sub_account)
+                            );
+                            println!("║ │  │  ├─ Enabled: {}", action.enabled);
+                            println!("║ │  │  ├─ Role ID: {}", action.role_id);
+                            println!("║ │  │  └─ Swig ID: {}", Pubkey::from(action.swig_id));
+                        }
+                    }
                 }
 
                 println!("║ │  ");
@@ -1261,8 +1395,8 @@ impl<'c> SwigWallet<'c> {
     /// Returns a `Result` containing the associated token address or a
     /// `SwigError`
     pub fn create_ata(&mut self, mint: &Pubkey) -> Result<Pubkey, SwigError> {
-        let associated_token_address =
-            get_associated_token_address(&self.instruction_builder.get_swig_account()?, &mint);
+        let swig_wallet_address = self.instruction_builder.get_swig_account()?;
+        let associated_token_address = get_associated_token_address(&swig_wallet_address, &mint);
 
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
         {
@@ -1275,9 +1409,9 @@ impl<'c> SwigWallet<'c> {
             if !account_exists {
                 // Create the instruction to create the ATA
                 let create_ata_instruction = create_associated_token_account(
-                    &self.fee_payer.pubkey(),                      // payer
-                    &self.instruction_builder.get_swig_account()?, // owner
-                    &mint,                                         // mint
+                    &self.fee_payer.pubkey(), // payer
+                    &swig_wallet_address,     // owner
+                    &mint,                    // mint
                     &TOKEN_PROGRAM_ID,
                 );
 
@@ -1306,7 +1440,70 @@ impl<'c> SwigWallet<'c> {
 
         #[cfg(all(feature = "rust_sdk_test", test))]
         CreateAssociatedTokenAccount::new(&mut self.litesvm, self.fee_payer, &mint)
-            .owner(&self.instruction_builder.get_swig_account()?)
+            .owner(&swig_wallet_address)
+            .send()
+            .map_err(|_| anyhow::anyhow!("Failed to create associated token account"))?;
+
+        Ok(associated_token_address)
+    }
+
+    /// Creates an associated token account for the Swig wallet
+    ///
+    /// # Arguments
+    ///
+    /// * `mint` - The mint address of the token to create an ATA for
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the associated token address or a
+    /// `SwigError`
+    pub fn create_wallet_ata(&mut self, mint: &Pubkey) -> Result<Pubkey, SwigError> {
+        let swig_wallet_address = self.instruction_builder.swig_wallet_address();
+        let associated_token_address = get_associated_token_address(&swig_wallet_address, &mint);
+
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        {
+            // Check if the ATA already exists
+            let account_exists = self
+                .rpc_client
+                .get_account(&associated_token_address)
+                .is_ok();
+
+            if !account_exists {
+                // Create the instruction to create the ATA
+                let create_ata_instruction = create_associated_token_account(
+                    &self.fee_payer.pubkey(), // payer
+                    &swig_wallet_address,     // owner
+                    &mint,                    // mint
+                    &TOKEN_PROGRAM_ID,
+                );
+
+                // Get recent blockhash
+                let recent_blockhash = self.rpc_client.get_latest_blockhash()?;
+
+                // Create and sign the transaction
+                let transaction = Transaction::new_signed_with_payer(
+                    &[create_ata_instruction],
+                    Some(&self.fee_payer.pubkey()),
+                    &[&self.fee_payer.insecure_clone()],
+                    recent_blockhash,
+                );
+
+                // Send the transaction
+                let signature = self.rpc_client.send_and_confirm_transaction(&transaction)?;
+
+                println!(
+                    "Success! Associated Token Account created. Transaction Signature: {}",
+                    signature
+                );
+            } else {
+                println!("Associated Token Account already exists.");
+            }
+        }
+
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        CreateAssociatedTokenAccount::new(&mut self.litesvm, self.fee_payer, &mint)
+            .owner(&swig_wallet_address)
             .send()
             .map_err(|_| anyhow::anyhow!("Failed to create associated token account"))?;
 

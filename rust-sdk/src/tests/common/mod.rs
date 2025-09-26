@@ -50,7 +50,7 @@ pub fn create_swig_ed25519(
     context: &mut SwigTestContext,
     authority: &Keypair,
     id: [u8; 32],
-) -> Result<(Pubkey, TransactionMetadata)> {
+) -> Result<(Pubkey, Pubkey, TransactionMetadata)> {
     let (swig, bump) =
         Pubkey::find_program_address(&swig_account_seeds(&id), &Pubkey::new_from_array(swig::ID));
     let (swig_wallet_address, wallet_address_bump) = Pubkey::find_program_address(
@@ -87,7 +87,7 @@ pub fn create_swig_ed25519(
         .svm
         .send_transaction(tx)
         .map_err(|e| anyhow::anyhow!("Failed to send transaction: {:?}", e))?;
-    Ok((swig, bench))
+    Ok((swig, swig_wallet_address, bench))
 }
 
 pub fn add_authority_with_ed25519_root(
