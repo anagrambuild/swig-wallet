@@ -1193,6 +1193,7 @@ fn test_all_but_manage_authority_cannot_toggle_sub_account() {
         restricted_authority.pubkey(),
         sub_account,
         restricted_role_id,
+        restricted_role_id,
         false, // disable
     )
     .unwrap();

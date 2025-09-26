@@ -252,7 +252,7 @@ fn test_sub_account_functionality() {
 
     // Test toggling the sub-account (disable/enable)
     let toggle_ix = builder
-        .toggle_sub_account(sub_account, false, None)
+        .toggle_sub_account(sub_account, 1, false, None)
         .unwrap();
 
     let msg = v0::Message::try_compile(
