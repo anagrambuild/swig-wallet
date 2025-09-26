@@ -464,11 +464,16 @@ fn update_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                 "Manage Authority",
                 "SOL",
                 "Token",
+                "SOL Destination",
+                "Token Destination",
                 "Program",
+                "Program All",
                 "Program Scope",
                 "Sub Account",
                 "Stake",
                 "Stake All",
+                "All But Manage Authority",
+                "Program Curated",
             ];
 
             let mut selected_types = Vec::new();
@@ -491,10 +496,22 @@ fn update_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                         amount: 0,
                         recurring: None,
                     },
-                    4 => Permission::Program {
+                    4 => Permission::SolDestination {
+                        destination: Pubkey::default(),
+                        amount: 0,
+                        recurring: None,
+                    },
+                    5 => Permission::TokenDestination {
+                        mint: Pubkey::default(),
+                        destination: Pubkey::default(),
+                        amount: 0,
+                        recurring: None,
+                    },
+                    6 => Permission::Program {
                         program_id: Pubkey::default(),
                     },
-                    5 => Permission::ProgramScope {
+                    7 => Permission::ProgramAll,
+                    8 => Permission::ProgramScope {
                         program_id: Pubkey::default(),
                         target_account: Pubkey::default(),
                         numeric_type: 0,
@@ -503,15 +520,16 @@ fn update_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                         balance_field_start: None,
                         balance_field_end: None,
                     },
-                    6 => Permission::SubAccount {
+                    9 => Permission::SubAccount {
                         sub_account: [0; 32],
                     },
-                    7 => Permission::Stake {
+                    10 => Permission::Stake {
                         amount: 0,
                         recurring: None,
                     },
-                    8 => Permission::StakeAll,
-                    9 => Permission::AllButManageAuthority,
+                    11 => Permission::StakeAll,
+                    12 => Permission::AllButManageAuthority,
+                    13 => Permission::ProgramCurated,
                     _ => unreachable!(),
                 };
 
@@ -825,11 +843,18 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
     let permission_types = vec![
         "All (Full access to all operations)",
         "Manage Authority (Add/remove authorities)",
+        "All But Manage Authority (All permissions except authority management)",
         "Token (Token-specific permissions)",
         "SOL (SOL transfer permissions)",
+        "Token Destination (Token transfer permissions to specific destinations)",
+        "SOL Destination (SOL transfer permissions to specific destinations)",
         "Program (Program interaction permissions)",
+        "Program All (Unrestricted program access)",
         "Program Scope (Token program scope permissions)",
+        "Program Curated (Curated program permissions)",
         "Sub Account (Sub-account management)",
+        "Stake (Stake management permissions)",
+        "Stake All (All stake management permissions)",
     ];
 
     let mut permissions = Vec::new();
@@ -844,7 +869,8 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
         let permission = match permission_type_idx {
             0 => Permission::All,
             1 => Permission::ManageAuthority,
-            2 => {
+            2 => Permission::AllButManageAuthority,
+            3 => {
                 // Get token mint address
                 let mint_str: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter token mint address")
@@ -877,7 +903,7 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
                     recurring,
                 }
             },
-            3 => {
+            4 => {
                 // Get SOL amount
                 let amount: u64 = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter SOL amount limit (in lamports)")
@@ -900,7 +926,80 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
 
                 Permission::Sol { amount, recurring }
             },
-            4 => {
+            5 => {
+                // Get token mint address
+                let mint_str: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter token mint address")
+                    .interact_text()?;
+                let mint = Pubkey::from_str(&mint_str)?;
+
+                // Get destination address
+                let destination_str: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter destination token account address")
+                    .interact_text()?;
+                let destination = Pubkey::from_str(&destination_str)?;
+
+                // Get amount
+                let amount: u64 = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter token amount limit")
+                    .interact_text()?;
+
+                // Check if recurring
+                let is_recurring = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Make this a recurring limit?")
+                    .default(false)
+                    .interact()?;
+
+                let recurring = if is_recurring {
+                    let window: u64 = Input::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Enter time window in slots")
+                        .interact_text()?;
+                    Some(RecurringConfig::new(window))
+                } else {
+                    None
+                };
+
+                Permission::TokenDestination {
+                    mint,
+                    destination,
+                    amount,
+                    recurring,
+                }
+            },
+            6 => {
+                // Get SOL destination
+                let destination_str: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter destination address")
+                    .interact_text()?;
+                let destination = Pubkey::from_str(&destination_str)?;
+
+                // Get SOL amount
+                let amount: u64 = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter SOL amount limit (in lamports)")
+                    .interact_text()?;
+
+                // Check if recurring
+                let is_recurring = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Make this a recurring limit?")
+                    .default(false)
+                    .interact()?;
+
+                let recurring = if is_recurring {
+                    let window: u64 = Input::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Enter time window in slots")
+                        .interact_text()?;
+                    Some(RecurringConfig::new(window))
+                } else {
+                    None
+                };
+
+                Permission::SolDestination {
+                    destination,
+                    amount,
+                    recurring,
+                }
+            },
+            7 => {
                 // Get program ID
                 let program_id_str: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter program ID")
@@ -909,7 +1008,8 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
 
                 Permission::Program { program_id }
             },
-            5 => {
+            8 => Permission::ProgramAll,
+            9 => {
                 // Program Scope for Token Programs
                 let token_programs = vec!["SPL Token", "Token2022"];
                 let program_idx = Select::with_theme(&ColorfulTheme::default())
@@ -960,10 +1060,15 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
                     balance_field_end: Some(72),   // Fixed for SPL token accounts
                 }
             },
-            6 => Permission::SubAccount {
+            10 => Permission::ProgramCurated,
+            11 => Permission::SubAccount {
                 sub_account: [0; 32],
             },
-            7 => Permission::AllButManageAuthority,
+            12 => Permission::Stake {
+                amount: 0,
+                recurring: None,
+            },
+            13 => Permission::StakeAll,
             _ => unreachable!(),
         };
 
@@ -1003,7 +1108,12 @@ pub fn sub_accounts_interactive(ctx: &mut SwigCliContext) -> Result<()> {
     match selection {
         0 => create_sub_account_interactive(ctx)?,
         1 => transfer_from_sub_account_interactive(ctx)?,
-        2 => toggle_sub_account_interactive(ctx)?,
+        2 => {
+            let sub_account_role_id = Input::<u32>::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter sub-account role ID")
+                .interact_text()?;
+            toggle_sub_account_interactive(ctx, sub_account_role_id)?;
+        },
         3 => withdraw_from_sub_account_interactive(ctx)?,
         _ => unreachable!(),
     }
@@ -1079,7 +1189,10 @@ pub fn withdraw_from_sub_account_interactive(ctx: &mut SwigCliContext) -> Result
     Ok(())
 }
 
-fn toggle_sub_account_interactive(ctx: &mut SwigCliContext) -> Result<()> {
+fn toggle_sub_account_interactive(
+    ctx: &mut SwigCliContext,
+    sub_account_role_id: u32,
+) -> Result<()> {
     println!("\n{}", "Toggling sub-account...".bright_blue().bold());
 
     let sub_account = ctx.wallet.as_mut().unwrap().get_sub_account()?;
@@ -1087,10 +1200,12 @@ fn toggle_sub_account_interactive(ctx: &mut SwigCliContext) -> Result<()> {
     let current_role_id = ctx.wallet.as_ref().unwrap().get_current_role_id()?;
 
     if let Some(sub_account) = sub_account {
-        ctx.wallet
-            .as_mut()
-            .unwrap()
-            .toggle_sub_account(sub_account, current_role_id, true)?;
+        ctx.wallet.as_mut().unwrap().toggle_sub_account(
+            sub_account,
+            current_role_id,
+            sub_account_role_id,
+            true,
+        )?;
     }
 
     Ok(())

@@ -1,12 +1,15 @@
 pub mod authority_tests;
 pub mod creation_tests;
+pub mod destination_tests;
 pub mod helper_tests;
+pub mod program_all_tests;
 pub mod program_scope_test;
 pub mod secp256r1_test;
 pub mod secp_tests;
 pub mod session_tests;
+pub mod sign_v1_tests;
+pub mod sign_v2_tests;
 pub mod sub_accounts_test;
-pub mod transfer_tests;
 
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
