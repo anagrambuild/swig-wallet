@@ -2097,6 +2097,7 @@ impl ToggleSubAccountInstruction {
         payer: Pubkey,
         sub_account: Pubkey,
         role_id: u32,
+        auth_role_id: u32,
         enabled: bool,
     ) -> anyhow::Result<Instruction> {
         let accounts = vec![
@@ -2106,7 +2107,7 @@ impl ToggleSubAccountInstruction {
             AccountMeta::new_readonly(authority, true),
         ];
 
-        let args = ToggleSubAccountV1Args::new(role_id, enabled);
+        let args = ToggleSubAccountV1Args::new(role_id, auth_role_id, enabled);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -2125,6 +2126,7 @@ impl ToggleSubAccountInstruction {
         current_slot: u64,
         sub_account: Pubkey,
         role_id: u32,
+        auth_role_id: u32,
         enabled: bool,
     ) -> anyhow::Result<Instruction>
     where
@@ -2136,7 +2138,7 @@ impl ToggleSubAccountInstruction {
             AccountMeta::new(sub_account, false),
         ];
 
-        let args = ToggleSubAccountV1Args::new(role_id, enabled);
+        let args = ToggleSubAccountV1Args::new(role_id, auth_role_id, enabled);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -2183,6 +2185,7 @@ impl ToggleSubAccountInstruction {
         counter: u32,
         sub_account: Pubkey,
         role_id: u32,
+        auth_role_id: u32,
         enabled: bool,
         public_key: &[u8; 33],
     ) -> anyhow::Result<Vec<Instruction>>
@@ -2197,7 +2200,7 @@ impl ToggleSubAccountInstruction {
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
 
-        let args = ToggleSubAccountV1Args::new(role_id, enabled);
+        let args = ToggleSubAccountV1Args::new(role_id, auth_role_id, enabled);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;

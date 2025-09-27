@@ -126,6 +126,7 @@ pub trait ClientRole {
         payer: Pubkey,
         sub_account: Pubkey,
         role_id: u32,
+        auth_role_id: u32,
         enabled: bool,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError>;
@@ -385,6 +386,7 @@ impl ClientRole for Ed25519ClientRole {
         payer: Pubkey,
         sub_account: Pubkey,
         role_id: u32,
+        auth_role_id: u32,
         enabled: bool,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
@@ -395,6 +397,7 @@ impl ClientRole for Ed25519ClientRole {
                 payer,
                 sub_account,
                 role_id,
+                auth_role_id,
                 enabled,
             )?,
         ])
@@ -728,6 +731,7 @@ impl ClientRole for Secp256k1ClientRole {
         payer: Pubkey,
         sub_account: Pubkey,
         role_id: u32,
+        auth_role_id: u32,
         enabled: bool,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
@@ -741,6 +745,7 @@ impl ClientRole for Secp256k1ClientRole {
                 current_slot,
                 sub_account,
                 role_id,
+                auth_role_id,
                 enabled,
             )?,
         ])
@@ -792,6 +797,8 @@ impl ClientRole for Secp256k1ClientRole {
     ) -> Result<Vec<Instruction>, SwigError> {
         let mut signed_instructions = Vec::new();
         let current_slot = current_slot.ok_or(SwigError::SlotRequired)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+
         for instruction in instructions {
             let swig_signed_instruction = SignV2Instruction::new_secp256k1(
                 swig_account,
@@ -799,7 +806,7 @@ impl ClientRole for Secp256k1ClientRole {
                 payer,
                 &self.signing_fn,
                 current_slot,
-                self.odometer,
+                new_odometer,
                 instruction,
                 role_id,
             )?;
@@ -1107,6 +1114,7 @@ impl ClientRole for Secp256r1ClientRole {
         payer: Pubkey,
         sub_account: Pubkey,
         role_id: u32,
+        auth_role_id: u32,
         enabled: bool,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
@@ -1121,6 +1129,7 @@ impl ClientRole for Secp256r1ClientRole {
             new_odometer,
             sub_account,
             role_id,
+            auth_role_id,
             enabled,
             &self.authority,
         )?;
@@ -1161,6 +1170,8 @@ impl ClientRole for Secp256r1ClientRole {
     ) -> Result<Vec<Instruction>, SwigError> {
         let mut signed_instructions = Vec::new();
         let current_slot = current_slot.ok_or(SwigError::SlotRequired)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+
         for instruction in instructions {
             let swig_signed_instructions = SignV2Instruction::new_secp256r1(
                 swig_account,
@@ -1168,7 +1179,7 @@ impl ClientRole for Secp256r1ClientRole {
                 payer,
                 &self.signing_fn,
                 current_slot,
-                self.odometer,
+                new_odometer,
                 instruction,
                 role_id,
                 &self.authority,
@@ -1356,6 +1367,7 @@ impl ClientRole for Ed25519SessionClientRole {
         _payer: Pubkey,
         _sub_account: Pubkey,
         _role_id: u32,
+        _auth_role_id: u32,
         _enabled: bool,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
@@ -1630,6 +1642,7 @@ impl ClientRole for Secp256k1SessionClientRole {
         _payer: Pubkey,
         _sub_account: Pubkey,
         _role_id: u32,
+        _auth_role_id: u32,
         _enabled: bool,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
@@ -1669,6 +1682,8 @@ impl ClientRole for Secp256k1SessionClientRole {
     ) -> Result<Vec<Instruction>, SwigError> {
         let mut signed_instructions = Vec::new();
         let current_slot = current_slot.ok_or(SwigError::SlotRequired)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+
         for instruction in instructions {
             let swig_signed_instruction = SignV2Instruction::new_secp256k1(
                 swig_account,
@@ -1676,7 +1691,7 @@ impl ClientRole for Secp256k1SessionClientRole {
                 payer,
                 &self.signing_fn,
                 current_slot,
-                self.odometer,
+                new_odometer,
                 instruction,
                 role_id,
             )?;
@@ -1728,6 +1743,7 @@ impl ClientRole for Secp256r1SessionClientRole {
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
 
         let mut signed_instructions = Vec::new();
         for instruction in instructions {
@@ -1736,7 +1752,7 @@ impl ClientRole for Secp256r1SessionClientRole {
                 payer,
                 &self.signing_fn,
                 current_slot,
-                0u32,
+                new_odometer,
                 instruction,
                 role_id,
                 &self.session_authority.public_key,
@@ -1757,13 +1773,13 @@ impl ClientRole for Secp256r1SessionClientRole {
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
-
+        let new_odometer = self.odometer.wrapping_add(1);
         let instructions = AddAuthorityInstruction::new_with_secp256r1_authority(
             swig_account,
             payer,
             &self.signing_fn,
             current_slot,
-            0u32,
+            new_odometer,
             role_id,
             &self.session_authority.public_key,
             AuthorityConfig {
@@ -1836,13 +1852,14 @@ impl ClientRole for Secp256r1SessionClientRole {
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
 
         let instructions = CreateSessionInstruction::new_with_secp256r1_authority(
             swig_account,
             payer,
             &self.signing_fn,
             current_slot,
-            0u32,
+            new_odometer,
             role_id,
             session_key,
             session_duration,
@@ -1909,6 +1926,7 @@ impl ClientRole for Secp256r1SessionClientRole {
         _payer: Pubkey,
         _sub_account: Pubkey,
         _role_id: u32,
+        _auth_role_id: u32,
         _enabled: bool,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
@@ -1948,6 +1966,7 @@ impl ClientRole for Secp256r1SessionClientRole {
     ) -> Result<Vec<Instruction>, SwigError> {
         let mut signed_instructions = Vec::new();
         let current_slot = current_slot.ok_or(SwigError::SlotRequired)?;
+        let new_odometer = self.odometer.wrapping_add(1);
         for instruction in instructions {
             let swig_signed_instructions = SignV2Instruction::new_secp256r1(
                 swig_account,
@@ -1955,7 +1974,7 @@ impl ClientRole for Secp256r1SessionClientRole {
                 payer,
                 &self.signing_fn,
                 current_slot,
-                self.odometer,
+                new_odometer,
                 instruction,
                 role_id,
                 &self.session_authority.public_key,

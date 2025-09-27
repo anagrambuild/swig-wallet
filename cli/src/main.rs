@@ -239,6 +239,8 @@ pub enum Command {
         id: String,
         #[arg(short, long)]
         enabled: bool,
+        #[arg(short, long)]
+        sub_account_role_id: u32,
     },
     /// Withdraw from a sub-account to the SWIG wallet
     WithdrawFromSubAccount {
@@ -416,10 +418,18 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
     let permission_types = vec![
         "All (Full access to all operations)",
         "Manage Authority (Add/remove authorities)",
+        "All But Manage Authority (All permissions except authority management)",
         "Token (Token-specific permissions)",
         "SOL (SOL transfer permissions)",
+        "Token Destination (Token transfer permissions to specific destinations)",
+        "SOL Destination (SOL transfer permissions to specific destinations)",
         "Program (Program interaction permissions)",
+        "Program All (Unrestricted program access)",
+        "Program Scope (Token program scope permissions)",
+        "Program Curated (Curated program permissions)",
         "Sub Account (Sub-account management)",
+        "Stake (Stake management permissions)",
+        "Stake All (All stake management permissions)",
     ];
 
     let mut permissions = Vec::new();
@@ -434,7 +444,8 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
         let permission = match permission_type_idx {
             0 => Permission::All,
             1 => Permission::ManageAuthority,
-            2 => {
+            2 => Permission::AllButManageAuthority,
+            3 => {
                 // Get token mint address
                 let mint_str: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter token mint address")
@@ -467,7 +478,7 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
                     recurring,
                 }
             },
-            3 => {
+            4 => {
                 // Get SOL amount
                 let amount: u64 = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter SOL amount limit (in lamports)")
@@ -490,7 +501,80 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
 
                 Permission::Sol { amount, recurring }
             },
-            4 => {
+            5 => {
+                // Get token mint address
+                let mint_str: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter token mint address")
+                    .interact_text()?;
+                let mint = Pubkey::from_str(&mint_str)?;
+
+                // Get destination address
+                let destination_str: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter destination token account address")
+                    .interact_text()?;
+                let destination = Pubkey::from_str(&destination_str)?;
+
+                // Get amount
+                let amount: u64 = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter token amount limit")
+                    .interact_text()?;
+
+                // Check if recurring
+                let is_recurring = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Make this a recurring limit?")
+                    .default(false)
+                    .interact()?;
+
+                let recurring = if is_recurring {
+                    let window: u64 = Input::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Enter time window in slots")
+                        .interact_text()?;
+                    Some(RecurringConfig::new(window))
+                } else {
+                    None
+                };
+
+                Permission::TokenDestination {
+                    mint,
+                    destination,
+                    amount,
+                    recurring,
+                }
+            },
+            6 => {
+                // Get SOL destination
+                let destination_str: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter destination address")
+                    .interact_text()?;
+                let destination = Pubkey::from_str(&destination_str)?;
+
+                // Get SOL amount
+                let amount: u64 = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter SOL amount limit (in lamports)")
+                    .interact_text()?;
+
+                // Check if recurring
+                let is_recurring = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Make this a recurring limit?")
+                    .default(false)
+                    .interact()?;
+
+                let recurring = if is_recurring {
+                    let window: u64 = Input::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Enter time window in slots")
+                        .interact_text()?;
+                    Some(RecurringConfig::new(window))
+                } else {
+                    None
+                };
+
+                Permission::SolDestination {
+                    destination,
+                    amount,
+                    recurring,
+                }
+            },
+            7 => {
                 // Get program ID
                 let program_id_str: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter program ID")
@@ -499,7 +583,60 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
 
                 Permission::Program { program_id }
             },
-            5 => {
+            8 => Permission::ProgramAll,
+            9 => {
+                // Program Scope for Token Programs
+                let token_programs = vec!["SPL Token", "Token2022"];
+                let program_idx = Select::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Choose token program")
+                    .items(&token_programs)
+                    .default(0)
+                    .interact()?;
+
+                let program_id = match program_idx {
+                    0 => spl_token::ID,
+                    1 => todo!("Token2022 program ID"), // Add Token2022 program ID when available
+                    _ => unreachable!(),
+                };
+
+                // Get target account (ATA)
+                let target_account_str: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter target token account address (ATA)")
+                    .interact_text()?;
+                let target_account = Pubkey::from_str(&target_account_str)?;
+
+                // Check if recurring limit should be set
+                let has_limit = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Set a recurring transfer limit?")
+                    .default(false)
+                    .interact()?;
+
+                let (limit, window) = if has_limit {
+                    let limit: u64 = Input::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Enter transfer limit amount")
+                        .interact_text()?;
+
+                    let window: u64 = Input::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Enter time window in slots")
+                        .interact_text()?;
+
+                    (Some(limit), Some(window))
+                } else {
+                    (None, None)
+                };
+
+                Permission::ProgramScope {
+                    program_id,
+                    target_account,
+                    numeric_type: 2, // U64 for token amounts
+                    limit,
+                    window,
+                    balance_field_start: Some(64), // Fixed for SPL token accounts
+                    balance_field_end: Some(72),   // Fixed for SPL token accounts
+                }
+            },
+            10 => Permission::ProgramCurated,
+            11 => {
                 // Get sub-account address
                 let sub_account_str: String = Input::with_theme(&ColorfulTheme::default())
                     .with_prompt("Enter sub-account address")
@@ -510,7 +647,11 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
                     sub_account: [0; 32],
                 }
             },
-            6 => Permission::AllButManageAuthority,
+            12 => Permission::Stake {
+                amount: 0,
+                recurring: None,
+            },
+            13 => Permission::StakeAll,
             _ => unreachable!(),
         };
 
