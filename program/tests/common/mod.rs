@@ -590,7 +590,6 @@ pub fn sub_account_sign(
         *swig_account,
         *sub_account,
         authority.pubkey(),
-        authority.pubkey(),
         role_id,
         instructions,
     )

@@ -141,7 +141,6 @@ fn test_create_session_v2() {
     let sign_ix = SignV2Instruction::new_ed25519(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         session_key.pubkey(),
         dummy_ix,
         0, // Role ID 0
@@ -254,7 +253,6 @@ fn test_expired_session_v2() {
     let sign_ix = SignV2Instruction::new_ed25519(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         session_key.pubkey(),
         dummy_ix,
         0, // Role ID 0
@@ -422,7 +420,6 @@ fn test_session_key_refresh_ed25519_v2() {
     let sign_ix = SignV2Instruction::new_ed25519(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         session_key.pubkey(),
         dummy_ix,
         0, // Role ID 0
@@ -535,7 +532,6 @@ fn test_transfer_sol_with_session_v2() {
     let sign_ix = SignV2Instruction::new_ed25519(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         session_key.pubkey(),
         transfer_ix,
         0, // Role ID 0
@@ -720,7 +716,6 @@ fn test_secp256k1_session_v2() {
     let sign_ix = SignV2Instruction::new_ed25519(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         session_key.pubkey(),
         dummy_ix,
         0, // Role ID 0
@@ -981,7 +976,6 @@ fn test_session_extension_before_expiration_v2() {
     let sign_ix = SignV2Instruction::new_ed25519(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         session_key.pubkey(),
         dummy_ix,
         0,
@@ -1097,7 +1091,6 @@ fn test_multiple_session_refreshes_v2() {
     let sign_ix = SignV2Instruction::new_ed25519(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         session_key.pubkey(),
         dummy_ix,
         0,

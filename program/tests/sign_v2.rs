@@ -87,7 +87,6 @@ fn test_sign_v2_transfer_sol() {
         swig,
         swig_wallet_address,
         swig_authority.pubkey(),
-        swig_authority.pubkey(),
         transfer_ix,
         0, // role_id 0 for root authority
     )
@@ -237,7 +236,6 @@ fn test_sign_v2_transfer_sol_with_additional_authority() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         transfer_ix,
         1, // second authority role_id
     )
@@ -355,7 +353,6 @@ fn test_sign_v2_transfer_sol_all_with_authority() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         transfer_ix,
         1, // second authority role_id
     )
@@ -468,7 +465,6 @@ fn test_sign_v2_fail_transfer_sol_with_insufficient_limit() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         transfer_ix,
         1, // second authority role_id
     )
@@ -572,7 +568,6 @@ fn test_sign_v2_fail_not_correct_authority() {
     let sign_v2_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        fake_authority.pubkey(),
         fake_authority.pubkey(),
         transfer_ix,
         1, // trying to use role_id 1 but with wrong authority
@@ -682,7 +677,6 @@ fn test_sign_v2_transfer_sol_with_recurring_limit() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         transfer_ix,
         1,
     )
@@ -710,7 +704,6 @@ fn test_sign_v2_transfer_sol_with_recurring_limit() {
     let sign_v2_ix2 = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix2,
         1,
@@ -754,7 +747,6 @@ fn test_sign_v2_transfer_sol_with_recurring_limit() {
     let sign_v2_ix3 = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix3,
         1,
@@ -904,7 +896,6 @@ fn test_sign_v2_transfer_token_with_recurring_limit() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         token_ix,
         1,
     )
@@ -943,7 +934,6 @@ fn test_sign_v2_transfer_token_with_recurring_limit() {
     let sign_v2_ix2 = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        second_authority.pubkey(),
         second_authority.pubkey(),
         token_ix2,
         1,
@@ -995,7 +985,6 @@ fn test_sign_v2_transfer_token_with_recurring_limit() {
     let sign_v2_ix3 = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        second_authority.pubkey(),
         second_authority.pubkey(),
         token_ix3,
         1,
@@ -1109,7 +1098,6 @@ fn test_sign_v2_transfer_between_swig_accounts() {
         sender_swig,
         sender_swig_wallet_address,
         sender_authority.pubkey(),
-        sender_authority.pubkey(),
         transfer_ix,
         0, // root authority role
     )
@@ -1217,15 +1205,11 @@ fn test_sign_v2_transfer_with_different_payer_and_authority() {
     let transfer_ix =
         system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
-    // Create SignV2 instruction with DIFFERENT payer and authority
-    // This test would have failed with the old &[2] authority index
-    // because it would have tried to use different_payer for authority verification
-    // instead of swig_authority
+    // Create SignV2 instruction signed by the swig authority while the fee payer differs
     let sign_v2_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        different_payer.pubkey(), // payer (index 2)
-        swig_authority.pubkey(),  // authority (index 3) - this is the key difference!
+        swig_authority.pubkey(),
         transfer_ix,
         0, // role_id 0 for root authority
     )
@@ -1242,7 +1226,7 @@ fn test_sign_v2_transfer_with_different_payer_and_authority() {
 
     let transfer_tx = VersionedTransaction::try_new(
         VersionedMessage::V0(transfer_message),
-        &[&different_payer, &swig_authority], // Both payer and authority must sign!
+        &[&different_payer, &swig_authority],
     )
     .unwrap();
 
@@ -1360,7 +1344,6 @@ fn test_sign_v2_secp256k1_transfer() {
     let sign_v2_ix = SignV2Instruction::new_secp256k1(
         swig,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         signing_fn,
         current_slot,
         1, // counter = 1 (first secp256k1 transaction)
@@ -1630,7 +1613,6 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
         swig,
         swig_wallet_address,
         swig_authority.pubkey(),
-        swig_authority.pubkey(),
         create_ata_ix,
         0, // role_id 0 for root authority (has All permission)
     )
@@ -1640,7 +1622,6 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
         swig,
         swig_wallet_address,
         swig_authority.pubkey(),
-        swig_authority.pubkey(),
         sol_transfer_ix,
         0, // role_id 0 for root authority (has All permission)
     )
@@ -1649,7 +1630,6 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
     let token_sign_v2_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        swig_authority.pubkey(),
         swig_authority.pubkey(),
         token_transfer_ix,
         0, // role_id 0 for root authority (has All permission)
@@ -1885,9 +1865,8 @@ fn test_sign_v2_fail_using_another_swig_wallet_address() {
     );
 
     let malicious_sign_v2_ix = SignV2Instruction::new_ed25519(
-        swig1,                    // swig1 account
-        swig2_wallet_address,     // trying to use swig2's wallet address!
-        swig1_authority.pubkey(), // swig1's authority
+        swig1,                // swig1 account
+        swig2_wallet_address, // swig1's authority
         swig1_authority.pubkey(),
         malicious_transfer_ix,
         0, // role_id 0 for root authority
@@ -1959,8 +1938,7 @@ fn test_sign_v2_fail_using_another_swig_wallet_address() {
 
     let legitimate_sign_v2_ix = SignV2Instruction::new_ed25519(
         swig1,
-        swig1_wallet_address, // using its own wallet address
-        swig1_authority.pubkey(),
+        swig1_wallet_address,
         swig1_authority.pubkey(),
         legitimate_transfer_ix,
         0,
@@ -2057,7 +2035,6 @@ fn test_sign_v2_secp256r1_transfer() {
     let sign_v2_instructions = SignV2Instruction::new_secp256r1(
         swig,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         authority_fn,
         current_slot,
         next_counter,
