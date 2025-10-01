@@ -211,7 +211,8 @@ fn test_sub_account_token_operations() {
     // Setup ATAs for sub-account and swig
     let sub_account_ata =
         setup_ata(swig_wallet.litesvm(), &mint, &sub_account, &main_authority).unwrap();
-    // Derive swig_wallet_address PDA using the on-chain expected seeds (swig account key)
+    // Derive swig_wallet_address PDA using the on-chain expected seeds (swig
+    // account key)
     let swig_account = swig_wallet.get_swig_account().unwrap();
     let (swig_wallet_address, _) = Pubkey::find_program_address(
         &swig_wallet_address_seeds(swig_account.as_ref()),

@@ -1205,7 +1205,7 @@ fn test_sign_v2_transfer_with_different_payer_and_authority() {
     let transfer_ix =
         system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
-    // Create SignV2 instruction signed by the swig authority while the fee payer differs
+    // Create SignV2 instruction signed by the swig authority
     let sign_v2_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,

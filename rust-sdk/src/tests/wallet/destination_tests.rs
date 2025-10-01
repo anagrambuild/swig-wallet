@@ -393,7 +393,8 @@ fn should_transfer_sol_to_different_destination_without_limit() {
     let transfer_ix =
         system_instruction::transfer(&swig_account, &different_destination, transfer_amount);
 
-    // This should fail because there's no general SOL permission, only destination-specific
+    // This should fail because there's no general SOL permission, only
+    // destination-specific
     assert!(swig_wallet.sign(vec![transfer_ix], None).is_err());
 }
 
@@ -461,12 +462,13 @@ fn should_combine_destination_and_general_limits() {
     assert!(signature != solana_sdk::signature::Signature::default());
     assert_eq!(swig_wallet.get_current_role_id().unwrap(), 1);
 
-    // Transfer to different destination should fail because destination limits exist
-    // but no specific limit for this destination
+    // Transfer to different destination should fail because destination limits
+    // exist but no specific limit for this destination
     let transfer_amount = 1_500_000; // 0.0015 SOL
     let transfer_ix =
         system_instruction::transfer(&swig_account, &different_destination, transfer_amount);
 
-    // This should fail because when destination limits exist, you can only transfer to destinations with specific limits
+    // This should fail because when destination limits exist, you can only transfer
+    // to destinations with specific limits
     assert!(swig_wallet.sign(vec![transfer_ix], None).is_err());
 }
