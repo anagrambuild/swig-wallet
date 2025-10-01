@@ -111,7 +111,6 @@ fn test_create_basic_token_transfer_v2() {
         swig,
         swig_wallet_address,
         swig_authority.pubkey(),
-        swig_authority.pubkey(),
         ixd,
         0, // role_id 0 for root authority
     )
@@ -221,7 +220,6 @@ fn test_create_and_sign_secp256k1_v2() {
     let sign_v2_ix = SignV2Instruction::new_secp256k1(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         signing_fn,
         current_slot,
         1, // counter = 1 (first transaction)

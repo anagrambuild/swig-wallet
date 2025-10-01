@@ -74,9 +74,9 @@ pub enum Permission {
         recurring: Option<RecurringConfig>,
     },
 
-    /// Permission to interact with specific tokens to specific destinations. Can be configured with
-    /// either a fixed limit or a recurring limit that resets after a
-    /// specified period.
+    /// Permission to interact with specific tokens to specific destinations.
+    /// Can be configured with either a fixed limit or a recurring limit
+    /// that resets after a specified period.
     TokenDestination {
         /// The mint address of the token
         mint: Pubkey,
@@ -101,12 +101,14 @@ pub enum Permission {
         recurring: Option<RecurringConfig>,
     },
 
-    /// Permission to manage SOL transactions to specific destinations. Can be configured with either
-    /// a fixed limit or a recurring limit that resets after a specified period.
+    /// Permission to manage SOL transactions to specific destinations. Can be
+    /// configured with either a fixed limit or a recurring limit that
+    /// resets after a specified period.
     SolDestination {
         /// The destination pubkey
         destination: Pubkey,
-        /// The maximum amount of SOL (in lamports) that can be transferred to this destination
+        /// The maximum amount of SOL (in lamports) that can be transferred to
+        /// this destination
         amount: u64,
         /// Optional recurring configuration. If provided, the amount becomes a
         /// recurring limit that resets after the specified window
@@ -122,7 +124,8 @@ pub enum Permission {
     },
 
     /// Permission to interact with any program (unrestricted CPI access).
-    /// This is the most permissive program permission and should be used with caution.
+    /// This is the most permissive program permission and should be used with
+    /// caution.
     ProgramAll,
 
     /// Permission to interact with specific programs. This allows the wallet

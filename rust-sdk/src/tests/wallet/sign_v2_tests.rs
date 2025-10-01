@@ -205,8 +205,9 @@ fn should_sign_v2_with_secp256k1_authority_transfers_sol() {
 
 #[test_log::test]
 fn should_sign_v2_secp256r1_transfer() {
-    use crate::tests::common::create_test_secp256r1_keypair;
     use solana_secp256r1_program::sign_message;
+
+    use crate::tests::common::create_test_secp256r1_keypair;
 
     let (mut litesvm, main_authority) = setup_test_environment();
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
@@ -257,8 +258,9 @@ fn should_sign_v2_secp256r1_transfer() {
 
 #[test_log::test]
 fn should_sign_v2_token_recurring_limit_enforced() {
-    use crate::tests::common::{mint_to, setup_ata, setup_mint};
     use litesvm_token::spl_token;
+
+    use crate::tests::common::{mint_to, setup_ata, setup_mint};
 
     let (mut litesvm, main_authority) = setup_test_environment();
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);

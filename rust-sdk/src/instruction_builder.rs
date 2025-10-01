@@ -165,10 +165,10 @@ impl SwigInstructionBuilder {
         self.client_role.sign_v2_instruction(
             self.swig_account,
             swig_wallet_address,
-            self.payer,
             self.role_id,
             instructions,
             current_slot,
+            core::slice::from_ref(&self.payer),
         )
     }
 
@@ -438,7 +438,6 @@ impl SwigInstructionBuilder {
         self.client_role.sub_account_sign_instruction(
             self.swig_account,
             sub_account,
-            self.payer,
             self.role_id,
             instructions,
             current_slot,

@@ -150,7 +150,6 @@ fn test_token_transfer_performance_comparison_v2() {
         swig,
         swig_wallet_address,
         swig_authority.pubkey(),
-        swig_authority.pubkey(),
         swig_transfer_ix,
         0, // authority role id
     )
@@ -270,7 +269,6 @@ fn test_sol_transfer_performance_comparison_v2() {
     let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        swig_authority.pubkey(),
         swig_authority.pubkey(),
         swig_transfer_ix,
         0, // authority role id
