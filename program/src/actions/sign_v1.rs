@@ -180,8 +180,14 @@ pub fn sign_v1(
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
 
-    if !matches!(account_classifiers[0], AccountClassification::ThisSwig { .. }) {
-        if matches!(account_classifiers[0], AccountClassification::ThisSwigV2 { .. }) {
+    if !matches!(
+        account_classifiers[0],
+        AccountClassification::ThisSwig { .. }
+    ) {
+        if matches!(
+            account_classifiers[0],
+            AccountClassification::ThisSwigV2 { .. }
+        ) {
             return Err(SwigError::SignV1CannotBeUsedWithSwigV2.into());
         }
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());

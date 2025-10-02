@@ -46,6 +46,7 @@ fn test_sol_destination_limit_basic() {
 
     // Create SWIG wallet
     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     // Add authority with destination-specific limit
     let second_authority = Keypair::new();
@@ -157,6 +158,7 @@ fn test_general_sol_limit_hit_before_destination_limit() {
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
 
     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -253,6 +255,7 @@ fn test_destination_limit_hit_before_general_sol_limit() {
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
 
     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -354,6 +357,7 @@ fn test_multiple_destination_limits() {
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
 
     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -478,6 +482,7 @@ fn test_sol_destination_limit_exceeds_limit() {
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
 
     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -565,6 +570,7 @@ fn test_sol_destination_limit_with_general_limit() {
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
 
     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -661,6 +667,7 @@ fn test_sol_destination_limit_cpi_enforcement() {
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context

@@ -21,14 +21,16 @@ use solana_sdk::{
     system_instruction,
     transaction::VersionedTransaction,
 };
-use swig_interface::{AuthorityConfig, ClientAction, RemoveAuthorityInstruction};
+use swig_interface::{
+    AuthorityConfig, ClientAction, RemoveAuthorityInstruction, SignV2Instruction,
+};
 use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, program::Program, sol_limit::SolLimit,
         Actionable,
     },
     authority::AuthorityType,
-    swig::{swig_account_seeds, SwigWithRoles},
+    swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
     IntoBytes, Transmutable,
 };
 
@@ -108,6 +110,8 @@ fn test_multiple_actions_with_transfer_and_manage_authority() {
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
 
     let second_authority = Keypair::new();
@@ -136,15 +140,23 @@ fn test_multiple_actions_with_transfer_and_manage_authority() {
     )
     .unwrap();
     let swig_lamports_balance = context.svm.get_account(&swig).unwrap().lamports;
-    let initial_swig_balance = 10_000_000_000;
-    context.svm.airdrop(&swig, initial_swig_balance).unwrap();
+    let initial_wallet_address_balance = context
+        .svm
+        .get_account(&swig_wallet_address)
+        .unwrap()
+        .lamports;
+    let airdrop_amount = 10_000_000_000;
+    context
+        .svm
+        .airdrop(&swig_wallet_address, airdrop_amount)
+        .unwrap();
     assert!(swig_create_txn.is_ok());
 
     let amount = 5_000_000_000; // 5 SOL
-    let ixd = system_instruction::transfer(&swig, &recipient.pubkey(), amount);
-    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let ixd = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), amount);
+    let sign_ix = SignV2Instruction::new_ed25519(
         swig,
-        second_authority.pubkey(),
+        swig_wallet_address,
         second_authority.pubkey(),
         ixd,
         1,
@@ -166,12 +178,13 @@ fn test_multiple_actions_with_transfer_and_manage_authority() {
     let res = context.svm.send_transaction(transfer_tx);
     assert!(res.is_ok());
     let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
+    let swig_wallet_address_after = context.svm.get_account(&swig_wallet_address).unwrap();
     let swig_account_after = context.svm.get_account(&swig).unwrap();
     assert_eq!(recipient_account.lamports, 10_000_000_000 + amount);
 
     assert_eq!(
-        swig_account_after.lamports,
-        swig_lamports_balance + initial_swig_balance - amount
+        swig_wallet_address_after.lamports,
+        initial_wallet_address_balance + airdrop_amount - amount
     );
     let swig_state = SwigWithRoles::from_bytes(&swig_account_after.data).unwrap();
     let role = swig_state.get_role(1).unwrap().unwrap();
