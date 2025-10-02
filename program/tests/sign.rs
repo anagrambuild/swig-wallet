@@ -23,10 +23,12 @@ use swig::actions::sign_v1::SignV1Args;
 use swig_interface::{compact_instructions, AuthorityConfig, ClientAction};
 use swig_state::{
     action::{
-        all::All, program::Program, sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
-        token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit,
+        all::All, program::Program, program_all::ProgramAll, sol_limit::SolLimit,
+        sol_recurring_limit::SolRecurringLimit, token_limit::TokenLimit,
+        token_recurring_limit::TokenRecurringLimit, Permission,
     },
     authority::AuthorityType,
+    role::Role,
     swig::{swig_account_seeds, SwigWithRoles},
 };
 
@@ -2125,5 +2127,108 @@ fn test_multiple_token_limits_cpi_enforcement() {
     println!(
         "✅ This demonstrates that the SWIG wallet properly handles complex multi-token attack \
          scenarios."
+    );
+}
+
+#[test_log::test]
+fn test_token_transfer_through_secondary_authority() {
+    let mut context = setup_test_context().unwrap();
+
+    let swig_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Create wallet and setup
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let recipient = Keypair::new();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig_key,
+        &context.default_payer,
+    )
+    .unwrap();
+    let recipient_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &recipient.pubkey(),
+        &recipient,
+    )
+    .unwrap();
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &swig_ata,
+        1000,
+    )
+    .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: recipient.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: mint_pubkey.to_bytes(),
+                current_amount: 600_000_000,
+            }),
+            ClientAction::ProgramAll(ProgramAll {}),
+        ],
+    )
+    .unwrap();
+
+    // create transaction
+    let ixd = Instruction {
+        program_id: spl_token::id(),
+        accounts: vec![
+            AccountMeta::new(swig_ata, false),
+            AccountMeta::new(recipient_ata, false),
+            AccountMeta::new(swig_key, false),
+        ],
+        data: TokenInstruction::Transfer { amount: 100 }.pack(),
+    };
+
+    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig_key,
+        recipient.pubkey(),
+        recipient.pubkey(),
+        ixd,
+        1,
+    )
+    .unwrap();
+
+    println!("sign_ix: {:?}", sign_ix.data);
+
+    let message = v0::Message::try_compile(
+        &recipient.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&recipient]).unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    println!("result: {:?}", result);
+    assert!(result.is_ok(), "Transfer below limit should succeed");
+    println!(
+        "Compute units consumed for below limit transfer: {}",
+        result.unwrap().compute_units_consumed
     );
 }
