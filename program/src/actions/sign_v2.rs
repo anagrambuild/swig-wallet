@@ -19,6 +19,7 @@ use swig_state::{
     action::{
         all::All,
         all_but_manage_authority::AllButManageAuthority,
+        blacklist::Blacklist,
         program::Program,
         program_all::ProgramAll,
         program_curated::ProgramCurated,
@@ -234,6 +235,16 @@ pub fn sign_v2(
     for (index, account_classifier) in account_classifiers.iter().enumerate() {
         let account = unsafe { all_accounts.get_unchecked(index) };
 
+        // Check if the account is blacklisted
+        let account_key = unsafe { account.key().as_ref() };
+        if let Some(blacklist_action) =
+            RoleMut::get_action_mut::<Blacklist>(role.actions, account_key)?
+        {
+            if blacklist_action.is_wallet() {
+                return Err(SwigAuthenticateError::PermissionDeniedBlacklisted.into());
+            }
+        }
+
         // Only check writable accounts as read-only accounts won't modify data
         if !account.is_writable() {
             continue;
@@ -308,6 +319,15 @@ pub fn sign_v2(
                     // This is a CPI call where swig_wallet_address is signing - check Program
                     // permissions
                     let program_id_bytes = instruction.program_id.as_ref();
+
+                    // First check if the program is blacklisted
+                    if let Some(blacklist_action) =
+                        RoleMut::get_action_mut::<Blacklist>(role.actions, program_id_bytes)?
+                    {
+                        if blacklist_action.is_program() {
+                            return Err(SwigAuthenticateError::PermissionDeniedBlacklisted.into());
+                        }
+                    }
 
                     // Check if we have any program permission that allows this program
                     let has_permission =
