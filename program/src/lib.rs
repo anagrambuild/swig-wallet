@@ -181,7 +181,8 @@ unsafe fn execute(
     if let Ok(acc) = ctx.next_account() {
         match acc {
             MaybeAccount::Account(account) => {
-                let classification = classify_account(0, &account, accounts, account_classification, None)?;
+                let classification =
+                    classify_account(0, &account, accounts, account_classification, None)?;
                 account_classification[0].write(classification);
                 accounts[0].write(account);
             },
@@ -214,12 +215,22 @@ unsafe fn execute(
     // Process remaining accounts using the cache
     while let Ok(acc) = ctx.next_account() {
         let classification = match &acc {
-            MaybeAccount::Account(account) => {
-                classify_account(index, account, accounts, account_classification, program_scope_cache.as_ref())?
-            },
+            MaybeAccount::Account(account) => classify_account(
+                index,
+                account,
+                accounts,
+                account_classification,
+                program_scope_cache.as_ref(),
+            )?,
             MaybeAccount::Duplicated(account_index) => {
                 let account = accounts[*account_index as usize].assume_init_ref().clone();
-                classify_account(index, &account, accounts, account_classification, program_scope_cache.as_ref())?
+                classify_account(
+                    index,
+                    &account,
+                    accounts,
+                    account_classification,
+                    program_scope_cache.as_ref(),
+                )?
             },
         };
         account_classification[index].write(classification);
@@ -387,7 +398,8 @@ unsafe fn classify_account(
             ) == 0;
 
             let matches_swig_wallet_address = if index > 1 {
-                // Only check wallet address if account[1] is actually classified as SwigWalletAddress
+                // Only check wallet address if account[1] is actually classified as
+                // SwigWalletAddress
                 if matches!(
                     account_classifications.get_unchecked(1).assume_init_ref(),
                     AccountClassification::SwigWalletAddress

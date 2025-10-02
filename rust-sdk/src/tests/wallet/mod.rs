@@ -88,8 +88,7 @@ fn create_test_wallet_with_version(
 }
 
 fn convert_wallet_to_v1(wallet: &mut SwigWallet) {
-    use swig_state::swig::Swig;
-    use swig_state::Transmutable;
+    use swig_state::{swig::Swig, Transmutable};
 
     let swig_key = wallet.get_swig();
 
