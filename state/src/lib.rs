@@ -51,6 +51,13 @@ pub enum AccountClassification {
         /// The account's lamport balance
         lamports: u64,
     },
+    /// A main Swig v2 account with its lamport balance
+    ThisSwigV2 {
+        /// The account's lamport balance
+        lamports: u64,
+    },
+    /// A Swig wallet address account
+    SwigWalletAddress,
     /// A Swig token account with its token balance
     SwigTokenAccount {
         /// The token balance in the account

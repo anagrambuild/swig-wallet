@@ -94,6 +94,20 @@ pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
     Ok(())
 }
 
+#[inline(always)]
+fn is_swig_v2(data: &[u8]) -> bool {
+    data.len() >= Swig::LEN
+        && unsafe {
+            *data.get_unchecked(Swig::LEN - 7) == 0
+                && *data.get_unchecked(Swig::LEN - 6) == 0
+                && *data.get_unchecked(Swig::LEN - 5) == 0
+                && *data.get_unchecked(Swig::LEN - 4) == 0
+                && *data.get_unchecked(Swig::LEN - 3) == 0
+                && *data.get_unchecked(Swig::LEN - 2) == 0
+                && *data.get_unchecked(Swig::LEN - 1) == 0
+        }
+}
+
 /// Core instruction execution function.
 ///
 /// This function processes all accounts in the instruction context, classifies
@@ -123,20 +137,11 @@ unsafe fn execute(
 ) -> Result<(), ProgramError> {
     let mut index: usize = 0;
 
-    // Get instruction discriminator so we can classify based on SignV1 vs SignV2
-    let instruction_discriminator =
-        if let Some(&first_byte) = ctx.instruction_data_unchecked().get(0) {
-            Some(first_byte)
-        } else {
-            None
-        };
-
     // First account must be processed to get SwigWithRoles
     if let Ok(acc) = ctx.next_account() {
         match acc {
             MaybeAccount::Account(account) => {
-                let classification =
-                    classify_account(0, &account, accounts, None, instruction_discriminator)?;
+                let classification = classify_account(0, &account, accounts, None)?;
                 account_classification[0].write(classification);
                 accounts[0].write(account);
             },
@@ -169,22 +174,12 @@ unsafe fn execute(
     // Process remaining accounts using the cache
     while let Ok(acc) = ctx.next_account() {
         let classification = match &acc {
-            MaybeAccount::Account(account) => classify_account(
-                index,
-                account,
-                accounts,
-                program_scope_cache.as_ref(),
-                instruction_discriminator,
-            )?,
+            MaybeAccount::Account(account) => {
+                classify_account(index, account, accounts, program_scope_cache.as_ref())?
+            },
             MaybeAccount::Duplicated(account_index) => {
                 let account = accounts[*account_index as usize].assume_init_ref().clone();
-                classify_account(
-                    index,
-                    &account,
-                    accounts,
-                    program_scope_cache.as_ref(),
-                    instruction_discriminator,
-                )?
+                classify_account(index, &account, accounts, program_scope_cache.as_ref())?
             },
         };
         account_classification[index].write(classification);
@@ -237,7 +232,6 @@ unsafe fn classify_account(
     account: &AccountInfo,
     accounts: &[MaybeUninit<AccountInfo>],
     program_scope_cache: Option<&ProgramScopeCache>,
-    instruction_discriminator: Option<u8>,
 ) -> Result<AccountClassification, ProgramError> {
     let mut target_index: usize = 0;
     match account.owner() {
@@ -246,13 +240,17 @@ unsafe fn classify_account(
             let first_byte = unsafe { *data.get_unchecked(0) }.into();
             match first_byte {
                 Discriminator::SwigConfigAccount if index == 0 => {
-                    Ok(AccountClassification::ThisSwig {
-                        lamports: account.lamports(),
-                    })
+                    if is_swig_v2(data) {
+                        Ok(AccountClassification::ThisSwigV2 {
+                            lamports: account.lamports(),
+                        })
+                    } else {
+                        Ok(AccountClassification::ThisSwig {
+                            lamports: account.lamports(),
+                        })
+                    }
                 },
                 Discriminator::SwigConfigAccount if index != 0 => {
-                    // Additional Swig accounts are only allowed if the first account is also a Swig
-                    // account
                     let first_account = accounts.get_unchecked(0).assume_init_ref();
                     let first_data = first_account.borrow_data_unchecked();
 
@@ -267,6 +265,21 @@ unsafe fn classify_account(
                 },
                 _ => Ok(AccountClassification::None),
             }
+        },
+        &SYSTEM_PROGRAM_ID if index == 1 => {
+            if index > 0 {
+                let first_account = accounts.get_unchecked(0).assume_init_ref();
+                let first_data = first_account.borrow_data_unchecked();
+                
+                if first_account.owner() == &crate::ID
+                    && first_data.len() >= Swig::LEN
+                    && *first_data.get_unchecked(0) == Discriminator::SwigConfigAccount as u8
+                    && is_swig_v2(first_data)
+                {
+                    return Ok(AccountClassification::SwigWalletAddress);
+                }
+            }
+            Ok(AccountClassification::None)
         },
         &STAKING_ID => {
             let data = account.borrow_data_unchecked();
@@ -319,25 +332,17 @@ unsafe fn classify_account(
             }
             Ok(AccountClassification::None)
         },
-        // This feature flag ensures that when program_scope_test feature is enabled,
-        // this branch is excluded, allowing program_scope_test to provide a custom implementation
-        // to test program scope functionality in isolation.
         #[cfg(not(feature = "program_scope_test"))]
         &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if account.data_len() >= 165 && index > 0 => unsafe {
             let data = account.borrow_data_unchecked();
             let token_authority = data.get_unchecked(32..64);
 
-            // Check if token authority matches account[0] (swig account) - for SignV1
             let matches_swig_account = sol_memcmp(
                 accounts.get_unchecked(0).assume_init_ref().key(),
                 token_authority,
                 32,
             ) == 0;
 
-            // Check if token authority matches account[1] (swig_wallet_address) - for
-            // SignV2 Note: We only check account[1] if this is a SignV2-style
-            // account layout where account[1] exists and is expected to be
-            // swig_wallet_address
             let matches_swig_wallet_address = if index > 1 && accounts.len() > 1 {
                 sol_memcmp(
                     accounts.get_unchecked(1).assume_init_ref().key(),
