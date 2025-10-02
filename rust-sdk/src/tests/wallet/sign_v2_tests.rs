@@ -10,7 +10,7 @@ use crate::client_role::{Ed25519ClientRole, Secp256k1ClientRole, Secp256r1Client
 #[test_log::test]
 fn should_sign_v2_transfer_with_ed25519_within_limits() {
     let (mut litesvm, main_authority) = setup_test_environment();
-    let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+    let mut swig_wallet = create_test_wallet_v2(litesvm, &main_authority);
 
     // Fund the swig wallet PDA
     let swig_wallet_address = swig_wallet.get_swig_wallet_address().unwrap();
@@ -37,7 +37,7 @@ fn should_sign_v2_fail_transfer_beyond_limits() {
         .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+    let mut swig_wallet = create_test_wallet_v2(litesvm, &main_authority);
 
     // Add limited SOL permission and system program permission
     swig_wallet
@@ -83,7 +83,7 @@ fn should_sign_v2_fail_transfer_beyond_limits() {
 #[test_log::test]
 fn should_sign_v2_transfer_between_swig_accounts() {
     let (mut litesvm, main_authority) = setup_test_environment();
-    let mut sender_wallet = create_test_wallet(litesvm, &main_authority);
+    let mut sender_wallet = create_test_wallet_v2(litesvm, &main_authority);
 
     // Create a second swig wallet (different swig id) as recipient
     let other_auth = Keypair::new();
@@ -127,7 +127,7 @@ fn should_sign_v2_with_different_payer_and_authority() {
         .unwrap();
 
     // Create wallet with main authority, then switch payer
-    let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+    let mut swig_wallet = create_test_wallet_v2(litesvm, &main_authority);
     swig_wallet.switch_payer(&different_payer).unwrap();
 
     // Fund PDA and transfer
@@ -147,7 +147,7 @@ fn should_sign_v2_with_different_payer_and_authority() {
 #[test_log::test]
 fn should_sign_v2_with_secp256k1_authority_transfers_sol() {
     let (mut litesvm, main_authority) = setup_test_environment();
-    let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+    let mut swig_wallet = create_test_wallet_v2(litesvm, &main_authority);
 
     // Add secp256k1 authority with SOL and program permissions
     let wallet = LocalSigner::random();
@@ -210,7 +210,7 @@ fn should_sign_v2_secp256r1_transfer() {
     use crate::tests::common::create_test_secp256r1_keypair;
 
     let (mut litesvm, main_authority) = setup_test_environment();
-    let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+    let mut swig_wallet = create_test_wallet_v2(litesvm, &main_authority);
 
     // Create secp256r1 authority and add
     let (signing_key, public_key) = create_test_secp256r1_keypair();
@@ -263,7 +263,7 @@ fn should_sign_v2_token_recurring_limit_enforced() {
     use crate::tests::common::{mint_to, setup_ata, setup_mint};
 
     let (mut litesvm, main_authority) = setup_test_environment();
-    let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+    let mut swig_wallet = create_test_wallet_v2(litesvm, &main_authority);
 
     // Fund wallet PDA and mint tokens
     let swig_wallet_address = swig_wallet.get_swig_wallet_address().unwrap();
