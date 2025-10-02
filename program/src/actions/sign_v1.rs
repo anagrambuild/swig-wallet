@@ -269,6 +269,10 @@ pub fn sign_v1(
 
         let hash = match account_classifier {
             AccountClassification::ThisSwig { .. } | AccountClassification::ThisSwigV2 { .. } => {
+                // For ThisSwig accounts, hash the entire account data and owner to ensure no
+                // unexpected modifications. Lamports are handled separately in
+                // the permission check, but we still need to verify
+                // that the account data itself and ownership hasn't been tampered with
                 let data = unsafe { account.borrow_data_unchecked() };
                 let hash = hash_except(&data, account.owner(), NO_EXCLUDE_RANGES);
                 Some(hash)
