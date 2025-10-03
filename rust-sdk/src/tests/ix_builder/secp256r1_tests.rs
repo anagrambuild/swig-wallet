@@ -72,6 +72,9 @@ fn test_secp256r1_basic_signing() {
     );
 
     let swig_key = builder.get_swig_account().unwrap();
+
+    convert_swig_to_v1(&mut context, &swig_key);
+
     context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
 
     // Set up a recipient and transaction
@@ -236,6 +239,9 @@ fn test_secp256r1_replay_protection() {
     );
 
     let swig_key = builder.get_swig_account().unwrap();
+
+    convert_swig_to_v1(&mut context, &swig_key);
+
     context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
 
     // Set up transfer instruction

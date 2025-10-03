@@ -74,6 +74,7 @@ fn test_token_destination_limit_basic() {
     .unwrap();
 
     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -236,6 +237,7 @@ fn test_token_destination_limit_exceeds_limit() {
     .unwrap();
 
     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -398,6 +400,7 @@ fn test_multiple_token_destination_limits() {
     .unwrap();
 
     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -687,6 +690,7 @@ fn test_token_destination_limit_different_mints() {
     );
 
     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context

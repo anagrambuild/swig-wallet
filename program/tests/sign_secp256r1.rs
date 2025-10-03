@@ -103,6 +103,7 @@ fn test_secp256r1_basic_signing() {
     // Create a new swig with the secp256r1 authority
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
     context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
 
     // Set up a recipient and transaction
@@ -198,6 +199,7 @@ fn test_secp256r1_counter_increment() {
     // Create a new swig with the secp256r1 authority
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
     context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
 
     // Verify initial counter is 0
@@ -218,6 +220,7 @@ fn test_secp256r1_replay_protection() {
     // Create a new swig with the secp256r1 authority
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
     context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
 
     // Set up transfer instruction
@@ -422,6 +425,7 @@ fn test_secp256r1_session_authority_odometer() {
     // Create a swig with secp256r1 session authority type using the helper function
     let (swig_key, _) =
         create_swig_secp256r1_session(&mut context, &public_key, id, 100, [0; 32]).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
 
     // Helper function to read the current counter for session authorities
     let get_session_counter = |ctx: &SwigTestContext| -> Result<u32, String> {
@@ -535,6 +539,7 @@ fn test_secp256r1_add_authority_with_secp256r1() {
 
     // Create a new swig with secp256r1 authority
     let (swig_key, _) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
     context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
 
     // Create a second secp256r1 public key to add as a new authority

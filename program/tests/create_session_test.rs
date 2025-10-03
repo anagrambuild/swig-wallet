@@ -41,6 +41,7 @@ fn test_create_session() {
     // Create a swig with ed25519session authority type
     let (swig_key, res) =
         create_swig_ed25519_session(&mut context, &swig_authority, id, 100, [0; 32]).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
 
     println!("res: {:?}", res.logs);
     // Airdrop funds to the swig account so it can transfer SOL
@@ -173,6 +174,7 @@ fn test_expired_session() {
     // Create a swig with ed25519session authority type
     let (swig_key, _) =
         create_swig_ed25519_session(&mut context, &swig_authority, id, 100, [0; 32]).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
 
     // Airdrop funds to the swig account so it can transfer SOL
     context.svm.airdrop(&swig_key, 50_000_000_000).unwrap();
@@ -275,6 +277,7 @@ fn test_session_key_refresh_ed25519() {
     // Create a swig with ed25519session authority type
     let (swig_key, _) =
         create_swig_ed25519_session(&mut context, &swig_authority, id, 100, [0; 32]).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
 
     // Airdrop funds to the swig account so it can transfer SOL
     context.svm.airdrop(&swig_key, 50_000_000_000).unwrap();
@@ -435,6 +438,7 @@ fn test_transfer_sol_with_session() {
     // Create a swig with ed25519session authority type
     let (swig_key, _) =
         create_swig_ed25519_session(&mut context, &swig_authority, id, 100, [0; 32]).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
 
     // Airdrop funds to the swig account so it can transfer SOL
     let initial_swig_balance = 50_000_000_000;
@@ -565,6 +569,7 @@ fn test_secp256k1_session() {
     // Create a swig with secp256k1 session authority type
     let (swig_key, res) =
         create_swig_secp256k1_session(&mut context, &wallet, id, 100, [0; 32]).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
 
     println!("res: {:?}", res.logs);
     // Airdrop funds to the swig account so it can transfer SOL
@@ -712,6 +717,7 @@ fn test_session_key_refresh_secp256k1() {
     // Create a swig with secp256k1 session authority type
     let (swig_key, _) =
         create_swig_secp256k1_session(&mut context, &wallet, id, 100, [0; 32]).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
 
     // Airdrop funds to the swig account
     context.svm.airdrop(&swig_key, 50_000_000_000).unwrap();
@@ -829,6 +835,7 @@ fn test_session_extension_before_expiration() {
     // Create a swig with ed25519session authority type
     let (swig_key, _) =
         create_swig_ed25519_session(&mut context, &swig_authority, id, 100, [0; 32]).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
 
     context.svm.airdrop(&swig_key, 50_000_000_000).unwrap();
 
@@ -958,6 +965,7 @@ fn test_multiple_session_refreshes() {
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) =
         create_swig_ed25519_session(&mut context, &swig_authority, id, 100, [0; 32]).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
     context.svm.airdrop(&swig_key, 50_000_000_000).unwrap();
 
     let session_key = Keypair::new();

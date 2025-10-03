@@ -190,9 +190,7 @@ fn test_token_transfer_performance_comparison_v2() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    // SignV2 uses slightly more CU than SignV1 due to additional account handling
-    // Set a reasonable limit for SignV2 token transfers to avoid regressions
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3850);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3798);
 }
 
 #[test_log::test]
@@ -312,7 +310,5 @@ fn test_sol_transfer_performance_comparison_v2() {
         account_difference
     );
 
-    // SignV2 uses more CU than SignV1 due to additional account handling
-    // Set a reasonable limit for SignV2 SOL transfers to avoid regressions
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3250);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3253);
 }

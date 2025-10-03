@@ -41,6 +41,7 @@ fn test_cpi_signing_requires_program_permission() {
     // Create swig account with ed25519 authority
     let (_, _transaction_metadata) =
         create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     // Add a second authority with Program permission for system program
     let second_authority = Keypair::new();
@@ -197,6 +198,7 @@ fn test_cpi_signing_without_program_permission_fails() {
     // Create swig account with ed25519 authority
     let (_, _transaction_metadata) =
         create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     // Add a second authority with NO Program permission
     let second_authority = Keypair::new();
@@ -286,6 +288,7 @@ fn test_cpi_signing_with_program_all_permission() {
     // Create swig account with ed25519 authority
     let (_, _transaction_metadata) =
         create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     // Add a second authority with ProgramAll permission
     let second_authority = Keypair::new();
@@ -375,6 +378,7 @@ fn test_cpi_signing_with_program_curated_permission() {
     // Create swig account with ed25519 authority
     let (_, _transaction_metadata) =
         create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     // Add a second authority with ProgramCurated permission
     let second_authority = Keypair::new();
