@@ -29,7 +29,7 @@ use swig_state::{
     },
     authority::AuthorityType,
     role::Role,
-    swig::SwigWithRoles,
+    swig::{swig_wallet_address_seeds, SwigWithRoles},
 };
 
 /// Test 1: Verify oracle limit permission is added correctly
@@ -46,6 +46,9 @@ fn test_oracle_limit_permission_add() {
     let id = rand::random::<[u8; 32]>();
     let oracle_program = Keypair::new();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
 
     // Create secondary authority
     let secondary_authority = Keypair::new();
@@ -122,6 +125,9 @@ fn test_oracle_limit_sol_transfer() {
     let oracle_program = Keypair::new();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
 
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
     let secondary_authority = Keypair::new();
     context
         .svm
@@ -151,17 +157,23 @@ fn test_oracle_limit_sol_transfer() {
     .unwrap();
 
     // Fund swig wallet
-    context.svm.airdrop(&swig_key, 20_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 20_000_000_000)
+        .unwrap();
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     display_swig(swig_key, &swig_account.data, swig_account.lamports).unwrap();
 
     // Test 1: Transfer below limit (1 SOL ≈ 150 USD at mock price)
-    let transfer_ix =
-        system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 1_000_000_000);
-    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let transfer_ix = system_instruction::transfer(
+        &swig_wallet_address,
+        &secondary_authority.pubkey(),
+        1_000_000_000,
+    );
+    let mut sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix,
         1,
@@ -198,11 +210,14 @@ fn test_oracle_limit_sol_transfer() {
     );
 
     // Test 2: Transfer above limit (2 SOL ≈ 300 Eur at mock price)
-    let transfer_ix =
-        system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 2_000_000_000);
-    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let transfer_ix = system_instruction::transfer(
+        &swig_wallet_address,
+        &secondary_authority.pubkey(),
+        2_000_000_000,
+    );
+    let mut sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix,
         1,
@@ -259,6 +274,9 @@ fn test_oracle_limit_token_transfer() {
     let oracle_program = Keypair::new();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
 
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
     let secondary_authority = Keypair::new();
     context
         .svm
@@ -291,7 +309,7 @@ fn test_oracle_limit_token_transfer() {
     let swig_ata = setup_ata(
         &mut context.svm,
         &oracle_mint,
-        &swig_key,
+        &swig_wallet_address,
         &context.default_payer,
     )
     .unwrap();
@@ -318,15 +336,15 @@ fn test_oracle_limit_token_transfer() {
         &spl_token::id(),
         &swig_ata,
         &recipient_ata,
-        &swig_key,
+        &swig_wallet_address,
         &[],
         500_000_000, // 0.5 tokens with 9 decimals
     )
     .unwrap();
 
-    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix,
         1,
@@ -368,15 +386,15 @@ fn test_oracle_limit_token_transfer() {
         &spl_token::id(),
         &swig_ata,
         &recipient_ata,
-        &swig_key,
+        &swig_wallet_address,
         &[],
         2_500_000_000, // 2.5 tokens with 9 decimals
     )
     .unwrap();
 
-    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix,
         1,
@@ -434,6 +452,9 @@ fn test_oracle_limit_sol_passthrough() {
     let oracle_program = Keypair::new();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
 
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
     let secondary_authority = Keypair::new();
     context
         .svm
@@ -466,14 +487,20 @@ fn test_oracle_limit_sol_passthrough() {
     .unwrap();
 
     // Fund swig wallet
-    context.svm.airdrop(&swig_key, 20_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 20_000_000_000)
+        .unwrap();
 
     // Test 1: Transfer below limit (1 SOL ≈ 150 USD at mock price)
-    let transfer_ix =
-        system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 1_000_000_000);
-    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let transfer_ix = system_instruction::transfer(
+        &swig_wallet_address,
+        &secondary_authority.pubkey(),
+        1_000_000_000,
+    );
+    let mut sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix,
         1,
@@ -511,11 +538,14 @@ fn test_oracle_limit_sol_passthrough() {
     );
 
     // Test 2: Transfer above limit (2 SOL ≈ 300 USD at mock price)
-    let transfer_ix =
-        system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 2_000_000_000);
-    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let transfer_ix = system_instruction::transfer(
+        &swig_wallet_address,
+        &secondary_authority.pubkey(),
+        2_000_000_000,
+    );
+    let mut sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix,
         1,
@@ -571,6 +601,9 @@ fn test_oracle_limit_token_passthrough() {
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
 
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
     let secondary_authority = Keypair::new();
     context
         .svm
@@ -590,7 +623,7 @@ fn test_oracle_limit_token_passthrough() {
     let swig_ata = setup_ata(
         &mut context.svm,
         &oracle_mint,
-        &swig_key,
+        &swig_wallet_address,
         &context.default_payer,
     )
     .unwrap();
@@ -638,15 +671,15 @@ fn test_oracle_limit_token_passthrough() {
         &spl_token::id(),
         &swig_ata,
         &recipient_ata,
-        &swig_key,
+        &swig_wallet_address,
         &[],
         500_000_000, // 0.5 tokens with 9 decimals
     )
     .unwrap();
 
-    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix,
         1,
@@ -687,15 +720,15 @@ fn test_oracle_limit_token_passthrough() {
         &spl_token::id(),
         &swig_ata,
         &recipient_ata,
-        &swig_key,
+        &swig_wallet_address,
         &[],
         2_500_000_000, // 2.5 tokens with 9 decimals
     )
     .unwrap();
 
-    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix,
         1,
@@ -752,6 +785,9 @@ fn test_oracle_stale_price() {
     let oracle_program = Keypair::new();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
 
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
     let secondary_authority = Keypair::new();
     context
         .svm
@@ -781,16 +817,22 @@ fn test_oracle_stale_price() {
     .unwrap();
 
     // Fund swig wallet
-    context.svm.airdrop(&swig_key, 20_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 20_000_000_000)
+        .unwrap();
 
     // Test 1: Transfer with stale price
-    advance_slot(&mut context, 150);
+    advance_slot(&mut context, 250);
 
-    let transfer_ix =
-        system_instruction::transfer(&swig_key, &secondary_authority.pubkey(), 1_000_000_000);
-    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let transfer_ix = system_instruction::transfer(
+        &swig_wallet_address,
+        &secondary_authority.pubkey(),
+        1_000_000_000,
+    );
+    let mut sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix,
         1,
@@ -825,7 +867,7 @@ fn test_oracle_stale_price() {
         result.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(63)
+            solana_sdk::instruction::InstructionError::Custom(65)
         ),
         "Expected error code 63"
     );
@@ -871,8 +913,14 @@ fn test_oracle_sol_transfer_performance_comparison() {
     let id = rand::random::<[u8; 32]>();
     let (swig, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
 
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+
     // Fund swig wallet with SOL
-    context.svm.airdrop(&swig, 20_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 20_000_000_000)
+        .unwrap();
 
     // Add secondary authority with oracle limit permission (1000 USD limit)
     let oracle_limit = OracleTokenLimit::new(
@@ -929,11 +977,11 @@ fn test_oracle_sol_transfer_performance_comparison() {
 
     // Measure swig SOL transfer performance (without oracle)
     let swig_transfer_ix =
-        system_instruction::transfer(&swig, &recipient.pubkey(), transfer_amount);
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
-    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,
-        swig_authority.pubkey(),
+        swig_wallet_address,
         swig_authority.pubkey(),
         swig_transfer_ix,
         0, // authority role id
@@ -963,11 +1011,11 @@ fn test_oracle_sol_transfer_performance_comparison() {
 
     // Measure swig SOL transfer performance (with oracle)
     let swig_oracle_transfer_ix =
-        system_instruction::transfer(&swig, &recipient.pubkey(), transfer_amount);
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
-    let mut swig_oracle_sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut swig_oracle_sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         swig_oracle_transfer_ix,
         1, // secondary authority role id
@@ -1119,6 +1167,9 @@ fn test_oracle_token_transfer_performance_comparison() {
     let id = rand::random::<[u8; 32]>();
     let (swig, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
 
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+
     // Add secondary authority with oracle limit permission (1000 USD limit)
     let oracle_limit = OracleTokenLimit::new(
         BaseAsset::USD,
@@ -1145,7 +1196,7 @@ fn test_oracle_token_transfer_performance_comparison() {
     let swig_ata = setup_ata(
         &mut context.svm,
         &oracle_mint,
-        &swig,
+        &swig_wallet_address,
         &context.default_payer,
     )
     .unwrap();
@@ -1227,15 +1278,15 @@ fn test_oracle_token_transfer_performance_comparison() {
         &token_program_id,
         &swig_ata,
         &recipient_ata,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount,
     )
     .unwrap();
 
-    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,
-        swig_authority.pubkey(),
+        swig_wallet_address,
         swig_authority.pubkey(),
         swig_transfer_ix,
         0, // authority role id
@@ -1258,9 +1309,16 @@ fn test_oracle_token_transfer_performance_comparison() {
     )
     .unwrap();
 
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    display_swig(swig, &swig_account.data, swig_account.lamports).unwrap();
+
     let swig_transfer_result = context.svm.send_transaction(swig_transfer_tx).unwrap();
+
     let swig_transfer_cu = swig_transfer_result.compute_units_consumed;
-    println!("Swig token transfer CU: {}", swig_transfer_cu);
+    println!(
+        "Swig token transfer CU (without oracle): {}",
+        swig_transfer_cu
+    );
     println!("Swig token transfer accounts: {}", swig_tx_accounts);
 
     // Measure swig token transfer performance (with oracle)
@@ -1268,15 +1326,15 @@ fn test_oracle_token_transfer_performance_comparison() {
         &token_program_id,
         &swig_ata,
         &recipient_ata,
-        &swig,
+        &swig_wallet_address,
         &[],
         transfer_amount,
     )
     .unwrap();
 
-    let mut swig_oracle_sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut swig_oracle_sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         swig_oracle_transfer_ix,
         1, // secondary authority role id
@@ -1316,7 +1374,10 @@ fn test_oracle_token_transfer_performance_comparison() {
         .send_transaction(swig_oracle_transfer_tx)
         .unwrap();
     let swig_oracle_transfer_cu = swig_oracle_transfer_result.compute_units_consumed;
-    println!("Swig oracle token transfer CU: {}", swig_oracle_transfer_cu);
+    println!(
+        "Swig oracle token transfer CU (with oracle): {}",
+        swig_oracle_transfer_cu
+    );
     println!(
         "Swig oracle token transfer accounts: {}",
         swig_oracle_tx_accounts

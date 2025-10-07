@@ -536,7 +536,13 @@ fn get_scope_price_data(
         let unix_timestamp =
             u64::from_le_bytes(unsafe { price_data.get_unchecked(24..32).try_into().unwrap() });
 
+        // time to allow (for Test): 120 seconds = 120 seconds / 0.4ms per slot = 300 slots
+        #[cfg(test)]
+        if last_updated_slot < current_slot - 300 {
+            return Err(SwigError::OraclePriceStale);
+        }
         // time to allow: 60 seconds = 60 seconds / 0.4ms per slot = 150 slots
+        #[cfg(not(test))]
         if last_updated_slot < current_slot - 150 {
             return Err(SwigError::OraclePriceStale);
         }

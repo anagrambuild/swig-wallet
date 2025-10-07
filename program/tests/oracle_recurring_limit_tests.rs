@@ -32,7 +32,7 @@ use swig_state::{
     },
     authority::AuthorityType,
     role::Role,
-    swig::SwigWithRoles,
+    swig::{swig_wallet_address_seeds, SwigWithRoles},
 };
 
 /// Test 1: Verify oracle recurring limit permission is added correctly
@@ -135,6 +135,9 @@ fn test_oracle_recurring_limit_sol_transfer() {
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
 
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
     // Create secondary authority
     let secondary_authority = Keypair::new();
     context
@@ -170,18 +173,21 @@ fn test_oracle_recurring_limit_sol_transfer() {
     let mint = load_sample_scope_data(&mut context.svm, &context.default_payer).unwrap();
 
     // Fund swig wallet
-    context.svm.airdrop(&swig_key, 20_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 20_000_000_000)
+        .unwrap();
 
     // Test SOL transfer within limit (0.1 SOL ≈ 15 USD at mock price)
     let transfer_ix = system_instruction::transfer(
-        &swig_key,
+        &swig_wallet_address,
         &secondary_authority.pubkey(),
         100_000_000, // 0.1 SOL
     );
 
-    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix,
         1,
@@ -212,6 +218,7 @@ fn test_oracle_recurring_limit_sol_transfer() {
 
     // This should succeed as it's within the oracle recurring limit
     let result = context.svm.send_transaction(tx);
+    println!("result: {:?}", result);
     assert!(
         result.is_ok(),
         "SOL transfer should succeed within oracle recurring limit"
@@ -219,14 +226,14 @@ fn test_oracle_recurring_limit_sol_transfer() {
 
     // Test SOL transfer that exceeds the limit (1 SOL ≈ 150 USD at mock price)
     let transfer_ix2 = system_instruction::transfer(
-        &swig_key,
+        &swig_wallet_address,
         &secondary_authority.pubkey(),
         1_000_000_000, // 1 SOL
     );
 
-    let mut sign_ix2 = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix2 = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix2,
         1,
@@ -277,6 +284,8 @@ fn test_oracle_recurring_limit_token_transfer() {
     // Create a swig wallet
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
 
     // Create secondary authority
     let secondary_authority = Keypair::new();
@@ -313,7 +322,13 @@ fn test_oracle_recurring_limit_token_transfer() {
     let mint = load_sample_scope_data(&mut context.svm, &context.default_payer).unwrap();
 
     // Setup token mint and accounts
-    let swig_ata = setup_ata(&mut context.svm, &mint, &swig_key, &context.default_payer).unwrap();
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
     let recipient_ata = setup_ata(
         &mut context.svm,
         &mint,
@@ -337,15 +352,15 @@ fn test_oracle_recurring_limit_token_transfer() {
         &spl_token::id(),
         &swig_ata,
         &recipient_ata,
-        &swig_key,
+        &swig_wallet_address,
         &[],
         100_000_000, // 100 tokens
     )
     .unwrap();
 
-    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix,
         1,
@@ -376,6 +391,7 @@ fn test_oracle_recurring_limit_token_transfer() {
 
     // This should succeed as it's within the oracle recurring limit
     let result = context.svm.send_transaction(tx);
+    println!("result: {:?}", result);
     assert!(
         result.is_ok(),
         "Token transfer should succeed within oracle recurring limit"
@@ -388,15 +404,15 @@ fn test_oracle_recurring_limit_token_transfer() {
         &spl_token::id(),
         &swig_ata,
         &recipient_ata,
-        &swig_key,
+        &swig_wallet_address,
         &[],
         1_000_000_000, // 1000 tokens
     )
     .unwrap();
 
-    let mut sign_ix2 = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix2 = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix2,
         1,
@@ -447,6 +463,8 @@ fn test_oracle_recurring_limit_window_reset() {
     // Create a swig wallet
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
 
     // Create secondary authority
     let secondary_authority = Keypair::new();
@@ -458,7 +476,7 @@ fn test_oracle_recurring_limit_window_reset() {
     // Add oracle recurring limit permission (100 USD per window, 100 slots window)
     let oracle_recurring_limit = OracleRecurringLimit::new(
         BaseAsset::USD,
-        100_000_000, // 100 USD
+        200_000_000, // 200 USD
         3,           // 3 slots window (smaller to avoid stale price)
         false,
     );
@@ -483,18 +501,21 @@ fn test_oracle_recurring_limit_window_reset() {
     let mint = load_sample_scope_data(&mut context.svm, &context.default_payer).unwrap();
 
     // Fund swig wallet
-    context.svm.airdrop(&swig_key, 20_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 20_000_000_000)
+        .unwrap();
 
     // Use up most of the limit
     let transfer_ix = system_instruction::transfer(
-        &swig_key,
+        &swig_wallet_address,
         &secondary_authority.pubkey(),
         500_000_000, // 0.5 SOL (should use up most of 100 USD limit)
     );
 
-    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix,
         1,
@@ -529,18 +550,19 @@ fn test_oracle_recurring_limit_window_reset() {
         context.svm.get_account(&swig_key).unwrap().lamports,
     );
     let result = context.svm.send_transaction(tx);
+    println!("result: {:?}", result);
     assert!(result.is_ok(), "First SOL transfer should succeed");
 
     // Try to transfer more than remaining limit (should fail)
     let transfer_ix2 = system_instruction::transfer(
-        &swig_key,
+        &swig_wallet_address,
         &secondary_authority.pubkey(),
         500_000_001, // 0.5 SOL (should exceed remaining limit)
     );
 
-    let mut sign_ix2 = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix2 = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix2,
         1,
@@ -575,14 +597,14 @@ fn test_oracle_recurring_limit_window_reset() {
 
     // Try the same transfer again (should succeed after window reset)
     let transfer_ix3 = system_instruction::transfer(
-        &swig_key,
+        &swig_wallet_address,
         &secondary_authority.pubkey(),
         51_000_000, // 0.05 SOL (should succeed after window reset)
     );
 
-    let mut sign_ix3 = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix3 = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix3,
         1,
@@ -636,6 +658,9 @@ fn test_oracle_recurring_limit_passthrough() {
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
 
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
     // Create secondary authority
     let secondary_authority = Keypair::new();
     context
@@ -677,18 +702,21 @@ fn test_oracle_recurring_limit_passthrough() {
     let mint = load_sample_scope_data(&mut context.svm, &context.default_payer).unwrap();
 
     // Fund swig wallet
-    context.svm.airdrop(&swig_key, 20_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 20_000_000_000)
+        .unwrap();
 
     // Test transfer that passes oracle recurring limit but should be caught by SOL limit
     let transfer_ix = system_instruction::transfer(
-        &swig_key,
+        &swig_wallet_address,
         &secondary_authority.pubkey(),
         600_000_000, // 0.6 SOL (within oracle limit but exceeds SOL limit)
     );
 
-    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
-        secondary_authority.pubkey(),
+        swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix,
         1,
@@ -722,5 +750,12 @@ fn test_oracle_recurring_limit_passthrough() {
     assert!(
         result.is_err(),
         "Transfer should fail due to SOL limit even with passthrough"
+    );
+    assert_eq!(
+        result.unwrap_err().err,
+        solana_sdk::transaction::TransactionError::InstructionError(
+            0,
+            solana_sdk::instruction::InstructionError::Custom(3033)
+        ),
     );
 }
