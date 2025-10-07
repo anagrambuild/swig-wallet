@@ -16,7 +16,7 @@ use swig_state::{
     action::all::All,
     authority::AuthorityType,
     swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
-    IntoBytes,
+    IntoBytes, Transmutable,
 };
 
 pub struct SwigTestContext {
@@ -50,7 +50,7 @@ pub fn create_swig_ed25519(
     context: &mut SwigTestContext,
     authority: &Keypair,
     id: [u8; 32],
-) -> Result<(Pubkey, TransactionMetadata)> {
+) -> Result<(Pubkey, Pubkey, TransactionMetadata)> {
     let (swig, bump) =
         Pubkey::find_program_address(&swig_account_seeds(&id), &Pubkey::new_from_array(swig::ID));
     let (swig_wallet_address, wallet_address_bump) = Pubkey::find_program_address(
@@ -87,7 +87,7 @@ pub fn create_swig_ed25519(
         .svm
         .send_transaction(tx)
         .map_err(|e| anyhow::anyhow!("Failed to send transaction: {:?}", e))?;
-    Ok((swig, bench))
+    Ok((swig, swig_wallet_address, bench))
 }
 
 pub fn add_authority_with_ed25519_root(
@@ -433,4 +433,24 @@ pub fn create_swig_secp256r1_session(
         .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
 
     Ok((swig, bench))
+}
+
+pub fn convert_swig_to_v1(context: &mut SwigTestContext, swig_pubkey: &Pubkey) {
+    use swig_state::swig::Swig;
+
+    let mut account = context
+        .svm
+        .get_account(swig_pubkey)
+        .expect("Swig account should exist");
+
+    if account.data.len() >= Swig::LEN {
+        let last_8_start = Swig::LEN - 8;
+        let reserved_lamports: u64 = 256;
+        account.data[last_8_start..Swig::LEN].copy_from_slice(&reserved_lamports.to_le_bytes());
+    }
+
+    context
+        .svm
+        .set_account(swig_pubkey.clone(), account)
+        .expect("Failed to update account");
 }

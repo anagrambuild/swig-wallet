@@ -2,8 +2,6 @@
 /// wallet. This module implements functionality to authenticate and execute
 /// transactions using sub-account authorities, with proper validation and
 /// permission checks.
-use core::mem::MaybeUninit;
-
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
@@ -16,7 +14,6 @@ use swig_assertions::*;
 use swig_compact_instructions::InstructionIterator;
 use swig_state::{
     action::{all::All, sub_account::SubAccount, ActionLoader, Actionable},
-    authority::AuthorityType,
     role::RoleMut,
     swig::{sub_account_signer, Swig},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
@@ -153,7 +150,6 @@ pub fn sub_account_sign_v1(
     let role = role_opt.unwrap();
 
     // Store authority info before authentication (to avoid borrow checker issues)
-    let authority_type = role.position.authority_type()?;
     let is_session_based = role.authority.session_based();
 
     let clock = Clock::get()?;
@@ -200,19 +196,7 @@ pub fn sub_account_sign_v1(
     let sub_account_bump = sub_account.bump;
     let sub_account_role_id = sub_account.role_id;
     let sub_account_swig_id = sub_account.swig_id;
-    const UNINIT_KEY: MaybeUninit<&Pubkey> = MaybeUninit::uninit();
-    let mut restricted_keys: [MaybeUninit<&Pubkey>; 2] = [UNINIT_KEY; 2];
-    let rkeys: &[&Pubkey] = unsafe {
-        if authority_type == AuthorityType::Secp256k1 {
-            restricted_keys[0].write(ctx.accounts.payer.key());
-            core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 1)
-        } else {
-            let authority_index = *sign_v1.authority_payload.get_unchecked(0) as usize;
-            restricted_keys[0].write(ctx.accounts.payer.key());
-            restricted_keys[1].write(all_accounts[authority_index].key());
-            core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 2)
-        }
-    };
+    let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,
         sign_v1.instruction_payload,

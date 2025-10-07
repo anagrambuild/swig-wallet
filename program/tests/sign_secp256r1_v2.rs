@@ -143,7 +143,6 @@ fn test_secp256r1_basic_signing_v2() {
     let instructions = swig_interface::SignV2Instruction::new_secp256r1(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         authority_fn,
         current_slot,
         next_counter,
@@ -268,7 +267,6 @@ fn test_secp256r1_replay_protection_v2() {
     let instructions1 = swig_interface::SignV2Instruction::new_secp256r1(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         authority_fn1,
         current_slot,
         counter1,
@@ -311,7 +309,6 @@ fn test_secp256r1_replay_protection_v2() {
     let instructions2 = swig_interface::SignV2Instruction::new_secp256r1(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         authority_fn2,
         current_slot,
         counter1, // Same counter - should trigger replay protection

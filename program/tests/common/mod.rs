@@ -46,6 +46,26 @@ pub fn program_id() -> Pubkey {
     swig::ID.into()
 }
 
+pub fn convert_swig_to_v1(context: &mut SwigTestContext, swig_pubkey: &Pubkey) {
+    use swig_state::swig::Swig;
+
+    let mut account = context
+        .svm
+        .get_account(swig_pubkey)
+        .expect("Swig account should exist");
+
+    if account.data.len() >= Swig::LEN {
+        let last_8_start = Swig::LEN - 8;
+        let reserved_lamports: u64 = 256;
+        account.data[last_8_start..Swig::LEN].copy_from_slice(&reserved_lamports.to_le_bytes());
+    }
+
+    context
+        .svm
+        .set_account(swig_pubkey.clone(), account)
+        .expect("Failed to update account");
+}
+
 pub fn add_authority_with_ed25519_root<'a>(
     context: &mut SwigTestContext,
     swig_pubkey: &Pubkey,
@@ -715,6 +735,7 @@ pub fn toggle_sub_account(
     sub_account: &Pubkey,
     authority: &Keypair,
     role_id: u32,
+    auth_role_id: u32,
     enabled: bool,
 ) -> anyhow::Result<TransactionMetadata> {
     // Create the instruction to toggle a sub-account
@@ -724,6 +745,7 @@ pub fn toggle_sub_account(
         authority.pubkey(),
         *sub_account,
         role_id,
+        auth_role_id,
         enabled,
     )
     .map_err(|e| anyhow::anyhow!("Failed to create toggle sub-account instruction: {:?}", e))?;
@@ -762,7 +784,6 @@ pub fn sub_account_sign(
     let sub_account_sign_ix = SubAccountSignInstruction::new_with_ed25519_authority(
         *swig_account,
         *sub_account,
-        authority.pubkey(),
         authority.pubkey(),
         role_id,
         instructions,

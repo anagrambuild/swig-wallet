@@ -128,15 +128,15 @@ fn test_secp256k1_basic_signing_v2() {
     );
 
     // Create and submit the transaction using SignV2
-    let sign_ix = swig_interface::SignV2Instruction::new_secp256k1(
+    let sign_ix = swig_interface::SignV2Instruction::new_secp256k1_with_signers(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         signing_fn,
         current_slot,
         next_counter, // Use dynamic counter value
         transfer_ix,
         0, // Role ID 0
+        &[context.default_payer.pubkey()],
     )
     .unwrap();
 
@@ -208,15 +208,15 @@ fn test_secp256k1_direct_signature_reuse_v2() {
     let next_counter = current_counter + 1;
 
     // TRANSACTION 1: Initial transaction that should succeed using SignV2
-    let sign_ix = swig_interface::SignV2Instruction::new_secp256k1(
+    let sign_ix = swig_interface::SignV2Instruction::new_secp256k1_with_signers(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         sign_fn,
         current_slot,
         next_counter, // Use dynamic counter value
         transfer_ix.clone(),
         0, // Role ID
+        &[context.default_payer.pubkey()],
     )
     .unwrap();
 
@@ -254,15 +254,15 @@ fn test_secp256k1_direct_signature_reuse_v2() {
 
     // TRANSACTION 2: Attempt to reuse the stored signature (should fail) using
     // SignV2
-    let sign_ix2 = swig_interface::SignV2Instruction::new_secp256k1(
+    let sign_ix2 = swig_interface::SignV2Instruction::new_secp256k1_with_signers(
         swig_key,
         swig_wallet_address,
-        payer2.pubkey(),
         reuse_signature_fn,
         current_slot,
         next_counter, // Trying to reuse the same counter (should fail)
         transfer_ix2,
         0,
+        &[context.default_payer.pubkey()],
     )
     .unwrap();
 
@@ -301,15 +301,15 @@ fn test_secp256k1_direct_signature_reuse_v2() {
     let updated_counter = get_secp256k1_counter(&context, &swig_key, &wallet).unwrap();
     let next_counter_fresh = updated_counter + 1;
 
-    let sign_ix3 = swig_interface::SignV2Instruction::new_secp256k1(
+    let sign_ix3 = swig_interface::SignV2Instruction::new_secp256k1_with_signers(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         fresh_signing_fn,
         current_slot_value, // Use current slot from simulator
         next_counter_fresh, // Use dynamic counter value
         transfer_ix3,
         0,
+        &[context.default_payer.pubkey()],
     )
     .unwrap();
 
@@ -386,15 +386,15 @@ fn test_secp256k1_old_signature_v2() {
     let next_counter = current_counter + 1;
 
     // Create and submit the transaction with the old signature using SignV2
-    let sign_ix = swig_interface::SignV2Instruction::new_secp256k1(
+    let sign_ix = swig_interface::SignV2Instruction::new_secp256k1_with_signers(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         signing_fn,
         old_slot,     // Using old slot
         next_counter, // Use dynamic counter value
         transfer_ix,
         0,
+        &[context.default_payer.pubkey()],
     )
     .unwrap();
 
@@ -463,7 +463,6 @@ fn test_secp256k1_add_authority_v2() {
     let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         primary_authority.pubkey(),
         transfer_ix,
         0, // role_id of the primary wallet
@@ -555,15 +554,15 @@ fn test_secp256k1_add_authority_v2() {
     };
 
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
-    let sign_ix = swig_interface::SignV2Instruction::new_secp256k1(
+    let sign_ix = swig_interface::SignV2Instruction::new_secp256k1_with_signers(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         signing_fn,
         current_slot,
         1, // counter = 1 (first transaction)
         transfer_ix,
         1, // role_id of the secp256k1 authority
+        &[context.default_payer.pubkey()],
     )
     .unwrap();
 
@@ -672,7 +671,6 @@ fn test_secp256k1_add_ed25519_authority_v2() {
     let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         ed25519_authority.pubkey(),
         transfer_ix,
         1, // role_id of the ed25519 authority
@@ -753,15 +751,15 @@ fn test_secp256k1_replay_scenario_1_v2() {
     let next_counter = current_counter + 1;
 
     // TRANSACTION 1: Initial transaction that should succeed using SignV2
-    let sign_ix = swig_interface::SignV2Instruction::new_secp256k1(
+    let sign_ix = swig_interface::SignV2Instruction::new_secp256k1_with_signers(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         signing_fn,
         current_slot,
         next_counter, // Use dynamic counter value instead of hardcoded 1
         transfer_ix.clone(),
         0, // Role ID
+        &[context.default_payer.pubkey()],
     )
     .unwrap();
 
@@ -860,15 +858,15 @@ fn test_secp256k1_replay_scenario_1_v2() {
     // Calculate the next counter for the fresh transaction
     let next_counter_fresh = current_counter_after_replay + 1;
 
-    let sign_ix3 = swig_interface::SignV2Instruction::new_secp256k1(
+    let sign_ix3 = swig_interface::SignV2Instruction::new_secp256k1_with_signers(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         fresh_signing_fn,
         current_slot,
         next_counter_fresh, // Use dynamic counter value
         transfer_ix3,
         0,
+        &[context.default_payer.pubkey()],
     )
     .unwrap();
 
@@ -954,15 +952,15 @@ fn test_secp256k1_replay_scenario_2_v2() {
     let next_counter = current_counter + 1;
 
     // TRANSACTION 1: Initial transaction that should succeed using SignV2
-    let sign_ix = swig_interface::SignV2Instruction::new_secp256k1(
+    let sign_ix = swig_interface::SignV2Instruction::new_secp256k1_with_signers(
         swig_key,
         swig_wallet_address,
-        context.default_payer.pubkey(),
         signing_fn,
         current_slot,
         next_counter, // Use dynamic counter value
         transfer_ix.clone(),
         0, // Role ID
+        &[context.default_payer.pubkey()],
     )
     .unwrap();
 

@@ -87,6 +87,7 @@ fn test_create_basic_token_transfer() {
     .unwrap();
 
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
+    convert_swig_to_v1(&mut context, &swig);
     assert!(swig_create_txn.is_ok());
 
     let ixd = Instruction {
@@ -141,6 +142,7 @@ fn test_create_and_sign_secp256k1() {
     let swig_created = create_swig_secp256k1(&mut context, &wallet, id);
     assert!(swig_created.is_ok(), "{:?}", swig_created.err());
     let (swig_key, bench) = swig_created.unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
     println!("Create CU {:?}", bench.compute_units_consumed);
     println!("logs: {:?}", bench.logs);
     if let Some(account) = context.svm.get_account(&swig_key) {

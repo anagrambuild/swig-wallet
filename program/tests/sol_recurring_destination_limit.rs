@@ -48,6 +48,7 @@ fn test_sol_recurring_destination_limit_basic() {
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
 
     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -145,6 +146,7 @@ fn test_sol_recurring_destination_limit_exceeds_limit() {
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
 
     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -239,6 +241,7 @@ fn test_sol_recurring_destination_limit_time_reset() {
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
 
     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -391,6 +394,7 @@ fn test_multiple_sol_recurring_destination_limits() {
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
 
     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -524,6 +528,7 @@ fn test_sol_recurring_destination_limit_no_reset_when_exceeds_fresh() {
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
 
     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context

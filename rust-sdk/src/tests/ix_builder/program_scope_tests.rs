@@ -51,6 +51,8 @@ fn test_token_transfer_with_program_scope() {
     let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_result.is_ok());
 
+    convert_swig_to_v1(&mut context, &swig);
+
     // Setup token accounts
     let swig_ata = setup_ata(
         &mut context.svm,
@@ -208,6 +210,8 @@ fn test_recurring_limit_program_scope() {
     let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
     let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_result.is_ok());
+
+    convert_swig_to_v1(&mut context, &swig);
 
     // Setup token accounts
     let swig_ata = setup_ata(

@@ -109,6 +109,7 @@ fn test_multiple_actions_with_transfer_and_manage_authority() {
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context

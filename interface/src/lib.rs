@@ -623,18 +623,43 @@ impl SignV2Instruction {
     pub fn new_ed25519(
         swig_account: Pubkey,
         swig_wallet_address: Pubkey,
-        payer: Pubkey,
         authority: Pubkey,
         inner_instruction: Instruction,
         role_id: u32,
     ) -> anyhow::Result<Instruction> {
+        Self::new_ed25519_with_signers(
+            swig_account,
+            swig_wallet_address,
+            authority,
+            inner_instruction,
+            role_id,
+            &[],
+        )
+    }
+
+    pub fn new_ed25519_with_signers(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        authority: Pubkey,
+        inner_instruction: Instruction,
+        role_id: u32,
+        transaction_signers: &[Pubkey],
+    ) -> anyhow::Result<Instruction> {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new(payer, true),
             AccountMeta::new_readonly(authority, true),
         ];
-        let (accounts, ixs) = compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        let (mut accounts, ixs) =
+            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        for account in &mut accounts {
+            if transaction_signers
+                .iter()
+                .any(|signer| signer == &account.pubkey)
+            {
+                account.is_signer = true;
+            }
+        }
         let ix_bytes = ixs.into_bytes();
         let args = swig::actions::sign_v2::SignV2Args::new(role_id, ix_bytes.len() as u16);
         let arg_bytes = args
@@ -643,14 +668,13 @@ impl SignV2Instruction {
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [arg_bytes, &ix_bytes, &[3]].concat(),
+            data: [arg_bytes, &ix_bytes, &[2]].concat(),
         })
     }
 
     pub fn new_secp256k1<F>(
         swig_account: Pubkey,
         swig_wallet_address: Pubkey,
-        payer: Pubkey,
         mut authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
@@ -660,13 +684,46 @@ impl SignV2Instruction {
     where
         F: FnMut(&[u8]) -> [u8; 65],
     {
+        Self::new_secp256k1_with_signers(
+            swig_account,
+            swig_wallet_address,
+            authority_payload_fn,
+            current_slot,
+            counter,
+            inner_instruction,
+            role_id,
+            &[],
+        )
+    }
+
+    pub fn new_secp256k1_with_signers<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        inner_instruction: Instruction,
+        role_id: u32,
+        transaction_signers: &[Pubkey],
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new(payer, true),
             AccountMeta::new_readonly(system_program::ID, false),
         ];
-        let (accounts, ixs) = compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        let (mut accounts, ixs) =
+            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        for account in &mut accounts {
+            if transaction_signers
+                .iter()
+                .any(|signer| signer == &account.pubkey)
+            {
+                account.is_signer = true;
+            }
+        }
         let ix_bytes = ixs.into_bytes();
         let args = swig::actions::sign_v2::SignV2Args::new(role_id, ix_bytes.len() as u16);
 
@@ -709,7 +766,6 @@ impl SignV2Instruction {
     pub fn new_secp256r1<F>(
         swig_account: Pubkey,
         swig_wallet_address: Pubkey,
-        payer: Pubkey,
         mut authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
@@ -720,14 +776,49 @@ impl SignV2Instruction {
     where
         F: FnMut(&[u8]) -> [u8; 64],
     {
+        Self::new_secp256r1_with_signers(
+            swig_account,
+            swig_wallet_address,
+            authority_payload_fn,
+            current_slot,
+            counter,
+            inner_instruction,
+            role_id,
+            public_key,
+            &[],
+        )
+    }
+
+    pub fn new_secp256r1_with_signers<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        inner_instruction: Instruction,
+        role_id: u32,
+        public_key: &[u8; 33],
+        transaction_signers: &[Pubkey],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new(payer, true),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
-        let (accounts, ixs) = compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        let (mut accounts, ixs) =
+            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        for account in &mut accounts {
+            if transaction_signers
+                .iter()
+                .any(|signer| signer == &account.pubkey)
+            {
+                account.is_signer = true;
+            }
+        }
         let ix_bytes = ixs.into_bytes();
         let args = swig::actions::sign_v2::SignV2Args::new(role_id, ix_bytes.len() as u16);
 
@@ -769,7 +860,7 @@ impl SignV2Instruction {
         // For secp256r1, the authority payload includes slot, counter, instruction
         // index, and padding Must be at least 17 bytes to satisfy
         // secp256r1_authority_authenticate() requirements
-        let instruction_sysvar_index = 4; // Instructions sysvar is at index 4 for SignV2
+        let instruction_sysvar_index = 3; // Instructions sysvar is at index 3 for SignV2
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
         authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
@@ -1938,13 +2029,11 @@ impl SubAccountSignInstruction {
         swig_account: Pubkey,
         sub_account: Pubkey,
         authority: Pubkey,
-        payer: Pubkey,
         role_id: u32,
         instructions: Vec<Instruction>,
     ) -> anyhow::Result<Instruction> {
         let accounts = vec![
             AccountMeta::new_readonly(swig_account, false),
-            AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(authority, true),
@@ -1959,14 +2048,13 @@ impl SubAccountSignInstruction {
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: [args_bytes, &ix_bytes, &[4]].concat(),
+            data: [args_bytes, &ix_bytes, &[3]].concat(),
         })
     }
 
     pub fn new_with_secp256k1_authority<F>(
         swig_account: Pubkey,
         sub_account: Pubkey,
-        payer: Pubkey,
         mut authority_payload_fn: F,
         current_slot: u64,
         role_id: u32,
@@ -1977,7 +2065,6 @@ impl SubAccountSignInstruction {
     {
         let accounts = vec![
             AccountMeta::new_readonly(swig_account, false),
-            AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
             AccountMeta::new_readonly(system_program::ID, false),
         ];
@@ -2018,7 +2105,6 @@ impl SubAccountSignInstruction {
     pub fn new_with_secp256r1_authority<F>(
         swig_account: Pubkey,
         sub_account: Pubkey,
-        payer: Pubkey,
         mut authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
@@ -2031,7 +2117,6 @@ impl SubAccountSignInstruction {
     {
         let accounts = vec![
             AccountMeta::new_readonly(swig_account, false),
-            AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
@@ -2105,6 +2190,7 @@ impl ToggleSubAccountInstruction {
         payer: Pubkey,
         sub_account: Pubkey,
         role_id: u32,
+        auth_role_id: u32,
         enabled: bool,
     ) -> anyhow::Result<Instruction> {
         let accounts = vec![
@@ -2114,7 +2200,7 @@ impl ToggleSubAccountInstruction {
             AccountMeta::new_readonly(authority, true),
         ];
 
-        let args = ToggleSubAccountV1Args::new(role_id, enabled);
+        let args = ToggleSubAccountV1Args::new(role_id, auth_role_id, enabled);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -2133,6 +2219,7 @@ impl ToggleSubAccountInstruction {
         current_slot: u64,
         sub_account: Pubkey,
         role_id: u32,
+        auth_role_id: u32,
         enabled: bool,
     ) -> anyhow::Result<Instruction>
     where
@@ -2144,7 +2231,7 @@ impl ToggleSubAccountInstruction {
             AccountMeta::new(sub_account, false),
         ];
 
-        let args = ToggleSubAccountV1Args::new(role_id, enabled);
+        let args = ToggleSubAccountV1Args::new(role_id, auth_role_id, enabled);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -2191,6 +2278,7 @@ impl ToggleSubAccountInstruction {
         counter: u32,
         sub_account: Pubkey,
         role_id: u32,
+        auth_role_id: u32,
         enabled: bool,
         public_key: &[u8; 33],
     ) -> anyhow::Result<Vec<Instruction>>
@@ -2205,7 +2293,7 @@ impl ToggleSubAccountInstruction {
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
 
-        let args = ToggleSubAccountV1Args::new(role_id, enabled);
+        let args = ToggleSubAccountV1Args::new(role_id, auth_role_id, enabled);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;

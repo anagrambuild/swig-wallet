@@ -92,6 +92,7 @@ fn test_secp256k1_basic_signing() {
     // Create a new swig with the secp256k1 authority
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_secp256k1(&mut context, &wallet, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
     context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
 
     // Set up a recipient and transaction
@@ -161,6 +162,7 @@ fn test_secp256k1_direct_signature_reuse() {
     // Create a new swig with the secp256k1 authority
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_secp256k1(&mut context, &wallet, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
     context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
     let payer2 = Keypair::new();
     context.svm.airdrop(&payer2.pubkey(), 1_000_000).unwrap();
@@ -331,6 +333,7 @@ fn test_secp256k1_compressed_key_creation() {
     // Test that we can create a swig with a compressed key
     let (swig_key, _) =
         create_swig_secp256k1_with_key_type(&mut context, &wallet, id, true).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
 
     // If we get here, the compressed key creation succeeded
     assert!(true, "Compressed key creation should succeed");
@@ -347,6 +350,7 @@ fn test_secp256k1_compressed_key_full_signing_flow() {
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) =
         create_swig_secp256k1_with_key_type(&mut context, &wallet, id, true).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
     context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
 
     // Set up a recipient and transaction
@@ -435,6 +439,7 @@ fn test_secp256k1_old_signature() {
     // Create a new swig with the secp256k1 authority
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_secp256k1(&mut context, &wallet, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
     context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
 
     // Set up a recipient and transaction
@@ -514,6 +519,7 @@ fn test_secp256k1_add_authority() {
 
     // Create a new swig with Ed25519 authority
     let (swig_key, _) = create_swig_ed25519(&mut context, &primary_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
     context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
 
     // Read the account data to verify initial state
@@ -658,6 +664,7 @@ fn test_secp256k1_add_ed25519_authority() {
     // Create a new swig with the secp256k1 authority
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_secp256k1(&mut context, &wallet, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
     context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
 
     // Create an ed25519 authority to add
@@ -768,6 +775,7 @@ fn test_secp256k1_replay_scenario_1() {
     // Create a new swig with the secp256k1 authority
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_secp256k1(&mut context, &wallet, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
     context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
 
     // Set up a recipient and transaction
@@ -961,6 +969,7 @@ fn test_secp256k1_replay_scenario_2() {
     // Create a new swig with the secp256k1 authority
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_secp256k1(&mut context, &wallet, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
     context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
 
     // Set up a recipient and transaction
@@ -1069,6 +1078,7 @@ fn test_secp256k1_session_authority_odometer() {
     // Create a swig with secp256k1 session authority type
     let (swig_key, _) =
         create_swig_secp256k1_session(&mut context, &wallet, id, 100, [0; 32]).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
 
     // Helper function to read the current counter for session authorities
     let get_session_counter = |ctx: &SwigTestContext| -> Result<u32, String> {

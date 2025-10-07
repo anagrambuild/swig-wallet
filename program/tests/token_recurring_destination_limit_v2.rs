@@ -146,7 +146,6 @@ fn test_token_recurring_destination_limit_basic_v2() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         transfer_ix,
         1,
     )
@@ -216,7 +215,6 @@ fn test_token_recurring_destination_limit_basic_v2() {
     let sign_ix2 = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix2,
         1,
@@ -357,7 +355,6 @@ fn test_token_recurring_destination_limit_exceeds_limit_v2() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         transfer_ix,
         1,
     )
@@ -491,7 +488,6 @@ fn test_token_recurring_destination_limit_time_reset_v2() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         transfer_ix1,
         1,
     )
@@ -546,7 +542,6 @@ fn test_token_recurring_destination_limit_time_reset_v2() {
     let sign_ix2 = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix2,
         1,
@@ -713,7 +708,6 @@ fn test_multiple_token_recurring_destination_limits_v2() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         transfer_ix1,
         1,
     )
@@ -735,7 +729,6 @@ fn test_multiple_token_recurring_destination_limits_v2() {
     let sign_ix2 = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix2,
         1,
@@ -887,7 +880,6 @@ fn test_token_recurring_destination_limit_no_reset_when_exceeds_fresh_v2() {
     let sign_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix,
         1,
@@ -1074,7 +1066,6 @@ fn test_token_recurring_destination_limit_different_mints_v2() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         transfer_ix1,
         1,
     )
@@ -1111,7 +1102,6 @@ fn test_token_recurring_destination_limit_different_mints_v2() {
     let sign_ix2 = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix2,
         1,

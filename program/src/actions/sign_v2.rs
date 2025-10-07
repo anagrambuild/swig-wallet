@@ -36,7 +36,6 @@ use swig_state::{
         token_recurring_limit::TokenRecurringLimit,
         Action, Permission,
     },
-    authority::AuthorityType,
     role::RoleMut,
     swig::{swig_account_signer, swig_wallet_address_signer, Swig},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
@@ -48,7 +47,7 @@ use crate::{
         accounts::{Context, SignV2Accounts},
         SwigInstruction,
     },
-    util::{build_restricted_keys, hash_except},
+    util::hash_except,
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
 };
 // use swig_instructions::InstructionIterator;
@@ -178,8 +177,27 @@ pub fn sign_v2(
     account_classifiers: &mut [AccountClassification],
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
-    // KEEP remove since we enfoce swig is owned in lib.rs
-    // check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
+
+    if !matches!(
+        account_classifiers[0],
+        AccountClassification::ThisSwigV2 { .. }
+    ) {
+        if matches!(
+            account_classifiers[0],
+            AccountClassification::ThisSwig { .. }
+        ) {
+            return Err(SwigError::SignV2CannotBeUsedWithSwigV1.into());
+        }
+        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+    }
+
+    if !matches!(
+        account_classifiers[1],
+        AccountClassification::SwigWalletAddress
+    ) {
+        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+    }
+
     let sign_v2 = SignV2::from_instruction_bytes(data)?;
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
@@ -209,21 +227,7 @@ pub fn sign_v2(
             slot,
         )?;
     }
-    const UNINIT_KEY: MaybeUninit<&Pubkey> = MaybeUninit::uninit();
-    let mut restricted_keys: [MaybeUninit<&Pubkey>; 2] = [UNINIT_KEY; 2];
-    let rkeys: &[&Pubkey] = unsafe {
-        if role.position.authority_type()? == AuthorityType::Secp256k1
-            || role.position.authority_type()? == AuthorityType::Secp256r1
-        {
-            restricted_keys[0].write(ctx.accounts.payer.key());
-            core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 1)
-        } else {
-            let authority_index = *sign_v2.authority_payload.get_unchecked(0) as usize;
-            restricted_keys[0].write(ctx.accounts.payer.key());
-            restricted_keys[1].write(all_accounts[authority_index].key());
-            core::slice::from_raw_parts(restricted_keys.as_ptr() as _, 2)
-        }
-    };
+    let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,
         sign_v2.instruction_payload,
@@ -255,12 +259,12 @@ pub fn sign_v2(
         }
 
         let hash = match account_classifier {
-            AccountClassification::ThisSwig { .. } => {
-                let data = unsafe { account.borrow_data_unchecked() };
+            AccountClassification::ThisSwig { .. } | AccountClassification::ThisSwigV2 { .. } => {
                 // For ThisSwig accounts, hash the entire account data and owner to ensure no
                 // unexpected modifications. Lamports are handled separately in
                 // the permission check, but we still need to verify
                 // that the account data itself and ownership hasn't been tampered with
+                let data = unsafe { account.borrow_data_unchecked() };
                 let hash = hash_except(&data, account.owner(), NO_EXCLUDE_RANGES);
                 Some(hash)
             },
@@ -433,10 +437,10 @@ pub fn sign_v2(
     } else {
         'account_loop: for (index, account) in account_classifiers.iter_mut().enumerate() {
             match account {
-                AccountClassification::ThisSwig { lamports } => {
+                AccountClassification::ThisSwig { lamports }
+                | AccountClassification::ThisSwigV2 { lamports } => {
                     let account_info = unsafe { all_accounts.get_unchecked(index) };
 
-                    // Only validate snapshots for writable accounts
                     if account_info.is_writable() {
                         let data = unsafe { &account_info.borrow_data_unchecked() };
                         let current_hash =
