@@ -1120,9 +1120,9 @@ pub fn display_swig(swig_pubkey: Pubkey, data: &[u8], lamports: u64) -> Result<(
             }
 
             // Check Oracle limit
-            if let Some(actions) = Role::get_all_actions_of_type::<OracleTokenLimit>(&role)
-                .map_err(|_| anyhow::anyhow!("Failed to get action"))?
-            {
+            let actions = Role::get_all_actions_of_type::<OracleTokenLimit>(&role)
+                .map_err(|_| anyhow::anyhow!("Failed to get action"))?;
+            if !actions.is_empty() {
                 println!("║ │  ├─ Oracle Token Limit:");
                 for action in actions {
                     println!(
@@ -1145,9 +1145,9 @@ pub fn display_swig(swig_pubkey: Pubkey, data: &[u8], lamports: u64) -> Result<(
                 }
             }
 
-            if let Some(actions) = Role::get_all_actions_of_type::<OracleRecurringLimit>(&role)
-                .map_err(|_| anyhow::anyhow!("Failed to get action"))?
-            {
+            let actions = Role::get_all_actions_of_type::<OracleRecurringLimit>(&role)
+                .map_err(|_| anyhow::anyhow!("Failed to get action"))?;
+            if !actions.is_empty() {
                 println!("║ │  ├─ Oracle Recurring Limit:");
                 for action in actions {
                     println!(
