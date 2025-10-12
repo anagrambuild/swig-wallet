@@ -196,4 +196,19 @@ pub enum SwigInstruction {
     #[account(2, writable, signer, name="payer", desc="the payer")]
     #[account(3, name="system_program", desc="the system program")]
     TransferAssetsV1 = 13,
+
+    /// Modifies authorization locks for an authority.
+    ///
+    /// This instruction can add, remove, or update authorization locks for an
+    /// existing authority that has the ManageAuthorizationLocks permission.
+    /// The operation type is specified in the instruction data.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. System program account
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, name="system_program", desc="the system program")]
+    ModifyAuthLockV1 = 14,
 }

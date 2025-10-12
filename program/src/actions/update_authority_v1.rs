@@ -12,7 +12,10 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, Action},
+    action::{
+        all::All, manage_auth_lock::ManageAuthorizationLocks, manage_authority::ManageAuthority,
+        Action, Actionable, Permission,
+    },
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::{Swig, SwigBuilder},
@@ -70,6 +73,90 @@ fn calculate_num_actions(actions_data: &[u8]) -> Result<u8, ProgramError> {
     }
 
     Ok(count)
+}
+
+/// Checks if any manage authorization locks actions are present in the provided actions data.
+///
+/// This function iterates through the actions data and checks if any action
+/// has the ManageAuthorizationLocks permission type.
+///
+/// # Arguments
+/// * `actions_data` - Raw bytes containing action data
+///
+/// # Returns
+/// * `Result<bool, ProgramError>` - True if manage authorization locks actions are found, or error if
+///   invalid data
+fn contains_manage_authorization_locks_actions(actions_data: &[u8]) -> Result<bool, ProgramError> {
+    let mut cursor = 0;
+
+    while cursor < actions_data.len() {
+        if cursor + Action::LEN > actions_data.len() {
+            break;
+        }
+
+        let action_header =
+            unsafe { Action::load_unchecked(&actions_data[cursor..cursor + Action::LEN])? };
+        cursor += Action::LEN;
+
+        let action_len = action_header.length() as usize;
+        if cursor + action_len > actions_data.len() {
+            return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
+        }
+
+        // Check if this action is a manage authorization locks action
+        if action_header.permission()? == Permission::ManageAuthorizationLocks {
+            return Ok(true);
+        }
+
+        cursor += action_len;
+    }
+
+    Ok(false)
+}
+
+/// Handles manage authorization locks actions in the update authority operation.
+///
+/// This function processes any manage authorization locks actions found in the actions data.
+/// Currently implements a dummy placeholder that will be replaced with actual logic.
+///
+/// # Arguments
+/// * `actions_data` - Raw bytes containing action data
+/// * `operation` - The operation type being performed
+///
+/// # Returns
+/// * `Result<(), ProgramError>` - Success or error status
+fn handle_manage_authorization_locks_actions(
+    actions_data: &[u8],
+    operation: AuthorityUpdateOperation,
+) -> Result<(), ProgramError> {
+    // Check if manage authorization locks actions are present
+    if contains_manage_authorization_locks_actions(actions_data)? {
+        // TODO: Implement actual manage authorization locks handling logic
+        // This is a placeholder implementation
+        match operation {
+            AuthorityUpdateOperation::ReplaceAll => {
+                // Handle adding/updating manage authorization locks
+                msg!("Manage authorization locks actions detected in ReplaceAll operation - placeholder implementation");
+            },
+            AuthorityUpdateOperation::AddActions => {
+                // Handle adding new manage authorization locks
+                msg!("Manage authorization locks actions detected in AddActions operation - placeholder implementation");
+            },
+            AuthorityUpdateOperation::RemoveActionsByType => {
+                // Handle removing manage authorization locks by type
+                msg!("Manage authorization locks actions detected in RemoveActionsByType operation - placeholder implementation");
+            },
+            AuthorityUpdateOperation::RemoveActionsByIndex => {
+                // Handle removing manage authorization locks by index
+                msg!("Manage authorization locks actions detected in RemoveActionsByIndex operation - placeholder implementation");
+            },
+        }
+
+        // For now, just return success - actual implementation will be added later
+        return Ok(());
+    }
+
+    Ok(())
 }
 
 /// Struct representing the complete update authority instruction data.
@@ -667,7 +754,7 @@ pub fn update_authority_v1(
                 .pad_to_align()
                 .size();
 
-        ctx.accounts.swig.realloc(aligned_size, false)?;
+        ctx.accounts.swig.resize(aligned_size)?;
 
         let cost = Rent::get()?.minimum_balance(aligned_size);
         let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
@@ -693,6 +780,31 @@ pub fn update_authority_v1(
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let _swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+
+    // Check for manage authorization locks actions and handle them
+    match operation {
+        AuthorityUpdateOperation::ReplaceAll => {
+            let new_actions = update_authority_v1.get_actions_data()?;
+            handle_manage_authorization_locks_actions(new_actions, operation)?;
+        },
+        AuthorityUpdateOperation::AddActions => {
+            let new_actions = update_authority_v1.get_actions_data()?;
+            handle_manage_authorization_locks_actions(new_actions, operation)?;
+        },
+        AuthorityUpdateOperation::RemoveActionsByType => {
+            let remove_types = update_authority_v1.get_remove_types()?;
+            // For remove by type, we need to check if ManageAuthorizationLocks type is being removed
+            if remove_types.contains(&(ManageAuthorizationLocks::TYPE as u8)) {
+                handle_manage_authorization_locks_actions(&[], operation)?;
+            }
+        },
+        AuthorityUpdateOperation::RemoveActionsByIndex => {
+            // For remove by index, we need to check the current actions to see if any are manage auth locks
+            let current_actions =
+                &swig_roles[actions_offset..actions_offset + current_actions_size];
+            handle_manage_authorization_locks_actions(current_actions, operation)?;
+        },
+    }
 
     // Now perform the operation with the reallocated account
     match operation {
