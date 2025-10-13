@@ -142,6 +142,9 @@ pub fn sub_account_sign_v1(
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_unchecked(swig_header)? };
 
+    let (swig_roles, _) =
+        unsafe { swig_roles.split_at_mut_unchecked(swig.roles_boundary as usize) };
+
     let role_opt = Swig::get_mut_role(sign_v1.args.role_id, swig_roles)?;
     if role_opt.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());

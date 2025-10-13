@@ -178,6 +178,9 @@ pub fn add_authority_v1(
         let (swig_header, swig_roles) =
             unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
         let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+
+        let (swig_roles, _) =
+            unsafe { swig_roles.split_at_mut_unchecked(swig.roles_boundary as usize) };
         let acting_role = Swig::get_mut_role(add_authority_v1.args.acting_role_id, swig_roles)?;
         if acting_role.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());

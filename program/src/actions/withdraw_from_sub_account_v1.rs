@@ -124,6 +124,9 @@ pub fn withdraw_from_sub_account_v1(
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_unchecked(&swig_header)? };
 
+    let (swig_roles, _) =
+        unsafe { swig_roles.split_at_mut_unchecked(swig.roles_boundary as usize) };
+
     let swig_wallet_address_seeds = swig_wallet_address_seeds(ctx.accounts.swig.key().as_ref());
     // Validate that the swig wallet address is the correct PDA derived from the
     // swig account

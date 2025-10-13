@@ -18,7 +18,7 @@ use swig_state::{
         swig_account_seeds_with_bump, swig_account_signer, swig_wallet_address_seeds_with_bump,
         swig_wallet_address_signer, Swig, SwigBuilder,
     },
-    IntoBytes, Transmutable,
+    IntoBytes, SwigStateError, Transmutable,
 };
 
 use crate::{

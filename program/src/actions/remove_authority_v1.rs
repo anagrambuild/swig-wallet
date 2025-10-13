@@ -13,7 +13,7 @@ use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
     swig::{Swig, SwigBuilder},
-    Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
+    Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
 use crate::{
@@ -159,8 +159,11 @@ pub fn remove_authority_v1(
         if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
-        let (_swig_header, swig_roles) =
+        let (swig_header, swig_roles) =
             unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+        let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+        let (swig_roles, _) =
+            unsafe { swig_roles.split_at_mut_unchecked(swig.roles_boundary as usize) };
         {
             let acting_role =
                 Swig::get_mut_role(remove_authority_v1.args.acting_role_id, swig_roles)?;

@@ -11,7 +11,9 @@ use pinocchio::{
     ProgramResult,
 };
 use swig_assertions::check_self_owned;
-use swig_state::{swig::Swig, Discriminator, IntoBytes, SwigAuthenticateError, Transmutable};
+use swig_state::{
+    swig::Swig, Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
+};
 
 use crate::{
     error::SwigError,
@@ -137,7 +139,12 @@ pub fn create_session_v1(
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
-    let (_swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+    let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+
+    let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+    let (swig_roles, _) =
+        unsafe { swig_roles.split_at_mut_unchecked(swig.roles_boundary as usize) };
+
     let role = Swig::get_mut_role(create_session_v1.args.role_id, swig_roles)?;
     if role.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());

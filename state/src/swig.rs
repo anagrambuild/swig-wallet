@@ -417,6 +417,7 @@ impl<'a> SwigBuilder<'a> {
         }
         self.swig.roles += 1;
         self.swig.role_counter += 1;
+        self.swig.roles_boundary = boundary as u32;
         Ok(())
     }
 }
@@ -438,7 +439,14 @@ pub struct Swig {
     /// Amount of lamports reserved for rent
     // pub reserved_lamports: u64,
     pub wallet_bump: u8,
-    pub _padding: [u8; 7],
+    /// Padding
+    pub _padding: [u8; 3],
+    /// Boundary of the auth lock actions
+    pub roles_boundary: u32,
+    /// Number of auth lock actions
+    pub auth_lock_count: u32,
+    /// Padding
+    pub _padding2: [u8; 12],
 }
 
 impl Swig {
@@ -451,7 +459,10 @@ impl Swig {
             roles: 0,
             role_counter: 0,
             wallet_bump,
-            _padding: [0; 7],
+            _padding: [0; 3],
+            roles_boundary: 0,
+            auth_lock_count: 0,
+            _padding2: [0; 12],
         }
     }
 
@@ -460,9 +471,9 @@ impl Swig {
         let mut cursor = 0;
         let mut found_offset = None;
         let roles_len = roles.len();
-        if roles_len < Swig::LEN {
-            return Err(ProgramError::InvalidAccountData);
-        }
+        // if roles_len < Swig::LEN {
+        //     return Err(ProgramError::InvalidAccountData);
+        // }
         for _i in 0..roles_len {
             let offset = cursor + Position::LEN;
             let position =

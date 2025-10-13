@@ -8,6 +8,7 @@
 mod common;
 
 use common::*;
+use litesvm::LiteSVM;
 use litesvm_token::spl_token::{self, instruction::TokenInstruction};
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
@@ -19,8 +20,8 @@ use solana_sdk::{
 };
 use swig_interface::{
     program_id, AddAuthLockInstruction, AddAuthorityInstruction, AuthorityConfig, ClientAction,
-    ModifyAuthLockUpdateInstruction, RemoveAuthLockInstruction, SignInstruction,
-    UpdateAuthorityData, UpdateAuthorityInstruction,
+    ModifyAuthLockAddInstruction, ModifyAuthLockUpdateInstruction, RemoveAuthLockInstruction,
+    SignInstruction, UpdateAuthorityData, UpdateAuthorityInstruction,
 };
 use swig_state::{
     action::{
@@ -30,7 +31,7 @@ use swig_state::{
     },
     authority::AuthorityType,
     role::Role,
-    swig::{swig_account_seeds, SwigWithRoles},
+    swig::{swig_account_seeds, Swig, SwigWithRoles},
     Transmutable,
 };
 
@@ -492,6 +493,353 @@ fn test_authorization_lock_update_values() {
     println!("- Amount updated from 1,000,000 to {}", new_amount);
     println!("- Expires_at updated from 1,000,000 to {}", new_expires_at);
     println!("- Mint remained unchanged: [0; 32] (SOL)");
+}
+
+// =========================================================================
+// Authorization Lock Cache Tests
+// =========================================================================
+
+fn read_auth_lock_cache_entries(svm: &LiteSVM, swig: &Pubkey) -> Vec<([u8; 32], u64, u64)> {
+    let swig_account = svm.get_account(swig).unwrap();
+    let data = &swig_account.data;
+    let swig_hdr = unsafe { Swig::load_unchecked(&data[..Swig::LEN]).unwrap() };
+    let roles_boundary = swig_hdr.roles_boundary as usize;
+    let count = swig_hdr.auth_lock_count as usize;
+    let mut out = Vec::with_capacity(count);
+    let mut cursor = Swig::LEN + roles_boundary;
+    for _ in 0..count {
+        let mut mint = [0u8; 32];
+        mint.copy_from_slice(&data[cursor..cursor + 32]);
+        cursor += 32;
+        let mut amt_bytes = [0u8; 8];
+        amt_bytes.copy_from_slice(&data[cursor..cursor + 8]);
+        cursor += 8;
+        let mut exp_bytes = [0u8; 8];
+        exp_bytes.copy_from_slice(&data[cursor..cursor + 8]);
+        cursor += 8;
+        out.push((
+            mint,
+            u64::from_le_bytes(amt_bytes),
+            u64::from_le_bytes(exp_bytes),
+        ));
+    }
+    out
+}
+
+#[test_log::test]
+fn test_authorization_lock_cache_add_two_mints_and_remove_one() {
+    let (mut context, swig_authority, second_authority) =
+        setup_test_context_with_authorities().unwrap();
+    let id = rand::random::<[u8; 32]>();
+    let swig = create_swig_with_auth_lock_permissions(
+        &mut context,
+        &swig_authority,
+        &second_authority,
+        id,
+    )
+    .unwrap();
+
+    // Two different mints
+    let mint_sol = [0u8; 32];
+    let mut mint_token = [0u8; 32];
+    mint_token[0] = 9;
+
+    // Add SOL lock
+    let add_sol_ix = AddAuthLockInstruction::new_with_ed25519_authority(
+        swig,
+        context.default_payer.pubkey(),
+        second_authority.pubkey(),
+        1,
+        AuthorizationLock::new(mint_sol, 1_000, 10_000),
+    )
+    .unwrap();
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[add_sol_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &second_authority],
+    )
+    .unwrap();
+    context.svm.send_transaction(tx).unwrap();
+
+    // Add token lock
+    let add_tok_ix = AddAuthLockInstruction::new_with_ed25519_authority(
+        swig,
+        context.default_payer.pubkey(),
+        second_authority.pubkey(),
+        1,
+        AuthorizationLock::new(mint_token, 2_500, 20_000),
+    )
+    .unwrap();
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[add_tok_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &second_authority],
+    )
+    .unwrap();
+    context.svm.send_transaction(tx).unwrap();
+
+    // Verify cache has two entries with correct data
+    let entries = read_auth_lock_cache_entries(&context.svm, &swig);
+    assert_eq!(entries.len(), 2);
+    assert!(entries
+        .iter()
+        .any(|(m, a, e)| *m == mint_sol && *a == 1_000 && *e == 10_000));
+    assert!(entries
+        .iter()
+        .any(|(m, a, e)| *m == mint_token && *a == 2_500 && *e == 20_000));
+
+    // Remove token lock and verify cache updates to single entry
+    let rm_tok_ix = RemoveAuthLockInstruction::new_with_ed25519_authority(
+        swig,
+        context.default_payer.pubkey(),
+        second_authority.pubkey(),
+        1,
+        mint_token,
+    )
+    .unwrap();
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[rm_tok_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &second_authority],
+    )
+    .unwrap();
+    let result = context.svm.send_transaction(tx).unwrap();
+
+    let entries = read_auth_lock_cache_entries(&context.svm, &swig);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].0, mint_sol);
+    assert_eq!(entries[0].1, 1_000);
+    assert_eq!(entries[0].2, 10_000);
+}
+
+#[test_log::test]
+fn test_authorization_lock_cache_updates_after_modify() {
+    let (mut context, swig_authority, second_authority) =
+        setup_test_context_with_authorities().unwrap();
+    let id = rand::random::<[u8; 32]>();
+    let swig = create_swig_with_auth_lock_permissions(
+        &mut context,
+        &swig_authority,
+        &second_authority,
+        id,
+    )
+    .unwrap();
+
+    let mint_sol = [0u8; 32];
+
+    // Add lock
+    let add_ix = AddAuthLockInstruction::new_with_ed25519_authority(
+        swig,
+        context.default_payer.pubkey(),
+        second_authority.pubkey(),
+        1,
+        AuthorizationLock::new(mint_sol, 1_000, 10_000),
+    )
+    .unwrap();
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[add_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &second_authority],
+    )
+    .unwrap();
+    context.svm.send_transaction(tx).unwrap();
+
+    // Update lock
+    let upd_ix = ModifyAuthLockUpdateInstruction::new_with_ed25519_authority(
+        swig,
+        context.default_payer.pubkey(),
+        second_authority.pubkey(),
+        1,
+        mint_sol,
+        4_000,
+        50_000,
+    )
+    .unwrap();
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[upd_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &second_authority],
+    )
+    .unwrap();
+    context.svm.send_transaction(tx).unwrap();
+
+    // Verify cache reflects updated values
+    let entries = read_auth_lock_cache_entries(&context.svm, &swig);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].0, mint_sol);
+    assert_eq!(entries[0].1, 4_000);
+    assert_eq!(entries[0].2, 50_000);
+}
+
+#[test_log::test]
+fn test_authorization_lock_cache_same_mint_flow() {
+    let (mut context, swig_authority, second_authority) =
+        setup_test_context_with_authorities().unwrap();
+    let id = rand::random::<[u8; 32]>();
+    let swig = create_swig_with_auth_lock_permissions(
+        &mut context,
+        &swig_authority,
+        &second_authority,
+        id,
+    )
+    .unwrap();
+
+    let mint = [0u8; 32];
+
+    // Add first lock: amount=1_000, expires=10_000
+    let add1_ix = AddAuthLockInstruction::new_with_ed25519_authority(
+        swig,
+        context.default_payer.pubkey(),
+        second_authority.pubkey(),
+        1,
+        AuthorizationLock::new(mint, 1_000, 10_000),
+    )
+    .unwrap();
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[add1_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &second_authority],
+    )
+    .unwrap();
+    context.svm.send_transaction(tx).unwrap();
+
+    // Cache should have one entry
+    let entries = read_auth_lock_cache_entries(&context.svm, &swig);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].0, mint);
+    assert_eq!(entries[0].1, 1_000);
+    assert_eq!(entries[0].2, 10_000);
+
+    // Add second lock with SAME mint: amount=2_500, expires=20_000
+    let add2_ix = ModifyAuthLockAddInstruction::new_with_ed25519_authority(
+        swig,
+        context.default_payer.pubkey(),
+        second_authority.pubkey(),
+        1,
+        mint,
+        2_500,
+        20_000,
+    )
+    .unwrap();
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[add2_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &second_authority],
+    )
+    .unwrap();
+    context.svm.send_transaction(tx).unwrap();
+
+    // Cache should aggregate totals and earliest
+    let entries = read_auth_lock_cache_entries(&context.svm, &swig);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].0, mint);
+    assert_eq!(entries[0].1, 3_500); // 1_000 + 2_500
+    assert_eq!(entries[0].2, 10_000); // min(10_000, 20_000)
+
+    // Update lock for same mint (program updates the first occurrence):
+    // new amount=4_000, new expires=5_000
+    let upd_ix = ModifyAuthLockUpdateInstruction::new_with_ed25519_authority(
+        swig,
+        context.default_payer.pubkey(),
+        second_authority.pubkey(),
+        1,
+        mint,
+        4_000,
+        5_000,
+    )
+    .unwrap();
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[upd_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &second_authority],
+    )
+    .unwrap();
+    context.svm.send_transaction(tx).unwrap();
+
+    // Cache: total should be 4_000 + 2_500 = 6_500, earliest 5_000
+    let entries = read_auth_lock_cache_entries(&context.svm, &swig);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].0, mint);
+    assert_eq!(entries[0].1, 6_500);
+    assert_eq!(entries[0].2, 5_000);
+
+    // Remove a lock by mint (implementation removes the last one after swap logic)
+    let rm_ix = RemoveAuthLockInstruction::new_with_ed25519_authority(
+        swig,
+        context.default_payer.pubkey(),
+        second_authority.pubkey(),
+        1,
+        mint,
+    )
+    .unwrap();
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[rm_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &second_authority],
+    )
+    .unwrap();
+    context.svm.send_transaction(tx).unwrap();
+
+    // Only the updated lock should remain in cache
+    let entries = read_auth_lock_cache_entries(&context.svm, &swig);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].0, mint);
+    assert_eq!(entries[0].1, 4_000);
+    assert_eq!(entries[0].2, 5_000);
 }
 
 /// Test updating authorization lock with different mint (should fail)

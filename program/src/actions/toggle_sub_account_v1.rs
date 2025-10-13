@@ -150,6 +150,9 @@ pub fn toggle_sub_account_v1(
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_unchecked(swig_header)? };
 
+    let (swig_roles, _) =
+        unsafe { swig_roles.split_at_mut_unchecked(swig.roles_boundary as usize) };
+
     msg!(
         "toggle_sub_account_v1: auth_role_id: {}",
         toggle_sub_account.args.auth_role_id

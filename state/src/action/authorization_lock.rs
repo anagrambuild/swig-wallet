@@ -94,3 +94,56 @@ impl<'a> Actionable<'a> for AuthorizationLock {
         data[0..32] == self.mint
     }
 }
+
+#[repr(C, align(8))]
+#[derive(Debug, NoPadding)]
+pub struct AuthorizationLockCache {
+    pub mint: [u8; 32],
+    pub total_amount: u64,
+    pub earliest_expires_at: u64,
+}
+
+impl AuthorizationLockCache {
+    pub fn new(mint: [u8; 32], total_amount: u64, earliest_expires_at: u64) -> Self {
+        Self {
+            mint,
+            total_amount,
+            earliest_expires_at,
+        }
+    }
+
+    pub fn add_lock(&mut self, amount: u64, expires_at: u64) {
+        self.total_amount += amount;
+        if expires_at < self.earliest_expires_at {
+            self.earliest_expires_at = expires_at;
+        }
+    }
+
+    // Returns true if the lock was removed
+    // Returns false if the lock was removed but the earliest expires at was not updated
+    pub fn remove_lock(&mut self, amount: u64, expires_at: u64) -> bool {
+        self.total_amount -= amount;
+        if expires_at == self.earliest_expires_at {
+            return false;
+        }
+        return true;
+    }
+
+    pub fn is_expired(&self, current_slot: u64) -> bool {
+        current_slot >= self.earliest_expires_at
+    }
+}
+
+impl Transmutable for AuthorizationLockCache {
+    /// Size of the AuthorizationLockCache struct in bytes
+    /// 32 (mint) + 8 (total_amount) + 8 (earliest_expires_at) = 48
+    const LEN: usize = 32 + 8 + 8;
+}
+
+impl TransmutableMut for AuthorizationLockCache {}
+
+impl IntoBytes for AuthorizationLockCache {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
+        Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
+    }
+}

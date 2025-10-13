@@ -239,7 +239,9 @@ fn test_migrate_swig_to_wallet_address_basic() {
     assert_eq!(new_swig.roles, old_swig.roles);
     assert_eq!(new_swig.role_counter, old_swig.role_counter);
     assert_eq!(new_swig.wallet_bump, wallet_address_bump);
-    assert_eq!(new_swig._padding, [0; 7]);
+    assert_eq!(new_swig._padding, [0; 3]);
+    assert_eq!(new_swig.roles_boundary, 0);
+    assert_eq!(new_swig._padding2, [0; 12]);
 
     println!("✅ Migration test structure validated successfully!");
     println!(

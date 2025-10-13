@@ -135,6 +135,9 @@ pub fn transfer_assets_v1(
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_unchecked(&swig_header)? };
 
+    let (swig_roles, _) =
+        unsafe { swig_roles.split_at_mut_unchecked(swig.roles_boundary as usize) };
+
     // Verify the swig account has the correct discriminator
     if unsafe { *swig_header.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());

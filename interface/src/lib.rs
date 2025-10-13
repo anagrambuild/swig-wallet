@@ -2902,7 +2902,7 @@ impl ModifyAuthLockAddInstruction {
             AccountMeta::new_readonly(authority, true),
         ];
 
-        let args = ModifyAuthLockV1Args::new_add(role_id);
+        let args = ModifyAuthLockV1Args::new_update(role_id);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
