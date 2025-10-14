@@ -430,6 +430,7 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
         "Sub Account (Sub-account management)",
         "Stake (Stake management permissions)",
         "Stake All (All stake management permissions)",
+        "Oracle (Value-based limit using price oracle)",
     ];
 
     let mut permissions = Vec::new();
@@ -652,6 +653,53 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
                 recurring: None,
             },
             13 => Permission::StakeAll,
+            14 => {
+                // Oracle value-based limit
+                // Choose base asset
+                let base_assets = vec!["USD (6 decimals)", "EUR (6 decimals)"];
+                let base_idx = Select::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Choose base asset for oracle limit")
+                    .items(&base_assets)
+                    .default(0)
+                    .interact()?;
+                let base_asset_type: u8 = match base_idx {
+                    0 => 0,
+                    1 => 1,
+                    _ => 0,
+                };
+
+                // Value limit in base asset minor units (e.g., 6 decimals for USD)
+                let value_limit: u64 = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter value limit in base asset minor units (e.g., 100_000_000 for 100.000000)")
+                    .interact_text()?;
+
+                let passthrough_check = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enable passthrough check (continue checking other actions)?")
+                    .default(false)
+                    .interact()?;
+
+                // Recurring?
+                let is_recurring = Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Make this a recurring oracle limit?")
+                    .default(false)
+                    .interact()?;
+
+                let recurring = if is_recurring {
+                    let window: u64 = Input::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Enter time window in slots")
+                        .interact_text()?;
+                    Some(RecurringConfig::new(window))
+                } else {
+                    None
+                };
+
+                Permission::OracleLimit {
+                    base_asset_type,
+                    value_limit,
+                    passthrough_check,
+                    recurring,
+                }
+            },
             _ => unreachable!(),
         };
 

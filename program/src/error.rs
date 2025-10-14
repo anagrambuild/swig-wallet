@@ -116,6 +116,18 @@ pub enum SwigError {
     SignV1CannotBeUsedWithSwigV2,
     /// SignV2 instruction cannot be used with Swig v1 accounts
     SignV2CannotBeUsedWithSwigV1,
+    /// Wrong oracle program account
+    WrongScopeOracleAccount,
+    /// Wrong oracle mapping account
+    WrongOracleMappingAccount,
+    /// Oracle mint not found
+    OracleMintNotFound,
+    /// Oracle value overflow during calculation
+    OracleValueOverflow,
+    /// Oracle price chain empty
+    OraclePriceChainEmpty,
+    /// Oracle price is stale
+    OraclePriceStale,
 }
 
 /// Implements conversion from SwigError to ProgramError.
