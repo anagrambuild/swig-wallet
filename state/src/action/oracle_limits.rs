@@ -21,6 +21,9 @@ use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 use pinocchio_pubkey::pubkey;
 
+pub const ORACLE_MAPPING_ACCOUNT: [u8; 32] =
+    pubkey!("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw");
+pub const SCOPE_ACCOUNT: [u8; 32] = pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ");
 pub const ORACLE_MAPPING_OWNER: [u8; 32] = pubkey!("9WM51wrB9xpRzFgYJHocYNnx4DF6G6ee2eB44ZGoZ8vg");
 pub const SCOPE_OWNER: [u8; 32] = pubkey!("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ");
 pub const SOL_MINT: [u8; 32] = pubkey!("So11111111111111111111111111111111111111112");

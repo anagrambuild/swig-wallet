@@ -20,7 +20,9 @@ use swig_state::{
     action::{
         all::All,
         all_but_manage_authority::AllButManageAuthority,
-        oracle_limits::{BaseAsset, OracleTokenLimit, ORACLE_MAPPING_OWNER, SCOPE_OWNER, SOL_MINT},
+        oracle_limits::{
+            BaseAsset, OracleTokenLimit, ORACLE_MAPPING_ACCOUNT, SCOPE_ACCOUNT, SOL_MINT,
+        },
         oracle_recurring_limit::OracleRecurringLimit,
         program::Program,
         program_all::ProgramAll,
@@ -478,7 +480,7 @@ pub fn sign_v1(
                                     let scope_account =
                                         all_accounts.get_unchecked(all_accounts.len() - 1);
                                     // also check if owner matches
-                                    if scope_account.owner().as_ref() != &SCOPE_OWNER {
+                                    if scope_account.owner().as_ref() != &SCOPE_ACCOUNT {
                                         return Err(SwigError::WrongScopeOracleAccount.into());
                                     }
                                     scope_account.borrow_data_unchecked()
@@ -487,7 +489,7 @@ pub fn sign_v1(
                                 let mapping_registry = unsafe {
                                     let mapping_account =
                                         all_accounts.get_unchecked(all_accounts.len() - 2);
-                                    if mapping_account.owner().as_ref() != &ORACLE_MAPPING_OWNER {
+                                    if mapping_account.owner().as_ref() != &ORACLE_MAPPING_ACCOUNT {
                                         return Err(SwigError::WrongOracleMappingAccount.into());
                                     }
                                     mapping_account.borrow_data_unchecked()
@@ -522,7 +524,7 @@ pub fn sign_v1(
                                     let scope_account =
                                         all_accounts.get_unchecked(all_accounts.len() - 1);
                                     // also check if owner matches
-                                    if scope_account.owner().as_ref() != &SCOPE_OWNER {
+                                    if scope_account.owner().as_ref() != &SCOPE_ACCOUNT {
                                         return Err(SwigError::WrongScopeOracleAccount.into());
                                     }
                                     scope_account.borrow_data_unchecked()
@@ -531,7 +533,7 @@ pub fn sign_v1(
                                 let mapping_registry = unsafe {
                                     let mapping_account =
                                         all_accounts.get_unchecked(all_accounts.len() - 2);
-                                    let owner = ORACLE_MAPPING_OWNER;
+                                    let owner = ORACLE_MAPPING_ACCOUNT;
                                     if mapping_account.owner().as_ref() != &owner {
                                         return Err(SwigError::WrongOracleMappingAccount.into());
                                     }
@@ -733,7 +735,7 @@ pub fn sign_v1(
                                 let scope_data = unsafe {
                                     let scope_account =
                                         all_accounts.get_unchecked(all_accounts.len() - 1);
-                                    if scope_account.owner().as_ref() != &SCOPE_OWNER {
+                                    if scope_account.key().as_ref() != &SCOPE_ACCOUNT {
                                         return Err(SwigError::WrongScopeOracleAccount.into());
                                     }
                                     scope_account.borrow_data_unchecked()
@@ -742,7 +744,7 @@ pub fn sign_v1(
                                 let mapping_data = unsafe {
                                     let mapping_account =
                                         all_accounts.get_unchecked(all_accounts.len() - 2);
-                                    if mapping_account.owner().as_ref() != &ORACLE_MAPPING_OWNER {
+                                    if mapping_account.key().as_ref() != &ORACLE_MAPPING_ACCOUNT {
                                         return Err(SwigError::WrongOracleMappingAccount.into());
                                     }
                                     mapping_account.borrow_data_unchecked()
@@ -779,7 +781,7 @@ pub fn sign_v1(
                                 let scope_data = unsafe {
                                     let scope_account =
                                         all_accounts.get_unchecked(all_accounts.len() - 1);
-                                    if scope_account.owner().as_ref() != &SCOPE_OWNER {
+                                    if scope_account.key().as_ref() != &SCOPE_ACCOUNT {
                                         return Err(SwigError::WrongScopeOracleAccount.into());
                                     }
                                     scope_account.borrow_data_unchecked()
@@ -788,7 +790,7 @@ pub fn sign_v1(
                                 let mapping_data = unsafe {
                                     let mapping_account =
                                         all_accounts.get_unchecked(all_accounts.len() - 2);
-                                    if mapping_account.owner().as_ref() != &ORACLE_MAPPING_OWNER {
+                                    if mapping_account.key().as_ref() != &ORACLE_MAPPING_ACCOUNT {
                                         return Err(SwigError::WrongOracleMappingAccount.into());
                                     }
                                     mapping_account.borrow_data_unchecked()
