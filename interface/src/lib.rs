@@ -665,6 +665,19 @@ impl SignV2Instruction {
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Appends the oracle accounts to the instruction
+        let oracle_accounts = vec![
+            AccountMeta::new_readonly(
+                Pubkey::from_str_const("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw"),
+                false,
+            ),
+            AccountMeta::new_readonly(
+                Pubkey::from_str_const("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C"),
+                false,
+            ),
+        ];
+        accounts.extend(oracle_accounts);
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
@@ -730,6 +743,19 @@ impl SignV2Instruction {
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Appends the oracle accounts to the instruction
+        let oracle_accounts = vec![
+            AccountMeta::new_readonly(
+                Pubkey::from_str_const("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw"),
+                false,
+            ),
+            AccountMeta::new_readonly(
+                Pubkey::from_str_const("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C"),
+                false,
+            ),
+        ];
+        accounts.extend(oracle_accounts);
 
         let mut account_payload_bytes = Vec::new();
         for account in &accounts {
@@ -825,6 +851,19 @@ impl SignV2Instruction {
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Appends the oracle accounts to the instruction
+        let oracle_accounts = vec![
+            AccountMeta::new_readonly(
+                Pubkey::from_str_const("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw"),
+                false,
+            ),
+            AccountMeta::new_readonly(
+                Pubkey::from_str_const("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C"),
+                false,
+            ),
+        ];
+        accounts.extend(oracle_accounts);
 
         // Create the message hash for secp256r1 authentication
         let mut account_payload_bytes = Vec::new();

@@ -481,7 +481,7 @@ pub fn sign_v2(
                                         all_accounts.get_unchecked(all_accounts.len() - 1);
                                     // also check if owner matches
                                     if scope_account.owner().as_ref() != &SCOPE_OWNER {
-                                        return Err(SwigError::WrongOracleProgramAccount.into());
+                                        return Err(SwigError::WrongScopeOracleAccount.into());
                                     }
                                     scope_account.borrow_data_unchecked()
                                 };
@@ -525,7 +525,7 @@ pub fn sign_v2(
                                         all_accounts.get_unchecked(all_accounts.len() - 1);
                                     // also check if owner matches
                                     if scope_account.owner().as_ref() != &SCOPE_OWNER {
-                                        return Err(SwigError::WrongOracleProgramAccount.into());
+                                        return Err(SwigError::WrongScopeOracleAccount.into());
                                     }
                                     scope_account.borrow_data_unchecked()
                                 };
@@ -735,7 +735,7 @@ pub fn sign_v2(
                                     let scope_account =
                                         all_accounts.get_unchecked(all_accounts.len() - 1);
                                     if scope_account.owner().as_ref() != &SCOPE_OWNER {
-                                        return Err(SwigError::WrongOracleProgramAccount.into());
+                                        return Err(SwigError::WrongScopeOracleAccount.into());
                                     }
                                     scope_account.borrow_data_unchecked()
                                 };
@@ -781,7 +781,7 @@ pub fn sign_v2(
                                     let scope_account =
                                         all_accounts.get_unchecked(all_accounts.len() - 1);
                                     if scope_account.owner().as_ref() != &SCOPE_OWNER {
-                                        return Err(SwigError::WrongOracleProgramAccount.into());
+                                        return Err(SwigError::WrongScopeOracleAccount.into());
                                     }
                                     scope_account.borrow_data_unchecked()
                                 };

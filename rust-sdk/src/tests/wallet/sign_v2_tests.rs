@@ -319,6 +319,10 @@ fn should_sign_v2_token_recurring_limit_enforced() {
             Some(&second_authority),
         )
         .unwrap();
+    swig_wallet
+        .litesvm()
+        .airdrop(&second_authority.pubkey(), 1_000_000_000)
+        .unwrap();
 
     // First transfer within limit
     let amount1 = 300u64;

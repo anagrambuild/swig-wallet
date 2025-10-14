@@ -180,17 +180,6 @@ fn test_oracle_limit_sol_transfer() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
-            false,
-        ),
-    ]);
-
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
         &[sign_ix],
@@ -223,17 +212,6 @@ fn test_oracle_limit_sol_transfer() {
         1,
     )
     .unwrap();
-
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
-            false,
-        ),
-    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -351,17 +329,6 @@ fn test_oracle_limit_token_transfer() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
-            false,
-        ),
-    ]);
-
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
         &[sign_ix],
@@ -400,17 +367,6 @@ fn test_oracle_limit_token_transfer() {
         1,
     )
     .unwrap();
-
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
-            false,
-        ),
-    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -507,17 +463,6 @@ fn test_oracle_limit_sol_passthrough() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
-            false,
-        ),
-    ]);
-
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
         &[sign_ix],
@@ -551,17 +496,6 @@ fn test_oracle_limit_sol_passthrough() {
         1,
     )
     .unwrap();
-
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
-            false,
-        ),
-    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -686,17 +620,6 @@ fn test_oracle_limit_token_passthrough() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
-            false,
-        ),
-    ]);
-
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
         &[sign_ix],
@@ -734,17 +657,6 @@ fn test_oracle_limit_token_passthrough() {
         1,
     )
     .unwrap();
-
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
-            false,
-        ),
-    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -839,17 +751,6 @@ fn test_oracle_stale_price() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
-            false,
-        ),
-    ]);
-
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
         &[sign_ix],
@@ -867,7 +768,7 @@ fn test_oracle_stale_price() {
         result.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(65)
+            solana_sdk::instruction::InstructionError::Custom(52)
         ),
         "Expected error code 63"
     );
@@ -1021,18 +922,6 @@ fn test_oracle_sol_transfer_performance_comparison() {
         1, // secondary authority role id
     )
     .unwrap();
-
-    // Add oracle accounts
-    swig_oracle_sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
-            false,
-        ),
-    ]);
 
     let swig_oracle_transfer_message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -1340,18 +1229,6 @@ fn test_oracle_token_transfer_performance_comparison() {
         1, // secondary authority role id
     )
     .unwrap();
-
-    // Add oracle accounts
-    swig_oracle_sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
-            false,
-        ),
-    ]);
 
     let swig_oracle_transfer_message = v0::Message::try_compile(
         &secondary_authority.pubkey(),

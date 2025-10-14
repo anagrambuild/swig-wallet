@@ -2,6 +2,7 @@ pub mod authority_tests;
 pub mod creation_tests;
 pub mod destination_tests;
 pub mod helper_tests;
+pub mod oracle_tests;
 pub mod program_all_tests;
 pub mod program_scope_test;
 pub mod secp256r1_test;
@@ -106,4 +107,85 @@ fn convert_wallet_to_v1(wallet: &mut SwigWallet) {
     litesvm
         .set_account(swig_key, account)
         .expect("Failed to update account");
+}
+
+use crate::tests::common::{mint_to, setup_ata, setup_mint};
+use oracle_mapping_state::{DataLen, MintMapping, ScopeMappingRegistry};
+use solana_client::rpc_client::RpcClient;
+use solana_sdk::account::Account;
+use std::str::FromStr;
+
+pub fn load_sample_scope_data(svm: &mut LiteSVM, payer: &Keypair) -> anyhow::Result<(Pubkey)> {
+    let pubkey = Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap();
+    let owner = Pubkey::from_str("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ").unwrap();
+
+    let client = RpcClient::new("https://api.mainnet-beta.solana.com".to_string());
+    let mut scope_account = client.get_account(&pubkey).unwrap();
+
+    let mut data = Account {
+        lamports: 200_700_000,
+        data: scope_account.data,
+        owner,
+        executable: false,
+        rent_epoch: 18446744073709551615,
+    };
+
+    svm.set_account(pubkey, data).unwrap();
+
+    let mapping_pubkey = Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap();
+    let owner_pubkey = Pubkey::from_str("9WM51wrB9xpRzFgYJHocYNnx4DF6G6ee2eB44ZGoZ8vg").unwrap();
+
+    let mint = setup_mint(svm, &payer).unwrap();
+
+    let devnet_client = RpcClient::new("https://api.devnet.solana.com".to_string());
+    let scope_mapping_registry_acc = devnet_client.get_account(&mapping_pubkey).unwrap();
+
+    let mut scope_mapping_data = scope_mapping_registry_acc.data.clone();
+    let mut scope_mapping_registry = ScopeMappingRegistry::from_bytes(
+        scope_mapping_data[..ScopeMappingRegistry::LEN]
+            .try_into()
+            .unwrap(),
+    )
+    .unwrap();
+
+    // Create new mint mapping
+    let new_mint_mapping = MintMapping::new(
+        mint.to_bytes(),
+        Some([0, u16::MAX, u16::MAX]),
+        None,
+        None,
+        9,
+    );
+
+    let mapping_mint_data = new_mint_mapping.to_bytes();
+    let mapping = &mapping_mint_data[..new_mint_mapping.serialized_size() as usize];
+
+    let insertion_offset =
+        ScopeMappingRegistry::LEN + scope_mapping_registry.last_mapping_offset as usize;
+
+    scope_mapping_data.resize(insertion_offset + mapping.len(), 0);
+
+    scope_mapping_data[insertion_offset..insertion_offset + mapping.len()].copy_from_slice(mapping);
+
+    scope_mapping_registry.total_mappings += 1;
+    scope_mapping_registry.last_mapping_offset += mapping.len() as u16;
+
+    scope_mapping_data[..ScopeMappingRegistry::LEN]
+        .copy_from_slice(&scope_mapping_registry.to_bytes());
+
+    let data = Account {
+        lamports: scope_mapping_registry_acc.lamports + 10000000,
+        data: scope_mapping_data,
+        owner: owner_pubkey,
+        executable: false,
+        rent_epoch: 18446744073709551615,
+    };
+
+    svm.set_account(mapping_pubkey, data).unwrap();
+
+    // sync litesvm slot to mainnet slot
+    let slot = client.get_slot().unwrap();
+    svm.warp_to_slot(slot);
+
+    Ok(mint)
 }

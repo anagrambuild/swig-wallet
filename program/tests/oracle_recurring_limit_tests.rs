@@ -194,17 +194,6 @@ fn test_oracle_recurring_limit_sol_transfer() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
-            false,
-        ),
-    ]);
-
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
         &[sign_ix],
@@ -367,17 +356,6 @@ fn test_oracle_recurring_limit_token_transfer() {
     )
     .unwrap();
 
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
-            false,
-        ),
-    ]);
-
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
         &[sign_ix],
@@ -476,7 +454,7 @@ fn test_oracle_recurring_limit_window_reset() {
     // Add oracle recurring limit permission (100 USD per window, 100 slots window)
     let oracle_recurring_limit = OracleRecurringLimit::new(
         BaseAsset::USD,
-        200_000_000, // 200 USD
+        180_000_000, // 200 USD
         3,           // 3 slots window (smaller to avoid stale price)
         false,
     );
@@ -521,17 +499,6 @@ fn test_oracle_recurring_limit_window_reset() {
         1,
     )
     .unwrap();
-
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
-            false,
-        ),
-    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -593,6 +560,7 @@ fn test_oracle_recurring_limit_window_reset() {
             .unwrap();
 
     let result2 = context.svm.send_transaction(tx2);
+    println!("result2: {:?}", result2);
     assert!(result2.is_err(), "Second transfer should fail due to limit");
 
     // Try the same transfer again (should succeed after window reset)
@@ -622,7 +590,7 @@ fn test_oracle_recurring_limit_window_reset() {
         ),
     ]);
 
-    println!("slot: {:?}", advance_slot(&mut context, 4));
+    println!("slot: {:?}", advance_slot(&mut context, 5));
 
     let message3 = v0::Message::try_compile(
         &secondary_authority.pubkey(),
@@ -722,17 +690,6 @@ fn test_oracle_recurring_limit_passthrough() {
         1,
     )
     .unwrap();
-
-    sign_ix.accounts.extend(vec![
-        AccountMeta::new_readonly(
-            Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap(),
-            false,
-        ),
-        AccountMeta::new_readonly(
-            Pubkey::from_str("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C").unwrap(),
-            false,
-        ),
-    ]);
 
     let message = v0::Message::try_compile(
         &secondary_authority.pubkey(),

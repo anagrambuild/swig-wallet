@@ -8140,6 +8140,7 @@ dependencies = [
  "litesvm",
  "litesvm-token",
  "openssl",
+ "oracle-mapping-state",
  "rand 0.8.5",
  "secp256k1",
  "solana-account-decoder-client-types",

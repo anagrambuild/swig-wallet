@@ -537,7 +537,7 @@ pub fn load_sample_scope_data(svm: &mut LiteSVM, payer: &Keypair) -> anyhow::Res
     svm.set_account(pubkey, data).unwrap();
 
     let mapping_pubkey = Pubkey::from_str("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw").unwrap();
-    let owner_pubkey = Pubkey::from_str("HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ").unwrap();
+    let owner_pubkey = Pubkey::from_str("9WM51wrB9xpRzFgYJHocYNnx4DF6G6ee2eB44ZGoZ8vg").unwrap();
 
     let mint = setup_mint(svm, &payer).unwrap();
 

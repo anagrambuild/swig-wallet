@@ -27,7 +27,9 @@ use spl_token::ID as TOKEN_PROGRAM_ID;
 use swig_interface::{swig, swig_key};
 use swig_state::{
     action::{
-        all::All, manage_authority::ManageAuthority, program_scope::ProgramScope,
+        all::All, manage_authority::ManageAuthority, oracle_limits::OracleTokenLimit,
+        oracle_recurring_limit::OracleRecurringLimit, program::Program, program_all::ProgramAll,
+        program_curated::ProgramCurated, program_scope::ProgramScope,
         sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
         sol_recurring_destination_limit::SolRecurringDestinationLimit,
         sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
@@ -751,6 +753,12 @@ impl<'c> SwigWallet<'c> {
         #[cfg(all(feature = "rust_sdk_test", test))]
         let swig_account = self.litesvm.get_account(&swig_pubkey).unwrap();
 
+        let swig_wallet_address = self.get_swig_wallet_address()?;
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let swig_wallet_data = self.rpc_client.get_account(&swig_wallet_address)?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let swig_wallet_data = self.litesvm.get_account(&swig_wallet_address).unwrap();
+
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
         #[cfg(all(feature = "rust_sdk_test", test))]
@@ -758,7 +766,7 @@ impl<'c> SwigWallet<'c> {
 
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let token_accounts = self.rpc_client.get_token_accounts_by_owner(
-            &swig_pubkey,
+            &swig_wallet_address,
             TokenAccountsFilter::ProgramId(TOKEN_PROGRAM_ID),
         )?;
         #[cfg(all(feature = "rust_sdk_test", test))]
@@ -766,7 +774,7 @@ impl<'c> SwigWallet<'c> {
 
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let token_accounts_22 = self.rpc_client.get_token_accounts_by_owner(
-            &swig_pubkey,
+            &swig_wallet_address,
             TokenAccountsFilter::ProgramId(TOKEN_22_PROGRAM_ID),
         )?;
         #[cfg(all(feature = "rust_sdk_test", test))]
@@ -778,11 +786,12 @@ impl<'c> SwigWallet<'c> {
         println!("╔══════════════════════════════════════════════════════════════════");
         println!("║ SWIG WALLET DETAILS");
         println!("╠══════════════════════════════════════════════════════════════════");
-        println!("║ Account Address: {}", swig_pubkey);
+        println!("║ Swig Account Address: {}", swig_wallet_address);
+        println!("║ Config Address: {}", swig_pubkey);
         println!("║ Total Roles: {}", swig_with_roles.state.role_counter);
         println!(
             "║ Balance: {} SOL",
-            swig_account.lamports() as f64 / 1_000_000_000.0
+            swig_wallet_data.lamports() as f64 / 1_000_000_000.0
         );
         if !token_accounts.is_empty() || !token_accounts_22.is_empty() {
             println!("║ Token Balances:");
@@ -870,6 +879,27 @@ impl<'c> SwigWallet<'c> {
                         _ => todo!(),
                     }
                 );
+
+                println!("║ ├─ Program Permissions:");
+                let program_all_permission = Role::get_action::<ProgramAll>(&role, &[])
+                    .map_err(|_| SwigError::AuthorityNotFound)?;
+                if program_all_permission.is_some() {
+                    println!("║ │  ├─ Full Access (All Permissions)");
+                }
+                let program_curated_permission = Role::get_action::<ProgramCurated>(&role, &[])
+                    .map_err(|_| SwigError::AuthorityNotFound)?;
+                if program_curated_permission.is_some() {
+                    println!("║ │  ├─ Curated Programs");
+                }
+                let program_permissions = Role::get_all_actions_of_type::<Program>(&role)
+                    .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in program_permissions.iter().enumerate() {
+                    println!(
+                        "║ │  ├─ Program {}: {}",
+                        index + 1,
+                        Pubkey::from(action.program_id)
+                    );
+                }
 
                 println!("║ ├─ Permissions:");
 
@@ -1087,6 +1117,64 @@ impl<'c> SwigWallet<'c> {
                     }
                 }
 
+                // Check Oracle Limits
+                let oracle_limits = Role::get_all_actions_of_type::<OracleTokenLimit>(&role)
+                    .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in oracle_limits.iter().enumerate() {
+                    println!("║ │  ├─ Oracle Limits");
+                    print!(
+                        "║ │  │  ├─ Amount: {} ",
+                        action.value_limit as f64
+                            / 10_f64.powf(action.get_base_asset_decimals() as f64)
+                    );
+                    println!(
+                        "{}",
+                        match action.base_asset_type {
+                            0 => "USD",
+                            1 => "EUR",
+                            _ => "Unknown",
+                        }
+                    );
+                    println!("║ │  │  └─ Passthrough Check: {}", action.passthrough_check);
+                }
+
+                let oracle_recurring_limits =
+                    Role::get_all_actions_of_type::<OracleRecurringLimit>(&role)
+                        .map_err(|_| SwigError::AuthorityNotFound)?;
+                for (index, action) in oracle_recurring_limits.iter().enumerate() {
+                    println!("║ │  ├─ Oracle Recurring Limits");
+                    print!(
+                        "║ │  │  ├─ Current Usage: {} ",
+                        action.current_amount as f64
+                            / 10_f64.powf(action.get_base_asset_decimals() as f64)
+                    );
+                    println!(
+                        "{}",
+                        match action.base_asset_type {
+                            0 => "USD",
+                            1 => "EUR",
+                            _ => "Unknown",
+                        }
+                    );
+                    print!(
+                        "║ │  │  ├─ Max Usage for the cycle: {} ",
+                        action.recurring_value_limit as f64
+                            / 10_f64.powf(action.get_base_asset_decimals() as f64)
+                    );
+                    println!(
+                        "{}",
+                        match action.base_asset_type {
+                            0 => "USD",
+                            1 => "EUR",
+                            _ => "Unknown",
+                        }
+                    );
+                    println!("║ │  │  ├─ Window: {} slots", action.window);
+
+                    println!("║ │  │  └─ Last Reset: Slot {}", action.last_reset);
+                    println!("║ │  │  └─ Passthrough Check: {}", action.passthrough_check);
+                }
+
                 println!("║ │  ");
             }
         }
@@ -1204,6 +1292,10 @@ impl<'c> SwigWallet<'c> {
             .switch_authority(role_id, client_role)?;
 
         self.authority_keypair = authority_kp;
+
+        if authority_kp.is_some() {
+            self.switch_payer(authority_kp.unwrap())?;
+        }
 
         // Update the stored role data for the new authority
         self.refresh_permissions()?;
