@@ -50,6 +50,8 @@ spl-memo = "=6.0.0"
 solana-secp256r1-program = "2.2.1"
 openssl = { version = "0.10.72", features = ["vendored"] }
 hex = "0.4.3"
+base64 = "0.22"
+serde_json = "1"
 
 [features]
 test-bpf = []

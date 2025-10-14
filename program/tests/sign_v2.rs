@@ -4,22 +4,28 @@
 // and run only program_scope tests or only the regular tests.
 
 mod common;
+use std::str::FromStr;
+
+use base64::{prelude::BASE64_STANDARD, Engine};
 use common::*;
 use litesvm_token::spl_token::{self, instruction::TokenInstruction};
 use solana_sdk::{
     account::Account,
+    hash::Hash,
     instruction::{AccountMeta, Instruction, InstructionError},
     message::{v0, VersionedMessage},
     native_token::LAMPORTS_PER_SOL,
     program_pack::Pack,
     pubkey::Pubkey,
-    signature::Keypair,
+    signature::{Keypair, Signature},
     signer::Signer,
     system_instruction,
     sysvar::{clock::Clock, rent::Rent},
     transaction::{TransactionError, VersionedTransaction},
 };
-use swig_interface::{AuthorityConfig, ClientAction, SignInstruction, SignV2Instruction};
+use swig_interface::{
+    AuthorityConfig, ClientAction, CreateInstruction, SignInstruction, SignV2Instruction,
+};
 use swig_state::{
     action::{
         all::All, program::Program, program_all::ProgramAll, sol_limit::SolLimit,
@@ -29,6 +35,38 @@ use swig_state::{
     authority::AuthorityType,
     swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
 };
+
+fn log_instruction(label: &str, ix: &Instruction) {
+    let accounts = ix
+        .accounts
+        .iter()
+        .enumerate()
+        .map(|(index, meta)| {
+            serde_json::json!({
+                "index": index,
+                "pubkey": meta.pubkey.to_string(),
+                "is_signer": meta.is_signer,
+                "is_writable": meta.is_writable,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let structured = serde_json::json!({
+        "label": label,
+        "program_id": ix.program_id.to_string(),
+        "accounts": accounts,
+        "data_len": ix.data.len(),
+        "data_base58": bs58::encode(&ix.data).into_string(),
+        "data_base64": BASE64_STANDARD.encode(&ix.data),
+        "data_hex": hex::encode(&ix.data),
+    });
+
+    println!(
+        "{}_instruction={}",
+        label,
+        serde_json::to_string_pretty(&structured).unwrap()
+    );
+}
 
 #[test_log::test]
 fn test_sign_v2_transfer_sol() {
@@ -159,6 +197,171 @@ fn test_sign_v2_transfer_sol() {
     println!(
         "✅ SignV2 test passed: Successfully transferred {} lamports",
         transfer_amount
+    );
+}
+
+#[test_log::test]
+fn test_generate_transactions_for_external_system() {
+    let authority = Pubkey::from_str("BdKgpY1Cjyd5xizSnqCNQcDqW616gwMCVAjg8mFP3rbW")
+        .expect("provided authority should be valid");
+    let swig_id = [21u8; 32];
+    let (swig_account, swig_bump) =
+        Pubkey::find_program_address(&swig_account_seeds(&swig_id), &program_id());
+    let (swig_wallet_address, swig_wallet_bump) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(swig_account.as_ref()),
+        &program_id(),
+    );
+
+    println!("swig_id_base58={}", bs58::encode(swig_id).into_string());
+    println!("swig_account={}", swig_account);
+    println!("swig_wallet_address={}", swig_wallet_address);
+
+    let create_ix = CreateInstruction::new(
+        swig_account,
+        swig_bump,
+        authority,
+        swig_wallet_address,
+        swig_wallet_bump,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: authority.as_ref(),
+        },
+        vec![ClientAction::All(All {})],
+        swig_id,
+    )
+    .expect("create instruction should build");
+
+    log_instruction("create", &create_ix);
+
+    let create_message =
+        v0::Message::try_compile(&authority, &[create_ix.clone()], &[], Hash::default())
+            .expect("create message should compile");
+
+    assert_eq!(create_ix.accounts[1].pubkey, authority);
+    assert!(create_ix.accounts[1].is_signer);
+
+    let mut create_tx = VersionedTransaction {
+        signatures: vec![Signature::default()],
+        message: VersionedMessage::V0(create_message),
+    };
+    // Use a placeholder signature so the payload is never executable.
+    create_tx.signatures[0] = Signature::default();
+
+    match &create_tx.message {
+        VersionedMessage::V0(message) => {
+            assert_eq!(message.account_keys[0], authority);
+            assert_eq!(message.header.num_required_signatures, 1);
+        },
+        _ => panic!("create transaction should use v0 message"),
+    }
+
+    let create_tx_bytes =
+        bincode::serialize(&create_tx).expect("create transaction should serialize to bytes");
+    assert!(!create_tx_bytes.is_empty());
+    println!("create_tx.bytes={:?}", create_tx_bytes);
+    println!(
+        "create_tx.base58={}",
+        bs58::encode(&create_tx_bytes).into_string()
+    );
+    println!(
+        "create_tx.base64={}",
+        BASE64_STANDARD.encode(&create_tx_bytes)
+    );
+
+    println!("=== INITIAL TRANSFER: authority -> swig wallet ===");
+
+    let initial_transfer_ix =
+        system_instruction::transfer(&authority, &swig_wallet_address, LAMPORTS_PER_SOL);
+    log_instruction("initial_transfer", &initial_transfer_ix);
+
+    let initial_transfer_message = v0::Message::try_compile(
+        &authority,
+        &[initial_transfer_ix.clone()],
+        &[],
+        Hash::default(),
+    )
+    .expect("initial transfer message should compile");
+    let mut initial_transfer_tx = VersionedTransaction {
+        signatures: vec![Signature::default()],
+        message: VersionedMessage::V0(initial_transfer_message),
+    };
+    // Use a placeholder signature so the payload is never executable.
+    initial_transfer_tx.signatures[0] = Signature::default();
+
+    match &initial_transfer_tx.message {
+        VersionedMessage::V0(message) => {
+            assert_eq!(message.account_keys[0], authority);
+            assert!(message
+                .account_keys
+                .iter()
+                .any(|key| key == &swig_wallet_address));
+        },
+        _ => panic!("initial transfer transaction should use v0 message"),
+    }
+
+    let initial_transfer_tx_bytes = bincode::serialize(&initial_transfer_tx)
+        .expect("initial transfer transaction should serialize to bytes");
+    assert!(!initial_transfer_tx_bytes.is_empty());
+    println!("initial_transfer_tx.bytes={:?}", initial_transfer_tx_bytes);
+    println!(
+        "initial_transfer_tx.base58={}",
+        bs58::encode(&initial_transfer_tx_bytes).into_string()
+    );
+    println!(
+        "initial_transfer_tx.base64={}",
+        BASE64_STANDARD.encode(&initial_transfer_tx_bytes)
+    );
+
+    println!("=== SIGNV2 TRANSFER: swig wallet -> authority ===");
+
+    let sign_v2_inner_transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &authority, LAMPORTS_PER_SOL);
+    log_instruction("sign_v2_inner_transfer", &sign_v2_inner_transfer_ix);
+
+    let sign_v2_ix = SignV2Instruction::new_ed25519_with_signers(
+        swig_account,
+        swig_wallet_address,
+        authority,
+        sign_v2_inner_transfer_ix.clone(),
+        0,
+        &[authority],
+    )
+    .expect("sign v2 instruction should build");
+
+    log_instruction("sign_v2", &sign_v2_ix);
+
+    let sign_v2_transfer_message =
+        v0::Message::try_compile(&authority, &[sign_v2_ix.clone()], &[], Hash::default())
+            .expect("sign v2 transfer message should compile");
+    let mut sign_v2_transfer_tx = VersionedTransaction {
+        signatures: vec![Signature::default()],
+        message: VersionedMessage::V0(sign_v2_transfer_message),
+    };
+    // Use a placeholder signature so the payload is never executable.
+    sign_v2_transfer_tx.signatures[0] = Signature::default();
+
+    match &sign_v2_transfer_tx.message {
+        VersionedMessage::V0(message) => {
+            assert_eq!(message.account_keys[0], authority);
+            assert!(message
+                .account_keys
+                .iter()
+                .any(|key| key == &swig_wallet_address));
+        },
+        _ => panic!("sign v2 transfer transaction should use v0 message"),
+    }
+
+    let sign_v2_transfer_tx_bytes = bincode::serialize(&sign_v2_transfer_tx)
+        .expect("sign v2 transfer transaction should serialize to bytes");
+    assert!(!sign_v2_transfer_tx_bytes.is_empty());
+    println!("sign_v2_transfer_tx.bytes={:?}", sign_v2_transfer_tx_bytes);
+    println!(
+        "sign_v2_transfer_tx.base58={}",
+        bs58::encode(&sign_v2_transfer_tx_bytes).into_string()
+    );
+    println!(
+        "sign_v2_transfer_tx.base64={}",
+        BASE64_STANDARD.encode(&sign_v2_transfer_tx_bytes)
     );
 }
 
