@@ -1974,3 +1974,268 @@ impl ClientRole for Secp256r1SessionClientRole {
         Ok(signed_instructions)
     }
 }
+
+/// Client role for ProgramExec authority.
+///
+/// This authority type validates that a preceding instruction in the transaction
+/// matches the configured program ID and instruction discriminator. The preceding
+/// instruction must be provided when creating sign instructions.
+///
+/// ProgramExec authority works with SignV2 only, as it requires separate config
+/// and wallet address accounts.
+pub struct ProgramExecClientRole {
+    /// The program ID that must execute the preceding instruction
+    pub program_id: Pubkey,
+    /// The instruction discriminator/prefix to match
+    pub instruction_prefix: Vec<u8>,
+}
+
+impl ProgramExecClientRole {
+    /// Creates a new ProgramExecClientRole.
+    ///
+    /// # Arguments
+    /// * `program_id` - The program ID that must execute the preceding instruction
+    /// * `instruction_prefix` - The instruction discriminator/prefix to match (up to 40 bytes)
+    pub fn new(program_id: Pubkey, instruction_prefix: Vec<u8>) -> Self {
+        Self {
+            program_id,
+            instruction_prefix,
+        }
+    }
+
+    /// Creates authority data for a ProgramExec authority.
+    ///
+    /// This is a convenience method that generates the authority data bytes
+    /// needed when adding a ProgramExec authority to a Swig wallet.
+    pub fn authority_data(&self) -> Vec<u8> {
+        use swig_state::authority::programexec::ProgramExecAuthority;
+        ProgramExecAuthority::create_authority_data(
+            &self.program_id.to_bytes(),
+            &self.instruction_prefix,
+        )
+    }
+
+    /// Creates a sign instruction with a preceding program instruction.
+    ///
+    /// This method creates both the preceding instruction and the sign instruction
+    /// that must be executed together in the same transaction.
+    ///
+    /// # Arguments
+    /// * `swig_account` - The Swig wallet config account
+    /// * `swig_wallet_address` - The Swig wallet address PDA
+    /// * `payer` - The transaction fee payer
+    /// * `preceding_instruction` - The instruction that must precede the sign instruction
+    /// * `inner_instruction` - The instruction to be signed by the Swig wallet
+    /// * `role_id` - The role ID that has ProgramExec authority
+    ///
+    /// # Returns
+    /// Returns a vector containing both instructions that must be executed in order:
+    /// [preceding_instruction, sign_instruction]
+    pub fn sign_with_program_exec(
+        &self,
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        inner_instruction: Instruction,
+        role_id: u32,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        SignV2Instruction::new_program_exec(
+            swig_account,
+            swig_wallet_address,
+            payer,
+            preceding_instruction,
+            inner_instruction,
+            role_id,
+        )
+        .map_err(|e| SwigError::InterfaceError(e.to_string()))
+    }
+}
+
+impl ClientRole for ProgramExecClientRole {
+    fn sign_instruction(
+        &self,
+        _swig_account: Pubkey,
+        _payer: Pubkey,
+        _role_id: u32,
+        _instructions: Vec<Instruction>,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        // ProgramExec requires a preceding instruction, so this method cannot be used directly.
+        // Users should use sign_with_program_exec instead.
+        Err(SwigError::InterfaceError(
+            "ProgramExec authority requires a preceding instruction. Use sign_with_program_exec instead.".to_string()
+        ))
+    }
+
+    fn add_authority_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        new_authority_type: AuthorityType,
+        new_authority: &[u8],
+        actions: Vec<ClientAction>,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "ProgramExec authority requires a root Ed25519 authority for management operations. Use a root authority to add authorities.".to_string()
+        ))
+    }
+
+    fn update_authority_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "ProgramExec authority requires a root Ed25519 authority for management operations. Use a root authority to update this authority.".to_string()
+        ))
+    }
+
+    fn remove_authority_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        authority_to_remove_id: u32,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "ProgramExec authority requires a root Ed25519 authority for management operations. Use a root authority to remove this authority.".to_string()
+        ))
+    }
+
+    fn create_session_instruction(
+        &self,
+        _swig_account: Pubkey,
+        _payer: Pubkey,
+        _role_id: u32,
+        _session_key: Pubkey,
+        _session_duration: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "ProgramExec authority does not support session creation".to_string()
+        ))
+    }
+
+    fn sub_account_sign_instruction(
+        &self,
+        _swig_account: Pubkey,
+        _sub_account: Pubkey,
+        _payer: Pubkey,
+        _role_id: u32,
+        _instructions: Vec<Instruction>,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "ProgramExec authority does not support sub-account signing".to_string()
+        ))
+    }
+
+    fn withdraw_token_from_sub_account_instruction(
+        &self,
+        _swig_account: Pubkey,
+        _payer: Pubkey,
+        _sub_account: Pubkey,
+        _sub_account_token: Pubkey,
+        _swig_token: Pubkey,
+        _token_program: Pubkey,
+        _role_id: u32,
+        _amount: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "ProgramExec authority does not support token withdraw from sub-account".to_string()
+        ))
+    }
+
+    fn create_sub_account_instruction(
+        &self,
+        _swig_account: Pubkey,
+        _payer: Pubkey,
+        _role_id: u32,
+        _sub_account: Pubkey,
+        _sub_account_bump: u8,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "ProgramExec authority does not support sub-account operations".to_string()
+        ))
+    }
+
+    fn withdraw_from_sub_account_instruction(
+        &self,
+        _swig_account: Pubkey,
+        _payer: Pubkey,
+        _sub_account: Pubkey,
+        _role_id: u32,
+        _amount: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "ProgramExec authority does not support sub-account operations".to_string()
+        ))
+    }
+
+    fn toggle_sub_account_instruction(
+        &self,
+        _swig_account: Pubkey,
+        _payer: Pubkey,
+        _sub_account: Pubkey,
+        _role_id: u32,
+        _enabled: bool,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "ProgramExec authority does not support sub-account operations".to_string()
+        ))
+    }
+
+    fn authority_type(&self) -> AuthorityType {
+        AuthorityType::ProgramExec
+    }
+
+    fn authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
+        Ok(self.authority_data())
+    }
+
+    fn odometer(&self) -> Result<u32, SwigError> {
+        Err(SwigError::InterfaceError(
+            "ProgramExec authority does not use odometer".to_string()
+        ))
+    }
+
+    fn increment_odometer(&mut self) -> Result<(), SwigError> {
+        Err(SwigError::InterfaceError(
+            "ProgramExec authority does not use odometer".to_string()
+        ))
+    }
+
+    fn update_odometer(&mut self, _odometer: u32) -> Result<(), SwigError> {
+        Err(SwigError::InterfaceError(
+            "ProgramExec authority does not use odometer".to_string()
+        ))
+    }
+
+    fn sign_v2_instruction(
+        &self,
+        _swig_account: Pubkey,
+        _swig_wallet_address: Pubkey,
+        _payer: Pubkey,
+        _role_id: u32,
+        _instructions: Vec<Instruction>,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        // ProgramExec requires a preceding instruction, so this method cannot be used directly.
+        // Users should use sign_with_program_exec instead.
+        Err(SwigError::InterfaceError(
+            "ProgramExec authority requires a preceding instruction. Use sign_with_program_exec instead.".to_string()
+        ))
+    }
+}

@@ -6,6 +6,7 @@
 //! session-based variants.
 
 pub mod ed25519;
+pub mod programexec;
 pub mod secp256k1;
 pub mod secp256r1;
 
@@ -13,6 +14,7 @@ use std::any::Any;
 
 use ed25519::{ED25519Authority, Ed25519SessionAuthority};
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
+use programexec::{ProgramExecAuthority, session::ProgramExecSessionAuthority};
 use secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority};
 use secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority};
 
@@ -41,7 +43,7 @@ pub trait Authority: Transmutable + TransmutableMut + IntoBytes {
 ///
 /// This trait defines the interface for interacting with authorities,
 /// including authentication and session management.
-pub trait AuthorityInfo: IntoBytes {
+pub trait AuthorityInfo {
     /// Returns the type of this authority
     fn authority_type(&self) -> AuthorityType;
 
@@ -129,6 +131,10 @@ pub enum AuthorityType {
     Secp256r1,
     /// Session-based Secp256r1 authority
     Secp256r1Session,
+    /// Program execution authority
+    ProgramExec,
+    /// Session-based Program execution authority
+    ProgramExecSession,
 }
 
 impl TryFrom<u16> for AuthorityType {
@@ -144,6 +150,8 @@ impl TryFrom<u16> for AuthorityType {
             4 => Ok(AuthorityType::Secp256k1Session),
             5 => Ok(AuthorityType::Secp256r1),
             6 => Ok(AuthorityType::Secp256r1Session),
+            7 => Ok(AuthorityType::ProgramExec),
+            8 => Ok(AuthorityType::ProgramExecSession),
             _ => Err(ProgramError::InvalidInstructionData),
         }
     }
@@ -167,6 +175,8 @@ pub const fn authority_type_to_length(
         AuthorityType::Secp256k1Session => Ok(Secp256k1SessionAuthority::LEN),
         AuthorityType::Secp256r1 => Ok(Secp256r1Authority::LEN),
         AuthorityType::Secp256r1Session => Ok(Secp256r1SessionAuthority::LEN),
+        AuthorityType::ProgramExec => Ok(ProgramExecAuthority::LEN),
+        AuthorityType::ProgramExecSession => Ok(ProgramExecSessionAuthority::LEN),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }

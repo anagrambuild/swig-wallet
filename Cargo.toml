@@ -9,6 +9,7 @@ members = [
   "no-padding",
   "rust-sdk",
   "cli",
+  "test-program-authority",
 ]
 
 [workspace.package]

@@ -116,6 +116,8 @@ pub enum SwigError {
     SignV1CannotBeUsedWithSwigV2,
     /// SignV2 instruction cannot be used with Swig v1 accounts
     SignV2CannotBeUsedWithSwigV1,
+    /// Reserved ID prefix, must use deterministic create ID
+    ReservedIdPrefix,
 }
 
 /// Implements conversion from SwigError to ProgramError.

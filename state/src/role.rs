@@ -79,7 +79,7 @@ impl<'a> Role<'a> {
     }
 
     /// Retrieves all actions associated with this role.
-    pub fn get_all_actions(&'a self) -> Result<Vec<&Action>, ProgramError> {
+    pub fn get_all_actions(&self) -> Result<Vec<&Action>, ProgramError> {
         let mut actions = Vec::new();
         let mut cursor = 0;
         while cursor < self.actions.len() {

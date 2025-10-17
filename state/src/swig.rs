@@ -8,12 +8,13 @@
 extern crate alloc;
 
 use no_padding::NoPadding;
-use pinocchio::{instruction::Seed, msg, program_error::ProgramError};
+use pinocchio::{instruction::Seed, program_error::ProgramError};
 
 use crate::{
     action::{program_scope::ProgramScope, Action, ActionLoader, Actionable},
     authority::{
         ed25519::{ED25519Authority, Ed25519SessionAuthority},
+        programexec::{ProgramExecAuthority, session::ProgramExecSessionAuthority},
         secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority},
         secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority},
         Authority, AuthorityInfo, AuthorityType,
@@ -97,37 +98,6 @@ pub fn sub_account_signer<'a>(
     ]
 }
 
-/// Represents a Swig sub-account with its associated metadata.
-// #[repr(C, align(8))]
-// #[derive(Debug, PartialEq, NoPadding)]
-// pub struct SwigSubAccount {
-//     /// Account type discriminator
-//     pub discriminator: u8,
-//     /// PDA bump seed
-//     pub bump: u8,
-//     /// Whether the sub-account is enabled
-//     pub enabled: bool,
-//     _padding: [u8; 1],
-//     /// ID of the role associated with this sub-account
-//     pub role_id: u32,
-//     /// ID of the parent Swig account
-//     pub swig_id: [u8; 32],
-//     /// Amount of lamports reserved for rent
-//     pub reserved_lamports: u64,
-// }
-
-// impl Transmutable for SwigSubAccount {
-//     const LEN: usize = core::mem::size_of::<Self>();
-// }
-
-// impl TransmutableMut for SwigSubAccount {}
-
-// impl IntoBytes for SwigSubAccount {
-//     fn into_bytes(&self) -> Result<&[u8], ProgramError> {
-//         Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
-//     }
-// }
-
 /// Builder for constructing and modifying Swig accounts.
 pub struct SwigBuilder<'a> {
     /// Buffer for role data
@@ -142,6 +112,10 @@ impl<'a> SwigBuilder<'a> {
         let (swig_bytes, roles_bytes) = account_buffer.split_at_mut(Swig::LEN);
         let bytes = swig.into_bytes()?;
         swig_bytes[0..].copy_from_slice(bytes);
+        println!("Swig bytes length: {}", swig_bytes.len());
+        println!("Swig alignment: {}", swig_bytes.as_ptr() as usize % std::mem::align_of::<u8>());
+        //get alignment of memory address
+        println!("Roles alignment: {}", roles_bytes.as_ptr() as usize % std::mem::align_of::<u8>());
         let builder = Self {
             role_buffer: roles_bytes,
             swig: unsafe { Swig::load_mut_unchecked(swig_bytes)? },
@@ -370,6 +344,21 @@ impl<'a> SwigBuilder<'a> {
                 )?;
                 Secp256r1SessionAuthority::LEN
             },
+            AuthorityType::ProgramExec => {
+                ProgramExecAuthority::set_into_bytes(
+                    authority_data,
+                    &mut self.role_buffer[auth_offset..auth_offset + ProgramExecAuthority::LEN],
+                )?;
+                ProgramExecAuthority::LEN
+            },
+            AuthorityType::ProgramExecSession => {
+                ProgramExecSessionAuthority::set_into_bytes(
+                    authority_data,
+                    &mut self.role_buffer
+                        [auth_offset..auth_offset + ProgramExecSessionAuthority::LEN],
+                )?;
+                ProgramExecSessionAuthority::LEN
+            },
             _ => return Err(SwigStateError::InvalidAuthorityData.into()),
         };
         let size = authority_length + actions_data.len();
@@ -435,8 +424,7 @@ pub struct Swig {
     pub roles: u16,
     /// Counter for generating unique role IDs
     pub role_counter: u32,
-    /// Amount of lamports reserved for rent
-    // pub reserved_lamports: u64,
+    /// Wallet address bump seed
     pub wallet_bump: u8,
     pub _padding: [u8; 7],
 }
@@ -498,6 +486,12 @@ impl Swig {
                 },
                 AuthorityType::Secp256r1Session => unsafe {
                     Secp256r1SessionAuthority::load_mut_unchecked(authority)?
+                },
+                AuthorityType::ProgramExec => unsafe {
+                    ProgramExecAuthority::load_mut_unchecked(authority)?
+                },
+                AuthorityType::ProgramExecSession => unsafe {
+                    ProgramExecSessionAuthority::load_mut_unchecked(authority)?
                 },
                 _ => return Err(ProgramError::InvalidAccountData),
             };
@@ -596,6 +590,16 @@ impl<'a> SwigWithRoles<'a> {
                         self.roles.get_unchecked(offset..offset + auth_len),
                     )?
                 },
+                AuthorityType::ProgramExec => unsafe {
+                    ProgramExecAuthority::load_unchecked(
+                        self.roles.get_unchecked(offset..offset + auth_len),
+                    )?
+                },
+                AuthorityType::ProgramExecSession => unsafe {
+                    ProgramExecSessionAuthority::load_unchecked(
+                        self.roles.get_unchecked(offset..offset + auth_len),
+                    )?
+                },
                 _ => return Err(ProgramError::InvalidAccountData),
             };
 
@@ -650,6 +654,16 @@ impl<'a> SwigWithRoles<'a> {
                         },
                         AuthorityType::Secp256r1Session => unsafe {
                             Secp256r1SessionAuthority::load_unchecked(self.roles.get_unchecked(
+                                offset..offset + position.authority_length() as usize,
+                            ))?
+                        },
+                        AuthorityType::ProgramExec => unsafe {
+                            ProgramExecAuthority::load_unchecked(self.roles.get_unchecked(
+                                offset..offset + position.authority_length() as usize,
+                            ))?
+                        },
+                        AuthorityType::ProgramExecSession => unsafe {
+                            ProgramExecSessionAuthority::load_unchecked(self.roles.get_unchecked(
                                 offset..offset + position.authority_length() as usize,
                             ))?
                         },
@@ -733,7 +747,8 @@ mod tests {
     use super::*;
     use crate::{
         action::{all::All, manage_authority::ManageAuthority, sol_limit::SolLimit, Actionable},
-        authority::{ed25519::ED25519Authority, secp256k1::CreateSecp256k1SessionAuthority},
+        authority::ed25519::ED25519Authority,
+        Transmutable
     };
 
     // Calculate exact buffer size needed for a test with N roles
@@ -1311,9 +1326,9 @@ mod tests {
 
         // Test duplicate authority test
         println!("Testing duplicate authority");
-        let (mut new_buffer, _, _) = setup_large_test_buffer();
-        let new_swig = Swig::new(id, bump, 0);
-        let mut new_builder = SwigBuilder::create(&mut new_buffer, new_swig).unwrap();
+        let (mut new_buffer, id, bump) = setup_large_test_buffer();
+        let swig = Swig::new(id, bump, 0);
+        let mut new_builder = SwigBuilder::create(&mut new_buffer, swig).unwrap();
 
         // Add two roles with the same authority but different actions
         new_builder
