@@ -112,16 +112,6 @@ impl<'a> SwigBuilder<'a> {
         let (swig_bytes, roles_bytes) = account_buffer.split_at_mut(Swig::LEN);
         let bytes = swig.into_bytes()?;
         swig_bytes[0..].copy_from_slice(bytes);
-        println!("Swig bytes length: {}", swig_bytes.len());
-        println!(
-            "Swig alignment: {}",
-            swig_bytes.as_ptr() as usize % std::mem::align_of::<u8>()
-        );
-        // get alignment of memory address
-        println!(
-            "Roles alignment: {}",
-            roles_bytes.as_ptr() as usize % std::mem::align_of::<u8>()
-        );
         let builder = Self {
             role_buffer: roles_bytes,
             swig: unsafe { Swig::load_mut_unchecked(swig_bytes)? },
