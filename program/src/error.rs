@@ -112,6 +112,8 @@ pub enum SwigError {
     AccountDataModifiedUnexpectedly,
     /// Cannot update root authority (ID 0)
     PermissionDeniedCannotUpdateRootAuthority,
+    /// Reserved ID prefix, must use deterministic create ID
+    ReservedIdPrefix,
 }
 
 /// Implements conversion from SwigError to ProgramError.
