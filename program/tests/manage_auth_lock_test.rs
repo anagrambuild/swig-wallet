@@ -15,7 +15,7 @@ use swig_state::{
     action::{
         all::All, authorization_lock::AuthorizationLock,
         manage_auth_lock::ManageAuthorizationLocks, manage_authority::ManageAuthority,
-        sol_limit::SolLimit,
+        program_all::ProgramAll, sol_limit::SolLimit,
     },
     authority::AuthorityType,
     swig::SwigWithRoles,
@@ -92,7 +92,7 @@ fn test_manage_authorization_locks_ed25519_add_lock() -> anyhow::Result<()> {
         authority: second_authority_pubkey.as_ref(),
     };
     let actions = vec![
-        ClientAction::All(All {}),
+        ClientAction::ProgramAll(ProgramAll {}),
         ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
     ];
 
@@ -103,6 +103,19 @@ fn test_manage_authorization_locks_ed25519_add_lock() -> anyhow::Result<()> {
         authority_config,
         actions,
     )?;
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
+
+    for i in 0..swig_data.state.roles {
+        let role = swig_data.get_role(i as u32).unwrap().unwrap();
+        println!("role: {:?}", role.position.id());
+        let role_actions = role.get_all_actions().unwrap();
+        for action in role_actions {
+            println!("=> action: {:?}", action.permission());
+        }
+    }
 
     // Create new actions to replace all existing actions on the second authority
     let new_actions = vec![
@@ -133,11 +146,16 @@ fn test_manage_authorization_locks_ed25519_add_lock() -> anyhow::Result<()> {
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
         .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
-    let role = swig_data.get_role(2).unwrap().unwrap();
-    let role_actions = role.get_all_actions().unwrap();
-    for action in role_actions {
-        println!("action: {:?}", action.permission());
+
+    for i in 0..swig_data.state.roles {
+        let role = swig_data.get_role(i as u32).unwrap().unwrap();
+        println!("role: {:?}", role.position.id());
+        let role_actions = role.get_all_actions().unwrap();
+        for action in role_actions {
+            println!("=> action: {:?}", action.permission());
+        }
     }
+
     Ok(())
 }
 

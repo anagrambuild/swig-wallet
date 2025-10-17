@@ -697,7 +697,8 @@ pub fn manage_authorization_locks_v1(
     }
 
     let mut size_diff: i64;
-    let mints = args_authlock
+    let mut global_mints_to_add = Vec::new();
+    let mut mints = args_authlock
         .iter()
         .map(|authlock| authlock.mint)
         .collect::<Vec<[u8; 32]>>();
@@ -713,6 +714,7 @@ pub fn manage_authorization_locks_v1(
                 }
             }
             let new_actions = manage_authlock_args.get_actions_data()?;
+
             size_diff = perform_add_actions_operation(
                 swig_roles,
                 swig_data_len,
@@ -723,6 +725,111 @@ pub fn manage_authorization_locks_v1(
                 manage_authlock_args.args.authority_to_update_id,
             )?;
             msg!("size_diff: {:?}", size_diff);
+
+            let swig_data_len = ctx.accounts.swig.data_len();
+
+            let global_role = Swig::get_mut_role(0, swig_roles)?.unwrap();
+
+            for auth_lock in &mut args_authlock {
+                let global_has_authlock =
+                    global_role.get_action::<AuthorizationLock>(&auth_lock.mint);
+                if global_has_authlock.is_ok() {
+                    let global_has_authlock = global_has_authlock.unwrap();
+                    if global_has_authlock.is_none() {
+                        global_mints_to_add.push(auth_lock);
+                    } else {
+                        // keep such that update flow will handle the update
+                    }
+                } else {
+                    global_mints_to_add.push(auth_lock);
+                }
+            }
+
+            let mut action_bytes = Vec::new();
+            for auth_lock in &global_mints_to_add {
+                let action_header = Action::new(
+                    Permission::AuthorizationLock,
+                    AuthorizationLock::LEN as u16,
+                    action_bytes.len() as u32 + Action::LEN as u32 + AuthorizationLock::LEN as u32,
+                );
+                let action_header_bytes = action_header.into_bytes()?;
+                let action_data_bytes = auth_lock.into_bytes()?;
+                action_bytes.extend_from_slice(&action_header_bytes);
+                action_bytes.extend_from_slice(&action_data_bytes);
+
+                // remove from mints
+                mints.remove(mints.iter().position(|x| x == &auth_lock.mint).unwrap());
+            }
+
+            {
+                let new_size = (swig_data_len + action_bytes.len()) as usize;
+                let aligned_size =
+                    core::alloc::Layout::from_size_align(new_size, core::mem::size_of::<u64>())
+                        .map_err(|_| SwigError::InvalidAlignment)?
+                        .pad_to_align()
+                        .size();
+
+                ctx.accounts.swig.realloc(aligned_size, false)?;
+
+                let cost = Rent::get()?.minimum_balance(aligned_size);
+                let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
+
+                let additional_cost = cost.saturating_sub(current_lamports);
+
+                if additional_cost > 0 {
+                    Transfer {
+                        from: ctx.accounts.payer,
+                        to: ctx.accounts.swig,
+                        lamports: additional_cost,
+                    }
+                    .invoke()?;
+                }
+            }
+
+            let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+            let (swig_header, swig_roles) =
+                unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+            let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+            let target_role_id = 0;
+            let (current_actions_size, authority_offset, actions_offset) = {
+                let mut cursor = 0;
+                let mut found = false;
+                let mut auth_offset = 0;
+                let mut act_offset = 0;
+                let mut current_size = 0;
+
+                for _i in 0..swig.roles {
+                    let position = unsafe {
+                        Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])?
+                    };
+                    if position.id() == target_role_id {
+                        found = true;
+                        auth_offset = cursor;
+                        act_offset = cursor + Position::LEN + position.authority_length() as usize;
+                        current_size = position.boundary() as usize - act_offset;
+
+                        break;
+                    }
+                    cursor = position.boundary() as usize;
+                }
+
+                if !found {
+                    return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+                }
+
+                (current_size, auth_offset, act_offset)
+            };
+
+            size_diff = perform_add_actions_operation(
+                swig_roles,
+                swig_data_len,
+                authority_offset,
+                actions_offset,
+                current_actions_size,
+                &action_bytes,
+                0,
+            )?;
+            msg!("global size_diff: {:?}", size_diff);
         },
         ManageAuthorizationLocksOperation::RemoveLock => {
             size_diff = perform_modify_authlock_operation(
@@ -735,7 +842,29 @@ pub fn manage_authorization_locks_v1(
                 manage_authlock_args.args.authority_to_update_id,
                 false,
             )?;
-            msg!("size_diff: {:?}", size_diff);
+
+            if size_diff < 0 {
+                let new_size = (swig_data_len as i64 + size_diff) as usize;
+                let aligned_size =
+                    core::alloc::Layout::from_size_align(new_size, core::mem::size_of::<u64>())
+                        .map_err(|_| SwigError::InvalidAlignment)?
+                        .pad_to_align()
+                        .size();
+
+                ctx.accounts.swig.resize(aligned_size)?;
+
+                let cost = Rent::get()?.minimum_balance(aligned_size);
+                let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
+
+                let additional_cost = current_lamports.saturating_sub(cost);
+
+                if additional_cost > 0 {
+                    unsafe {
+                        *ctx.accounts.swig.borrow_mut_lamports_unchecked() -= additional_cost;
+                        *ctx.accounts.swig.borrow_mut_lamports_unchecked() += additional_cost;
+                    }
+                }
+            }
         },
         ManageAuthorizationLocksOperation::UpdateLock => {
             size_diff = perform_modify_authlock_operation(
@@ -750,31 +879,6 @@ pub fn manage_authorization_locks_v1(
             )?;
             msg!("size_diff: {:?}", size_diff);
         },
-    }
-
-    msg!("swig_roles {}", swig_roles.len());
-
-    if size_diff < 0 {
-        let new_size = (swig_data_len as i64 + size_diff) as usize;
-        let aligned_size =
-            core::alloc::Layout::from_size_align(new_size, core::mem::size_of::<u64>())
-                .map_err(|_| SwigError::InvalidAlignment)?
-                .pad_to_align()
-                .size();
-
-        ctx.accounts.swig.resize(aligned_size)?;
-
-        let cost = Rent::get()?.minimum_balance(aligned_size);
-        let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
-
-        let additional_cost = current_lamports.saturating_sub(cost);
-
-        if additional_cost > 0 {
-            unsafe {
-                *ctx.accounts.swig.borrow_mut_lamports_unchecked() -= additional_cost;
-                *ctx.accounts.swig.borrow_mut_lamports_unchecked() += additional_cost;
-            }
-        }
     }
 
     // Get fresh references to the swig account data after reallocation
@@ -813,8 +917,8 @@ pub fn manage_authorization_locks_v1(
         (current_size, auth_offset, act_offset)
     };
 
-    msg!("performing to be updated");
     if !to_be_updated.is_empty() {
+        msg!("performing to be updated");
         size_diff = perform_modify_authlock_operation(
             swig_roles,
             swig_data_len,
@@ -874,16 +978,12 @@ pub fn get_authlock_by_mints(
 
         for role in &roles {
             let role = Swig::get_mut_role(*role, swig_roles)?.unwrap();
-            msg!("role {:?}", role.position.id());
 
             let auth_lock = role.get_action::<AuthorizationLock>(mint);
-
             if auth_lock.is_ok() {
                 let auth_lock = auth_lock.unwrap();
-                msg!("auth_lock {:?}", auth_lock);
 
                 if auth_lock.is_some() {
-                    msg!("mint found in role");
                     mint_found = true;
                     new_auth_lock.update_for_global(auth_lock.unwrap());
                 }
