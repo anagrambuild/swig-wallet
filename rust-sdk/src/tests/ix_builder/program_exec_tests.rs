@@ -46,19 +46,19 @@ fn test_program_exec_sign_with_preceding_instruction() {
     let swig_key_for_closure = swig_key;
     let swig_wallet_for_closure = swig_wallet_address;
 
-    // Create ProgramExec authority with function that generates preceding instruction
-    let program_exec_role = ProgramExecClientRole::new(
-        TEST_PROGRAM_ID,
-        VALID_DISCRIMINATOR.to_vec(),
-        move || Instruction {
-            program_id: TEST_PROGRAM_ID,
-            accounts: vec![
-                AccountMeta::new_readonly(swig_key_for_closure, false), // config
-                AccountMeta::new_readonly(swig_wallet_for_closure, false), // wallet
-            ],
-            data: VALID_DISCRIMINATOR.to_vec(),
-        },
-    );
+    // Create ProgramExec authority with function that generates preceding
+    // instruction
+    let program_exec_role =
+        ProgramExecClientRole::new(TEST_PROGRAM_ID, VALID_DISCRIMINATOR.to_vec(), move || {
+            Instruction {
+                program_id: TEST_PROGRAM_ID,
+                accounts: vec![
+                    AccountMeta::new_readonly(swig_key_for_closure, false), // config
+                    AccountMeta::new_readonly(swig_wallet_for_closure, false), // wallet
+                ],
+                data: VALID_DISCRIMINATOR.to_vec(),
+            }
+        });
 
     // Add ProgramExec authority using root authority
     let mut root_builder = SwigInstructionBuilder::new(
@@ -108,24 +108,25 @@ fn test_program_exec_sign_with_preceding_instruction() {
     println!("✓ Successfully added ProgramExec authority");
     println!("  - Total roles: {}", swig_data.state.roles);
 
-    // Note: To actually test signing with ProgramExec, the TEST_PROGRAM would need to be
-    // deployed and executed. This test verifies that the authority can be added and
-    // the authority data is correctly generated with the closure-based function pattern.
+    // Note: To actually test signing with ProgramExec, the TEST_PROGRAM would
+    // need to be deployed and executed. This test verifies that the
+    // authority can be added and the authority data is correctly generated
+    // with the closure-based function pattern.
 }
 
 #[test_log::test]
 fn test_program_exec_authority_data_generation() {
     // Test that authority data is generated correctly
-    // The function doesn't matter for authority_data() generation, so use a dummy one
-    let program_exec_role = ProgramExecClientRole::new(
-        TEST_PROGRAM_ID,
-        VALID_DISCRIMINATOR.to_vec(),
-        || Instruction {
-            program_id: TEST_PROGRAM_ID,
-            accounts: vec![],
-            data: vec![],
-        },
-    );
+    // The function doesn't matter for authority_data() generation, so use a dummy
+    // one
+    let program_exec_role =
+        ProgramExecClientRole::new(TEST_PROGRAM_ID, VALID_DISCRIMINATOR.to_vec(), || {
+            Instruction {
+                program_id: TEST_PROGRAM_ID,
+                accounts: vec![],
+                data: vec![],
+            }
+        });
 
     let authority_data = program_exec_role.authority_data();
 
@@ -197,31 +198,29 @@ fn test_program_exec_with_multiple_authorities() {
     let swig_key_for_closure = swig_key;
     let swig_wallet_for_closure = swig_wallet_address;
 
-    let program_exec_role1 = ProgramExecClientRole::new(
-        TEST_PROGRAM_ID,
-        discriminator1.clone(),
-        move || Instruction {
-            program_id: TEST_PROGRAM_ID,
-            accounts: vec![
-                AccountMeta::new_readonly(swig_key_for_closure, false),
-                AccountMeta::new_readonly(swig_wallet_for_closure, false),
-            ],
-            data: discriminator1.clone(),
-        },
-    );
+    let program_exec_role1 =
+        ProgramExecClientRole::new(TEST_PROGRAM_ID, discriminator1.clone(), move || {
+            Instruction {
+                program_id: TEST_PROGRAM_ID,
+                accounts: vec![
+                    AccountMeta::new_readonly(swig_key_for_closure, false),
+                    AccountMeta::new_readonly(swig_wallet_for_closure, false),
+                ],
+                data: discriminator1.clone(),
+            }
+        });
 
-    let program_exec_role2 = ProgramExecClientRole::new(
-        TEST_PROGRAM_ID,
-        discriminator2.clone(),
-        move || Instruction {
-            program_id: TEST_PROGRAM_ID,
-            accounts: vec![
-                AccountMeta::new_readonly(swig_key_for_closure, false),
-                AccountMeta::new_readonly(swig_wallet_for_closure, false),
-            ],
-            data: discriminator2.clone(),
-        },
-    );
+    let program_exec_role2 =
+        ProgramExecClientRole::new(TEST_PROGRAM_ID, discriminator2.clone(), move || {
+            Instruction {
+                program_id: TEST_PROGRAM_ID,
+                accounts: vec![
+                    AccountMeta::new_readonly(swig_key_for_closure, false),
+                    AccountMeta::new_readonly(swig_wallet_for_closure, false),
+                ],
+                data: discriminator2.clone(),
+            }
+        });
 
     let mut root_builder = SwigInstructionBuilder::new(
         swig_id,

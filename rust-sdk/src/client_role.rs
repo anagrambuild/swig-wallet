@@ -1326,14 +1326,16 @@ impl ClientRole for Ed25519SessionClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let session_key = Pubkey::new_from_array(self.session_authority.public_key);
-        Ok(vec![CreateSubAccountInstruction::new_with_ed25519_authority(
-            swig_account,
-            session_key,
-            payer,
-            sub_account,
-            role_id,
-            sub_account_bump,
-        )?])
+        Ok(vec![
+            CreateSubAccountInstruction::new_with_ed25519_authority(
+                swig_account,
+                session_key,
+                payer,
+                sub_account,
+                role_id,
+                sub_account_bump,
+            )?,
+        ])
     }
 
     fn sub_account_sign_instruction(
@@ -1684,15 +1686,13 @@ impl ClientRole for Secp256k1SessionClientRole {
         // Session authorities sign as Ed25519 with the session_key
         let session_key = Pubkey::new_from_array(self.session_authority.session_key);
 
-        Ok(vec![
-            SubAccountSignInstruction::new_with_ed25519_authority(
-                swig_account,
-                sub_account,
-                session_key,
-                role_id,
-                instructions,
-            )?,
-        ])
+        Ok(vec![SubAccountSignInstruction::new_with_ed25519_authority(
+            swig_account,
+            sub_account,
+            session_key,
+            role_id,
+            instructions,
+        )?])
     }
 
     fn withdraw_from_sub_account_instruction(
@@ -2034,15 +2034,13 @@ impl ClientRole for Secp256r1SessionClientRole {
         // Session authorities sign as Ed25519 with the session_key
         let session_key = Pubkey::new_from_array(self.session_authority.session_key);
 
-        Ok(vec![
-            SubAccountSignInstruction::new_with_ed25519_authority(
-                swig_account,
-                sub_account,
-                session_key,
-                role_id,
-                instructions,
-            )?,
-        ])
+        Ok(vec![SubAccountSignInstruction::new_with_ed25519_authority(
+            swig_account,
+            sub_account,
+            session_key,
+            role_id,
+            instructions,
+        )?])
     }
 
     fn withdraw_from_sub_account_instruction(
@@ -2296,7 +2294,7 @@ where
         instructions: Vec<Instruction>,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-       Err(SwigError::InterfaceError(
+        Err(SwigError::InterfaceError(
             "ProgramExecClientRole only supports SignV2 instructions".to_string(),
         ))
     }
@@ -2399,9 +2397,9 @@ where
         instructions: Vec<Instruction>,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        // Note: SubAccountSign requires a payer parameter but the trait doesn't provide it
-        // We'll use the swig_account as a placeholder since the actual payer needs to be
-        // determined by the caller
+        // Note: SubAccountSign requires a payer parameter but the trait doesn't provide
+        // it We'll use the swig_account as a placeholder since the actual payer
+        // needs to be determined by the caller
         let payer = swig_account; // Caller should ensure correct payer is set
 
         let preceding_instruction = (self.preceding_instruction_fn)();
@@ -2576,11 +2574,8 @@ where
             ));
         }
 
-        let (_, compact_ixs) = swig_interface::compact_instructions(
-            swig_account,
-            accounts_with_signers,
-            instructions,
-        );
+        let (_, compact_ixs) =
+            swig_interface::compact_instructions(swig_account, accounts_with_signers, instructions);
 
         let inner_instruction = solana_program::instruction::Instruction {
             program_id: swig_interface::program_id(),
@@ -2591,11 +2586,9 @@ where
         // Get the preceding instruction from the function
         let preceding_instruction = (self.preceding_instruction_fn)();
 
-        // Determine payer from transaction_signers (first signer is typically the payer)
-        let payer = transaction_signers
-            .first()
-            .copied()
-            .unwrap_or(swig_account);
+        // Determine payer from transaction_signers (first signer is typically the
+        // payer)
+        let payer = transaction_signers.first().copied().unwrap_or(swig_account);
 
         // Use SignV2 with ProgramExec
         SignV2Instruction::new_program_exec(
