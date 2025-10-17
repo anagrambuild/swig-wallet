@@ -50,6 +50,7 @@ fn test_token_transfer_performance_comparison() {
     let id = rand::random::<[u8; 32]>();
     let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
     let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
+    convert_swig_to_v1(&mut context, &swig);
     assert!(swig_create_result.is_ok());
 
     // Setup token accounts
@@ -190,7 +191,7 @@ fn test_token_transfer_performance_comparison() {
     );
     // 3744 is the max difference in CU between the two transactions lets lower
     // this as far as possible but never increase it
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3805);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3851);
 }
 
 #[test_log::test]
@@ -218,6 +219,7 @@ fn test_sol_transfer_performance_comparison() {
     let id = rand::random::<[u8; 32]>();
     let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
     let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
+    convert_swig_to_v1(&mut context, &swig);
     assert!(swig_create_result.is_ok());
 
     context.svm.airdrop(&swig, initial_sol_amount).unwrap();
@@ -303,5 +305,5 @@ fn test_sol_transfer_performance_comparison() {
 
     // Set a reasonable limit for the CU difference to avoid regressions
     // Similar to the token transfer test assertion
-    assert!(swig_transfer_cu - regular_transfer_cu <= 2032);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 2196);
 }

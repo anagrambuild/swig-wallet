@@ -90,13 +90,12 @@ pub enum SwigInstruction {
     /// Additional accounts may be required for CPI calls.
     ///
     /// Required accounts:
-    /// 1. `[writable, signer]` Swig wallet account
-    /// 2. `[writable, signer]` Payer account
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Swig wallet address account
     /// 3. System program account
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
     #[account(1, writable, signer, name="swig_wallet_address", desc="the swig smart wallet address")]
-    #[account(2, writable, signer, name="payer", desc="the payer")]
-    #[account(3, name="system_program", desc="the system program")]
+    #[account(2, name="system_program", desc="the system program")]
     SignV2 = 11,
 
     /// Creates a new session for temporary authority.
@@ -143,13 +142,11 @@ pub enum SwigInstruction {
     ///
     /// Required accounts:
     /// 1. Swig wallet account
-    /// 2. `[writable, signer]` Payer account
-    /// 3. `[writable]` Sub-account
-    /// 4. System program account
+    /// 2. `[writable]` Sub-account
+    /// 3. System program account
     #[account(0, name="swig", desc="the swig smart wallet")]
-    #[account(1, writable, signer, name="payer", desc="the payer")]
-    #[account(2, writable, name="sub_account", desc="the sub account")]
-    #[account(3, name="system_program", desc="the system program")]
+    #[account(1, writable, name="sub_account", desc="the sub account")]
+    #[account(2, name="system_program", desc="the system program")]
     SubAccountSignV1 = 9,
 
     /// Toggles the enabled state of a sub-account.

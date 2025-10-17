@@ -57,6 +57,7 @@ fn test_all_but_manage_authority_can_transfer_sol() {
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -175,6 +176,7 @@ fn test_all_but_manage_authority_can_transfer_tokens() {
     .unwrap();
 
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
+    convert_swig_to_v1(&mut context, &swig);
     assert!(swig_create_txn.is_ok());
 
     let second_authority = Keypair::new();
@@ -296,6 +298,7 @@ fn test_all_but_manage_authority_can_do_cpi_calls() {
 
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_txn.is_ok());
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -1192,6 +1195,7 @@ fn test_all_but_manage_authority_cannot_toggle_sub_account() {
         restricted_authority.pubkey(),
         restricted_authority.pubkey(),
         sub_account,
+        restricted_role_id,
         restricted_role_id,
         false, // disable
     )

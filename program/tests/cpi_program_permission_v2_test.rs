@@ -92,7 +92,6 @@ fn test_cpi_signing_requires_program_permission_v2() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         transfer_ix,
         1, // Second authority should be role_id 1
     )
@@ -155,7 +154,6 @@ fn test_cpi_signing_requires_program_permission_v2() {
     let sign_ix2 = swig_interface::SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        third_authority.pubkey(),
         third_authority.pubkey(),
         transfer_ix2,
         2, // Third authority should be role_id 2
@@ -257,7 +255,6 @@ fn test_cpi_signing_without_program_permission_fails_v2() {
     let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix,
         1, // Second authority should be role_id 1
@@ -363,7 +360,6 @@ fn test_cpi_signing_with_program_all_permission_v2() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         transfer_ix,
         1,
     )
@@ -464,7 +460,6 @@ fn test_cpi_signing_with_program_curated_permission_v2() {
     let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix,
         1,

@@ -24,7 +24,8 @@ fn test_add_authority_with_ed25519_root() {
     let role_id = 0;
 
     // First create the Swig account
-    let (swig_key, _) = create_swig_ed25519(&mut context, &authority, swig_id).unwrap();
+    let (swig_key, swig_wallet_address, _) =
+        create_swig_ed25519(&mut context, &authority, swig_id).unwrap();
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
@@ -180,7 +181,7 @@ fn test_remove_authority_with_ed25519_root() {
     let authority_pubkey = authority.pubkey();
     let role_id = 0;
 
-    let (swig_key, _) = create_swig_ed25519(&mut context, &authority, swig_id).unwrap();
+    let (swig_key, _, _) = create_swig_ed25519(&mut context, &authority, swig_id).unwrap();
 
     let new_authority = Keypair::new();
     let permissions = vec![Permission::Sol {
@@ -286,7 +287,7 @@ fn test_update_authority_with_ed25519_root() {
     let role_id = 0;
 
     // First create the Swig account
-    let (swig_key, _) = create_swig_ed25519(&mut context, &authority, swig_id).unwrap();
+    let (swig_key, _, _) = create_swig_ed25519(&mut context, &authority, swig_id).unwrap();
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,

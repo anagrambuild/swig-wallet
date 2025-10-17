@@ -192,7 +192,6 @@ fn sign_with_swig_v2(
         *swig_account,
         *swig_wallet_address,
         authority.pubkey(),
-        authority.pubkey(),
         instruction,
         0, // role_id 0 for root authority
     )?;

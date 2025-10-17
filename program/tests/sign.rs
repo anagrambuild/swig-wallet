@@ -23,8 +23,9 @@ use swig::actions::sign_v1::SignV1Args;
 use swig_interface::{compact_instructions, AuthorityConfig, ClientAction};
 use swig_state::{
     action::{
-        all::All, program::Program, sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit,
-        token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit,
+        all::All, program::Program, program_all::ProgramAll, sol_limit::SolLimit,
+        sol_recurring_limit::SolRecurringLimit, token_limit::TokenLimit,
+        token_recurring_limit::TokenRecurringLimit,
     },
     authority::AuthorityType,
     swig::{swig_account_seeds, SwigWithRoles},
@@ -90,6 +91,7 @@ fn test_transfer_sol_with_additional_authority() {
     context.svm.airdrop(&swig, 10_000_000_000).unwrap();
     context.svm.warp_to_slot(100);
 
+    convert_swig_to_v1(&mut context, &swig);
     let ixd = system_instruction::transfer(&swig, &recipient.pubkey(), amount / 2);
     let sign_ix = swig_interface::SignInstruction::new_ed25519(
         swig,
@@ -154,6 +156,7 @@ fn test_transfer_sol_all_with_authority() {
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -260,6 +263,7 @@ fn test_transfer_sol_and_tokens_with_mixed_permissions() {
 
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_txn.is_ok());
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -373,6 +377,7 @@ fn test_fail_transfer_sol_with_additional_authority_not_enough() {
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
+    convert_swig_to_v1(&mut context, &swig);
     let second_authority = Keypair::new();
     context
         .svm
@@ -441,6 +446,7 @@ fn fail_not_correct_authority() {
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
+    convert_swig_to_v1(&mut context, &swig);
     let second_authority = Keypair::new();
     context
         .svm
@@ -534,6 +540,7 @@ fn fail_wrong_resource() {
 
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_txn.is_ok());
+    convert_swig_to_v1(&mut context, &swig);
     let second_authority = Keypair::new();
     context
         .svm
@@ -608,6 +615,7 @@ fn test_transfer_sol_with_recurring_limit() {
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -766,6 +774,7 @@ fn test_transfer_sol_with_recurring_limit_window_reset() {
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -928,6 +937,7 @@ fn test_transfer_token_with_recurring_limit() {
     .unwrap();
 
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -1132,6 +1142,7 @@ fn test_transfer_between_swig_accounts() {
         sender_create_result.is_ok(),
         "Failed to create sender Swig account"
     );
+    convert_swig_to_v1(&mut context, &sender_swig);
 
     let recipient_create_result =
         create_swig_ed25519(&mut context, &recipient_authority, recipient_id);
@@ -1139,6 +1150,7 @@ fn test_transfer_between_swig_accounts() {
         recipient_create_result.is_ok(),
         "Failed to create recipient Swig account"
     );
+    convert_swig_to_v1(&mut context, &recipient_swig);
 
     // Fund the sender Swig account
     context.svm.airdrop(&sender_swig, 5_000_000_000).unwrap();
@@ -1213,6 +1225,7 @@ fn test_sol_limit_cpi_enforcement() {
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -1373,6 +1386,7 @@ fn test_sol_limit_cpi_enforcement_no_sol_limit() {
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -1580,6 +1594,7 @@ fn test_token_limit_cpi_enforcement() {
     .unwrap();
 
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -1854,6 +1869,7 @@ fn test_multiple_token_limits_cpi_enforcement() {
     }
 
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -2125,5 +2141,110 @@ fn test_multiple_token_limits_cpi_enforcement() {
     println!(
         "✅ This demonstrates that the SWIG wallet properly handles complex multi-token attack \
          scenarios."
+    );
+}
+
+#[test_log::test]
+fn test_token_transfer_through_secondary_authority() {
+    let mut context = setup_test_context().unwrap();
+
+    let swig_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Create wallet and setup
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    convert_swig_to_v1(&mut context, &swig_key);
+
+    let recipient = Keypair::new();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig_key,
+        &context.default_payer,
+    )
+    .unwrap();
+    let recipient_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &recipient.pubkey(),
+        &recipient,
+    )
+    .unwrap();
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &swig_ata,
+        1000,
+    )
+    .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: recipient.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: mint_pubkey.to_bytes(),
+                current_amount: 600_000_000,
+            }),
+            ClientAction::ProgramAll(ProgramAll {}),
+        ],
+    )
+    .unwrap();
+
+    // create transaction
+    let ixd = Instruction {
+        program_id: spl_token::id(),
+        accounts: vec![
+            AccountMeta::new(swig_ata, false),
+            AccountMeta::new(recipient_ata, false),
+            AccountMeta::new(swig_key, false),
+        ],
+        data: TokenInstruction::Transfer { amount: 100 }.pack(),
+    };
+
+    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig_key,
+        recipient.pubkey(),
+        recipient.pubkey(),
+        ixd,
+        1,
+    )
+    .unwrap();
+
+    println!("sign_ix: {:?}", sign_ix.data);
+
+    let message = v0::Message::try_compile(
+        &recipient.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&recipient]).unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    println!("result: {:?}", result);
+    assert!(result.is_ok(), "Transfer below limit should succeed");
+    println!(
+        "Compute units consumed for below limit transfer: {}",
+        result.unwrap().compute_units_consumed
     );
 }

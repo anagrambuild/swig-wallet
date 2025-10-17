@@ -99,7 +99,6 @@ fn test_sol_destination_limit_basic_v2() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         inner_ix,
         1, // role_id
     )
@@ -217,7 +216,6 @@ fn test_general_sol_limit_hit_before_destination_limit_v2() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         inner_ix,
         1,
     )
@@ -320,7 +318,6 @@ fn test_destination_limit_hit_before_general_sol_limit_v2() {
     let sol_transfer_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        second_authority.pubkey(),
         second_authority.pubkey(),
         inner_ix,
         1,
@@ -431,7 +428,6 @@ fn test_multiple_destination_limits_v2() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         inner_ix1,
         1,
     )
@@ -445,7 +441,6 @@ fn test_multiple_destination_limits_v2() {
     let sol_transfer_ix2 = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        second_authority.pubkey(),
         second_authority.pubkey(),
         inner_ix2,
         1,
@@ -557,7 +552,6 @@ fn test_sol_destination_limit_exceeds_limit_v2() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         inner_ix,
         1,
     )
@@ -658,7 +652,6 @@ fn test_sol_destination_limit_with_general_limit_v2() {
     let sol_transfer_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        second_authority.pubkey(),
         second_authority.pubkey(),
         inner_ix,
         1,

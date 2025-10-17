@@ -47,6 +47,8 @@ fn test_sign_instruction_with_ed25519_authority() {
 
     let swig_key = builder.get_swig_account().unwrap();
 
+    convert_swig_to_v1(&mut context, &swig_key);
+
     // Fund the Swig account
     context.svm.airdrop(&swig_key, 1_000_000_000).unwrap();
 
@@ -142,6 +144,9 @@ fn test_sign_instruction_with_secp256k1_authority() {
     );
 
     let swig_key = builder.get_swig_account().unwrap();
+
+    convert_swig_to_v1(&mut context, &swig_key);
+
     context.svm.airdrop(&swig_key, 1_000_000_000).unwrap();
 
     let recipient = Keypair::new();

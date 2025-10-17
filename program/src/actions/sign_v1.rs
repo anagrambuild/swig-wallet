@@ -179,8 +179,20 @@ pub fn sign_v1(
     account_classifiers: &mut [AccountClassification],
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
-    // KEEP remove since we enfoce swig is owned in lib.rs
-    // check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
+
+    if !matches!(
+        account_classifiers[0],
+        AccountClassification::ThisSwig { .. }
+    ) {
+        if matches!(
+            account_classifiers[0],
+            AccountClassification::ThisSwigV2 { .. }
+        ) {
+            return Err(SwigError::SignV1CannotBeUsedWithSwigV2.into());
+        }
+        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+    }
+
     let sign_v1 = SignV1::from_instruction_bytes(data)?;
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
@@ -256,12 +268,12 @@ pub fn sign_v1(
         }
 
         let hash = match account_classifier {
-            AccountClassification::ThisSwig { .. } => {
-                let data = unsafe { account.borrow_data_unchecked() };
+            AccountClassification::ThisSwig { .. } | AccountClassification::ThisSwigV2 { .. } => {
                 // For ThisSwig accounts, hash the entire account data and owner to ensure no
                 // unexpected modifications. Lamports are handled separately in
                 // the permission check, but we still need to verify
                 // that the account data itself and ownership hasn't been tampered with
+                let data = unsafe { account.borrow_data_unchecked() };
                 let hash = hash_except(&data, account.owner(), NO_EXCLUDE_RANGES);
                 Some(hash)
             },
@@ -425,10 +437,10 @@ pub fn sign_v1(
     } else {
         'account_loop: for (index, account) in account_classifiers.iter_mut().enumerate() {
             match account {
-                AccountClassification::ThisSwig { lamports } => {
+                AccountClassification::ThisSwig { lamports }
+                | AccountClassification::ThisSwigV2 { lamports } => {
                     let account_info = unsafe { all_accounts.get_unchecked(index) };
 
-                    // Only validate snapshots for writable accounts
                     if account_info.is_writable() {
                         let data = unsafe { &account_info.borrow_data_unchecked() };
                         let current_hash =

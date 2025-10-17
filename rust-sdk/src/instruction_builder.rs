@@ -165,10 +165,10 @@ impl SwigInstructionBuilder {
         self.client_role.sign_v2_instruction(
             self.swig_account,
             swig_wallet_address,
-            self.payer,
             self.role_id,
             instructions,
             current_slot,
+            core::slice::from_ref(&self.payer),
         )
     }
 
@@ -322,6 +322,23 @@ impl SwigInstructionBuilder {
         Pubkey::find_program_address(&swig_account_seeds(id), &program_id()).0
     }
 
+    /// Derives the Swig wallet address public key from an ID
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The 32-byte identifier used to derive the Swig wallet address
+    ///
+    /// # Returns
+    ///
+    /// Returns the derived Swig wallet address public key
+    pub fn swig_wallet_address(&self) -> Pubkey {
+        Pubkey::find_program_address(
+            &swig_wallet_address_seeds(self.swig_account.as_ref()),
+            &program_id(),
+        )
+        .0
+    }
+
     /// Returns the current role ID of the Swig account
     ///
     /// # Returns
@@ -421,7 +438,6 @@ impl SwigInstructionBuilder {
         self.client_role.sub_account_sign_instruction(
             self.swig_account,
             sub_account,
-            self.payer,
             self.role_id,
             instructions,
             current_slot,
@@ -508,6 +524,8 @@ impl SwigInstructionBuilder {
     pub fn toggle_sub_account(
         &self,
         sub_account: Pubkey,
+        sub_account_role_id: u32,
+        auth_role_id: u32,
         enabled: bool,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
@@ -515,7 +533,8 @@ impl SwigInstructionBuilder {
             self.swig_account,
             self.payer,
             sub_account,
-            self.role_id,
+            sub_account_role_id,
+            auth_role_id,
             enabled,
             current_slot,
         )

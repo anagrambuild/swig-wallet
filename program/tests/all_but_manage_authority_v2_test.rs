@@ -104,7 +104,6 @@ fn test_all_but_manage_authority_can_transfer_sol() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         ixd,
         1, // AllButManageAuthority role
     )
@@ -271,7 +270,6 @@ fn test_all_but_manage_authority_can_transfer_tokens() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         token_ix,
         1, // AllButManageAuthority role
     )
@@ -406,7 +404,6 @@ fn test_all_but_manage_authority_can_do_cpi_calls() {
         swig,
         swig_wallet_address,
         second_authority.pubkey(),
-        second_authority.pubkey(),
         token_ix,
         1, // AllButManageAuthority role
     )
@@ -416,7 +413,6 @@ fn test_all_but_manage_authority_can_do_cpi_calls() {
     let sign_ix2 = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        second_authority.pubkey(),
         second_authority.pubkey(),
         sol_ix,
         1, // AllButManageAuthority role
