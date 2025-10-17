@@ -1348,7 +1348,7 @@ impl<'c> SwigWallet<'c> {
     ///
     /// Returns a `Result` containing the balance in lamports or a `SwigError`
     pub fn get_balance(&self) -> Result<u64, SwigError> {
-        let swig_pubkey = self.get_swig_account()?;
+        let swig_pubkey = self.get_swig_wallet_address()?;
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let balance = self.rpc_client.get_balance(&swig_pubkey)?;
         #[cfg(all(feature = "rust_sdk_test", test))]

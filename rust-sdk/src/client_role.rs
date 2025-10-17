@@ -1668,20 +1668,16 @@ impl ClientRole for Secp256k1SessionClientRole {
         swig_wallet_address: Pubkey,
         role_id: u32,
         instructions: Vec<Instruction>,
-        current_slot: Option<u64>,
+        _current_slot: Option<u64>,
         transaction_signers: &[Pubkey],
     ) -> Result<Vec<Instruction>, SwigError> {
         let mut signed_instructions = Vec::new();
-        let current_slot = current_slot.ok_or(SwigError::SlotRequired)?;
-        let new_odometer = self.odometer.wrapping_add(1);
-
         for instruction in instructions {
-            let swig_signed_instruction = SignV2Instruction::new_secp256k1_with_signers(
+            let session_key_pubkey = Pubkey::new_from_array(self.session_authority.session_key);
+            let swig_signed_instruction = SignV2Instruction::new_ed25519_with_signers(
                 swig_account,
                 swig_wallet_address,
-                &self.signing_fn,
-                current_slot,
-                new_odometer,
+                session_key_pubkey,
                 instruction,
                 role_id,
                 transaction_signers,
@@ -1738,17 +1734,14 @@ impl ClientRole for Secp256r1SessionClientRole {
 
         let mut signed_instructions = Vec::new();
         for instruction in instructions {
-            let swig_signed_instruction = SignInstruction::new_secp256r1(
+            let swig_signed_instruction = SignInstruction::new_ed25519(
                 swig_account,
                 payer,
-                &self.signing_fn,
-                current_slot,
-                new_odometer,
+                Pubkey::from(self.session_authority.session_key),
                 instruction,
                 role_id,
-                &self.session_authority.public_key,
             )?;
-            signed_instructions.extend(swig_signed_instruction);
+            signed_instructions.push(swig_signed_instruction);
         }
         Ok(signed_instructions)
     }
@@ -1951,25 +1944,21 @@ impl ClientRole for Secp256r1SessionClientRole {
         swig_wallet_address: Pubkey,
         role_id: u32,
         instructions: Vec<Instruction>,
-        current_slot: Option<u64>,
+        _current_slot: Option<u64>,
         transaction_signers: &[Pubkey],
     ) -> Result<Vec<Instruction>, SwigError> {
         let mut signed_instructions = Vec::new();
-        let current_slot = current_slot.ok_or(SwigError::SlotRequired)?;
-        let new_odometer = self.odometer.wrapping_add(1);
         for instruction in instructions {
-            let swig_signed_instructions = SignV2Instruction::new_secp256r1_with_signers(
+            let session_key_pubkey = Pubkey::new_from_array(self.session_authority.session_key);
+            let swig_signed_instruction = SignV2Instruction::new_ed25519_with_signers(
                 swig_account,
                 swig_wallet_address,
-                &self.signing_fn,
-                current_slot,
-                new_odometer,
+                session_key_pubkey,
                 instruction,
                 role_id,
-                &self.session_authority.public_key,
                 transaction_signers,
             )?;
-            signed_instructions.extend(swig_signed_instructions);
+            signed_instructions.push(swig_signed_instruction);
         }
         Ok(signed_instructions)
     }
