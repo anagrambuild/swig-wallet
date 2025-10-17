@@ -23,19 +23,18 @@ use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
 
 use self::{
-    add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*,
-    create_v1::*, migrate_to_wallet_address_v1::*, remove_authority_v1::*, sign_v1::*, sign_v2::*,
+    add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*, create_v1::*,
+    migrate_to_wallet_address_v1::*, remove_authority_v1::*, sign_v1::*, sign_v2::*,
     sub_account_sign_v1::*, toggle_sub_account_v1::*, transfer_assets_v1::*,
     update_authority_v1::*, withdraw_from_sub_account_v1::*,
 };
 use crate::{
     instruction::{
         accounts::{
-            AddAuthorityV1Accounts, CreateSessionV1Accounts,
-            CreateSubAccountV1Accounts, CreateV1Accounts, MigrateToWalletAddressV1Accounts,
-            RemoveAuthorityV1Accounts, SignV1Accounts, SignV2Accounts, SubAccountSignV1Accounts,
-            ToggleSubAccountV1Accounts, TransferAssetsV1Accounts, UpdateAuthorityV1Accounts,
-            WithdrawFromSubAccountV1Accounts,
+            AddAuthorityV1Accounts, CreateSessionV1Accounts, CreateSubAccountV1Accounts,
+            CreateV1Accounts, MigrateToWalletAddressV1Accounts, RemoveAuthorityV1Accounts,
+            SignV1Accounts, SignV2Accounts, SubAccountSignV1Accounts, ToggleSubAccountV1Accounts,
+            TransferAssetsV1Accounts, UpdateAuthorityV1Accounts, WithdrawFromSubAccountV1Accounts,
         },
         SwigInstruction,
     },
@@ -87,7 +86,7 @@ pub fn process_action(
         },
         SwigInstruction::TransferAssetsV1 => {
             process_transfer_assets_v1(accounts, account_classification, data)
-        }
+        },
     }
 }
 

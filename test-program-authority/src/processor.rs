@@ -1,17 +1,15 @@
 //! Test program instruction processor
 
 use solana_program::{
-    account_info::AccountInfo,
-    entrypoint::ProgramResult,
-    program_error::ProgramError,
+    account_info::AccountInfo, entrypoint::ProgramResult, msg, program_error::ProgramError,
     pubkey::Pubkey,
-    msg,
 };
 
 /// Instruction discriminators
 pub mod instructions {
-    /// Test token transfer instruction - discriminator matches what ProgramExec authority expects
-    /// This instruction will call swig's sign instruction via CPI
+    /// Test token transfer instruction - discriminator matches what ProgramExec
+    /// authority expects This instruction will call swig's sign instruction
+    /// via CPI
     pub const TEST_TOKEN_TRANSFER: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
     /// Invalid discriminator for testing failures
@@ -31,17 +29,16 @@ pub fn process_instruction(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    let discriminator: [u8; 8] = instruction_data[0..8].try_into()
+    let discriminator: [u8; 8] = instruction_data[0..8]
+        .try_into()
         .map_err(|_| ProgramError::InvalidInstructionData)?;
     let remaining_data = &instruction_data[8..];
 
     match discriminator {
-        instructions::TEST_TOKEN_TRANSFER => {
-            process_test_token_transfer(accounts, remaining_data)
-        }
+        instructions::TEST_TOKEN_TRANSFER => process_test_token_transfer(accounts, remaining_data),
         instructions::INVALID_DISCRIMINATOR => {
             process_invalid_instruction(accounts, remaining_data)
-        }
+        },
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
@@ -54,10 +51,7 @@ pub fn process_instruction(
 /// 2. `[]` State account (owned by this program, controls success/failure)
 /// 3. `[]` Swig program
 /// 4+. Additional accounts needed for the inner instruction
-fn process_test_token_transfer(
-    accounts: &[AccountInfo],
-    _data: &[u8],
-) -> ProgramResult {
+fn process_test_token_transfer(accounts: &[AccountInfo], _data: &[u8]) -> ProgramResult {
     if accounts.len() < 4 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
@@ -90,10 +84,7 @@ fn process_test_token_transfer(
 }
 
 /// Process invalid instruction - for testing failure cases
-fn process_invalid_instruction(
-    accounts: &[AccountInfo],
-    data: &[u8],
-) -> ProgramResult {
+fn process_invalid_instruction(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     // Same as test_token_transfer but with invalid discriminator
     process_test_token_transfer(accounts, data)
 }

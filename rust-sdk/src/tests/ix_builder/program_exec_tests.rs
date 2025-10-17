@@ -16,7 +16,8 @@ use super::*;
 use crate::{client_role::ProgramExecClientRole, types::Permission, Ed25519ClientRole};
 
 // Test program ID (same as used in program tests)
-const TEST_PROGRAM_ID: Pubkey = solana_program::pubkey!("BXAu5ZWHnGun2XZjUZ9nqwiZ5dNVmofPGYdMC4rx4qLV");
+const TEST_PROGRAM_ID: Pubkey =
+    solana_program::pubkey!("BXAu5ZWHnGun2XZjUZ9nqwiZ5dNVmofPGYdMC4rx4qLV");
 const VALID_DISCRIMINATOR: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
 #[test_log::test]
@@ -36,13 +37,14 @@ fn test_program_exec_sign_with_preceding_instruction() {
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
 
     // Airdrop to swig wallet so it can execute transfers
-    context.svm.airdrop(&swig_wallet_address, 10_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000)
+        .unwrap();
 
     // Create ProgramExec authority
-    let program_exec_role = ProgramExecClientRole::new(
-        TEST_PROGRAM_ID,
-        VALID_DISCRIMINATOR.to_vec(),
-    );
+    let program_exec_role =
+        ProgramExecClientRole::new(TEST_PROGRAM_ID, VALID_DISCRIMINATOR.to_vec());
 
     // Add ProgramExec authority using root authority
     let mut root_builder = SwigInstructionBuilder::new(
@@ -65,13 +67,8 @@ fn test_program_exec_sign_with_preceding_instruction() {
         .unwrap();
 
     // Execute add authority instruction
-    let msg = v0::Message::try_compile(
-        &payer,
-        &add_auth_ix,
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
+    let msg = v0::Message::try_compile(&payer, &add_auth_ix, &[], context.svm.latest_blockhash())
+        .unwrap();
 
     let tx = VersionedTransaction::try_new(
         VersionedMessage::V0(msg),
@@ -89,29 +86,30 @@ fn test_program_exec_sign_with_preceding_instruction() {
     // Verify authority was added
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_data.state.roles, 2, "Should have 2 roles (root + program exec)");
+    assert_eq!(
+        swig_data.state.roles, 2,
+        "Should have 2 roles (root + program exec)"
+    );
 
     // Now use ProgramExec authority to sign a transfer
     let program_exec_role_id = 1; // The role ID of the ProgramExec authority we just added
     let recipient = Keypair::new();
 
     // Create the preceding instruction that the test program will execute
-    // This instruction validates that it came from TEST_PROGRAM_ID with VALID_DISCRIMINATOR
+    // This instruction validates that it came from TEST_PROGRAM_ID with
+    // VALID_DISCRIMINATOR
     let preceding_instruction = Instruction {
         program_id: TEST_PROGRAM_ID,
         accounts: vec![
-            AccountMeta::new_readonly(swig_key, false),           // config
+            AccountMeta::new_readonly(swig_key, false), // config
             AccountMeta::new_readonly(swig_wallet_address, false), // wallet
         ],
         data: VALID_DISCRIMINATOR.to_vec(),
     };
 
     // Create the inner instruction that will be signed by the swig wallet
-    let transfer_instruction = system_instruction::transfer(
-        &swig_wallet_address,
-        &recipient.pubkey(),
-        1_000_000,
-    );
+    let transfer_instruction =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), 1_000_000);
 
     // Use ProgramExecClientRole to create both instructions
     let instructions = program_exec_role
@@ -128,33 +126,46 @@ fn test_program_exec_sign_with_preceding_instruction() {
     // The instructions vector contains [preceding_instruction, sign_instruction]
     assert_eq!(instructions.len(), 2, "Should have 2 instructions");
 
-    // Note: This test would need the actual TEST_PROGRAM to be deployed to execute successfully.
-    // For now, we're just testing that the instruction builder correctly creates the instructions.
+    // Note: This test would need the actual TEST_PROGRAM to be deployed to execute
+    // successfully. For now, we're just testing that the instruction builder
+    // correctly creates the instructions.
     println!("✓ Successfully created ProgramExec sign instructions");
-    println!("  - Preceding instruction program: {}", instructions[0].program_id);
-    println!("  - Sign instruction program: {}", instructions[1].program_id);
+    println!(
+        "  - Preceding instruction program: {}",
+        instructions[0].program_id
+    );
+    println!(
+        "  - Sign instruction program: {}",
+        instructions[1].program_id
+    );
     println!("  - Total instructions: {}", instructions.len());
 }
 
 #[test_log::test]
 fn test_program_exec_authority_data_generation() {
     // Test that authority data is generated correctly
-    let program_exec_role = ProgramExecClientRole::new(
-        TEST_PROGRAM_ID,
-        VALID_DISCRIMINATOR.to_vec(),
-    );
+    let program_exec_role =
+        ProgramExecClientRole::new(TEST_PROGRAM_ID, VALID_DISCRIMINATOR.to_vec());
 
     let authority_data = program_exec_role.authority_data();
 
     // Verify the authority data is not empty
-    assert!(!authority_data.is_empty(), "Authority data should not be empty");
+    assert!(
+        !authority_data.is_empty(),
+        "Authority data should not be empty"
+    );
 
     // The authority data should contain the program ID and discriminator
     println!("✓ Authority data length: {} bytes", authority_data.len());
 
     // Verify the authority data contains the expected information
-    // The format is: [program_id: 32 bytes][instruction_prefix_len: 1 byte][padding: 7 bytes][instruction_prefix: 40 bytes]
-    assert_eq!(authority_data.len(), 80, "Authority data should be exactly 80 bytes");
+    // The format is: [program_id: 32 bytes][instruction_prefix_len: 1
+    // byte][padding: 7 bytes][instruction_prefix: 40 bytes]
+    assert_eq!(
+        authority_data.len(),
+        80,
+        "Authority data should be exactly 80 bytes"
+    );
 
     // Verify program ID (first 32 bytes)
     assert_eq!(
@@ -165,9 +176,14 @@ fn test_program_exec_authority_data_generation() {
 
     // Verify discriminator length (at offset 32)
     let prefix_len = authority_data[32] as usize;
-    assert_eq!(prefix_len, VALID_DISCRIMINATOR.len(), "Prefix length should match");
+    assert_eq!(
+        prefix_len,
+        VALID_DISCRIMINATOR.len(),
+        "Prefix length should match"
+    );
 
-    // Verify discriminator (starts at offset 40 after program_id + prefix_len + padding)
+    // Verify discriminator (starts at offset 40 after program_id + prefix_len +
+    // padding)
     const IX_PREFIX_OFFSET: usize = 40; // 32 + 1 + 7
     assert_eq!(
         &authority_data[IX_PREFIX_OFFSET..IX_PREFIX_OFFSET + prefix_len],
@@ -189,21 +205,18 @@ fn test_program_exec_with_multiple_authorities() {
     let (swig_wallet_address, _) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
 
-    context.svm.airdrop(&swig_wallet_address, 10_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000)
+        .unwrap();
 
     // Add multiple ProgramExec authorities with different discriminators
     let discriminator1 = vec![1, 2, 3, 4, 5, 6, 7, 8];
     let discriminator2 = vec![9, 10, 11, 12, 13, 14, 15, 16];
 
-    let program_exec_role1 = ProgramExecClientRole::new(
-        TEST_PROGRAM_ID,
-        discriminator1.clone(),
-    );
+    let program_exec_role1 = ProgramExecClientRole::new(TEST_PROGRAM_ID, discriminator1.clone());
 
-    let program_exec_role2 = ProgramExecClientRole::new(
-        TEST_PROGRAM_ID,
-        discriminator2.clone(),
-    );
+    let program_exec_role2 = ProgramExecClientRole::new(TEST_PROGRAM_ID, discriminator2.clone());
 
     let mut root_builder = SwigInstructionBuilder::new(
         swig_id,
@@ -224,13 +237,8 @@ fn test_program_exec_with_multiple_authorities() {
         )
         .unwrap();
 
-    let msg = v0::Message::try_compile(
-        &payer,
-        &add_auth_ix1,
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
+    let msg = v0::Message::try_compile(&payer, &add_auth_ix1, &[], context.svm.latest_blockhash())
+        .unwrap();
 
     let tx = VersionedTransaction::try_new(
         VersionedMessage::V0(msg),
@@ -250,13 +258,8 @@ fn test_program_exec_with_multiple_authorities() {
         )
         .unwrap();
 
-    let msg = v0::Message::try_compile(
-        &payer,
-        &add_auth_ix2,
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
+    let msg = v0::Message::try_compile(&payer, &add_auth_ix2, &[], context.svm.latest_blockhash())
+        .unwrap();
 
     let tx = VersionedTransaction::try_new(
         VersionedMessage::V0(msg),

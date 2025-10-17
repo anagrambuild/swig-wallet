@@ -10,8 +10,8 @@ pub mod authority;
 pub mod constants;
 pub mod role;
 pub mod swig;
-pub mod util;
 pub mod transmute;
+pub mod util;
 pub use transmute::{IntoBytes, Transmutable, TransmutableMut};
 
 /// Represents the type discriminator for different account types in the system.
