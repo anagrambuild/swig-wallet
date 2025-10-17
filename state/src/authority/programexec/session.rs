@@ -4,8 +4,10 @@ use core::any::Any;
 
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
 
-use super::super::{ed25519::ed25519_authenticate, Authority, AuthorityInfo, AuthorityType};
-use super::{program_exec_authenticate, MAX_INSTRUCTION_PREFIX_LEN};
+use super::{
+    super::{ed25519::ed25519_authenticate, Authority, AuthorityInfo, AuthorityType},
+    program_exec_authenticate, MAX_INSTRUCTION_PREFIX_LEN,
+};
 use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
 
 /// Creation parameters for a session-based program execution authority.

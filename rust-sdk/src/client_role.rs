@@ -1977,9 +1977,9 @@ impl ClientRole for Secp256r1SessionClientRole {
 
 /// Client role for ProgramExec authority.
 ///
-/// This authority type validates that a preceding instruction in the transaction
-/// matches the configured program ID and instruction discriminator. The preceding
-/// instruction must be provided when creating sign instructions.
+/// This authority type validates that a preceding instruction in the
+/// transaction matches the configured program ID and instruction discriminator.
+/// The preceding instruction must be provided when creating sign instructions.
 ///
 /// ProgramExec authority works with SignV2 only, as it requires separate config
 /// and wallet address accounts.
@@ -1994,8 +1994,10 @@ impl ProgramExecClientRole {
     /// Creates a new ProgramExecClientRole.
     ///
     /// # Arguments
-    /// * `program_id` - The program ID that must execute the preceding instruction
-    /// * `instruction_prefix` - The instruction discriminator/prefix to match (up to 40 bytes)
+    /// * `program_id` - The program ID that must execute the preceding
+    ///   instruction
+    /// * `instruction_prefix` - The instruction discriminator/prefix to match
+    ///   (up to 40 bytes)
     pub fn new(program_id: Pubkey, instruction_prefix: Vec<u8>) -> Self {
         Self {
             program_id,
@@ -2017,20 +2019,21 @@ impl ProgramExecClientRole {
 
     /// Creates a sign instruction with a preceding program instruction.
     ///
-    /// This method creates both the preceding instruction and the sign instruction
-    /// that must be executed together in the same transaction.
+    /// This method creates both the preceding instruction and the sign
+    /// instruction that must be executed together in the same transaction.
     ///
     /// # Arguments
     /// * `swig_account` - The Swig wallet config account
     /// * `swig_wallet_address` - The Swig wallet address PDA
     /// * `payer` - The transaction fee payer
-    /// * `preceding_instruction` - The instruction that must precede the sign instruction
+    /// * `preceding_instruction` - The instruction that must precede the sign
+    ///   instruction
     /// * `inner_instruction` - The instruction to be signed by the Swig wallet
     /// * `role_id` - The role ID that has ProgramExec authority
     ///
     /// # Returns
-    /// Returns a vector containing both instructions that must be executed in order:
-    /// [preceding_instruction, sign_instruction]
+    /// Returns a vector containing both instructions that must be executed in
+    /// order: [preceding_instruction, sign_instruction]
     pub fn sign_with_program_exec(
         &self,
         swig_account: Pubkey,
@@ -2061,10 +2064,12 @@ impl ClientRole for ProgramExecClientRole {
         _instructions: Vec<Instruction>,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        // ProgramExec requires a preceding instruction, so this method cannot be used directly.
-        // Users should use sign_with_program_exec instead.
+        // ProgramExec requires a preceding instruction, so this method cannot be used
+        // directly. Users should use sign_with_program_exec instead.
         Err(SwigError::InterfaceError(
-            "ProgramExec authority requires a preceding instruction. Use sign_with_program_exec instead.".to_string()
+            "ProgramExec authority requires a preceding instruction. Use sign_with_program_exec \
+             instead."
+                .to_string(),
         ))
     }
 
@@ -2079,7 +2084,9 @@ impl ClientRole for ProgramExecClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         Err(SwigError::InterfaceError(
-            "ProgramExec authority requires a root Ed25519 authority for management operations. Use a root authority to add authorities.".to_string()
+            "ProgramExec authority requires a root Ed25519 authority for management operations. \
+             Use a root authority to add authorities."
+                .to_string(),
         ))
     }
 
@@ -2093,7 +2100,9 @@ impl ClientRole for ProgramExecClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         Err(SwigError::InterfaceError(
-            "ProgramExec authority requires a root Ed25519 authority for management operations. Use a root authority to update this authority.".to_string()
+            "ProgramExec authority requires a root Ed25519 authority for management operations. \
+             Use a root authority to update this authority."
+                .to_string(),
         ))
     }
 
@@ -2106,7 +2115,9 @@ impl ClientRole for ProgramExecClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         Err(SwigError::InterfaceError(
-            "ProgramExec authority requires a root Ed25519 authority for management operations. Use a root authority to remove this authority.".to_string()
+            "ProgramExec authority requires a root Ed25519 authority for management operations. \
+             Use a root authority to remove this authority."
+                .to_string(),
         ))
     }
 
@@ -2120,7 +2131,7 @@ impl ClientRole for ProgramExecClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         Err(SwigError::InterfaceError(
-            "ProgramExec authority does not support session creation".to_string()
+            "ProgramExec authority does not support session creation".to_string(),
         ))
     }
 
@@ -2134,7 +2145,7 @@ impl ClientRole for ProgramExecClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         Err(SwigError::InterfaceError(
-            "ProgramExec authority does not support sub-account signing".to_string()
+            "ProgramExec authority does not support sub-account signing".to_string(),
         ))
     }
 
@@ -2151,7 +2162,7 @@ impl ClientRole for ProgramExecClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         Err(SwigError::InterfaceError(
-            "ProgramExec authority does not support token withdraw from sub-account".to_string()
+            "ProgramExec authority does not support token withdraw from sub-account".to_string(),
         ))
     }
 
@@ -2165,7 +2176,7 @@ impl ClientRole for ProgramExecClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         Err(SwigError::InterfaceError(
-            "ProgramExec authority does not support sub-account operations".to_string()
+            "ProgramExec authority does not support sub-account operations".to_string(),
         ))
     }
 
@@ -2179,7 +2190,7 @@ impl ClientRole for ProgramExecClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         Err(SwigError::InterfaceError(
-            "ProgramExec authority does not support sub-account operations".to_string()
+            "ProgramExec authority does not support sub-account operations".to_string(),
         ))
     }
 
@@ -2193,7 +2204,7 @@ impl ClientRole for ProgramExecClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         Err(SwigError::InterfaceError(
-            "ProgramExec authority does not support sub-account operations".to_string()
+            "ProgramExec authority does not support sub-account operations".to_string(),
         ))
     }
 
@@ -2207,19 +2218,19 @@ impl ClientRole for ProgramExecClientRole {
 
     fn odometer(&self) -> Result<u32, SwigError> {
         Err(SwigError::InterfaceError(
-            "ProgramExec authority does not use odometer".to_string()
+            "ProgramExec authority does not use odometer".to_string(),
         ))
     }
 
     fn increment_odometer(&mut self) -> Result<(), SwigError> {
         Err(SwigError::InterfaceError(
-            "ProgramExec authority does not use odometer".to_string()
+            "ProgramExec authority does not use odometer".to_string(),
         ))
     }
 
     fn update_odometer(&mut self, _odometer: u32) -> Result<(), SwigError> {
         Err(SwigError::InterfaceError(
-            "ProgramExec authority does not use odometer".to_string()
+            "ProgramExec authority does not use odometer".to_string(),
         ))
     }
 
@@ -2232,10 +2243,12 @@ impl ClientRole for ProgramExecClientRole {
         _instructions: Vec<Instruction>,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        // ProgramExec requires a preceding instruction, so this method cannot be used directly.
-        // Users should use sign_with_program_exec instead.
+        // ProgramExec requires a preceding instruction, so this method cannot be used
+        // directly. Users should use sign_with_program_exec instead.
         Err(SwigError::InterfaceError(
-            "ProgramExec authority requires a preceding instruction. Use sign_with_program_exec instead.".to_string()
+            "ProgramExec authority requires a preceding instruction. Use sign_with_program_exec \
+             instead."
+                .to_string(),
         ))
     }
 }

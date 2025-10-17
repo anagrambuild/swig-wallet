@@ -14,7 +14,7 @@ use std::any::Any;
 
 use ed25519::{ED25519Authority, Ed25519SessionAuthority};
 use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
-use programexec::{ProgramExecAuthority, session::ProgramExecSessionAuthority};
+use programexec::{session::ProgramExecSessionAuthority, ProgramExecAuthority};
 use secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority};
 use secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority};
 

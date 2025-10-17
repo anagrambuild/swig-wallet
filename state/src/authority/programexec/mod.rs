@@ -25,7 +25,8 @@ const IX_PREFIX_OFFSET: usize = 32 + 1 + 7; // program_id + instruction_prefix_l
 /// Standard Program Execution authority implementation.
 ///
 /// This struct represents a program execution authority that validates
-/// a preceding instruction matches the configured program and instruction prefix.
+/// a preceding instruction matches the configured program and instruction
+/// prefix.
 #[repr(C, align(8))]
 #[derive(Debug, PartialEq, no_padding::NoPadding)]
 pub struct ProgramExecAuthority {
@@ -56,11 +57,14 @@ impl ProgramExecAuthority {
     /// Creates authority data bytes for creating a ProgramExec authority.
     ///
     /// # Arguments
-    /// * `program_id` - The program ID that must execute the preceding instruction
-    /// * `instruction_prefix` - The instruction discriminator/prefix to match (up to 40 bytes)
+    /// * `program_id` - The program ID that must execute the preceding
+    ///   instruction
+    /// * `instruction_prefix` - The instruction discriminator/prefix to match
+    ///   (up to 40 bytes)
     ///
     /// # Returns
-    /// Returns a vector of bytes that can be used as authority data when creating a ProgramExec authority
+    /// Returns a vector of bytes that can be used as authority data when
+    /// creating a ProgramExec authority
     pub fn create_authority_data(program_id: &[u8; 32], instruction_prefix: &[u8]) -> Vec<u8> {
         let prefix_len = instruction_prefix.len().min(MAX_INSTRUCTION_PREFIX_LEN);
         let mut data = Vec::with_capacity(Self::LEN);
@@ -87,7 +91,7 @@ impl ProgramExecAuthority {
 ///
 
 impl Transmutable for ProgramExecAuthority {
-    //len of header
+    // len of header
     const LEN: usize = core::mem::size_of::<ProgramExecAuthority>();
 }
 
@@ -110,7 +114,8 @@ impl Authority for ProgramExecAuthority {
         let authority = unsafe { ProgramExecAuthority::load_mut_unchecked(bytes)? };
         authority.program_id.copy_from_slice(&create_data[..32]);
         authority.instruction_prefix_len = prefix_len as u8;
-        authority.instruction_prefix[..prefix_len].copy_from_slice(&create_data[IX_PREFIX_OFFSET..IX_PREFIX_OFFSET + prefix_len]);
+        authority.instruction_prefix[..prefix_len]
+            .copy_from_slice(&create_data[IX_PREFIX_OFFSET..IX_PREFIX_OFFSET + prefix_len]);
         Ok(())
     }
 }
@@ -263,8 +268,8 @@ pub fn program_exec_authenticate(
         );
     }
 
-    // Verify the first two accounts of the preceding instruction are config and wallet
-    // Get account meta at index 0 (should be config)
+    // Verify the first two accounts of the preceding instruction are config and
+    // wallet Get account meta at index 0 (should be config)
     let account_0 = unsafe { preceding_ix.get_account_meta_at_unchecked(0) };
     let account_1 = unsafe { preceding_ix.get_account_meta_at_unchecked(1) };
 
@@ -278,6 +283,7 @@ pub fn program_exec_authenticate(
     }
 
     // If we get here, all checks passed - the instruction executed successfully
-    // (implied by the transaction being valid) with the correct program, data, and accounts
+    // (implied by the transaction being valid) with the correct program, data, and
+    // accounts
     Ok(())
 }

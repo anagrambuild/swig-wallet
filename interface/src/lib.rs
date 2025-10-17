@@ -667,28 +667,32 @@ impl SignInstruction {
 
     /// Creates a sign instruction for ProgramExec authority.
     ///
-    /// This method creates a sign instruction that will be validated by checking
-    /// that the preceding instruction in the transaction matches the configured
-    /// program ID and instruction discriminator.
+    /// This method creates a sign instruction that will be validated by
+    /// checking that the preceding instruction in the transaction matches
+    /// the configured program ID and instruction discriminator.
     ///
     /// The ProgramExec authority validates that:
     /// - The preceding instruction was executed by the expected program
     /// - The instruction data matches the expected discriminator/prefix
-    /// - The preceding instruction's first two accounts are the swig config and wallet
+    /// - The preceding instruction's first two accounts are the swig config and
+    ///   wallet
     ///
     /// # Arguments
     ///
     /// * `swig_account` - The Swig wallet account
     /// * `payer` - The transaction fee payer
-    /// * `preceding_instruction` - The instruction that must precede this sign instruction
+    /// * `preceding_instruction` - The instruction that must precede this sign
+    ///   instruction
     /// * `inner_instruction` - The instruction to be signed by the Swig wallet
     /// * `role_id` - The role ID that has ProgramExec authority
-    /// * `instruction_sysvar_index` - Index where the instructions sysvar will be in accounts
+    /// * `instruction_sysvar_index` - Index where the instructions sysvar will
+    ///   be in accounts
     ///
     /// # Returns
     ///
-    /// Returns a vector containing both the preceding instruction and the sign instruction.
-    /// These must be executed in the same transaction in this order.
+    /// Returns a vector containing both the preceding instruction and the sign
+    /// instruction. These must be executed in the same transaction in this
+    /// order.
     pub fn new_program_exec(
         swig_account: Pubkey,
         payer: Pubkey,
@@ -705,8 +709,7 @@ impl SignInstruction {
             AccountMeta::new_readonly(INSTRUCTIONS_ID, false), // Instructions sysvar
         ];
 
-        let (accounts, ixs) =
-            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        let (accounts, ixs) = compact_instructions(swig_account, accounts, vec![inner_instruction]);
 
         // Validate the instructions sysvar index
         if instruction_sysvar_index as usize >= accounts.len() {

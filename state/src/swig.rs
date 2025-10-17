@@ -14,7 +14,7 @@ use crate::{
     action::{program_scope::ProgramScope, Action, ActionLoader, Actionable},
     authority::{
         ed25519::{ED25519Authority, Ed25519SessionAuthority},
-        programexec::{ProgramExecAuthority, session::ProgramExecSessionAuthority},
+        programexec::{session::ProgramExecSessionAuthority, ProgramExecAuthority},
         secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority},
         secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority},
         Authority, AuthorityInfo, AuthorityType,
@@ -113,9 +113,15 @@ impl<'a> SwigBuilder<'a> {
         let bytes = swig.into_bytes()?;
         swig_bytes[0..].copy_from_slice(bytes);
         println!("Swig bytes length: {}", swig_bytes.len());
-        println!("Swig alignment: {}", swig_bytes.as_ptr() as usize % std::mem::align_of::<u8>());
-        //get alignment of memory address
-        println!("Roles alignment: {}", roles_bytes.as_ptr() as usize % std::mem::align_of::<u8>());
+        println!(
+            "Swig alignment: {}",
+            swig_bytes.as_ptr() as usize % std::mem::align_of::<u8>()
+        );
+        // get alignment of memory address
+        println!(
+            "Roles alignment: {}",
+            roles_bytes.as_ptr() as usize % std::mem::align_of::<u8>()
+        );
         let builder = Self {
             role_buffer: roles_bytes,
             swig: unsafe { Swig::load_mut_unchecked(swig_bytes)? },
@@ -748,7 +754,7 @@ mod tests {
     use crate::{
         action::{all::All, manage_authority::ManageAuthority, sol_limit::SolLimit, Actionable},
         authority::ed25519::ED25519Authority,
-        Transmutable
+        Transmutable,
     };
 
     // Calculate exact buffer size needed for a test with N roles
