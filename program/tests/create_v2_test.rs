@@ -38,12 +38,11 @@ fn test_create_v2() {
     println!("Create CU {:?}", bench.compute_units_consumed);
     println!("logs: {:?}", bench.logs);
     if let Some(account) = context.svm.get_account(&swig_key) {
-        println!("swig_data: {:?}", account.data);
         let swig = SwigWithRoles::from_bytes(&account.data).unwrap();
 
-        assert_eq!(swig.state.roles, 1);
+        assert_eq!(swig.state.roles, 2);
         assert_eq!(swig.state.id, id);
-        assert_eq!(swig.state.role_counter, 1);
+        assert_eq!(swig.state.role_counter, 2);
     }
 }
 

@@ -196,4 +196,15 @@ pub enum SwigInstruction {
     #[account(2, writable, signer, name="payer", desc="the payer")]
     #[account(3, name="system_program", desc="the system program")]
     TransferAssetsV1 = 13,
+
+    /// Manages authorization locks for the wallet.
+    ///
+    /// Required accounts:
+    /// 1. `[writable, signer]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. System program account
+    #[account(0, writable, signer, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, name="system_program", desc="the system program")]
+    ManageAuthorizationLocksV1 = 14,
 }

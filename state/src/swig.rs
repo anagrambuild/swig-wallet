@@ -312,7 +312,11 @@ impl<'a> SwigBuilder<'a> {
         actions_data: &'a [u8],
     ) -> Result<(), ProgramError> {
         // Calculate the actual number of actions from the actions data
-        let num_actions = Self::calculate_num_actions(actions_data)?;
+        let num_actions = if self.swig.roles == 0 {
+            0
+        } else {
+            Self::calculate_num_actions(actions_data)?
+        };
 
         // check number of roles and iterate to last boundary
         let mut cursor = 0;
@@ -370,6 +374,13 @@ impl<'a> SwigBuilder<'a> {
                 )?;
                 Secp256r1SessionAuthority::LEN
             },
+            AuthorityType::None => {
+                if self.swig.roles == 0 {
+                    0
+                } else {
+                    return Err(SwigStateError::InvalidAuthorityData.into());
+                }
+            },
             _ => return Err(SwigStateError::InvalidAuthorityData.into()),
         };
         let size = authority_length + actions_data.len();
@@ -412,6 +423,7 @@ impl<'a> SwigBuilder<'a> {
                     .copy_from_slice(action_slice);
                 cursor += action_header.length() as usize;
             } else {
+                msg!("Invalid action layout");
                 return Err(ProgramError::InvalidAccountData);
             }
         }

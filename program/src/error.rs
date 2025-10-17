@@ -116,6 +116,19 @@ pub enum SwigError {
     SignV1CannotBeUsedWithSwigV2,
     /// SignV2 instruction cannot be used with Swig v1 accounts
     SignV2CannotBeUsedWithSwigV1,
+
+    /// Invalid authorization lock instruction data
+    InvalidAuthLockInstructionData,
+    /// Manage authorization locks not exists
+    ManageAuthorizationLocksNotExists,
+    /// Duplicate mint in authorization lock instruction data
+    DuplicateMintInAuthLockInstructionData,
+    /// Permission denied for global authority
+    PermissiondeniedGlobalAuthortiy,
+    /// Authorization lock already exists
+    AuthLockAlreadyExists,
+    /// Authorization lock not exists
+    AuthLockNotExists,
 }
 
 /// Implements conversion from SwigError to ProgramError.

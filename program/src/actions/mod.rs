@@ -9,6 +9,7 @@ pub mod add_authority_v1;
 pub mod create_session_v1;
 pub mod create_sub_account_v1;
 pub mod create_v1;
+pub mod manage_auth_lock_v1;
 pub mod migrate_to_wallet_address_v1;
 pub mod remove_authority_v1;
 pub mod sign_v1;
@@ -24,17 +25,18 @@ use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, Pro
 
 use self::{
     add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*, create_v1::*,
-    migrate_to_wallet_address_v1::*, remove_authority_v1::*, sign_v1::*, sign_v2::*,
-    sub_account_sign_v1::*, toggle_sub_account_v1::*, transfer_assets_v1::*,
+    manage_auth_lock_v1::*, migrate_to_wallet_address_v1::*, remove_authority_v1::*, sign_v1::*,
+    sign_v2::*, sub_account_sign_v1::*, toggle_sub_account_v1::*, transfer_assets_v1::*,
     update_authority_v1::*, withdraw_from_sub_account_v1::*,
 };
 use crate::{
     instruction::{
         accounts::{
             AddAuthorityV1Accounts, CreateSessionV1Accounts, CreateSubAccountV1Accounts,
-            CreateV1Accounts, MigrateToWalletAddressV1Accounts, RemoveAuthorityV1Accounts,
-            SignV1Accounts, SignV2Accounts, SubAccountSignV1Accounts, ToggleSubAccountV1Accounts,
-            TransferAssetsV1Accounts, UpdateAuthorityV1Accounts, WithdrawFromSubAccountV1Accounts,
+            CreateV1Accounts, ManageAuthorizationLocksV1Accounts, MigrateToWalletAddressV1Accounts,
+            RemoveAuthorityV1Accounts, SignV1Accounts, SignV2Accounts, SubAccountSignV1Accounts,
+            ToggleSubAccountV1Accounts, TransferAssetsV1Accounts, UpdateAuthorityV1Accounts,
+            WithdrawFromSubAccountV1Accounts,
         },
         SwigInstruction,
     },
@@ -86,6 +88,9 @@ pub fn process_action(
         },
         SwigInstruction::TransferAssetsV1 => {
             process_transfer_assets_v1(accounts, account_classification, data)
+        },
+        SwigInstruction::ManageAuthorizationLocksV1 => {
+            process_manage_authorization_locks_v1(accounts, data)
         },
     }
 }
@@ -211,4 +216,12 @@ fn process_transfer_assets_v1(
 ) -> ProgramResult {
     let account_ctx = TransferAssetsV1Accounts::context(accounts)?;
     transfer_assets_v1(account_ctx, accounts, data, account_classification)
+}
+
+/// Processes a ManageAuthorizationLocksV1 instruction.
+///
+/// Manages authorization locks for the wallet.
+fn process_manage_authorization_locks_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = ManageAuthorizationLocksV1Accounts::context(accounts)?;
+    manage_authorization_locks_v1(account_ctx, data, accounts)
 }
