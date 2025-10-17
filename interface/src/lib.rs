@@ -2390,6 +2390,53 @@ impl WithdrawFromSubAccountInstruction {
         // Return both instructions - preceding instruction must come first
         Ok(vec![preceding_instruction, main_ix])
     }
+
+    pub fn new_token_with_program_exec(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        sub_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        sub_account_token: Pubkey,
+        swig_token: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        amount: u64,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
+
+        let mut accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new(sub_account_token, false),
+            AccountMeta::new(swig_token, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(token_program, false),
+        ];
+
+        // Add instructions sysvar at a stable index
+        let instruction_sysvar_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+
+        let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Build authority payload for ProgramExec: [instruction_sysvar_index: 1 byte]
+        let authority_payload = vec![instruction_sysvar_index];
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        };
+
+        // Return both instructions - preceding instruction must come first
+        Ok(vec![preceding_instruction, main_ix])
+    }
 }
 
 pub struct SubAccountSignInstruction;
@@ -2766,6 +2813,7 @@ impl ToggleSubAccountInstruction {
         preceding_instruction: Instruction,
         sub_account: Pubkey,
         role_id: u32,
+        auth_role_id: u32,
         enabled: bool,
     ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
@@ -2780,7 +2828,7 @@ impl ToggleSubAccountInstruction {
         let instruction_sysvar_index = accounts.len() as u8;
         accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
 
-        let args = ToggleSubAccountV1Args::new(role_id, enabled);
+        let args = ToggleSubAccountV1Args::new(role_id, auth_role_id, enabled);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;

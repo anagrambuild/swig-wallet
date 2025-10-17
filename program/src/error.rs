@@ -112,8 +112,6 @@ pub enum SwigError {
     AccountDataModifiedUnexpectedly,
     /// Cannot update root authority (ID 0)
     PermissionDeniedCannotUpdateRootAuthority,
-    /// Reserved ID prefix, must use deterministic create ID
-    ReservedIdPrefix,
     /// SignV1 instruction cannot be used with Swig v2 accounts
     SignV1CannotBeUsedWithSwigV2,
     /// SignV2 instruction cannot be used with Swig v1 accounts
