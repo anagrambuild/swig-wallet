@@ -264,6 +264,36 @@ pub enum Command {
         #[arg(short, long)]
         output_format: Option<String>,
     },
+    /// Create a session for session-based authorities
+    CreateSession {
+        #[arg(short, long)]
+        authority_type: Option<String>,
+        #[arg(short, long)]
+        authority: Option<String>,
+        #[arg(short, long)]
+        authority_kp: Option<String>,
+        #[arg(short, long = "swig-id")]
+        id: String,
+        #[arg(short, long)]
+        session_key: String,
+        #[arg(short, long)]
+        max_session_length: Option<u64>,
+    },
+    /// Transfer funds using session-based authority
+    TransferSession {
+        #[arg(short, long)]
+        authority_type: Option<String>,
+        #[arg(short, long)]
+        authority: Option<String>,
+        #[arg(short, long)]
+        authority_kp: Option<String>,
+        #[arg(short, long = "swig-id")]
+        id: String,
+        #[arg(short, long)]
+        recipient: String,
+        #[arg(short, long)]
+        amount: u64,
+    },
 }
 
 pub struct SwigCliContext {

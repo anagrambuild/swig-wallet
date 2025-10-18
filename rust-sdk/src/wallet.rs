@@ -1832,6 +1832,20 @@ impl<'c> SwigWallet<'c> {
             Err(SwigError::AuthorityNotFound)
         }
     }
+
+    /// Get swig pda from swig id
+    ///
+    /// # Arguments
+    ///
+    /// * `swig_id` - The ID of the swig to get the PDA for
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the PDA or a `SwigError`
+    pub fn get_swig_pda(swig_id: [u8; 32]) -> Result<Pubkey, SwigError> {
+        let swig_pda = SwigInstructionBuilder::swig_key(&swig_id);
+        Ok(swig_pda)
+    }
 }
 
 // Helper to build CurrentRole from a Role and role_id

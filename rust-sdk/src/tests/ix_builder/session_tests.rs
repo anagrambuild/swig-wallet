@@ -35,7 +35,9 @@ fn test_create_ed25519_session() {
     let mut swig_ix_builder = SwigInstructionBuilder::new(
         id,
         Box::new(Ed25519SessionClientRole::new(
-            CreateEd25519SessionAuthority::new(swig_authority.pubkey().to_bytes(), [0; 32], 100),
+            swig_authority.pubkey(),
+            Pubkey::new_from_array([0; 32]),
+            100,
         )),
         context.default_payer.pubkey(),
         0,
@@ -146,11 +148,9 @@ fn test_create_secp256k1_session() {
     let mut swig_ix_builder = SwigInstructionBuilder::new(
         id,
         Box::new(Secp256k1SessionClientRole::new(
-            CreateSecp256k1SessionAuthority::new(
-                secp_pubkey[1..].try_into().unwrap(),
-                [0; 32],
-                100,
-            ),
+            secp_pubkey[1..].try_into().unwrap(),
+            Pubkey::new_from_array([0; 32]),
+            100,
             Box::new(signing_fn),
         )),
         context.default_payer.pubkey(),
