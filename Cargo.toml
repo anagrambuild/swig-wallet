@@ -1,14 +1,15 @@
 [workspace]
 resolver = "2"
 members = [
-    "program",
-    "interface",
-    "instructions",
-    "state",
-    "assertions",
-    "no-padding",
-    "rust-sdk",
-    "cli",
+  "program",
+  "interface",
+  "instructions",
+  "state",
+  "assertions",
+  "no-padding",
+  "rust-sdk",
+  "cli",
+  "test-program-authority",
 ]
 
 [workspace.package]
