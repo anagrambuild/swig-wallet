@@ -8034,11 +8034,13 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_json",
+ "solana-client",
  "solana-sdk",
  "solana-secp256r1-program",
  "spl-associated-token-account",
  "spl-token 8.0.0",
  "swig-sdk",
+ "swig-state",
  "tokio",
 ]
 

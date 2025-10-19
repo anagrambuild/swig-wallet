@@ -90,7 +90,7 @@ impl SwigInstructionBuilder {
         );
 
         let authority_type = self.client_role.authority_type();
-        let auth_bytes = self.client_role.authority_bytes()?;
+        let auth_bytes = self.client_role.create_authority_bytes()?;
 
         let actions = vec![ClientAction::All(swig_state::action::all::All {})];
 

@@ -17,6 +17,11 @@ use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
 use directories::BaseDirs;
 use hex;
 use indicatif::{ProgressBar, ProgressStyle};
+use openssl::{
+    bn::BigNumContext,
+    ec::{EcGroup, EcPoint, PointConversionForm},
+    nid::Nid,
+};
 use rand::Rng;
 use solana_sdk::{
     pubkey::Pubkey,
@@ -83,13 +88,13 @@ pub struct SwigCli {
 pub enum Command {
     /// Create a new SWIG wallet
     Create {
-        #[arg(short, long)]
+        #[arg(short = 't', long)]
         authority_type: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         authority: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'k', long)]
         authority_kp: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'f', long)]
         fee_payer: Option<String>,
         #[arg(short, long = "swig-id")]
         id: Option<String>,
@@ -97,78 +102,83 @@ pub enum Command {
     /// Add a new authority to a wallet
     AddAuthority {
         // Signing authority
-        #[arg(short, long)]
+        #[arg(short = 't', long)]
         authority_type: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         authority: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'k', long)]
         authority_kp: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'f', long)]
         fee_payer: Option<String>,
         #[arg(short, long = "swig-id")]
         id: String,
         // New authority
-        #[arg(short, long)]
+        #[arg(short = 'n', long)]
         new_authority: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'T', long)]
         new_authority_type: Option<String>,
-        #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ',')]
+        #[arg(short = 'p', long, value_parser, num_args = 1..)]
         permissions: Vec<String>,
+        // Session data (for session-based authorities)
+        #[arg(short = 's', long)]
+        session_key: Option<String>,
+        #[arg(short = 'm', long)]
+        max_session_length: Option<u64>,
     },
     /// Remove an authority from a wallet
     RemoveAuthority {
         // Signing authority
-        #[arg(short, long)]
+        #[arg(short = 't', long)]
         authority_type: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         authority: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'k', long)]
         authority_kp: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'f', long)]
         fee_payer: Option<String>,
         #[arg(short, long = "swig-id")]
         id: String,
         // Remove authority
-        #[arg(short, long)]
+        #[arg(short = 'r', long)]
         remove_authority: Option<String>,
     },
     /// Update an existing authority in a wallet
     UpdateAuthority {
         // Signing authority
-        #[arg(short, long)]
+        #[arg(short = 't', long)]
         authority_type: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         authority: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'k', long)]
         authority_kp: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'f', long)]
         fee_payer: Option<String>,
         #[arg(short, long = "swig-id")]
         id: String,
         // Authority to update
-        #[arg(short, long)]
+        #[arg(short = 'u', long)]
         authority_to_update_id: u32,
         // Update operation
-        #[arg(short, long)]
+        #[arg(short = 'o', long)]
         operation: String,
         // New permissions (for ReplaceAll and AddActions operations)
-        #[arg(short, long, value_parser, num_args = 0.., value_delimiter = ',')]
+        #[arg(short = 'p', long, value_parser, num_args = 0..)]
         permissions: Vec<String>,
         // Action types to remove (for RemoveActionsByType operation)
-        #[arg(short, long, value_parser, num_args = 0.., value_delimiter = ',')]
+        #[arg(short = 'A', long, value_parser, num_args = 0.., value_delimiter = ',')]
         action_types: Vec<String>,
         // Indices to remove (for RemoveActionsByIndex operation)
-        #[arg(short, long, value_parser, num_args = 0.., value_delimiter = ',')]
+        #[arg(short = 'i', long, value_parser, num_args = 0.., value_delimiter = ',')]
         indices: Vec<u16>,
     },
     /// View wallet details
     View {
         // Signing authority
-        #[arg(short, long)]
+        #[arg(short = 't', long)]
         authority_type: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         authority: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'k', long)]
         authority_kp: Option<String>,
         #[arg(short, long = "swig-id")]
         id: String,
@@ -176,11 +186,11 @@ pub enum Command {
     /// Check wallet balance
     Balance {
         // Signing authority
-        #[arg(short, long)]
+        #[arg(short = 't', long)]
         authority_type: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         authority: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'k', long)]
         authority_kp: Option<String>,
         #[arg(short, long = "swig-id")]
         id: String,
@@ -188,81 +198,194 @@ pub enum Command {
     /// Get role id
     GetRoleId {
         // Signing authority
-        #[arg(short, long)]
+        #[arg(short = 't', long)]
         authority_type: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         authority: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'k', long)]
         authority_kp: Option<String>,
         #[arg(short, long = "swig-id")]
         id: String,
-        #[arg(short, long)]
+        #[arg(short = 'f', long)]
         authority_to_fetch: String,
-        #[arg(short, long)]
+        #[arg(short = 'T', long)]
         authority_type_to_fetch: String,
     },
     /// Create a sub-account for the wallet
     CreateSubAccount {
-        #[arg(short, long)]
+        #[arg(short = 't', long)]
         authority_type: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         authority: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'k', long)]
         authority_kp: Option<String>,
         #[arg(short, long = "swig-id")]
         id: String,
     },
     /// Transfer from a sub-account
     TransferFromSubAccount {
-        #[arg(short, long)]
+        #[arg(short = 't', long)]
         authority_type: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         authority: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'k', long)]
         authority_kp: Option<String>,
         #[arg(short, long = "swig-id")]
         id: String,
-        #[arg(short, long)]
+        #[arg(short = 'r', long)]
         recipient: String,
-        #[arg(short, long)]
+        #[arg(short = 'm', long)]
         amount: u64,
     },
     /// Toggle a sub-account
     ToggleSubAccount {
-        #[arg(short, long)]
+        #[arg(short = 't', long)]
         authority_type: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         authority: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'k', long)]
         authority_kp: Option<String>,
         #[arg(short, long = "swig-id")]
         id: String,
-        #[arg(short, long)]
+        #[arg(short = 'e', long)]
         enabled: bool,
-        #[arg(short, long)]
+        #[arg(short = 's', long)]
         sub_account_role_id: u32,
     },
     /// Withdraw from a sub-account to the SWIG wallet
     WithdrawFromSubAccount {
-        #[arg(short, long)]
+        #[arg(short = 't', long)]
         authority_type: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         authority: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'k', long)]
         authority_kp: Option<String>,
         #[arg(short, long = "swig-id")]
         id: String,
-        #[arg(short, long)]
+        #[arg(short = 's', long)]
         sub_account: String,
-        #[arg(short, long)]
+        #[arg(short = 'm', long)]
         amount: u64,
     },
     /// Generate keypairs for different authority types
     Generate {
-        #[arg(short, long)]
+        #[arg(short = 't', long)]
         authority_type: String,
-        #[arg(short, long)]
+        #[arg(short = 'o', long)]
         output_format: Option<String>,
+    },
+    /// Create a session for session-based authorities
+    CreateSession {
+        #[arg(short = 't', long)]
+        authority_type: Option<String>,
+        #[arg(short = 'a', long)]
+        authority: Option<String>,
+        #[arg(short = 'k', long)]
+        authority_kp: Option<String>,
+        #[arg(short, long = "swig-id")]
+        id: String,
+        #[arg(short = 's', long)]
+        session_key: String,
+        #[arg(short = 'm', long)]
+        max_session_length: Option<u64>,
+    },
+    /// Transfer funds using session-based authority
+    TransferSession {
+        #[arg(short = 't', long)]
+        authority_type: Option<String>,
+        #[arg(short = 'a', long)]
+        authority: Option<String>,
+        #[arg(short = 'k', long)]
+        authority_kp: Option<String>,
+        #[arg(short, long = "swig-id")]
+        id: String,
+        #[arg(short = 'r', long)]
+        recipient: String,
+        #[arg(short = 'm', long)]
+        amount: u64,
+        #[arg(short = 's', long)]
+        session_keypair: String,
+    },
+    /// Switch to a different authority role
+    SwitchAuthority {
+        #[arg(short = 't', long)]
+        authority_type: Option<String>,
+        #[arg(short = 'a', long)]
+        authority: Option<String>,
+        #[arg(short = 'k', long)]
+        authority_kp: Option<String>,
+        #[arg(short = 'f', long)]
+        fee_payer: Option<String>,
+        #[arg(short, long = "swig-id")]
+        id: String,
+        #[arg(short = 'r', long)]
+        role_id: u32,
+        #[arg(short = 'T', long)]
+        new_authority_type: Option<String>,
+        #[arg(short = 'K', long)]
+        new_authority_kp: Option<String>,
+        #[arg(short = 's', long)]
+        session_key: Option<String>,
+        #[arg(short = 'm', long)]
+        max_session_length: Option<u64>,
+    },
+    /// Transfer funds from SWIG wallet
+    Transfer {
+        #[arg(short = 't', long)]
+        authority_type: Option<String>,
+        #[arg(short = 'a', long)]
+        authority: Option<String>,
+        #[arg(short = 'k', long)]
+        authority_kp: Option<String>,
+        #[arg(short = 'f', long)]
+        fee_payer: Option<String>,
+        #[arg(short, long = "swig-id")]
+        id: String,
+        #[arg(short = 'r', long)]
+        recipient: String,
+        #[arg(short = 'm', long)]
+        amount: u64,
+    },
+    /// Check session status
+    CheckSessionStatus {
+        #[arg(short = 't', long)]
+        authority_type: Option<String>,
+        #[arg(short = 'a', long)]
+        authority: Option<String>,
+        #[arg(short = 'k', long)]
+        authority_kp: Option<String>,
+        #[arg(short, long = "swig-id")]
+        id: String,
+    },
+    /// Transfer funds using session keypair
+    TransferWithSession {
+        #[arg(short = 't', long)]
+        authority_type: Option<String>,
+        #[arg(short = 'a', long)]
+        authority: Option<String>,
+        #[arg(short = 'k', long)]
+        authority_kp: Option<String>,
+        #[arg(short = 'f', long)]
+        fee_payer: Option<String>,
+        #[arg(short, long = "swig-id")]
+        id: String,
+        #[arg(short = 'r', long)]
+        recipient: String,
+        #[arg(short = 'm', long)]
+        amount: u64,
+        #[arg(short = 's', long)]
+        session_keypair: String,
+    },
+    /// Load an existing SWIG wallet
+    LoadWallet {
+        #[arg(short = 't', long)]
+        authority_type: Option<String>,
+        #[arg(short = 'a', long)]
+        authority: Option<String>,
+        #[arg(short = 'k', long)]
+        authority_kp: Option<String>,
+        #[arg(short, long = "swig-id")]
+        id: String,
     },
 }
 
@@ -686,22 +809,15 @@ pub fn format_authority(authority: &str, authority_type: &AuthorityType) -> Resu
             let authority_bytes = hex::decode(clean_authority)
                 .map_err(|_| anyhow!("Invalid hex string for Secp256k1 authority"))?;
 
-            // For Secp256k1, we expect the uncompressed public key (65 bytes starting with
-            // 0x04) or compressed public key (33 bytes starting with 0x02 or
-            // 0x03)
+            // For Secp256k1, we expect the uncompressed public key without the 0x04 prefix
             if authority_bytes.len() == 65 && authority_bytes[0] == 0x04 {
-                // Uncompressed format - remove the 0x04 prefix
+                // Remove the 0x04 prefix
                 Ok(authority_bytes[1..].to_vec())
-            } else if authority_bytes.len() == 33
-                && (authority_bytes[0] == 0x02 || authority_bytes[0] == 0x03)
-            {
-                // Compressed format - remove the prefix
-                Ok(authority_bytes[1..].to_vec())
+            } else if authority_bytes.len() == 64 {
+                // Already in the correct format
+                Ok(authority_bytes)
             } else {
-                Err(anyhow!(
-                    "Invalid Secp256k1 public key format - expected 33 bytes (compressed) or 65 \
-                     bytes (uncompressed)"
-                ))
+                Err(anyhow!("Invalid Secp256k1 public key format"))
             }
         },
         AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
@@ -713,14 +829,15 @@ pub fn format_authority(authority: &str, authority_type: &AuthorityType) -> Resu
             let authority_bytes = hex::decode(clean_authority)
                 .map_err(|_| anyhow!("Invalid hex string for Secp256r1 authority"))?;
 
-            // For Secp256r1, we expect the compressed public key (33 bytes)
-            if authority_bytes.len() == 33 {
-                Ok(authority_bytes)
-            } else {
-                Err(anyhow!(
-                    "Invalid Secp256r1 public key format - expected 33 bytes"
-                ))
-            }
+            let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
+            let mut ctx = BigNumContext::new()?;
+
+            // Parse the public key bytes into an EcPoint
+            let point = EcPoint::from_bytes(&group, &authority_bytes, &mut ctx)?;
+
+            // Convert to compressed format
+            let compressed = point.to_bytes(&group, PointConversionForm::COMPRESSED, &mut ctx)?;
+            Ok(compressed.to_vec())
         },
         _ => Err(anyhow!("Unsupported authority type")),
     }
