@@ -252,8 +252,8 @@ fn get_client_role(
                             anyhow!("Failed to cast authority to Ed25519SessionAuthority")
                         })?;
 
-                    let session_pubkey = Pubkey::from(session_authority.session_key);
-                    let max_session_length = session_authority.max_session_length;
+                    session_pubkey = Some(Pubkey::from(session_authority.session_key));
+                    max_session_length = Some(session_authority.max_session_length);
                 }
 
                 (
@@ -347,8 +347,8 @@ fn get_client_role(
                             anyhow!("Failed to cast authority to Secp256k1SessionAuthority")
                         })?;
 
-                    let session_pubkey = Pubkey::from(session_authority.session_key);
-                    let max_session_length = session_authority.max_session_age;
+                    session_pubkey = Some(Pubkey::from(session_authority.session_key));
+                    max_session_length = Some(session_authority.max_session_age);
                 }
 
                 (
@@ -465,9 +465,7 @@ fn get_client_role(
                         .ok();
                 } else {
                     let swig_with_roles = swig_with_roles.unwrap();
-                    let role_id = swig_with_roles
-                        .lookup_role_id(&compressed_pubkey[1..])
-                        .unwrap();
+                    let role_id = swig_with_roles.lookup_role_id(&compressed_pubkey).unwrap();
 
                     if role_id.is_none() {
                         return Err(anyhow!("Authority not found"));
@@ -483,8 +481,8 @@ fn get_client_role(
                             anyhow!("Failed to cast authority to Secp256r1SessionAuthority")
                         })?;
 
-                    let session_pubkey = Pubkey::from(session_authority.session_key);
-                    let max_session_length = session_authority.max_session_age;
+                    session_pubkey = Some(Pubkey::from(session_authority.session_key));
+                    max_session_length = Some(session_authority.max_session_age);
                 }
                 (
                     Box::new(Secp256r1SessionClientRole::new(
