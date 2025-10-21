@@ -27,7 +27,6 @@ bytemuck = { version = "1.13.1", features = ["derive"] }
 no-padding = { path = "../no-padding" }
 solana-security-txt = "=1.1.1"
 default-env = "=0.1.1"
-solana-program = "=2.2.1"
 
 [dev-dependencies]
 solana-sdk = "2"
@@ -51,8 +50,6 @@ spl-memo = "=6.0.0"
 solana-secp256r1-program = "2.2.1"
 openssl = { version = "0.10.72", features = ["vendored"] }
 hex = "0.4.3"
-solana-pubkey = "3.0"
-thiserror = "2.0"
 
 [features]
 test-bpf = []
@@ -65,5 +62,4 @@ crate-type = ["cdylib", "lib"]
 
 [build-dependencies]
 shank_idl = { version = "0.4.2", git = "https://github.com/anagrambuild/shank.git" }
-serde_json = "1.0"
 anyhow = "1.0"
