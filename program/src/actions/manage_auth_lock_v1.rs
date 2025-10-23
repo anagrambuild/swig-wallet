@@ -201,7 +201,6 @@ impl<'a> ManageAuthorizationLocksV1<'a> {
             ManageAuthorizationLocksOperation::AddLock => Ok(&self.operation_data[1..]),
             ManageAuthorizationLocksOperation::RemoveLock => Ok(&self.operation_data[1..]),
             ManageAuthorizationLocksOperation::UpdateLock => Ok(&self.operation_data[1..]),
-            _ => Err(ProgramError::InvalidInstructionData),
         }
     }
 

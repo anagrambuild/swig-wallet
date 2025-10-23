@@ -2591,7 +2591,6 @@ impl ManageAuthorizationLocksV1Instruction {
         // Encode operation type in the first byte of the data
         let mut encoded_data = Vec::new();
         encoded_data.push(operation as u8);
-        println!("operation_data: {:?}", &operation_data);
         encoded_data.extend_from_slice(&operation_data);
 
         let args = ManageAuthorizationLocksV1Args::new(

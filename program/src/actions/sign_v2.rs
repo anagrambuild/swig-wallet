@@ -19,6 +19,7 @@ use swig_state::{
     action::{
         all::All,
         all_but_manage_authority::AllButManageAuthority,
+        authorization_lock::AuthorizationLock,
         program::Program,
         program_all::ProgramAll,
         program_curated::ProgramCurated,
@@ -205,11 +206,24 @@ pub fn sign_v2(
     }
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
-    let role = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)?;
-    if role.is_none() {
-        return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+
+    // Get offsets first without mutable borrowing
+    let global_role_offsets = Swig::get_role_offsets(0, swig_roles)?;
+    if global_role_offsets.is_none() {
+        return Err(SwigError::GlobalRoleNotFound.into());
     }
-    let role = role.unwrap();
+    let (global_role_start, global_role_end) = global_role_offsets.unwrap();
+
+    let (global_role, user_roles) = swig_roles.split_at_mut(global_role_end);
+    let global_role = Swig::get_role_from_role_data_slice(
+        &mut global_role[global_role_start..global_role_end],
+        global_role_start,
+        global_role_end,
+    )?
+    .unwrap();
+    let user_role =
+        Swig::get_mut_role_without_global(sign_v2.args.role_id, user_roles, global_role_end)?;
+    let role = user_role.unwrap();
     let clock = Clock::get()?;
     let slot = clock.slot;
     if role.authority.session_based() {
@@ -467,6 +481,13 @@ pub fn sign_v2(
                         // First check general SOL limits
                         let mut general_limit_applied = false;
 
+                        if let Some(action) = RoleMut::get_action_mut::<AuthorizationLock>(
+                            global_role.actions,
+                            &[0u8; 32],
+                        )? {
+                            action.run(total_sol_spent)?;
+                        }
+
                         if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])? {
                             action.run(total_sol_spent)?;
                             general_limit_applied = true;
@@ -579,6 +600,12 @@ pub fn sign_v2(
                     }
 
                     if total_token_spent > 0 {
+                        if let Some(action) =
+                            RoleMut::get_action_mut::<AuthorizationLock>(global_role.actions, mint)?
+                        {
+                            action.run(total_token_spent)?;
+                        }
+
                         // Check token destination limits for outgoing transfers using zero-copy
                         // approach
                         let source_account_key = unsafe { all_accounts.get_unchecked(index) }.key();

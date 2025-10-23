@@ -178,6 +178,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedTokenDestinationLimitExceeded,
     /// Token destination recurring limit exceeded
     PermissionDeniedRecurringTokenDestinationLimitExceeded,
+    /// Authorization lock exceeded
+    PermissionDeniedAuthorizationLockExceeded,  
 }
 
 impl From<SwigStateError> for ProgramError {

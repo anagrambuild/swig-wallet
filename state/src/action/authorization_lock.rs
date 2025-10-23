@@ -5,7 +5,7 @@ use pinocchio::program_error::ProgramError;
 
 use crate::{
     action::{Actionable, Permission},
-    IntoBytes, Transmutable, TransmutableMut,
+    IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
 /// Represents an individual authorization lock on tokens or SOL.
@@ -76,6 +76,13 @@ impl AuthorizationLock {
         if existing_lock.expires_at < self.expires_at {
             self.expires_at = existing_lock.expires_at;
         }
+    }
+
+    pub fn run(&mut self, total_spent: u64) -> Result<(), ProgramError> {
+        if total_spent > self.amount {
+            return Err(SwigAuthenticateError::PermissionDeniedAuthorizationLockExceeded.into());
+        }
+        Ok(())
     }
 }
 

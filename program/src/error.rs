@@ -117,6 +117,9 @@ pub enum SwigError {
     /// SignV2 instruction cannot be used with Swig v1 accounts
     SignV2CannotBeUsedWithSwigV1,
 
+    /// Global role not found
+    GlobalRoleNotFound,
+
     /// Invalid authorization lock instruction data
     InvalidAuthLockInstructionData,
     /// Manage authorization locks not exists
@@ -129,6 +132,8 @@ pub enum SwigError {
     AuthLockAlreadyExists,
     /// Authorization lock not exists
     AuthLockNotExists,
+    /// Cannot remove authorization lock from update authority
+    CannotRemoveAuthLockFromUpdateAuthority,
 }
 
 /// Implements conversion from SwigError to ProgramError.

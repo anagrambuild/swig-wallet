@@ -12,7 +12,10 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, Action},
+    action::{
+        all::All, authorization_lock::AuthorizationLock, manage_auth_lock,
+        manage_authority::ManageAuthority, Action, Permission,
+    },
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::{Swig, SwigBuilder},
@@ -267,6 +270,99 @@ impl<'a> UpdateAuthorityV1<'a> {
             _ => Err(ProgramError::InvalidInstructionData),
         }
     }
+
+    pub fn get_affected_auth_lock_from_args(
+        &self,
+    ) -> Result<Vec<&AuthorizationLock>, ProgramError> {
+        let operation = self.get_operation()?;
+        let role_id = self.args.authority_to_update_id;
+        let mut authlocks: Vec<&AuthorizationLock> = Vec::new();
+        match operation {
+            AuthorityUpdateOperation::ReplaceAll | AuthorityUpdateOperation::AddActions => {
+                let actions = self.get_actions_data()?;
+                let mut cursor = 0;
+                while cursor < actions.len() {
+                    let action =
+                        unsafe { Action::load_unchecked(&actions[cursor..cursor + Action::LEN])? };
+                    if action.permission()? == Permission::AuthorizationLock {
+                        let auth_lock = unsafe {
+                            AuthorizationLock::load_unchecked(
+                                &actions[cursor + Action::LEN
+                                    ..cursor + Action::LEN + AuthorizationLock::LEN],
+                            )?
+                        };
+                        authlocks.push(&auth_lock);
+                        if role_id == 0 {
+                            return Err(SwigError::PermissiondeniedGlobalAuthortiy.into());
+                        }
+                    }
+                    if action.permission()? == Permission::ManageAuthority {
+                        if role_id == 0 {
+                            return Err(SwigError::PermissiondeniedGlobalAuthortiy.into());
+                        }
+                    }
+                    cursor += Action::LEN + action.length() as usize;
+                }
+            },
+            AuthorityUpdateOperation::RemoveActionsByType => {
+                let remove_types = self.get_remove_types()?;
+                if role_id == 0
+                    && (remove_types.contains(&(Permission::AuthorizationLock as u8))
+                        || remove_types.contains(&(Permission::ManageAuthority as u8)))
+                {
+                    return Err(SwigError::PermissiondeniedGlobalAuthortiy.into());
+                }
+            },
+            _ => return Ok(authlocks),
+        }
+        Ok(authlocks)
+    }
+
+    pub fn validate_auth_lock_changes(
+        &self,
+        role_auth_locks: Vec<&AuthorizationLock>,
+        args_authlocks: Vec<&AuthorizationLock>,
+        can_manage_auth_lock: bool,
+        action_indices: Vec<u16>,
+        auth_lock_index: Option<u16>,
+    ) -> Result<(), ProgramError> {
+        let operation = self.get_operation()?;
+        match operation {
+            AuthorityUpdateOperation::ReplaceAll => {
+                if can_manage_auth_lock && role_auth_locks.len() > 0 {
+                    return Err(SwigError::CannotRemoveAuthLockFromUpdateAuthority.into());
+                }
+            },
+            AuthorityUpdateOperation::AddActions => {
+                if args_authlocks.len() > 0 {
+                    return Err(SwigError::CannotRemoveAuthLockFromUpdateAuthority.into());
+                }
+            },
+            AuthorityUpdateOperation::RemoveActionsByType => {
+                let remove_types = self.get_remove_types()?;
+                let remove_manage_auth_lock =
+                    remove_types.contains(&(Permission::ManageAuthorizationLocks as u8));
+                let remove_authorization_lock =
+                    remove_types.contains(&(Permission::AuthorizationLock as u8));
+
+                if remove_authorization_lock || remove_manage_auth_lock && role_auth_locks.len() > 0
+                {
+                    return Err(SwigError::CannotRemoveAuthLockFromUpdateAuthority.into());
+                }
+            },
+            AuthorityUpdateOperation::RemoveActionsByIndex => {
+                let remove_indices = self.get_remove_indices()?;
+                // cannot remove manage auht lock or manage auth lock if there is auth lock
+                if auth_lock_index.is_some()
+                    && remove_indices.contains(&auth_lock_index.unwrap())
+                    && action_indices.len() > 0
+                {
+                    return Err(SwigError::CannotRemoveAuthLockFromUpdateAuthority.into());
+                }
+            },
+        }
+        Ok(())
+    }
 }
 
 /// Performs a replace-all operation on an authority's actions.
@@ -323,7 +419,13 @@ fn perform_replace_all_operation(
             // Update the position for the role we're updating
             if position.id() == authority_to_update_id {
                 position.boundary = (position.boundary() as i64 + size_diff) as u32;
-                position.num_actions = calculate_num_actions(new_actions)? as u16;
+                // Also add a condition in unwrap that will return 0 if authority_to_update_id is 0 and error is returned
+                let num_actions = if authority_to_update_id == 0 {
+                    calculate_num_actions(new_actions).unwrap_or(0) as u16
+                } else {
+                    calculate_num_actions(new_actions)? as u16
+                };
+                position.num_actions = num_actions;
             }
 
             cursor = position.boundary() as usize;
@@ -335,7 +437,12 @@ fn perform_replace_all_operation(
                 &mut swig_roles[authority_offset..authority_offset + Position::LEN],
             )?
         };
-        position.num_actions = calculate_num_actions(new_actions)? as u16;
+        let num_actions = if authority_to_update_id == 0 {
+            calculate_num_actions(new_actions).unwrap_or(0) as u16
+        } else {
+            calculate_num_actions(new_actions)? as u16
+        };
+        position.num_actions = num_actions;
     }
 
     if actions_offset + new_actions_size > swig_roles.len() {
@@ -436,7 +543,7 @@ fn perform_remove_by_type_operation(
         let action_len = action_header.length() as usize;
         let total_action_size = Action::LEN + action_len;
 
-        if cursor + total_action_size > current_actions.len() {
+        if cursor + total_action_size > current_actions.len() && authority_to_update_id != 0 {
             return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
         }
 
@@ -453,7 +560,7 @@ fn perform_remove_by_type_operation(
     }
 
     // Ensure we don't remove all actions
-    if filtered_actions.is_empty() {
+    if filtered_actions.is_empty() && authority_to_update_id != 0 {
         return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
     }
 
@@ -492,6 +599,16 @@ fn perform_remove_by_index_operation(
 
         let action_header =
             unsafe { Action::load_unchecked(&current_actions[cursor..cursor + Action::LEN])? };
+
+        if authority_to_update_id == 0 {
+            if action_header.permission()? == Permission::AuthorizationLock {
+                return Err(SwigError::PermissiondeniedGlobalAuthortiy.into());
+            }
+            if action_header.permission()? == Permission::ManageAuthority {
+                return Err(SwigError::PermissiondeniedGlobalAuthortiy.into());
+            }
+        }
+
         let action_len = action_header.length() as usize;
         let total_action_size = Action::LEN + action_len;
 
@@ -511,7 +628,7 @@ fn perform_remove_by_index_operation(
     }
 
     // Ensure we don't remove all actions
-    if filtered_actions.is_empty() {
+    if filtered_actions.is_empty() && authority_to_update_id != 0 {
         return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
     }
 
@@ -667,7 +784,7 @@ pub fn update_authority_v1(
                 .pad_to_align()
                 .size();
 
-        ctx.accounts.swig.realloc(aligned_size, false)?;
+        ctx.accounts.swig.resize(aligned_size)?;
 
         let cost = Rent::get()?.minimum_balance(aligned_size);
         let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
@@ -688,6 +805,22 @@ pub fn update_authority_v1(
         // No size change, so no need to transfer additional funds
         0
     };
+
+    // Have a list of all mints of the role
+    let (can_manage_auth_lock, role_auth_locks, action_indices, auth_lock_index) =
+        get_affected_auth_lock_from_role(
+            swig_roles,
+            update_authority_v1.args.authority_to_update_id,
+        )?;
+    // Stores all new mints which are coming from the arguments
+    let args_authlocks = update_authority_v1.get_affected_auth_lock_from_args()?;
+    update_authority_v1.validate_auth_lock_changes(
+        role_auth_locks,
+        args_authlocks,
+        can_manage_auth_lock,
+        action_indices,
+        auth_lock_index,
+    )?;
 
     // Get fresh references to the swig account data after reallocation
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
@@ -747,4 +880,67 @@ pub fn update_authority_v1(
     }
 
     Ok(())
+}
+
+pub fn get_affected_auth_lock_from_role(
+    swig_roles: &[u8],
+    authority_to_update_id: u32,
+) -> Result<(bool, Vec<&AuthorizationLock>, Vec<u16>, Option<u16>), ProgramError> {
+    let mut cursor = 0;
+    let mut authlocks = Vec::new();
+    let mut can_manage_auth_lock = false;
+    let mut indices = Vec::new();
+    let mut auth_lock_index = None;
+    while cursor < swig_roles.len() {
+        if cursor + Position::LEN > swig_roles.len() {
+            break;
+        }
+        let position =
+            unsafe { Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])? };
+        cursor += Position::LEN;
+
+        if position.id() == authority_to_update_id {
+            let actions_data = &swig_roles
+                [cursor + position.authority_length() as usize..position.boundary() as usize];
+
+            let mut action_cursor = 0;
+            let mut action_index = 0u16;
+
+            while action_cursor + Action::LEN <= actions_data.len() {
+                let action = unsafe {
+                    Action::load_unchecked(
+                        &actions_data[action_cursor..action_cursor + Action::LEN],
+                    )?
+                };
+
+                if action.permission()? == Permission::AuthorizationLock {
+                    // Check if we have enough data to read the AuthorizationLock
+                    let auth_lock_start = action_cursor + Action::LEN;
+                    let auth_lock_end = auth_lock_start + AuthorizationLock::LEN;
+
+                    if auth_lock_end <= actions_data.len() {
+                        let auth_lock = unsafe {
+                            AuthorizationLock::load_unchecked(
+                                &actions_data[auth_lock_start..auth_lock_end],
+                            )
+                            .map_err(|_| ProgramError::InvalidInstructionData)?
+                        };
+                        authlocks.push(auth_lock);
+                        indices.push(action_index);
+                    }
+                }
+
+                if action.permission()? == Permission::ManageAuthorizationLocks {
+                    can_manage_auth_lock = true;
+                    auth_lock_index = Some(action_index);
+                }
+
+                action_index += 1;
+                // Advance to the next action by skipping the current action's data
+                action_cursor += Action::LEN + action.length() as usize;
+            }
+        }
+        cursor = position.boundary() as usize;
+    }
+    Ok((can_manage_auth_lock, authlocks, indices, auth_lock_index))
 }
