@@ -46,7 +46,7 @@ fn test_secp256r1_basic_signing() {
         id,
         Box::new(Secp256r1ClientRole::new(public_key, signing_fn)),
         context.default_payer.pubkey(),
-        0, // role_id
+        1, // role_id
     );
 
     // Build the create instruction
@@ -156,7 +156,7 @@ fn test_secp256r1_counter_increment() {
         id,
         Box::new(Secp256r1ClientRole::new(public_key, dummy_signing_fn)),
         context.default_payer.pubkey(),
-        0, // role_id
+        1, // role_id
     );
 
     // Build the create instruction
@@ -213,7 +213,7 @@ fn test_secp256r1_replay_protection() {
         id,
         Box::new(Secp256r1ClientRole::new(public_key, signing_fn)),
         context.default_payer.pubkey(),
-        0, // role_id
+        1, // role_id
     );
 
     // Build the create instruction
@@ -300,7 +300,7 @@ fn test_secp256r1_replay_protection() {
         id,
         Box::new(replay_client_role),
         context.default_payer.pubkey(),
-        0, // role_id
+        1, // role_id
     );
 
     let signed_instructions2 = replay_builder
@@ -349,7 +349,7 @@ fn test_secp256r1_add_authority() {
         id,
         Box::new(Ed25519ClientRole::new(primary_authority.pubkey())),
         context.default_payer.pubkey(),
-        0, // role_id
+        1, // role_id
     );
 
     let create_ix = builder.build_swig_account().unwrap();
@@ -413,10 +413,10 @@ fn test_secp256r1_add_authority() {
     // Verify the authority was added
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_state.state.roles, 2);
+    assert_eq!(swig_state.state.roles, 3);
 
     println!("✓ Successfully added Secp256r1 authority");
-    println!("✓ Authority count increased to 2");
+    println!("✓ Authority count increased to 3");
 }
 
 #[test_log::test]
@@ -471,7 +471,7 @@ fn test_secp256r1_session_authority_odometer() {
             .map_err(|e| format!("Failed to parse swig data: {:?}", e))?;
 
         let role = swig
-            .get_role(0)
+            .get_role(1)
             .map_err(|e| format!("Failed to get role: {:?}", e))?
             .ok_or("Role not found")?;
 
@@ -493,8 +493,8 @@ fn test_secp256r1_session_authority_odometer() {
     // Verify the session authority structure is correctly initialized
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 1);
-    let role = swig.get_role(0).unwrap().unwrap();
+    assert_eq!(swig.state.roles, 2);
+    let role = swig.get_role(1).unwrap().unwrap();
 
     assert_eq!(
         role.authority.authority_type(),
@@ -584,7 +584,7 @@ fn test_secp256r1_add_authority_with_secp256r1() {
         id,
         Box::new(Secp256r1ClientRole::new(public_key, signing_fn)),
         context.default_payer.pubkey(),
-        0, // role_id
+        1, // role_id
     );
 
     // Build the create instruction
@@ -659,7 +659,7 @@ fn test_secp256r1_add_authority_with_secp256r1() {
     // Verify the authority was added
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_state.state.roles, 2);
+    assert_eq!(swig_state.state.roles, 3);
 
     // Verify the counter was incremented
     let new_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();

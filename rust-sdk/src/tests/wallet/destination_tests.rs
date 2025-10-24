@@ -39,12 +39,12 @@ fn should_add_sol_destination_limit() {
         .unwrap();
 
     // Verify the authority was added
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
 
     let role_id = swig_wallet
         .get_role_id(&secondary_authority.pubkey().to_bytes())
         .unwrap();
-    assert_eq!(role_id, 1);
+    assert_eq!(role_id, 2);
 }
 
 #[test_log::test]
@@ -80,12 +80,12 @@ fn should_add_sol_recurring_destination_limit() {
         .unwrap();
 
     // Verify the authority was added
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
 
     let role_id = swig_wallet
         .get_role_id(&secondary_authority.pubkey().to_bytes())
         .unwrap();
-    assert_eq!(role_id, 1);
+    assert_eq!(role_id, 2);
 }
 
 #[test_log::test]
@@ -122,12 +122,12 @@ fn should_add_token_destination_limit() {
         .unwrap();
 
     // Verify the authority was added
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
 
     let role_id = swig_wallet
         .get_role_id(&secondary_authority.pubkey().to_bytes())
         .unwrap();
-    assert_eq!(role_id, 1);
+    assert_eq!(role_id, 2);
 }
 
 #[test_log::test]
@@ -165,12 +165,12 @@ fn should_add_token_recurring_destination_limit() {
         .unwrap();
 
     // Verify the authority was added
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
 
     let role_id = swig_wallet
         .get_role_id(&secondary_authority.pubkey().to_bytes())
         .unwrap();
-    assert_eq!(role_id, 1);
+    assert_eq!(role_id, 2);
 }
 
 #[test_log::test]
@@ -218,12 +218,12 @@ fn should_add_multiple_destination_limits() {
         .unwrap();
 
     // Verify the authority was added
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
 
     let role_id = swig_wallet
         .get_role_id(&secondary_authority.pubkey().to_bytes())
         .unwrap();
-    assert_eq!(role_id, 1);
+    assert_eq!(role_id, 2);
 }
 
 #[test_log::test]
@@ -259,7 +259,7 @@ fn should_transfer_sol_within_destination_limit() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
             Some(&secondary_authority),
         )
@@ -282,7 +282,7 @@ fn should_transfer_sol_within_destination_limit() {
 
     // Verify transfer was successful
     assert!(signature != solana_sdk::signature::Signature::default());
-    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 1);
+    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 2);
 }
 
 #[test_log::test]
@@ -318,7 +318,7 @@ fn should_fail_transfer_sol_beyond_destination_limit() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
             Some(&secondary_authority),
         )
@@ -374,7 +374,7 @@ fn should_transfer_sol_to_different_destination_without_limit() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
             Some(&secondary_authority),
         )
@@ -437,7 +437,7 @@ fn should_combine_destination_and_general_limits() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
             Some(&secondary_authority),
         )
@@ -460,7 +460,7 @@ fn should_combine_destination_and_general_limits() {
 
     // Verify transfer was successful
     assert!(signature != solana_sdk::signature::Signature::default());
-    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 1);
+    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 2);
 
     // Transfer to different destination should fail because destination limits
     // exist but no specific limit for this destination

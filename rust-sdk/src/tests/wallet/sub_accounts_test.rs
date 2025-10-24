@@ -20,7 +20,7 @@ fn test_sub_account_creation_and_setup() {
 
     // Setup secondary authority
     let secondary_authority = Keypair::new();
-    let secondary_role_id = 1;
+    let secondary_role_id = 2;
     swig_wallet
         .add_authority(
             AuthorityType::Ed25519,
@@ -59,7 +59,7 @@ fn test_sub_account_sol_operations() {
 
     // Setup secondary authority and create sub-account
     let secondary_authority = Keypair::new();
-    let secondary_role_id = 1;
+    let secondary_role_id = 2;
     swig_wallet
         .add_authority(
             AuthorityType::Ed25519,
@@ -151,7 +151,7 @@ fn test_sub_account_sol_operations() {
     // Switch back to main authority
     swig_wallet
         .switch_authority(
-            0,
+            1,
             Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
             Some(&main_authority),
         )
@@ -178,7 +178,7 @@ fn test_sub_account_token_operations() {
 
     // Setup and create sub-account
     let secondary_authority = Keypair::new();
-    let secondary_role_id = 1;
+    let secondary_role_id = 2;
     swig_wallet
         .add_authority(
             AuthorityType::Ed25519,
@@ -238,7 +238,7 @@ fn test_sub_account_token_operations() {
 
     swig_wallet
         .switch_authority(
-            0,
+            1,
             Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
             Some(&main_authority),
         )
@@ -262,7 +262,7 @@ fn test_sub_account_toggle_operations() {
 
     // Setup and create sub-account
     let secondary_authority = Keypair::new();
-    let secondary_role_id = 1;
+    let secondary_role_id = 2;
     swig_wallet
         .add_authority(
             AuthorityType::Ed25519,
@@ -303,7 +303,7 @@ fn test_sub_account_toggle_operations() {
     println!("Disable signature: {:?}", signature);
 
     let signature = swig_wallet
-        .toggle_sub_account(sub_account, 1, 1, true)
+        .toggle_sub_account(sub_account, 2, 2, true)
         .unwrap();
     println!("Enable signature: {:?}", signature);
 }
@@ -315,7 +315,7 @@ fn test_secondary_authority_operations() {
 
     // Setup secondary authority
     let secondary_authority = Keypair::new();
-    let secondary_role_id = 1;
+    let secondary_role_id = 2;
     swig_wallet
         .add_authority(
             AuthorityType::Ed25519,
@@ -396,7 +396,7 @@ fn test_sub_account_error_cases() {
     // Switch to unauthorized authority
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(unauthorized_authority.pubkey())),
             Some(&unauthorized_authority),
         )
@@ -420,7 +420,7 @@ fn test_sub_account_error_cases() {
     // Add sub-account permission to main authority
     swig_wallet
         .switch_authority(
-            0,
+            1,
             Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
             Some(&main_authority),
         )
@@ -438,7 +438,7 @@ fn test_sub_account_error_cases() {
 
     swig_wallet
         .switch_authority(
-            2,
+            3,
             Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
             Some(&main_authority),
         )
@@ -464,7 +464,7 @@ fn test_sub_account_error_cases() {
     // Test Case 5: Unauthorized operations on existing sub-account
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(unauthorized_authority.pubkey())),
             Some(&unauthorized_authority),
         )

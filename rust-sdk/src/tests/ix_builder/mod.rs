@@ -75,7 +75,7 @@ pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), S
     println!("║ ROLES & PERMISSIONS");
     println!("╠══════════════════════════════════════════════════════════════════");
 
-    for i in 0..swig_with_roles.state.role_counter {
+    for i in 1..swig_with_roles.state.role_counter {
         let role = swig_with_roles
             .get_role(i)
             .map_err(|e| SwigError::AuthorityNotFound)?;

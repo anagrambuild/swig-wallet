@@ -513,6 +513,59 @@ fn get_matching_args_action_by_mint(
     Some(authlocks.remove(index))
 }
 
+/// Gets the authlocks by mints from the swig roles.
+/// If the mint is found in the global role, it will be added to the to_be_updated list.
+/// Otherwise, it will be added to the to_be_removed list.
+pub fn get_authlock_by_mints(
+    swig: &Swig,
+    swig_roles: &mut [u8],
+    mints: Vec<[u8; 32]>,
+) -> Result<(Vec<AuthorizationLock>, Vec<AuthorizationLock>), ProgramError> {
+    let mut cursor = 0;
+    let mut roles = Vec::new();
+    let mut to_be_updated: Vec<AuthorizationLock> = Vec::new();
+    let mut to_be_removed: Vec<AuthorizationLock> = Vec::new();
+
+    while cursor < swig_roles.len() {
+        let position =
+            unsafe { Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])? };
+
+        roles.push(position.id());
+        cursor = position.boundary() as usize;
+    }
+
+    for (index, mint) in mints.iter().enumerate() {
+        let mut mint_found = false;
+        let mut new_auth_lock = AuthorizationLock {
+            mint: mint.clone(),
+            amount: 0,
+            expires_at: u64::MAX,
+        };
+
+        for role in &roles {
+            let role = Swig::get_mut_role(*role, swig_roles)?.unwrap();
+
+            let auth_lock = role.get_action::<AuthorizationLock>(mint);
+            if auth_lock.is_ok() {
+                let auth_lock = auth_lock.unwrap();
+
+                if auth_lock.is_some() {
+                    mint_found = true;
+                    new_auth_lock.update_for_global(auth_lock.unwrap());
+                }
+            }
+        }
+
+        if mint_found {
+            to_be_removed.push(new_auth_lock);
+        } else {
+            to_be_updated.push(new_auth_lock);
+        }
+    }
+
+    Ok((to_be_updated, to_be_removed))
+}
+
 /// Updates an existing authority in a Swig wallet.
 ///
 /// This function handles the complete flow of updating an authority:
@@ -601,7 +654,7 @@ pub fn manage_authorization_locks_v1(
     }
 
     // Role without all or manage authority cannot update other roles' auth locks
-    if (all.is_none() || manage_authority.is_none())
+    if ((all.is_none() && manage_authority.is_none()) && manage_authlock.is_some())
         && (manage_authlock_args.args.acting_role_id
             != manage_authlock_args.args.authority_to_update_id)
     {
@@ -836,6 +889,7 @@ pub fn manage_authorization_locks_v1(
                 &action_bytes,
                 0,
             )?;
+            msg!("added lock to role");
         },
         ManageAuthorizationLocksOperation::RemoveLock => {
             size_diff = perform_modify_authlock_operation(
@@ -871,9 +925,10 @@ pub fn manage_authorization_locks_v1(
                     }
                 }
             }
+            msg!("removed lock from role");
         },
         ManageAuthorizationLocksOperation::UpdateLock => {
-            size_diff = perform_modify_authlock_operation(
+            perform_modify_authlock_operation(
                 swig_roles,
                 swig_data_len,
                 authority_offset,
@@ -883,7 +938,7 @@ pub fn manage_authorization_locks_v1(
                 manage_authlock_args.args.authority_to_update_id,
                 true,
             )?;
-            msg!("size_diff: {:?}", size_diff);
+            msg!("updated lock in role");
         },
     }
 
@@ -891,6 +946,7 @@ pub fn manage_authorization_locks_v1(
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+    let swig_data_len = ctx.accounts.swig.data_len();
 
     let (mut to_be_updated, mut to_be_removed) = get_authlock_by_mints(swig, swig_roles, mints)?;
 
@@ -939,7 +995,6 @@ pub fn manage_authorization_locks_v1(
     }
 
     if !to_be_removed.is_empty() {
-        msg!("performing to be removed");
         size_diff = perform_modify_authlock_operation(
             swig_roles,
             swig_data_len,
@@ -954,54 +1009,4 @@ pub fn manage_authorization_locks_v1(
     }
 
     Ok(())
-}
-
-pub fn get_authlock_by_mints(
-    swig: &Swig,
-    swig_roles: &mut [u8],
-    mints: Vec<[u8; 32]>,
-) -> Result<(Vec<AuthorizationLock>, Vec<AuthorizationLock>), ProgramError> {
-    let mut cursor = 0;
-    let mut roles = Vec::new();
-    let mut to_be_updated: Vec<AuthorizationLock> = Vec::new();
-    let mut to_be_removed: Vec<AuthorizationLock> = Vec::new();
-
-    while cursor < swig_roles.len() {
-        let position =
-            unsafe { Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])? };
-
-        roles.push(position.id());
-        cursor = position.boundary() as usize;
-    }
-
-    for (index, mint) in mints.iter().enumerate() {
-        let mut mint_found = false;
-        let mut new_auth_lock = AuthorizationLock {
-            mint: mint.clone(),
-            amount: 0,
-            expires_at: u64::MAX,
-        };
-
-        for role in &roles {
-            let role = Swig::get_mut_role(*role, swig_roles)?.unwrap();
-
-            let auth_lock = role.get_action::<AuthorizationLock>(mint);
-            if auth_lock.is_ok() {
-                let auth_lock = auth_lock.unwrap();
-
-                if auth_lock.is_some() {
-                    mint_found = true;
-                    new_auth_lock.update_for_global(auth_lock.unwrap());
-                }
-            }
-        }
-
-        if mint_found {
-            to_be_removed.push(new_auth_lock);
-        } else {
-            to_be_updated.push(new_auth_lock);
-        }
-    }
-
-    Ok((to_be_updated, to_be_removed))
 }

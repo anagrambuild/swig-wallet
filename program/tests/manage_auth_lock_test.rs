@@ -6,11 +6,21 @@
 mod common;
 
 use common::*;
-use solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::Signer};
-use swig_interface::{
-    AuthorityConfig, ClientAction, UpdateAuthorityData, UpdateAuthorityInstruction,
+use solana_sdk::{
+    instruction::InstructionError,
+    message::{v0, VersionedMessage},
+    pubkey::Pubkey,
+    signature::Keypair,
+    signer::Signer,
+    system_instruction,
+    transaction::TransactionError,
+    transaction::VersionedTransaction,
 };
-use swig_interface::{ManageAuthorizationLocksData, ManageAuthorizationLocksV1Instruction};
+use swig_interface::{
+    AuthorityConfig, ClientAction, ManageAuthorizationLocksData,
+    ManageAuthorizationLocksV1Instruction, SignV2Instruction, UpdateAuthorityData,
+    UpdateAuthorityInstruction,
+};
 use swig_state::{
     action::{
         all::All, authorization_lock::AuthorizationLock,
@@ -18,7 +28,7 @@ use swig_state::{
         program_all::ProgramAll, sol_limit::SolLimit,
     },
     authority::AuthorityType,
-    swig::SwigWithRoles,
+    swig::{swig_wallet_address_seeds, SwigWithRoles},
 };
 
 /// Helper function to update authority with Ed25519 root authority
@@ -94,6 +104,9 @@ fn test_manage_authorization_locks_ed25519_add_lock() -> anyhow::Result<()> {
     let actions = vec![
         ClientAction::ProgramAll(ProgramAll {}),
         ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
+        ClientAction::SolLimit(SolLimit {
+            amount: 2 * 1000000,
+        }),
     ];
 
     let _add_result = add_authority_with_ed25519_root(
@@ -149,12 +162,87 @@ fn test_manage_authorization_locks_ed25519_add_lock() -> anyhow::Result<()> {
 
     for i in 0..swig_data.state.roles {
         let role = swig_data.get_role(i as u32).unwrap().unwrap();
-        println!("role: {:?}", role.position.id());
         let role_actions = role.get_all_actions().unwrap();
         for action in role_actions {
             println!("=> action: {:?}", action.permission());
         }
     }
+
+    // Derive wallet PDA and airdrop SOL to it
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000)
+        .unwrap();
+
+    // Also fund the secondary authority for fees
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 2_000_000)
+        .unwrap();
+
+    // Now create a sol transaction that spends less than locked SOL
+    let transfer_amount = 1000000;
+
+    let transfer_ix = system_instruction::transfer(
+        &swig_wallet_address,
+        &context.default_payer.pubkey(),
+        transfer_amount,
+    );
+
+    let sign_ix = SignV2Instruction::new_ed25519(
+        swig,
+        swig_wallet_address,
+        second_authority.pubkey(),
+        transfer_ix,
+        2,
+    )?;
+
+    let message = v0::Message::try_compile(
+        &second_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&second_authority])?;
+    let result = context.svm.send_transaction(tx);
+    println!("result: {:?}", result);
+    assert!(result.is_ok());
+
+    // Now create a sol transaction that spends more than locked SOL
+    let transfer_amount = 1000000 + 1;
+
+    let transfer_ix = system_instruction::transfer(
+        &swig_wallet_address,
+        &context.default_payer.pubkey(),
+        transfer_amount,
+    );
+
+    let sign_ix = SignV2Instruction::new_ed25519(
+        swig,
+        swig_wallet_address,
+        second_authority.pubkey(),
+        transfer_ix,
+        2,
+    )?;
+
+    let message = v0::Message::try_compile(
+        &second_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&second_authority])?;
+    let result = context.svm.send_transaction(tx);
+    println!("result: {:?}", result);
+    assert!(result.is_err());
+    assert!(matches!(
+        result.unwrap_err().err,
+        TransactionError::InstructionError(_, InstructionError::Custom(3033))
+    ));
 
     Ok(())
 }
@@ -178,16 +266,6 @@ fn test_manage_authorization_locks_ed25519_remove_lock() -> anyhow::Result<()> {
     let actions = vec![
         ClientAction::All(All {}),
         ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
-        ClientAction::AuthorizationLock(AuthorizationLock {
-            mint: [0u8; 32],
-            amount: 1000000,
-            expires_at: 1000000,
-        }),
-        ClientAction::AuthorizationLock(AuthorizationLock {
-            mint: [1u8; 32],
-            amount: 2000000,
-            expires_at: 2000000,
-        }),
     ];
 
     let add_result = add_authority_with_ed25519_root(
@@ -200,16 +278,7 @@ fn test_manage_authorization_locks_ed25519_remove_lock() -> anyhow::Result<()> {
     println!("Added authority with actions: {:?}", add_result);
     assert!(add_result.is_ok());
 
-    // Add a third authority that we can update
-    let third_authority = Keypair::new();
-    let third_authority_pubkey = third_authority.pubkey();
-    let authority_config = AuthorityConfig {
-        authority_type: AuthorityType::Ed25519,
-        authority: third_authority_pubkey.as_ref(),
-    };
-    let actions = vec![
-        ClientAction::All(All {}),
-        ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
+    let auth_lock_actions = vec![
         ClientAction::AuthorizationLock(AuthorizationLock {
             mint: [0u8; 32],
             amount: 1000000,
@@ -222,32 +291,59 @@ fn test_manage_authorization_locks_ed25519_remove_lock() -> anyhow::Result<()> {
         }),
     ];
 
-    let _add_result = add_authority_with_ed25519_root(
-        &mut context,
-        &swig,
-        &root_authority,
-        authority_config,
-        actions,
-    );
-    println!("Added third authority with actions: {:?}", add_result);
-    assert!(add_result.is_ok());
+    let root_role_id = 1;
+
+    let add_lock_ix = ManageAuthorizationLocksV1Instruction::new_with_ed25519_authority(
+        swig,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        root_role_id,
+        2, // authority_id 2 (the second authority)
+        ManageAuthorizationLocksData::AddLock(auth_lock_actions),
+    )?;
+    let msg = solana_sdk::message::v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[add_lock_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+    let tx = solana_sdk::transaction::VersionedTransaction::try_new(
+        solana_sdk::message::VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )?;
+    let result = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e));
+    assert!(result.is_ok());
+    println!("Transaction logs: {:?}", result.unwrap().logs);
 
     // Get role_id for the root authority
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
         .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
-    let role_id = swig_data
-        .lookup_role_id(root_authority.pubkey().as_ref())
-        .map_err(|e| anyhow::anyhow!("Failed to lookup role id {:?}", e))?
-        .unwrap();
-    println!("Got role_id {:?}", role_id);
+    let role = swig_data.get_role(2).unwrap().unwrap();
+    let auth_lock_actions = role.get_all_actions_of_type::<AuthorizationLock>().unwrap();
+    for action in auth_lock_actions {
+        println!("auth_lock_action mint: {:?}", action.mint);
+        println!("auth_lock_action amount: {:?}", action.amount);
+        println!("auth_lock_action expires_at: {:?}", action.expires_at);
+    }
+    println!("global authority role id: {:?}", 0);
+    let role = swig_data.get_role(0).unwrap().unwrap();
+    let auth_lock_actions = role.get_all_actions_of_type::<AuthorizationLock>().unwrap();
+    for action in auth_lock_actions {
+        println!("auth_lock_action mint: {:?}", action.mint);
+        println!("auth_lock_action amount: {:?}", action.amount);
+        println!("auth_lock_action expires_at: {:?}", action.expires_at);
+    }
 
     // Remove the lock
     let remove_lock_ix = ManageAuthorizationLocksV1Instruction::new_with_ed25519_authority(
         swig,
         context.default_payer.pubkey(),
         root_authority.pubkey(),
-        role_id,
+        root_role_id,
         2, // authority_id 2 (the second authority)
         ManageAuthorizationLocksData::RemoveLock(vec![[0u8; 32]]),
     )?;
@@ -267,17 +363,29 @@ fn test_manage_authorization_locks_ed25519_remove_lock() -> anyhow::Result<()> {
     let result = context
         .svm
         .send_transaction(tx)
-        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e));
+    println!("result: {:?}", result);
+    assert!(result.is_ok());
 
-    println!("Transaction logs: {:?}", result.logs);
+    println!("Transaction logs: {:?}", result.unwrap().logs);
 
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
         .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
     let role = swig_data.get_role(2).unwrap().unwrap();
-    let role_actions = role.get_all_actions().unwrap();
-    for action in role_actions {
-        println!("action: {:?}", action.permission());
+    let auth_lock_actions = role.get_all_actions_of_type::<AuthorizationLock>().unwrap();
+    for action in auth_lock_actions {
+        println!("auth_lock_action mint: {:?}", action.mint);
+        println!("auth_lock_action amount: {:?}", action.amount);
+        println!("auth_lock_action expires_at: {:?}", action.expires_at);
+    }
+    println!("global authority role id: {:?}", 0);
+    let role = swig_data.get_role(0).unwrap().unwrap();
+    let auth_lock_actions = role.get_all_actions_of_type::<AuthorizationLock>().unwrap();
+    for action in auth_lock_actions {
+        println!("auth_lock_action mint: {:?}", action.mint);
+        println!("auth_lock_action amount: {:?}", action.amount);
+        println!("auth_lock_action expires_at: {:?}", action.expires_at);
     }
     Ok(())
 }
@@ -301,16 +409,6 @@ fn test_manage_authorization_locks_ed25519_update_lock() -> anyhow::Result<()> {
     let actions = vec![
         ClientAction::All(All {}),
         ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
-        ClientAction::AuthorizationLock(AuthorizationLock {
-            mint: [0u8; 32],
-            amount: 10,
-            expires_at: 1000000,
-        }),
-        ClientAction::AuthorizationLock(AuthorizationLock {
-            mint: [1u8; 32],
-            amount: 10,
-            expires_at: 2000000,
-        }),
     ];
 
     let add_result = add_authority_with_ed25519_root(
@@ -322,6 +420,44 @@ fn test_manage_authorization_locks_ed25519_update_lock() -> anyhow::Result<()> {
     );
     println!("Added authority with actions: {:?}", add_result);
     assert!(add_result.is_ok());
+
+    let auth_lock_actions = vec![
+        ClientAction::AuthorizationLock(AuthorizationLock {
+            mint: [0u8; 32],
+            amount: 1000000,
+            expires_at: 1000000,
+        }),
+        ClientAction::AuthorizationLock(AuthorizationLock {
+            mint: [1u8; 32],
+            amount: 2000000,
+            expires_at: 2000000,
+        }),
+    ];
+
+    let remove_lock_ix = ManageAuthorizationLocksV1Instruction::new_with_ed25519_authority(
+        swig,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        1,
+        2, // authority_id 2 (the second authority)
+        ManageAuthorizationLocksData::AddLock(auth_lock_actions),
+    )?;
+    let msg = solana_sdk::message::v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[remove_lock_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+    let tx = solana_sdk::transaction::VersionedTransaction::try_new(
+        solana_sdk::message::VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )?;
+    let result = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e));
+    assert!(result.is_ok());
+    println!("Transaction logs: {:?}", result.unwrap().logs);
 
     // Get role_id for the root authority
     let swig_account = context.svm.get_account(&swig).unwrap();
@@ -364,9 +500,10 @@ fn test_manage_authorization_locks_ed25519_update_lock() -> anyhow::Result<()> {
     let result = context
         .svm
         .send_transaction(tx)
-        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e));
+    assert!(result.is_ok());
 
-    println!("Transaction logs: {:?}", result.logs);
+    println!("Transaction logs: {:?}", result.unwrap().logs);
 
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
@@ -382,125 +519,5 @@ fn test_manage_authorization_locks_ed25519_update_lock() -> anyhow::Result<()> {
         println!("authlock_action: {:?}", action.amount);
         println!("authlock_action: {:?}", action.expires_at);
     }
-    Ok(())
-}
-
-// Basic tests for Secp256k1 and Secp256r1 - these would need proper signature
-// generation For now, just test that the instruction building works
-
-#[test]
-fn test_update_authority_secp256k1_instruction_building() -> anyhow::Result<()> {
-    let swig_pubkey = Pubkey::new_unique();
-    let payer_pubkey = Pubkey::new_unique();
-    let authority_pubkey = Pubkey::new_unique();
-
-    let new_actions = vec![ClientAction::All(All {})];
-
-    // Test that we can build Secp256k1 instructions without errors
-    let _ix = UpdateAuthorityInstruction::new_with_secp256k1_authority(
-        swig_pubkey,
-        payer_pubkey,
-        |_| [0u8; 65], // dummy signature function
-        0,             // current_slot
-        0,             // counter
-        0,             // role_id
-        0,             // authority_id
-        UpdateAuthorityData::ReplaceAll(vec![ClientAction::All(All {})]),
-    )?;
-
-    let _ix = UpdateAuthorityInstruction::new_with_secp256k1_authority(
-        swig_pubkey,
-        payer_pubkey,
-        |_| [0u8; 65],
-        0, // current_slot
-        0, // counter
-        0, // role_id
-        0, // authority_id
-        UpdateAuthorityData::AddActions(vec![ClientAction::All(All {})]),
-    )?;
-
-    let _ix = UpdateAuthorityInstruction::new_with_secp256k1_authority(
-        swig_pubkey,
-        payer_pubkey,
-        |_| [0u8; 65],
-        0,                                                   // current_slot
-        0,                                                   // counter
-        0,                                                   // role_id
-        0,                                                   // authority_id
-        UpdateAuthorityData::RemoveActionsByType(vec![6u8]), // All action type discriminant
-    )?;
-
-    let _ix = UpdateAuthorityInstruction::new_with_secp256k1_authority(
-        swig_pubkey,
-        payer_pubkey,
-        |_| [0u8; 65],
-        0, // current_slot
-        0, // counter
-        0, // role_id
-        0, // authority_id
-        UpdateAuthorityData::RemoveActionsByIndex(vec![0u16]),
-    )?;
-
-    Ok(())
-}
-
-#[test]
-fn test_update_authority_secp256r1_instruction_building() -> anyhow::Result<()> {
-    let swig_pubkey = Pubkey::new_unique();
-    let payer_pubkey = Pubkey::new_unique();
-    let authority_pubkey = Pubkey::new_unique();
-
-    let new_actions = vec![ClientAction::All(All {})];
-
-    // Test that we can build Secp256r1 instructions without errors
-    let dummy_pubkey = [0u8; 33]; // dummy public key
-    let _ix = UpdateAuthorityInstruction::new_with_secp256r1_authority(
-        swig_pubkey,
-        payer_pubkey,
-        |_| [0u8; 64], // dummy signature function
-        0,             // current_slot
-        0,             // counter
-        0,             // role_id
-        0,             // authority_id
-        UpdateAuthorityData::ReplaceAll(vec![ClientAction::All(All {})]),
-        &dummy_pubkey,
-    )?;
-
-    let _ix = UpdateAuthorityInstruction::new_with_secp256r1_authority(
-        swig_pubkey,
-        payer_pubkey,
-        |_| [0u8; 64],
-        0, // current_slot
-        0, // counter
-        0, // role_id
-        0, // authority_id
-        UpdateAuthorityData::AddActions(vec![ClientAction::All(All {})]),
-        &dummy_pubkey,
-    )?;
-
-    let _ix = UpdateAuthorityInstruction::new_with_secp256r1_authority(
-        swig_pubkey,
-        payer_pubkey,
-        |_| [0u8; 64],
-        0,                                                   // current_slot
-        0,                                                   // counter
-        0,                                                   // role_id
-        0,                                                   // authority_id
-        UpdateAuthorityData::RemoveActionsByType(vec![6u8]), // All action type discriminant
-        &dummy_pubkey,
-    )?;
-
-    let _ix = UpdateAuthorityInstruction::new_with_secp256r1_authority(
-        swig_pubkey,
-        payer_pubkey,
-        |_| [0u8; 64],
-        0, // current_slot
-        0, // counter
-        0, // role_id
-        0, // authority_id
-        UpdateAuthorityData::RemoveActionsByIndex(vec![0u16]),
-        &dummy_pubkey,
-    )?;
-
     Ok(())
 }

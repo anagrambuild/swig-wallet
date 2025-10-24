@@ -89,7 +89,7 @@ fn test_sign_v2_transfer_sol() {
         swig_wallet_address,
         swig_authority.pubkey(),
         transfer_ix,
-        0, // role_id 0 for root authority
+        1, // role_id 0 for root authority
     )
     .unwrap();
 
@@ -238,7 +238,7 @@ fn test_sign_v2_transfer_sol_with_additional_authority() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix,
-        1, // second authority role_id
+        2, // second authority role_id
     )
     .unwrap();
 
@@ -280,7 +280,7 @@ fn test_sign_v2_transfer_sol_with_additional_authority() {
     // Verify sol limit was decremented
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role1 = swig_state.get_role(1).unwrap().unwrap();
+    let role1 = swig_state.get_role(2).unwrap().unwrap();
     let action = role1.get_action::<SolLimit>(&[]).unwrap().unwrap();
     assert_eq!(action.amount, 0);
 }
@@ -355,7 +355,7 @@ fn test_sign_v2_transfer_sol_all_with_authority() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix,
-        1, // second authority role_id
+        2, // second authority role_id
     )
     .unwrap();
 
@@ -467,7 +467,7 @@ fn test_sign_v2_fail_transfer_sol_with_insufficient_limit() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix,
-        1, // second authority role_id
+        2, // second authority role_id
     )
     .unwrap();
 
@@ -679,7 +679,7 @@ fn test_sign_v2_transfer_sol_with_recurring_limit() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix,
-        1,
+        2,
     )
     .unwrap();
 
@@ -750,7 +750,7 @@ fn test_sign_v2_transfer_sol_with_recurring_limit() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix3,
-        1,
+        2,
     )
     .unwrap();
 
@@ -898,7 +898,7 @@ fn test_sign_v2_transfer_token_with_recurring_limit() {
         swig_wallet_address,
         second_authority.pubkey(),
         token_ix,
-        1,
+        2,
     )
     .unwrap();
 
@@ -988,7 +988,7 @@ fn test_sign_v2_transfer_token_with_recurring_limit() {
         swig_wallet_address,
         second_authority.pubkey(),
         token_ix3,
-        1,
+        2,
     )
     .unwrap();
 
@@ -1100,7 +1100,7 @@ fn test_sign_v2_transfer_between_swig_accounts() {
         sender_swig_wallet_address,
         sender_authority.pubkey(),
         transfer_ix,
-        0, // root authority role
+        1, // root authority role
     )
     .unwrap();
 
@@ -1212,7 +1212,7 @@ fn test_sign_v2_transfer_with_different_payer_and_authority() {
         swig_wallet_address,
         swig_authority.pubkey(),
         transfer_ix,
-        0, // role_id 0 for root authority
+        1, // role_id 0 for root authority
     )
     .unwrap();
 
@@ -1349,7 +1349,7 @@ fn test_sign_v2_secp256k1_transfer() {
         current_slot,
         1, // counter = 1 (first secp256k1 transaction)
         transfer_ix,
-        0, // role_id 0 for root authority
+        1, // role_id 0 for root authority
     )
     .unwrap();
 
@@ -1615,7 +1615,7 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
         swig_wallet_address,
         swig_authority.pubkey(),
         create_ata_ix,
-        0, // role_id 0 for root authority (has All permission)
+        1, // role_id 0 for root authority (has All permission)
     )
     .unwrap();
 
@@ -1624,7 +1624,7 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
         swig_wallet_address,
         swig_authority.pubkey(),
         sol_transfer_ix,
-        0, // role_id 0 for root authority (has All permission)
+        1, // role_id 0 for root authority (has All permission)
     )
     .unwrap();
 
@@ -1633,7 +1633,7 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
         swig_wallet_address,
         swig_authority.pubkey(),
         token_transfer_ix,
-        0, // role_id 0 for root authority (has All permission)
+        1, // role_id 0 for root authority (has All permission)
     )
     .unwrap();
 
@@ -1870,7 +1870,7 @@ fn test_sign_v2_fail_using_another_swig_wallet_address() {
         swig2_wallet_address, // swig1's authority
         swig1_authority.pubkey(),
         malicious_transfer_ix,
-        0, // role_id 0 for root authority
+        1, // role_id 0 for root authority
     )
     .unwrap();
 
@@ -1942,7 +1942,7 @@ fn test_sign_v2_fail_using_another_swig_wallet_address() {
         swig1_wallet_address,
         swig1_authority.pubkey(),
         legitimate_transfer_ix,
-        0,
+        1,
     )
     .unwrap();
 
@@ -2040,7 +2040,7 @@ fn test_sign_v2_secp256r1_transfer() {
         current_slot,
         next_counter,
         transfer_ix,
-        0, // role_id 0 for root authority
+        1, // role_id 0 for root authority
         &public_key,
     )
     .unwrap();
@@ -2174,7 +2174,7 @@ fn test_sign_v1_rejected_by_swig_v2() {
         swig_authority.pubkey(),
         swig_authority.pubkey(),
         transfer_ix,
-        0,
+        1,
     )
     .unwrap();
 
@@ -2302,7 +2302,7 @@ fn test_sign_v2_token_transfer_through_secondary_authority() {
         swig_wallet_address,
         recipient.pubkey(),
         token_transfer_ix,
-        1,
+        2,
     )
     .unwrap();
 

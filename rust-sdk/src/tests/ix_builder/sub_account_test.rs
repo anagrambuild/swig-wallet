@@ -24,7 +24,7 @@ fn test_sub_account_functionality() {
     let swig_id = [3u8; 32];
     let root_authority = Keypair::new();
     let sub_account_authority = Keypair::new();
-    let role_id = 0;
+    let role_id = 1;
 
     println!("Root authority: {:?}", root_authority.pubkey());
     println!(
@@ -79,7 +79,7 @@ fn test_sub_account_functionality() {
     context.svm.send_transaction(tx).unwrap();
 
     // Create a sub-account using the sub-account authority
-    let sub_account_role_id = 1; // The sub-account authority has role_id 1
+    let sub_account_role_id = 2; // The sub-account authority has role_id 1
     let mut sub_account_builder = SwigInstructionBuilder::new(
         swig_id,
         Box::new(Ed25519ClientRole::new(sub_account_authority.pubkey())),

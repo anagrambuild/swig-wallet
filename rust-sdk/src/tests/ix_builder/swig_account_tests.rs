@@ -22,7 +22,7 @@ fn test_create_swig_account_with_ed25519_authority() {
     let swig_id = [1u8; 32];
     let authority = Keypair::new();
     let payer = context.default_payer;
-    let role_id = 0;
+    let role_id = 1;
 
     let builder = SwigInstructionBuilder::new(
         swig_id,
@@ -49,10 +49,10 @@ fn test_create_swig_account_with_ed25519_authority() {
     let (swig_key, _) = Pubkey::find_program_address(&swig_account_seeds(&swig_id), &program_id());
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let root_role = swig_data.get_role(0).unwrap().unwrap();
+    let root_role = swig_data.get_role(1).unwrap().unwrap();
 
     assert_eq!(swig_data.state.id, swig_id);
-    assert_eq!(swig_data.state.roles, 1);
+    assert_eq!(swig_data.state.roles, 2);
 }
 
 #[test_log::test]
@@ -69,7 +69,7 @@ fn test_create_swig_account_with_secp256k1_authority() {
         .to_bytes();
 
     let payer = &context.default_payer;
-    let role_id = 0;
+    let role_id = 1;
 
     let builder = SwigInstructionBuilder::new(
         swig_id,
@@ -98,10 +98,10 @@ fn test_create_swig_account_with_secp256k1_authority() {
     let (swig_key, _) = Pubkey::find_program_address(&swig_account_seeds(&swig_id), &program_id());
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let root_role = swig_data.get_role(0).unwrap().unwrap();
+    let root_role = swig_data.get_role(1).unwrap().unwrap();
 
     assert_eq!(swig_data.state.id, swig_id);
-    assert_eq!(swig_data.state.roles, 1);
+    assert_eq!(swig_data.state.roles, 2);
     assert_eq!(
         root_role.authority.authority_type(),
         AuthorityType::Secp256k1

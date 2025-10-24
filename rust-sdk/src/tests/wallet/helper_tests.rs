@@ -50,13 +50,13 @@ fn should_get_role_id_for_authority() {
     let role_id = swig_wallet
         .get_role_id(&secondary_authority.pubkey().to_bytes())
         .unwrap();
-    assert_eq!(role_id, 1); // Should be role ID 1 (0 is the main authority)
+    assert_eq!(role_id, 2); // Should be role ID 2 (1 is the main authority)
 
     // Get role ID for the main authority
     let main_role_id = swig_wallet
         .get_role_id(&main_authority.pubkey().to_bytes())
         .unwrap();
-    assert_eq!(main_role_id, 0); // Should be role ID 0
+    assert_eq!(main_role_id, 1); // Should be role ID 1
 }
 
 #[test_log::test]
@@ -65,7 +65,7 @@ fn should_get_current_role_id() {
     let swig_wallet = create_test_wallet(litesvm, &main_authority);
 
     let role_id = swig_wallet.get_current_role_id().unwrap();
-    assert_eq!(role_id, 0); // Main authority should be role ID 0
+    assert_eq!(role_id, 1); // Main authority should be role ID 1
 }
 
 #[test_log::test]
@@ -119,7 +119,7 @@ fn should_get_sub_account() {
     // Switch to the sub-account authority
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(sub_account_authority.pubkey())),
             Some(&sub_account_authority),
         )
@@ -216,7 +216,7 @@ fn should_get_sol_limits() {
     // Switch to the limited authority
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(limited_authority.pubkey())),
             Some(&limited_authority),
         )
@@ -255,7 +255,7 @@ fn should_check_sol_spending_ability() {
     // Switch to the limited authority
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(limited_authority.pubkey())),
             Some(&limited_authority),
         )
@@ -281,7 +281,7 @@ fn should_get_role_count() {
 
     // Initially should have 1 role (main authority)
     let initial_count = swig_wallet.get_role_count().unwrap();
-    assert_eq!(initial_count, 1);
+    assert_eq!(initial_count, 2);
 
     // Add another authority
     let secondary_authority = Keypair::new();
@@ -298,7 +298,7 @@ fn should_get_role_count() {
 
     // Should now have 2 roles
     let new_count = swig_wallet.get_role_count().unwrap();
-    assert_eq!(new_count, 2);
+    assert_eq!(new_count, 3);
 }
 
 #[test_log::test]
@@ -330,7 +330,7 @@ fn should_get_authority_type() {
         .unwrap();
 
     // Check Secp256k1 authority type
-    let secp_authority_type = swig_wallet.get_authority_type(1).unwrap();
+    let secp_authority_type = swig_wallet.get_authority_type(2).unwrap();
     assert_eq!(secp_authority_type, AuthorityType::Secp256k1);
 }
 
@@ -340,7 +340,7 @@ fn should_get_authority_identity() {
     let swig_wallet = create_test_wallet(litesvm, &main_authority);
 
     // Get main authority identity
-    let main_identity = swig_wallet.get_authority_identity(0).unwrap();
+    let main_identity = swig_wallet.get_authority_identity(1).unwrap();
     assert_eq!(main_identity, main_authority.pubkey().to_bytes());
 }
 
@@ -360,7 +360,7 @@ fn should_get_role_permissions() {
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
 
     // Get main role permissions
-    let main_permissions = swig_wallet.get_role_permissions(0).unwrap();
+    let main_permissions = swig_wallet.get_role_permissions(1).unwrap();
     assert!(main_permissions.contains(&Permission::All));
 
     // Add an authority with specific permissions
@@ -377,7 +377,7 @@ fn should_get_role_permissions() {
         .unwrap();
 
     // Get the new role permissions
-    let limited_permissions = swig_wallet.get_role_permissions(1).unwrap();
+    let limited_permissions = swig_wallet.get_role_permissions(2).unwrap();
     assert!(limited_permissions.contains(&Permission::Sol {
         amount: 5_000_000_000,
         recurring: None,
@@ -392,7 +392,7 @@ fn should_check_role_has_permission() {
 
     // Main role should have all permissions
     let has_all = swig_wallet
-        .role_has_permission(0, &Permission::All)
+        .role_has_permission(1, &Permission::All)
         .unwrap();
     assert!(has_all);
 
@@ -412,7 +412,7 @@ fn should_check_role_has_permission() {
     // Check if the new role has the specific permission
     let has_sol = swig_wallet
         .role_has_permission(
-            1,
+            2,
             &Permission::Sol {
                 amount: 5_000_000_000,
                 recurring: None,
@@ -423,7 +423,7 @@ fn should_check_role_has_permission() {
 
     // Check if the new role doesn't have all permissions
     let has_all_in_new = swig_wallet
-        .role_has_permission(1, &Permission::All)
+        .role_has_permission(2, &Permission::All)
         .unwrap();
     assert!(!has_all_in_new);
 }
@@ -434,7 +434,7 @@ fn should_get_formatted_authority_address() {
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
 
     // Get formatted address for Ed25519 authority
-    let ed25519_address = swig_wallet.get_formatted_authority_address(0).unwrap();
+    let ed25519_address = swig_wallet.get_formatted_authority_address(1).unwrap();
     assert!(!ed25519_address.is_empty());
     assert!(ed25519_address.len() > 30); // Base58 encoded addresses are typically long
     println!("Ed25519 address: {}", ed25519_address);
@@ -459,7 +459,7 @@ fn should_get_formatted_authority_address() {
         .unwrap();
 
     // Get formatted address for Secp256k1 authority
-    let secp256k1_address = swig_wallet.get_formatted_authority_address(1).unwrap();
+    let secp256k1_address = swig_wallet.get_formatted_authority_address(2).unwrap();
     assert!(!secp256k1_address.is_empty());
     assert!(secp256k1_address.starts_with("0x")); // Ethereum addresses start with 0x
     println!("Secp256k1 address: {}", secp256k1_address);
@@ -524,7 +524,7 @@ fn should_handle_permission_checks_with_different_authorities() {
     // Switch to the SOL-only authority
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(sol_only_authority.pubkey())),
             Some(&sol_only_authority),
         )

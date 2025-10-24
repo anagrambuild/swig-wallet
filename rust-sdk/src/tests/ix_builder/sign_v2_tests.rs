@@ -19,7 +19,7 @@ fn test_sign_v2_with_ed25519_authority_transfers_sol() {
     let authority = Keypair::new();
     let payer_kp = context.default_payer.insecure_clone();
     let payer = &payer_kp;
-    let role_id = 0;
+    let role_id = 1;
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
@@ -89,7 +89,7 @@ fn test_sign_v2_with_secp256k1_authority_transfers_sol() {
     let swig_id = [7u8; 32];
     let payer_kp = context.default_payer.insecure_clone();
     let payer = &payer_kp;
-    let role_id = 0;
+    let role_id = 1;
 
     let wallet = LocalSigner::random();
     let secp_pubkey = wallet
@@ -181,7 +181,7 @@ fn test_sign_v2_with_additional_authority_and_sol_limit() {
     let swig_authority = Keypair::new();
     let payer_kp = context.default_payer.insecure_clone();
     let payer = &payer_kp;
-    let role_id = 0;
+    let role_id = 1;
 
     let mut builder = SwigInstructionBuilder::new(
         [2u8; 32],
@@ -241,7 +241,7 @@ fn test_sign_v2_with_additional_authority_and_sol_limit() {
         [2u8; 32],
         Box::new(Ed25519ClientRole::new(second_authority.pubkey())),
         payer.pubkey(),
-        1,
+        2,
     );
     builder2.switch_payer(payer.pubkey()).unwrap();
     let ixs = builder2
@@ -267,7 +267,7 @@ fn test_sign_v2_fail_with_insufficient_sol_limit() {
     let swig_authority = Keypair::new();
     let payer_kp = context.default_payer.insecure_clone();
     let payer = &payer_kp;
-    let role_id = 0;
+    let role_id = 1;
 
     let mut builder = SwigInstructionBuilder::new(
         [3u8; 32],
@@ -322,7 +322,7 @@ fn test_sign_v2_fail_with_insufficient_sol_limit() {
         [3u8; 32],
         Box::new(Ed25519ClientRole::new(second_authority.pubkey())),
         second_authority.pubkey(),
-        1,
+        2,
     );
     let ixs = builder2
         .sign_v2_instruction(
@@ -355,7 +355,7 @@ fn test_sign_v2_transfer_between_swig_accounts() {
         [4u8; 32],
         Box::new(Ed25519ClientRole::new(sender_auth.pubkey())),
         payer.pubkey(),
-        0,
+        1,
     );
     {
         let ix = sender_builder.build_swig_account().unwrap();
@@ -375,7 +375,7 @@ fn test_sign_v2_transfer_between_swig_accounts() {
         [5u8; 32],
         Box::new(Ed25519ClientRole::new(recipient_auth.pubkey())),
         payer.pubkey(),
-        0,
+        1,
     );
     {
         let ix = recipient_builder.build_swig_account().unwrap();
@@ -425,7 +425,7 @@ fn test_sign_v2_different_payer_and_authority() {
         [6u8; 32],
         Box::new(Ed25519ClientRole::new(swig_authority.pubkey())),
         different_payer.pubkey(),
-        0,
+        1,
     );
     {
         let ix = builder.build_swig_account().unwrap();
@@ -500,7 +500,7 @@ fn test_sign_v2_secp256r1_transfer() {
             Box::new(authority_fn),
         )),
         payer.pubkey(),
-        0,
+        1,
     );
     {
         let ix = builder.build_swig_account().unwrap();
@@ -629,7 +629,7 @@ fn test_sign_v2_token_recurring_limit() {
         [10u8; 32],
         Box::new(Ed25519ClientRole::new(second_authority.pubkey())),
         payer.pubkey(),
-        1,
+        2,
     );
     let ixs1 = builder2
         .sign_v2_instruction(
