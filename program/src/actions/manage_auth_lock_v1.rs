@@ -594,8 +594,17 @@ pub fn manage_authorization_locks_v1(
     // Check permissions - same as add/remove authority
     let all = acting_role.get_action::<All>(&[])?;
     let manage_authority = acting_role.get_action::<ManageAuthority>(&[])?;
+    let manage_authlock = acting_role.get_action::<ManageAuthorizationLocks>(&[])?;
 
-    if all.is_none() && manage_authority.is_none() {
+    if all.is_none() && manage_authority.is_none() && manage_authlock.is_none() {
+        return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
+    }
+
+    // Role without all or manage authority cannot update other roles' auth locks
+    if (all.is_none() || manage_authority.is_none())
+        && (manage_authlock_args.args.acting_role_id
+            != manage_authlock_args.args.authority_to_update_id)
+    {
         return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
     }
 
@@ -714,7 +723,7 @@ pub fn manage_authorization_locks_v1(
             }
             let new_actions = manage_authlock_args.get_actions_data()?;
 
-            size_diff = perform_add_actions_operation(
+            perform_add_actions_operation(
                 swig_roles,
                 swig_data_len,
                 authority_offset,
@@ -723,7 +732,6 @@ pub fn manage_authorization_locks_v1(
                 new_actions,
                 manage_authlock_args.args.authority_to_update_id,
             )?;
-            msg!("size_diff: {:?}", size_diff);
 
             let swig_data_len = ctx.accounts.swig.data_len();
 
@@ -819,7 +827,7 @@ pub fn manage_authorization_locks_v1(
                 (current_size, auth_offset, act_offset)
             };
 
-            size_diff = perform_add_actions_operation(
+            perform_add_actions_operation(
                 swig_roles,
                 swig_data_len,
                 authority_offset,
@@ -828,7 +836,6 @@ pub fn manage_authorization_locks_v1(
                 &action_bytes,
                 0,
             )?;
-            msg!("global size_diff: {:?}", size_diff);
         },
         ManageAuthorizationLocksOperation::RemoveLock => {
             size_diff = perform_modify_authlock_operation(

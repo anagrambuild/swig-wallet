@@ -327,6 +327,9 @@ impl<'a> UpdateAuthorityV1<'a> {
         auth_lock_index: Option<u16>,
     ) -> Result<(), ProgramError> {
         let operation = self.get_operation()?;
+        if args_authlocks.len() > 0 {
+            return Err(SwigError::CannotRemoveAuthLockFromUpdateAuthority.into());
+        }
         match operation {
             AuthorityUpdateOperation::ReplaceAll => {
                 if can_manage_auth_lock && role_auth_locks.len() > 0 {
@@ -334,9 +337,9 @@ impl<'a> UpdateAuthorityV1<'a> {
                 }
             },
             AuthorityUpdateOperation::AddActions => {
-                if args_authlocks.len() > 0 {
-                    return Err(SwigError::CannotRemoveAuthLockFromUpdateAuthority.into());
-                }
+                // if args_authlocks.len() > 0 {
+                //     return Err(SwigError::CannotRemoveAuthLockFromUpdateAuthority.into());
+                // }
             },
             AuthorityUpdateOperation::RemoveActionsByType => {
                 let remove_types = self.get_remove_types()?;
@@ -358,6 +361,11 @@ impl<'a> UpdateAuthorityV1<'a> {
                     && action_indices.len() > 0
                 {
                     return Err(SwigError::CannotRemoveAuthLockFromUpdateAuthority.into());
+                }
+                for index in remove_indices {
+                    if action_indices.contains(&index) {
+                        return Err(SwigError::CannotRemoveAuthLockFromUpdateAuthority.into());
+                    }
                 }
             },
         }
