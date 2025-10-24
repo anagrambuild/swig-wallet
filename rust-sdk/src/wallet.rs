@@ -112,7 +112,7 @@ impl<'c> SwigWallet<'c> {
 
         if !account_exists {
             let instruction_builder =
-                SwigInstructionBuilder::new(swig_id, client_role, fee_payer.pubkey(), 0);
+                SwigInstructionBuilder::new(swig_id, client_role, fee_payer.pubkey(), 1);
 
             let create_ix = instruction_builder.build_swig_account()?;
 
@@ -142,7 +142,7 @@ impl<'c> SwigWallet<'c> {
             let swig_with_roles =
                 SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
             let role = swig_with_roles
-                .get_role(0)
+                .get_role(1)
                 .map_err(|_| SwigError::AuthorityNotFound)?;
             let current_role = if let Some(role) = role {
                 build_current_role(0, &role)
@@ -826,7 +826,7 @@ impl<'c> SwigWallet<'c> {
         println!("║ ROLES & PERMISSIONS");
         println!("╠══════════════════════════════════════════════════════════════════");
 
-        for i in 0..swig_with_roles.state.role_counter {
+        for i in 1..swig_with_roles.state.role_counter {
             let role = swig_with_roles
                 .get_role(i)
                 .map_err(|e| SwigError::AuthorityNotFound)?;
@@ -1657,7 +1657,7 @@ impl<'c> SwigWallet<'c> {
         let swig_with_roles =
             SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
 
-        Ok(swig_with_roles.state.role_counter)
+        Ok(swig_with_roles.state.roles as u32)
     }
 
     /// Gets the authority type for a specific role
