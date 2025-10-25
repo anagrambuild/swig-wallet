@@ -28,6 +28,7 @@ use crate::{
         accounts::{Context, UpdateAuthorityV1Accounts},
         SwigInstruction,
     },
+    util::auth_lock::get_affected_auth_lock_from_role,
 };
 
 /// Calculates the actual number of actions in the provided actions data.
@@ -320,7 +321,7 @@ impl<'a> UpdateAuthorityV1<'a> {
 
     pub fn validate_auth_lock_changes(
         &self,
-        role_auth_locks: Vec<&AuthorizationLock>,
+        role_auth_locks: Vec<AuthorizationLock>,
         args_authlocks: Vec<&AuthorizationLock>,
         can_manage_auth_lock: bool,
         action_indices: Vec<u16>,
@@ -814,7 +815,7 @@ pub fn update_authority_v1(
         0
     };
 
-    // Have a list of all mints of the role
+    // Have a list of all auth locks mints of the role
     let (can_manage_auth_lock, role_auth_locks, action_indices, auth_lock_index) =
         get_affected_auth_lock_from_role(
             swig_roles,
@@ -888,67 +889,4 @@ pub fn update_authority_v1(
     }
 
     Ok(())
-}
-
-pub fn get_affected_auth_lock_from_role(
-    swig_roles: &[u8],
-    authority_to_update_id: u32,
-) -> Result<(bool, Vec<&AuthorizationLock>, Vec<u16>, Option<u16>), ProgramError> {
-    let mut cursor = 0;
-    let mut authlocks = Vec::new();
-    let mut can_manage_auth_lock = false;
-    let mut indices = Vec::new();
-    let mut auth_lock_index = None;
-    while cursor < swig_roles.len() {
-        if cursor + Position::LEN > swig_roles.len() {
-            break;
-        }
-        let position =
-            unsafe { Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])? };
-        cursor += Position::LEN;
-
-        if position.id() == authority_to_update_id {
-            let actions_data = &swig_roles
-                [cursor + position.authority_length() as usize..position.boundary() as usize];
-
-            let mut action_cursor = 0;
-            let mut action_index = 0u16;
-
-            while action_cursor + Action::LEN <= actions_data.len() {
-                let action = unsafe {
-                    Action::load_unchecked(
-                        &actions_data[action_cursor..action_cursor + Action::LEN],
-                    )?
-                };
-
-                if action.permission()? == Permission::AuthorizationLock {
-                    // Check if we have enough data to read the AuthorizationLock
-                    let auth_lock_start = action_cursor + Action::LEN;
-                    let auth_lock_end = auth_lock_start + AuthorizationLock::LEN;
-
-                    if auth_lock_end <= actions_data.len() {
-                        let auth_lock = unsafe {
-                            AuthorizationLock::load_unchecked(
-                                &actions_data[auth_lock_start..auth_lock_end],
-                            )
-                            .map_err(|_| ProgramError::InvalidInstructionData)?
-                        };
-                        authlocks.push(auth_lock);
-                        indices.push(action_index);
-                    }
-                }
-
-                if action.permission()? == Permission::ManageAuthorizationLocks {
-                    can_manage_auth_lock = true;
-                    auth_lock_index = Some(action_index);
-                }
-
-                action_index += 1;
-                // Advance to the next action by skipping the current action's data
-                action_cursor += Action::LEN + action.length() as usize;
-            }
-        }
-        cursor = position.boundary() as usize;
-    }
-    Ok((can_manage_auth_lock, authlocks, indices, auth_lock_index))
 }

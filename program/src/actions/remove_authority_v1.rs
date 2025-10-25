@@ -13,7 +13,7 @@ use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
     swig::{Swig, SwigBuilder},
-    Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
+    Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
 use crate::{
@@ -22,6 +22,7 @@ use crate::{
         accounts::{Context, RemoveAuthorityV1Accounts},
         SwigInstruction,
     },
+    util::auth_lock::{get_affected_auth_lock_from_role, modify_global_auth_locks},
 };
 
 /// Struct representing the complete remove authority instruction data.
@@ -155,6 +156,7 @@ pub fn remove_authority_v1(
         return Err(SwigAuthenticateError::PermissionDeniedCannotRemoveRootAuthority.into());
     }
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+    let mut role_auth_locks = Vec::new();
     // All validation and processing as a closure to avoid borrowing
     // swig_account_data for too long
     {
@@ -200,6 +202,11 @@ pub fn remove_authority_v1(
             }
         }
 
+        (_, role_auth_locks, _, _) = get_affected_auth_lock_from_role(
+            swig_roles,
+            remove_authority_v1.args.authority_to_remove_id,
+        )?;
+
         // Get the role to remove
         let role_to_remove =
             Swig::get_mut_role(remove_authority_v1.args.authority_to_remove_id, swig_roles)?;
@@ -227,6 +234,45 @@ pub fn remove_authority_v1(
         *ctx.accounts.payer.borrow_mut_lamports_unchecked() = ctx.accounts.payer.lamports() + diff;
     };
     ctx.accounts.swig.realloc(new_size, false)?;
+
+    // Handle global auth lock updates after removing the role
+    {
+        let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        let (swig_header, swig_roles) =
+            unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+        let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+
+        if role_auth_locks.len() > 0 {
+            let mints = role_auth_locks
+                .iter()
+                .map(|authlock| authlock.mint)
+                .collect::<Vec<[u8; 32]>>();
+            let size_diff = modify_global_auth_locks(swig_account_data, mints)?;
+
+            if size_diff < 0 {
+                let new_size = (swig_account_data.len() as i64 + size_diff) as usize;
+                let aligned_size =
+                    core::alloc::Layout::from_size_align(new_size, core::mem::size_of::<u64>())
+                        .map_err(|_| SwigError::InvalidAlignment)?
+                        .pad_to_align()
+                        .size();
+
+                ctx.accounts.swig.resize(aligned_size)?;
+
+                let cost = Rent::get()?.minimum_balance(aligned_size);
+                let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
+
+                let additional_cost = current_lamports.saturating_sub(cost);
+
+                if additional_cost > 0 {
+                    unsafe {
+                        *ctx.accounts.swig.borrow_mut_lamports_unchecked() -= additional_cost;
+                        *ctx.accounts.payer.borrow_mut_lamports_unchecked() += additional_cost;
+                    }
+                }
+            }
+        }
+    }
 
     Ok(())
 }

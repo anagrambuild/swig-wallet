@@ -12,9 +12,16 @@ use solana_sdk::{
     signer::Signer,
     transaction::VersionedTransaction,
 };
-use swig_interface::{AuthorityConfig, ClientAction, RemoveAuthorityInstruction};
+use swig_interface::{
+    AuthorityConfig, ClientAction, ManageAuthorizationLocksData,
+    ManageAuthorizationLocksV1Instruction, RemoveAuthorityInstruction,
+};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, sol_limit::SolLimit},
+    action::{
+        all::All, authorization_lock::AuthorizationLock,
+        manage_auth_lock::ManageAuthorizationLocks, manage_authority::ManageAuthority,
+        sol_limit::SolLimit,
+    },
     authority::AuthorityType,
     swig::SwigWithRoles,
 };
@@ -1009,4 +1016,371 @@ fn test_create_remove_authority_with_balance_checks() {
     let diff = swig_balance_diff - payer_balance_diff - 2 * txn_fee_per_sig; // 2 sigs from swig and payer
 
     assert_eq!(diff, 0);
+}
+
+#[test_log::test]
+fn test_remove_authority_with_auth_lock_single_authority() {
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+
+    // Create a swig wallet with the root authority
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    // Add a second authority with manage authority permission
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ManageAuthority(ManageAuthority {}),
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
+        ],
+    )
+    .unwrap();
+
+    // Verify we have two authorities
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 3);
+
+    // Get the role ID of the root authority
+    let root_role_id = swig
+        .lookup_role_id(root_authority.pubkey().as_ref())
+        .unwrap()
+        .unwrap();
+
+    // Add auth lock to the second authority (role ID 2)
+    let mint = [1u8; 32]; // Use a specific mint for testing
+    let auth_lock_amount = 1000000;
+    let expires_at = 1000000;
+
+    let manage_auth_lock_ix = ManageAuthorizationLocksV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        root_role_id,
+        2, // authority_id 2 (the second authority)
+        ManageAuthorizationLocksData::AddLock(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
+                mint,
+                amount: auth_lock_amount,
+                expires_at,
+            },
+        )]),
+    )
+    .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[manage_auth_lock_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )
+    .unwrap();
+
+    context.svm.send_transaction(tx).unwrap();
+
+    // Verify the auth lock was added to the global role (role ID 0)
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let global_role = swig.get_role(0).unwrap().unwrap();
+    let auth_locks = global_role
+        .get_all_actions_of_type::<AuthorizationLock>()
+        .unwrap();
+    assert_eq!(auth_locks.len(), 1);
+    assert_eq!(auth_locks[0].mint, mint);
+    assert_eq!(auth_locks[0].amount, auth_lock_amount);
+    assert_eq!(auth_locks[0].expires_at, expires_at);
+
+    // Now remove the second authority
+    let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        root_role_id,
+        2, // Authority to remove (the second one)
+    )
+    .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[remove_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(tx).unwrap();
+    println!("result: {:?}", result);
+
+    // Verify that only one authority remains
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 2);
+
+    // Verify it's the root authority
+    let found_root = swig
+        .lookup_role_id(root_authority.pubkey().as_ref())
+        .unwrap()
+        .is_some();
+    assert!(found_root, "Only the root authority should remain");
+
+    // Verify that the global role auth lock is removed since it was the only authority with this mint
+    let global_role = swig.get_role(0).unwrap().unwrap();
+    let auth_locks = global_role
+        .get_all_actions_of_type::<AuthorizationLock>()
+        .unwrap();
+    println!("auth_locks: {:?}", auth_locks);
+    assert_eq!(
+        auth_locks.len(),
+        0,
+        "Global role should have no auth locks after removing the only authority with auth lock"
+    );
+}
+
+#[test_log::test]
+fn test_remove_authority_with_auth_lock_two_authorities() {
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+
+    // Create a swig wallet with the root authority
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    // Add a second authority with manage authority permission
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ManageAuthority(ManageAuthority {}),
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
+        ],
+    )
+    .unwrap();
+
+    // Add a third authority with manage authority permission
+    let third_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&third_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: third_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ManageAuthority(ManageAuthority {}),
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
+        ],
+    )
+    .unwrap();
+
+    // Verify we have three authorities
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 4);
+
+    // Get the role ID of the root authority
+    let root_role_id = swig
+        .lookup_role_id(root_authority.pubkey().as_ref())
+        .unwrap()
+        .unwrap();
+
+    // Add auth lock to the second authority (role ID 2) with amount 1000000
+    let mint = [2u8; 32]; // Use a specific mint for testing
+    let auth_lock_amount_1 = 1000000;
+    let expires_at = 1000000;
+
+    let manage_auth_lock_ix = ManageAuthorizationLocksV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        root_role_id,
+        2, // authority_id 2 (the second authority)
+        ManageAuthorizationLocksData::AddLock(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
+                mint,
+                amount: auth_lock_amount_1,
+                expires_at,
+            },
+        )]),
+    )
+    .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[manage_auth_lock_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )
+    .unwrap();
+
+    context.svm.send_transaction(tx).unwrap();
+
+    // Add auth lock to the third authority (role ID 3) with amount 2000000
+    let auth_lock_amount_2 = 2000000;
+
+    let manage_auth_lock_ix = ManageAuthorizationLocksV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        root_role_id,
+        3, // authority_id 3 (the third authority)
+        ManageAuthorizationLocksData::AddLock(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
+                mint,
+                amount: auth_lock_amount_2,
+                expires_at,
+            },
+        )]),
+    )
+    .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[manage_auth_lock_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )
+    .unwrap();
+
+    context.svm.send_transaction(tx).unwrap();
+
+    // Verify the auth locks were added to the global role (role ID 0)
+    // The global role should have the combined amount
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let global_role = swig.get_role(0).unwrap().unwrap();
+    let auth_locks = global_role
+        .get_all_actions_of_type::<AuthorizationLock>()
+        .unwrap();
+    assert_eq!(auth_locks.len(), 1);
+    assert_eq!(auth_locks[0].mint, mint);
+    assert_eq!(
+        auth_locks[0].amount,
+        auth_lock_amount_1 + auth_lock_amount_2
+    );
+    assert_eq!(auth_locks[0].expires_at, expires_at);
+
+    // Now remove the second authority
+    let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        root_role_id,
+        2, // Authority to remove (the second one)
+    )
+    .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[remove_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )
+    .unwrap();
+
+    context.svm.send_transaction(tx).unwrap();
+
+    // Verify that only two authorities remain (root and third)
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 3);
+
+    // Verify the root authority still exists
+    let found_root = swig
+        .lookup_role_id(root_authority.pubkey().as_ref())
+        .unwrap()
+        .is_some();
+    assert!(found_root, "Root authority should still exist");
+
+    // Verify the third authority still exists
+    let found_third = swig
+        .lookup_role_id(third_authority.pubkey().as_ref())
+        .unwrap()
+        .is_some();
+    assert!(found_third, "Third authority should still exist");
+
+    // Verify that the global role auth lock is updated correctly
+    // It should now only have the amount from the third authority
+    let global_role = swig.get_role(0).unwrap().unwrap();
+    let auth_locks = global_role
+        .get_all_actions_of_type::<AuthorizationLock>()
+        .unwrap();
+    assert_eq!(auth_locks.len(), 1, "Global role should have one auth lock");
+    assert_eq!(auth_locks[0].mint, mint);
+    assert_eq!(
+        auth_locks[0].amount, auth_lock_amount_2,
+        "Global auth lock should only contain the amount from the remaining authority"
+    );
+    assert_eq!(auth_locks[0].expires_at, expires_at);
 }

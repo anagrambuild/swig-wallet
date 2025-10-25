@@ -7,6 +7,7 @@
 //! The utilities are optimized for performance and safety.
 
 use std::mem::MaybeUninit;
+pub mod auth_lock;
 
 use pinocchio::{
     account_info::AccountInfo,
