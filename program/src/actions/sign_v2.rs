@@ -485,7 +485,10 @@ pub fn sign_v2(
                             global_role.actions,
                             &[0u8; 32],
                         )? {
-                            action.run(total_sol_spent, current_lamports)?;
+                            let swig_wallet_address_balance =
+                                ctx.accounts.swig_wallet_address.lamports();
+
+                            action.run(swig_wallet_address_balance)?;
                         }
 
                         if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])? {
@@ -603,7 +606,7 @@ pub fn sign_v2(
                         if let Some(action) =
                             RoleMut::get_action_mut::<AuthorizationLock>(global_role.actions, mint)?
                         {
-                            action.run(total_token_spent, current_token_balance)?;
+                            action.run(current_token_balance)?;
                         }
 
                         // Check token destination limits for outgoing transfers using zero-copy

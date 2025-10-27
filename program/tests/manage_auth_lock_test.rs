@@ -6,8 +6,9 @@
 mod common;
 
 use common::*;
+use litesvm_token::spl_token::{self, instruction::TokenInstruction};
 use solana_sdk::{
-    instruction::InstructionError,
+    instruction::{AccountMeta, Instruction, InstructionError},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
@@ -25,7 +26,7 @@ use swig_state::{
     action::{
         all::All, authorization_lock::AuthorizationLock,
         manage_auth_lock::ManageAuthorizationLocks, manage_authority::ManageAuthority,
-        program_all::ProgramAll, sol_limit::SolLimit,
+        program_all::ProgramAll, sol_limit::SolLimit, token_limit::TokenLimit,
     },
     authority::AuthorityType,
     swig::{swig_wallet_address_seeds, SwigWithRoles},
@@ -105,7 +106,7 @@ fn test_manage_authorization_locks_ed25519_add_lock() -> anyhow::Result<()> {
         ClientAction::ProgramAll(ProgramAll {}),
         ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
         ClientAction::SolLimit(SolLimit {
-            amount: 2 * 1000000,
+            amount: 4 * 1_000_000,
         }),
     ];
 
@@ -137,7 +138,7 @@ fn test_manage_authorization_locks_ed25519_add_lock() -> anyhow::Result<()> {
     let new_actions = vec![
         ClientAction::AuthorizationLock(AuthorizationLock {
             mint: [0u8; 32],
-            amount: 1000000,
+            amount: 1_500_000,
             expires_at: 1000000,
         }),
         ClientAction::AuthorizationLock(AuthorizationLock {
@@ -174,7 +175,7 @@ fn test_manage_authorization_locks_ed25519_add_lock() -> anyhow::Result<()> {
 
     // Verify the first authorization lock
     assert_eq!(auth_lock_actions[0].mint, [0u8; 32]);
-    assert_eq!(auth_lock_actions[0].amount, 1000000);
+    assert_eq!(auth_lock_actions[0].amount, 1500000);
     assert_eq!(auth_lock_actions[0].expires_at, 1000000);
 
     // Verify the second authorization lock
@@ -193,7 +194,7 @@ fn test_manage_authorization_locks_ed25519_add_lock() -> anyhow::Result<()> {
 
     // Verify the global cache has the first authorization lock
     assert_eq!(global_auth_lock_actions[0].mint, [0u8; 32]);
-    assert_eq!(global_auth_lock_actions[0].amount, 1000000);
+    assert_eq!(global_auth_lock_actions[0].amount, 1500000);
     assert_eq!(global_auth_lock_actions[0].expires_at, 1000000);
 
     // Verify the global cache has the second authorization lock
@@ -206,7 +207,7 @@ fn test_manage_authorization_locks_ed25519_add_lock() -> anyhow::Result<()> {
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
     context
         .svm
-        .airdrop(&swig_wallet_address, 2_000_000)
+        .airdrop(&swig_wallet_address, 5_000_000)
         .unwrap();
 
     // Also fund the secondary authority for fees
@@ -215,8 +216,13 @@ fn test_manage_authorization_locks_ed25519_add_lock() -> anyhow::Result<()> {
         .airdrop(&second_authority.pubkey(), 2_000_000)
         .unwrap();
 
-    // Test 1: Create a SOL transaction that spends less than locked SOL (should succeed)
-    let transfer_amount = 1000000; // Exactly the locked amount
+    // Test 1: Create a SOL transaction that keeps balance above the lock (should succeed)
+    // Balance: 5_000_000, Lock: 1_500_000, Rent exempt: ~890_000
+    // Effective balance for check: 5_000_000 - 890_000 = 4_110_000
+    // Max we can transfer: 4_110_000 - 1_500_000 = 2_610_000
+    // Let's transfer 2_000_000 (leaves 2_000_000 - 890_000 = 1_110_000 after rent, which is < 1_500_000??)
+    // Actually, after transfer, remaining balance is 3_000_000, so effective is 3_000_000 - 890_000 = 2_110_000, which is >= 1_500_000
+    let transfer_amount = 1_900_000;
 
     let transfer_ix = system_instruction::transfer(
         &swig_wallet_address,
@@ -240,13 +246,25 @@ fn test_manage_authorization_locks_ed25519_add_lock() -> anyhow::Result<()> {
     )?;
 
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&second_authority])?;
+
+    let swig_wallet_balance = context.svm.get_balance(&swig_wallet_address).unwrap();
+    println!("swig_wallet_balance: {}", swig_wallet_balance);
+
     let result = context.svm.send_transaction(tx);
 
-    // This should succeed because we're spending exactly the locked amount
+    println!("result: {:?}", result);
+    // This should succeed because balance after transfer (2_000_000) >= lock (1_500_000)
     assert!(result.is_ok());
 
-    // Test 2: Create a SOL transaction that spends more than locked SOL (should fail)
-    let transfer_amount = 1000000 + 1; // More than the locked amount
+    // Test 2: Create a SOL transaction that would go below the lock (should fail)
+    // After first transfer, balance should be around 3_000_000 (5_000_000 - 2_000_000)
+    // Rent exempt: ~890_000
+    // Effective balance: 3_000_000 - 890_000 = 2_110_000
+    // Max we can transfer: 2_110_000 - 1_500_000 = 610_000
+    // Let's try to transfer 700_000 (would leave effective balance 1_410_000, which is < 1_500_000)
+    let swig_wallet_balance = context.svm.get_balance(&swig_wallet_address).unwrap();
+
+    let transfer_amount = swig_wallet_balance - 1500000 + 1;
 
     let transfer_ix = system_instruction::transfer(
         &swig_wallet_address,
@@ -269,9 +287,12 @@ fn test_manage_authorization_locks_ed25519_add_lock() -> anyhow::Result<()> {
         context.svm.latest_blockhash(),
     )?;
 
+    let swig_wallet_balance = context.svm.get_balance(&swig_wallet_address).unwrap();
+    println!("swig_wallet_balance: {}", swig_wallet_balance);
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&second_authority])?;
     let result = context.svm.send_transaction(tx);
 
+    println!("result: {:?}", result);
     // This should fail with the specific authorization lock error
     assert!(result.is_err());
     if let Err(e) = result {
@@ -1006,6 +1027,281 @@ fn test_manage_authorization_locks_ed25519_update_lock() -> anyhow::Result<()> {
     assert_eq!(global_auth_lock_actions_after[1].mint, [1u8; 32]);
     assert_eq!(global_auth_lock_actions_after[1].amount, 2000000);
     assert_eq!(global_auth_lock_actions_after[1].expires_at, 2000000);
+
+    Ok(())
+}
+
+#[test]
+fn test_manage_authorization_locks_token_mint() -> anyhow::Result<()> {
+    let mut context = setup_test_context()?;
+
+    // Create initial wallet with Ed25519 authority
+    let root_authority = Keypair::new();
+    let id = [4u8; 32];
+    let (swig, _) = create_swig_ed25519(&mut context, &root_authority, id)?;
+
+    // Setup token mint
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer)?;
+
+    // Add a second authority that we can update
+    let second_authority = Keypair::new();
+    let second_authority_pubkey = second_authority.pubkey();
+    let authority_config = AuthorityConfig {
+        authority_type: AuthorityType::Ed25519,
+        authority: second_authority_pubkey.as_ref(),
+    };
+
+    let initial_actions = vec![
+        ClientAction::ProgramAll(ProgramAll {}),
+        ClientAction::SolLimit(SolLimit { amount: 2 * 10000 }),
+        ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
+        ClientAction::TokenLimit(TokenLimit {
+            token_mint: mint_pubkey.to_bytes(),
+            current_amount: 10000,
+        }),
+    ];
+
+    let add_result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root_authority,
+        authority_config,
+        initial_actions,
+    );
+
+    // Verify the authority was added successfully
+    assert!(add_result.is_ok());
+
+    // Derive swig wallet address
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
+
+    // Setup ATA for the swig wallet address
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig_wallet_address,
+        &context.default_payer,
+    )?;
+
+    // Mint tokens to the swig ATA
+    let mint_amount = 10000;
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &swig_ata,
+        mint_amount,
+    )?;
+
+    // Create authorization lock for the token mint
+    let mint_bytes = mint_pubkey.to_bytes();
+    let auth_lock_actions = vec![ClientAction::AuthorizationLock(AuthorizationLock {
+        mint: mint_bytes,
+        amount: 3000,
+        expires_at: 1000000,
+    })];
+
+    let root_role_id = 1;
+
+    // Add authorization lock to the second authority
+    let add_lock_ix = ManageAuthorizationLocksV1Instruction::new_with_ed25519_authority(
+        swig,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        root_role_id,
+        2, // authority_id 2 (the second authority)
+        ManageAuthorizationLocksData::AddLock(auth_lock_actions),
+    )?;
+
+    let msg = solana_sdk::message::v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[add_lock_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+
+    let tx = solana_sdk::transaction::VersionedTransaction::try_new(
+        solana_sdk::message::VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )?;
+
+    let result = context.svm.send_transaction(tx);
+
+    // Verify the add lock transaction succeeded
+    assert!(result.is_ok());
+
+    // Verify the authorization lock was added correctly
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
+
+    let role = swig_data.get_role(2).unwrap().unwrap();
+    let auth_lock_actions = role.get_all_actions_of_type::<AuthorizationLock>().unwrap();
+
+    // Should have 1 authorization lock action
+    assert_eq!(auth_lock_actions.len(), 1);
+
+    // Verify the authorization lock
+    assert_eq!(auth_lock_actions[0].mint, mint_bytes);
+    assert_eq!(auth_lock_actions[0].amount, 3000);
+    assert_eq!(auth_lock_actions[0].expires_at, 1000000);
+
+    // Verify global role cache was updated with the authorization locks
+    let global_role = swig_data.get_role(0).unwrap().unwrap();
+    let global_auth_lock_actions = global_role
+        .get_all_actions_of_type::<AuthorizationLock>()
+        .unwrap();
+
+    // Global role should have the same authorization lock as the second authority
+    assert_eq!(global_auth_lock_actions.len(), 1);
+
+    // Verify the global cache has the authorization lock
+    assert_eq!(global_auth_lock_actions[0].mint, mint_bytes);
+    assert_eq!(global_auth_lock_actions[0].amount, 3000);
+    assert_eq!(global_auth_lock_actions[0].expires_at, 1000000);
+
+    // Verify the lock was saved to persistent storage by reading it back
+    let swig_account_after = context.svm.get_account(&swig).unwrap();
+    let swig_data_after = SwigWithRoles::from_bytes(&swig_account_after.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
+    let global_role_after = swig_data_after.get_role(0).unwrap().unwrap();
+    let global_auth_lock_actions_after = global_role_after
+        .get_all_actions_of_type::<AuthorizationLock>()
+        .unwrap();
+    assert_eq!(global_auth_lock_actions_after.len(), 1);
+    assert_eq!(global_auth_lock_actions_after[0].mint, mint_bytes);
+    assert_eq!(global_auth_lock_actions_after[0].amount, 3000);
+
+    // Setup recipient ATA for token transfers
+    let recipient = Keypair::new();
+    let recipient_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &recipient.pubkey(),
+        &context.default_payer,
+    )?;
+
+    // Fund the second authority for fees
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 2_000_000)
+        .unwrap();
+
+    // Expire blockhash to get fresh one
+    context.svm.expire_blockhash();
+
+    // Test 1: Transfer that would violate the auth lock (should fail)
+    // Balance: 10000, Lock: 3000
+    // Max transfer: 10000 - 3000 = 7000
+    // Let's try to transfer 7001 (should fail)
+    let transfer_amount = 7001;
+
+    let transfer_ix = Instruction {
+        program_id: spl_token::id(),
+        accounts: vec![
+            AccountMeta::new(swig_ata, false),
+            AccountMeta::new(recipient_ata, false),
+            AccountMeta::new(swig_wallet_address, false),
+        ],
+        data: TokenInstruction::Transfer {
+            amount: transfer_amount,
+        }
+        .pack(),
+    };
+
+    let sign_ix = SignV2Instruction::new_ed25519(
+        swig,
+        swig_wallet_address,
+        second_authority.pubkey(),
+        transfer_ix,
+        2,
+    )?;
+
+    let message = v0::Message::try_compile(
+        &second_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&second_authority])?;
+    let result = context.svm.send_transaction(tx);
+
+    // Check the actual balance after the failed transfer attempt
+    let swig_ata_account = context.svm.get_account(&swig_ata).unwrap();
+    let balance_after: u64 = u64::from_le_bytes(
+        swig_ata_account
+            .data
+            .get(64..72)
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
+    println!("Token balance after transfer attempt: {}", balance_after);
+
+    assert!(result.is_err());
+    if let Err(e) = result {
+        assert!(matches!(
+            e.err,
+            TransactionError::InstructionError(_, InstructionError::Custom(3033))
+        ));
+    }
+
+    // Test 2: Transfer within the limit (should succeed)
+    // Balance: 10000, Lock: 3000
+    // Max transfer: 10000 - 3000 = 7000
+    // Let's transfer 5000 (leaves 5000 which is >= 3000)
+    let transfer_amount = 5000;
+
+    let swig_ata_data = context.svm.get_account(&swig_ata).unwrap().data;
+    let current_token_balance: u64 =
+        u64::from_le_bytes(swig_ata_data.get(64..72).unwrap().try_into().unwrap());
+    println!("current token balance: {}", current_token_balance);
+
+    let transfer_ix = spl_token::instruction::transfer(
+        &spl_token::ID,
+        &swig_ata,
+        &recipient_ata,
+        &swig_wallet_address,
+        &[],
+        transfer_amount,
+    )
+    .unwrap();
+
+    let sign_ix = SignV2Instruction::new_ed25519(
+        swig,
+        swig_wallet_address,
+        second_authority.pubkey(),
+        transfer_ix,
+        2,
+    )?;
+
+    let message = v0::Message::try_compile(
+        &second_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&second_authority])?;
+    let result = context.svm.send_transaction(tx);
+
+    println!("result: {:?}", result);
+    // This should succeed
+    assert!(result.is_ok());
+
+    // Verify the balance decreased correctly
+    let swig_ata_account = context.svm.get_account(&swig_ata).unwrap();
+    let remaining_balance: u64 = u64::from_le_bytes(
+        swig_ata_account
+            .data
+            .get(64..72)
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
+    assert_eq!(remaining_balance, 5000);
 
     Ok(())
 }
