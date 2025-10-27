@@ -78,8 +78,8 @@ impl AuthorizationLock {
         }
     }
 
-    pub fn run(&mut self, total_spent: u64) -> Result<(), ProgramError> {
-        if total_spent > self.amount {
+    pub fn run(&mut self, total_spent: u64, current_balance: u64) -> Result<(), ProgramError> {
+        if current_balance.saturating_sub(total_spent) > self.amount {
             return Err(SwigAuthenticateError::PermissionDeniedAuthorizationLockExceeded.into());
         }
         Ok(())
