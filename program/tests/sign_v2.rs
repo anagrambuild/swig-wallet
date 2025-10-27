@@ -2372,7 +2372,9 @@ fn test_sign_v2_minimum_rent_check() {
         },
         vec![
             ClientAction::ProgramAll(ProgramAll {}),
-            ClientAction::SolLimit(SolLimit { amount: 100000000 }),
+            ClientAction::SolLimit(SolLimit {
+                amount: 3_000_000_000,
+            }),
         ],
     )
     .unwrap();
@@ -2382,8 +2384,8 @@ fn test_sign_v2_minimum_rent_check() {
         .airdrop(&swig_wallet_address, 1_000_000_000)
         .unwrap();
 
-    // Create a simple transfer instruction from swig_wallet_address
-    let transfer_amount = 898775040; // swig wallet balance - swig config rent min
+    // Failure case - transfer amount is greater than the swig wallet balance and the rent exempt minimum
+    let transfer_amount = 1_000_000_000 + 1; // swig wallet balance + 1
     let transfer_ix =
         system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
@@ -2426,20 +2428,53 @@ fn test_sign_v2_minimum_rent_check() {
     // Execute the transaction
     let result = context.svm.send_transaction(transfer_tx);
 
-    if result.is_err() {
-        println!("Transaction failed: {:?}", result.err());
-        assert!(
-            false,
-            "SignV2 transaction with different payer and authority should succeed"
-        );
-    } else {
-        let txn = result.unwrap();
-        println!(
-            "SignV2 Transfer with different payer/authority successful - CU consumed: {:?}",
-            txn.compute_units_consumed
-        );
-        println!("Logs: {}", txn.pretty_logs());
-    }
+    assert!(result.is_err(), "Transfer should be rejected");
+
+    // Success case - transfer amount is less than the swig wallet balance and the rent exempt minimum
+    let transfer_amount = 1_000_000_000; // swig wallet balance
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+
+    // Create SignV2 instruction signed by the swig authority
+    let sign_v2_ix = SignV2Instruction::new_ed25519(
+        swig,
+        swig_wallet_address,
+        secondary_authority.pubkey(),
+        transfer_ix,
+        1, // role_id 0 for root authority
+    )
+    .unwrap();
+
+    // Build and execute transaction - payer signs but authority is different
+    let transfer_message = v0::Message::try_compile(
+        &different_payer.pubkey(),
+        &[sign_v2_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message),
+        &[&different_payer, &secondary_authority],
+    )
+    .unwrap();
+
+    let initial_recipient_balance = context
+        .svm
+        .get_account(&recipient.pubkey())
+        .unwrap()
+        .lamports;
+    let initial_swig_wallet_address_balance = context
+        .svm
+        .get_account(&swig_wallet_address)
+        .unwrap()
+        .lamports;
+
+    // Execute the transaction
+    let result = context.svm.send_transaction(transfer_tx);
+
+    assert!(result.is_ok(), "Transfer should succeed");
 
     // Verify the transfer was successful
     let final_recipient_balance = context
