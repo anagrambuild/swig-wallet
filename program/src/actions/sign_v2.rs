@@ -7,6 +7,7 @@ use core::mem::MaybeUninit;
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
+    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
     sysvars::{clock::Clock, Sysvar},
@@ -457,6 +458,17 @@ pub fn sign_v2(
                     let account_data = unsafe { account_info.borrow_data_unchecked() };
                     let rent_exempt_minimum =
                         pinocchio::sysvars::rent::Rent::get()?.minimum_balance(account_data.len());
+                    msg!("current_lamports: {}", current_lamports);
+                    msg!(
+                        "swig wallet balance: {}",
+                        ctx.accounts.swig_wallet_address.lamports()
+                    );
+                    msg!("rent_exempt_minimum: {}", rent_exempt_minimum);
+                    msg!(
+                        "wallet rent exempt minimum: {}",
+                        pinocchio::sysvars::rent::Rent::get()?
+                            .minimum_balance(ctx.accounts.swig_wallet_address.data_len())
+                    );
                     if current_lamports < rent_exempt_minimum {
                         return Err(
                             SwigAuthenticateError::PermissionDeniedInsufficientBalance.into()
