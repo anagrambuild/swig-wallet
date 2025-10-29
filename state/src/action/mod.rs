@@ -8,6 +8,8 @@
 pub mod all;
 pub mod all_but_manage_authority;
 pub mod manage_authority;
+pub mod oracle_limits;
+pub mod oracle_recurring_limit;
 pub mod program;
 pub mod program_all;
 pub mod program_curated;
@@ -24,10 +26,13 @@ pub mod token_destination_limit;
 pub mod token_limit;
 pub mod token_recurring_destination_limit;
 pub mod token_recurring_limit;
+use crate::{IntoBytes, SwigStateError, Transmutable, TransmutableMut};
 use all::All;
 use all_but_manage_authority::AllButManageAuthority;
 use manage_authority::ManageAuthority;
 use no_padding::NoPadding;
+use oracle_limits::OracleTokenLimit;
+use oracle_recurring_limit::OracleRecurringLimit;
 use pinocchio::program_error::ProgramError;
 use program::Program;
 use program_all::ProgramAll;
@@ -45,8 +50,6 @@ use token_destination_limit::TokenDestinationLimit;
 use token_limit::TokenLimit;
 use token_recurring_destination_limit::TokenRecurringDestinationLimit;
 use token_recurring_limit::TokenRecurringLimit;
-
-use crate::{IntoBytes, SwigStateError, Transmutable, TransmutableMut};
 
 /// Represents an action in the Swig wallet system.
 ///
@@ -163,6 +166,10 @@ pub enum Permission {
     /// Permission to perform recurring token operations with limits to specific
     /// destinations
     TokenRecurringDestinationLimit = 19,
+    /// Permission to perform token operations with oracle-based limits
+    OracleTokenLimit = 20,
+    /// Permission to perform token operations with recurring oracle-based limits
+    OracleRecurringLimit = 21,
 }
 
 impl TryFrom<u16> for Permission {
@@ -172,7 +179,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=19 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=21 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -240,6 +247,8 @@ impl ActionLoader {
             Permission::TokenRecurringDestinationLimit => {
                 TokenRecurringDestinationLimit::valid_layout(data)
             },
+            Permission::OracleTokenLimit => OracleTokenLimit::valid_layout(data),
+            Permission::OracleRecurringLimit => OracleRecurringLimit::valid_layout(data),
             _ => Ok(false),
         }
     }

@@ -5,6 +5,8 @@ use swig_state::{
         all::All,
         all_but_manage_authority::AllButManageAuthority,
         manage_authority::ManageAuthority,
+        oracle_limits::OracleTokenLimit as OracleTokenLimitAction,
+        oracle_recurring_limit::OracleRecurringLimit as OracleRecurringLimitAction,
         program::Program,
         program_all::ProgramAll,
         program_curated::ProgramCurated,
@@ -164,6 +166,20 @@ pub enum Permission {
     /// This grants access to all wallet operations but excludes the ability
     /// to add, remove, or modify authorities/subaccounts.
     AllButManageAuthority,
+
+    /// Permission to enforce value-based limits using oracle pricing
+    OracleLimit {
+        /// Base asset denomination for the limit (e.g., 0=USD, 1=EUR)
+        base_asset_type: u8,
+        /// Remaining value limit in base asset units (e.g., 6 decimals for USD)
+        value_limit: u64,
+        /// If true, continue checking other actions even if oracle check passes
+        passthrough_check: bool,
+        /// Optional recurring configuration. If provided, the amount becomes a
+        /// recurring limit that resets after the specified window
+        /// period. If None, amount is treated as a fixed limit.
+        recurring: Option<RecurringConfig>,
+    },
 }
 
 impl Permission {
@@ -332,6 +348,38 @@ impl Permission {
                     actions.push(ClientAction::AllButManageAuthority(
                         AllButManageAuthority {},
                     ));
+                },
+                Permission::OracleLimit {
+                    base_asset_type,
+                    value_limit,
+                    passthrough_check,
+                    recurring,
+                } => match recurring {
+                    Some(config) => {
+                        actions.push(ClientAction::OracleRecurringLimit(
+                            OracleRecurringLimitAction::new(
+                                match base_asset_type {
+                                    0 => swig_state::action::oracle_limits::BaseAsset::USD,
+                                    1 => swig_state::action::oracle_limits::BaseAsset::EUR,
+                                    _ => swig_state::action::oracle_limits::BaseAsset::USD,
+                                },
+                                value_limit,
+                                config.window,
+                                passthrough_check,
+                            ),
+                        ));
+                    },
+                    None => {
+                        actions.push(ClientAction::OracleTokenLimit(OracleTokenLimitAction::new(
+                            match base_asset_type {
+                                0 => swig_state::action::oracle_limits::BaseAsset::USD,
+                                1 => swig_state::action::oracle_limits::BaseAsset::EUR,
+                                _ => swig_state::action::oracle_limits::BaseAsset::USD,
+                            },
+                            value_limit,
+                            passthrough_check,
+                        )));
+                    },
                 },
             }
         }
@@ -573,6 +621,36 @@ impl Permission {
             permissions.push(Permission::AllButManageAuthority);
         }
 
+        // Check for OracleTokenLimit permissions
+        let oracle_limits =
+            swig_state::role::Role::get_all_actions_of_type::<OracleTokenLimitAction>(role)
+                .map_err(|_| SwigError::InvalidSwigData)?;
+        for action in oracle_limits {
+            permissions.push(Permission::OracleLimit {
+                base_asset_type: action.base_asset_type,
+                value_limit: action.value_limit,
+                passthrough_check: action.passthrough_check,
+                recurring: None,
+            });
+        }
+
+        // Check for OracleRecurringLimit permissions
+        let oracle_recurring_limits =
+            swig_state::role::Role::get_all_actions_of_type::<OracleRecurringLimitAction>(role)
+                .map_err(|_| SwigError::InvalidSwigData)?;
+        for action in oracle_recurring_limits {
+            permissions.push(Permission::OracleLimit {
+                base_asset_type: action.base_asset_type,
+                value_limit: action.recurring_value_limit,
+                passthrough_check: action.passthrough_check != 0,
+                recurring: Some(RecurringConfig {
+                    window: action.window,
+                    last_reset: action.last_reset,
+                    current_amount: action.current_amount,
+                }),
+            });
+        }
+
         Ok(permissions)
     }
 
@@ -649,6 +727,13 @@ impl Permission {
             },
             Permission::StakeAll => 12,
             Permission::AllButManageAuthority => 15,
+            Permission::OracleLimit { recurring, .. } => {
+                if recurring.is_some() {
+                    21 // OracleRecurringLimit
+                } else {
+                    20 // OracleTokenLimit
+                }
+            },
         }
     }
 }

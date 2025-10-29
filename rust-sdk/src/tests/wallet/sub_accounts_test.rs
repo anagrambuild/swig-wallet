@@ -39,6 +39,7 @@ fn test_sub_account_creation_and_setup() {
             Some(&secondary_authority),
         )
         .unwrap();
+    swig_wallet.switch_payer(&main_authority).unwrap();
 
     let signature = swig_wallet.create_sub_account().unwrap();
     println!("Sub-account created with signature: {:?}", signature);
@@ -78,6 +79,7 @@ fn test_sub_account_sol_operations() {
             Some(&secondary_authority),
         )
         .unwrap();
+    swig_wallet.switch_payer(&main_authority).unwrap();
 
     // Create sub-account
     let signature = swig_wallet.create_sub_account().unwrap();
@@ -196,6 +198,7 @@ fn test_sub_account_token_operations() {
             Some(&secondary_authority),
         )
         .unwrap();
+    swig_wallet.switch_payer(&main_authority).unwrap();
 
     let signature = swig_wallet.create_sub_account().unwrap();
     let role_id_bytes = swig_wallet.get_current_role_id().unwrap().to_le_bytes();
@@ -280,6 +283,7 @@ fn test_sub_account_toggle_operations() {
             Some(&secondary_authority),
         )
         .unwrap();
+    swig_wallet.switch_payer(&main_authority).unwrap();
 
     let signature = swig_wallet.create_sub_account().unwrap();
     let role_id_bytes = swig_wallet.get_current_role_id().unwrap().to_le_bytes();
@@ -334,6 +338,7 @@ fn test_secondary_authority_operations() {
             Some(&secondary_authority),
         )
         .unwrap();
+    swig_wallet.switch_payer(&main_authority).unwrap();
 
     let signature = swig_wallet.create_sub_account().unwrap();
     let role_id_bytes = swig_wallet.get_current_role_id().unwrap().to_le_bytes();

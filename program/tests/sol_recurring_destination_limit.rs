@@ -442,7 +442,7 @@ fn test_multiple_sol_recurring_destination_limits() {
     context.svm.warp_to_slot(100);
 
     // Test transfer to recipient1 within limit
-    let transfer_amount1 = 200_000_000u64; // 0.2 SOL - within recipient1's limit
+    let transfer_amount1 = 250_000_000u64; // 0.2 SOL - within recipient1's limit
 
     let inner_ix1 = system_instruction::transfer(&swig, &recipient1.pubkey(), transfer_amount1);
     let sol_transfer_ix1 = SignInstruction::new_ed25519(

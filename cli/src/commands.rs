@@ -239,6 +239,45 @@ pub fn parse_permission_from_json(permission_json: &Value) -> Result<Permission>
                 recurring,
             })
         },
+        Some("oracle") => {
+            // Oracle value-based limit, optional recurring
+            // Supported fields:
+            // - baseAsset: "USD" | "EUR" (preferred) OR baseAssetType: number (u8)
+            // - valueLimit: u64
+            // - passthrough: bool (default false)
+            // - recurring: { window: u64 } (optional)
+            let base_asset_type = if let Some(base_str) = permission_json["baseAsset"].as_str() {
+                match base_str {
+                    "USD" | "usd" => 0u8,
+                    "EUR" | "eur" => 1u8,
+                    other => return Err(anyhow!("Invalid baseAsset: {} (use USD or EUR)", other)),
+                }
+            } else {
+                permission_json["baseAssetType"].as_u64().unwrap_or(0) as u8
+            };
+
+            let value_limit = permission_json["valueLimit"].as_u64().ok_or_else(|| {
+                anyhow!("valueLimit is required for oracle permission (u64 in base asset units)")
+            })?;
+
+            let passthrough_check = permission_json["passthrough"].as_bool().unwrap_or(false);
+
+            let recurring = if let Some(recurring) = permission_json.get("recurring") {
+                let window = recurring["window"].as_u64().ok_or_else(|| {
+                    anyhow!("recurring.window is required when recurring is provided")
+                })?;
+                Some(swig_sdk::RecurringConfig::new(window))
+            } else {
+                None
+            };
+
+            Ok(Permission::OracleLimit {
+                base_asset_type,
+                value_limit,
+                passthrough_check,
+                recurring,
+            })
+        },
         Some(unknown) => Err(anyhow!("Invalid permission type: {}", unknown)),
         None => Err(anyhow!("Permission type is required")),
     }
@@ -881,6 +920,12 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                             "Token" => Ok(Permission::Token {
                                 mint: Pubkey::default(),
                                 amount: 0,
+                                recurring: None,
+                            }),
+                            "OracleLimit" | "Oracle" => Ok(Permission::OracleLimit {
+                                base_asset_type: 0,
+                                value_limit: 0,
+                                passthrough_check: false,
                                 recurring: None,
                             }),
                             "Program" => Ok(Permission::Program {

@@ -73,6 +73,7 @@ fn should_token_transfer_with_program_scope() {
             Some(&new_authority),
         )
         .unwrap();
+    swig_wallet.switch_payer(&main_authority).unwrap();
 
     // Mint initial tokens to swig wallet
     let initial_token_amount = 2000;
@@ -168,7 +169,7 @@ fn should_token_transfer_with_recurring_limit_program_scope() {
             Some(&new_authority),
         )
         .unwrap();
-
+    swig_wallet.switch_payer(&main_authority).unwrap();
     // Mint initial tokens to swig wallet
     let initial_token_amount = 2000;
     mint_to(

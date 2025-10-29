@@ -124,7 +124,7 @@ fn should_get_sub_account() {
             Some(&sub_account_authority),
         )
         .unwrap();
-
+    swig_wallet.switch_payer(&main_authority).unwrap();
     // Create a sub account
     swig_wallet.create_sub_account().unwrap();
 

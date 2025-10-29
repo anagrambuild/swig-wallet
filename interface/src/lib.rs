@@ -23,7 +23,8 @@ pub use swig_compact_instructions::*;
 use swig_state::{
     action::{
         all::All, all_but_manage_authority::AllButManageAuthority,
-        manage_authority::ManageAuthority, program::Program, program_all::ProgramAll,
+        manage_authority::ManageAuthority, oracle_limits::OracleTokenLimit,
+        oracle_recurring_limit::OracleRecurringLimit, program::Program, program_all::ProgramAll,
         program_curated::ProgramCurated, program_scope::ProgramScope,
         sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
         sol_recurring_destination_limit::SolRecurringDestinationLimit,
@@ -61,6 +62,8 @@ pub enum ClientAction {
     StakeLimit(StakeLimit),
     StakeRecurringLimit(StakeRecurringLimit),
     StakeAll(StakeAll),
+    OracleTokenLimit(OracleTokenLimit),
+    OracleRecurringLimit(OracleRecurringLimit),
 }
 
 impl ClientAction {
@@ -105,6 +108,12 @@ impl ClientAction {
                 (Permission::StakeRecurringLimit, StakeRecurringLimit::LEN)
             },
             ClientAction::StakeAll(_) => (Permission::StakeAll, StakeAll::LEN),
+            ClientAction::OracleTokenLimit(_) => {
+                (Permission::OracleTokenLimit, OracleTokenLimit::LEN)
+            },
+            ClientAction::OracleRecurringLimit(_) => {
+                (Permission::OracleRecurringLimit, OracleRecurringLimit::LEN)
+            },
         };
         let offset = data.len() as u32;
         let header = Action::new(
@@ -136,6 +145,8 @@ impl ClientAction {
             ClientAction::StakeLimit(action) => action.into_bytes(),
             ClientAction::StakeRecurringLimit(action) => action.into_bytes(),
             ClientAction::StakeAll(action) => action.into_bytes(),
+            ClientAction::OracleTokenLimit(action) => action.into_bytes(),
+            ClientAction::OracleRecurringLimit(action) => action.into_bytes(),
         };
         data.extend_from_slice(
             bytes_res.map_err(|e| anyhow::anyhow!("Failed to serialize action {:?}", e))?,
@@ -654,6 +665,19 @@ impl SignV2Instruction {
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Appends the oracle accounts to the instruction
+        let oracle_accounts = vec![
+            AccountMeta::new_readonly(
+                Pubkey::from_str_const("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw"),
+                false,
+            ),
+            AccountMeta::new_readonly(
+                Pubkey::from_str_const("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C"),
+                false,
+            ),
+        ];
+        accounts.extend(oracle_accounts);
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
@@ -719,6 +743,19 @@ impl SignV2Instruction {
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Appends the oracle accounts to the instruction
+        let oracle_accounts = vec![
+            AccountMeta::new_readonly(
+                Pubkey::from_str_const("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw"),
+                false,
+            ),
+            AccountMeta::new_readonly(
+                Pubkey::from_str_const("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C"),
+                false,
+            ),
+        ];
+        accounts.extend(oracle_accounts);
 
         let mut account_payload_bytes = Vec::new();
         for account in &accounts {
@@ -814,6 +851,19 @@ impl SignV2Instruction {
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Appends the oracle accounts to the instruction
+        let oracle_accounts = vec![
+            AccountMeta::new_readonly(
+                Pubkey::from_str_const("FbeuRDWwLvZWEU3HNtaLoYKagw9rH1NvmjpRMpjMwhDw"),
+                false,
+            ),
+            AccountMeta::new_readonly(
+                Pubkey::from_str_const("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C"),
+                false,
+            ),
+        ];
+        accounts.extend(oracle_accounts);
 
         // Create the message hash for secp256r1 authentication
         let mut account_payload_bytes = Vec::new();
