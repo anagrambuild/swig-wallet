@@ -59,3 +59,7 @@ stake_tests = []
 
 [lib]
 crate-type = ["cdylib", "lib"]
+
+[build-dependencies]
+shank_idl = { version = "0.4.2", git = "https://github.com/anagrambuild/shank.git" }
+anyhow = "1.0"
