@@ -457,10 +457,24 @@ pub fn sign_v2(
                     let account_data = unsafe { account_info.borrow_data_unchecked() };
                     let rent_exempt_minimum =
                         pinocchio::sysvars::rent::Rent::get()?.minimum_balance(account_data.len());
-                    if current_lamports < rent_exempt_minimum {
-                        return Err(
-                            SwigAuthenticateError::PermissionDeniedInsufficientBalance.into()
-                        );
+
+                    // Make sure that the withdrawal
+                    if matches!(account, AccountClassification::ThisSwigV2 { .. }) {
+                        let swig_wallet_balance = ctx.accounts.swig_wallet_address.lamports();
+                        let swig_wallet_rent_exempt_minimum =
+                            pinocchio::sysvars::rent::Rent::get()?
+                                .minimum_balance(ctx.accounts.swig_wallet_address.data_len());
+                        if swig_wallet_balance < swig_wallet_rent_exempt_minimum {
+                            return Err(
+                                SwigAuthenticateError::PermissionDeniedInsufficientBalance.into()
+                            );
+                        }
+                    } else if matches!(account, AccountClassification::ThisSwig { .. }) {
+                        if current_lamports < rent_exempt_minimum {
+                            return Err(
+                                SwigAuthenticateError::PermissionDeniedInsufficientBalance.into()
+                            );
+                        }
                     }
 
                     if total_sol_spent > 0 {
