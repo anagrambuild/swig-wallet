@@ -17,11 +17,10 @@ bs58 = "0.5.1"
 hex = "0.4.3"
 thiserror = "2.0.12"
 anyhow = "1.0.75"
-alloy-primitives = { version = "1.0.0", features = ["k256"] }
-alloy-signer = { version = "0.14.0" }
-alloy-signer-local = { version = "0.14.0" }
+alloy-primitives = { version = "1.0.35", features = ["k256"] }
+alloy-signer = { version = "1.1.0" }
+alloy-signer-local = { version = "1.1.0" }
 secp256k1 = "0.30.0"
-litesvm-token = "0.6.1"
 spl-associated-token-account = "7.0.0"
 spl-token = "8.0.0"
 solana-account-decoder-client-types = "2.0"
@@ -29,7 +28,8 @@ solana-account-decoder-client-types = "2.0"
 [dev-dependencies]
 test-log = "0.2"
 rand = "0.8"
-litesvm = { version = "0.6.1" }
+litesvm = { version = "0.8.1" }
+litesvm-token = "0.8.1"
 openssl = "0.10"
 solana-secp256r1-program = "2.0"
 
