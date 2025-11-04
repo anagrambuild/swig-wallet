@@ -27,17 +27,14 @@ fn generate_idl() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or(anyhow!("program needs to be a lib"))?;
 
     let lib_full_path_str = crate_root.join(lib_rel_path);
-    let lib_full_path = lib_full_path_str
-        .to_str()
-        .ok_or(anyhow!("invalid path"))?;
+    let lib_full_path = lib_full_path_str.to_str().ok_or(anyhow!("invalid path"))?;
 
     // extract idl and convert to json
     let opts = ParseIdlOpts {
         require_program_address: false,
         ..ParseIdlOpts::default()
     };
-    let idl = extract_idl(lib_full_path, opts)?
-        .ok_or(anyhow!("no idl could be extracted"))?;
+    let idl = extract_idl(lib_full_path, opts)?.ok_or(anyhow!("no idl could be extracted"))?;
     let idl_json = idl.try_into_json()?;
 
     // write to json file
