@@ -112,7 +112,9 @@ impl Authority for ProgramExecAuthority {
         }
 
         let authority = unsafe { ProgramExecAuthority::load_mut_unchecked(bytes)? };
-        authority.program_id.copy_from_slice(&create_data[..32]);
+        let create_data_program_id = &create_data[..32];
+        assert_program_exec_cant_be_swig(create_data_program_id)?;
+        authority.program_id.copy_from_slice(create_data_program_id);
         authority.instruction_prefix_len = prefix_len as u8;
         authority.instruction_prefix[..prefix_len]
             .copy_from_slice(&create_data[IX_PREFIX_OFFSET..IX_PREFIX_OFFSET + prefix_len]);
@@ -189,6 +191,14 @@ impl IntoBytes for ProgramExecAuthority {
     }
 }
 
+fn assert_program_exec_cant_be_swig(program_id: &[u8]) -> Result<(), ProgramError> {
+    if sol_assert_bytes_eq(program_id, &swig_assertions::id(), 32) {
+        return Err(SwigAuthenticateError::PermissionDeniedProgramExecCannotBeSwig.into());
+    }
+    Ok(())
+
+}
+
 /// Authenticates a program execution authority.
 ///
 /// Validates that a preceding instruction:
@@ -244,6 +254,10 @@ pub fn program_exec_authenticate(
 
     // Get the preceding instruction
     let preceding_ix = unsafe { ixs.deserialize_instruction_unchecked(current_index - 1) };
+    let num_accounts = u16::from_le_bytes(unsafe { *(preceding_ix.get_instruction_data().as_ptr() as *const [u8; 2]) });
+    if num_accounts < 2 {
+        return Err(SwigAuthenticateError::PermissionDeniedProgramExecInvalidInstructionData.into());
+    }
 
     // Verify the instruction is calling the expected program
     if !sol_assert_bytes_eq(preceding_ix.get_program_id(), expected_program_id, 32) {

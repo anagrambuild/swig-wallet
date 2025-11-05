@@ -192,6 +192,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedProgramExecInvalidConfigAccount,
     /// Program execution wallet account index mismatch
     PermissionDeniedProgramExecInvalidWalletAccount,
+    /// Program execution cannot be the Swig program
+    PermissionDeniedProgramExecCannotBeSwig,
 }
 
 impl From<SwigStateError> for ProgramError {
