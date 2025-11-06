@@ -196,7 +196,6 @@ fn assert_program_exec_cant_be_swig(program_id: &[u8]) -> Result<(), ProgramErro
         return Err(SwigAuthenticateError::PermissionDeniedProgramExecCannotBeSwig.into());
     }
     Ok(())
-
 }
 
 /// Authenticates a program execution authority.
@@ -254,9 +253,13 @@ pub fn program_exec_authenticate(
 
     // Get the preceding instruction
     let preceding_ix = unsafe { ixs.deserialize_instruction_unchecked(current_index - 1) };
-    let num_accounts = u16::from_le_bytes(unsafe { *(preceding_ix.get_instruction_data().as_ptr() as *const [u8; 2]) });
+    let num_accounts = u16::from_le_bytes(unsafe {
+        *(preceding_ix.get_instruction_data().as_ptr() as *const [u8; 2])
+    });
     if num_accounts < 2 {
-        return Err(SwigAuthenticateError::PermissionDeniedProgramExecInvalidInstructionData.into());
+        return Err(
+            SwigAuthenticateError::PermissionDeniedProgramExecInvalidInstructionData.into(),
+        );
     }
 
     // Verify the instruction is calling the expected program
