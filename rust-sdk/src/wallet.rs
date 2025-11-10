@@ -745,11 +745,17 @@ impl<'c> SwigWallet<'c> {
     /// Returns a `Result` containing unit type or a `SwigError`
     pub fn display_swig(&self) -> Result<(), SwigError> {
         let swig_pubkey = self.get_swig_account()?;
+        let swig_wallet_address = self.get_swig_wallet_address()?;
 
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let swig_account = self.rpc_client.get_account(&swig_pubkey)?;
         #[cfg(all(feature = "rust_sdk_test", test))]
         let swig_account = self.litesvm.get_account(&swig_pubkey).unwrap();
+
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let swig_wallet_account = self.rpc_client.get_account(&swig_wallet_address)?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let swig_wallet_account = self.litesvm.get_account(&swig_wallet_address).unwrap();
 
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
@@ -778,12 +784,13 @@ impl<'c> SwigWallet<'c> {
         println!("╔══════════════════════════════════════════════════════════════════");
         println!("║ SWIG WALLET DETAILS");
         println!("╠══════════════════════════════════════════════════════════════════");
-        println!("║ Account Address: {}", swig_pubkey);
-        println!("║ Total Roles: {}", swig_with_roles.state.role_counter);
+        println!("║ Config Account Address: {}", swig_pubkey);
+        println!("║ Wallet Address: {}", swig_wallet_address);
         println!(
-            "║ Balance: {} SOL",
-            swig_account.lamports() as f64 / 1_000_000_000.0
+            "║ Wallet Balance: {} SOL",
+            swig_wallet_account.lamports() as f64 / 1_000_000_000.0
         );
+        println!("║ Total Roles: {}", swig_with_roles.state.role_counter);
         if !token_accounts.is_empty() || !token_accounts_22.is_empty() {
             println!("║ Token Balances:");
             for token_account in token_accounts.iter() {
@@ -1348,7 +1355,7 @@ impl<'c> SwigWallet<'c> {
     ///
     /// Returns a `Result` containing the balance in lamports or a `SwigError`
     pub fn get_balance(&self) -> Result<u64, SwigError> {
-        let swig_pubkey = self.get_swig_account()?;
+        let swig_pubkey = self.get_swig_wallet_address()?;
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let balance = self.rpc_client.get_balance(&swig_pubkey)?;
         #[cfg(all(feature = "rust_sdk_test", test))]
@@ -1824,6 +1831,20 @@ impl<'c> SwigWallet<'c> {
         } else {
             Err(SwigError::AuthorityNotFound)
         }
+    }
+
+    /// Get swig pda from swig id
+    ///
+    /// # Arguments
+    ///
+    /// * `swig_id` - The ID of the swig to get the PDA for
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the PDA or a `SwigError`
+    pub fn get_swig_pda(swig_id: [u8; 32]) -> Result<Pubkey, SwigError> {
+        let swig_pda = SwigInstructionBuilder::swig_key(&swig_id);
+        Ok(swig_pda)
     }
 }
 
