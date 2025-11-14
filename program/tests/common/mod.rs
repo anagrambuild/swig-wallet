@@ -593,7 +593,7 @@ pub fn setup_enterprise_test_context() -> anyhow::Result<SwigTestContext> {
 pub fn load_enterprise_program(svm: &mut LiteSVM) -> anyhow::Result<()> {
     svm.add_program_from_file(
         Pubkey::new_from_array(swig::SWIG_ENTERPRISE_ID),
-        "/Users/santhosh/Documents/anagram/swig/enterprise-handler/target/deploy/swig_enterprise_program.so",
+        "./tests/common/swig_enterprise_program.so",
     )
     .map_err(|_| anyhow::anyhow!("Failed to load enterprise program"))
 }

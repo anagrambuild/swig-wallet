@@ -50,7 +50,7 @@ spl-memo = "=6.0.0"
 solana-secp256r1-program = "2.2.1"
 openssl = { version = "0.10.72", features = ["vendored"] }
 hex = "0.4.3"
-swig-enterprise-state = { path = "../../../enterprise-handler/state" }
+swig-enterprise-state = { git = "https://github.com/anagrambuild/swig-enterprise" }
 
 [features]
 test-bpf = []
