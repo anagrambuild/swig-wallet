@@ -377,7 +377,7 @@ fn test_update_authority_with_ed25519_root() {
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
 
     // Check that the authority still exists
-    let role = swig_data.get_role(1).unwrap();
+    let role = swig_data.get_role(2).unwrap();
     assert!(role.is_some(), "Authority should still exist after update");
 
     let role = role.unwrap();

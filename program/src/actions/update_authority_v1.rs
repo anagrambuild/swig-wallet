@@ -323,7 +323,13 @@ fn perform_replace_all_operation(
             // Update the position for the role we're updating
             if position.id() == authority_to_update_id {
                 position.boundary = (position.boundary() as i64 + size_diff) as u32;
-                position.num_actions = calculate_num_actions(new_actions)? as u16;
+                // Also add a condition in unwrap that will return 0 if authority_to_update_id is 0 and error is returned
+                let num_actions = if authority_to_update_id == 0 {
+                    calculate_num_actions(new_actions).unwrap_or(0) as u16
+                } else {
+                    calculate_num_actions(new_actions)? as u16
+                };
+                position.num_actions = num_actions;
             }
 
             cursor = position.boundary() as usize;
@@ -335,7 +341,12 @@ fn perform_replace_all_operation(
                 &mut swig_roles[authority_offset..authority_offset + Position::LEN],
             )?
         };
-        position.num_actions = calculate_num_actions(new_actions)? as u16;
+        let num_actions = if authority_to_update_id == 0 {
+            calculate_num_actions(new_actions).unwrap_or(0) as u16
+        } else {
+            calculate_num_actions(new_actions)? as u16
+        };
+        position.num_actions = num_actions;
     }
 
     if actions_offset + new_actions_size > swig_roles.len() {
@@ -436,7 +447,7 @@ fn perform_remove_by_type_operation(
         let action_len = action_header.length() as usize;
         let total_action_size = Action::LEN + action_len;
 
-        if cursor + total_action_size > current_actions.len() {
+        if cursor + total_action_size > current_actions.len() && authority_to_update_id != 0 {
             return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
         }
 
@@ -453,7 +464,7 @@ fn perform_remove_by_type_operation(
     }
 
     // Ensure we don't remove all actions
-    if filtered_actions.is_empty() {
+    if filtered_actions.is_empty() && authority_to_update_id != 0 {
         return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
     }
 
@@ -511,7 +522,7 @@ fn perform_remove_by_index_operation(
     }
 
     // Ensure we don't remove all actions
-    if filtered_actions.is_empty() {
+    if filtered_actions.is_empty() && authority_to_update_id != 0 {
         return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
     }
 

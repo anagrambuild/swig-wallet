@@ -56,7 +56,7 @@ fn should_get_role_id_for_authority() {
     let main_role_id = swig_wallet
         .get_role_id(&main_authority.pubkey().to_bytes())
         .unwrap();
-    assert_eq!(main_role_id, 0); // Should be role ID 0
+    assert_eq!(main_role_id, 1); // Should be role ID 1
 }
 
 #[test_log::test]
@@ -65,7 +65,7 @@ fn should_get_current_role_id() {
     let swig_wallet = create_test_wallet(litesvm, &main_authority);
 
     let role_id = swig_wallet.get_current_role_id().unwrap();
-    assert_eq!(role_id, 0); // Main authority should be role ID 0
+    assert_eq!(role_id, 1); // Main authority should be role ID 1
 }
 
 #[test_log::test]

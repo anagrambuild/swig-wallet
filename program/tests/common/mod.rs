@@ -4,17 +4,18 @@ use litesvm::{types::TransactionMetadata, LiteSVM};
 use litesvm_token::{spl_token, CreateAssociatedTokenAccount, CreateMint, MintTo};
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
-    instruction::Instruction,
+    instruction::{AccountMeta, Instruction},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
+    system_program,
     transaction::VersionedTransaction,
 };
 use swig_interface::{
-    swig, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
-    CreateSubAccountInstruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
-    WithdrawFromSubAccountInstruction,
+    swig, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateEnterpriseInstruction,
+    CreateInstruction, CreateSubAccountInstruction, SubAccountSignInstruction,
+    ToggleSubAccountInstruction, WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, sub_account::SubAccount},
@@ -40,7 +41,7 @@ pub fn convert_swig_to_v1(context: &mut SwigTestContext, swig_pubkey: &Pubkey) {
 
     if account.data.len() >= Swig::LEN {
         let last_8_start = Swig::LEN - 8;
-        let reserved_lamports: u64 = 256;
+        let reserved_lamports: u64 = 1 << 16; // 65_536 lamports
         account.data[last_8_start..Swig::LEN].copy_from_slice(&reserved_lamports.to_le_bytes());
     }
 
@@ -215,6 +216,102 @@ pub fn create_swig_ed25519(
         .send_transaction(tx)
         .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
     Ok((swig, bench))
+}
+
+pub fn create_swig_enterprise(
+    context: &mut SwigTestContext,
+    authority: &Keypair,
+    enterprise_account: Pubkey,
+    id: [u8; 32],
+) -> anyhow::Result<(Pubkey, TransactionMetadata)> {
+    let payer_pubkey = context.default_payer.pubkey();
+    let (swig, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let create_ix = CreateEnterpriseInstruction::new(
+        swig,
+        bump,
+        payer_pubkey,
+        swig_wallet_address,
+        wallet_address_bump,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: authority.pubkey().as_ref(),
+        },
+        #[cfg(feature = "program_scope_test")]
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+        #[cfg(not(feature = "program_scope_test"))]
+        vec![ClientAction::All(All {})],
+        id,
+        enterprise_account,
+    )?;
+
+    let msg = v0::Message::try_compile(
+        &payer_pubkey,
+        &[create_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[context.default_payer.insecure_clone()],
+    )
+    .unwrap();
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+    Ok((swig, bench))
+}
+
+pub fn create_enterprise_account(context: &mut SwigTestContext) -> anyhow::Result<Pubkey> {
+    use swig_enterprise_state::EnterpriseState;
+
+    let enterprise = EnterpriseState::new(
+        context.default_payer.pubkey().to_bytes(),
+        [0; 32],
+        0,
+        vec![],
+        2,
+    );
+
+    let (enterprise_account_address, _) = Pubkey::find_program_address(
+        &[
+            EnterpriseState::SEED.as_bytes(),
+            &context.default_payer.pubkey().to_bytes(),
+        ],
+        &Pubkey::from(swig::SWIG_ENTERPRISE_ID),
+    );
+
+    let instruction = Instruction {
+        program_id: Pubkey::from(swig::SWIG_ENTERPRISE_ID),
+        accounts: vec![
+            AccountMeta::new(context.default_payer.pubkey(), true),
+            AccountMeta::new(enterprise_account_address, false),
+            AccountMeta::new_readonly(Pubkey::from(system_program::ID), false),
+        ],
+        data: [
+            0u16.to_le_bytes().to_vec(),
+            enterprise.into_bytes().unwrap().to_vec(),
+        ]
+        .concat(),
+    };
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[instruction],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[context.default_payer.insecure_clone()],
+    )
+    .unwrap();
+    let metadata = context.svm.send_transaction(tx).unwrap();
+    Ok(enterprise_account_address)
 }
 
 pub fn create_swig_ed25519_session(
@@ -472,6 +569,27 @@ pub fn setup_test_context() -> anyhow::Result<SwigTestContext> {
 pub fn load_program(svm: &mut LiteSVM) -> anyhow::Result<()> {
     svm.add_program_from_file(program_id(), "../target/deploy/swig.so")
         .map_err(|_| anyhow::anyhow!("Failed to load program"))
+}
+
+pub fn setup_enterprise_test_context() -> anyhow::Result<SwigTestContext> {
+    let payer = Keypair::new();
+    let mut svm = LiteSVM::new();
+    load_program(&mut svm)?;
+    load_enterprise_program(&mut svm)?;
+    svm.airdrop(&payer.pubkey(), 10_000_000_000)
+        .map_err(|e| anyhow::anyhow!("Failed to airdrop {:?}", e))?;
+    Ok(SwigTestContext {
+        svm,
+        default_payer: payer,
+    })
+}
+
+pub fn load_enterprise_program(svm: &mut LiteSVM) -> anyhow::Result<()> {
+    svm.add_program_from_file(
+        Pubkey::new_from_array(swig::SWIG_ENTERPRISE_ID),
+        "/Users/santhosh/Documents/anagram/swig/enterprise-handler/target/deploy/swig_enterprise_program.so",
+    )
+    .map_err(|_| anyhow::anyhow!("Failed to load enterprise program"))
 }
 
 pub fn setup_mint(svm: &mut LiteSVM, payer: &Keypair) -> anyhow::Result<Pubkey> {

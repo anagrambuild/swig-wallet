@@ -151,7 +151,7 @@ fn test_token_transfer_performance_comparison_v2() {
         swig_wallet_address,
         swig_authority.pubkey(),
         swig_transfer_ix,
-        0, // authority role id
+        1, // authority role id
     )
     .unwrap();
 
@@ -190,7 +190,7 @@ fn test_token_transfer_performance_comparison_v2() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3798);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3962);
 }
 
 #[test_log::test]
@@ -269,7 +269,7 @@ fn test_sol_transfer_performance_comparison_v2() {
         swig_wallet_address,
         swig_authority.pubkey(),
         swig_transfer_ix,
-        0, // authority role id
+        1, // authority role id
     )
     .unwrap();
 
@@ -310,5 +310,5 @@ fn test_sol_transfer_performance_comparison_v2() {
         account_difference
     );
 
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3253);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3422);
 }

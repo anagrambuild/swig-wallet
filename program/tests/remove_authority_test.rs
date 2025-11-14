@@ -56,15 +56,15 @@ fn test_create_remove_authority() {
     // Verify we have two authorities
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 2);
+    assert_eq!(swig.state.roles, 3);
 
     // Remove the second authority
     let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
         context.default_payer.pubkey(),
         swig_authority.pubkey(),
-        0, // Acting role ID (using the first authority)
-        1, // Authority to remove (the second one)
+        1, // Acting role ID (using the first authority)
+        2, // Authority to remove (the second one)
     )
     .unwrap();
 
@@ -87,7 +87,7 @@ fn test_create_remove_authority() {
     // Verify that only one authority remains
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 1);
+    assert_eq!(swig.state.roles, 2);
 
     // Verify it's the root authority
     let found_root = swig
@@ -167,15 +167,15 @@ fn test_create_remove_secp_authority() {
     // Verify we have two authorities
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 2);
+    assert_eq!(swig.state.roles, 3);
 
     // Remove the second authority
     let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
         context.default_payer.pubkey(),
         swig_authority.pubkey(),
-        0, // Acting role ID (using the first authority)
-        1, // Authority to remove (the second one)
+        1, // Acting role ID (using the first authority)
+        2, // Authority to remove (the second one)
     )
     .unwrap();
 
@@ -198,7 +198,7 @@ fn test_create_remove_secp_authority() {
     // Verify that only one authority remains
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 1);
+    assert_eq!(swig.state.roles, 2);
 
     // Verify it's the root authority
     let found_root = swig
@@ -275,7 +275,7 @@ fn test_secp256k1_root_remove_authority() {
         signing_fn,
         0, // current slot (same as working test)
         1, // counter = 1 (first transaction, same as working test)
-        0, // role_id of the primary wallet
+        1, // role_id of the primary wallet
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
@@ -309,7 +309,7 @@ fn test_secp256k1_root_remove_authority() {
     // Verify the authority was added
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_state.state.roles, 2);
+    assert_eq!(swig_state.state.roles, 3);
 
     let remove_ix = RemoveAuthorityInstruction::new_with_secp256k1_authority(
         swig_key,
@@ -317,8 +317,8 @@ fn test_secp256k1_root_remove_authority() {
         signing_fn,
         1, // current slot
         2, // counter = 2 (second transaction),
-        0, // role_id of the primary wallet (secp256k1 root authority)
-        1, // Authority to remove (the Ed25519 authority)
+        1, // role_id of the primary wallet (secp256k1 root authority)
+        2, // Authority to remove (the Ed25519 authority)
     )
     .unwrap();
 
@@ -345,10 +345,10 @@ fn test_secp256k1_root_remove_authority() {
     // Verify that only one authority remains (the secp256k1 root)
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_state.state.roles, 1);
+    assert_eq!(swig_state.state.roles, 2);
 
     // Verify it's the secp256k1 root authority by checking the authority type
-    let role = swig_state.get_role(0).unwrap().unwrap();
+    let role = swig_state.get_role(1).unwrap().unwrap();
     assert_eq!(role.authority.authority_type(), AuthorityType::Secp256k1);
 
     println!("✓ Secp256k1 root authority successfully removed Ed25519 authority");
@@ -444,8 +444,8 @@ fn test_remove_authority_permissions() {
         swig_key,
         context.default_payer.pubkey(),
         third_authority.pubkey(),
-        2, // Acting role ID (third authority)
-        1, // Remove the second authority
+        3, // Acting role ID (third authority)
+        2, // Remove the second authority
     )
     .unwrap();
 
@@ -468,7 +468,7 @@ fn test_remove_authority_permissions() {
     // Verify that only two authorities remain: root and third
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 2);
+    assert_eq!(swig.state.roles, 3);
 
     // Verify the right authorities are present
     let found_root = swig
@@ -576,8 +576,8 @@ fn test_remove_authority_self() {
         swig_key,
         context.default_payer.pubkey(),
         second_authority.pubkey(),
-        1, // Acting role ID (second authority)
-        1, // Remove itself
+        2, // Acting role ID (second authority)
+        2, // Remove itself
     )
     .unwrap();
 
@@ -600,7 +600,7 @@ fn test_remove_authority_self() {
     // Verify that only the root authority remains
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 1);
+    assert_eq!(swig.state.roles, 2);
 
     // Verify it's the root authority
     let found_root = swig
@@ -630,7 +630,7 @@ fn test_remove_root_authority_role_validation() {
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
 
     // Print the role details to understand what's happening
-    let role = swig.get_role(0).unwrap().unwrap();
+    let role = swig.get_role(1).unwrap().unwrap();
     println!("Root authority role: {:?}", role.position.id);
 
     // Add a second authority with no permissions
@@ -738,8 +738,8 @@ fn test_remove_authority_different_types() {
         swig_key,
         context.default_payer.pubkey(),
         root_authority.pubkey(),
-        0, // Acting role ID (root authority)
-        1, // Remove second authority
+        1, // Acting role ID (root authority)
+        2, // Remove second authority
     )
     .unwrap();
 
@@ -762,7 +762,7 @@ fn test_remove_authority_different_types() {
     // Verify that only the root authority remains
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 1);
+    assert_eq!(swig.state.roles, 2);
 }
 
 #[test_log::test]
@@ -867,15 +867,15 @@ fn test_authority_with_management_can_remove_other_authorities() {
     // Verify we have three authorities
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 3);
+    assert_eq!(swig.state.roles, 4);
 
     // Second authority removes the third authority
     let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
         context.default_payer.pubkey(),
         second_authority.pubkey(),
-        1, // Acting role ID (second authority)
-        2, // Remove third authority
+        2, // Acting role ID (second authority)
+        3, // Remove third authority
     )
     .unwrap();
 
@@ -898,7 +898,7 @@ fn test_authority_with_management_can_remove_other_authorities() {
     // Verify that only two authorities remain
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 2);
+    assert_eq!(swig.state.roles, 3);
 }
 
 #[test_log::test]
@@ -940,7 +940,7 @@ fn test_create_remove_authority_with_balance_checks() {
     // Verify we have two authorities
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 2);
+    assert_eq!(swig.state.roles, 3);
 
     let swig_old_balance = context.svm.get_balance(&swig_key).unwrap();
     let payer_old_balance = context
@@ -953,8 +953,8 @@ fn test_create_remove_authority_with_balance_checks() {
         swig_key,
         context.default_payer.pubkey(),
         swig_authority.pubkey(),
-        0, // Acting role ID (using the first authority)
-        1, // Authority to remove (the second one)
+        1, // Acting role ID (using the first authority)
+        2, // Authority to remove (the second one)
     )
     .unwrap();
 
@@ -977,7 +977,7 @@ fn test_create_remove_authority_with_balance_checks() {
     // Verify that only one authority remains
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 1);
+    assert_eq!(swig.state.roles, 2);
 
     // Verify it's the root authority
     let found_root = swig
