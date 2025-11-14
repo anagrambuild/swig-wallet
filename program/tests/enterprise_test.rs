@@ -22,8 +22,12 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_enterprise_state::EnterpriseState;
-use swig_interface::SignV2Instruction;
+use swig_interface::{
+    AddAuthorityInstruction, AuthorityConfig, ClientAction, SignV2Instruction, UpdateAuthorityData,
+    UpdateAuthorityInstruction,
+};
 use swig_state::{
+    action::{sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit},
     authority::{secp256k1::Secp256k1Authority, AuthorityType},
     swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
 };
@@ -51,7 +55,7 @@ fn test_create_enterprise() {
 
     let (swig_key, bench) = swig_created.unwrap();
     println!("Create Enterprise CU {:?}", bench.compute_units_consumed);
-    // println!("logs: {:?}", bench.logs);
+    println!("logs: {}", bench.pretty_logs());
 
     let swig = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig.data).unwrap();
@@ -250,4 +254,233 @@ fn test_create_enterprise_with_sol_transfer() {
     let res = context.svm.send_transaction(transfer_tx);
     assert!(res.is_err(), "Transfer should fail");
     println!("Transfer error: {:?}", res.err());
+}
+
+#[test]
+fn test_create_enterprise_add_authority() {
+    println!(
+        "\n\nTesting create enterprise and add authority connected wallet ==========================================="
+    );
+    let mut context = setup_enterprise_test_context().unwrap();
+    let authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    let enterprise_account = create_enterprise_account(&mut context).unwrap();
+
+    // will be replaced with SIA
+    let id = rand::random::<[u8; 32]>();
+    let swig_created = create_swig_enterprise(&mut context, &authority, enterprise_account, id);
+    assert!(swig_created.is_ok(), "{:?}", swig_created.err());
+
+    let (swig_key, bench) = swig_created.unwrap();
+
+    let swig = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig.data).unwrap();
+    let role = swig.get_role(0).unwrap().unwrap(); // Role ID 0 is the enterprise owner
+    assert_eq!(role.position.authority_type, AuthorityType::Ed25519 as u16);
+
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    use crate::ClientAction::ProgramCurated;
+
+    let program_curated_action = swig_state::action::program_curated::ProgramCurated::new();
+
+    let add_authority_ix = AddAuthorityInstruction::new_with_ed25519_authority_enterprise(
+        swig_key,
+        authority.pubkey(),
+        authority.pubkey(),
+        1,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ProgramCurated(program_curated_action),
+            ClientAction::SolRecurringLimit(SolRecurringLimit {
+                window: 100,
+                recurring_amount: 100,
+                current_amount: 100,
+                last_reset: 0,
+            }),
+        ],
+        enterprise_account,
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &authority.pubkey(),
+        &[add_authority_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&authority]).unwrap();
+
+    let res = context.svm.send_transaction(tx);
+    assert!(res.is_err(), "Add authority should fail as we are adding sol recurring limit without enterprise having the permission");
+
+    let program_curated_action = swig_state::action::program_curated::ProgramCurated::new();
+
+    let add_authority_ix = AddAuthorityInstruction::new_with_ed25519_authority_enterprise(
+        swig_key,
+        authority.pubkey(),
+        authority.pubkey(),
+        1,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ProgramCurated(program_curated_action),
+            ClientAction::SolLimit(SolLimit {
+                amount: 100_000_000,
+            }),
+        ],
+        enterprise_account,
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &authority.pubkey(),
+        &[add_authority_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&authority]).unwrap();
+
+    let res = context.svm.send_transaction(tx);
+    assert!(res.is_ok(), "Add authority should succeed");
+}
+
+#[test]
+fn test_create_enterprise_update_authority() {
+    println!(
+        "\n\nTesting create enterprise and add authority connected wallet ==========================================="
+    );
+    let mut context = setup_enterprise_test_context().unwrap();
+    let authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    let enterprise_account = create_enterprise_account(&mut context).unwrap();
+
+    // will be replaced with SIA
+    let id = rand::random::<[u8; 32]>();
+    let swig_created = create_swig_enterprise(&mut context, &authority, enterprise_account, id);
+    assert!(swig_created.is_ok(), "{:?}", swig_created.err());
+
+    let (swig_key, bench) = swig_created.unwrap();
+
+    let swig = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig.data).unwrap();
+    let role = swig.get_role(0).unwrap().unwrap(); // Role ID 0 is the enterprise owner
+    assert_eq!(role.position.authority_type, AuthorityType::Ed25519 as u16);
+
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    use crate::ClientAction::ProgramCurated;
+
+    let program_curated_action = swig_state::action::program_curated::ProgramCurated::new();
+
+    let add_authority_ix = AddAuthorityInstruction::new_with_ed25519_authority_enterprise(
+        swig_key,
+        authority.pubkey(),
+        authority.pubkey(),
+        1,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ProgramCurated(program_curated_action),
+            ClientAction::SolLimit(SolLimit {
+                amount: 100_000_000,
+            }),
+        ],
+        enterprise_account,
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &authority.pubkey(),
+        &[add_authority_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&authority]).unwrap();
+
+    let res = context.svm.send_transaction(tx);
+    assert!(res.is_ok(), "Add authority should succeed");
+
+    let update_authority_ix = UpdateAuthorityInstruction::new_with_ed25519_authority_enterprise(
+        swig_key,
+        authority.pubkey(),
+        authority.pubkey(),
+        1,
+        2,
+        UpdateAuthorityData::ReplaceAll(vec![ClientAction::SolRecurringLimit(SolRecurringLimit {
+            window: 100,
+            recurring_amount: 100,
+            current_amount: 100,
+            last_reset: 0,
+        })]),
+        enterprise_account,
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &authority.pubkey(),
+        &[update_authority_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&authority]).unwrap();
+
+    let res = context.svm.send_transaction(tx);
+    assert!(res.is_err(), "Update authority should fail as we are replacing sol limit without enterprise having the permission");
+
+    let update_authority_ix = UpdateAuthorityInstruction::new_with_ed25519_authority_enterprise(
+        swig_key,
+        authority.pubkey(),
+        authority.pubkey(),
+        1,
+        2,
+        UpdateAuthorityData::ReplaceAll(vec![ClientAction::SolLimit(SolLimit {
+            amount: 100_000_000,
+        })]),
+        enterprise_account,
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &authority.pubkey(),
+        &[update_authority_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&authority]).unwrap();
+
+    let res = context.svm.send_transaction(tx);
+    assert!(res.is_ok(), "Update authority should succeed");
+    println!("Update authority logs: {}", res.unwrap().pretty_logs());
 }

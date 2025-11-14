@@ -268,11 +268,17 @@ pub fn create_swig_enterprise(
 pub fn create_enterprise_account(context: &mut SwigTestContext) -> anyhow::Result<Pubkey> {
     use swig_enterprise_state::EnterpriseState;
 
+    use swig_enterprise_state::EnterprisePermission;
+
     let enterprise = EnterpriseState::new(
         context.default_payer.pubkey().to_bytes(),
         [0; 32],
         0,
-        vec![],
+        vec![
+            EnterprisePermission::SolLimit,
+            EnterprisePermission::ProgramAll,
+            EnterprisePermission::ProgramCurated,
+        ],
         2,
     );
 

@@ -132,6 +132,8 @@ pub enum SwigError {
     InvalidEnterpriseData,
     /// Enterprise subscription expired
     EnterpriseSubscriptionExpired,
+    /// Invalid enterprise permissions
+    InvalidEnterprisePermissions,
 }
 
 /// Implements conversion from SwigError to ProgramError.
