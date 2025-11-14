@@ -25,6 +25,8 @@ use crate::{
         accounts::{AddAuthorityV1Accounts, Context},
         SwigInstruction,
     },
+    util::permission_utils::{check_valid_permissions, get_permissions, permissions_to_mask},
+    SWIG_ENTERPRISE_ID,
 };
 
 /// Struct representing the complete add authority instruction data.
@@ -209,6 +211,47 @@ pub fn add_authority_v1(
         if all.is_none() && manage_authority.is_none() {
             return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
         }
+
+        if swig.swig_type == 1 {
+            let enterprise_account = ctx
+                .remaining_accounts
+                .get(1)
+                .ok_or(SwigError::EnterpriseAccountNotFound)?;
+
+            if enterprise_account.owner().ne(&SWIG_ENTERPRISE_ID) {
+                return Err(SwigError::InvalidEnterpriseAccount.into());
+            }
+
+            // check the data inside the enterprise account. ie fetch the enterprise owner
+            if enterprise_account.data_len() == 96 {
+                let enterprise_data = unsafe { enterprise_account.borrow_data_unchecked() };
+                let enterprise_owner = &enterprise_data[..32];
+
+                let subscription_end = u64::from_le_bytes(
+                    enterprise_data[72..80]
+                        .try_into()
+                        .map_err(|_| SwigError::InvalidEnterpriseData)?,
+                );
+
+                if subscription_end < Clock::get()?.slot {
+                    return Err(SwigError::EnterpriseSubscriptionExpired.into());
+                }
+
+                let permissions = get_permissions(add_authority_v1.actions)?;
+                let permissions_mask = permissions_to_mask(permissions);
+
+                let enterprise_allowed_permissions = u64::from_le_bytes(
+                    enterprise_data[80..88]
+                        .try_into()
+                        .map_err(|_| SwigError::InvalidEnterpriseData)?,
+                );
+
+                if !check_valid_permissions(enterprise_allowed_permissions, permissions_mask) {
+                    return Err(SwigError::InvalidEnterprisePermissions.into());
+                }
+            }
+        }
+
         let new_authority_length = authority_type_to_length(&new_authority_type)?;
         let role_size = Position::LEN + new_authority_length + add_authority_v1.actions.len();
 

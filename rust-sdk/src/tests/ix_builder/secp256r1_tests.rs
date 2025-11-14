@@ -471,7 +471,7 @@ fn test_secp256r1_session_authority_odometer() {
             .map_err(|e| format!("Failed to parse swig data: {:?}", e))?;
 
         let role = swig
-            .get_role(0)
+            .get_role(1)
             .map_err(|e| format!("Failed to get role: {:?}", e))?
             .ok_or("Role not found")?;
 
@@ -493,8 +493,8 @@ fn test_secp256r1_session_authority_odometer() {
     // Verify the session authority structure is correctly initialized
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 1);
-    let role = swig.get_role(0).unwrap().unwrap();
+    assert_eq!(swig.state.roles, 2);
+    let role = swig.get_role(1).unwrap().unwrap();
 
     assert_eq!(
         role.authority.authority_type(),

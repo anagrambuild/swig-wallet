@@ -142,7 +142,7 @@ impl<'c> SwigWallet<'c> {
             let swig_with_roles =
                 SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
             let role = swig_with_roles
-                .get_role(0)
+                .get_role(1)
                 .map_err(|_| SwigError::AuthorityNotFound)?;
             let current_role = if let Some(role) = role {
                 build_current_role(0, &role)
