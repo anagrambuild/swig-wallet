@@ -2441,7 +2441,7 @@ fn test_sign_v2_minimum_rent_check() {
         swig_wallet_address,
         secondary_authority.pubkey(),
         transfer_ix,
-        1, // role_id 0 for root authority
+        2, // role_id 2 for secondary authority
     )
     .unwrap();
 
@@ -2474,6 +2474,7 @@ fn test_sign_v2_minimum_rent_check() {
     // Execute the transaction
     let result = context.svm.send_transaction(transfer_tx);
 
+    println!("result: {:?}", result);
     assert!(result.is_ok(), "Transfer should succeed");
 
     // Verify the transfer was successful

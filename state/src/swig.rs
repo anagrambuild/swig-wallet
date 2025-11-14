@@ -453,12 +453,15 @@ pub struct Swig {
     /// Amount of lamports reserved for rent
     // pub reserved_lamports: u64,
     pub wallet_bump: u8,
-    pub _padding: [u8; 7],
+    // Type of the Swig account
+    // 0: regular, 1: Enterprise 2. Enterprise with SIA
+    pub swig_type: u8,
+    pub _padding: [u8; 6],
 }
 
 impl Swig {
     /// Creates a new Swig account.
-    pub fn new(id: [u8; 32], bump: u8, wallet_bump: u8) -> Self {
+    pub fn new(id: [u8; 32], bump: u8, wallet_bump: u8, swig_type: u8) -> Self {
         Self {
             discriminator: Discriminator::SwigConfigAccount as u8,
             id,
@@ -466,7 +469,8 @@ impl Swig {
             roles: 0,
             role_counter: 0,
             wallet_bump,
-            _padding: [0; 7],
+            swig_type,
+            _padding: [0; 6],
         }
     }
 
@@ -934,7 +938,7 @@ mod tests {
     fn test_swig_creation() {
         let (mut account_buffer, id, bump) = setup_test_buffer();
         let (mut _account_buffer_2, id, bump_2) = setup_test_buffer();
-        let swig = Swig::new(id, bump, bump_2);
+        let swig = Swig::new(id, bump, bump_2, 0);
 
         // Test all fields of the Swig struct
         assert_eq!(swig.discriminator, 1);
@@ -983,7 +987,7 @@ mod tests {
     #[test]
     fn test_add_single_role() {
         let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump, 0);
+        let swig = Swig::new(id, bump, 0, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
         let authority = ED25519Authority {
@@ -1041,7 +1045,7 @@ mod tests {
     #[test]
     fn test_role_lookup() {
         let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump, 0);
+        let swig = Swig::new(id, bump, 0, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
         let authority = ED25519Authority {
@@ -1099,7 +1103,7 @@ mod tests {
     #[test]
     fn test_multiple_roles() {
         let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump, 0);
+        let swig = Swig::new(id, bump, 0, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
         let authority1 = ED25519Authority {
@@ -1171,7 +1175,7 @@ mod tests {
     #[test]
     fn test_get_mut_role() -> Result<(), ProgramError> {
         let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump, 0);
+        let swig = Swig::new(id, bump, 0, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
         let authority = ED25519Authority {
@@ -1271,7 +1275,7 @@ mod tests {
     #[test]
     fn test_multiple_actions_with_token_limit() -> Result<(), ProgramError> {
         let (mut account_buffer, id, bump) = setup_test_buffer();
-        let swig = Swig::new(id, bump, 0);
+        let swig = Swig::new(id, bump, 0, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
         let authority = ED25519Authority {
@@ -1424,7 +1428,7 @@ mod tests {
     #[test]
     fn test_lookup_role_id_comprehensive() -> Result<(), ProgramError> {
         let (mut account_buffer, id, bump) = setup_large_test_buffer();
-        let swig = Swig::new(id, bump, 0);
+        let swig = Swig::new(id, bump, 0, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
         // Create authorities with different public keys
@@ -1518,7 +1522,7 @@ mod tests {
         // Test duplicate authority test
         println!("Testing duplicate authority");
         let (mut new_buffer, _, _) = setup_large_test_buffer();
-        let new_swig = Swig::new(id, bump, 0);
+        let new_swig = Swig::new(id, bump, 0, 0);
         let mut new_builder = SwigBuilder::create(&mut new_buffer, new_swig).unwrap();
 
         // Add two roles with the same authority but different actions
@@ -1562,7 +1566,7 @@ mod tests {
         let id = [1; 32];
         let bump = 255;
 
-        let swig = Swig::new(id, bump, 0);
+        let swig = Swig::new(id, bump, 0, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
         // Create two different authorities
@@ -1702,7 +1706,7 @@ mod tests {
     fn test_remove_non_existent_role() -> Result<(), ProgramError> {
         // Single role with minimal action size
         let (mut account_buffer, id, bump) = setup_precise_test_buffer(1, Action::LEN + 1);
-        let swig = Swig::new(id, bump, 0);
+        let swig = Swig::new(id, bump, 0, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
         // Add a role
@@ -1757,7 +1761,7 @@ mod tests {
     fn test_remove_from_empty_swig() -> Result<(), ProgramError> {
         // Empty swig, no roles
         let (mut account_buffer, id, bump) = setup_precise_test_buffer(0, 0);
-        let swig = Swig::new(id, bump, 0);
+        let swig = Swig::new(id, bump, 0, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
         // Verify initial state
@@ -1777,7 +1781,7 @@ mod tests {
     fn test_remove_only_role() -> Result<(), ProgramError> {
         // Single role with minimal action size
         let (mut account_buffer, id, bump) = setup_precise_test_buffer(1, Action::LEN + 1);
-        let swig = Swig::new(id, bump, 0);
+        let swig = Swig::new(id, bump, 0, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
         // Add a single role
@@ -1835,7 +1839,7 @@ mod tests {
         let id = [1; 32];
         let bump = 255;
 
-        let swig = Swig::new(id, bump, 0);
+        let swig = Swig::new(id, bump, 0, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
         // Create two different authorities
@@ -1960,7 +1964,7 @@ mod tests {
         let id = [1; 32];
         let bump = 255;
 
-        let swig = Swig::new(id, bump, 0);
+        let swig = Swig::new(id, bump, 0, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
         // Create two different authorities
@@ -2092,7 +2096,7 @@ mod tests {
         let id = [1; 32];
         let bump = 255;
 
-        let swig = Swig::new(id, bump, 0);
+        let swig = Swig::new(id, bump, 0, 0);
         let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
 
         // Create two different authorities

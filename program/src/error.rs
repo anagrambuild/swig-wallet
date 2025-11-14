@@ -134,6 +134,19 @@ pub enum SwigError {
     AuthLockNotExists,
     /// Cannot remove authorization lock from update authority
     CannotRemoveAuthLockFromUpdateAuthority,
+
+    /// Invalid enterprise account
+    EnterpriseAccountNotFound,
+    /// Invalid enterprise account
+    InvalidEnterpriseAccount,
+    /// Invalid enterprise owner mismatch
+    InvalidEnterpriseOwnerMismatch,
+    /// Enterprise max wallets exceeded
+    EnterpriseMaxWalletsExceeded,
+    /// Enterprise data is invalid
+    InvalidEnterpriseData,
+    /// Enterprise subscription expired
+    EnterpriseSubscriptionExpired,
 }
 
 /// Implements conversion from SwigError to ProgramError.

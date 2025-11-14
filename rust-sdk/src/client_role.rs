@@ -439,6 +439,7 @@ impl ClientRole for Ed25519ClientRole {
                 instruction,
                 role_id,
                 transaction_signers,
+                None,
             )?;
             signed_instructions.push(swig_signed_instruction);
         }
@@ -1406,6 +1407,7 @@ impl ClientRole for Ed25519SessionClientRole {
                 instruction,
                 role_id,
                 transaction_signers,
+                None,
             )?;
             signed_instructions.push(swig_signed_instruction);
         }

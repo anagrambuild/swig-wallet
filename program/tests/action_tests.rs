@@ -165,6 +165,7 @@ fn test_multiple_actions_with_transfer_and_manage_authority() {
             .unwrap();
 
     let res = context.svm.send_transaction(transfer_tx);
+    println!("transfer_tx: {:?}", res);
     assert!(res.is_ok());
     let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
     let swig_account_after = context.svm.get_account(&swig).unwrap();
