@@ -25,14 +25,15 @@ bs58 = "0.5.1"
 hex = "0.4.3"
 swig-sdk = { path = "../rust-sdk" }
 openssl = { version = "0.10", features = ["vendored"] }
-solana-sdk = "2.0"
-solana-secp256r1-program = "2.0"
+solana-sdk = "3.0"
+solana-secp256r1-program = "3.0"
+solana-system-interface = {version = "3.0.0", features = ["bincode"]}
 
 alloy-primitives = { version = "1.0.0", features = ["k256"] }
-alloy-signer = { version = "0.14.0" }
-alloy-signer-local = { version = "0.14.0" }
-spl-token = "8.0.0"
-spl-associated-token-account = "7.0.0"
+alloy-signer = { version = "1.1.1" }
+alloy-signer-local = { version = "1.1.1" }
+spl-token = "9.0.0"
+spl-associated-token-account = "8.0.0"
 
 [lints]
 workspace = true

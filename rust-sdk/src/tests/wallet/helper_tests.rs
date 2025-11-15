@@ -139,7 +139,7 @@ fn should_get_current_slot() {
     let swig_wallet = create_test_wallet(litesvm, &main_authority);
 
     let slot = swig_wallet.get_current_slot().unwrap();
-    assert!(slot >= 0); // Slot can be 0 in test environment
+    // assert!(slot >= 0); // Slot can be 0 in test environment
     println!("Current slot: {}", slot);
 }
 

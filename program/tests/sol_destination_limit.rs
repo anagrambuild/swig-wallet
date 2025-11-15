@@ -10,9 +10,9 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     transaction::{TransactionError, VersionedTransaction},
 };
+use solana_system_interface::instruction as system_instruction;
 use swig::actions::sign_v1::SignV1Args;
 use swig_interface::{compact_instructions, AuthorityConfig, ClientAction, SignInstruction};
 use swig_state::{
@@ -700,7 +700,7 @@ fn test_sol_destination_limit_cpi_enforcement() {
                 amount: LAMPORTS_PER_SOL,
             }),
             ClientAction::Program(Program {
-                program_id: solana_sdk::system_program::ID.to_bytes(),
+                program_id: solana_sdk_ids::system_program::ID.to_bytes(),
             }),
         ],
     )

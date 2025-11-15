@@ -13,10 +13,10 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::{Keypair, Signature},
     signer::Signer,
-    system_instruction,
     sysvar::rent::Rent,
     transaction::VersionedTransaction,
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_interface::{
     AuthorityConfig, ClientAction, CreateSubAccountInstruction, SignInstruction,
     SubAccountSignInstruction, ToggleSubAccountInstruction, WithdrawFromSubAccountInstruction,
@@ -127,7 +127,7 @@ fn test_create_sub_account() {
     // Verify the sub-account was created as a system program owned account (not
     // program owned)
     let sub_account_data = context.svm.get_account(&sub_account).unwrap();
-    assert_eq!(sub_account_data.owner, solana_sdk::system_program::id());
+    assert_eq!(sub_account_data.owner, solana_sdk_ids::system_program::id());
 
     // Verify the sub-account data is now stored in the SubAccount action instead of
     // the account
@@ -164,7 +164,7 @@ fn test_create_sub_account() {
     // 1. Verify sub-account is system program owned
     assert_eq!(
         sub_account_data.owner,
-        solana_sdk::system_program::id(),
+        solana_sdk_ids::system_program::id(),
         "Sub-account should be owned by system program"
     );
 

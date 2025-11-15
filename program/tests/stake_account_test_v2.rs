@@ -14,22 +14,20 @@ use once_cell::sync::Lazy;
 use solana_client::{
     rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig, rpc_response::RpcVoteAccountInfo,
 };
-use solana_program::{pubkey::Pubkey as SolanaPubkey, system_instruction};
+use solana_compute_budget_interface::ComputeBudgetInstruction;
+use solana_program::pubkey::Pubkey as SolanaPubkey;
 use solana_sdk::{
-    compute_budget::ComputeBudgetInstruction,
     instruction::{AccountMeta, Instruction},
     message::{v0, Message, VersionedMessage},
     signature::{Keypair, Signature, Signer},
-    stake::{
-        instruction::{deactivate_stake, delegate_stake, initialize as stake_initialize, withdraw},
-        state::{Authorized, Lockup},
-    },
     transaction::{Transaction, VersionedTransaction},
-    vote::{
-        instruction as vote_instruction,
-        state::{VoteInit, VoteState},
-    },
 };
+use solana_stake_interface::{
+    instruction::{deactivate_stake, delegate_stake, initialize as stake_initialize, withdraw},
+    state::{Authorized, Lockup},
+};
+use solana_system_interface::instruction as system_instruction;
+use solana_vote_interface::{instruction as vote_instruction, state::VoteInit};
 use swig_interface::{AuthorityConfig, ClientAction, SignV2Instruction};
 use swig_state::{
     action::{
@@ -43,8 +41,8 @@ use swig_state::{
 
 // Constants
 const LOCALHOST: &str = "http://localhost:8899";
-const STAKE_PROGRAM_ID: SolanaPubkey = solana_sdk::stake::program::id();
-const VOTE_PROGRAM_ID: SolanaPubkey = solana_sdk::vote::program::id();
+const STAKE_PROGRAM_ID: SolanaPubkey = solana_stake_interface::program::id();
+const VOTE_PROGRAM_ID: SolanaPubkey = solana_vote_interface::program::id();
 
 // Global static validator process that will be shared across all tests
 static GLOBAL_VALIDATOR: Lazy<Mutex<ValidatorProcess>> = Lazy::new(|| {

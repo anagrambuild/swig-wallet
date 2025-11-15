@@ -86,8 +86,8 @@ security_txt! {
 pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
     const AI: MaybeUninit<AccountInfo> = MaybeUninit::<AccountInfo>::uninit();
     const AC: MaybeUninit<AccountClassification> = MaybeUninit::<AccountClassification>::uninit();
-    let mut accounts = [AI; 100];
-    let mut classifiers = [AC; 100];
+    let mut accounts = [AI; 64];
+    let mut classifiers = [AC; 64];
     unsafe {
         execute(&mut ctx, &mut accounts, &mut classifiers)?;
     }

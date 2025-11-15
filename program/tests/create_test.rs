@@ -17,10 +17,10 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     sysvar::rent::Rent,
     transaction::VersionedTransaction,
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_state::{
     authority::{secp256k1::Secp256k1Authority, AuthorityType},
     swig::{swig_account_seeds, SwigWithRoles},

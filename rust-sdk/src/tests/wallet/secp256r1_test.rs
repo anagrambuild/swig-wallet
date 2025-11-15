@@ -1,8 +1,8 @@
 use solana_sdk::{
     signature::{Keypair, Signer},
-    system_instruction,
     sysvar::clock::Clock,
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_state::{
     authority::{
         secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority},

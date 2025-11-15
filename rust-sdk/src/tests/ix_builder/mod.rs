@@ -4,16 +4,16 @@ use alloy_signer_local::LocalSigner;
 use common::*;
 use litesvm::{types::TransactionMetadata, LiteSVM};
 use litesvm_token::spl_token;
-use solana_program::{pubkey::Pubkey, system_program};
 use solana_sdk::{
     account::ReadableAccount,
     clock::Clock,
     message::{v0, VersionedMessage},
+    pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     transaction::VersionedTransaction,
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_interface::{
     program_id, AuthorityConfig, ClientAction, CreateInstruction, CreateSessionInstruction,
     SignInstruction,
@@ -107,7 +107,7 @@ pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), S
                         let mut hasher = solana_sdk::keccak::Hasher::default();
                         hasher.hash(authority_hex.as_bytes());
                         let hash = hasher.result();
-                        let address = format!("0x{}", hex::encode(&hash.0[12..32]));
+                        let address = format!("0x{}", hex::encode(&hash.as_bytes()[12..32]));
                         format!(
                             "{} \n║ │  ├─ odometer: {:?}",
                             address,

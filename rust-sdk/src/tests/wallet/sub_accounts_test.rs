@@ -1,8 +1,8 @@
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
-use solana_program::system_instruction;
 use solana_sdk::signature::{Keypair, Signer};
+use solana_system_interface::instruction as system_instruction;
 use spl_token::ID as TOKEN_PROGRAM_ID;
 use swig_interface::program_id;
 use swig_state::{

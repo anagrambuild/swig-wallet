@@ -3,9 +3,10 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::{LocalSigner, PrivateKeySigner};
 use solana_sdk::{
     signature::{Keypair, Signer},
-    system_instruction, system_program,
     sysvar::clock::Clock,
 };
+use solana_sdk_ids::system_program;
+use solana_system_interface::instruction as system_instruction;
 use swig_state::authority::AuthorityType;
 
 use super::*;
