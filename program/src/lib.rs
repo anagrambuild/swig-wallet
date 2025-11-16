@@ -49,8 +49,6 @@ const STAKING_ID: Pubkey = pubkey!("Stake11111111111111111111111111111111111111"
 /// Program ID for the Solana System program
 const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111");
 
-const MAX_ACCOUNTS: usize = 255;
-
 pinocchio::default_allocator!();
 pinocchio::default_panic_handler!();
 
@@ -88,9 +86,8 @@ security_txt! {
 pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
     const AI: MaybeUninit<AccountInfo> = MaybeUninit::<AccountInfo>::uninit();
     const AC: MaybeUninit<AccountClassification> = MaybeUninit::<AccountClassification>::uninit();
-    let mut accounts = [AI; MAX_ACCOUNTS];
-    let mut classifiers = Vec::<MaybeUninit<AccountClassification>>::with_capacity(MAX_ACCOUNTS);
-    classifiers.extend([AC; MAX_ACCOUNTS]);
+    let mut accounts = [AI; 100];
+    let mut classifiers = [AC; 100];
     unsafe {
         execute(&mut ctx, &mut accounts, &mut classifiers)?;
     }
