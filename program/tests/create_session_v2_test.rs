@@ -15,10 +15,10 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     sysvar::rent::Rent,
     transaction::VersionedTransaction,
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_interface::{CreateSessionInstruction, SignV2Instruction};
 use swig_state::{
     authority::{

@@ -6,17 +6,17 @@ mod common;
 
 use common::*;
 use litesvm::types::TransactionMetadata;
+use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
-    compute_budget::ComputeBudgetInstruction,
     instruction::{AccountMeta, Instruction},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     sysvar::rent::Rent,
     transaction::VersionedTransaction,
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_interface::swig;
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
@@ -91,7 +91,7 @@ fn create_migration_instruction(
             AccountMeta::new(authority_pubkey, true), // authority (writable, signer)
             AccountMeta::new(payer_pubkey, true), // payer (writable, signer)
             AccountMeta::new(wallet_address_pubkey, false), // wallet address (writable)
-            AccountMeta::new_readonly(solana_sdk::system_program::ID, false), // system program
+            AccountMeta::new_readonly(solana_sdk_ids::system_program::ID, false), // system program
         ],
         data: instruction_data,
     }

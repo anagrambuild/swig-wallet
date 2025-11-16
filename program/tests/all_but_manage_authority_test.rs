@@ -18,10 +18,10 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     sysvar::clock::Clock,
     transaction::{TransactionError, VersionedTransaction},
 };
+use solana_system_interface::instruction as system_instruction;
 use swig::actions::sign_v1::SignV1Args;
 use swig_interface::{
     compact_instructions, AuthorityConfig, ClientAction, CreateSubAccountInstruction,
@@ -904,7 +904,7 @@ fn test_all_but_manage_authority_cannot_withdraw_from_sub_account() {
 
     // Verify the sub-account still exists and is intact
     let sub_account_data = context.svm.get_account(&sub_account).unwrap();
-    assert_eq!(sub_account_data.owner, solana_sdk::system_program::ID);
+    assert_eq!(sub_account_data.owner, solana_sdk_ids::system_program::ID);
 
     // Verify the restricted authority still has AllButManageAuthority permission
     let swig_account_after = context.svm.get_account(&swig).unwrap();
