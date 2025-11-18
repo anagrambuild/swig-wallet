@@ -147,7 +147,7 @@ fn test_token_recurring_destination_limit_basic_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix,
-        1,
+        2,
     )
     .unwrap();
 
@@ -185,7 +185,7 @@ fn test_token_recurring_destination_limit_basic_v2() {
     // Verify limit was decremented
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
 
     let combined_key = [mint_pubkey.to_bytes(), recipient_ata.to_bytes()].concat();
     let dest_limit = role
@@ -217,7 +217,7 @@ fn test_token_recurring_destination_limit_basic_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix2,
-        1,
+        2,
     )
     .unwrap();
 
@@ -239,7 +239,7 @@ fn test_token_recurring_destination_limit_basic_v2() {
 
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
 
     let dest_limit = role
         .get_action::<TokenRecurringDestinationLimit>(&combined_key)
@@ -356,7 +356,7 @@ fn test_token_recurring_destination_limit_exceeds_limit_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix,
-        1,
+        2,
     )
     .unwrap();
 
@@ -489,7 +489,7 @@ fn test_token_recurring_destination_limit_time_reset_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix1,
-        1,
+        2,
     )
     .unwrap();
 
@@ -512,7 +512,7 @@ fn test_token_recurring_destination_limit_time_reset_v2() {
     // Verify limit was decremented
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
     let combined_key = [mint_pubkey.to_bytes(), recipient_ata.to_bytes()].concat();
     let dest_limit = role
         .get_action::<TokenRecurringDestinationLimit>(&combined_key)
@@ -544,7 +544,7 @@ fn test_token_recurring_destination_limit_time_reset_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix2,
-        1,
+        2,
     )
     .unwrap();
 
@@ -567,7 +567,7 @@ fn test_token_recurring_destination_limit_time_reset_v2() {
     // Verify limit was reset and then decremented
     let swig_account_final = context.svm.get_account(&swig).unwrap();
     let swig_state_final = SwigWithRoles::from_bytes(&swig_account_final.data).unwrap();
-    let role_final = swig_state_final.get_role(1).unwrap().unwrap();
+    let role_final = swig_state_final.get_role(2).unwrap().unwrap();
     let dest_limit_final = role_final
         .get_action::<TokenRecurringDestinationLimit>(&combined_key)
         .unwrap()
@@ -709,7 +709,7 @@ fn test_multiple_token_recurring_destination_limits_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix1,
-        1,
+        2,
     )
     .unwrap();
 
@@ -731,7 +731,7 @@ fn test_multiple_token_recurring_destination_limits_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix2,
-        1,
+        2,
     )
     .unwrap();
 
@@ -753,7 +753,7 @@ fn test_multiple_token_recurring_destination_limits_v2() {
     // Verify both limits were decremented correctly
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
 
     let combined_key1 = [mint_pubkey.to_bytes(), recipient1_ata.to_bytes()].concat();
     let combined_key2 = [mint_pubkey.to_bytes(), recipient2_ata.to_bytes()].concat();
@@ -882,7 +882,7 @@ fn test_token_recurring_destination_limit_no_reset_when_exceeds_fresh_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix,
-        1,
+        2,
     )
     .unwrap();
 
@@ -913,7 +913,7 @@ fn test_token_recurring_destination_limit_no_reset_when_exceeds_fresh_v2() {
     // Verify limit was NOT reset (should still have the old current_amount)
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
     let combined_key = [mint_pubkey.to_bytes(), recipient_ata.to_bytes()].concat();
     let dest_limit = role
         .get_action::<TokenRecurringDestinationLimit>(&combined_key)
@@ -1067,7 +1067,7 @@ fn test_token_recurring_destination_limit_different_mints_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix1,
-        1,
+        2,
     )
     .unwrap();
 
@@ -1104,7 +1104,7 @@ fn test_token_recurring_destination_limit_different_mints_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix2,
-        1,
+        2,
     )
     .unwrap();
 
@@ -1127,7 +1127,7 @@ fn test_token_recurring_destination_limit_different_mints_v2() {
     // Verify both limits were decremented correctly
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
 
     let combined_key1 = [mint1_pubkey.to_bytes(), recipient_ata1.to_bytes()].concat();
     let combined_key2 = [mint2_pubkey.to_bytes(), recipient_ata2.to_bytes()].concat();

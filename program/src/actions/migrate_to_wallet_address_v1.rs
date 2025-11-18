@@ -203,7 +203,7 @@ pub fn migrate_to_wallet_address_v1(
     )?;
 
     // Create the new Swig structure with wallet_bump
-    let new_swig = Swig::new(old_swig.id, old_swig.bump, wallet_address_bump);
+    let new_swig = Swig::new(old_swig.id, old_swig.bump, wallet_address_bump, 0);
 
     // Ensure the role counter and roles count are preserved
     let mut new_swig_with_preserved_data = new_swig;

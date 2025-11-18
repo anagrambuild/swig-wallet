@@ -93,7 +93,7 @@ fn test_cpi_signing_requires_program_permission_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix,
-        1, // Second authority should be role_id 1
+        2, // Second authority should be role_id 1
     )
     .unwrap();
 
@@ -257,7 +257,7 @@ fn test_cpi_signing_without_program_permission_fails_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix,
-        1, // Second authority should be role_id 1
+        2, // Second authority should be role_id 1
     )
     .unwrap();
 
@@ -361,7 +361,7 @@ fn test_cpi_signing_with_program_all_permission_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix,
-        1,
+        2,
     )
     .unwrap();
 
@@ -462,7 +462,7 @@ fn test_cpi_signing_with_program_curated_permission_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix,
-        1,
+        2,
     )
     .unwrap();
 

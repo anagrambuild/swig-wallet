@@ -239,7 +239,8 @@ fn test_migrate_swig_to_wallet_address_basic() {
     assert_eq!(new_swig.roles, old_swig.roles);
     assert_eq!(new_swig.role_counter, old_swig.role_counter);
     assert_eq!(new_swig.wallet_bump, wallet_address_bump);
-    assert_eq!(new_swig._padding, [0; 7]);
+    assert_eq!(new_swig.swig_type, 0);
+    assert_eq!(new_swig._padding, [0; 6]);
 
     println!("✅ Migration test structure validated successfully!");
     println!(
@@ -302,7 +303,7 @@ fn test_validate_old_vs_new_swig_structure() {
     );
 
     // Simulate migration by creating new structure
-    let new_swig = Swig::new(test_id, test_bump, 200); // wallet_bump = 200
+    let new_swig = Swig::new(test_id, test_bump, 200, 0); // wallet_bump = 200
     let mut new_swig_updated = new_swig;
     new_swig_updated.roles = old_swig.roles;
     new_swig_updated.role_counter = old_swig.role_counter;
