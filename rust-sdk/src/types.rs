@@ -700,3 +700,19 @@ impl UpdateAuthorityData {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenProgram {
+    SplToken,
+    Token2022,
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenBalance {
+    pub mint: Pubkey,
+    pub token_account: Pubkey,
+    pub balance: u64,
+    pub decimals: u8,
+    pub ui_amount: f64,
+    pub program: TokenProgram,
+}

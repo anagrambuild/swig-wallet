@@ -10,6 +10,7 @@ pub mod session_tests;
 pub mod sign_v1_tests;
 pub mod sign_v2_tests;
 pub mod sub_accounts_test;
+pub mod token_balance_tests;
 
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
