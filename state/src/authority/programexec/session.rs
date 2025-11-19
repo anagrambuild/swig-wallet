@@ -8,7 +8,10 @@ use super::{
     super::{ed25519::ed25519_authenticate, Authority, AuthorityInfo, AuthorityType},
     program_exec_authenticate, MAX_INSTRUCTION_PREFIX_LEN,
 };
-use crate::{IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut};
+use crate::{
+    authority::programexec::assert_program_exec_cant_be_swig, IntoBytes, SwigAuthenticateError,
+    SwigStateError, Transmutable, TransmutableMut,
+};
 
 /// Creation parameters for a session-based program execution authority.
 #[repr(C, align(8))]
@@ -142,6 +145,16 @@ impl Authority for ProgramExecSessionAuthority {
         let create = unsafe { CreateProgramExecSessionAuthority::load_unchecked(create_data)? };
         let authority = unsafe { ProgramExecSessionAuthority::load_mut_unchecked(bytes)? };
 
+        if create_data.len() != Self::LEN {
+            return Err(SwigStateError::InvalidRoleData.into());
+        }
+
+        let prefix_len = create_data[32] as usize;
+        if prefix_len > MAX_INSTRUCTION_PREFIX_LEN {
+            return Err(SwigStateError::InvalidRoleData.into());
+        }
+        let create_data_program_id = &create_data[..32];
+        assert_program_exec_cant_be_swig(create_data_program_id)?;
         authority.program_id = create.program_id;
         authority.instruction_prefix = create.instruction_prefix;
         authority.instruction_prefix_len = create.instruction_prefix_len;
@@ -167,7 +180,7 @@ impl AuthorityInfo for ProgramExecSessionAuthority {
     }
 
     fn identity(&self) -> Result<&[u8], ProgramError> {
-        Ok(&self.program_id)
+        Ok(&self.instruction_prefix[..self.instruction_prefix_len as usize])
     }
 
     fn signature_odometer(&self) -> Option<u32> {
