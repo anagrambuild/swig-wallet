@@ -32,7 +32,7 @@ const IX_PREFIX_OFFSET: usize = 32 + 1 + 7; // program_id + instruction_prefix_l
 pub struct ProgramExecAuthority {
     /// The program ID that must execute the preceding instruction
     pub program_id: [u8; 32],
-    /// Length of the instruction prefix to match (0-8)
+    /// Length of the instruction prefix to match (0-40)
     pub instruction_prefix_len: u8,
     /// Padding for alignment
     _padding: [u8; 7],
@@ -139,7 +139,19 @@ impl AuthorityInfo for ProgramExecAuthority {
         if data.len() < 32 {
             return false;
         }
+        // The identity slice spans the full struct (80 bytes) to include both program_id and instruction_prefix
+        // which are separated by instruction_prefix_len and padding
+        if data.len() != Self::LEN {
+            return false;
+        }
+        // The identity slice includes intermediate bytes (instruction_prefix_len + padding)
+        // so we need to read instruction_prefix from IX_PREFIX_OFFSET
         sol_assert_bytes_eq(&self.program_id, &data[..32], 32)
+            && sol_assert_bytes_eq(
+                &self.instruction_prefix[..self.instruction_prefix_len as usize],
+                &data[IX_PREFIX_OFFSET..IX_PREFIX_OFFSET + self.instruction_prefix_len as usize],
+                self.instruction_prefix_len as usize,
+            )
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -147,7 +159,7 @@ impl AuthorityInfo for ProgramExecAuthority {
     }
 
     fn identity(&self) -> Result<&[u8], ProgramError> {
-        Ok(&self.program_id)
+       Ok(&self.instruction_prefix[..self.instruction_prefix_len as usize])
     }
 
     fn signature_odometer(&self) -> Option<u32> {
