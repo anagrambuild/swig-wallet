@@ -336,6 +336,12 @@ fn test_sub_account_sign_with_all_permission() {
     let sub_account =
         create_sub_account(&mut context, &swig_key, &root_authority, role_id, id).unwrap();
 
+    let swig_data = context.svm.get_account(&swig_key).unwrap();
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_data.data).unwrap();
+    let role = swig_with_roles.get_role(role_id).unwrap().unwrap();
+    let sub_account_action = role.get_all_actions_of_type::<SubAccount>().unwrap();
+    assert!(sub_account_action[0].sub_account == sub_account.to_bytes());
+
     // Fund the sub-account with some SOL
     let initial_balance = 5_000_000_000;
     context.svm.airdrop(&sub_account, initial_balance).unwrap();

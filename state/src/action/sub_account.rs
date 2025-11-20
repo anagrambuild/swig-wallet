@@ -25,7 +25,7 @@ pub struct SubAccount {
     pub bump: u8,
     /// Whether the sub-account is enabled
     pub enabled: bool,
-    _padding: [u8; 2],
+    pub _padding: [u8; 2],
     /// ID of the role associated with this sub-account
     pub role_id: u32,
     /// ID of the parent Swig account
