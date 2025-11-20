@@ -312,6 +312,63 @@ fn test_sub_account_sign() {
     );
 }
 
+// Test signing transactions with a sub-account with all permission
+#[test_log::test]
+fn test_sub_account_sign_with_all_permission() {
+    let mut context = setup_test_context().unwrap();
+    let recipient = Keypair::new();
+
+    // Set up the test environment
+    let (swig_key, root_authority, sub_account_authority, id) =
+        setup_test_with_sub_account_authority(&mut context).unwrap();
+
+    context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
+
+    let role_id = 0; // The all action authority has role_id 0
+
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let role = swig_with_roles.get_role(role_id).unwrap().unwrap();
+    let all_permission = role.get_action::<All>(&[]).unwrap();
+    assert!(all_permission.is_some());
+
+    // Create the sub-account with the sub-account authority
+    let sub_account =
+        create_sub_account(&mut context, &swig_key, &root_authority, role_id, id).unwrap();
+
+    // Fund the sub-account with some SOL
+    let initial_balance = 5_000_000_000;
+    context.svm.airdrop(&sub_account, initial_balance).unwrap();
+
+    // Create a transfer instruction that will be executed by the sub-account
+    let transfer_amount = 1_000_000;
+    let transfer_ix =
+        system_instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
+
+    // Sign and execute with the sub-account using the sub-account authority
+    let sign_result = sub_account_sign(
+        &mut context,
+        &swig_key,
+        &sub_account,
+        &root_authority,
+        role_id,
+        vec![transfer_ix],
+    )
+    .unwrap();
+
+    // Verify the funds were transferred
+    let recipient_balance = context
+        .svm
+        .get_account(&recipient.pubkey())
+        .unwrap()
+        .lamports;
+    assert_eq!(
+        recipient_balance,
+        1_000_000 + transfer_amount,
+        "Recipient's balance didn't increase by the correct amount"
+    );
+}
+
 // Test toggling a sub-account on and off
 #[test_log::test]
 fn test_toggle_sub_account() {
