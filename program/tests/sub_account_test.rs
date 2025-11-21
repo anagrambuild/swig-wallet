@@ -947,3 +947,102 @@ fn test_withdraw_token_from_sub_account() {
     assert_eq!(sub_account_token_account.amount, 0);
     assert_eq!(swig_token_account.amount, initial_token_amount);
 }
+
+#[test_log::test]
+fn test_all_permission_cannot_create_sub_account() {
+    let mut context = setup_test_context().unwrap();
+
+    let root_authority = Keypair::new();
+    let all_permission_authority = Keypair::new();
+
+    // Airdrop to both authorities
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&all_permission_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+
+    // Create a swig account with the root authority
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    // Add an authority with ONLY All permission (not SubAccount permission)
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: all_permission_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
+
+    // Get the all permission authority's role ID
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let all_permission_role_id = swig_state
+        .lookup_role_id(all_permission_authority.pubkey().as_ref())
+        .unwrap()
+        .expect("All permission authority should exist");
+
+    // Derive the sub-account address that would be created
+    let role_id_bytes = all_permission_role_id.to_le_bytes();
+    let (sub_account, sub_account_bump) =
+        Pubkey::find_program_address(&sub_account_seeds(&id, &role_id_bytes), &program_id());
+
+    // Now attempt to create a sub-account using the all permission authority
+    // This should FAIL because All permission alone should not allow sub-account
+    // creation (requires explicit SubAccount permission)
+    let create_sub_account_ix = CreateSubAccountInstruction::new_with_ed25519_authority(
+        swig_key,
+        all_permission_authority.pubkey(),
+        all_permission_authority.pubkey(),
+        sub_account,
+        all_permission_role_id,
+        sub_account_bump,
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &all_permission_authority.pubkey(),
+        &[create_sub_account_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&all_permission_authority])
+            .unwrap();
+
+    let create_sub_account_result = context.svm.send_transaction(tx);
+
+    // The operation should fail - All permission should not allow sub-account
+    // creation without explicit SubAccount permission
+    assert!(
+        create_sub_account_result.is_err(),
+        "All permission should NOT be able to create sub-accounts without explicit SubAccount \
+         permission"
+    );
+
+    // Verify it's the AuthorityCannotCreateSubAccount error (error code 36 = 0x24)
+    let error_msg = format!("{:?}", create_sub_account_result.unwrap_err());
+    assert!(
+        error_msg.contains("Custom(36)"),
+        "Expected AuthorityCannotCreateSubAccount error (code 36), got: {}",
+        error_msg
+    );
+
+    // Verify no sub-account was created
+    let sub_account_result = context.svm.get_account(&sub_account);
+    assert!(
+        sub_account_result.is_none(),
+        "Sub-account should not have been created"
+    );
+}
