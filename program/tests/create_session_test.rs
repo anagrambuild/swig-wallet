@@ -14,10 +14,10 @@ use solana_sdk::{
     message::{v0, VersionedMessage},
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     sysvar::rent::Rent,
     transaction::VersionedTransaction,
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_interface::{CreateSessionInstruction, SignInstruction};
 use swig_state::{
     authority::{

@@ -10,6 +10,7 @@ use solana_sdk::{
     signer::Signer,
     transaction::VersionedTransaction,
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state::{
     action::program_scope::{NumericType, ProgramScope, ProgramScopeType},
@@ -225,7 +226,7 @@ fn test_sol_transfer_performance_comparison() {
     context.svm.airdrop(&swig, initial_sol_amount).unwrap();
     let transfer_amount = 1_000_000;
 
-    let regular_transfer_ix = solana_sdk::system_instruction::transfer(
+    let regular_transfer_ix = system_instruction::transfer(
         &regular_sender.pubkey(),
         &recipient.pubkey(),
         transfer_amount,
@@ -255,7 +256,7 @@ fn test_sol_transfer_performance_comparison() {
 
     // Measure swig SOL transfer performance
     let swig_transfer_ix =
-        solana_sdk::system_instruction::transfer(&swig, &recipient.pubkey(), transfer_amount);
+        system_instruction::transfer(&swig, &recipient.pubkey(), transfer_amount);
 
     let sign_ix = swig_interface::SignInstruction::new_ed25519(
         swig,

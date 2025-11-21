@@ -15,10 +15,10 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     sysvar::{clock::Clock, rent::Rent},
     transaction::{TransactionError, VersionedTransaction},
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_interface::{AuthorityConfig, ClientAction, SignInstruction, SignV2Instruction};
 use swig_state::{
     action::{
@@ -224,7 +224,7 @@ fn test_sign_v2_transfer_sol_with_additional_authority() {
         vec![
             ClientAction::SolLimit(SolLimit { amount: amount / 2 }),
             ClientAction::Program(Program {
-                program_id: solana_sdk::system_program::ID.to_bytes(),
+                program_id: solana_sdk_ids::system_program::ID.to_bytes(),
             }),
         ],
     )
@@ -452,7 +452,7 @@ fn test_sign_v2_fail_transfer_sol_with_insufficient_limit() {
         vec![
             ClientAction::SolLimit(SolLimit { amount: 1000 }),
             ClientAction::Program(Program {
-                program_id: solana_sdk::system_program::ID.to_bytes(),
+                program_id: solana_sdk_ids::system_program::ID.to_bytes(),
             }),
         ],
     )
@@ -664,7 +664,7 @@ fn test_sign_v2_transfer_sol_with_recurring_limit() {
                 current_amount: 500,
             }),
             ClientAction::Program(Program {
-                program_id: solana_sdk::system_program::ID.to_bytes(),
+                program_id: solana_sdk_ids::system_program::ID.to_bytes(),
             }),
         ],
     )
@@ -1585,7 +1585,7 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
             AccountMeta::new(recipient_ata, false), // associated token account
             AccountMeta::new_readonly(recipient.pubkey(), false), // owner
             AccountMeta::new_readonly(mint_pubkey, false), // mint
-            AccountMeta::new_readonly(solana_sdk::system_program::ID, false), // system program
+            AccountMeta::new_readonly(solana_sdk_ids::system_program::ID, false), // system program
             AccountMeta::new_readonly(spl_token::id(), false), // token program
         ],
         data: vec![], // create_associated_token_account has no instruction data

@@ -3,8 +3,8 @@ use solana_sdk::{
     instruction::{AccountMeta, Instruction},
     keccak,
     pubkey::Pubkey,
-    system_program,
 };
+use solana_sdk_ids::system_program;
 use solana_secp256r1_program::new_secp256r1_instruction_with_signature;
 pub use swig;
 use swig::actions::{
