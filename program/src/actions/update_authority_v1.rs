@@ -380,7 +380,7 @@ fn perform_replace_all_operation(
 }
 
 /// Performs an add-actions operation on an authority.
-fn perform_add_actions_operation(
+pub fn perform_add_actions_operation(
     swig_roles: &mut [u8],
     swig_data_len: usize,
     authority_offset: usize,

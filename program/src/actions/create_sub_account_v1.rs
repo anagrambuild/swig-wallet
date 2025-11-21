@@ -16,11 +16,11 @@ use pinocchio_system::instructions::Transfer;
 use swig_assertions::*;
 use swig_state::{
     action::{
-        all::All, manage_authority::ManageAuthority, sub_account::SubAccount, ActionLoader,
-        Actionable,
+        all::All, manage_authority::ManageAuthority, sub_account::SubAccount, Action, ActionLoader,
+        Actionable, Permission,
     },
     authority::AuthorityType,
-    role::RoleMut,
+    role::{Position, RoleMut},
     swig::{
         sub_account_seeds_with_bump, sub_account_signer, swig_account_seeds_with_bump,
         swig_account_signer, Swig,
@@ -29,6 +29,7 @@ use swig_state::{
 };
 
 use crate::{
+    actions::{perform_add_actions_operation, process_update_authority_v1, UpdateAuthorityV1Args},
     error::SwigError,
     instruction::{
         accounts::{Context, CreateSubAccountV1Accounts},
@@ -154,6 +155,8 @@ pub fn create_sub_account_v1(
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 
+    let swig_data_len = swig_account_data.len();
+
     // Split the swig account data to get the header and roles
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_unchecked(swig_header)? };
@@ -247,5 +250,123 @@ pub fn create_sub_account_v1(
         sub_account_action_mut.swig_id = swig.id;
     }
 
+    if has_all_permission && !has_sub_account_permission {
+        let action_data = create_sub_account_data(
+            ctx.accounts.sub_account.key().as_ref().try_into().unwrap(),
+            create_sub_account.args.sub_account_bump,
+            create_sub_account.args.role_id,
+            swig.id,
+        )?;
+        let size_diff = action_data.len() as i64;
+
+        let (current_actions_size, authority_offset, actions_offset) = {
+            let mut cursor = 0;
+            let mut found = false;
+            let mut auth_offset = 0;
+            let mut act_offset = 0;
+            let mut current_size = 0;
+
+            // Verify the swig account data
+            let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+            if unsafe { *swig_account_data.get_unchecked(0) }
+                != Discriminator::SwigConfigAccount as u8
+            {
+                return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+            }
+
+            let swig_data_len = swig_account_data.len();
+
+            // Split the swig account data to get the header and roles
+            let (swig_header, swig_roles) =
+                unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+            let swig = unsafe { Swig::load_unchecked(swig_header)? };
+
+            for _i in 0..swig.roles {
+                let position = unsafe {
+                    Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])?
+                };
+
+                if position.id() == create_sub_account.args.role_id {
+                    found = true;
+                    auth_offset = cursor;
+                    act_offset = cursor + Position::LEN + position.authority_length() as usize;
+                    current_size = position.boundary() as usize - act_offset;
+                    break;
+                }
+                cursor = position.boundary() as usize;
+            }
+
+            if !found {
+                return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+            }
+
+            (current_size, auth_offset, act_offset)
+        };
+
+        let new_size = (swig_data_len as i64 + size_diff) as usize;
+        let aligned_size =
+            core::alloc::Layout::from_size_align(new_size, core::mem::size_of::<u64>())
+                .map_err(|_| SwigError::InvalidAlignment)?
+                .pad_to_align()
+                .size();
+
+        ctx.accounts.swig.resize(aligned_size)?;
+
+        let cost = Rent::get()?.minimum_balance(aligned_size);
+        let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
+
+        let additional_cost = cost.saturating_sub(current_lamports);
+
+        if additional_cost > 0 {
+            Transfer {
+                from: ctx.accounts.payer,
+                to: ctx.accounts.swig,
+                lamports: additional_cost,
+            }
+            .invoke()?;
+        }
+
+        // Reborrow the swig account data after reallocation
+        let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        let (swig_header, swig_roles) =
+            unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+        let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+
+        perform_add_actions_operation(
+            swig_roles,
+            swig_data_len,
+            authority_offset,
+            actions_offset,
+            current_actions_size,
+            &action_data,
+            create_sub_account.args.role_id,
+        )?;
+    }
+
     Ok(())
+}
+
+pub fn create_sub_account_data(
+    sub_account: [u8; 32],
+    sub_account_bump: u8,
+    role_id: u32,
+    swig_id: [u8; 32],
+) -> Result<Vec<u8>, ProgramError> {
+    let len = Action::LEN as u16 + SubAccount::LEN as u16;
+    let mut data = vec![0; len as usize];
+    let header = Action::new(Permission::SubAccount, SubAccount::LEN as u16, len as u32);
+    let header_bytes = header
+        .into_bytes()
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+    data[..Action::LEN].copy_from_slice(header_bytes);
+    let sub_account = SubAccount {
+        sub_account,
+        bump: sub_account_bump,
+        enabled: true,
+        _padding: [0; 2],
+        role_id,
+        swig_id,
+    };
+    data[Action::LEN..].copy_from_slice(sub_account.into_bytes().unwrap());
+    Ok(data)
 }
