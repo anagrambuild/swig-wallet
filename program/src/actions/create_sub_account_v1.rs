@@ -194,7 +194,9 @@ pub fn create_sub_account_v1(
         sub_account_action.is_some()
     };
 
-    if !has_all_permission && !has_sub_account_permission {
+    // Even if role has `All` action, it must have a `SubAccount` action before it
+    // can create a `SubAccount`
+    if !has_sub_account_permission {
         return Err(SwigError::AuthorityCannotCreateSubAccount.into());
     }
     // Derive the sub-account address using the authority index as seed (keeping PDA
