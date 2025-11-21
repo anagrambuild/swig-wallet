@@ -1,0 +1,38 @@
+[package]
+name = "swig-migration-cli"
+version.workspace = true
+edition = "2024"
+license = "AGPL-3.0"
+description = "SWIG Migration CLI - Tool for migrating Swig accounts to wallet address feature"
+authors.workspace = true
+documentation.workspace = true
+
+[[bin]]
+name = "swig-migration"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.4", features = ["derive"] }
+colored = "2.1"
+console = "0.15"
+indicatif = "0.17"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+tokio = { version = "1.0", features = ["full"] }
+bs58 = "0.5.1"
+hex = "0.4.3"
+solana-sdk = "2.3.0"
+solana-client = "2.3.0"
+solana-program = "2.3.0"
+borsh = "1.0"
+
+# Local dependencies
+swig-state = { path = "../state" }
+swig-assertions = { path = "../assertions" }
+no-padding = { path = "../no-padding" }
+pinocchio = "0.5"
+
+[lints]
+workspace = true
