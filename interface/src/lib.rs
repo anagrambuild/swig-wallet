@@ -150,8 +150,8 @@ pub fn program_id() -> Pubkey {
 
 pub const PROGRAM_ID: [u8; 32] = swig::ID;
 
-pub fn swig_key(id: String) -> Pubkey {
-    Pubkey::find_program_address(&swig_account_seeds(id.as_bytes()), &program_id()).0
+pub fn swig_key_bytes(id: &[u8; 32]) -> Pubkey {
+    Pubkey::find_program_address(&swig_account_seeds(id), &program_id()).0
 }
 
 pub fn swig_wallet_address(config_address: Pubkey) -> Pubkey {
