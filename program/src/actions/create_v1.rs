@@ -3,13 +3,17 @@
 /// specified authority types and associated actions.
 use no_padding::NoPadding;
 use pinocchio::{
+    cpi,
+    instruction::{AccountMeta, Instruction},
     msg,
     program_error::ProgramError,
-    sysvars::{rent::Rent, Sysvar},
+    sysvars::{clock::Clock, instructions::Instructions, rent::Rent, Sysvar},
     ProgramResult,
 };
+use pinocchio_pubkey::pubkey;
 use pinocchio_system::instructions::CreateAccount;
 use swig_assertions::{check_self_pda, check_system_owner, check_zero_data};
+use swig_compact_instructions::AccountProxy;
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, ActionLoader, Actionable},
     authority::{authority_type_to_length, AuthorityType},
@@ -27,6 +31,7 @@ use crate::{
         accounts::{Context, CreateV1Accounts},
         SwigInstruction,
     },
+    SWIG_ENTERPRISE_ID,
 };
 
 /// Arguments for creating a new Swig wallet account.
@@ -47,6 +52,8 @@ pub struct CreateV1Args {
     pub bump: u8,
     pub wallet_address_bump: u8,
     pub id: [u8; 32],
+    pub swig_type: u8,
+    pub _padding: [u8; 7],
 }
 
 impl CreateV1Args {
@@ -64,6 +71,7 @@ impl CreateV1Args {
         authority_type: AuthorityType,
         authority_data_len: u16,
         wallet_address_bump: u8,
+        swig_type: u8,
     ) -> Self {
         Self {
             discriminator: SwigInstruction::CreateV1,
@@ -72,6 +80,8 @@ impl CreateV1Args {
             authority_type: authority_type as u16,
             authority_data_len,
             wallet_address_bump,
+            swig_type,
+            _padding: [0; 7],
         }
     }
 }
@@ -182,6 +192,52 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
         SwigError::InvalidSeedSwigAccount,
     )?;
 
+    // Enterprise Swig account checks
+    if create_v1.args.swig_type == 1 {
+        let enterprise_account = ctx
+            .remaining_accounts
+            .last()
+            .ok_or(SwigError::EnterpriseAccountNotFound)?;
+
+        if enterprise_account.owner().ne(&SWIG_ENTERPRISE_ID) {
+            return Err(SwigError::InvalidEnterpriseAccount.into());
+        }
+
+        // check the data inside the enterprise account. ie fetch the enterprise owner
+        if enterprise_account.data_len() == 96 {
+            let enterprise_data = unsafe { enterprise_account.borrow_data_unchecked() };
+            let enterprise_owner = &enterprise_data[..32];
+            if enterprise_owner != ctx.accounts.payer.key() {
+                return Err(SwigError::InvalidEnterpriseOwnerMismatch.into());
+            }
+
+            let subscription_end = u64::from_le_bytes(
+                enterprise_data[72..80]
+                    .try_into()
+                    .map_err(|_| SwigError::InvalidEnterpriseData)?,
+            );
+
+            if subscription_end < Clock::get()?.slot {
+                return Err(SwigError::EnterpriseSubscriptionExpired.into());
+            }
+
+            let active_wallets = u32::from_le_bytes(
+                enterprise_data[64..68]
+                    .try_into()
+                    .map_err(|_| SwigError::InvalidEnterpriseData)?,
+            );
+            let max_limit = u32::from_le_bytes(
+                enterprise_data[88..92]
+                    .try_into()
+                    .map_err(|_| SwigError::InvalidEnterpriseData)?,
+            );
+
+            if active_wallets >= max_limit {
+                return Err(SwigError::EnterpriseMaxWalletsExceeded.into());
+            }
+        }
+    }
+
     let manage_authority_action = create_v1.get_action::<ManageAuthority>()?;
     let all_action = create_v1.get_action::<All>()?;
     if manage_authority_action.is_none() && all_action.is_none() {
@@ -191,14 +247,19 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
     let authority_type = AuthorityType::try_from(create_v1.args.authority_type)?;
     let authority_length = authority_type_to_length(&authority_type)?;
     let account_size = core::alloc::Layout::from_size_align(
-        Swig::LEN + Position::LEN + authority_length + create_v1.actions.len(),
+        Swig::LEN + Position::LEN + authority_length + create_v1.actions.len() + Position::LEN + 32,
         core::mem::size_of::<u64>(),
     )
     .map_err(|_| SwigError::InvalidAlignment)?
     .pad_to_align()
     .size();
     let lamports_needed = Rent::get()?.minimum_balance(account_size);
-    let swig = Swig::new(create_v1.args.id, bump, wallet_address_bump);
+    let swig = Swig::new(
+        create_v1.args.id,
+        bump,
+        wallet_address_bump,
+        create_v1.args.swig_type,
+    );
 
     // Get current lamports in the account
     let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
@@ -248,6 +309,45 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
 
     let swig_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let mut swig_builder = SwigBuilder::create(swig_data, swig)?;
+
+    if create_v1.args.swig_type == 1 {
+        let enterprise_account = ctx.remaining_accounts.last().unwrap();
+        let enterprise_program = &ctx.remaining_accounts[ctx.remaining_accounts.len() - 2];
+
+        swig_builder.add_role(
+            AuthorityType::Ed25519,
+            enterprise_account.key().as_ref(),
+            &[],
+        )?;
+
+        // CPI to the enterprise program to increment counter
+        let enterprise_account_owner = enterprise_account.owner();
+        if enterprise_account_owner != &SWIG_ENTERPRISE_ID
+            || enterprise_program.key() != &SWIG_ENTERPRISE_ID
+        {
+            return Err(SwigError::InvalidEnterpriseAccount.into());
+        }
+
+        let instruction = Instruction {
+            program_id: enterprise_program.key(),
+            accounts: &[
+                AccountMeta::new(ctx.accounts.payer.pubkey(), false, true),
+                AccountMeta::new(enterprise_account.pubkey(), true, false),
+                AccountMeta::new(enterprise_program.key(), false, false),
+            ],
+            data: &4u16.to_le_bytes(),
+        };
+        cpi::invoke(
+            &instruction,
+            &[ctx.accounts.payer, enterprise_account, enterprise_program],
+        )?;
+    } else {
+        swig_builder.add_role(
+            AuthorityType::Ed25519,
+            pubkey!("111111111111111111111111111111111111111111").as_ref(),
+            &[],
+        )?;
+    }
 
     swig_builder.add_role(authority_type, create_v1.authority_data, create_v1.actions)?;
     Ok(())

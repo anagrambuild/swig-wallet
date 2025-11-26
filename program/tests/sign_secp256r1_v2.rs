@@ -150,7 +150,7 @@ fn test_secp256r1_basic_signing_v2() {
         current_slot,
         next_counter,
         transfer_ix.clone(),
-        0, // Role ID 0
+        1, // Role ID 1
         &public_key,
     )
     .unwrap();
@@ -274,7 +274,7 @@ fn test_secp256r1_replay_protection_v2() {
         current_slot,
         counter1,
         transfer_ix.clone(),
-        0,
+        1,
         &public_key,
     )
     .unwrap();
@@ -377,7 +377,7 @@ fn test_secp256r1_add_authority_v2() {
         swig_key,
         context.default_payer.pubkey(),
         primary_authority.pubkey(),
-        0, // role_id of the primary wallet
+        1, // role_id of the primary wallet
         AuthorityConfig {
             authority_type: AuthorityType::Secp256r1,
             authority: &secp256r1_pubkey,
@@ -410,7 +410,7 @@ fn test_secp256r1_add_authority_v2() {
     // Verify the authority was added
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_state.state.roles, 2);
+    assert_eq!(swig_state.state.roles, 3);
 
     println!("✓ Successfully added Secp256r1 authority");
     println!("✓ Authority count increased to 2");
@@ -468,7 +468,7 @@ fn test_secp256r1_session_authority_odometer_v2() {
             .map_err(|e| format!("Failed to parse swig data: {:?}", e))?;
 
         let role = swig
-            .get_role(0)
+            .get_role(1)
             .map_err(|e| format!("Failed to get role: {:?}", e))?
             .ok_or("Role not found")?;
 
@@ -490,8 +490,8 @@ fn test_secp256r1_session_authority_odometer_v2() {
     // Verify the session authority structure is correctly initialized
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 1);
-    let role = swig.get_role(0).unwrap().unwrap();
+    assert_eq!(swig.state.roles, 2);
+    let role = swig.get_role(1).unwrap().unwrap();
 
     assert_eq!(
         role.authority.authority_type(),
@@ -600,7 +600,7 @@ fn test_secp256r1_add_authority_with_secp256r1_v2() {
         authority_fn,
         current_slot,
         next_counter,
-        0, // role_id of the primary authority
+        1, // role_id of the primary authority
         &public_key,
         AuthorityConfig {
             authority_type: AuthorityType::Secp256r1,
@@ -632,7 +632,7 @@ fn test_secp256r1_add_authority_with_secp256r1_v2() {
     // Verify the authority was added
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_state.state.roles, 2);
+    assert_eq!(swig_state.state.roles, 3);
 
     // Verify the counter was incremented
     let new_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();

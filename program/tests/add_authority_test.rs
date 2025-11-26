@@ -44,9 +44,9 @@ fn test_create_add_authority() {
     .unwrap();
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 2);
-    assert_eq!(swig.state.role_counter, 2);
-    let role_0 = swig.get_role(0).unwrap().unwrap();
+    assert_eq!(swig.state.roles, 3);
+    assert_eq!(swig.state.role_counter, 3);
+    let role_0 = swig.get_role(1).unwrap().unwrap();
     assert_eq!(role_0.authority.authority_type(), AuthorityType::Ed25519);
     assert!(!role_0.authority.session_based());
     assert_eq!(
@@ -111,8 +111,8 @@ fn test_cannot_add_authority_with_zero_actions() {
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
     assert_eq!(
-        swig.state.roles, 1,
-        "Should still have only the root authority"
+        swig.state.roles, 2,
+        "Should still have only the root and global authority"
     );
 }
 
@@ -196,8 +196,8 @@ fn test_multiple_authorities_with_different_actions() {
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
     assert_eq!(
-        swig.state.roles, 4,
-        "Should have 4 authorities (root + 3 added)"
+        swig.state.roles, 5,
+        "Should have 5 authorities (root + global + 3 added)"
     );
 
     // Verify authority1 has ManageAuthority permission

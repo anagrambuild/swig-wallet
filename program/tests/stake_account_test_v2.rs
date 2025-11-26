@@ -193,7 +193,7 @@ fn sign_with_swig_v2(
         *swig_wallet_address,
         authority.pubkey(),
         instruction,
-        0, // role_id 0 for root authority
+        1, // role_id 1 for root authority
     )?;
 
     // Get recent blockhash
