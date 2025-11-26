@@ -47,7 +47,7 @@ use crate::{
         accounts::{Context, SignV2Accounts},
         SwigInstruction,
     },
-    util::hash_except,
+    util::{hash_except, validate_external_kill_switch},
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
 };
 // use swig_instructions::InstructionIterator;
@@ -209,9 +209,10 @@ pub fn sign_v2(
     if role.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
-    let role = role.unwrap();
+    let mut role = role.unwrap();
     let clock = Clock::get()?;
     let slot = clock.slot;
+
     if role.authority.session_based() {
         role.authority.authenticate_session(
             all_accounts,
@@ -227,6 +228,10 @@ pub fn sign_v2(
             slot,
         )?;
     }
+
+    // Validate external kill switch if present
+    validate_external_kill_switch(&mut role, all_accounts)?;
+
     let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,

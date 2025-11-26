@@ -28,6 +28,7 @@ use crate::{
         accounts::{Context, ToggleSubAccountV1Accounts},
         SwigInstruction,
     },
+    util::validate_external_kill_switch,
 };
 
 /// Arguments for toggling a sub-account's enabled state.
@@ -165,6 +166,10 @@ pub fn toggle_sub_account_v1(
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
         let mut role = role_opt.unwrap();
+
+        // Validate external kill switch if present
+        validate_external_kill_switch(&mut role, all_accounts)?;
+
         authenticate_authority(&mut role, all_accounts, &toggle_sub_account)?;
         let all_action = role.get_action::<All>(&[])?;
         let manage_authority_action = role.get_action::<ManageAuthority>(&[])?;
@@ -193,6 +198,9 @@ pub fn toggle_sub_account_v1(
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
         let mut sub_account_role = sub_acc_role_opt.unwrap();
+
+        // Validate external kill switch if present
+        validate_external_kill_switch(&mut sub_account_role, all_accounts)?;
 
         authenticate_authority(&mut sub_account_role, all_accounts, &toggle_sub_account)?;
 
