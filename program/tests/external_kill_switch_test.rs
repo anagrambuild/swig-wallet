@@ -14,7 +14,7 @@ use solana_sdk::{
 };
 use swig_interface::{
     AuthorityConfig, ClientAction, CreateSessionInstruction, CreateSubAccountInstruction,
-    SignInstruction, SubAccountSignInstruction, ToggleSubAccountInstruction, UpdateAuthorityData,
+    SignV2Instruction, SubAccountSignInstruction, ToggleSubAccountInstruction, UpdateAuthorityData,
     WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
@@ -23,14 +23,14 @@ use swig_state::{
         program::Program, program_all::ProgramAll, sol_limit::SolLimit, sub_account::SubAccount,
     },
     authority::AuthorityType,
-    swig::{sub_account_seeds, swig_account_seeds, SwigWithRoles},
+    swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
 };
 
 /// Helper function to create a Swig account with an external kill switch
 /// that blocks execution (external account has wrong data)
 fn setup_swig_with_blocking_kill_switch(
     context: &mut Context,
-) -> (Pubkey, Keypair, Keypair, Keypair) {
+) -> (Pubkey, Keypair, Keypair, Keypair, Pubkey) {
     let swig_authority = Keypair::new();
     let test_authority = Keypair::new();
     let external_account = Keypair::new();
@@ -96,17 +96,26 @@ fn setup_swig_with_blocking_kill_switch(
             ClientAction::SolLimit(SolLimit {
                 amount: 1_000_000_000,
             }),
-            ClientAction::SubAccount(SubAccount {
-                sub_account: [0; 32],
-            }),
+            ClientAction::SubAccount(SubAccount::new_for_creation()),
         ],
     )
     .unwrap();
 
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(&swig.as_ref()), &program_id());
     // Fund the swig account
-    context.svm.airdrop(&swig, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
-    (swig, swig_authority, test_authority, external_account)
+    (
+        swig,
+        swig_authority,
+        test_authority,
+        external_account,
+        swig_wallet_address,
+    )
 }
 
 #[test_log::test]
@@ -180,20 +189,29 @@ fn test_external_kill_switch_blocks_execution() {
             ClientAction::Program(Program {
                 program_id: solana_sdk::system_program::ID.to_bytes(),
             }),
+            ClientAction::SolLimit(SolLimit {
+                amount: 1_000_000_000,
+            }),
         ],
     )
     .unwrap();
 
-    context.svm.airdrop(&swig, 10_000_000_000).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(&swig.as_ref()), &program_id());
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Create a simple transfer instruction to test
     let amount = 1_000_000;
-    let transfer_ix = system_instruction::transfer(&swig, &recipient.pubkey(), amount);
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), amount);
 
     // Create sign_v1 instruction
-    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let mut sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,
-        second_authority.pubkey(),
+        swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix,
         1, // role_id for the authority with kill switch
@@ -220,16 +238,17 @@ fn test_external_kill_switch_blocks_execution() {
     // Execute the instruction - should fail due to kill switch
     let result = context.svm.send_transaction(transfer_tx);
 
+    println!("DEBUG: Result: {:?}", result);
     assert!(
         result.is_err(),
         "Transaction should fail due to kill switch"
     );
 
-    // Should fail with external kill switch error (3029)
+    // Should fail with external kill switch error (3033)
     let error = result.unwrap_err();
     assert_eq!(
         error.err,
-        TransactionError::InstructionError(0, InstructionError::Custom(3029))
+        TransactionError::InstructionError(0, InstructionError::Custom(3033))
     );
 
     println!("✅ External kill switch correctly blocked execution when values don't match");
@@ -258,6 +277,8 @@ fn test_external_kill_switch_allows_execution() {
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(&swig.as_ref()), &program_id());
 
     // Create external account with test data
     let external_account = Keypair::new();
@@ -334,16 +355,20 @@ fn test_external_kill_switch_allows_execution() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Create a simple transfer instruction to test
     let amount = 1_000_000;
-    let transfer_ix = system_instruction::transfer(&swig, &recipient.pubkey(), amount);
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), amount);
 
-    // Create sign_v1 instruction
-    let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+    // Create sign_v2 instruction
+    let mut sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,
-        second_authority.pubkey(),
+        swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix,
         1, // role_id for the authority with kill switch
@@ -460,16 +485,22 @@ fn test_external_kill_switch_missing_account() {
     )
     .unwrap();
 
-    context.svm.airdrop(&swig, 10_000_000_000).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(&swig.as_ref()), &program_id());
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Create a simple transfer instruction to test
     let amount = 1_000_000;
-    let transfer_ix = system_instruction::transfer(&swig, &recipient.pubkey(), amount);
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), amount);
 
     // Create sign_v1 instruction WITHOUT adding the external account
-    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+    let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,
-        second_authority.pubkey(),
+        swig_wallet_address,
         second_authority.pubkey(),
         transfer_ix,
         1, // role_id for the authority with kill switch
@@ -497,12 +528,12 @@ fn test_external_kill_switch_missing_account() {
         "Transaction should fail when external account is missing"
     );
 
-    // Should fail with external kill switch error (3029) because account is not
+    // Should fail with external kill switch error (3034) because account is not
     // provided
     let error = result.unwrap_err();
     assert_eq!(
         error.err,
-        TransactionError::InstructionError(0, InstructionError::Custom(3030))
+        TransactionError::InstructionError(0, InstructionError::Custom(3034))
     );
 
     println!(
@@ -630,16 +661,24 @@ fn test_external_kill_switch_with_different_numeric_types() {
         )
         .unwrap();
 
-        context.svm.airdrop(&test_swig, 10_000_000_000).unwrap();
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_wallet_address_seeds(&test_swig.as_ref()),
+            &program_id(),
+        );
+        context
+            .svm
+            .airdrop(&swig_wallet_address, 10_000_000_000)
+            .unwrap();
 
         // Create a simple transfer instruction to test
         let amount = 1_000_000;
-        let transfer_ix = system_instruction::transfer(&test_swig, &recipient.pubkey(), amount);
+        let transfer_ix =
+            system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), amount);
 
         // Create sign_v1 instruction
-        let mut sign_ix = swig_interface::SignInstruction::new_ed25519(
+        let mut sign_ix = swig_interface::SignV2Instruction::new_ed25519(
             test_swig,
-            second_authority.pubkey(),
+            swig_wallet_address,
             second_authority.pubkey(),
             transfer_ix,
             1, // role_id for the authority with kill switch
@@ -668,6 +707,7 @@ fn test_external_kill_switch_with_different_numeric_types() {
         // Execute the instruction - should succeed since values match
         let result = context.svm.send_transaction(transfer_tx);
 
+        println!("DEBUG: Result: {:?}", result);
         assert!(
             result.is_ok(),
             "Transaction should succeed for numeric type {}",
@@ -684,7 +724,7 @@ fn test_external_kill_switch_with_different_numeric_types() {
 #[test_log::test]
 fn test_kill_switch_blocks_add_authority_v1() {
     let mut context = setup_test_context().unwrap();
-    let (swig, _swig_authority, test_authority, external_account) =
+    let (swig, _swig_authority, test_authority, external_account, swig_wallet_address) =
         setup_swig_with_blocking_kill_switch(&mut context);
 
     let new_authority = Keypair::new();
@@ -746,7 +786,7 @@ fn test_kill_switch_blocks_add_authority_v1() {
 #[test_log::test]
 fn test_kill_switch_blocks_remove_authority_v1() {
     let mut context = setup_test_context().unwrap();
-    let (swig, _swig_authority, test_authority, external_account) =
+    let (swig, _swig_authority, test_authority, external_account, swig_wallet_address) =
         setup_swig_with_blocking_kill_switch(&mut context);
 
     // Try to remove an authority with the test authority that has kill switch
@@ -799,7 +839,7 @@ fn test_kill_switch_blocks_remove_authority_v1() {
 #[test_log::test]
 fn test_kill_switch_blocks_update_authority_v1() {
     let mut context = setup_test_context().unwrap();
-    let (swig, _swig_authority, test_authority, external_account) =
+    let (swig, _swig_authority, test_authority, external_account, swig_wallet_address) =
         setup_swig_with_blocking_kill_switch(&mut context);
 
     // Try to update an authority with the test authority that has kill switch
@@ -855,7 +895,7 @@ fn test_kill_switch_blocks_update_authority_v1() {
 #[test_log::test]
 fn test_kill_switch_blocks_create_session_v1() {
     let mut context = setup_test_context().unwrap();
-    let (swig, _swig_authority, test_authority, external_account) =
+    let (swig, _swig_authority, test_authority, external_account, swig_wallet_address) =
         setup_swig_with_blocking_kill_switch(&mut context);
 
     let session_key = Keypair::new();
@@ -911,7 +951,7 @@ fn test_kill_switch_blocks_create_session_v1() {
 #[test_log::test]
 fn test_kill_switch_blocks_create_sub_account_v1() {
     let mut context = setup_test_context().unwrap();
-    let (swig, _swig_authority, test_authority, external_account) =
+    let (swig, _swig_authority, test_authority, external_account, swig_wallet_address) =
         setup_swig_with_blocking_kill_switch(&mut context);
 
     // Generate a random sub-account ID and derive the sub-account address
@@ -972,7 +1012,7 @@ fn test_kill_switch_blocks_create_sub_account_v1() {
 #[test_log::test]
 fn test_kill_switch_blocks_toggle_sub_account_v1() {
     let mut context = setup_test_context().unwrap();
-    let (swig, _swig_authority, test_authority, external_account) =
+    let (swig, _swig_authority, test_authority, external_account, swig_wallet_address) =
         setup_swig_with_blocking_kill_switch(&mut context);
 
     // Generate a random sub-account ID and derive the sub-account address
@@ -990,6 +1030,7 @@ fn test_kill_switch_blocks_toggle_sub_account_v1() {
         test_authority.pubkey(),
         sub_account,
         1,     // role_id
+        1,     // auth_role_id
         false, // enabled (disable the sub-account)
     )
     .unwrap();
@@ -1033,7 +1074,7 @@ fn test_kill_switch_blocks_toggle_sub_account_v1() {
 #[test_log::test]
 fn test_kill_switch_blocks_sub_account_sign_v1() {
     let mut context = setup_test_context().unwrap();
-    let (swig, _swig_authority, test_authority, external_account) =
+    let (swig, _swig_authority, test_authority, external_account, swig_wallet_address) =
         setup_swig_with_blocking_kill_switch(&mut context);
 
     // Generate a random sub-account ID and derive the sub-account address
@@ -1053,7 +1094,6 @@ fn test_kill_switch_blocks_sub_account_sign_v1() {
     let mut sub_account_sign_ix = SubAccountSignInstruction::new_with_ed25519_authority(
         swig,
         sub_account,
-        test_authority.pubkey(),
         test_authority.pubkey(),
         1, // role_id
         vec![transfer_ix],
@@ -1099,7 +1139,7 @@ fn test_kill_switch_blocks_sub_account_sign_v1() {
 #[test_log::test]
 fn test_kill_switch_blocks_withdraw_from_sub_account_v1() {
     let mut context = setup_test_context().unwrap();
-    let (swig, _swig_authority, test_authority, external_account) =
+    let (swig, _swig_authority, test_authority, external_account, swig_wallet_address) =
         setup_swig_with_blocking_kill_switch(&mut context);
 
     // Generate a random sub-account ID and derive the sub-account address
@@ -1119,6 +1159,7 @@ fn test_kill_switch_blocks_withdraw_from_sub_account_v1() {
         test_authority.pubkey(),
         test_authority.pubkey(),
         sub_account,
+        swig_wallet_address,
         1, // role_id
         withdraw_amount,
     )
