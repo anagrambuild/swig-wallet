@@ -33,10 +33,10 @@ use swig_state::{
         all::All, all_but_manage_authority::AllButManageAuthority,
         manage_authority::ManageAuthority, program::Program, sol_limit::SolLimit,
         sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount, token_limit::TokenLimit,
-        token_recurring_limit::TokenRecurringLimit,
+        token_recurring_limit::TokenRecurringLimit, Action, Permission,
     },
     authority::AuthorityType,
-    swig::{sub_account_seeds, swig_account_seeds, SwigSubAccount, SwigWithRoles},
+    swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
     Transmutable,
 };
 
@@ -57,6 +57,7 @@ fn test_all_but_manage_authority_can_transfer_sol() {
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -175,6 +176,7 @@ fn test_all_but_manage_authority_can_transfer_tokens() {
     .unwrap();
 
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
+    convert_swig_to_v1(&mut context, &swig);
     assert!(swig_create_txn.is_ok());
 
     let second_authority = Keypair::new();
@@ -296,6 +298,7 @@ fn test_all_but_manage_authority_can_do_cpi_calls() {
 
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_txn.is_ok());
+    convert_swig_to_v1(&mut context, &swig);
 
     let second_authority = Keypair::new();
     context
@@ -802,9 +805,7 @@ fn test_all_but_manage_authority_cannot_withdraw_from_sub_account() {
             authority_type: AuthorityType::Ed25519,
             authority: sub_account_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SubAccount(SubAccount {
-            sub_account: [0; 32],
-        })],
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation())],
     )
     .unwrap();
 
@@ -844,12 +845,17 @@ fn test_all_but_manage_authority_cannot_withdraw_from_sub_account() {
     // Now attempt to withdraw SOL from the sub-account using the restricted
     // authority This should FAIL because AllButManageAuthority should not allow
     // sub-account operations
+
+    // Derive the swig wallet address
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let withdraw_amount = 1_000_000_000;
     let withdraw_ix = WithdrawFromSubAccountInstruction::new_with_ed25519_authority(
         swig,
         restricted_authority.pubkey(),
         restricted_authority.pubkey(),
         sub_account,
+        swig_wallet_address,
         restricted_role_id,
         withdraw_amount,
     )
@@ -898,7 +904,7 @@ fn test_all_but_manage_authority_cannot_withdraw_from_sub_account() {
 
     // Verify the sub-account still exists and is intact
     let sub_account_data = context.svm.get_account(&sub_account).unwrap();
-    assert_eq!(sub_account_data.owner, program_id());
+    assert_eq!(sub_account_data.owner, solana_sdk::system_program::ID);
 
     // Verify the restricted authority still has AllButManageAuthority permission
     let swig_account_after = context.svm.get_account(&swig).unwrap();
@@ -969,9 +975,7 @@ fn test_all_but_manage_authority_cannot_sign_with_sub_account() {
             authority_type: AuthorityType::Ed25519,
             authority: sub_account_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SubAccount(SubAccount {
-            sub_account: [0; 32],
-        })],
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation())],
     )
     .unwrap();
 
@@ -1118,9 +1122,7 @@ fn test_all_but_manage_authority_cannot_toggle_sub_account() {
             authority_type: AuthorityType::Ed25519,
             authority: sub_account_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SubAccount(SubAccount {
-            sub_account: [0; 32],
-        })],
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation())],
     )
     .unwrap();
 
@@ -1149,14 +1151,41 @@ fn test_all_but_manage_authority_cannot_toggle_sub_account() {
     )
     .unwrap();
 
-    // Verify the sub-account is initially enabled
-    let sub_account_data = context.svm.get_account(&sub_account).unwrap();
-    let sub_account_state =
-        unsafe { SwigSubAccount::load_unchecked(&sub_account_data.data).unwrap() };
-    assert!(
-        sub_account_state.enabled,
-        "Sub-account should be initially enabled"
-    );
+    // Verify the sub-account is initially enabled by checking the SubAccount action
+    let swig_account_data = context.svm.get_account(&swig).unwrap();
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data.data).unwrap();
+    let role = swig_with_roles
+        .get_role(sub_account_role_id)
+        .unwrap()
+        .unwrap();
+
+    // Find the SubAccount action and verify it's enabled
+    let mut cursor = 0;
+    let mut found_enabled_action = false;
+
+    for _i in 0..role.position.num_actions() {
+        let action_header =
+            unsafe { Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN]) }.unwrap();
+        cursor += Action::LEN;
+
+        if action_header.permission().unwrap() == Permission::SubAccount {
+            let action_data = &role.actions[cursor..cursor + action_header.length() as usize];
+            let sub_account_action = unsafe { SubAccount::load_unchecked(action_data) }.unwrap();
+
+            if sub_account_action.sub_account == sub_account.to_bytes() {
+                assert!(
+                    sub_account_action.enabled,
+                    "Sub-account should be initially enabled"
+                );
+                found_enabled_action = true;
+                break;
+            }
+        }
+
+        cursor += action_header.length() as usize;
+    }
+
+    assert!(found_enabled_action, "SubAccount action not found");
 
     // Now attempt to toggle (disable) the sub-account using the restricted
     // authority This should FAIL because AllButManageAuthority should not allow
@@ -1166,6 +1195,7 @@ fn test_all_but_manage_authority_cannot_toggle_sub_account() {
         restricted_authority.pubkey(),
         restricted_authority.pubkey(),
         sub_account,
+        restricted_role_id,
         restricted_role_id,
         false, // disable
     )
@@ -1200,13 +1230,41 @@ fn test_all_but_manage_authority_cannot_toggle_sub_account() {
     );
 
     // Verify the sub-account is still enabled (no change occurred)
-    let sub_account_data_after = context.svm.get_account(&sub_account).unwrap();
-    let sub_account_state_after =
-        unsafe { SwigSubAccount::load_unchecked(&sub_account_data_after.data).unwrap() };
-    assert!(
-        sub_account_state_after.enabled,
-        "Sub-account should still be enabled"
-    );
+    let swig_account_data_after = context.svm.get_account(&swig).unwrap();
+    let swig_with_roles_after = SwigWithRoles::from_bytes(&swig_account_data_after.data).unwrap();
+    let role_after = swig_with_roles_after
+        .get_role(sub_account_role_id)
+        .unwrap()
+        .unwrap();
+
+    // Find the SubAccount action and verify it's still enabled
+    let mut cursor = 0;
+    let mut found_enabled_action = false;
+
+    for _i in 0..role_after.position.num_actions() {
+        let action_header =
+            unsafe { Action::load_unchecked(&role_after.actions[cursor..cursor + Action::LEN]) }
+                .unwrap();
+        cursor += Action::LEN;
+
+        if action_header.permission().unwrap() == Permission::SubAccount {
+            let action_data = &role_after.actions[cursor..cursor + action_header.length() as usize];
+            let sub_account_action = unsafe { SubAccount::load_unchecked(action_data) }.unwrap();
+
+            if sub_account_action.sub_account == sub_account.to_bytes() {
+                assert!(
+                    sub_account_action.enabled,
+                    "Sub-account should still be enabled"
+                );
+                found_enabled_action = true;
+                break;
+            }
+        }
+
+        cursor += action_header.length() as usize;
+    }
+
+    assert!(found_enabled_action, "SubAccount action not found");
 
     // Verify the restricted authority still has AllButManageAuthority permission
     let swig_account_after = context.svm.get_account(&swig).unwrap();

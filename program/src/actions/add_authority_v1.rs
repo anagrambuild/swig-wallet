@@ -172,8 +172,8 @@ pub fn add_authority_v1(
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let swig_data_len = swig_account_data.len();
     let new_authority_type = AuthorityType::try_from(add_authority_v1.args.new_authority_type)?;
-    let new_reserved_lamports = {
-        if swig_account_data[0] != Discriminator::SwigAccount as u8 {
+    {
+        if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
         let (swig_header, swig_roles) =
@@ -224,10 +224,14 @@ pub fn add_authority_v1(
         .pad_to_align()
         .size();
         ctx.accounts.swig.realloc(account_size, false)?;
-        let cost = Rent::get()?
-            .minimum_balance(account_size)
-            .checked_sub(swig.reserved_lamports)
+
+        // Get current account lamports after reallocation
+        let current_lamports = ctx.accounts.swig.lamports();
+        let required_lamports = Rent::get()?.minimum_balance(account_size);
+        let cost = required_lamports
+            .checked_sub(current_lamports)
             .unwrap_or_default();
+
         if cost > 0 {
             Transfer {
                 from: ctx.accounts.payer,
@@ -236,11 +240,9 @@ pub fn add_authority_v1(
             }
             .invoke()?;
         }
-        swig.reserved_lamports + cost
     };
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let mut swig_builder = SwigBuilder::new_from_bytes(swig_account_data)?;
-    swig_builder.swig.reserved_lamports = new_reserved_lamports;
     swig_builder.add_role(
         new_authority_type,
         add_authority_v1.authority_data,

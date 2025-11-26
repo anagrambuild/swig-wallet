@@ -15,17 +15,13 @@ pub mod util;
 /// Represents the type discriminator for different account types in the system.
 #[repr(u8)]
 pub enum Discriminator {
-    /// Represents a main Swig account
-    SwigAccount = 1,
-    /// Represents a sub-account within a Swig account
-    SwigSubAccount,
+    SwigConfigAccount = 1,
 }
 
 impl From<u8> for Discriminator {
     fn from(discriminator: u8) -> Self {
         match discriminator {
-            1 => Discriminator::SwigAccount,
-            2 => Discriminator::SwigSubAccount,
+            1 => Discriminator::SwigConfigAccount,
             _ => panic!("Invalid discriminator"),
         }
     }
@@ -55,6 +51,13 @@ pub enum AccountClassification {
         /// The account's lamport balance
         lamports: u64,
     },
+    /// A main Swig v2 account with its lamport balance
+    ThisSwigV2 {
+        /// The account's lamport balance
+        lamports: u64,
+    },
+    /// A Swig wallet address account
+    SwigWalletAddress,
     /// A Swig token account with its token balance
     SwigTokenAccount {
         /// The token balance in the account
@@ -167,6 +170,14 @@ pub enum SwigAuthenticateError {
     PermissionDeniedSecp256r1InvalidMessage,
     /// Invalid Secp256r1 authentication kind
     PermissionDeniedSecp256r1InvalidAuthenticationKind,
+    /// SOL destination limit exceeded
+    PermissionDeniedSolDestinationLimitExceeded,
+    /// SOL destination recurring limit exceeded
+    PermissionDeniedSolDestinationRecurringLimitExceeded,
+    /// Token destination limit exceeded
+    PermissionDeniedTokenDestinationLimitExceeded,
+    /// Token destination recurring limit exceeded
+    PermissionDeniedRecurringTokenDestinationLimitExceeded,
     /// External kill switch has been triggered
     PermissionDeniedExternalKillSwitchTriggered,
     /// Invalid kill switch account

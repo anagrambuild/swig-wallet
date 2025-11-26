@@ -46,6 +46,8 @@ const SPL_TOKEN_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5D
 const SPL_TOKEN_2022_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 /// Program ID for the Solana Staking program
 const STAKING_ID: Pubkey = pubkey!("Stake11111111111111111111111111111111111111");
+/// Program ID for the Solana System program
+const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111");
 
 pinocchio::default_allocator!();
 pinocchio::default_panic_handler!();
@@ -92,6 +94,60 @@ pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
     Ok(())
 }
 
+/// Determines if a Swig account is v2 format by checking the last 7 bytes.
+///
+/// # Account Format Differences
+///
+/// **Swig V2** (last 8 bytes): `[wallet_bump: u8, _padding: [u8; 7]]`
+/// - Example bytes: `[253, 0, 0, 0, 0, 0, 0, 0]` where 253 is the bump seed
+/// - As little-endian u64: `0x0000000000000FD` (the wallet_bump in the lowest
+///   byte)
+/// - After right shift by 8: `0x000000000000000` (removes wallet_bump, leaves
+///   only padding)
+/// - Result: equals 0 ✓ → **V2 account**
+///
+/// **Swig V1** (last 8 bytes): `u64` value (typically role_counter,
+/// session_expiry, etc.)
+/// - Example values: 1, 2, 100, 256, 1000, etc.
+/// - Example bytes for 256: `[0, 1, 0, 0, 0, 0, 0, 0]` (little-endian)
+/// - As little-endian u64: `0x0000000000000100`
+/// - After right shift by 8: `0x0000000000000001` (non-zero in upper 7 bytes)
+/// - Result: non-zero ✓ → **V1 account**
+///
+/// # Why This Works
+///
+/// The key insight is that v2 accounts have 7 consecutive zero bytes (padding),
+/// while v1 accounts store a u64 value that, when interpreted as bytes, will
+/// almost certainly have at least one non-zero byte in positions other than the
+/// first byte. Even small u64 values like 1, 2, 100 will have zeros in the
+/// first byte but the actual value stored in subsequent bytes.
+///
+/// By reading the last 8 bytes as a u64 and right-shifting by 8 bits, we:
+/// 1. Remove the first byte (wallet_bump in v2, or low byte of u64 in v1)
+/// 2. Check if the remaining 7 bytes are all zeros
+///
+/// This is a zero-copy operation using a single unaligned u64 read, followed by
+/// a single shift and comparison, making it extremely efficient (3 CPU
+/// operations total).
+///
+/// # Safety
+///
+/// This function assumes `data.len() >= Swig::LEN` has been checked by the
+/// caller. Reading beyond the end of the slice would be undefined behavior.
+///
+/// # Arguments
+/// * `data` - The account data slice, must be `Swig::LEN` bytes
+///
+/// # Returns
+/// * `true` if the account is v2 format (last 7 bytes are zero)
+/// * `false` if the account is v1 format (last 7 bytes contain non-zero values)
+#[inline(always)]
+unsafe fn is_swig_v2(data: &[u8]) -> bool {
+    let last_8_bytes_ptr = data.as_ptr().add(Swig::LEN - 8) as *const u64;
+    let last_8_bytes = last_8_bytes_ptr.read_unaligned();
+    last_8_bytes >> 8 == 0
+}
+
 /// Core instruction execution function.
 ///
 /// This function processes all accounts in the instruction context, classifies
@@ -125,7 +181,8 @@ unsafe fn execute(
     if let Ok(acc) = ctx.next_account() {
         match acc {
             MaybeAccount::Account(account) => {
-                let classification = classify_account(0, &account, accounts, None)?;
+                let classification =
+                    classify_account(0, &account, accounts, account_classification, None)?;
                 account_classification[0].write(classification);
                 accounts[0].write(account);
             },
@@ -141,7 +198,8 @@ unsafe fn execute(
         let first_account = accounts[0].assume_init_ref();
         if first_account.owner() == &crate::ID {
             let data = first_account.borrow_data_unchecked();
-            if data.len() >= Swig::LEN && *data.get_unchecked(0) == Discriminator::SwigAccount as u8
+            if data.len() >= Swig::LEN
+                && *data.get_unchecked(0) == Discriminator::SwigConfigAccount as u8
             {
                 ProgramScopeCache::load_from_swig(data)
             } else {
@@ -157,12 +215,22 @@ unsafe fn execute(
     // Process remaining accounts using the cache
     while let Ok(acc) = ctx.next_account() {
         let classification = match &acc {
-            MaybeAccount::Account(account) => {
-                classify_account(index, account, accounts, program_scope_cache.as_ref())?
-            },
+            MaybeAccount::Account(account) => classify_account(
+                index,
+                account,
+                accounts,
+                account_classification,
+                program_scope_cache.as_ref(),
+            )?,
             MaybeAccount::Duplicated(account_index) => {
                 let account = accounts[*account_index as usize].assume_init_ref().clone();
-                classify_account(index, &account, accounts, program_scope_cache.as_ref())?
+                classify_account(
+                    index,
+                    &account,
+                    accounts,
+                    account_classification,
+                    program_scope_cache.as_ref(),
+                )?
             },
         };
         account_classification[index].write(classification);
@@ -175,11 +243,10 @@ unsafe fn execute(
         index += 1;
     }
 
-    let instruction = unsafe { ctx.instruction_data_unchecked() };
     process_action(
         core::slice::from_raw_parts(accounts.as_ptr() as _, index),
         core::slice::from_raw_parts_mut(account_classification.as_mut_ptr() as _, index),
-        instruction,
+        ctx.instruction_data_unchecked(),
     )?;
     Ok(())
 }
@@ -215,26 +282,33 @@ unsafe fn classify_account(
     index: usize,
     account: &AccountInfo,
     accounts: &[MaybeUninit<AccountInfo>],
+    account_classifications: &[MaybeUninit<AccountClassification>],
     program_scope_cache: Option<&ProgramScopeCache>,
 ) -> Result<AccountClassification, ProgramError> {
     let mut target_index: usize = 0;
     match account.owner() {
         &crate::ID => {
             let data = account.borrow_data_unchecked();
-            let first_byte = unsafe { *data.get_unchecked(0) }.into();
+            let first_byte = *data.get_unchecked(0);
             match first_byte {
-                Discriminator::SwigAccount if index == 0 => Ok(AccountClassification::ThisSwig {
-                    lamports: account.lamports(),
-                }),
-                Discriminator::SwigAccount if index != 0 => {
-                    // Additional Swig accounts are only allowed if the first account is also a Swig
-                    // account
+                disc if disc == Discriminator::SwigConfigAccount as u8 && index == 0 => {
+                    if data.len() >= Swig::LEN && is_swig_v2(data) {
+                        Ok(AccountClassification::ThisSwigV2 {
+                            lamports: account.lamports(),
+                        })
+                    } else {
+                        Ok(AccountClassification::ThisSwig {
+                            lamports: account.lamports(),
+                        })
+                    }
+                },
+                disc if disc == Discriminator::SwigConfigAccount as u8 && index != 0 => {
                     let first_account = accounts.get_unchecked(0).assume_init_ref();
                     let first_data = first_account.borrow_data_unchecked();
 
                     if first_account.owner() == &crate::ID
                         && first_data.len() >= 8
-                        && *first_data.get_unchecked(0) == Discriminator::SwigAccount as u8
+                        && *first_data.get_unchecked(0) == Discriminator::SwigConfigAccount as u8
                     {
                         Ok(AccountClassification::None)
                     } else {
@@ -243,6 +317,23 @@ unsafe fn classify_account(
                 },
                 _ => Ok(AccountClassification::None),
             }
+        },
+        &SYSTEM_PROGRAM_ID if index == 1 => {
+            let first_account = accounts.get_unchecked(0).assume_init_ref();
+            let first_data = first_account.borrow_data_unchecked();
+
+            // When the account is the new Swig account structure, it's safe to assume the
+            // account directly after will be the SwigWalletAddress. This is validated
+            // further down in instructions relevant to the V2 account structure via signer
+            // seeds.
+            if first_account.owner() == &crate::ID
+                && first_data.len() >= Swig::LEN
+                && *first_data.get_unchecked(0) == Discriminator::SwigConfigAccount as u8
+                && is_swig_v2(first_data)
+            {
+                return Ok(AccountClassification::SwigWalletAddress);
+            }
+            Ok(AccountClassification::None)
         },
         &STAKING_ID => {
             let data = account.borrow_data_unchecked();
@@ -295,18 +386,37 @@ unsafe fn classify_account(
             }
             Ok(AccountClassification::None)
         },
-        // This feature flag ensures that when program_scope_test feature is enabled,
-        // this branch is excluded, allowing program_scope_test to provide a custom implementation
-        // to test program scope functionality in isolation.
         #[cfg(not(feature = "program_scope_test"))]
         &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if account.data_len() >= 165 && index > 0 => unsafe {
             let data = account.borrow_data_unchecked();
-            if sol_memcmp(
+            let token_authority = data.get_unchecked(32..64);
+
+            let matches_swig_account = sol_memcmp(
                 accounts.get_unchecked(0).assume_init_ref().key(),
-                data.get_unchecked(32..64),
+                token_authority,
                 32,
-            ) == 0
-            {
+            ) == 0;
+
+            let matches_swig_wallet_address = if index > 1 {
+                // Only check wallet address if account[1] is actually classified as
+                // SwigWalletAddress
+                if matches!(
+                    account_classifications.get_unchecked(1).assume_init_ref(),
+                    AccountClassification::SwigWalletAddress
+                ) {
+                    sol_memcmp(
+                        accounts.get_unchecked(1).assume_init_ref().key(),
+                        token_authority,
+                        32,
+                    ) == 0
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if matches_swig_account || matches_swig_wallet_address {
                 Ok(AccountClassification::SwigTokenAccount {
                     balance: u64::from_le_bytes(
                         data.get_unchecked(64..72)

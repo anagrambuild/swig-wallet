@@ -77,6 +77,10 @@ pub enum SwigError {
     /// Counter not set
     #[error("Counter not set")]
     CounterNotSet,
+
+    /// Slot is required for this operation
+    #[error("Slot is required for this operation")]
+    SlotRequired,
 }
 
 impl From<anyhow::Error> for SwigError {

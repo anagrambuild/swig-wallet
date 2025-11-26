@@ -63,6 +63,25 @@ pub struct Secp256r1SignatureOffsets {
     pub message_instruction_index: u16,
 }
 
+impl Secp256r1SignatureOffsets {
+    /// Deserialize from bytes (14 bytes in little-endian format)
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProgramError> {
+        if bytes.len() != SIGNATURE_OFFSETS_SERIALIZED_SIZE {
+            return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
+        }
+
+        Ok(Self {
+            signature_offset: u16::from_le_bytes([bytes[0], bytes[1]]),
+            signature_instruction_index: u16::from_le_bytes([bytes[2], bytes[3]]),
+            public_key_offset: u16::from_le_bytes([bytes[4], bytes[5]]),
+            public_key_instruction_index: u16::from_le_bytes([bytes[6], bytes[7]]),
+            message_data_offset: u16::from_le_bytes([bytes[8], bytes[9]]),
+            message_data_size: u16::from_le_bytes([bytes[10], bytes[11]]),
+            message_instruction_index: u16::from_le_bytes([bytes[12], bytes[13]]),
+        })
+    }
+}
+
 /// Creation parameters for a session-based Secp256r1 authority.
 #[derive(Debug, no_padding::NoPadding)]
 #[repr(C, align(8))]
@@ -321,9 +340,6 @@ impl AuthorityInfo for Secp256r1SessionAuthority {
         current_slot: u64,
         duration: u64,
     ) -> Result<(), ProgramError> {
-        if sol_assert_bytes_eq(&self.session_key, &session_key, 32) {
-            return Err(SwigAuthenticateError::InvalidSessionKeyCannotReuseSessionKey.into());
-        }
         if duration > self.max_session_age {
             return Err(SwigAuthenticateError::InvalidSessionDuration.into());
         }
@@ -568,7 +584,8 @@ fn compute_message_hash(
 }
 
 /// Verify the secp256r1 instruction data contains the expected signature and
-/// public key
+/// public key. This also validates that the secp256r1 precompile offsets point
+/// to the expected locations, ensuring proper data alignment.
 pub fn verify_secp256r1_instruction_data(
     instruction_data: &[u8],
     expected_pubkey: &[u8; 33],
@@ -586,6 +603,37 @@ pub fn verify_secp256r1_instruction_data(
     if instruction_data.len() < MESSAGE_DATA_OFFSET + MESSAGE_DATA_SIZE {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
     }
+
+    // Parse the Secp256r1SignatureOffsets structure
+    let offsets = Secp256r1SignatureOffsets::from_bytes(
+        &instruction_data
+            [SIGNATURE_OFFSETS_START..SIGNATURE_OFFSETS_START + SIGNATURE_OFFSETS_SERIALIZED_SIZE],
+    )?;
+
+    // Validate that all offsets point to the current instruction (0xFFFF)
+    // This ensures all data references are within the same instruction
+    if offsets.signature_instruction_index != 0xFFFF {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
+    }
+    if offsets.public_key_instruction_index != 0xFFFF {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
+    }
+    if offsets.message_instruction_index != 0xFFFF {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
+    }
+
+    // Validate that the offsets match the expected fixed locations
+    // This ensures the precompile is verifying the data we're checking
+    if offsets.public_key_offset as usize != PUBKEY_DATA_OFFSET {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
+    }
+    if offsets.message_data_offset as usize != MESSAGE_DATA_OFFSET {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
+    }
+    if offsets.message_data_size as usize != expected_message.len() {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into());
+    }
+
     let pubkey_data = &instruction_data
         [PUBKEY_DATA_OFFSET..PUBKEY_DATA_OFFSET + COMPRESSED_PUBKEY_SERIALIZED_SIZE];
     let message_data =
@@ -727,18 +775,13 @@ fn webauthn_message<'a>(
     let huffman_encoded_origin =
         &auth_payload[offset + huffman_tree_len..offset + huffman_tree_len + huffman_encoded_len];
 
-    // Log the huffman input for monitoring
-    pinocchio::msg!(
-        "WebAuthn Huffman input: {} bytes encoded",
-        huffman_encoded_len
-    );
-
     // Decode the huffman-encoded origin URL
     let decoded_origin = decode_huffman_origin(huffman_tree, huffman_encoded_origin, origin_len)?;
 
     // Log the decoded origin for monitoring
-    let origin_str = core::str::from_utf8(&decoded_origin).unwrap_or("<invalid utf8>");
-    pinocchio::msg!("WebAuthn Huffman decoded origin: '{}'", origin_str);
+    // let origin_str = core::str::from_utf8(&decoded_origin).unwrap_or("<invalid
+    // utf8>"); pinocchio::msg!("WebAuthn Huffman decoded origin: '{}'",
+    // origin_str);
 
     // Reconstruct the client data JSON using the decoded origin and reconstructed
     // challenge
@@ -1119,6 +1162,34 @@ mod tests {
         assert!(
             result.is_err(),
             "Verification should fail with wrong public key"
+        );
+    }
+
+    #[test]
+    fn test_verify_secp256r1_instruction_data_incorrect_offset() {
+        let test_message = [0u8; 32];
+        let test_signature = [0xCD; 64];
+        let test_pubkey = [0x02; 33];
+
+        let mut instruction_data =
+            create_test_secp256r1_instruction_data(&test_message, &test_signature, &test_pubkey);
+
+        // Modify the public_key_offset to point to a different location
+        let modified_offset: u16 = 200; // Different from expected PUBKEY_DATA_OFFSET
+        let public_key_offset_index = SIGNATURE_OFFSETS_START + 4;
+        instruction_data[public_key_offset_index..public_key_offset_index + 2]
+            .copy_from_slice(&modified_offset.to_le_bytes());
+
+        // Verification should fail because the offset doesn't match expected value
+        let result =
+            verify_secp256r1_instruction_data(&instruction_data, &test_pubkey, &test_message);
+        assert!(
+            result.is_err(),
+            "Verification should fail when offset does not match expected location"
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into()
         );
     }
 }

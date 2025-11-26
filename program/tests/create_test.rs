@@ -18,6 +18,7 @@ use solana_sdk::{
     signature::Keypair,
     signer::Signer,
     system_instruction,
+    sysvar::rent::Rent,
     transaction::VersionedTransaction,
 };
 use swig_state::{
@@ -86,6 +87,7 @@ fn test_create_basic_token_transfer() {
     .unwrap();
 
     let swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id);
+    convert_swig_to_v1(&mut context, &swig);
     assert!(swig_create_txn.is_ok());
 
     let ixd = Instruction {
@@ -140,6 +142,7 @@ fn test_create_and_sign_secp256k1() {
     let swig_created = create_swig_secp256k1(&mut context, &wallet, id);
     assert!(swig_created.is_ok(), "{:?}", swig_created.err());
     let (swig_key, bench) = swig_created.unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
     println!("Create CU {:?}", bench.compute_units_consumed);
     println!("logs: {:?}", bench.logs);
     if let Some(account) = context.svm.get_account(&swig_key) {
@@ -233,8 +236,11 @@ fn test_create_and_sign_secp256k1() {
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    // Calculate rent-exempt minimum for the account
+    let rent = context.svm.get_sysvar::<Rent>();
+    let rent_exempt_minimum = rent.minimum_balance(swig_account.data.len());
     assert_eq!(
         swig_account.lamports,
-        swig_state.state.reserved_lamports + 10_000_000_000 - transfer_amount
+        rent_exempt_minimum + 10_000_000_000 - transfer_amount
     );
 }

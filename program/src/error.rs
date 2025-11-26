@@ -112,6 +112,10 @@ pub enum SwigError {
     AccountDataModifiedUnexpectedly,
     /// Cannot update root authority (ID 0)
     PermissionDeniedCannotUpdateRootAuthority,
+    /// SignV1 instruction cannot be used with Swig v2 accounts
+    SignV1CannotBeUsedWithSwigV2,
+    /// SignV2 instruction cannot be used with Swig v1 accounts
+    SignV2CannotBeUsedWithSwigV1,
 }
 
 /// Implements conversion from SwigError to ProgramError.

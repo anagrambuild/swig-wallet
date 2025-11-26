@@ -63,6 +63,8 @@ fn test_token_transfer_with_program_scope() {
     let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_result.is_ok());
 
+    convert_swig_to_v1(&mut context, &swig);
+
     // Setup token accounts
     let swig_ata = setup_ata(
         &mut context.svm,
@@ -234,7 +236,7 @@ fn test_token_transfer_with_program_scope() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    assert!(swig_transfer_cu - regular_transfer_cu <= 5575);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 5800);
 }
 
 /// Helper function to perform token transfers through the swig
@@ -481,6 +483,8 @@ fn test_recurring_limit_program_scope() {
     let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
     println!("sig_create_result: {:?}", swig_create_result);
     assert!(swig_create_result.is_ok());
+
+    convert_swig_to_v1(&mut context, &swig);
 
     // Expire the blockhash after swig creation
     context.svm.expire_blockhash();
@@ -1007,6 +1011,8 @@ fn test_program_scope_balance_underflow_check() {
     let id = rand::random::<[u8; 32]>();
     let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
     create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    convert_swig_to_v1(&mut context, &swig);
 
     // Setup token accounts
     let swig_ata = setup_ata(

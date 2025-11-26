@@ -2,7 +2,7 @@ use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
     program_id, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
     CreateSessionInstruction, CreateSubAccountInstruction, RemoveAuthorityInstruction,
-    SignInstruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
+    SignInstruction, SignV2Instruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
     UpdateAuthorityData as InterfaceUpdateAuthorityData, WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
@@ -10,7 +10,7 @@ use swig_state::{
         ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
         secp256r1::CreateSecp256r1SessionAuthority, AuthorityType,
     },
-    swig::{sub_account_seeds, swig_account_seeds},
+    swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds},
     IntoBytes,
 };
 
@@ -84,6 +84,11 @@ impl SwigInstructionBuilder {
         let (swig_account, swig_bump_seed) =
             Pubkey::find_program_address(&swig_account_seeds(&self.swig_id), &program_id);
 
+        let (swig_wallet_address, wallet_address_bump) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &program_id,
+        );
+
         let authority_type = self.client_role.authority_type();
         let auth_bytes = self.client_role.authority_bytes()?;
 
@@ -93,6 +98,8 @@ impl SwigInstructionBuilder {
             swig_account,
             swig_bump_seed,
             self.payer,
+            swig_wallet_address,
+            wallet_address_bump,
             AuthorityConfig {
                 authority_type,
                 authority: &auth_bytes,
@@ -125,6 +132,43 @@ impl SwigInstructionBuilder {
             self.role_id,
             instructions,
             current_slot,
+        )
+    }
+
+    /// Creates a SignV2 instruction for signing transactions
+    ///
+    /// SignV2 instructions use the swig_wallet_address PDA as the transaction
+    /// authority, which is different from the regular sign instruction that
+    /// uses the swig account directly.
+    ///
+    /// # Arguments
+    ///
+    /// * `instructions` - Vector of instructions to be signed
+    /// * `current_slot` - Optional current slot number (required for
+    ///   Secp256k1/Secp256r1)
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the SignV2 instruction or a `SwigError`
+    pub fn sign_v2_instruction(
+        &mut self,
+        instructions: Vec<Instruction>,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        // Derive the swig_wallet_address from the swig account
+        use swig_state::swig::swig_wallet_address_seeds;
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_wallet_address_seeds(self.swig_account.as_ref()),
+            &program_id(),
+        );
+
+        self.client_role.sign_v2_instruction(
+            self.swig_account,
+            swig_wallet_address,
+            self.role_id,
+            instructions,
+            current_slot,
+            core::slice::from_ref(&self.payer),
         )
     }
 
@@ -278,6 +322,23 @@ impl SwigInstructionBuilder {
         Pubkey::find_program_address(&swig_account_seeds(id), &program_id()).0
     }
 
+    /// Derives the Swig wallet address public key from an ID
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The 32-byte identifier used to derive the Swig wallet address
+    ///
+    /// # Returns
+    ///
+    /// Returns the derived Swig wallet address public key
+    pub fn swig_wallet_address(&self) -> Pubkey {
+        Pubkey::find_program_address(
+            &swig_wallet_address_seeds(self.swig_account.as_ref()),
+            &program_id(),
+        )
+        .0
+    }
+
     /// Returns the current role ID of the Swig account
     ///
     /// # Returns
@@ -377,7 +438,6 @@ impl SwigInstructionBuilder {
         self.client_role.sub_account_sign_instruction(
             self.swig_account,
             sub_account,
-            self.payer,
             self.role_id,
             instructions,
             current_slot,
@@ -464,6 +524,8 @@ impl SwigInstructionBuilder {
     pub fn toggle_sub_account(
         &self,
         sub_account: Pubkey,
+        sub_account_role_id: u32,
+        auth_role_id: u32,
         enabled: bool,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
@@ -471,7 +533,8 @@ impl SwigInstructionBuilder {
             self.swig_account,
             self.payer,
             sub_account,
-            self.role_id,
+            sub_account_role_id,
+            auth_role_id,
             enabled,
             current_slot,
         )

@@ -313,7 +313,8 @@ impl ProgramScope {
                 if current_slot.saturating_sub(self.last_reset) > self.window {
                     // Reset the spent amount to zero for the new window
                     self.current_amount = 0;
-                    self.last_reset = current_slot;
+                    // reset the last reset to the start of the current window
+                    self.last_reset = (current_slot / self.window) * self.window;
                 }
 
                 // Check if the requested amount plus what's already spent would exceed the

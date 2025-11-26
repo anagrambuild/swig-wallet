@@ -12,7 +12,7 @@ use pinocchio::{
     sysvars::{clock::Clock, rent::Rent, Sysvar},
     ProgramResult,
 };
-use pinocchio_system::instructions::CreateAccount;
+use pinocchio_system::instructions::Transfer;
 use swig_assertions::*;
 use swig_state::{
     action::{
@@ -23,7 +23,7 @@ use swig_state::{
     role::RoleMut,
     swig::{
         sub_account_seeds_with_bump, sub_account_signer, swig_account_seeds_with_bump,
-        swig_account_signer, Swig, SwigSubAccount,
+        swig_account_signer, Swig,
     },
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
@@ -143,15 +143,15 @@ pub fn create_sub_account_v1(
 ) -> ProgramResult {
     // Check that the swig account is owned by our program
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
+    // Check that the sub_account is system owned (will hold assets)
     check_system_owner(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
-    check_zero_data(ctx.accounts.sub_account, SwigError::SubAccountAlreadyExists)?;
 
     // Parse the instruction data
     let create_sub_account = CreateSubAccountV1::from_instruction_bytes(data)?;
 
     // Verify the swig account data
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigAccount as u8 {
+    if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 
@@ -199,10 +199,13 @@ pub fn create_sub_account_v1(
         sub_account_action.is_some()
     };
 
-    if !has_all_permission && !has_sub_account_permission {
+    // Even if role has `All` action, it must have a `SubAccount` action before it
+    // can create a `SubAccount`
+    if !has_sub_account_permission {
         return Err(SwigError::AuthorityCannotCreateSubAccount.into());
     }
-    // Derive the sub-account address using the authority index as seed
+    // Derive the sub-account address using the authority index as seed (keeping PDA
+    // for deterministic addressing)
     let role_id_bytes = create_sub_account.args.role_id.to_le_bytes();
     let bump_byte = [create_sub_account.args.sub_account_bump];
     let sub_account_seeds = sub_account_seeds_with_bump(&swig.id, &role_id_bytes, &bump_byte);
@@ -212,48 +215,43 @@ pub fn create_sub_account_v1(
         ctx.accounts.sub_account.key(),
         SwigError::InvalidSeedSwigAccount,
     )?;
-    // Create the sub-account
-    let account_size = SwigSubAccount::LEN;
-    let lamports_needed = Rent::get()?.minimum_balance(account_size);
 
-    // Get current lamports in the account
-    let current_lamports = unsafe { *ctx.accounts.sub_account.borrow_lamports_unchecked() };
+    // Transfer lamports to the sub_account to make it system-owned and rent-exempt
+    // This follows the same pattern as swig_wallet_address creation in create_v1.rs
+    let sub_account_rent_exemption = Rent::get()?.minimum_balance(0); // 0 space for system account
 
-    // Only transfer additional lamports if needed for rent exemption
-    let lamports_to_transfer = if current_lamports >= lamports_needed {
-        0
-    } else {
-        lamports_needed - current_lamports
-    };
+    // Get current lamports in sub-account
+    let current_sub_account_lamports =
+        unsafe { *ctx.accounts.sub_account.borrow_lamports_unchecked() };
 
-    // Create account with proper space allocation and ownership assignment
-    let create_account_ix = CreateAccount {
-        from: ctx.accounts.payer,
-        to: ctx.accounts.sub_account,
-        lamports: lamports_to_transfer,
-        space: account_size as u64,
-        owner: &crate::ID,
-    };
-    let role_id_bytes = create_sub_account.args.role_id.to_le_bytes();
-    let bump_byte = [create_sub_account.args.sub_account_bump];
-    let seeds = sub_account_signer(&swig.id, &role_id_bytes, &bump_byte);
-    create_account_ix.invoke_signed(&[seeds.as_slice().into()])?;
-    // Initialize the sub-account data with a Swig account structure
-    let sub_account_data = unsafe { ctx.accounts.sub_account.borrow_mut_data_unchecked() };
-    let mut sub_account = unsafe { SwigSubAccount::load_mut_unchecked(sub_account_data)? };
-    sub_account.discriminator = Discriminator::SwigSubAccount as u8;
-    sub_account.bump = create_sub_account.args.sub_account_bump;
-    sub_account.role_id = create_sub_account.args.role_id;
-    sub_account.swig_id = swig.id;
-    sub_account.enabled = true;
-    // Set reserved lamports to the minimum rent-exempt amount
-    sub_account.reserved_lamports = lamports_needed;
+    // Only transfer if the account needs more lamports for rent exemption
+    let sub_account_lamports_to_transfer =
+        if current_sub_account_lamports >= sub_account_rent_exemption {
+            0
+        } else {
+            sub_account_rent_exemption - current_sub_account_lamports
+        };
 
-    // Update the SubAccount action to store the newly created sub-account's public
-    // key
+    if sub_account_lamports_to_transfer > 0 {
+        // Use CPI to system program for clean lamport transfer
+        pinocchio_system::instructions::Transfer {
+            from: ctx.accounts.payer,
+            to: ctx.accounts.sub_account,
+            lamports: sub_account_lamports_to_transfer,
+        }
+        .invoke()?;
+    }
+
+    // Update the SubAccount action to store all sub-account metadata
     if let Some(sub_account_action_mut) = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?
     {
-        sub_account_action_mut.sub_account = *ctx.accounts.sub_account.key();
+        sub_account_action_mut
+            .sub_account
+            .copy_from_slice(ctx.accounts.sub_account.key().as_ref());
+        sub_account_action_mut.bump = create_sub_account.args.sub_account_bump;
+        sub_account_action_mut.enabled = true; // Default to enabled
+        sub_account_action_mut.role_id = create_sub_account.args.role_id;
+        sub_account_action_mut.swig_id = swig.id;
     }
 
     Ok(())

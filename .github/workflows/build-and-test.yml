@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 env:
-  RUST_VERSION: 1.84.0
+  RUST_VERSION: 1.89.0
   SOLANA_VERSION: 2.2.17
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: sccache
@@ -16,7 +16,7 @@ env:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-m
     steps:
       - uses: actions/checkout@v4
 

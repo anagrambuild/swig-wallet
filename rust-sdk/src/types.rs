@@ -6,14 +6,20 @@ use swig_state::{
         all_but_manage_authority::AllButManageAuthority,
         manage_authority::ManageAuthority,
         program::Program,
+        program_all::ProgramAll,
+        program_curated::ProgramCurated,
         program_scope::{NumericType, ProgramScope, ProgramScopeType},
+        sol_destination_limit::SolDestinationLimit,
         sol_limit::SolLimit,
+        sol_recurring_destination_limit::SolRecurringDestinationLimit,
         sol_recurring_limit::SolRecurringLimit,
         stake_all::StakeAll,
         stake_limit::StakeLimit,
         stake_recurring_limit::StakeRecurringLimit,
         sub_account::SubAccount,
+        token_destination_limit::TokenDestinationLimit,
         token_limit::TokenLimit,
+        token_recurring_destination_limit::TokenRecurringDestinationLimit,
         token_recurring_limit::TokenRecurringLimit,
     },
     role::Role,
@@ -68,10 +74,41 @@ pub enum Permission {
         recurring: Option<RecurringConfig>,
     },
 
+    /// Permission to interact with specific tokens to specific destinations.
+    /// Can be configured with either a fixed limit or a recurring limit
+    /// that resets after a specified period.
+    TokenDestination {
+        /// The mint address of the token
+        mint: Pubkey,
+        /// The destination token account
+        destination: Pubkey,
+        /// The maximum amount that can be transferred to this destination
+        amount: u64,
+        /// Optional recurring configuration. If provided, the amount becomes a
+        /// recurring limit that resets after the specified window
+        /// period. If None, amount is treated as a fixed limit.
+        recurring: Option<RecurringConfig>,
+    },
+
     /// Permission to manage SOL transactions. Can be configured with either
     /// a fixed limit or a recurring limit that resets after a specified period.
     Sol {
         /// The maximum amount of SOL (in lamports) that can be transferred
+        amount: u64,
+        /// Optional recurring configuration. If provided, the amount becomes a
+        /// recurring limit that resets after the specified window
+        /// period. If None, amount is treated as a fixed limit.
+        recurring: Option<RecurringConfig>,
+    },
+
+    /// Permission to manage SOL transactions to specific destinations. Can be
+    /// configured with either a fixed limit or a recurring limit that
+    /// resets after a specified period.
+    SolDestination {
+        /// The destination pubkey
+        destination: Pubkey,
+        /// The maximum amount of SOL (in lamports) that can be transferred to
+        /// this destination
         amount: u64,
         /// Optional recurring configuration. If provided, the amount becomes a
         /// recurring limit that resets after the specified window
@@ -86,6 +123,11 @@ pub enum Permission {
         program_id: Pubkey,
     },
 
+    /// Permission to interact with any program (unrestricted CPI access).
+    /// This is the most permissive program permission and should be used with
+    /// caution.
+    ProgramAll,
+
     /// Permission to interact with specific programs. This allows the wallet
     /// to execute instructions for the specified program.
     ProgramScope {
@@ -97,6 +139,9 @@ pub enum Permission {
         balance_field_start: Option<u64>,
         balance_field_end: Option<u64>,
     },
+
+    /// Permission to interact with curated programs only
+    ProgramCurated,
 
     /// Permission to manage sub-accounts. This allows creating and managing
     /// hierarchical wallet structures through sub-accounts.
@@ -158,6 +203,32 @@ impl Permission {
                         }));
                     },
                 },
+                Permission::TokenDestination {
+                    mint,
+                    destination,
+                    amount,
+                    recurring,
+                } => match recurring {
+                    Some(config) => {
+                        actions.push(ClientAction::TokenRecurringDestinationLimit(
+                            TokenRecurringDestinationLimit {
+                                token_mint: mint.to_bytes(),
+                                destination: destination.to_bytes(),
+                                recurring_amount: amount,
+                                window: config.window,
+                                last_reset: 0,
+                                current_amount: amount,
+                            },
+                        ));
+                    },
+                    None => {
+                        actions.push(ClientAction::TokenDestinationLimit(TokenDestinationLimit {
+                            token_mint: mint.to_bytes(),
+                            destination: destination.to_bytes(),
+                            amount,
+                        }));
+                    },
+                },
                 Permission::Sol { amount, recurring } => match recurring {
                     Some(config) => {
                         actions.push(ClientAction::SolRecurringLimit(SolRecurringLimit {
@@ -171,9 +242,40 @@ impl Permission {
                         actions.push(ClientAction::SolLimit(SolLimit { amount }));
                     },
                 },
+                Permission::SolDestination {
+                    destination,
+                    amount,
+                    recurring,
+                } => match recurring {
+                    Some(config) => {
+                        actions.push(ClientAction::SolRecurringDestinationLimit(
+                            SolRecurringDestinationLimit {
+                                destination: destination.to_bytes(),
+                                recurring_amount: amount,
+                                window: config.window,
+                                last_reset: 0,
+                                current_amount: amount,
+                            },
+                        ));
+                    },
+                    None => {
+                        actions.push(ClientAction::SolDestinationLimit(SolDestinationLimit {
+                            destination: destination.to_bytes(),
+                            amount,
+                        }));
+                    },
+                },
                 Permission::Program { program_id } => {
                     actions.push(ClientAction::Program(Program {
                         program_id: program_id.to_bytes(),
+                    }));
+                },
+                Permission::ProgramAll => {
+                    actions.push(ClientAction::ProgramAll(ProgramAll {}));
+                },
+                Permission::ProgramCurated => {
+                    actions.push(ClientAction::ProgramCurated(ProgramCurated {
+                        _reserved: [0; 32],
                     }));
                 },
                 Permission::ProgramScope {
@@ -208,7 +310,7 @@ impl Permission {
                     }));
                 },
                 Permission::SubAccount { sub_account } => {
-                    actions.push(ClientAction::SubAccount(SubAccount { sub_account }));
+                    actions.push(ClientAction::SubAccount(SubAccount::new(sub_account)));
                 },
                 Permission::Stake { amount, recurring } => match recurring {
                     Some(config) => {
@@ -288,10 +390,10 @@ impl Permission {
             });
         }
 
-        // Check for TokenLimit permission
-        if let Some(action) = swig_state::role::Role::get_action::<TokenLimit>(role, &[])
-            .map_err(|_| SwigError::InvalidSwigData)?
-        {
+        // Check for TokenLimit permissions
+        let token_limits = swig_state::role::Role::get_all_actions_of_type::<TokenLimit>(role)
+            .map_err(|_| SwigError::InvalidSwigData)?;
+        for action in token_limits {
             permissions.push(Permission::Token {
                 mint: Pubkey::new_from_array(action.token_mint),
                 amount: action.current_amount,
@@ -299,10 +401,11 @@ impl Permission {
             });
         }
 
-        // Check for TokenRecurringLimit permission
-        if let Some(action) = swig_state::role::Role::get_action::<TokenRecurringLimit>(role, &[])
-            .map_err(|_| SwigError::InvalidSwigData)?
-        {
+        // Check for TokenRecurringLimit permissions
+        let token_recurring_limits =
+            swig_state::role::Role::get_all_actions_of_type::<TokenRecurringLimit>(role)
+                .map_err(|_| SwigError::InvalidSwigData)?;
+        for action in token_recurring_limits {
             permissions.push(Permission::Token {
                 mint: Pubkey::new_from_array(action.token_mint),
                 amount: action.limit,
@@ -314,31 +417,87 @@ impl Permission {
             });
         }
 
+        // Check for TokenDestinationLimit permissions
+        let token_destination_limits =
+            swig_state::role::Role::get_all_actions_of_type::<TokenDestinationLimit>(role)
+                .map_err(|_| SwigError::InvalidSwigData)?;
+        for action in token_destination_limits {
+            permissions.push(Permission::TokenDestination {
+                mint: Pubkey::new_from_array(action.token_mint),
+                destination: Pubkey::new_from_array(action.destination),
+                amount: action.amount,
+                recurring: None,
+            });
+        }
+
+        // Check for TokenRecurringDestinationLimit permissions
+        let token_recurring_destination_limits =
+            swig_state::role::Role::get_all_actions_of_type::<TokenRecurringDestinationLimit>(role)
+                .map_err(|_| SwigError::InvalidSwigData)?;
+        for action in token_recurring_destination_limits {
+            permissions.push(Permission::TokenDestination {
+                mint: Pubkey::new_from_array(action.token_mint),
+                destination: Pubkey::new_from_array(action.destination),
+                amount: action.recurring_amount,
+                recurring: Some(RecurringConfig {
+                    window: action.window,
+                    last_reset: action.last_reset,
+                    current_amount: action.current_amount,
+                }),
+            });
+        }
+
+        // Check for SolDestinationLimit permissions
+        let sol_destination_limits =
+            swig_state::role::Role::get_all_actions_of_type::<SolDestinationLimit>(role)
+                .map_err(|_| SwigError::InvalidSwigData)?;
+        for action in sol_destination_limits {
+            permissions.push(Permission::SolDestination {
+                destination: Pubkey::new_from_array(action.destination),
+                amount: action.amount,
+                recurring: None,
+            });
+        }
+
+        // Check for SolRecurringDestinationLimit permissions
+        let sol_recurring_destination_limits =
+            swig_state::role::Role::get_all_actions_of_type::<SolRecurringDestinationLimit>(role)
+                .map_err(|_| SwigError::InvalidSwigData)?;
+        for action in sol_recurring_destination_limits {
+            permissions.push(Permission::SolDestination {
+                destination: Pubkey::new_from_array(action.destination),
+                amount: action.recurring_amount,
+                recurring: Some(RecurringConfig {
+                    window: action.window,
+                    last_reset: action.last_reset,
+                    current_amount: action.current_amount,
+                }),
+            });
+        }
+
+        // Check for ProgramAll permission
+        if swig_state::role::Role::get_action::<ProgramAll>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .is_some()
+        {
+            permissions.push(Permission::ProgramAll);
+        }
+
+        if swig_state::role::Role::get_action::<ProgramCurated>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .is_some()
+        {
+            permissions.push(Permission::ProgramCurated);
+        }
+
         // Check for Program permissions by iterating through all actions
-        let all_actions = role
-            .get_all_actions()
+        let custom_program_actions = role
+            .get_all_actions_of_type::<Program>()
             .map_err(|_| SwigError::InvalidSwigData)?;
-        for action in all_actions {
-            match action.permission() {
-                Ok(swig_state::action::Permission::Program)
-                | Ok(swig_state::action::Permission::ProgramAll)
-                | Ok(swig_state::action::Permission::ProgramCurated) => {
-                    // Get the program action data
-                    let action_data = unsafe {
-                        core::slice::from_raw_parts(
-                            (action as *const _ as *const u8).add(swig_state::action::Action::LEN),
-                            action.length() as usize,
-                        )
-                    };
-                    if action_data.len() >= 32 {
-                        let program_id_bytes: [u8; 32] = action_data[0..32].try_into().unwrap();
-                        permissions.push(Permission::Program {
-                            program_id: Pubkey::new_from_array(program_id_bytes),
-                        });
-                    }
-                },
-                _ => {},
-            }
+        for program_action in custom_program_actions {
+            permissions.push(Permission::Program {
+                program_id: Pubkey::new_from_array(program_action.program_id),
+            });
         }
 
         // Check for ProgramScope permission
@@ -419,16 +578,27 @@ impl Permission {
 
     pub fn to_action_type(&self) -> u8 {
         match self {
-            Permission::All => 0x07,
-            Permission::ManageAuthority => 0x08,
+            Permission::All => 7,
+            Permission::ManageAuthority => 8,
             Permission::Sol {
                 amount: _,
                 recurring,
             } => {
                 if recurring.is_some() {
-                    0x02 // SolRecurringLimit
+                    2 // SolRecurringLimit
                 } else {
-                    0x01 // SolLimit
+                    1 // SolLimit
+                }
+            },
+            Permission::SolDestination {
+                destination: _,
+                amount: _,
+                recurring,
+            } => {
+                if recurring.is_some() {
+                    17 // SolRecurringDestinationLimit
+                } else {
+                    16 // SolDestinationLimit
                 }
             },
             Permission::Token {
@@ -437,12 +607,26 @@ impl Permission {
                 recurring,
             } => {
                 if recurring.is_some() {
-                    0x06 // TokenRecurringLimit
+                    6 // TokenRecurringLimit
                 } else {
-                    0x05 // TokenLimit
+                    5 // TokenLimit
                 }
             },
-            Permission::Program { program_id: _ } => 0x03,
+            Permission::TokenDestination {
+                mint: _,
+                destination: _,
+                amount: _,
+                recurring,
+            } => {
+                if recurring.is_some() {
+                    19 // TokenRecurringDestinationLimit
+                } else {
+                    18 // TokenDestinationLimit
+                }
+            },
+            Permission::Program { program_id: _ } => 3,
+            Permission::ProgramAll => 13,
+            Permission::ProgramCurated => 14,
             Permission::ProgramScope {
                 program_id: _,
                 target_account: _,
@@ -451,20 +635,20 @@ impl Permission {
                 window: _,
                 balance_field_start: _,
                 balance_field_end: _,
-            } => 0x04,
-            Permission::SubAccount { sub_account: _ } => 0x09,
+            } => 4,
+            Permission::SubAccount { sub_account: _ } => 9,
             Permission::Stake {
                 amount: _,
                 recurring,
             } => {
                 if recurring.is_some() {
-                    0x0B // StakeRecurringLimit
+                    11 // StakeRecurringLimit
                 } else {
-                    0x0A // StakeLimit
+                    10 // StakeLimit
                 }
             },
-            Permission::StakeAll => 0x0C,
-            Permission::AllButManageAuthority => 0x0F,
+            Permission::StakeAll => 12,
+            Permission::AllButManageAuthority => 15,
         }
     }
 }
