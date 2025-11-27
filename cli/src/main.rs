@@ -21,8 +21,8 @@ use rand::Rng;
 use solana_sdk::{
     pubkey::Pubkey,
     signature::{read_keypair_file, Keypair, Signer},
-    system_instruction::transfer,
 };
+use solana_system_interface::instruction::transfer;
 use swig_sdk::{
     authority::{ed25519::CreateEd25519SessionAuthority, AuthorityType},
     swig::SwigWithRoles,

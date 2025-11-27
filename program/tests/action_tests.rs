@@ -6,21 +6,22 @@
 mod common;
 
 use common::*;
+use solana_address_lookup_table_interface::state::AddressLookupTable;
+use solana_commitment_config::CommitmentConfig;
+use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
     account::ReadableAccount,
-    address_lookup_table::{state::AddressLookupTable, AddressLookupTableAccount},
-    commitment_config::CommitmentConfig,
-    compute_budget::ComputeBudgetInstruction,
     instruction::{AccountMeta, Instruction},
     keccak::hash,
+    message::AddressLookupTableAccount,
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     rent::Rent,
     signature::{read_keypair_file, Keypair, Signature},
     signer::{Signer, SignerError},
-    system_instruction,
     transaction::VersionedTransaction,
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_interface::{AuthorityConfig, ClientAction, RemoveAuthorityInstruction};
 use swig_state::{
     action::{
@@ -131,7 +132,7 @@ fn test_multiple_actions_with_transfer_and_manage_authority() {
             }),
             ClientAction::ManageAuthority(ManageAuthority {}),
             ClientAction::Program(Program {
-                program_id: solana_sdk::system_program::ID.to_bytes(),
+                program_id: solana_sdk_ids::system_program::ID.to_bytes(),
             }),
         ],
     )
