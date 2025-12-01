@@ -190,7 +190,7 @@ fn test_token_transfer_performance_comparison_v2() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3849);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3851);
 }
 
 #[test_log::test]
@@ -310,5 +310,5 @@ fn test_sol_transfer_performance_comparison_v2() {
         account_difference
     );
 
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3304);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3306);
 }

@@ -244,11 +244,11 @@ fn test_external_kill_switch_blocks_execution() {
         "Transaction should fail due to kill switch"
     );
 
-    // Should fail with external kill switch error (3033)
+    // Should fail with external kill switch error (3040)
     let error = result.unwrap_err();
     assert_eq!(
         error.err,
-        TransactionError::InstructionError(0, InstructionError::Custom(3033))
+        TransactionError::InstructionError(0, InstructionError::Custom(3040))
     );
 
     println!("✅ External kill switch correctly blocked execution when values don't match");
@@ -528,12 +528,12 @@ fn test_external_kill_switch_missing_account() {
         "Transaction should fail when external account is missing"
     );
 
-    // Should fail with external kill switch error (3034) because account is not
+    // Should fail with external kill switch error (3041) because account is not
     // provided
     let error = result.unwrap_err();
     assert_eq!(
         error.err,
-        TransactionError::InstructionError(0, InstructionError::Custom(3034))
+        TransactionError::InstructionError(0, InstructionError::Custom(3041))
     );
 
     println!(
