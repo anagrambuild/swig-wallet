@@ -194,6 +194,10 @@ pub enum SwigAuthenticateError {
     PermissionDeniedProgramExecInvalidWalletAccount,
     /// Program execution cannot be the Swig program
     PermissionDeniedProgramExecCannotBeSwig,
+    /// External kill switch has been triggered
+    PermissionDeniedExternalKillSwitchTriggered,
+    /// Invalid kill switch account
+    PermissionDeniedInvalidExternalKillSwitch,
 }
 
 impl From<SwigStateError> for ProgramError {

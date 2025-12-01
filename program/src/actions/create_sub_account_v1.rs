@@ -34,6 +34,7 @@ use crate::{
         accounts::{Context, CreateSubAccountV1Accounts},
         SwigInstruction,
     },
+    util::validate_external_kill_switch,
 };
 
 /// Arguments for creating a new sub-account in a Swig wallet.
@@ -163,7 +164,11 @@ pub fn create_sub_account_v1(
     if role_opt.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
-    let role = role_opt.unwrap();
+    let mut role = role_opt.unwrap();
+
+    // Validate external kill switch if present
+    validate_external_kill_switch(&mut role, &all_accounts)?;
+
     // Authenticate the authority
     let clock = Clock::get()?;
     let slot = clock.slot;

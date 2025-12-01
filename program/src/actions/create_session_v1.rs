@@ -19,6 +19,7 @@ use crate::{
         accounts::{Context, CreateSessionV1Accounts},
         SwigInstruction,
     },
+    util::validate_external_kill_switch,
 };
 
 /// Arguments for creating a new session in a Swig wallet.
@@ -142,7 +143,11 @@ pub fn create_session_v1(
     if role.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
-    let role = role.unwrap();
+    let mut role = role.unwrap();
+
+    // Validate external kill switch if present
+    validate_external_kill_switch(&mut role, account_infos)?;
+
     let clock = Clock::get()?;
     let slot = clock.slot;
     if !role.authority.session_based() {
