@@ -7,6 +7,7 @@
 
 pub mod all;
 pub mod all_but_manage_authority;
+pub mod blacklist;
 pub mod external_kill_switch;
 pub mod manage_authority;
 pub mod program;
@@ -27,6 +28,7 @@ pub mod token_recurring_destination_limit;
 pub mod token_recurring_limit;
 use all::All;
 use all_but_manage_authority::AllButManageAuthority;
+use blacklist::Blacklist;
 use external_kill_switch::ExternalKillSwitch;
 use manage_authority::ManageAuthority;
 use no_padding::NoPadding;
@@ -168,6 +170,8 @@ pub enum Permission {
     /// External kill switch that can disable operations based on external
     /// account state
     ExternalKillSwitch = 20,
+    /// Permission to blacklist programs or wallet addresses
+    Blacklist = 21,
 }
 
 impl TryFrom<u16> for Permission {
@@ -177,7 +181,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=20 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=21 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -246,6 +250,7 @@ impl ActionLoader {
                 TokenRecurringDestinationLimit::valid_layout(data)
             },
             Permission::ExternalKillSwitch => ExternalKillSwitch::valid_layout(data),
+            Permission::Blacklist => Blacklist::valid_layout(data),
             _ => Ok(false),
         }
     }

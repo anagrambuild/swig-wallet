@@ -198,6 +198,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedExternalKillSwitchTriggered,
     /// Invalid kill switch account
     PermissionDeniedInvalidExternalKillSwitch,
+    /// Operation blocked by blacklist
+    PermissionDeniedBlacklisted,
 }
 
 impl From<SwigStateError> for ProgramError {

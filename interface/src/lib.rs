@@ -22,7 +22,7 @@ use swig::actions::{
 pub use swig_compact_instructions::*;
 use swig_state::{
     action::{
-        all::All, all_but_manage_authority::AllButManageAuthority,
+        all::All, all_but_manage_authority::AllButManageAuthority, blacklist::Blacklist,
         external_kill_switch::ExternalKillSwitch, manage_authority::ManageAuthority,
         program::Program, program_all::ProgramAll, program_curated::ProgramCurated,
         program_scope::ProgramScope, sol_destination_limit::SolDestinationLimit,
@@ -62,6 +62,7 @@ pub enum ClientAction {
     StakeRecurringLimit(StakeRecurringLimit),
     StakeAll(StakeAll),
     ExternalKillSwitch(ExternalKillSwitch),
+    Blacklist(Blacklist),
 }
 
 impl ClientAction {
@@ -109,6 +110,7 @@ impl ClientAction {
             ClientAction::ExternalKillSwitch(_) => {
                 (Permission::ExternalKillSwitch, ExternalKillSwitch::LEN)
             },
+            ClientAction::Blacklist(_) => (Permission::Blacklist, Blacklist::LEN),
         };
         let offset = data.len() as u32;
         let header = Action::new(
@@ -141,6 +143,7 @@ impl ClientAction {
             ClientAction::StakeRecurringLimit(action) => action.into_bytes(),
             ClientAction::StakeAll(action) => action.into_bytes(),
             ClientAction::ExternalKillSwitch(action) => action.into_bytes(),
+            ClientAction::Blacklist(action) => action.into_bytes(),
         };
         data.extend_from_slice(
             bytes_res.map_err(|e| anyhow::anyhow!("Failed to serialize action {:?}", e))?,
@@ -155,12 +158,18 @@ pub fn program_id() -> Pubkey {
 
 pub const PROGRAM_ID: [u8; 32] = swig::ID;
 
+pub const PROGRAM_ID: [u8; 32] = swig::ID;
+
 pub fn swig_key_bytes(id: &[u8; 32]) -> Pubkey {
     Pubkey::find_program_address(&swig_account_seeds(id), &program_id()).0
 }
 
 pub fn swig_wallet_address(config_address: &Pubkey) -> Pubkey {
-    Pubkey::find_program_address(&swig_wallet_address_seeds(config_address.as_ref()), &program_id()).0
+    Pubkey::find_program_address(
+        &swig_wallet_address_seeds(config_address.as_ref()),
+        &program_id(),
+    )
+    .0
 }
 
 pub struct AuthorityConfig<'a> {
