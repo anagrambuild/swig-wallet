@@ -19,7 +19,10 @@ use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state::{
     action::all::All,
     authority::{
-        secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority},
+        secp256r1::{
+            Secp256r1Authority, Secp256r1SessionAuthority, COMPRESSED_PUBKEY_SERIALIZED_SIZE,
+            MESSAGE_DATA_OFFSET, MESSAGE_DATA_SIZE, PUBKEY_DATA_OFFSET, SIGNATURE_OFFSETS_START,
+        },
         AuthorityType,
     },
     swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
@@ -641,4 +644,127 @@ fn test_secp256r1_add_authority_with_secp256r1_v2() {
     println!("✓ Successfully added Secp256r1 authority using secp256r1 signature");
     println!("✓ Authority count increased to 2");
     println!("✓ Counter incremented correctly");
+}
+
+#[test_log::test]
+fn test_secp256r1_signature_offsets_bypass_allows_unauthorized_transfer_v2() {
+    let mut context = setup_test_context().unwrap();
+
+    // Primary wallet authority
+    let (_, primary_pubkey) = create_test_secp256r1_keypair();
+
+    eprintln!("Primary pubkey: {:?}", primary_pubkey);
+
+    // Secondary keypair for signing
+    let (secondary_key, secondary_pubkey) = create_test_secp256r1_keypair();
+    eprintln!("Secondary pubkey: {:?}", secondary_pubkey);
+
+    let test_message = [0x42u8; 32];
+
+    // Register the primary key as the only authority on a funded swig wallet
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_secp256r1(&mut context, &primary_pubkey, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
+    // Fund the swig_wallet_address
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
+
+    // Set up transfer transaction
+    let recipient = Keypair::new();
+    context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
+    let transfer_amount = 3_000_000;
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    let current_counter = get_secp256r1_counter(&context, &swig_key, &primary_pubkey).unwrap();
+    let next_counter = current_counter + 1;
+
+    // Build signing instructions but use a different key inside signing callback
+    let mut expected_hash = [0u8; 32];
+    let mut expected_hash_recorded = false;
+    let mut authority_fn = |message_hash: &[u8]| -> [u8; 64] {
+        expected_hash.copy_from_slice(message_hash);
+        expected_hash_recorded = true;
+        use solana_secp256r1_program::sign_message;
+        sign_message(&test_message, &secondary_key.private_key_to_der().unwrap()).unwrap()
+    };
+
+    let mut instructions = swig_interface::SignV2Instruction::new_secp256r1(
+        swig_key,
+        swig_wallet_address,
+        &mut authority_fn,
+        current_slot,
+        next_counter,
+        transfer_ix.clone(),
+        0,
+        &primary_pubkey,
+    )
+    .unwrap();
+
+    // Instruction 0 is the secp256r1 precompile call.
+    let secp_ix = instructions.first_mut().unwrap();
+
+    // Append secondary key and message data at the end of the instruction buffer.
+    let secondary_pubkey_offset = u16::try_from(secp_ix.data.len()).unwrap();
+    secp_ix.data.extend_from_slice(&secondary_pubkey);
+
+    let message_offset = u16::try_from(secp_ix.data.len()).unwrap();
+    secp_ix.data.extend_from_slice(&test_message);
+
+    // Modify the offsets to point to the appended data instead of expected
+    // locations.
+    let public_key_offset_index = SIGNATURE_OFFSETS_START + 4;
+    let message_offset_index = SIGNATURE_OFFSETS_START + 8;
+    secp_ix.data[public_key_offset_index..public_key_offset_index + 2]
+        .copy_from_slice(&secondary_pubkey_offset.to_le_bytes());
+    secp_ix.data[message_offset_index..message_offset_index + 2]
+        .copy_from_slice(&message_offset.to_le_bytes());
+
+    // Place expected data at the standard offsets for verification
+    secp_ix.data[PUBKEY_DATA_OFFSET..PUBKEY_DATA_OFFSET + COMPRESSED_PUBKEY_SERIALIZED_SIZE]
+        .copy_from_slice(&primary_pubkey);
+    secp_ix.data[MESSAGE_DATA_OFFSET..MESSAGE_DATA_OFFSET + MESSAGE_DATA_SIZE]
+        .copy_from_slice(&expected_hash);
+
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &instructions,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+
+    eprintln!("Transaction result: {:?}", result);
+    assert!(
+        result.is_err(),
+        "Transaction should fail because offset values are validated"
+    );
+
+    // The recipient should NOT have received any funds (transaction was rejected)
+    let recipient_balance = context
+        .svm
+        .get_account(&recipient.pubkey())
+        .unwrap()
+        .lamports;
+    assert_eq!(
+        recipient_balance, 1_000_000,
+        "Recipient should NOT have received funds since transaction was rejected"
+    );
+
+    // The counter should not have advanced (transaction was rejected)
+    let final_counter = get_secp256r1_counter(&context, &swig_key, &primary_pubkey).unwrap();
+    assert_eq!(
+        final_counter, current_counter,
+        "Counter should not have advanced since transaction was rejected"
+    );
 }
