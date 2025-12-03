@@ -1151,3 +1151,431 @@ fn test_program_scope_balance_underflow_check() {
     println!("✅ Transaction succeeded with proper balance tracking");
     println!("Result: {:?}", result.unwrap().pretty_logs());
 }
+
+/// This test mirrors the rust-sdk's should_token_transfer_with_program_scope test.
+/// It creates a swig wallet, adds a secondary authority with ProgramScope permissions,
+/// and performs a token transfer using that authority.
+#[test_log::test]
+fn test_token_transfer_with_program_scope_sign() {
+    let mut context = setup_test_context().unwrap();
+
+    // Setup authorities and recipient
+    let main_authority = Keypair::new();
+    let secondary_authority = Keypair::new();
+    let recipient = Keypair::new();
+
+    // Airdrop to participants
+    context
+        .svm
+        .airdrop(&main_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Setup token mint
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+
+    // Setup swig account with main_authority as root
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+
+    // Create swig with main_authority
+    let create_result = create_swig_ed25519(&mut context, &main_authority, id);
+    assert!(create_result.is_ok(), "Failed to create swig: {:?}", create_result.err());
+
+    convert_swig_to_v1(&mut context, &swig);
+
+    // Setup token accounts
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig,
+        &context.default_payer,
+    )
+    .unwrap();
+
+    let recipient_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &recipient.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+
+    // Setup a ProgramScope with limit of 1000 tokens
+    let program_scope = ProgramScope {
+        program_id: spl_token::ID.to_bytes(),
+        target_account: swig_ata.to_bytes(),
+        scope_type: ProgramScopeType::Limit as u64,
+        numeric_type: NumericType::U64 as u64,
+        current_amount: 0,
+        limit: 1000,
+        window: 0,               // Not used for Limit type
+        last_reset: 0,           // Not used for Limit type
+        balance_field_start: 64, // SPL Token balance starts at byte 64
+        balance_field_end: 72,   // SPL Token balance ends at byte 72 (u64 is 8 bytes)
+    };
+
+    // Add secondary authority with Program and ProgramScope permissions
+    let add_authority_result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &main_authority,
+        AuthorityConfig {
+            authority_type: swig_state::authority::AuthorityType::Ed25519,
+            authority: secondary_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::Program(Program {
+                program_id: spl_token::ID.to_bytes(),
+            }),
+            ClientAction::ProgramScope(program_scope),
+        ],
+    );
+
+    assert!(add_authority_result.is_ok(), "Failed to add authority: {:?}", add_authority_result.err());
+    println!("Added ProgramScope action for token program to secondary authority");
+
+    // Verify swig has 2 roles
+    let swig_data = context.svm.get_account(&swig).unwrap();
+    let swig_with_roles = swig_state::swig::SwigWithRoles::from_bytes(&swig_data.data).unwrap();
+    assert_eq!(swig_with_roles.state.roles, 2, "Expected 2 roles in swig");
+
+    // Mint tokens to swig wallet
+    let initial_token_amount = 2000;
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &swig_ata,
+        initial_token_amount,
+    )
+    .unwrap();
+
+    context.svm.expire_blockhash();
+
+    // Perform token transfer using secondary authority (role id 1)
+    let transfer_amount = 100;
+    let swig_transfer_ix = spl_token::instruction::transfer(
+        &spl_token::ID,
+        &swig_ata,
+        &recipient_ata,
+        &swig,
+        &[],
+        transfer_amount,
+    )
+    .unwrap();
+
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        swig_transfer_ix,
+        1, // secondary authority role id
+    )
+    .unwrap();
+
+    let transfer_message = v0::Message::try_compile(
+        &secondary_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message),
+        &[&secondary_authority],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(transfer_tx);
+    assert!(result.is_ok(), "Token transfer should succeed: {:?}", result.err());
+
+    // Verify the transfer succeeded
+    let final_swig_token_account = context.svm.get_account(&swig_ata).unwrap();
+    let final_balance = u64::from_le_bytes(
+        final_swig_token_account.data[64..72].try_into().unwrap()
+    );
+    assert_eq!(
+        final_balance,
+        initial_token_amount - transfer_amount,
+        "Token balance should be reduced by transfer amount"
+    );
+
+    println!("✅ Token transfer with ProgramScope sign completed successfully!");
+    println!("Transferred {} tokens, remaining balance: {}", transfer_amount, final_balance);
+}
+
+/// This test mirrors the rust-sdk's should_token_transfer_with_recurring_limit_program_scope test.
+/// It creates a swig wallet, adds an authority with RecurringLimit ProgramScope permissions,
+/// and verifies that:
+/// 1. Transfers succeed up to the limit
+/// 2. Transfers fail when limit is exceeded
+/// 3. After the window resets, transfers succeed again
+#[test_log::test]
+fn test_token_transfer_with_recurring_limit_program_scope_sign() {
+    let mut context = setup_test_context().unwrap();
+
+    // Setup authorities and recipient
+    let main_authority = Keypair::new();
+    let secondary_authority = Keypair::new();
+    let recipient = Keypair::new();
+
+    // Airdrop to participants
+    context
+        .svm
+        .airdrop(&main_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&secondary_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Setup token mint
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+
+    // Setup swig account with main_authority as root
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+
+    // Create swig with main_authority
+    let create_result = create_swig_ed25519(&mut context, &main_authority, id);
+    assert!(create_result.is_ok(), "Failed to create swig: {:?}", create_result.err());
+
+    convert_swig_to_v1(&mut context, &swig);
+
+    // Setup token accounts
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig,
+        &context.default_payer,
+    )
+    .unwrap();
+
+    let recipient_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &recipient.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+
+    // Setup a RecurringLimit ProgramScope
+    // Set a limit of 500 tokens per 100 slots
+    let window_size = 100;
+    let transfer_limit = 500_u64;
+
+    let program_scope = ProgramScope {
+        program_id: spl_token::ID.to_bytes(),
+        target_account: swig_ata.to_bytes(),
+        scope_type: ProgramScopeType::RecurringLimit as u64,
+        numeric_type: NumericType::U64 as u64,
+        current_amount: 0,
+        limit: transfer_limit as u128,
+        window: window_size,
+        last_reset: 0,
+        balance_field_start: 64,
+        balance_field_end: 72,
+    };
+
+    // Add secondary authority with Program and ProgramScope permissions
+    let add_authority_result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &main_authority,
+        AuthorityConfig {
+            authority_type: swig_state::authority::AuthorityType::Ed25519,
+            authority: secondary_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::Program(Program {
+                program_id: spl_token::ID.to_bytes(),
+            }),
+            ClientAction::ProgramScope(program_scope),
+        ],
+    );
+
+    assert!(add_authority_result.is_ok(), "Failed to add authority: {:?}", add_authority_result.err());
+    println!("Added RecurringLimit ProgramScope action for token program");
+
+    // Verify swig has 2 roles
+    let swig_data = context.svm.get_account(&swig).unwrap();
+    let swig_with_roles = swig_state::swig::SwigWithRoles::from_bytes(&swig_data.data).unwrap();
+    assert_eq!(swig_with_roles.state.roles, 2, "Expected 2 roles in swig");
+
+    // Mint tokens to swig wallet
+    let initial_token_amount = 2000;
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &swig_ata,
+        initial_token_amount,
+    )
+    .unwrap();
+
+    context.svm.expire_blockhash();
+
+    // First batch of transfers - should succeed up to the limit
+    println!("\n=== PHASE 1: Initial transfers within limit ===");
+    let transfer_batch = 100;
+    let mut transferred = 0;
+
+    // Transfer in batches of 100 tokens up to limit (should succeed)
+    while transferred + transfer_batch <= transfer_limit {
+        context.svm.expire_blockhash();
+
+        let before_token_account = context.svm.get_account(&swig_ata).unwrap();
+        let before_balance = u64::from_le_bytes(
+            before_token_account.data[64..72].try_into().unwrap()
+        );
+        println!("Before transfer, token balance: {}", before_balance);
+
+        let swig_transfer_ix = spl_token::instruction::transfer(
+            &spl_token::ID,
+            &swig_ata,
+            &recipient_ata,
+            &swig,
+            &[],
+            transfer_batch,
+        )
+        .unwrap();
+
+        let sign_ix = swig_interface::SignInstruction::new_ed25519(
+            swig,
+            secondary_authority.pubkey(),
+            secondary_authority.pubkey(),
+            swig_transfer_ix,
+            1, // secondary authority role id
+        )
+        .unwrap();
+
+        let transfer_message = v0::Message::try_compile(
+            &secondary_authority.pubkey(),
+            &[sign_ix],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap();
+
+        let transfer_tx = VersionedTransaction::try_new(
+            VersionedMessage::V0(transfer_message),
+            &[&secondary_authority],
+        )
+        .unwrap();
+
+        let result = context.svm.send_transaction(transfer_tx);
+        assert!(result.is_ok(), "Transfer should succeed within limit: {:?}", result.err());
+
+        transferred += transfer_batch;
+
+        let after_token_account = context.svm.get_account(&swig_ata).unwrap();
+        let after_balance = u64::from_le_bytes(
+            after_token_account.data[64..72].try_into().unwrap()
+        );
+        println!("After transfer, token balance: {}", after_balance);
+        println!("Total transferred: {}/{}", transferred, transfer_limit);
+
+        assert!(after_balance < before_balance, "Balance should decrease after transfer");
+    }
+
+    // Try to transfer one more batch (should fail)
+    println!("\n=== PHASE 2: Transfer exceeding limit ===");
+    context.svm.expire_blockhash();
+
+    let swig_transfer_ix = spl_token::instruction::transfer(
+        &spl_token::ID,
+        &swig_ata,
+        &recipient_ata,
+        &swig,
+        &[],
+        transfer_batch,
+    )
+    .unwrap();
+
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        swig_transfer_ix,
+        1,
+    )
+    .unwrap();
+
+    let transfer_message = v0::Message::try_compile(
+        &secondary_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message),
+        &[&secondary_authority],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(transfer_tx);
+    assert!(result.is_err(), "Transfer should have failed due to limit");
+    println!("Transfer correctly rejected due to limit");
+
+    // Advance the clock past the window to trigger a reset
+    println!("\n=== PHASE 3: Advancing slots to reset limit ===");
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    context.svm.warp_to_slot(current_slot + window_size + 1);
+    context.svm.expire_blockhash();
+    println!("Advanced from slot {} to slot {}", current_slot, context.svm.get_sysvar::<Clock>().slot);
+
+    // After resetting the clock, we should be able to transfer again
+    println!("\n=== PHASE 4: Transfer after window reset ===");
+    let swig_transfer_ix = spl_token::instruction::transfer(
+        &spl_token::ID,
+        &swig_ata,
+        &recipient_ata,
+        &swig,
+        &[],
+        transfer_batch,
+    )
+    .unwrap();
+
+    let sign_ix = swig_interface::SignInstruction::new_ed25519(
+        swig,
+        secondary_authority.pubkey(),
+        secondary_authority.pubkey(),
+        swig_transfer_ix,
+        1,
+    )
+    .unwrap();
+
+    let transfer_message = v0::Message::try_compile(
+        &secondary_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message),
+        &[&secondary_authority],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(transfer_tx);
+    assert!(result.is_ok(), "Token transfer after window reset should succeed: {:?}", result.err());
+
+    println!("✅ RecurringLimit ProgramScope sign test completed successfully!");
+}

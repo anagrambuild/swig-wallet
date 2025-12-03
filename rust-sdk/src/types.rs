@@ -21,12 +21,152 @@ use swig_state::{
         token_limit::TokenLimit,
         token_recurring_destination_limit::TokenRecurringDestinationLimit,
         token_recurring_limit::TokenRecurringLimit,
+        Action, Permission as ActionPermission,
     },
     role::Role,
     Transmutable,
 };
 
 use crate::SwigError;
+
+/// Data extracted from a ProgramScope action, read safely from potentially unaligned memory.
+///
+/// This is used off-chain where memory alignment is not guaranteed. The Solana VM provides
+/// 8-byte aligned account data, but off-chain (e.g., when reading via RPC), the buffer may
+/// not be properly aligned for types containing u128 fields (which require 16-byte alignment).
+///
+/// This struct mirrors `ProgramScope` but is populated via byte-by-byte reading to avoid
+/// undefined behavior from misaligned pointer access.
+#[derive(Debug, Clone)]
+pub struct ProgramScopeData {
+    pub current_amount: u128,
+    pub limit: u128,
+    pub window: u64,
+    pub last_reset: u64,
+    pub program_id: [u8; 32],
+    pub target_account: [u8; 32],
+    pub scope_type: u64,
+    pub numeric_type: u64,
+    pub balance_field_start: u64,
+    pub balance_field_end: u64,
+}
+
+impl ProgramScopeData {
+    /// Safely reads ProgramScope data from a byte slice without requiring alignment.
+    ///
+    /// This handles the case where ProgramScope contains u128 fields that would normally
+    /// require 16-byte alignment, but the data in the actions buffer may not be aligned.
+    ///
+    /// Layout (144 bytes total):
+    /// - current_amount: u128 (16 bytes) at offset 0
+    /// - limit: u128 (16 bytes) at offset 16
+    /// - window: u64 (8 bytes) at offset 32
+    /// - last_reset: u64 (8 bytes) at offset 40
+    /// - program_id: [u8; 32] at offset 48
+    /// - target_account: [u8; 32] at offset 80
+    /// - scope_type: u64 (8 bytes) at offset 112
+    /// - numeric_type: u64 (8 bytes) at offset 120
+    /// - balance_field_start: u64 (8 bytes) at offset 128
+    /// - balance_field_end: u64 (8 bytes) at offset 136
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 144 {
+            return None;
+        }
+
+        let current_amount = u128::from_le_bytes(bytes[0..16].try_into().ok()?);
+        let limit = u128::from_le_bytes(bytes[16..32].try_into().ok()?);
+        let window = u64::from_le_bytes(bytes[32..40].try_into().ok()?);
+        let last_reset = u64::from_le_bytes(bytes[40..48].try_into().ok()?);
+
+        let mut program_id = [0u8; 32];
+        program_id.copy_from_slice(&bytes[48..80]);
+
+        let mut target_account = [0u8; 32];
+        target_account.copy_from_slice(&bytes[80..112]);
+
+        let scope_type = u64::from_le_bytes(bytes[112..120].try_into().ok()?);
+        let numeric_type = u64::from_le_bytes(bytes[120..128].try_into().ok()?);
+        let balance_field_start = u64::from_le_bytes(bytes[128..136].try_into().ok()?);
+        let balance_field_end = u64::from_le_bytes(bytes[136..144].try_into().ok()?);
+
+        Some(Self {
+            current_amount,
+            limit,
+            window,
+            last_reset,
+            program_id,
+            target_account,
+            scope_type,
+            numeric_type,
+            balance_field_start,
+            balance_field_end,
+        })
+    }
+}
+
+/// Searches for a ProgramScope action in the role's action data and returns it safely.
+///
+/// This function reads ProgramScope data byte-by-byte to handle potentially unaligned
+/// memory access that can occur off-chain.
+pub fn find_program_scope_in_role(role: &Role, match_program_id: &[u8; 32]) -> Option<ProgramScopeData> {
+    let actions = role.actions;
+    let mut cursor = 0;
+
+    while cursor + Action::LEN <= actions.len() {
+        // Action header is only 8 bytes and has 8-byte alignment, so this is safe
+        let action = unsafe { Action::load_unchecked(&actions[cursor..cursor + Action::LEN]).ok()? };
+        cursor += Action::LEN;
+
+        if action.permission().ok()? == ActionPermission::ProgramScope {
+            let boundary = action.boundary() as usize;
+            if boundary <= actions.len() {
+                // Read the ProgramScope data safely without requiring alignment
+                if let Some(data) = ProgramScopeData::from_bytes(&actions[cursor..boundary]) {
+                    if &data.program_id == match_program_id {
+                        return Some(data);
+                    }
+                }
+            }
+        }
+
+        cursor = action.boundary() as usize;
+    }
+
+    None
+}
+
+/// Finds all ProgramScope actions in the role's action data and returns them safely.
+///
+/// This function reads ProgramScope data byte-by-byte to handle potentially unaligned
+/// memory access that can occur off-chain.
+pub fn find_all_program_scopes_in_role(role: &Role) -> Vec<ProgramScopeData> {
+    let actions = role.actions;
+    let mut cursor = 0;
+    let mut results = Vec::new();
+
+    while cursor + Action::LEN <= actions.len() {
+        // Action header is only 8 bytes and has 8-byte alignment, so this is safe
+        let action = match unsafe { Action::load_unchecked(&actions[cursor..cursor + Action::LEN]) } {
+            Ok(a) => a,
+            Err(_) => break,
+        };
+        cursor += Action::LEN;
+
+        if action.permission().ok() == Some(ActionPermission::ProgramScope) {
+            let boundary = action.boundary() as usize;
+            if boundary <= actions.len() {
+                // Read the ProgramScope data safely without requiring alignment
+                if let Some(data) = ProgramScopeData::from_bytes(&actions[cursor..boundary]) {
+                    results.push(data);
+                }
+            }
+        }
+
+        cursor = action.boundary() as usize;
+    }
+
+    results
+}
 
 /// Configuration for recurring limits that reset after a specified time window
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -501,10 +641,10 @@ impl Permission {
         }
 
         // Check for ProgramScope permission
-        if let Some(action) =
-            swig_state::role::Role::get_action::<ProgramScope>(role, &spl_token::ID.to_bytes())
-                .map_err(|_| SwigError::InvalidSwigData)?
-        {
+        // Use find_program_scope_in_role instead of Role::get_action because ProgramScope
+        // contains u128 fields that require 16-byte alignment, but action data in the swig
+        // account may not be properly aligned for off-chain use.
+        if let Some(action) = find_program_scope_in_role(role, &spl_token::ID.to_bytes()) {
             permissions.push(Permission::ProgramScope {
                 program_id: Pubkey::new_from_array(action.program_id),
                 target_account: Pubkey::new_from_array(action.target_account),
