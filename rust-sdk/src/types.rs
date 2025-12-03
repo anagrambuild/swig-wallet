@@ -29,14 +29,16 @@ use swig_state::{
 
 use crate::SwigError;
 
-/// Data extracted from a ProgramScope action, read safely from potentially unaligned memory.
+/// Data extracted from a ProgramScope action, read safely from potentially
+/// unaligned memory.
 ///
-/// This is used off-chain where memory alignment is not guaranteed. The Solana VM provides
-/// 8-byte aligned account data, but off-chain (e.g., when reading via RPC), the buffer may
-/// not be properly aligned for types containing u128 fields (which require 16-byte alignment).
+/// This is used off-chain where memory alignment is not guaranteed. The Solana
+/// VM provides 8-byte aligned account data, but off-chain (e.g., when reading
+/// via RPC), the buffer may not be properly aligned for types containing u128
+/// fields (which require 16-byte alignment).
 ///
-/// This struct mirrors `ProgramScope` but is populated via byte-by-byte reading to avoid
-/// undefined behavior from misaligned pointer access.
+/// This struct mirrors `ProgramScope` but is populated via byte-by-byte reading
+/// to avoid undefined behavior from misaligned pointer access.
 #[derive(Debug, Clone)]
 pub struct ProgramScopeData {
     pub current_amount: u128,
@@ -52,10 +54,12 @@ pub struct ProgramScopeData {
 }
 
 impl ProgramScopeData {
-    /// Safely reads ProgramScope data from a byte slice without requiring alignment.
+    /// Safely reads ProgramScope data from a byte slice without requiring
+    /// alignment.
     ///
-    /// This handles the case where ProgramScope contains u128 fields that would normally
-    /// require 16-byte alignment, but the data in the actions buffer may not be aligned.
+    /// This handles the case where ProgramScope contains u128 fields that would
+    /// normally require 16-byte alignment, but the data in the actions
+    /// buffer may not be aligned.
     ///
     /// Layout (144 bytes total):
     /// - current_amount: u128 (16 bytes) at offset 0
@@ -104,17 +108,22 @@ impl ProgramScopeData {
     }
 }
 
-/// Searches for a ProgramScope action in the role's action data and returns it safely.
+/// Searches for a ProgramScope action in the role's action data and returns it
+/// safely.
 ///
-/// This function reads ProgramScope data byte-by-byte to handle potentially unaligned
-/// memory access that can occur off-chain.
-pub fn find_program_scope_in_role(role: &Role, match_program_id: &[u8; 32]) -> Option<ProgramScopeData> {
+/// This function reads ProgramScope data byte-by-byte to handle potentially
+/// unaligned memory access that can occur off-chain.
+pub fn find_program_scope_in_role(
+    role: &Role,
+    match_program_id: &[u8; 32],
+) -> Option<ProgramScopeData> {
     let actions = role.actions;
     let mut cursor = 0;
 
     while cursor + Action::LEN <= actions.len() {
         // Action header is only 8 bytes and has 8-byte alignment, so this is safe
-        let action = unsafe { Action::load_unchecked(&actions[cursor..cursor + Action::LEN]).ok()? };
+        let action =
+            unsafe { Action::load_unchecked(&actions[cursor..cursor + Action::LEN]).ok()? };
         cursor += Action::LEN;
 
         if action.permission().ok()? == ActionPermission::ProgramScope {
@@ -135,10 +144,11 @@ pub fn find_program_scope_in_role(role: &Role, match_program_id: &[u8; 32]) -> O
     None
 }
 
-/// Finds all ProgramScope actions in the role's action data and returns them safely.
+/// Finds all ProgramScope actions in the role's action data and returns them
+/// safely.
 ///
-/// This function reads ProgramScope data byte-by-byte to handle potentially unaligned
-/// memory access that can occur off-chain.
+/// This function reads ProgramScope data byte-by-byte to handle potentially
+/// unaligned memory access that can occur off-chain.
 pub fn find_all_program_scopes_in_role(role: &Role) -> Vec<ProgramScopeData> {
     let actions = role.actions;
     let mut cursor = 0;
@@ -146,7 +156,8 @@ pub fn find_all_program_scopes_in_role(role: &Role) -> Vec<ProgramScopeData> {
 
     while cursor + Action::LEN <= actions.len() {
         // Action header is only 8 bytes and has 8-byte alignment, so this is safe
-        let action = match unsafe { Action::load_unchecked(&actions[cursor..cursor + Action::LEN]) } {
+        let action = match unsafe { Action::load_unchecked(&actions[cursor..cursor + Action::LEN]) }
+        {
             Ok(a) => a,
             Err(_) => break,
         };
@@ -641,9 +652,10 @@ impl Permission {
         }
 
         // Check for ProgramScope permission
-        // Use find_program_scope_in_role instead of Role::get_action because ProgramScope
-        // contains u128 fields that require 16-byte alignment, but action data in the swig
-        // account may not be properly aligned for off-chain use.
+        // Use find_program_scope_in_role instead of Role::get_action because
+        // ProgramScope contains u128 fields that require 16-byte alignment, but
+        // action data in the swig account may not be properly aligned for
+        // off-chain use.
         if let Some(action) = find_program_scope_in_role(role, &spl_token::ID.to_bytes()) {
             permissions.push(Permission::ProgramScope {
                 program_id: Pubkey::new_from_array(action.program_id),

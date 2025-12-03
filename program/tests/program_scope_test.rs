@@ -1152,9 +1152,9 @@ fn test_program_scope_balance_underflow_check() {
     println!("Result: {:?}", result.unwrap().pretty_logs());
 }
 
-/// This test mirrors the rust-sdk's should_token_transfer_with_program_scope test.
-/// It creates a swig wallet, adds a secondary authority with ProgramScope permissions,
-/// and performs a token transfer using that authority.
+/// This test mirrors the rust-sdk's should_token_transfer_with_program_scope
+/// test. It creates a swig wallet, adds a secondary authority with ProgramScope
+/// permissions, and performs a token transfer using that authority.
 #[test_log::test]
 fn test_token_transfer_with_program_scope_sign() {
     let mut context = setup_test_context().unwrap();
@@ -1187,7 +1187,11 @@ fn test_token_transfer_with_program_scope_sign() {
 
     // Create swig with main_authority
     let create_result = create_swig_ed25519(&mut context, &main_authority, id);
-    assert!(create_result.is_ok(), "Failed to create swig: {:?}", create_result.err());
+    assert!(
+        create_result.is_ok(),
+        "Failed to create swig: {:?}",
+        create_result.err()
+    );
 
     convert_swig_to_v1(&mut context, &swig);
 
@@ -1239,7 +1243,11 @@ fn test_token_transfer_with_program_scope_sign() {
         ],
     );
 
-    assert!(add_authority_result.is_ok(), "Failed to add authority: {:?}", add_authority_result.err());
+    assert!(
+        add_authority_result.is_ok(),
+        "Failed to add authority: {:?}",
+        add_authority_result.err()
+    );
     println!("Added ProgramScope action for token program to secondary authority");
 
     // Verify swig has 2 roles
@@ -1296,13 +1304,16 @@ fn test_token_transfer_with_program_scope_sign() {
     .unwrap();
 
     let result = context.svm.send_transaction(transfer_tx);
-    assert!(result.is_ok(), "Token transfer should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Token transfer should succeed: {:?}",
+        result.err()
+    );
 
     // Verify the transfer succeeded
     let final_swig_token_account = context.svm.get_account(&swig_ata).unwrap();
-    let final_balance = u64::from_le_bytes(
-        final_swig_token_account.data[64..72].try_into().unwrap()
-    );
+    let final_balance =
+        u64::from_le_bytes(final_swig_token_account.data[64..72].try_into().unwrap());
     assert_eq!(
         final_balance,
         initial_token_amount - transfer_amount,
@@ -1310,11 +1321,15 @@ fn test_token_transfer_with_program_scope_sign() {
     );
 
     println!("✅ Token transfer with ProgramScope sign completed successfully!");
-    println!("Transferred {} tokens, remaining balance: {}", transfer_amount, final_balance);
+    println!(
+        "Transferred {} tokens, remaining balance: {}",
+        transfer_amount, final_balance
+    );
 }
 
-/// This test mirrors the rust-sdk's should_token_transfer_with_recurring_limit_program_scope test.
-/// It creates a swig wallet, adds an authority with RecurringLimit ProgramScope permissions,
+/// This test mirrors the rust-sdk's
+/// should_token_transfer_with_recurring_limit_program_scope test. It creates a
+/// swig wallet, adds an authority with RecurringLimit ProgramScope permissions,
 /// and verifies that:
 /// 1. Transfers succeed up to the limit
 /// 2. Transfers fail when limit is exceeded
@@ -1351,7 +1366,11 @@ fn test_token_transfer_with_recurring_limit_program_scope_sign() {
 
     // Create swig with main_authority
     let create_result = create_swig_ed25519(&mut context, &main_authority, id);
-    assert!(create_result.is_ok(), "Failed to create swig: {:?}", create_result.err());
+    assert!(
+        create_result.is_ok(),
+        "Failed to create swig: {:?}",
+        create_result.err()
+    );
 
     convert_swig_to_v1(&mut context, &swig);
 
@@ -1407,7 +1426,11 @@ fn test_token_transfer_with_recurring_limit_program_scope_sign() {
         ],
     );
 
-    assert!(add_authority_result.is_ok(), "Failed to add authority: {:?}", add_authority_result.err());
+    assert!(
+        add_authority_result.is_ok(),
+        "Failed to add authority: {:?}",
+        add_authority_result.err()
+    );
     println!("Added RecurringLimit ProgramScope action for token program");
 
     // Verify swig has 2 roles
@@ -1438,9 +1461,8 @@ fn test_token_transfer_with_recurring_limit_program_scope_sign() {
         context.svm.expire_blockhash();
 
         let before_token_account = context.svm.get_account(&swig_ata).unwrap();
-        let before_balance = u64::from_le_bytes(
-            before_token_account.data[64..72].try_into().unwrap()
-        );
+        let before_balance =
+            u64::from_le_bytes(before_token_account.data[64..72].try_into().unwrap());
         println!("Before transfer, token balance: {}", before_balance);
 
         let swig_transfer_ix = spl_token::instruction::transfer(
@@ -1477,18 +1499,24 @@ fn test_token_transfer_with_recurring_limit_program_scope_sign() {
         .unwrap();
 
         let result = context.svm.send_transaction(transfer_tx);
-        assert!(result.is_ok(), "Transfer should succeed within limit: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Transfer should succeed within limit: {:?}",
+            result.err()
+        );
 
         transferred += transfer_batch;
 
         let after_token_account = context.svm.get_account(&swig_ata).unwrap();
-        let after_balance = u64::from_le_bytes(
-            after_token_account.data[64..72].try_into().unwrap()
-        );
+        let after_balance =
+            u64::from_le_bytes(after_token_account.data[64..72].try_into().unwrap());
         println!("After transfer, token balance: {}", after_balance);
         println!("Total transferred: {}/{}", transferred, transfer_limit);
 
-        assert!(after_balance < before_balance, "Balance should decrease after transfer");
+        assert!(
+            after_balance < before_balance,
+            "Balance should decrease after transfer"
+        );
     }
 
     // Try to transfer one more batch (should fail)
@@ -1537,7 +1565,11 @@ fn test_token_transfer_with_recurring_limit_program_scope_sign() {
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
     context.svm.warp_to_slot(current_slot + window_size + 1);
     context.svm.expire_blockhash();
-    println!("Advanced from slot {} to slot {}", current_slot, context.svm.get_sysvar::<Clock>().slot);
+    println!(
+        "Advanced from slot {} to slot {}",
+        current_slot,
+        context.svm.get_sysvar::<Clock>().slot
+    );
 
     // After resetting the clock, we should be able to transfer again
     println!("\n=== PHASE 4: Transfer after window reset ===");
@@ -1575,7 +1607,11 @@ fn test_token_transfer_with_recurring_limit_program_scope_sign() {
     .unwrap();
 
     let result = context.svm.send_transaction(transfer_tx);
-    assert!(result.is_ok(), "Token transfer after window reset should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Token transfer after window reset should succeed: {:?}",
+        result.err()
+    );
 
     println!("✅ RecurringLimit ProgramScope sign test completed successfully!");
 }

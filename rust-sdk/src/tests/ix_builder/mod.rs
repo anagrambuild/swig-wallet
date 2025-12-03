@@ -20,8 +20,8 @@ use swig_interface::{
 };
 use swig_state::{
     action::{
-        all::All, manage_authority::ManageAuthority,
-        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
+        all::All, manage_authority::ManageAuthority, sol_limit::SolLimit,
+        sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
     },
     authority::{
         ed25519::{CreateEd25519SessionAuthority, ED25519Authority, Ed25519SessionAuthority},
@@ -190,10 +190,13 @@ pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), S
             }
 
             // Check Program Scope
-            // Use find_program_scope_in_role instead of Role::get_action because ProgramScope
-            // contains u128 fields that require 16-byte alignment, but action data in the swig
-            // account may not be properly aligned for off-chain use.
-            if let Some(action) = crate::types::find_program_scope_in_role(&role, &spl_token::ID.to_bytes()) {
+            // Use find_program_scope_in_role instead of Role::get_action because
+            // ProgramScope contains u128 fields that require 16-byte alignment,
+            // but action data in the swig account may not be properly aligned
+            // for off-chain use.
+            if let Some(action) =
+                crate::types::find_program_scope_in_role(&role, &spl_token::ID.to_bytes())
+            {
                 let program_id = Pubkey::from(action.program_id);
                 let target_account = Pubkey::from(action.target_account);
                 println!("║ │  ├─ Program Scope");

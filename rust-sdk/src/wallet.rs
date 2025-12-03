@@ -13,8 +13,7 @@ use solana_program::{hash::Hash, instruction::Instruction, pubkey::Pubkey};
 use solana_sdk::{
     account::ReadableAccount,
     clock::Clock,
-    message::AddressLookupTableAccount,
-    message::{v0, VersionedMessage},
+    message::{v0, AddressLookupTableAccount, VersionedMessage},
     pubkey,
     rent::Rent,
     signature::{Keypair, Signature, Signer},
@@ -28,9 +27,8 @@ use spl_token::ID as TOKEN_PROGRAM_ID;
 use swig_interface::{swig, swig_key};
 use swig_state::{
     action::{
-        all::All, manage_authority::ManageAuthority,
-        sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
-        sol_recurring_destination_limit::SolRecurringDestinationLimit,
+        all::All, manage_authority::ManageAuthority, sol_destination_limit::SolDestinationLimit,
+        sol_limit::SolLimit, sol_recurring_destination_limit::SolRecurringDestinationLimit,
         sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
         token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
         token_recurring_destination_limit::TokenRecurringDestinationLimit,
@@ -1033,7 +1031,8 @@ impl<'c> SwigWallet<'c> {
                 // Check Program Scopes
                 // Use find_all_program_scopes_in_role instead of Role::get_all_actions_of_type
                 // because ProgramScope contains u128 fields that require 16-byte alignment,
-                // but action data in the swig account may not be properly aligned for off-chain use.
+                // but action data in the swig account may not be properly aligned for off-chain
+                // use.
                 let program_scopes = crate::types::find_all_program_scopes_in_role(&role);
                 for (index, action) in program_scopes.iter().enumerate() {
                     let program_id = Pubkey::from(action.program_id);
