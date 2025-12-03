@@ -37,6 +37,7 @@ fn test_blacklist_program_prevents_cpi() {
 
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
 
     let secondary_authority = Keypair::new();
     context
@@ -114,13 +115,13 @@ fn test_blacklist_program_prevents_cpi() {
     // The transaction should fail due to blacklist
     assert!(result.is_err());
 
-    // Check if the return error is 3033 (PermissionDeniedBlacklisted)
+    // Check if the return error is 3042 (PermissionDeniedBlacklisted)
     let error = result.unwrap_err();
     assert_eq!(
         error.err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3033)
+            solana_sdk::instruction::InstructionError::Custom(3042)
         )
     );
 }
@@ -138,6 +139,7 @@ fn test_blacklist_wallet_prevents_transaction() {
 
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
 
     let secondary_authority = Keypair::new();
     context
@@ -205,13 +207,13 @@ fn test_blacklist_wallet_prevents_transaction() {
     // The transaction should fail due to blacklist
     assert!(result.is_err());
 
-    // Check if the return error is 3033 (PermissionDeniedBlacklisted)
+    // Check if the return error is 3042 (PermissionDeniedBlacklisted)
     let error = result.unwrap_err();
     assert_eq!(
         error.err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3033)
+            solana_sdk::instruction::InstructionError::Custom(3042)
         )
     );
 }
@@ -229,6 +231,7 @@ fn test_blacklist_with_program_permission() {
 
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
 
     let secondary_authority = Keypair::new();
     context
@@ -308,13 +311,13 @@ fn test_blacklist_with_program_permission() {
     // The transaction should fail due to blacklist
     assert!(result.is_err());
 
-    // Check if the return error is 3033 (PermissionDeniedBlacklisted)
+    // Check if the return error is 3042 (PermissionDeniedBlacklisted)
     let error = result.unwrap_err();
     assert_eq!(
         error.err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3033)
+            solana_sdk::instruction::InstructionError::Custom(3042)
         )
     );
 }
@@ -332,6 +335,7 @@ fn test_multiple_blacklist_entries() {
 
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    convert_swig_to_v1(&mut context, &swig_key);
 
     let secondary_authority = Keypair::new();
     context
@@ -410,13 +414,13 @@ fn test_multiple_blacklist_entries() {
     let result1 = context.svm.send_transaction(transfer_tx1);
     assert!(result1.is_err());
 
-    // Check if the return error is 3033 (PermissionDeniedBlacklisted)
+    // Check if the return error is 3042 (PermissionDeniedBlacklisted)
     let error1 = result1.unwrap_err();
     assert_eq!(
         error1.err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3033)
+            solana_sdk::instruction::InstructionError::Custom(3042)
         )
     );
 
@@ -449,13 +453,13 @@ fn test_multiple_blacklist_entries() {
     let result2 = context.svm.send_transaction(transfer_tx2);
     assert!(result2.is_err());
 
-    // Check if the return error is 3033 (PermissionDeniedBlacklisted)
+    // Check if the return error is 3042 (PermissionDeniedBlacklisted)
     let error2 = result2.unwrap_err();
     assert_eq!(
         error2.err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3033)
+            solana_sdk::instruction::InstructionError::Custom(3042)
         )
     );
 }
@@ -474,6 +478,7 @@ fn test_add_multiple_blacklists() {
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
 
+    convert_swig_to_v1(&mut context, &swig_key);
     let secondary_authority = Keypair::new();
     context
         .svm
@@ -581,12 +586,13 @@ fn test_add_multiple_blacklists() {
     .unwrap();
 
     let result1 = context.svm.send_transaction(transfer_tx1);
+    println!("result1: {:?}", result1);
     assert!(result1.is_err());
     assert_eq!(
         result1.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3033)
+            solana_sdk::instruction::InstructionError::Custom(3042)
         )
     );
 
@@ -621,7 +627,7 @@ fn test_add_multiple_blacklists() {
         result2.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3033)
+            solana_sdk::instruction::InstructionError::Custom(3042)
         )
     );
 
@@ -656,7 +662,7 @@ fn test_add_multiple_blacklists() {
         result3.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3033)
+            solana_sdk::instruction::InstructionError::Custom(3042)
         )
     );
 
@@ -694,12 +700,12 @@ fn test_add_multiple_blacklists() {
     let result4 = context.svm.send_transaction(transfer_tx4);
     // This should fail due to missing program permission, not blacklist
     assert!(result4.is_err());
-    // Should fail with wrong resource (3006) not blacklist (3033)
+    // Should fail with wrong resource (3006) not blacklist (3042)
     assert_eq!(
         result4.unwrap_err().err,
         solana_sdk::transaction::TransactionError::InstructionError(
             0,
-            solana_sdk::instruction::InstructionError::Custom(3033)
+            solana_sdk::instruction::InstructionError::Custom(3042)
         )
     );
 }
