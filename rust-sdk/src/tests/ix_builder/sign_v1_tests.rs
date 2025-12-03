@@ -1,12 +1,13 @@
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
-use solana_program::{pubkey::Pubkey, system_instruction};
 use solana_sdk::{
     message::{v0, VersionedMessage},
+    pubkey::Pubkey,
     signature::{Keypair, Signer},
     transaction::VersionedTransaction,
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_interface::program_id;
 use swig_state::{
     authority::AuthorityType,
@@ -62,11 +63,7 @@ fn test_sign_instruction_with_ed25519_authority() {
     // Create a transfer instruction to test signing
     let recipient = Keypair::new();
     let transfer_amount = 100_000;
-    let transfer_ix = solana_program::system_instruction::transfer(
-        &swig_key,
-        &recipient.pubkey(),
-        transfer_amount,
-    );
+    let transfer_ix = system_instruction::transfer(&swig_key, &recipient.pubkey(), transfer_amount);
 
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
 
@@ -151,11 +148,7 @@ fn test_sign_instruction_with_secp256k1_authority() {
 
     let recipient = Keypair::new();
     let transfer_amount = 100_000;
-    let transfer_ix = solana_program::system_instruction::transfer(
-        &swig_key,
-        &recipient.pubkey(),
-        transfer_amount,
-    );
+    let transfer_ix = system_instruction::transfer(&swig_key, &recipient.pubkey(), transfer_amount);
 
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
 

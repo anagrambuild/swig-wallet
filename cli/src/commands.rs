@@ -16,9 +16,9 @@ use serde_json::Value;
 use solana_sdk::{
     pubkey::Pubkey,
     signature::{Keypair, Signer},
-    system_instruction,
 };
 use solana_secp256r1_program;
+use solana_system_interface::instruction as system_instruction;
 use swig_sdk::{
     authority::AuthorityType, client_role::Secp256r1ClientRole, types::UpdateAuthorityData,
     ClientRole, Ed25519ClientRole, Permission, RecurringConfig, Secp256k1ClientRole, SwigError,
