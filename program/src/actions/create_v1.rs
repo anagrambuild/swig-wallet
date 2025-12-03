@@ -8,6 +8,7 @@ use pinocchio::{
     sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
+use pinocchio_pubkey::pubkey;
 use pinocchio_system::instructions::CreateAccount;
 use swig_assertions::{check_self_pda, check_system_owner, check_zero_data};
 use swig_state::{
@@ -191,7 +192,7 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
     let authority_type = AuthorityType::try_from(create_v1.args.authority_type)?;
     let authority_length = authority_type_to_length(&authority_type)?;
     let account_size = core::alloc::Layout::from_size_align(
-        Swig::LEN + Position::LEN + authority_length + create_v1.actions.len(),
+        Swig::LEN + Position::LEN + authority_length + create_v1.actions.len() + Position::LEN + 32,
         core::mem::size_of::<u64>(),
     )
     .map_err(|_| SwigError::InvalidAlignment)?
@@ -248,6 +249,12 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
 
     let swig_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let mut swig_builder = SwigBuilder::create(swig_data, swig)?;
+
+    swig_builder.add_role(
+        AuthorityType::Ed25519,
+        pubkey!("111111111111111111111111111111111111111111").as_ref(),
+        &[],
+    )?;
 
     swig_builder.add_role(authority_type, create_v1.authority_data, create_v1.actions)?;
     Ok(())

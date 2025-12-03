@@ -100,7 +100,7 @@ fn test_sol_recurring_destination_limit_basic_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         inner_ix,
-        1, // role_id
+        2, // role_id
     )
     .unwrap();
 
@@ -122,7 +122,7 @@ fn test_sol_recurring_destination_limit_basic_v2() {
     // Verify limit was decremented
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
     let dest_limit = role
         .get_action::<SolRecurringDestinationLimit>(&recipient.pubkey().to_bytes())
         .unwrap()
@@ -204,7 +204,7 @@ fn test_sol_recurring_destination_limit_exceeds_limit_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         inner_ix,
-        1, // role_id
+        2, // role_id
     )
     .unwrap();
 
@@ -305,7 +305,7 @@ fn test_sol_recurring_destination_limit_time_reset_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         inner_ix1,
-        1, // role_id
+        2, // role_id
     )
     .unwrap();
 
@@ -329,7 +329,7 @@ fn test_sol_recurring_destination_limit_time_reset_v2() {
     // Verify limit was decremented
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
     let dest_limit = role
         .get_action::<SolRecurringDestinationLimit>(&recipient.pubkey().to_bytes())
         .unwrap()
@@ -352,7 +352,7 @@ fn test_sol_recurring_destination_limit_time_reset_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         inner_ix2,
-        1, // role_id
+        2, // role_id
     )
     .unwrap();
 
@@ -376,7 +376,7 @@ fn test_sol_recurring_destination_limit_time_reset_v2() {
     // Verify limit was reset and then decremented
     let swig_account_final = context.svm.get_account(&swig).unwrap();
     let swig_state_final = SwigWithRoles::from_bytes(&swig_account_final.data).unwrap();
-    let role_final = swig_state_final.get_role(1).unwrap().unwrap();
+    let role_final = swig_state_final.get_role(2).unwrap().unwrap();
     let dest_limit_final = role_final
         .get_action::<SolRecurringDestinationLimit>(&recipient.pubkey().to_bytes())
         .unwrap()
@@ -477,7 +477,7 @@ fn test_multiple_sol_recurring_destination_limits_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         inner_ix1,
-        1, // role_id
+        2, // role_id
     )
     .unwrap();
 
@@ -491,7 +491,7 @@ fn test_multiple_sol_recurring_destination_limits_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         inner_ix2,
-        1, // role_id
+        2, // role_id
     )
     .unwrap();
 
@@ -514,7 +514,7 @@ fn test_multiple_sol_recurring_destination_limits_v2() {
     // Verify both limits were decremented correctly
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
 
     let dest_limit1 = role
         .get_action::<SolRecurringDestinationLimit>(&recipient1.pubkey().to_bytes())
@@ -607,7 +607,7 @@ fn test_sol_recurring_destination_limit_no_reset_when_exceeds_fresh_v2() {
         swig_wallet_address,
         second_authority.pubkey(),
         inner_ix,
-        1, // role_id
+        2, // role_id
     )
     .unwrap();
 
@@ -639,7 +639,7 @@ fn test_sol_recurring_destination_limit_no_reset_when_exceeds_fresh_v2() {
     // Verify limit was NOT reset (should still have the old current_amount)
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
     let dest_limit = role
         .get_action::<SolRecurringDestinationLimit>(&recipient.pubkey().to_bytes())
         .unwrap()

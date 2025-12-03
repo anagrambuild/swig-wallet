@@ -127,7 +127,7 @@ fn test_secp256k1_basic_signing() {
         current_slot,
         next_counter, // Use dynamic counter value
         transfer_ix,
-        0, // Role ID 0
+        1, // Role ID 1
     )
     .unwrap();
 
@@ -199,7 +199,7 @@ fn test_secp256k1_direct_signature_reuse() {
         current_slot,
         next_counter, // Use dynamic counter value
         transfer_ix.clone(),
-        0, // Role ID
+        1, // Role ID
     )
     .unwrap();
 
@@ -289,7 +289,7 @@ fn test_secp256k1_direct_signature_reuse() {
         current_slot_value, // Use current slot from simulator
         next_counter_fresh, // Use dynamic counter value
         transfer_ix3,
-        0,
+        1,
     )
     .unwrap();
 
@@ -387,7 +387,7 @@ fn test_secp256k1_compressed_key_full_signing_flow() {
         current_slot,
         next_counter,
         transfer_ix,
-        0, // Role ID 0
+        1, // Role ID 1
     )
     .unwrap();
 
@@ -526,7 +526,7 @@ fn test_secp256k1_add_authority() {
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
     let roles_before = swig_state.state.roles;
-    assert_eq!(roles_before, 1);
+    assert_eq!(roles_before, 2);
 
     // Test initial Ed25519 signing
     let transfer_ix =
@@ -536,7 +536,7 @@ fn test_secp256k1_add_authority() {
         context.default_payer.pubkey(),
         primary_authority.pubkey(),
         transfer_ix,
-        0, // role_id of the primary wallet
+        1, // role_id of the primary wallet
     )
     .unwrap();
 
@@ -569,7 +569,7 @@ fn test_secp256k1_add_authority() {
         swig_key,
         context.default_payer.pubkey(),
         primary_authority.pubkey(),
-        0, // role_id of the primary wallet
+        1, // role_id of the primary wallet
         AuthorityConfig {
             authority_type: AuthorityType::Secp256k1,
             authority: &secp_wallet
@@ -607,7 +607,7 @@ fn test_secp256k1_add_authority() {
     // Verify the authority was added
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_state.state.roles, 2);
+    assert_eq!(swig_state.state.roles, 3);
 
     // Test signing with the new Secp256k1 authority
     let transfer_ix =
@@ -629,7 +629,7 @@ fn test_secp256k1_add_authority() {
         current_slot,
         1, // counter = 1 (first transaction)
         transfer_ix,
-        1, // role_id of the secp256k1 authority
+        2, // role_id of the secp256k1 authority
     )
     .unwrap();
 
@@ -689,7 +689,7 @@ fn test_secp256k1_add_ed25519_authority() {
         signing_fn,
         0, // current slot
         1, // counter = 1 (first transaction)
-        0, // role_id of the primary wallet
+        1, // role_id of the primary wallet
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
             authority: ed25519_authority.pubkey().as_ref(),
@@ -721,7 +721,7 @@ fn test_secp256k1_add_ed25519_authority() {
     // Verify the authority was added
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_state.state.roles, 2);
+    assert_eq!(swig_state.state.roles, 3);
 
     // Test signing with the new ed25519 authority
     let transfer_ix =
@@ -731,7 +731,7 @@ fn test_secp256k1_add_ed25519_authority() {
         context.default_payer.pubkey(),
         ed25519_authority.pubkey(),
         transfer_ix,
-        1, // role_id of the ed25519 authority
+        2, // role_id of the ed25519 authority
     )
     .unwrap();
 
@@ -809,7 +809,7 @@ fn test_secp256k1_replay_scenario_1() {
         current_slot,
         next_counter, // Use dynamic counter value instead of hardcoded 1
         transfer_ix.clone(),
-        0, // Role ID
+        1, // Role ID
     )
     .unwrap();
 
@@ -914,7 +914,7 @@ fn test_secp256k1_replay_scenario_1() {
         current_slot,
         next_counter_fresh, // Use dynamic counter value
         transfer_ix3,
-        0,
+        1,
     )
     .unwrap();
 
@@ -1000,7 +1000,7 @@ fn test_secp256k1_replay_scenario_2() {
         current_slot,
         next_counter, // Use dynamic counter value
         transfer_ix.clone(),
-        0, // Role ID
+        1, // Role ID
     )
     .unwrap();
 
@@ -1090,7 +1090,7 @@ fn test_secp256k1_session_authority_odometer() {
             .map_err(|e| format!("Failed to parse swig data: {:?}", e))?;
 
         let role = swig
-            .get_role(0)
+            .get_role(1)
             .map_err(|e| format!("Failed to get role: {:?}", e))?
             .ok_or("Role not found")?;
 
@@ -1112,8 +1112,8 @@ fn test_secp256k1_session_authority_odometer() {
     // Verify the session authority structure is correctly initialized
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 1);
-    let role = swig.get_role(0).unwrap().unwrap();
+    assert_eq!(swig.state.roles, 2);
+    let role = swig.get_role(1).unwrap().unwrap();
 
     assert_eq!(
         role.authority.authority_type(),

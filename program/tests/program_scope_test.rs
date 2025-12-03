@@ -196,7 +196,7 @@ fn test_token_transfer_with_program_scope() {
         swig_authority.pubkey(),
         swig_authority.pubkey(),
         swig_transfer_ix,
-        1, // authority role id
+        2, // role id
     )
     .unwrap();
 
@@ -236,7 +236,7 @@ fn test_token_transfer_with_program_scope() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    assert!(swig_transfer_cu - regular_transfer_cu <= 5800);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 5903);
 }
 
 /// Helper function to perform token transfers through the swig
@@ -279,7 +279,7 @@ fn perform_token_transfer(
         swig_authority.pubkey(),
         swig_authority.pubkey(),
         transfer_ix,
-        1, // authority role id
+        2, // role id
     )
     .unwrap();
 
@@ -899,7 +899,7 @@ fn test_program_scope_token_limit_cpi_enforcement() {
     let instruction_payload = compact_ixs.into_bytes();
 
     // Prepare the `sign_v1` instruction manually
-    let sign_args = swig::actions::sign_v1::SignV1Args::new(1, instruction_payload.len() as u16); // Role ID 1 for limited_authority
+    let sign_args = swig::actions::sign_v1::SignV1Args::new(2, instruction_payload.len() as u16); // Role ID 1 for limited_authority
     let mut sign_ix_data = Vec::new();
     sign_ix_data.extend_from_slice(sign_args.into_bytes().unwrap());
     sign_ix_data.extend_from_slice(&instruction_payload);
@@ -1110,7 +1110,7 @@ fn test_program_scope_balance_underflow_check() {
     let instruction_payload = compact_ixs.into_bytes();
 
     // Prepare the sign_v1 instruction
-    let sign_args = SignV1Args::new(1, instruction_payload.len() as u16);
+    let sign_args = SignV1Args::new(2, instruction_payload.len() as u16);
     let mut sign_ix_data = Vec::new();
     sign_ix_data.extend_from_slice(sign_args.into_bytes().unwrap());
     sign_ix_data.extend_from_slice(&instruction_payload);

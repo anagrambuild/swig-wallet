@@ -11,7 +11,10 @@ use swig_interface::{
     AuthorityConfig, ClientAction, UpdateAuthorityData, UpdateAuthorityInstruction,
 };
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, sol_limit::SolLimit},
+    action::{
+        all::All, manage_authority::ManageAuthority, program_all::ProgramAll, sol_limit::SolLimit,
+        Permission,
+    },
     authority::AuthorityType,
     swig::SwigWithRoles,
 };
@@ -106,7 +109,7 @@ fn test_update_authority_ed25519_replace_all() -> anyhow::Result<()> {
         &mut context,
         &swig,
         &root_authority,
-        1, // authority_id 1 (the second authority we just added)
+        2, // authority_id 2 (the second authority we just added)
         new_actions,
     )?;
 
@@ -161,7 +164,7 @@ fn test_update_authority_ed25519_add_actions() -> anyhow::Result<()> {
         context.default_payer.pubkey(),
         root_authority.pubkey(),
         role_id,
-        1, // authority_id 1 (the second authority)
+        2, // authority_id 2 (the second authority)
         UpdateAuthorityData::AddActions(additional_actions),
     )?;
 
@@ -187,7 +190,7 @@ fn test_update_authority_ed25519_add_actions() -> anyhow::Result<()> {
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
         .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
-    let role = swig_data.get_role(1).unwrap().unwrap();
+    let role = swig_data.get_role(2).unwrap().unwrap();
 
     println!("role: {:?}", role.get_all_actions());
     let role_actions = role.get_all_actions().unwrap();
@@ -247,7 +250,7 @@ fn test_update_authority_ed25519_remove_by_type() -> anyhow::Result<()> {
         context.default_payer.pubkey(),
         root_authority.pubkey(),
         role_id,
-        1, // authority_id 1 (the second authority)
+        2, // authority_id 2 (the second authority)
         UpdateAuthorityData::RemoveActionsByType(action_types_to_remove),
     )?;
 
@@ -320,7 +323,7 @@ fn test_update_authority_ed25519_remove_by_index() -> anyhow::Result<()> {
         context.default_payer.pubkey(),
         root_authority.pubkey(),
         role_id,
-        1, // authority_id 1 (the second authority)
+        2, // authority_id 2 (the second authority)
         UpdateAuthorityData::RemoveActionsByIndex(indices_to_remove),
     )?;
 

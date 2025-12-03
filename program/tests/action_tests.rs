@@ -68,8 +68,8 @@ fn test_multiple_actions_with_multiple_actions() {
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 2);
-    assert_eq!(swig.state.role_counter, 2);
+    assert_eq!(swig.state.roles, 3);
+    assert_eq!(swig.state.role_counter, 3);
     let role_id = swig
         .lookup_role_id(secondary_authority.pubkey().as_ref())
         .unwrap()
@@ -148,7 +148,7 @@ fn test_multiple_actions_with_transfer_and_manage_authority() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         ixd,
-        1,
+        2,
     )
     .unwrap();
 
@@ -175,7 +175,7 @@ fn test_multiple_actions_with_transfer_and_manage_authority() {
         swig_lamports_balance + initial_swig_balance - amount
     );
     let swig_state = SwigWithRoles::from_bytes(&swig_account_after.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
     assert!(role.get_action::<SolLimit>(&[]).unwrap().is_some());
     assert!(role.get_action::<ManageAuthority>(&[]).unwrap().is_some());
 
@@ -244,7 +244,7 @@ fn test_action_boundaries_after_role_removal() {
     // Create a swig wallet with the root authority (role 0)
     let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
 
-    // Add second authority (role 1) with TokenLimit and SolLimit actions
+    // Add second authority (role 2) with TokenLimit and SolLimit actions
     add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
@@ -263,7 +263,7 @@ fn test_action_boundaries_after_role_removal() {
     )
     .unwrap();
 
-    // Add third authority (role 2) with TokenLimit and SolLimit actions
+    // Add third authority (role 3) with TokenLimit and SolLimit actions
     add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
@@ -282,10 +282,10 @@ fn test_action_boundaries_after_role_removal() {
     )
     .unwrap();
 
-    // Verify we have three authorities
+    // Verify we have four authorities
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 3);
+    assert_eq!(swig.state.roles, 4);
 
     println!("swig: {:?}", swig.state.roles);
 
@@ -343,10 +343,10 @@ fn test_action_boundaries_after_role_removal() {
 
     context.svm.send_transaction(tx).unwrap();
 
-    // Verify that only two authorities remain
+    // Verify that only three authorities remain
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 2);
+    assert_eq!(swig.state.roles, 3);
 
     // Verify the second authority no longer exists
     let second_role = swig.get_role(second_role_id);
@@ -404,14 +404,14 @@ fn test_action_boundaries_after_role_removal() {
     // Verify we have three authorities
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 3);
+    assert_eq!(swig.state.roles, 4);
 
     let fourth_role_id = swig
         .lookup_role_id(fourth_authority.pubkey().as_ref())
         .unwrap()
         .expect("Fouth authority should exist");
 
-    assert_eq!(fourth_role_id, 3);
+    assert_eq!(fourth_role_id, 4);
 
     println!(
         "Role IDs: root={}, third={}, fourth={}",

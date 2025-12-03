@@ -92,7 +92,7 @@ fn test_all_but_manage_authority_can_transfer_sol() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         ixd,
-        1, // AllButManageAuthority role
+        2, // AllButManageAuthority role
     )
     .unwrap();
 
@@ -124,7 +124,7 @@ fn test_all_but_manage_authority_can_transfer_sol() {
     );
 
     let swig_state = SwigWithRoles::from_bytes(&swig_account_after.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
     assert!(role
         .get_action::<AllButManageAuthority>(&[])
         .unwrap()
@@ -222,7 +222,7 @@ fn test_all_but_manage_authority_can_transfer_tokens() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         token_ix,
-        1, // AllButManageAuthority role
+        2, // AllButManageAuthority role
     )
     .unwrap();
 
@@ -347,7 +347,7 @@ fn test_all_but_manage_authority_can_do_cpi_calls() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         token_ix,
-        1, // AllButManageAuthority role
+        2, // AllButManageAuthority role
     )
     .unwrap();
 
@@ -356,7 +356,7 @@ fn test_all_but_manage_authority_can_do_cpi_calls() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         sol_ix,
-        1, // AllButManageAuthority role
+        2, // AllButManageAuthority role
     )
     .unwrap();
 
@@ -434,7 +434,7 @@ fn test_all_but_manage_authority_cannot_add_authority() {
     // Verify we have two authorities (root + restricted)
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_state.state.roles, 2);
+    assert_eq!(swig_state.state.roles, 3);
 
     // Get the restricted authority's role ID
     let restricted_role_id = swig_state
@@ -469,11 +469,11 @@ fn test_all_but_manage_authority_cannot_add_authority() {
         error_msg
     );
 
-    // Verify that the swig still has only 2 authorities (no new authority was
+    // Verify that the swig still has only 3 authorities (no new authority was
     // added)
     let swig_account_after = context.svm.get_account(&swig).unwrap();
     let swig_state_after = SwigWithRoles::from_bytes(&swig_account_after.data).unwrap();
-    assert_eq!(swig_state_after.state.roles, 2);
+    assert_eq!(swig_state_after.state.roles, 3);
 
     // Verify the new authority does not exist
     let new_authority_lookup = swig_state_after
@@ -556,7 +556,7 @@ fn test_all_but_manage_authority_cannot_remove_authority() {
     // Verify we have three authorities (root + restricted + target)
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_state.state.roles, 3);
+    assert_eq!(swig_state.state.roles, 4);
 
     // Get the role IDs
     let restricted_role_id = swig_state
@@ -609,10 +609,10 @@ fn test_all_but_manage_authority_cannot_remove_authority() {
         error_msg
     );
 
-    // Verify that the swig still has 3 authorities (no authority was removed)
+    // Verify that the swig still has 4 authorities (no authority was removed)
     let swig_account_after = context.svm.get_account(&swig).unwrap();
     let swig_state_after = SwigWithRoles::from_bytes(&swig_account_after.data).unwrap();
-    assert_eq!(swig_state_after.state.roles, 3);
+    assert_eq!(swig_state_after.state.roles, 4);
 
     // Verify the target authority still exists
     let target_role_still_exists = swig_state_after.get_role(target_role_id).unwrap();
@@ -675,7 +675,7 @@ fn test_all_but_manage_authority_cannot_create_sub_account() {
     // Verify we have two authorities (root + restricted)
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_state.state.roles, 2);
+    assert_eq!(swig_state.state.roles, 3);
 
     // Get the restricted authority's role ID
     let restricted_role_id = swig_state
@@ -812,7 +812,7 @@ fn test_all_but_manage_authority_cannot_withdraw_from_sub_account() {
     // Verify we have three authorities (root + restricted + sub-account)
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_state.state.roles, 3);
+    assert_eq!(swig_state.state.roles, 4);
 
     // Get the role IDs
     let restricted_role_id = swig_state
@@ -982,7 +982,7 @@ fn test_all_but_manage_authority_cannot_sign_with_sub_account() {
     // Verify we have three authorities (root + restricted + sub-account)
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_state.state.roles, 3);
+    assert_eq!(swig_state.state.roles, 4);
 
     // Get the role IDs
     let restricted_role_id = swig_state
@@ -1129,7 +1129,7 @@ fn test_all_but_manage_authority_cannot_toggle_sub_account() {
     // Verify we have three authorities (root + restricted + sub-account)
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_state.state.roles, 3);
+    assert_eq!(swig_state.state.roles, 4);
 
     // Get the role IDs
     let restricted_role_id = swig_state
@@ -1340,7 +1340,7 @@ fn test_all_but_manage_authority_cannot_update_authority() {
     // Verify we have three authorities (root + restricted + target)
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_state.state.roles, 3);
+    assert_eq!(swig_state.state.roles, 4);
 
     // Get the role IDs
     let restricted_role_id = swig_state
@@ -1406,7 +1406,7 @@ fn test_all_but_manage_authority_cannot_update_authority() {
     // Verify that the swig still has 3 authorities (no changes)
     let swig_account_after = context.svm.get_account(&swig).unwrap();
     let swig_state_after = SwigWithRoles::from_bytes(&swig_account_after.data).unwrap();
-    assert_eq!(swig_state_after.state.roles, 3);
+    assert_eq!(swig_state_after.state.roles, 4);
 
     // Verify the target authority was not modified
     let target_role_after = swig_state_after.get_role(target_role_id).unwrap().unwrap();

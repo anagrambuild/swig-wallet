@@ -56,7 +56,7 @@ impl<'a> Role<'a> {
         match_data: &[u8],
     ) -> Result<Option<&'a A>, ProgramError> {
         let mut cursor = 0;
-        if self.actions.len() < Action::LEN {
+        if self.actions.len() < Action::LEN && self.position.id() != 0 {
             return Err(ProgramError::InvalidAccountData);
         }
         while cursor < self.actions.len() {
@@ -101,7 +101,7 @@ impl<'a> Role<'a> {
     ) -> Result<Vec<&'a A>, ProgramError> {
         let mut actions = Vec::new();
         let mut cursor = 0;
-        if self.actions.len() < Action::LEN {
+        if self.actions.len() < Action::LEN && self.position.id() != 0 {
             return Err(ProgramError::InvalidAccountData);
         }
         while cursor < self.actions.len() {

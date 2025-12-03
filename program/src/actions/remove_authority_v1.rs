@@ -149,7 +149,9 @@ pub fn remove_authority_v1(
         ProgramError::InvalidInstructionData
     })?;
 
-    if remove_authority_v1.args.authority_to_remove_id == 0 {
+    if remove_authority_v1.args.authority_to_remove_id == 0
+        || remove_authority_v1.args.authority_to_remove_id == 1
+    {
         return Err(SwigAuthenticateError::PermissionDeniedCannotRemoveRootAuthority.into());
     }
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };

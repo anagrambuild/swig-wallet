@@ -120,7 +120,7 @@ fn test_create_sub_account() {
         setup_test_with_sub_account_authority(&mut context).unwrap();
 
     // Create the sub-account with the sub-account authority
-    let role_id = 1; // The sub-account authority has role_id 1
+    let role_id = 2; // The sub-account authority has role_id 1
     let sub_account =
         create_sub_account(&mut context, &swig_key, &sub_account_authority, role_id, id).unwrap();
 
@@ -203,8 +203,8 @@ fn test_withdraw_sol_from_sub_account() {
         solana_sdk::pubkey::Pubkey::find_program_address(&swig_wallet_address_seeds, &program_id());
 
     // Create the sub-account with the sub-account authority
-    let role_id = 1; // The sub-account authority has role_id 1
-    let root_role_id = 0;
+    let role_id = 2; // The sub-account authority has role_id 2
+    let root_role_id = 1;
     let sub_account =
         create_sub_account(&mut context, &swig_key, &sub_account_authority, role_id, id).unwrap();
 
@@ -275,7 +275,7 @@ fn test_sub_account_sign() {
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
 
     // Create the sub-account with the sub-account authority
-    let role_id = 1; // The sub-account authority has role_id 1
+    let role_id = 2; // The sub-account authority has role_id 2
     let sub_account =
         create_sub_account(&mut context, &swig_key, &sub_account_authority, role_id, id).unwrap();
 
@@ -325,7 +325,7 @@ fn test_toggle_sub_account() {
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
 
     // Create the sub-account with the sub-account authority
-    let role_id = 1; // The sub-account authority has role_id 1
+    let role_id = 2; // The sub-account authority has role_id 2
     let root_role_id = 0;
     let sub_account =
         create_sub_account(&mut context, &swig_key, &sub_account_authority, role_id, id).unwrap();
@@ -342,7 +342,7 @@ fn test_toggle_sub_account() {
         &sub_account,
         &sub_account_authority,
         role_id,
-        1,
+        2,
         false, // disabled
     )
     .unwrap();
@@ -410,7 +410,7 @@ fn test_toggle_sub_account() {
         &sub_account,
         &sub_account_authority,
         role_id,
-        1,
+        2,
         true, // enabled
     )
     .unwrap();
@@ -491,7 +491,7 @@ fn test_toggle_sub_account_with_auth_role_id() {
         .svm
         .airdrop(&manage_authority.pubkey(), 1_000_000)
         .unwrap();
-    let manage_authority_role_id = 2;
+    let manage_authority_role_id = 3;
     let new_role = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
@@ -524,7 +524,7 @@ fn test_toggle_sub_account_with_auth_role_id() {
     .unwrap();
 
     // Create the sub-account with the sub-account authority
-    let role_id = 1; // The sub-account authority has role_id 1
+    let role_id = 2; // The sub-account authority has role_id 2
     let root_role_id = 0;
     let sub_account =
         create_sub_account(&mut context, &swig_key, &sub_account_authority, role_id, id).unwrap();
@@ -722,7 +722,7 @@ fn test_non_root_authority_cannot_disable_sub_account() {
     .unwrap();
 
     // Create the sub-account with the sub-account authority
-    let role_id = 1;
+    let role_id = 2;
     let sub_account =
         create_sub_account(&mut context, &swig_key, &sub_account_authority, role_id, id).unwrap();
 
@@ -737,8 +737,8 @@ fn test_non_root_authority_cannot_disable_sub_account() {
         &swig_key,
         &sub_account,
         &unauthorized_authority,
-        2, // The authority exists but lacks permissions
-        1,
+        3, // The authority exists but lacks permissions
+        2,
         false, // disabled
     );
 
@@ -814,7 +814,7 @@ fn test_non_root_authority_cannot_withdraw_from_sub_account() {
     .unwrap();
 
     // Create the sub-account with the sub-account authority
-    let role_id = 1;
+    let role_id = 2;
     let sub_account =
         create_sub_account(&mut context, &swig_key, &sub_account_authority, role_id, id).unwrap();
 
@@ -891,7 +891,7 @@ fn test_withdraw_token_from_sub_account() {
         setup_test_with_sub_account_authority(&mut context).unwrap();
     let (swig_wallet_address, _) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
-    let role_id = 1;
+    let role_id = 2;
     let sub_account = create_sub_account(
         &mut context,
         &swig_key,
@@ -933,7 +933,7 @@ fn test_withdraw_token_from_sub_account() {
         &sub_account_ata,
         &swig_ata,
         &spl_token::id(),
-        0,
+        1,
         initial_token_amount,
     )
     .unwrap();
