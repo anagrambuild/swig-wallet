@@ -635,6 +635,8 @@ fn test_authlock_manage_with_two_added_authorities() {
     let action = role_2.get_action::<ManageAuthorizationLocks>(&[]).unwrap();
     assert!(action.is_some());
 
+    display_swig(&swig_key, &swig_account.data, swig_account.lamports);
+
     /// UPDATE AUTHORITY WITH AUTHORIZATION LOCKS
     /// updating the authority role with authorization locks
     let new_actions: Vec<ClientAction> = vec![
@@ -689,6 +691,8 @@ fn test_authlock_manage_with_two_added_authorities() {
     println!("result: {:?}", result);
     assert!(result.is_ok());
 
+    display_swig(&swig_key, &swig_account.data, swig_account.lamports);
+
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
     assert_eq!(swig.state.roles, 3);
@@ -697,7 +701,7 @@ fn test_authlock_manage_with_two_added_authorities() {
     assert_eq!(role_2.authority.authority_type(), AuthorityType::Ed25519);
     assert!(!role_2.authority.session_based());
     let actions = role_2.get_all_actions().unwrap();
-    assert_eq!(actions.len(), 3);
+    assert_eq!(actions.len(), 2);
     println!(
         "actions[0]: {:?}",
         role_2
@@ -713,6 +717,8 @@ fn test_authlock_manage_with_two_added_authorities() {
         "actions[2]: {:?}",
         role_2.get_action::<AuthorizationLock>(&[1u8; 32]).unwrap()
     );
+
+    display_swig(&swig_key, &swig_account.data, swig_account.lamports);
 
     let third_authority = Keypair::new();
     context
@@ -750,6 +756,8 @@ fn test_authlock_manage_with_two_added_authorities() {
     assert_eq!(role_3.position.num_actions(), 1);
     let action = role_3.get_action::<ManageAuthorizationLocks>(&[]).unwrap();
     assert!(action.is_some());
+
+    display_swig(&swig_key, &swig_account.data, swig_account.lamports);
 
     context.svm.warp_to_slot(499);
 
@@ -831,6 +839,221 @@ fn test_authlock_manage_with_two_added_authorities() {
         "actions[2]: {:?}",
         role_2.get_action::<AuthorizationLock>(&[1u8; 32]).unwrap()
     );
+
+    display_swig(&swig_key, &swig_account.data, swig_account.lamports);
+
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let role_0 = swig.get_role(0).unwrap().unwrap();
+    let actions = role_0.get_all_actions().unwrap();
+    println!(
+        "action with 0 mint: {:?}",
+        role_0.get_action::<AuthorizationLock>(&[0u8; 32]).unwrap()
+    );
+    println!(
+        "action with 1 mint: {:?}",
+        role_0.get_action::<AuthorizationLock>(&[1u8; 32]).unwrap()
+    );
+}
+
+#[test_log::test]
+fn test_authlock_flow_with_different_expiries() {
+    // Step 1: Create swig
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+
+    let (swig_key, _swig_create_txn) =
+        create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    // Step 2: Add secondary auth
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::ManageAuthorizationLocks(
+            ManageAuthorizationLocks {},
+        )],
+    );
+    assert!(result.is_ok());
+
+    // Step 3: Add authlocks for secondary auth and display swig
+    let new_actions: Vec<ClientAction> = vec![
+        ClientAction::AuthorizationLock(AuthorizationLock {
+            mint: [0u8; 32],
+            amount: 1_000_000,
+            expires_at: 500, // First expiry time
+        }),
+        ClientAction::AuthorizationLock(AuthorizationLock {
+            mint: [1u8; 32],
+            amount: 2_000_000,
+            expires_at: 500, // First expiry time
+        }),
+    ];
+
+    let manage_auth_lock_data = ManageAuthLockData::AddAuthorizationLocks(new_actions);
+
+    let manage_auth_lock_instruction = ManageAuthLockInstruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        swig_authority.pubkey(),
+        1, // acting_role_id 1 (the root authority)
+        2, // authority_id 2 (the second authority we just added)
+        manage_auth_lock_data,
+    )
+    .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[manage_auth_lock_instruction],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &swig_authority],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    assert!(result.is_ok());
+
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    display_swig(&swig_key, &swig_account.data, swig_account.lamports);
+
+    // Step 4: Add third authority and display swig
+    let third_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&third_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: third_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::ManageAuthorizationLocks(
+            ManageAuthorizationLocks {},
+        )],
+    );
+    assert!(result.is_ok());
+
+    // Step 5: Add authlocks but with different expiry than the second ones and display swig
+    let new_actions: Vec<ClientAction> = vec![
+        ClientAction::AuthorizationLock(AuthorizationLock {
+            mint: [0u8; 32],
+            amount: 3_000_000,
+            expires_at: 100, // Different expiry time (1000 vs 500)
+        }),
+        ClientAction::AuthorizationLock(AuthorizationLock {
+            mint: [1u8; 32],
+            amount: 3_000_000,
+            expires_at: 1000, // Different expiry time (1000 vs 500)
+        }),
+        ClientAction::AuthorizationLock(AuthorizationLock {
+            mint: [3u8; 32],
+            amount: 4_000_000,
+            expires_at: 1000, // Different expiry time (1000 vs 500)
+        }),
+    ];
+
+    let manage_auth_lock_data = ManageAuthLockData::AddAuthorizationLocks(new_actions);
+
+    let manage_auth_lock_instruction = ManageAuthLockInstruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        swig_authority.pubkey(),
+        1, // acting_role_id 1 (the root authority)
+        3, // authority_id 3 (the third authority we just added)
+        manage_auth_lock_data,
+    )
+    .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[manage_auth_lock_instruction],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &swig_authority],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    println!("result: {:?}", result);
+    assert!(result.is_ok());
+
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    display_swig(&swig_key, &swig_account.data, swig_account.lamports);
+
+    context.svm.warp_to_slot(500);
+
+    let modify_auth_lock_data = ManageAuthLockData::ModifyAuthorizationLock(vec![
+        ClientAction::AuthorizationLock(AuthorizationLock {
+            mint: [1u8; 32],
+            amount: 3_000_000,
+            expires_at: 3000000,
+        }),
+        ClientAction::AuthorizationLock(AuthorizationLock {
+            mint: [0u8; 32],
+            amount: 4_000_000,
+            expires_at: 3000000,
+        }),
+    ]);
+    let modify_auth_lock_instruction = ManageAuthLockInstruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        swig_authority.pubkey(),
+        1, // acting_role_id 1 (the root authority)
+        3, // authority_id 3 (the third authority we just added)
+        modify_auth_lock_data,
+    )
+    .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[modify_auth_lock_instruction],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &swig_authority],
+    )
+    .unwrap();
+    let result = context.svm.send_transaction(tx);
+    println!("result: {:?}", result);
+
+    assert!(result.is_ok());
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    display_swig(&swig_key, &swig_account.data, swig_account.lamports);
 }
 
 // #[test]

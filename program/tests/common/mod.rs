@@ -17,11 +17,23 @@ use swig_interface::{
     UpdateAuthorityData, UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, sub_account::SubAccount},
+    action::{
+        all::All, all_but_manage_authority::AllButManageAuthority, authlock::AuthorizationLock,
+        manage_authlock::ManageAuthorizationLocks, manage_authority::ManageAuthority,
+        program::Program, program_all::ProgramAll, program_curated::ProgramCurated,
+        program_scope::ProgramScope, sol_destination_limit::SolDestinationLimit,
+        sol_limit::SolLimit, sol_recurring_destination_limit::SolRecurringDestinationLimit,
+        sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll, stake_limit::StakeLimit,
+        stake_recurring_limit::StakeRecurringLimit, sub_account::SubAccount,
+        token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
+        token_recurring_destination_limit::TokenRecurringDestinationLimit,
+        token_recurring_limit::TokenRecurringLimit,
+    },
     authority::{
         ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
         secp256r1::CreateSecp256r1SessionAuthority, AuthorityType,
     },
+    role::Role,
     swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
     IntoBytes, Transmutable,
 };
@@ -961,4 +973,353 @@ pub fn update_authority_with_ed25519_root_with_remove_actions(
         .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
 
     Ok(result)
+}
+
+pub fn display_swig(swig_pubkey: &Pubkey, data: &[u8], lamports: u64) -> Result<()> {
+    let swig_with_roles = SwigWithRoles::from_bytes(data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
+
+    println!("╔══════════════════════════════════════════════════════════════════");
+    println!("║ SWIG WALLET DETAILS");
+    println!("╠══════════════════════════════════════════════════════════════════");
+    println!("║ Account Address: {}", swig_pubkey);
+    println!("║ Total Roles: {}", swig_with_roles.state.role_counter);
+    println!("║ Balance: {} SOL", lamports as f64 / 1_000_000_000.0);
+
+    println!("╠══════════════════════════════════════════════════════════════════");
+    println!("║ ROLES & PERMISSIONS");
+    println!("╠══════════════════════════════════════════════════════════════════");
+
+    for i in 0..swig_with_roles.state.role_counter {
+        let role = swig_with_roles
+            .get_role(i)
+            .map_err(|e| anyhow::anyhow!("Failed to get role {:?}", e))?;
+
+        if let Some(role) = role {
+            println!("║");
+            println!("║ Role ID: {}", i);
+            println!(
+                "║ ├─ Type: {}",
+                if role.authority.session_based() {
+                    "Session-based Authority"
+                } else {
+                    "Permanent Authority"
+                }
+            );
+            println!("║ ├─ Authority Type: {:?}", role.authority.authority_type());
+            println!(
+                "║ ├─ Authority: {}",
+                match role.authority.authority_type() {
+                    AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
+                        let authority = role.authority.identity().unwrap();
+                        let authority = bs58::encode(authority).into_string();
+                        authority
+                    },
+                    AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
+                        let authority = role.authority.identity().unwrap();
+                        let authority_hex = hex::encode([&[0x4].as_slice(), authority].concat());
+                        // get eth address from public key
+                        let mut hasher = solana_sdk::keccak::Hasher::default();
+                        hasher.hash(authority_hex.as_bytes());
+                        let hash = hasher.result();
+                        let address = format!("0x{}", hex::encode(&hash.0[12..32]));
+                        format!(
+                            "{} \n║ │  ├─ odometer: {:?}",
+                            address,
+                            role.authority.signature_odometer()
+                        )
+                    },
+                    AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
+                        let authority = role.authority.identity().unwrap();
+                        let authority_hex = hex::encode(authority);
+                        format!(
+                            "Secp256r1: {} \n║ │  ├─ odometer: {:?}",
+                            authority_hex,
+                            role.authority.signature_odometer()
+                        )
+                    },
+                    _ => "Unknown authority type".to_string(),
+                }
+            );
+
+            println!("║ ├─ Permissions:");
+
+            // Check All permission
+            if (Role::get_action::<All>(&role, &[])
+                .map_err(|_| anyhow::anyhow!("Failed to get action"))?)
+            .is_some()
+            {
+                println!("║ │  ├─ Full Access (All Permissions)");
+            }
+
+            // Check Manage Authority permission
+            if (Role::get_action::<ManageAuthority>(&role, &[])
+                .map_err(|_| anyhow::anyhow!("Failed to get action"))?)
+            .is_some()
+            {
+                println!("║ │  ├─ Manage Authority");
+            }
+
+            // Check Sol Limit
+            if let Some(action) = Role::get_action::<SolLimit>(&role, &[])
+                .map_err(|_| anyhow::anyhow!("Failed to get action"))?
+            {
+                println!(
+                    "║ │  ├─ SOL Limit: {} SOL",
+                    action.amount as f64 / 1_000_000_000.0
+                );
+            }
+
+            // Check Sol Recurring Limit
+            if let Some(action) = Role::get_action::<SolRecurringLimit>(&role, &[])
+                .map_err(|_| anyhow::anyhow!("Failed to get action"))?
+            {
+                println!("║ │  ├─ Recurring SOL Limit:");
+                println!(
+                    "║ │  │  ├─ Amount: {} SOL",
+                    action.recurring_amount as f64 / 1_000_000_000.0
+                );
+                println!("║ │  │  ├─ Window: {} slots", action.window);
+                println!(
+                    "║ │  │  ├─ Current Usage: {} SOL",
+                    action.current_amount as f64 / 1_000_000_000.0
+                );
+                println!("║ │  │  └─ Last Reset: Slot {}", action.last_reset);
+            }
+
+            let auth_lock_actions = role.get_all_actions_of_type::<AuthorizationLock>().unwrap();
+            if !auth_lock_actions.is_empty() {
+                println!("║ │  ├─ Authorization Locks:");
+                for action in auth_lock_actions {
+                    println!("║ │  │  ├─ Mint: {:?}", action.mint);
+                    println!("║ │  │  ├─ Amount: {}", action.amount);
+                    println!("║ │  │  ├─ Expires At: {}", action.expires_at);
+                    println!("║ │  │  ");
+                }
+            }
+
+            // Check AllButManageAuthority permission
+            if (Role::get_action::<AllButManageAuthority>(&role, &[])
+                .map_err(|_| anyhow::anyhow!("Failed to get action"))?)
+            .is_some()
+            {
+                println!("║ │  ├─ All But Manage Authority");
+            }
+
+            // Check SubAccount permissions
+            let sub_account_actions = role.get_all_actions_of_type::<SubAccount>().unwrap();
+            if !sub_account_actions.is_empty() {
+                println!("║ │  ├─ Sub Accounts:");
+                for action in sub_account_actions {
+                    let sub_account_pubkey = Pubkey::new_from_array(action.sub_account);
+                    println!("║ │  │  ├─ Sub Account: {}", sub_account_pubkey);
+                    println!("║ │  │  ├─ Enabled: {}", action.enabled);
+                    println!("║ │  │  ├─ Role ID: {}", action.role_id);
+                    println!("║ │  │  ");
+                }
+            }
+
+            // Check Program permissions
+            let program_actions = role.get_all_actions_of_type::<Program>().unwrap();
+            if !program_actions.is_empty() {
+                println!("║ │  ├─ Programs:");
+                for action in program_actions {
+                    let program_id = Pubkey::new_from_array(action.program_id);
+                    println!("║ │  │  ├─ Program ID: {}", program_id);
+                }
+            }
+
+            // Check ProgramScope permissions
+            let program_scope_actions = role.get_all_actions_of_type::<ProgramScope>().unwrap();
+            if !program_scope_actions.is_empty() {
+                println!("║ │  ├─ Program Scopes:");
+                for action in program_scope_actions {
+                    let program_id = Pubkey::new_from_array(action.program_id);
+                    let target_account = Pubkey::new_from_array(action.target_account);
+                    println!("║ │  │  ├─ Program ID: {}", program_id);
+                    println!("║ │  │  ├─ Target Account: {}", target_account);
+                    println!("║ │  │  ├─ Scope Type: {}", action.scope_type);
+                    println!("║ │  │  ├─ Limit: {}", action.limit);
+                    println!("║ │  │  ├─ Current Amount: {}", action.current_amount);
+                    println!("║ │  │  ├─ Window: {} slots", action.window);
+                    println!("║ │  │  ├─ Last Reset: Slot {}", action.last_reset);
+                    println!("║ │  │  ├─ Numeric Type: {}", action.numeric_type);
+                    println!(
+                        "║ │  │  ├─ Balance Field: {} - {}",
+                        action.balance_field_start, action.balance_field_end
+                    );
+                    println!("║ │  │  ");
+                }
+            }
+
+            // Check ProgramAll permission
+            if (Role::get_action::<ProgramAll>(&role, &[])
+                .map_err(|_| anyhow::anyhow!("Failed to get action"))?)
+            .is_some()
+            {
+                println!("║ │  ├─ Program All (Unrestricted CPI)");
+            }
+
+            // Check ProgramCurated permission
+            if (Role::get_action::<ProgramCurated>(&role, &[])
+                .map_err(|_| anyhow::anyhow!("Failed to get action"))?)
+            .is_some()
+            {
+                println!("║ │  ├─ Program Curated");
+            }
+
+            // Check Token Limit permissions
+            let token_limit_actions = role.get_all_actions_of_type::<TokenLimit>().unwrap();
+            if !token_limit_actions.is_empty() {
+                println!("║ │  ├─ Token Limits:");
+                for action in token_limit_actions {
+                    let mint = Pubkey::new_from_array(action.token_mint);
+                    println!("║ │  │  ├─ Mint: {}", mint);
+                    println!("║ │  │  ├─ Remaining Amount: {}", action.current_amount);
+                    println!("║ │  │  ");
+                }
+            }
+
+            // Check Token Recurring Limit permissions
+            let token_recurring_limit_actions = role
+                .get_all_actions_of_type::<TokenRecurringLimit>()
+                .unwrap();
+            if !token_recurring_limit_actions.is_empty() {
+                println!("║ │  ├─ Recurring Token Limits:");
+                for action in token_recurring_limit_actions {
+                    let mint = Pubkey::new_from_array(action.token_mint);
+                    println!("║ │  │  ├─ Mint: {}", mint);
+                    println!("║ │  │  ├─ Recurring Amount: {}", action.limit);
+                    println!("║ │  │  ├─ Window: {} slots", action.window);
+                    println!("║ │  │  ├─ Current Usage: {}", action.current);
+                    println!("║ │  │  ├─ Last Reset: Slot {}", action.last_reset);
+                    println!("║ │  │  ");
+                }
+            }
+
+            // Check Token Destination Limit permissions
+            let token_destination_limit_actions = role
+                .get_all_actions_of_type::<TokenDestinationLimit>()
+                .unwrap();
+            if !token_destination_limit_actions.is_empty() {
+                println!("║ │  ├─ Token Destination Limits:");
+                for action in token_destination_limit_actions {
+                    let mint = Pubkey::new_from_array(action.token_mint);
+                    let destination = Pubkey::new_from_array(action.destination);
+                    println!("║ │  │  ├─ Mint: {}", mint);
+                    println!("║ │  │  ├─ Destination: {}", destination);
+                    println!("║ │  │  ├─ Remaining Amount: {}", action.amount);
+                    println!("║ │  │  ");
+                }
+            }
+
+            // Check Token Recurring Destination Limit permissions
+            let token_recurring_destination_limit_actions = role
+                .get_all_actions_of_type::<TokenRecurringDestinationLimit>()
+                .unwrap();
+            if !token_recurring_destination_limit_actions.is_empty() {
+                println!("║ │  ├─ Recurring Token Destination Limits:");
+                for action in token_recurring_destination_limit_actions {
+                    let mint = Pubkey::new_from_array(action.token_mint);
+                    let destination = Pubkey::new_from_array(action.destination);
+                    println!("║ │  │  ├─ Mint: {}", mint);
+                    println!("║ │  │  ├─ Destination: {}", destination);
+                    println!("║ │  │  ├─ Recurring Amount: {}", action.recurring_amount);
+                    println!("║ │  │  ├─ Window: {} slots", action.window);
+                    println!("║ │  │  ├─ Current Usage: {}", action.current_amount);
+                    println!("║ │  │  ├─ Last Reset: Slot {}", action.last_reset);
+                    println!("║ │  │  ");
+                }
+            }
+
+            // Check Sol Destination Limit permissions
+            let sol_destination_limit_actions = role
+                .get_all_actions_of_type::<SolDestinationLimit>()
+                .unwrap();
+            if !sol_destination_limit_actions.is_empty() {
+                println!("║ │  ├─ SOL Destination Limits:");
+                for action in sol_destination_limit_actions {
+                    let destination = Pubkey::new_from_array(action.destination);
+                    println!("║ │  │  ├─ Destination: {}", destination);
+                    println!(
+                        "║ │  │  ├─ Remaining Amount: {} SOL",
+                        action.amount as f64 / 1_000_000_000.0
+                    );
+                    println!("║ │  │  ");
+                }
+            }
+
+            // Check Sol Recurring Destination Limit permissions
+            let sol_recurring_destination_limit_actions = role
+                .get_all_actions_of_type::<SolRecurringDestinationLimit>()
+                .unwrap();
+            if !sol_recurring_destination_limit_actions.is_empty() {
+                println!("║ │  ├─ Recurring SOL Destination Limits:");
+                for action in sol_recurring_destination_limit_actions {
+                    let destination = Pubkey::new_from_array(action.destination);
+                    println!("║ │  │  ├─ Destination: {}", destination);
+                    println!(
+                        "║ │  │  ├─ Recurring Amount: {} SOL",
+                        action.recurring_amount as f64 / 1_000_000_000.0
+                    );
+                    println!("║ │  │  ├─ Window: {} slots", action.window);
+                    println!(
+                        "║ │  │  ├─ Current Usage: {} SOL",
+                        action.current_amount as f64 / 1_000_000_000.0
+                    );
+                    println!("║ │  │  ├─ Last Reset: Slot {}", action.last_reset);
+                    println!("║ │  │  ");
+                }
+            }
+
+            // Check Stake Limit
+            if let Some(action) = Role::get_action::<StakeLimit>(&role, &[])
+                .map_err(|_| anyhow::anyhow!("Failed to get action"))?
+            {
+                println!(
+                    "║ │  ├─ Stake Limit: {} SOL",
+                    action.amount as f64 / 1_000_000_000.0
+                );
+            }
+
+            // Check Stake Recurring Limit
+            if let Some(action) = Role::get_action::<StakeRecurringLimit>(&role, &[])
+                .map_err(|_| anyhow::anyhow!("Failed to get action"))?
+            {
+                println!("║ │  ├─ Recurring Stake Limit:");
+                println!(
+                    "║ │  │  ├─ Amount: {} SOL",
+                    action.recurring_amount as f64 / 1_000_000_000.0
+                );
+                println!("║ │  │  ├─ Window: {} slots", action.window);
+                println!(
+                    "║ │  │  ├─ Current Usage: {} SOL",
+                    action.current_amount as f64 / 1_000_000_000.0
+                );
+                println!("║ │  │  └─ Last Reset: Slot {}", action.last_reset);
+            }
+
+            // Check Stake All permission
+            if (Role::get_action::<StakeAll>(&role, &[])
+                .map_err(|_| anyhow::anyhow!("Failed to get action"))?)
+            .is_some()
+            {
+                println!("║ │  ├─ Stake All");
+            }
+
+            // Check Manage Authorization Locks permission
+            if (Role::get_action::<ManageAuthorizationLocks>(&role, &[])
+                .map_err(|_| anyhow::anyhow!("Failed to get action"))?)
+            .is_some()
+            {
+                println!("║ │  ├─ Manage Authorization Locks");
+            }
+
+            println!("║ │  ");
+        }
+    }
+
+    println!("╚══════════════════════════════════════════════════════════════════");
+
+    Ok(())
 }

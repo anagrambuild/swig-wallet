@@ -681,131 +681,180 @@ pub fn manage_auth_lock_v1(
     if all.is_none() && manage_authority.is_none() {
         return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
     }
+    {
+        // Verify the authority to update exists and calculate size difference
+        let (current_actions_size, authority_offset, actions_offset) = get_role_offsets(
+            swig,
+            swig_roles,
+            update_authority_v1.args.authority_to_update_id,
+        )?;
 
-    // Verify the authority to update exists and calculate size difference
-    let existing_authlocks: Option<Vec<AuthorizationLock>> = None;
-    let (current_actions_size, authority_offset, actions_offset) = {
-        let mut cursor = 0;
-        let mut found = false;
-        let mut auth_offset = 0;
-        let mut act_offset = 0;
-        let mut current_size = 0;
+        // Calculate size difference first
+        let operation = update_authority_v1.get_operation()?;
+        match operation {
+            ManageAuthLockOperation::AddAuthorizationLocks => {
+                // For add, we append new actions after the existing ones. The
+                // on-chain layout stores only the raw action bytes (without the
+                // leading operation discriminator), so size_diff should be computed
+                // using the decoded actions slice.
+                let new_actions = update_authority_v1.get_actions_data()?;
+                let size_diff = new_actions.len() as i64;
+                if size_diff != 0 {
+                    let new_size = (swig_data_len as i64 + size_diff) as usize;
+                    let aligned_size =
+                        core::alloc::Layout::from_size_align(new_size, core::mem::size_of::<u64>())
+                            .map_err(|_| SwigError::InvalidAlignment)?
+                            .pad_to_align()
+                            .size();
 
-        for _i in 0..swig.roles {
-            let position =
-                unsafe { Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])? };
+                    ctx.accounts.swig.resize(aligned_size)?;
 
-            if position.id() == update_authority_v1.args.authority_to_update_id {
-                found = true;
-                auth_offset = cursor;
-                act_offset = cursor + Position::LEN + position.authority_length() as usize;
-                current_size = position.boundary() as usize - act_offset;
-                break;
-            }
-            cursor = position.boundary() as usize;
-        }
+                    let cost = Rent::get()?.minimum_balance(aligned_size);
+                    let current_lamports =
+                        unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
 
-        if !found {
-            return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-        }
+                    let additional_cost = cost.saturating_sub(current_lamports);
 
-        (current_size, auth_offset, act_offset)
-    };
+                    if additional_cost > 0 {
+                        Transfer {
+                            from: ctx.accounts.payer,
+                            to: ctx.accounts.swig,
+                            lamports: additional_cost,
+                        }
+                        .invoke()?;
+                    }
+                }
 
-    let current_actions = &swig_roles[actions_offset..actions_offset + current_actions_size];
+                let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+                let (swig_header, swig_roles) =
+                    unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+                let _swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
 
-    let existing_authlocks = get_all_actions_of_type::<AuthorizationLock>(current_actions)?;
+                perform_add_actions_operation(
+                    swig_roles,
+                    swig_data_len,
+                    authority_offset,
+                    actions_offset,
+                    current_actions_size,
+                    new_actions,
+                    update_authority_v1.args.authority_to_update_id,
+                )?;
+            },
+            ManageAuthLockOperation::RemoveAuthorizationLocks => {
+                let remove_mints = update_authority_v1.get_remove_mints()?;
 
-    let existing_manage_authlocks =
-        get_all_actions_of_type::<ManageAuthorizationLocks>(current_actions)?;
+                let size_diff = perform_remove_by_mints_operation(
+                    swig_roles,
+                    swig_data_len,
+                    authority_offset,
+                    actions_offset,
+                    current_actions_size,
+                    &remove_mints,
+                    update_authority_v1.args.authority_to_update_id,
+                )?;
 
-    // Calculate size difference first
-    let operation = update_authority_v1.get_operation()?;
-    let size_diff = match operation {
-        ManageAuthLockOperation::AddAuthorizationLocks => {
-            // For add, we append new actions after the existing ones. The
-            // on-chain layout stores only the raw action bytes (without the
-            // leading operation discriminator), so size_diff should be computed
-            // using the decoded actions slice.
-            let new_actions = update_authority_v1.get_actions_data()?;
-            new_actions.len() as i64 // Adding to existing, so just the new size
-        },
-        ManageAuthLockOperation::RemoveAuthorizationLocks => {
-            // For remove operations, we need to calculate how much will be removed
-            // This is complex, so for now we'll calculate it in the operation function
-            0 // Will be calculated in the operation
-        },
-        ManageAuthLockOperation::ModifyAuthorizationLock => {
-            // For remove operations, we need to calculate how much will be removed
-            // This is complex, so for now we'll calculate it in the operation function
-            0 // Will be calculated in the operation
-        },
-    };
+                if size_diff != 0 {
+                    msg!("size_diff: {:?}", size_diff);
+                    let existing_swig_size = ctx.accounts.swig.data_len();
+                    let new_swig_size = existing_swig_size as i64 + size_diff as i64;
+                    let aligned_size = core::alloc::Layout::from_size_align(
+                        new_swig_size as usize,
+                        core::mem::size_of::<u64>(),
+                    )
+                    .map_err(|_| SwigError::InvalidAlignment)?
+                    .pad_to_align()
+                    .size();
 
-    // Handle account reallocation if size changed (before operations)
-    let new_reserved_lamports = if size_diff != 0 {
-        let new_size = (swig_data_len as i64 + size_diff) as usize;
-        let aligned_size =
-            core::alloc::Layout::from_size_align(new_size, core::mem::size_of::<u64>())
-                .map_err(|_| SwigError::InvalidAlignment)?
-                .pad_to_align()
-                .size();
+                    ctx.accounts.swig.resize(aligned_size)?;
 
-        ctx.accounts.swig.realloc(aligned_size, false)?;
+                    let cost = Rent::get()?.minimum_balance(aligned_size);
+                    let current_lamports =
+                        unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
 
-        let cost = Rent::get()?.minimum_balance(aligned_size);
-        let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
+                    let additional_cost = current_lamports.saturating_sub(cost);
 
-        let additional_cost = cost.saturating_sub(current_lamports);
+                    if additional_cost > 0 {
+                        unsafe {
+                            *ctx.accounts.swig.borrow_mut_lamports_unchecked() -= additional_cost;
+                            *ctx.accounts.payer.borrow_mut_lamports_unchecked() += additional_cost;
+                        }
+                    }
+                }
+            },
+            ManageAuthLockOperation::ModifyAuthorizationLock => {
+                let modify_auth_locks = update_authority_v1.get_auth_locks()?;
 
-        if additional_cost > 0 {
-            Transfer {
-                from: ctx.accounts.payer,
-                to: ctx.accounts.swig,
-                lamports: additional_cost,
-            }
-            .invoke()?;
-        }
+                let mut modify_role = Swig::get_mut_role(
+                    update_authority_v1.args.authority_to_update_id,
+                    swig_roles,
+                )?;
+                if modify_role.is_none() {
+                    return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+                }
+                let modify_role = modify_role.unwrap();
+                let mut actions = modify_role.actions;
 
-        cost
-    } else {
-        // No size change, so no need to transfer additional funds
-        0
-    };
+                for auth_lock in modify_auth_locks {
+                    if let Some(action) =
+                        RoleMut::get_action_mut::<AuthorizationLock>(actions, &auth_lock.mint)?
+                    {
+                        action.update(auth_lock.amount, auth_lock.expires_at);
+                    } else {
+                        return Err(SwigError::InvalidAuthorizationLockNotFound.into());
+                    }
+                }
+            },
+        };
+    }
 
     // Get fresh references to the swig account data after reallocation
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+    let swig_data_len = swig_account_data.len();
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let _swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
 
-    let mut size_diff = 0;
-    // Now perform the operation with the reallocated account
-    match operation {
-        ManageAuthLockOperation::AddAuthorizationLocks => {
-            let new_actions = update_authority_v1.get_actions_data()?;
+    // CACHE UPDATE AND EXPIRED AUTH HANDLING MODULE
+    {
+        let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        let (swig_header, mut swig_roles) =
+            unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
 
-            perform_add_actions_operation(
+        let current_slot = Clock::get()?.slot;
+        let (cache_auth_locks, expired_auth_locks) = get_cache_data(
+            swig_roles,
+            update_authority_v1.get_changed_mints()?,
+            current_slot,
+        )?;
+        msg!("expired_auth_locks: {:?}", expired_auth_locks);
+        msg!("cache_auth_locks: {:?}", cache_auth_locks);
+
+        // collect all the mints that are expired for each position
+        let mut cache_role = Swig::get_mut_role(0, swig_roles)?;
+        if cache_role.is_none() {
+            return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+        }
+        let cache_role = cache_role.unwrap();
+        let mut actions = cache_role.actions;
+
+        // Expiring handling logic
+        for (position_id, expired_mints) in expired_auth_locks {
+            let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+            let (swig_header, mut swig_roles) =
+                unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+            let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+
+            let (current_actions_size, authority_offset, actions_offset) =
+                get_role_offsets(swig, swig_roles, position_id)?;
+
+            // Remove the actions for the expired mints for each Role
+            let size_diff = perform_remove_by_mints_operation(
                 swig_roles,
                 swig_data_len,
                 authority_offset,
                 actions_offset,
                 current_actions_size,
-                new_actions,
-                update_authority_v1.args.authority_to_update_id,
-            )?;
-        },
-        ManageAuthLockOperation::RemoveAuthorizationLocks => {
-            // exclude the existing auth locks from the new actions and pass it to the replace all operation
-            let remove_mints = update_authority_v1.get_remove_mints()?;
-
-            size_diff = perform_remove_by_mints_operation(
-                swig_roles,
-                swig_data_len,
-                authority_offset,
-                actions_offset,
-                current_actions_size,
-                &remove_mints,
-                update_authority_v1.args.authority_to_update_id,
+                &expired_mints,
+                position_id,
             )?;
 
             if size_diff != 0 {
@@ -834,67 +883,88 @@ pub fn manage_auth_lock_v1(
                     }
                 }
             }
-        },
-        ManageAuthLockOperation::ModifyAuthorizationLock => {
-            let modify_auth_locks = update_authority_v1.get_auth_locks()?;
+        }
 
-            let mut modify_role =
-                Swig::get_mut_role(update_authority_v1.args.authority_to_update_id, swig_roles)?;
-            if modify_role.is_none() {
-                return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-            }
-            let modify_role = modify_role.unwrap();
-            let mut actions = modify_role.actions;
-
-            for auth_lock in modify_auth_locks {
-                if let Some(action) =
-                    RoleMut::get_action_mut::<AuthorizationLock>(actions, &auth_lock.mint)?
-                {
-                    action.update(auth_lock.amount, auth_lock.expires_at);
-                } else {
-                    return Err(SwigError::InvalidAuthorizationLockNotFound.into());
-                }
-            }
-        },
-    }
-
-    /// CACHE UPDATE AND EXPIRED AUTH HANDLING MODULE
-    {
         let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-        let (swig_header, swig_roles) =
+        let swig_data_len = swig_account_data.len();
+        let (swig_header, mut swig_roles) =
             unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
 
-        let current_slot = Clock::get()?.slot;
-        let (cache_auth_locks, expired_auth_locks) = get_cache_data(
-            swig_roles,
-            update_authority_v1.get_changed_mints()?,
-            current_slot,
-        )?;
-        msg!("expired_auth_locks: {:?}", expired_auth_locks);
-        msg!("cache_auth_locks: {:?}", cache_auth_locks);
+        let mut new_actions_for_cache = Vec::new();
 
-        // collect all the mints that are expired for each position
-        let mut cache_role = Swig::get_mut_role(0, swig_roles)?;
-        if cache_role.is_none() {
-            return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-        }
-        let cache_role = cache_role.unwrap();
-        let mut actions = cache_role.actions;
-
-        for (position_id, expired_mints) in expired_auth_locks {
-            // Remove the actions for the expired mints for each Role
-            todo!("Remove actions logic here");
-        }
-
+        // Cache update logic
         for auth_lock in cache_auth_locks {
             if let Some(action) =
                 RoleMut::get_action_mut::<AuthorizationLock>(actions, &auth_lock.mint)?
             {
+                msg!("auth_lock found: {:?}, updating cache", auth_lock.mint);
                 // Update the cache lock with new cache_auth_locks
                 action.update(auth_lock.amount, auth_lock.expires_at);
             } else {
-                todo!("Add logic here");
+                msg!(
+                    "auth_lock not found: {:?}, so pushing to new_actions_for_cache",
+                    auth_lock.mint
+                );
+                new_actions_for_cache.push(auth_lock);
             }
+        }
+
+        if !new_actions_for_cache.is_empty() {
+            msg!("new_actions_for_cache: {:?}", new_actions_for_cache);
+            let (current_actions_size, authority_offset, actions_offset) =
+                get_role_offsets(swig, swig_roles, 0)?;
+
+            // For add, we append new actions after the existing ones. The
+            // on-chain layout stores only the raw action bytes (without the
+            // leading operation discriminator), so size_diff should be computed
+            // using the decoded actions slice.
+            let new_actions = create_new_actions_for_cache(new_actions_for_cache)?;
+            let size_diff = new_actions.len() as i64;
+            if size_diff != 0 {
+                let new_size = (swig_data_len as i64 + size_diff) as usize;
+                let aligned_size =
+                    core::alloc::Layout::from_size_align(new_size, core::mem::size_of::<u64>())
+                        .map_err(|_| SwigError::InvalidAlignment)?
+                        .pad_to_align()
+                        .size();
+
+                ctx.accounts.swig.resize(aligned_size)?;
+
+                let cost = Rent::get()?.minimum_balance(aligned_size);
+                let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
+
+                let additional_cost = cost.saturating_sub(current_lamports);
+
+                if additional_cost > 0 {
+                    Transfer {
+                        from: ctx.accounts.payer,
+                        to: ctx.accounts.swig,
+                        lamports: additional_cost,
+                    }
+                    .invoke()?;
+                }
+                msg!(
+                    "resized for adding cache actions, size diff: {:?}",
+                    size_diff
+                );
+            }
+
+            let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+            let (swig_header, swig_roles) =
+                unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+            let _swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+
+            msg!("adding cache actions to role 0");
+            perform_add_actions_operation(
+                swig_roles,
+                swig_data_len,
+                authority_offset,
+                actions_offset,
+                current_actions_size,
+                &new_actions,
+                0,
+            )?;
+            msg!("cache actions added to role 0");
         }
     }
     Ok(())
@@ -934,6 +1004,10 @@ pub fn get_cache_data(
         };
         msg!("position: {:?}", position);
 
+        if position.id() == 0 {
+            cursor = position.boundary() as usize;
+            continue;
+        }
         let mut expired_mints = Vec::new();
         let mut actions_cursor = 0;
         for _i in 0..position.num_actions as usize {
@@ -970,4 +1044,58 @@ pub fn get_cache_data(
     }
 
     Ok((cache_auth_locks, expired_auth_locks))
+}
+
+fn get_role_offsets(
+    swig: &Swig,
+    swig_roles: &[u8],
+    authority_id: u32,
+) -> Result<(usize, usize, usize), ProgramError> {
+    let mut cursor = 0;
+    let mut found = false;
+    let mut auth_offset = 0;
+    let mut act_offset = 0;
+    let mut current_size = 0;
+
+    for _i in 0..swig.roles {
+        let position =
+            unsafe { Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])? };
+
+        if position.id() == authority_id {
+            found = true;
+            auth_offset = cursor;
+            act_offset = cursor + Position::LEN + position.authority_length() as usize;
+            current_size = position.boundary() as usize - act_offset;
+            break;
+        }
+        cursor = position.boundary() as usize;
+    }
+
+    if !found {
+        return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+    }
+
+    Ok((current_size, auth_offset, act_offset))
+}
+
+fn create_new_actions_for_cache(
+    auth_locks: Vec<AuthorizationLock>,
+) -> Result<Vec<u8>, ProgramError> {
+    let mut data = Vec::new();
+
+    for auth_lock in auth_locks {
+        let offset = data.len() as u32;
+        let header = Action::new(
+            Permission::AuthorizationLock,
+            AuthorizationLock::LEN as u16,
+            offset + Action::LEN as u32 + AuthorizationLock::LEN as u32,
+        );
+        let header_bytes = header.into_bytes()?;
+        data.extend_from_slice(header_bytes);
+
+        let auth_lock_bytes = auth_lock.into_bytes()?;
+        data.extend_from_slice(auth_lock_bytes);
+    }
+
+    Ok(data)
 }
