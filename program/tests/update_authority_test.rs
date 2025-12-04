@@ -19,58 +19,6 @@ use swig_state::{
     swig::SwigWithRoles,
 };
 
-/// Helper function to update authority with Ed25519 root authority
-pub fn update_authority_with_ed25519_root(
-    context: &mut SwigTestContext,
-    swig_pubkey: &Pubkey,
-    existing_ed25519_authority: &Keypair,
-    authority_to_update_id: u32,
-    new_actions: Vec<ClientAction>,
-) -> anyhow::Result<litesvm::types::TransactionMetadata> {
-    context.svm.expire_blockhash();
-    let payer_pubkey = context.default_payer.pubkey();
-    let swig_account = context
-        .svm
-        .get_account(swig_pubkey)
-        .ok_or(anyhow::anyhow!("Swig account not found"))?;
-    let swig = SwigWithRoles::from_bytes(&swig_account.data)
-        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
-    let role_id = swig
-        .lookup_role_id(existing_ed25519_authority.pubkey().as_ref())
-        .map_err(|e| anyhow::anyhow!("Failed to lookup role id {:?}", e))?
-        .unwrap();
-
-    let update_authority_ix = UpdateAuthorityInstruction::new_with_ed25519_authority(
-        *swig_pubkey,
-        payer_pubkey,
-        existing_ed25519_authority.pubkey(),
-        role_id,
-        authority_to_update_id,
-        UpdateAuthorityData::ReplaceAll(new_actions),
-    )?;
-
-    let msg = solana_sdk::message::v0::Message::try_compile(
-        &payer_pubkey,
-        &[update_authority_ix],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .map_err(|e| anyhow::anyhow!("Failed to compile message {:?}", e))?;
-
-    let tx = solana_sdk::transaction::VersionedTransaction::try_new(
-        solana_sdk::message::VersionedMessage::V0(msg),
-        &[&context.default_payer, existing_ed25519_authority],
-    )
-    .map_err(|e| anyhow::anyhow!("Failed to create transaction {:?}", e))?;
-
-    let result = context
-        .svm
-        .send_transaction(tx)
-        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
-
-    Ok(result)
-}
-
 #[test]
 fn test_update_authority_ed25519_replace_all() -> anyhow::Result<()> {
     let mut context = setup_test_context()?;

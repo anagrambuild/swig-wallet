@@ -108,6 +108,8 @@ pub enum SwigStateError {
     PermissionLoadError,
     /// Adding an authority requires at least one action
     InvalidAuthorityMustHaveAtLeastOneAction,
+    /// Trying to add actions that are IX specific
+    InvalidPermissionForRole,
 }
 
 /// Error types related to authentication operations.
@@ -178,6 +180,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedTokenDestinationLimitExceeded,
     /// Token destination recurring limit exceeded
     PermissionDeniedRecurringTokenDestinationLimitExceeded,
+    /// Authorization lock exceeded
+    PermissionDeniedAuthorizationLockExceeded,
 }
 
 impl From<SwigStateError> for ProgramError {

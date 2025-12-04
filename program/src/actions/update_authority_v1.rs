@@ -25,6 +25,7 @@ use crate::{
         accounts::{Context, UpdateAuthorityV1Accounts},
         SwigInstruction,
     },
+    util::authority_ops::*,
 };
 
 /// Calculates the actual number of actions in the provided actions data.
@@ -651,20 +652,28 @@ pub fn update_authority_v1(
     let size_diff = match operation {
         AuthorityUpdateOperation::ReplaceAll => {
             let new_actions = update_authority_v1.get_actions_data()?;
+            check_new_actions_validity(new_actions)?;
             new_actions.len() as i64 - current_actions_size as i64
         },
         AuthorityUpdateOperation::AddActions => {
             let new_actions = update_authority_v1.get_actions_data()?;
+            check_new_actions_validity(new_actions)?;
             new_actions.len() as i64 // Adding to existing, so just the new size
         },
         AuthorityUpdateOperation::RemoveActionsByType => {
             // For remove operations, we need to calculate how much will be removed
             // This is complex, so for now we'll calculate it in the operation function
+            let remove_types = update_authority_v1.get_remove_types()?;
+            check_remove_actions_validity_by_type(remove_types)?;
             0 // Will be calculated in the operation
         },
         AuthorityUpdateOperation::RemoveActionsByIndex => {
             // For remove operations, we need to calculate how much will be removed
             // This is complex, so for now we'll calculate it in the operation function
+            let remove_indices = update_authority_v1.get_remove_indices()?;
+            let current_actions =
+                &swig_roles[actions_offset..actions_offset + current_actions_size];
+            check_remove_actions_validity_by_index(current_actions, &remove_indices)?;
             0 // Will be calculated in the operation
         },
     };

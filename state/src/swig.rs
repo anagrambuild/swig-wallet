@@ -11,7 +11,7 @@ use no_padding::NoPadding;
 use pinocchio::{instruction::Seed, msg, program_error::ProgramError};
 
 use crate::{
-    action::{program_scope::ProgramScope, Action, ActionLoader, Actionable},
+    action::{program_scope::ProgramScope, Action, ActionLoader, Actionable, IX_SPECIFIC_ACTIONS},
     authority::{
         ed25519::{ED25519Authority, Ed25519SessionAuthority},
         secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority},
@@ -401,6 +401,10 @@ impl<'a> SwigBuilder<'a> {
         for _i in 0..num_actions {
             let header = &actions_data[action_cursor..action_cursor + Action::LEN];
             let action_header = unsafe { Action::load_unchecked(header)? };
+            // Check if the permission is forbidden for add-role
+            if IX_SPECIFIC_ACTIONS.contains(&action_header.permission()?) {
+                return Err(SwigStateError::InvalidPermissionForRole.into());
+            }
             action_cursor += Action::LEN;
             let action_slice =
                 &actions_data[action_cursor..action_cursor + action_header.length() as usize];

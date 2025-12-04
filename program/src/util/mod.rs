@@ -31,7 +31,10 @@ use swig_state::{
     Transmutable,
 };
 
+pub mod authority_ops;
+
 use crate::error::SwigError;
+use authority_ops::*;
 
 /// Cache for program scope information to optimize lookups.
 ///
