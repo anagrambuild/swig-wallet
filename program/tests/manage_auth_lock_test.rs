@@ -211,6 +211,7 @@ fn test_authlock_add_authority_with_manage_authlock_and_authorization_lock() {
     let action = role_2.get_action::<ManageAuthorizationLocks>(&[]).unwrap();
     assert!(action.is_some());
 
+    /// UPDATE AUTHORITY WITH AUTHORIZATION LOCKS
     /// updating the authority role with authorization locks
     let new_actions: Vec<ClientAction> = vec![
         ClientAction::SolLimit(SolLimit { amount: 1000000 }),

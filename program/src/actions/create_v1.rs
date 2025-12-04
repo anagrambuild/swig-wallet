@@ -12,7 +12,10 @@ use pinocchio_pubkey::pubkey;
 use pinocchio_system::instructions::CreateAccount;
 use swig_assertions::{check_self_pda, check_system_owner, check_zero_data};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, ActionLoader, Actionable},
+    action::{
+        all::All, manage_authority::ManageAuthority, token_limit::TokenLimit, ActionLoader,
+        Actionable,
+    },
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::{

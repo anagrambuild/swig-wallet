@@ -12,7 +12,10 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, Action},
+    action::{
+        all::All, authlock::AuthorizationLock, manage_authlock::ManageAuthorizationLocks,
+        manage_authority::ManageAuthority, Action,
+    },
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::{Swig, SwigBuilder},
@@ -619,6 +622,7 @@ pub fn update_authority_v1(
     }
 
     // Verify the authority to update exists and calculate size difference
+    let existing_authlocks: Option<Vec<AuthorizationLock>> = None;
     let (current_actions_size, authority_offset, actions_offset) = {
         let mut cursor = 0;
         let mut found = false;
@@ -646,18 +650,34 @@ pub fn update_authority_v1(
 
         (current_size, auth_offset, act_offset)
     };
+    let current_actions = &swig_roles[actions_offset..actions_offset + current_actions_size];
+    let existing_authlocks = get_all_actions_of_type::<AuthorizationLock>(current_actions)?;
+    let existing_manage_authlocks =
+        get_all_actions_of_type::<ManageAuthorizationLocks>(current_actions)?;
 
     // Calculate size difference first
     let operation = update_authority_v1.get_operation()?;
     let size_diff = match operation {
         AuthorityUpdateOperation::ReplaceAll => {
             let new_actions = update_authority_v1.get_actions_data()?;
-            check_new_actions_validity(new_actions)?;
+            msg!("replace all");
+            if !get_all_actions_of_type::<AuthorizationLock>(new_actions)?.is_empty() {
+                msg!("new authlocks cannot be added");
+                return Err(SwigStateError::InvalidPermissionForRole.into());
+            }
+            if !existing_authlocks.is_empty() {
+                msg!("old authlocks cannot be replaced");
+                return Err(SwigStateError::InvalidPermissionForRole.into());
+            }
             new_actions.len() as i64 - current_actions_size as i64
         },
         AuthorityUpdateOperation::AddActions => {
             let new_actions = update_authority_v1.get_actions_data()?;
-            check_new_actions_validity(new_actions)?;
+            msg!("add actions");
+            if !get_all_actions_of_type::<AuthorizationLock>(new_actions)?.is_empty() {
+                msg!("new authlocks cannot be added");
+                return Err(SwigStateError::InvalidPermissionForRole.into());
+            }
             new_actions.len() as i64 // Adding to existing, so just the new size
         },
         AuthorityUpdateOperation::RemoveActionsByType => {
@@ -673,7 +693,11 @@ pub fn update_authority_v1(
             let remove_indices = update_authority_v1.get_remove_indices()?;
             let current_actions =
                 &swig_roles[actions_offset..actions_offset + current_actions_size];
-            check_remove_actions_validity_by_index(current_actions, &remove_indices)?;
+            check_remove_actions_validity_by_index(
+                current_actions,
+                &remove_indices,
+                !existing_authlocks.is_empty(),
+            )?;
             0 // Will be calculated in the operation
         },
     };
