@@ -67,6 +67,18 @@ impl AuthorizationLock {
         }
     }
 
+    /// Update the authorization lock with the new values
+    ///
+    /// # Arguments
+    /// * `existing_lock` - The existing authorization lock
+    ///
+    /// # Returns
+    /// * `Result<(), ProgramError>` - Success or error if insufficient amount
+    pub fn update(&mut self, amount: u64, expires_at: u64) {
+        self.amount = amount;
+        self.expires_at = expires_at;
+    }
+
     /// Compare and update the values to be used for the global config file
     ///
     ///

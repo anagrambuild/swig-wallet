@@ -78,6 +78,5 @@ pub fn get_all_actions_of_type<'a, A: Actionable<'a>>(
         }
         cursor = action.boundary() as usize;
     }
-    msg!("matched_actions: {:?}", matched_actions.len());
     Ok(matched_actions)
 }
