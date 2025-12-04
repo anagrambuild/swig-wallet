@@ -4,6 +4,7 @@
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
+    msg,
     program_error::ProgramError,
     sysvars::{clock::Clock, rent::Rent, Sysvar},
     ProgramResult,
@@ -16,7 +17,7 @@ use swig_state::{
         manage_authority::ManageAuthority, Action, Permission,
     },
     authority::{authority_type_to_length, AuthorityType},
-    role::{Position, RoleMut},
+    role::{Position, Role, RoleMut},
     swig::{Swig, SwigBuilder},
     Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut,
 };
@@ -243,6 +244,25 @@ impl<'a> ManageAuthLockV1<'a> {
                 Ok(mints)
             },
             _ => Err(ProgramError::InvalidInstructionData),
+        }
+    }
+
+    /// Get the changed mints from the operation data
+    pub fn get_changed_mints(&self) -> Result<Vec<[u8; 32]>, ProgramError> {
+        match self.get_operation()? {
+            ManageAuthLockOperation::ModifyAuthorizationLock
+            | ManageAuthLockOperation::AddAuthorizationLocks => {
+                let auth_locks = self.get_auth_locks()?;
+                let mints = auth_locks
+                    .iter()
+                    .map(|lock| lock.mint)
+                    .collect::<Vec<[u8; 32]>>();
+                Ok(mints)
+            },
+            ManageAuthLockOperation::RemoveAuthorizationLocks => {
+                let remove_mints = self.get_remove_mints()?;
+                Ok(remove_mints)
+            },
         }
     }
 
@@ -758,6 +778,7 @@ pub fn manage_auth_lock_v1(
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let _swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
 
+    let mut size_diff = 0;
     // Now perform the operation with the reallocated account
     match operation {
         ManageAuthLockOperation::AddAuthorizationLocks => {
@@ -777,7 +798,7 @@ pub fn manage_auth_lock_v1(
             // exclude the existing auth locks from the new actions and pass it to the replace all operation
             let remove_mints = update_authority_v1.get_remove_mints()?;
 
-            perform_remove_by_mints_operation(
+            size_diff = perform_remove_by_mints_operation(
                 swig_roles,
                 swig_data_len,
                 authority_offset,
@@ -786,6 +807,33 @@ pub fn manage_auth_lock_v1(
                 &remove_mints,
                 update_authority_v1.args.authority_to_update_id,
             )?;
+
+            if size_diff != 0 {
+                msg!("size_diff: {:?}", size_diff);
+                let existing_swig_size = ctx.accounts.swig.data_len();
+                let new_swig_size = existing_swig_size as i64 + size_diff as i64;
+                let aligned_size = core::alloc::Layout::from_size_align(
+                    new_swig_size as usize,
+                    core::mem::size_of::<u64>(),
+                )
+                .map_err(|_| SwigError::InvalidAlignment)?
+                .pad_to_align()
+                .size();
+
+                ctx.accounts.swig.resize(aligned_size)?;
+
+                let cost = Rent::get()?.minimum_balance(aligned_size);
+                let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
+
+                let additional_cost = current_lamports.saturating_sub(cost);
+
+                if additional_cost > 0 {
+                    unsafe {
+                        *ctx.accounts.swig.borrow_mut_lamports_unchecked() -= additional_cost;
+                        *ctx.accounts.payer.borrow_mut_lamports_unchecked() += additional_cost;
+                    }
+                }
+            }
         },
         ManageAuthLockOperation::ModifyAuthorizationLock => {
             let modify_auth_locks = update_authority_v1.get_auth_locks()?;
@@ -810,5 +858,116 @@ pub fn manage_auth_lock_v1(
         },
     }
 
+    /// CACHE UPDATE AND EXPIRED AUTH HANDLING MODULE
+    {
+        let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        let (swig_header, swig_roles) =
+            unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+
+        let current_slot = Clock::get()?.slot;
+        let (cache_auth_locks, expired_auth_locks) = get_cache_data(
+            swig_roles,
+            update_authority_v1.get_changed_mints()?,
+            current_slot,
+        )?;
+        msg!("expired_auth_locks: {:?}", expired_auth_locks);
+        msg!("cache_auth_locks: {:?}", cache_auth_locks);
+
+        // collect all the mints that are expired for each position
+        let mut cache_role = Swig::get_mut_role(0, swig_roles)?;
+        if cache_role.is_none() {
+            return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+        }
+        let cache_role = cache_role.unwrap();
+        let mut actions = cache_role.actions;
+
+        for (position_id, expired_mints) in expired_auth_locks {
+            // Remove the actions for the expired mints for each Role
+            todo!("Remove actions logic here");
+        }
+
+        for auth_lock in cache_auth_locks {
+            if let Some(action) =
+                RoleMut::get_action_mut::<AuthorizationLock>(actions, &auth_lock.mint)?
+            {
+                // Update the cache lock with new cache_auth_locks
+                action.update(auth_lock.amount, auth_lock.expires_at);
+            } else {
+                todo!("Add logic here");
+            }
+        }
+    }
     Ok(())
+}
+
+pub fn get_cache_data(
+    roles: &[u8],
+    mints: Vec<[u8; 32]>,
+    current_slot: u64,
+) -> Result<(Vec<AuthorizationLock>, Vec<(u32, Vec<[u8; 32]>)>), ProgramError> {
+    // create a authlock vector that corresponds to the mints
+    let mut cache_auth_locks = Vec::new();
+    for mint in mints {
+        let auth_lock = AuthorizationLock::new(mint, 0, u64::MAX);
+        cache_auth_locks.push(auth_lock);
+    }
+    let mut expired_auth_locks = Vec::new();
+
+    // Iterate through the role_data and update the auth lock for each which is there in the mint.
+    let mut cursor = 0;
+
+    while cursor < roles.len() {
+        if cursor + Position::LEN > roles.len() {
+            break;
+        }
+
+        let position = unsafe {
+            Position::load_unchecked(roles.get_unchecked(cursor..cursor + Position::LEN))?
+        };
+
+        let mut actions_offset = cursor + Position::LEN + position.authority_length() as usize;
+
+        let actions_data = unsafe {
+            roles.get_unchecked(
+                actions_offset..actions_offset + position.num_actions as usize * Action::LEN,
+            )
+        };
+        msg!("position: {:?}", position);
+
+        let mut expired_mints = Vec::new();
+        let mut actions_cursor = 0;
+        for _i in 0..position.num_actions as usize {
+            let action = unsafe {
+                Action::load_unchecked(
+                    actions_data.get_unchecked(actions_cursor..actions_cursor + Action::LEN),
+                )?
+            };
+            if action.permission()? == Permission::AuthorizationLock {
+                let auth_lock = unsafe {
+                    AuthorizationLock::load_unchecked(actions_data.get_unchecked(
+                        actions_cursor + Action::LEN
+                            ..actions_cursor + Action::LEN + AuthorizationLock::LEN,
+                    ))?
+                };
+                // call the auth_lock.update_cache with the corresponding cache_auth_locks where the mint is the auth_lock.mint
+                if let Some(cache_lock) = cache_auth_locks
+                    .iter_mut()
+                    .find(|lock| lock.mint == auth_lock.mint)
+                {
+                    if !auth_lock.update_cache(cache_lock, current_slot) {
+                        expired_mints.push(auth_lock.mint);
+                    }
+                }
+            }
+            actions_cursor = action.boundary() as usize;
+        }
+
+        if !expired_mints.is_empty() {
+            expired_auth_locks.push((position.id(), expired_mints));
+        }
+
+        cursor = position.boundary() as usize;
+    }
+
+    Ok((cache_auth_locks, expired_auth_locks))
 }

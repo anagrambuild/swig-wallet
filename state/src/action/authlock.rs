@@ -79,14 +79,29 @@ impl AuthorizationLock {
         self.expires_at = expires_at;
     }
 
+    /// Update the cache with the new authorization lock
+    ///
+    /// # Arguments
+    /// * `cache_auth_locks` - The cache of authorization locks
+    ///
+    /// # Returns
+    /// * `Result<(), ProgramError>` - Success or error if insufficient amount
+    pub fn update_cache(&self, cache_lock: &mut AuthorizationLock, current_slot: u64) -> bool {
+        if self.is_expired(current_slot) {
+            return false;
+        }
+        cache_lock.update_for_global(self.amount, self.expires_at);
+        return true;
+    }
+
     /// Compare and update the values to be used for the global config file
     ///
     ///
     ///
-    pub fn update_for_global(&mut self, existing_lock: &AuthorizationLock) {
-        self.amount += existing_lock.amount;
-        if existing_lock.expires_at < self.expires_at {
-            self.expires_at = existing_lock.expires_at;
+    pub fn update_for_global(&mut self, amount: u64, expires_at: u64) {
+        self.amount += amount;
+        if expires_at < self.expires_at {
+            self.expires_at = expires_at;
         }
     }
 
