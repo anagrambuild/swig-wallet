@@ -11,7 +11,9 @@ use swig_interface::{
     AuthorityConfig, ClientAction, UpdateAuthorityData, UpdateAuthorityInstruction,
 };
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, sol_limit::SolLimit},
+    action::{
+        all::All, manage_authority::ManageAuthority, sol_limit::SolLimit, token_limit::TokenLimit,
+    },
     authority::AuthorityType,
     swig::SwigWithRoles,
 };
@@ -342,6 +344,124 @@ fn test_update_authority_ed25519_remove_by_index() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
 
     println!("Transaction logs: {:?}", result.logs);
+
+    Ok(())
+}
+
+#[test]
+fn test_update_authority_ed25519_remove_by_index_bug() -> anyhow::Result<()> {
+    let mut context = setup_test_context()?;
+
+    // Create initial wallet with Ed25519 authority
+    let root_authority = Keypair::new();
+    let id = [4u8; 32]; // Use a different ID for this test
+    let (swig, _) = create_swig_ed25519(&mut context, &root_authority, id)?;
+
+    // Add a second authority that we can update
+    let second_authority = Keypair::new();
+    let second_authority_pubkey = second_authority.pubkey();
+    let authority_config = AuthorityConfig {
+        authority_type: AuthorityType::Ed25519,
+        authority: second_authority_pubkey.as_ref(),
+    };
+    let actions = vec![
+        ClientAction::All(All {}),
+        ClientAction::SolLimit(SolLimit { amount: 1000000 }),
+        ClientAction::TokenLimit(TokenLimit {
+            token_mint: [0u8; 32],
+            current_amount: 1000000,
+        }),
+        ClientAction::TokenLimit(TokenLimit {
+            token_mint: [1u8; 32],
+            current_amount: 1000000,
+        }),
+        ClientAction::TokenLimit(TokenLimit {
+            token_mint: [2u8; 32],
+            current_amount: 1000000,
+        }),
+    ];
+
+    // Add a second authority that we can update
+    let third_authority = Keypair::new();
+    let third_authority_pubkey = third_authority.pubkey();
+    let authority_config = AuthorityConfig {
+        authority_type: AuthorityType::Ed25519,
+        authority: third_authority_pubkey.as_ref(),
+    };
+    let actions = vec![
+        ClientAction::All(All {}),
+        ClientAction::SolLimit(SolLimit { amount: 1000000 }),
+        ClientAction::TokenLimit(TokenLimit {
+            token_mint: [0u8; 32],
+            current_amount: 1000000,
+        }),
+        ClientAction::TokenLimit(TokenLimit {
+            token_mint: [1u8; 32],
+            current_amount: 1000000,
+        }),
+        ClientAction::TokenLimit(TokenLimit {
+            token_mint: [2u8; 32],
+            current_amount: 1000000,
+        }),
+    ];
+
+    let _add_result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root_authority,
+        authority_config,
+        actions,
+    )?;
+
+    // Get role_id for the root authority
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
+    let role_id = swig_data
+        .lookup_role_id(root_authority.pubkey().as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to lookup role id {:?}", e))?
+        .unwrap();
+
+    // Remove actions by index
+    let indices_to_remove = vec![0u16, 3u16]; // Remove first action
+
+    // Use the remove_by_index method on the second authority (ID 1)
+    let update_authority_ix = UpdateAuthorityInstruction::new_with_ed25519_authority(
+        swig,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        role_id,
+        1, // authority_id 1 (the second authority)
+        UpdateAuthorityData::RemoveActionsByIndex(indices_to_remove),
+    )?;
+
+    let msg = solana_sdk::message::v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[update_authority_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+
+    let tx = solana_sdk::transaction::VersionedTransaction::try_new(
+        solana_sdk::message::VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )?;
+
+    let result = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+
+    println!("Transaction logs: {:?}", result.logs);
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
+    let role = swig_data.get_role(2).unwrap().unwrap();
+    let role_actions = role.get_all_actions().unwrap();
+    for action in role_actions {
+        println!("action: {:?}", action.permission());
+    }
 
     Ok(())
 }
