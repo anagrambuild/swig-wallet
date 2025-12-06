@@ -281,8 +281,6 @@ fn perform_replace_all_operation(
 ) -> Result<i64, ProgramError> {
     let new_actions_size = new_actions.len();
     let size_diff = new_actions_size as i64 - current_actions_size as i64;
-    msg!("swig_roles.len(): {:?}", swig_roles.len());
-    msg!("size_diff: {:?}", size_diff);
 
     if size_diff != 0 {
         // Need to shift data if size changed
@@ -310,7 +308,7 @@ fn perform_replace_all_operation(
 
         // Update boundaries of all roles after this one
         let mut cursor = 0;
-        for _i in 0..swig_roles.len() / Position::LEN {
+        while cursor < (swig_roles.len() + size_diff as usize) {
             if cursor + Position::LEN > swig_roles.len() {
                 break;
             }
@@ -324,11 +322,6 @@ fn perform_replace_all_operation(
 
             // Update the position for the role we're updating
             if position.id() == authority_to_update_id {
-                msg!(
-                    "position matched {:?} to update boundary: {:?}",
-                    position,
-                    (position.boundary() as i64 + size_diff) as u32
-                );
                 position.boundary = (position.boundary() as i64 + size_diff) as u32;
                 position.num_actions = calculate_num_actions(new_actions)? as u16;
             }
