@@ -10,12 +10,14 @@ use solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::Signer};
 use swig_interface::{
     AuthorityConfig, ClientAction, UpdateAuthorityData, UpdateAuthorityInstruction,
 };
+use swig_state::role::Position;
+use swig_state::Transmutable;
 use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, sol_limit::SolLimit, token_limit::TokenLimit,
     },
     authority::AuthorityType,
-    swig::SwigWithRoles,
+    swig::{Swig, SwigWithRoles},
 };
 
 /// Helper function to update authority with Ed25519 root authority
@@ -349,7 +351,7 @@ fn test_update_authority_ed25519_remove_by_index() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_update_authority_ed25519_remove_by_index_bug() -> anyhow::Result<()> {
+fn test_update_authority_ed25519_remove_by_index_with_multiple_actions() -> anyhow::Result<()> {
     let mut context = setup_test_context()?;
 
     // Create initial wallet with Ed25519 authority
@@ -367,6 +369,7 @@ fn test_update_authority_ed25519_remove_by_index_bug() -> anyhow::Result<()> {
     let actions = vec![
         ClientAction::All(All {}),
         ClientAction::SolLimit(SolLimit { amount: 1000000 }),
+        ClientAction::ManageAuthority(ManageAuthority {}),
         ClientAction::TokenLimit(TokenLimit {
             token_mint: [0u8; 32],
             current_amount: 1000000,
@@ -381,14 +384,22 @@ fn test_update_authority_ed25519_remove_by_index_bug() -> anyhow::Result<()> {
         }),
     ];
 
-    // Add a second authority that we can update
+    let second_authority_add_result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root_authority,
+        authority_config,
+        actions,
+    )?;
+
+    // Add a third authority that we can update
     let third_authority = Keypair::new();
     let third_authority_pubkey = third_authority.pubkey();
-    let authority_config = AuthorityConfig {
+    let third_authority_config = AuthorityConfig {
         authority_type: AuthorityType::Ed25519,
         authority: third_authority_pubkey.as_ref(),
     };
-    let actions = vec![
+    let third_actions = vec![
         ClientAction::All(All {}),
         ClientAction::SolLimit(SolLimit { amount: 1000000 }),
         ClientAction::TokenLimit(TokenLimit {
@@ -409,8 +420,39 @@ fn test_update_authority_ed25519_remove_by_index_bug() -> anyhow::Result<()> {
         &mut context,
         &swig,
         &root_authority,
-        authority_config,
-        actions,
+        third_authority_config,
+        third_actions,
+    )?;
+
+    let fourth_authority = Keypair::new();
+    let fourth_authority_pubkey = fourth_authority.pubkey();
+    let fourth_authority_config = AuthorityConfig {
+        authority_type: AuthorityType::Ed25519,
+        authority: fourth_authority_pubkey.as_ref(),
+    };
+    let fourth_actions = vec![
+        ClientAction::All(All {}),
+        ClientAction::SolLimit(SolLimit { amount: 1000000 }),
+        ClientAction::TokenLimit(TokenLimit {
+            token_mint: [0u8; 32],
+            current_amount: 1000000,
+        }),
+        ClientAction::TokenLimit(TokenLimit {
+            token_mint: [1u8; 32],
+            current_amount: 1000000,
+        }),
+        ClientAction::TokenLimit(TokenLimit {
+            token_mint: [2u8; 32],
+            current_amount: 1000000,
+        }),
+    ];
+
+    let _add_result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root_authority,
+        fourth_authority_config,
+        fourth_actions,
     )?;
 
     // Get role_id for the root authority
@@ -455,9 +497,28 @@ fn test_update_authority_ed25519_remove_by_index_bug() -> anyhow::Result<()> {
     println!("Transaction logs: {:?}", result.logs);
 
     let swig_account = context.svm.get_account(&swig).unwrap();
+    let (header, roles) = &swig_account.data.split_at(Swig::LEN);
+    let mut cursor = 0;
+    while cursor < roles.len() {
+        if cursor + Position::LEN > roles.len() {
+            break;
+        }
+        let position =
+            unsafe { Position::load_unchecked(&roles[cursor..cursor + Position::LEN]).unwrap() };
+        println!("position: {:?}", position);
+        cursor = position.boundary() as usize;
+    }
+
+    let role = swig_data.get_role(1).unwrap().unwrap();
+    let role_actions = role.get_all_actions().unwrap();
+    for action in role_actions {
+        println!("action: {:?}", action.permission());
+    }
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
         .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
-    let role = swig_data.get_role(2).unwrap().unwrap();
+    let role = swig_data.get_role(1).unwrap().unwrap();
     let role_actions = role.get_all_actions().unwrap();
     for action in role_actions {
         println!("action: {:?}", action.permission());
