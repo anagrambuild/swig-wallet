@@ -6,6 +6,8 @@
 //! instruction's business logic.
 
 pub mod add_authority_v1;
+pub mod close_swig_v1;
+pub mod close_token_account_v1;
 pub mod create_session_v1;
 pub mod create_sub_account_v1;
 pub mod create_v1;
@@ -22,18 +24,19 @@ use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
 
 use self::{
-    add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*, create_v1::*,
-    migrate_to_wallet_address_v1::*, remove_authority_v1::*, sign_v2::*, sub_account_sign_v1::*,
-    toggle_sub_account_v1::*, transfer_assets_v1::*, update_authority_v1::*,
-    withdraw_from_sub_account_v1::*,
+    add_authority_v1::*, close_swig_v1::*, close_token_account_v1::*, create_session_v1::*,
+    create_sub_account_v1::*, create_v1::*, migrate_to_wallet_address_v1::*,
+    remove_authority_v1::*, sign_v2::*, sub_account_sign_v1::*, toggle_sub_account_v1::*,
+    transfer_assets_v1::*, update_authority_v1::*, withdraw_from_sub_account_v1::*,
 };
 use crate::{
     instruction::{
         accounts::{
-            AddAuthorityV1Accounts, CreateSessionV1Accounts, CreateSubAccountV1Accounts,
-            CreateV1Accounts, MigrateToWalletAddressV1Accounts, RemoveAuthorityV1Accounts,
-            SignV2Accounts, SubAccountSignV1Accounts, ToggleSubAccountV1Accounts,
-            TransferAssetsV1Accounts, UpdateAuthorityV1Accounts, WithdrawFromSubAccountV1Accounts,
+            AddAuthorityV1Accounts, CloseSwigV1Accounts, CloseTokenAccountV1Accounts,
+            CreateSessionV1Accounts, CreateSubAccountV1Accounts, CreateV1Accounts,
+            MigrateToWalletAddressV1Accounts, RemoveAuthorityV1Accounts, SignV2Accounts,
+            SubAccountSignV1Accounts, ToggleSubAccountV1Accounts, TransferAssetsV1Accounts,
+            UpdateAuthorityV1Accounts, WithdrawFromSubAccountV1Accounts,
         },
         SwigInstruction,
     },
@@ -89,6 +92,8 @@ pub fn process_action(
         SwigInstruction::TransferAssetsV1 => {
             process_transfer_assets_v1(accounts, account_classification, data)
         },
+        SwigInstruction::CloseTokenAccountV1 => process_close_token_account_v1(accounts, data),
+        SwigInstruction::CloseSwigV1 => process_close_swig_v1(accounts, data),
     }
 }
 
@@ -202,4 +207,20 @@ fn process_transfer_assets_v1(
 ) -> ProgramResult {
     let account_ctx = TransferAssetsV1Accounts::context(accounts)?;
     transfer_assets_v1(account_ctx, accounts, data, account_classification)
+}
+
+/// Processes a CloseTokenAccountV1 instruction.
+///
+/// Closes a single token account owned by the swig wallet.
+fn process_close_token_account_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = CloseTokenAccountV1Accounts::context(accounts)?;
+    close_token_account_v1(account_ctx, accounts, data)
+}
+
+/// Processes a CloseSwigV1 instruction.
+///
+/// Closes the swig account and returns all lamports to destination.
+fn process_close_swig_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = CloseSwigV1Accounts::context(accounts)?;
+    close_swig_v1(account_ctx, accounts, data)
 }

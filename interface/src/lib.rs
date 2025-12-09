@@ -9,6 +9,8 @@ use solana_secp256r1_program::new_secp256r1_instruction_with_signature;
 pub use swig;
 use swig::actions::{
     add_authority_v1::AddAuthorityV1Args,
+    close_swig_v1::CloseSwigV1Args,
+    close_token_account_v1::CloseTokenAccountV1Args,
     create_session_v1::CreateSessionV1Args,
     create_sub_account_v1::CreateSubAccountV1Args,
     create_v1::CreateV1Args,
@@ -2820,5 +2822,340 @@ impl TransferAssetsV1Instruction {
 
         // Return both instructions - preceding instruction must come first
         Ok(vec![preceding_instruction, main_ix])
+    }
+}
+
+/// Instruction builder for closing a single token account owned by the swig wallet.
+pub struct CloseTokenAccountV1Instruction;
+
+impl CloseTokenAccountV1Instruction {
+    /// Create a close token account instruction with Ed25519 authority.
+    ///
+    /// # Arguments
+    /// * `swig_account` - The swig wallet account
+    /// * `swig_wallet_address` - The swig wallet address PDA
+    /// * `authority` - The authority with All or ManageAuthority permission
+    /// * `token_account` - The token account to close (must have zero balance)
+    /// * `destination` - Where to send the rent
+    /// * `token_program` - SPL Token or Token-2022 program
+    /// * `role_id` - The role ID of the authority
+    pub fn new_with_ed25519_authority(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        authority: Pubkey,
+        token_account: Pubkey,
+        destination: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new(destination, false),
+            AccountMeta::new(token_account, false),
+            AccountMeta::new_readonly(token_program, false),
+            AccountMeta::new_readonly(authority, true),
+        ];
+
+        let args = CloseTokenAccountV1Args::new(role_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &[5]].concat(), // Ed25519 authority index
+        })
+    }
+
+    /// Create a close token account instruction with Secp256k1 authority.
+    pub fn new_with_secp256k1_authority<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        token_account: Pubkey,
+        destination: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new(destination, false),
+            AccountMeta::new(token_account, false),
+            AccountMeta::new_readonly(token_program, false),
+        ];
+
+        let args = CloseTokenAccountV1Args::new(role_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let nonced_payload = prepare_secp256k1_payload(
+            current_slot,
+            counter,
+            args_bytes,
+            &account_payload_bytes,
+            &[],
+        );
+        let signature = authority_payload_fn(&nonced_payload);
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&counter.to_le_bytes());
+        authority_payload.extend_from_slice(&signature);
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        })
+    }
+
+    /// Create a close token account instruction with Secp256r1 authority.
+    pub fn new_with_secp256r1_authority<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        token_account: Pubkey,
+        destination: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new(destination, false),
+            AccountMeta::new(token_account, false),
+            AccountMeta::new_readonly(token_program, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+
+        let args = CloseTokenAccountV1Args::new(role_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let slot_bytes = current_slot.to_le_bytes();
+        let counter_bytes = counter.to_le_bytes();
+        let message_hash = keccak::hash(
+            &[
+                args_bytes,
+                &account_payload_bytes,
+                &slot_bytes[..],
+                &counter_bytes[..],
+            ]
+            .concat(),
+        )
+        .to_bytes();
+
+        let signature = authority_payload_fn(&message_hash);
+        let secp256r1_verify_ix =
+            new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
+
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&counter.to_le_bytes());
+        authority_payload.push(5); // instruction sysvar index
+        authority_payload.extend_from_slice(&[0u8; 4]);
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![secp256r1_verify_ix, main_ix])
+    }
+}
+
+/// Instruction builder for closing a swig wallet account.
+pub struct CloseSwigV1Instruction;
+
+impl CloseSwigV1Instruction {
+    /// Create a close swig instruction with Ed25519 authority.
+    ///
+    /// # Arguments
+    /// * `swig_account` - The swig wallet account to close
+    /// * `swig_wallet_address` - The swig wallet address PDA
+    /// * `authority` - The authority with All or ManageAuthority permission
+    /// * `destination` - Where to send all SOL and rent
+    /// * `role_id` - The role ID of the authority
+    pub fn new_with_ed25519_authority(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        authority: Pubkey,
+        destination: Pubkey,
+        role_id: u32,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new(destination, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(authority, true),
+        ];
+
+        let args = CloseSwigV1Args::new(role_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &[4]].concat(), // Ed25519 authority index
+        })
+    }
+
+    /// Create a close swig instruction with Secp256k1 authority.
+    pub fn new_with_secp256k1_authority<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        destination: Pubkey,
+        role_id: u32,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new(destination, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ];
+
+        let args = CloseSwigV1Args::new(role_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let nonced_payload = prepare_secp256k1_payload(
+            current_slot,
+            counter,
+            args_bytes,
+            &account_payload_bytes,
+            &[],
+        );
+        let signature = authority_payload_fn(&nonced_payload);
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&counter.to_le_bytes());
+        authority_payload.extend_from_slice(&signature);
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        })
+    }
+
+    /// Create a close swig instruction with Secp256r1 authority.
+    pub fn new_with_secp256r1_authority<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        destination: Pubkey,
+        role_id: u32,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new(destination, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+
+        let args = CloseSwigV1Args::new(role_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let slot_bytes = current_slot.to_le_bytes();
+        let counter_bytes = counter.to_le_bytes();
+        let message_hash = keccak::hash(
+            &[
+                args_bytes,
+                &account_payload_bytes,
+                &slot_bytes[..],
+                &counter_bytes[..],
+            ]
+            .concat(),
+        )
+        .to_bytes();
+
+        let signature = authority_payload_fn(&message_hash);
+        let secp256r1_verify_ix =
+            new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
+
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&counter.to_le_bytes());
+        authority_payload.push(4); // instruction sysvar index
+        authority_payload.extend_from_slice(&[0u8; 4]);
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![secp256r1_verify_ix, main_ix])
     }
 }

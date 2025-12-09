@@ -287,6 +287,61 @@ impl<'a> TokenTransfer<'a> {
     }
 }
 
+/// Helper struct for closing token accounts.
+///
+/// This struct encapsulates all the information needed to close a token
+/// account, transferring the remaining rent lamports to a destination.
+pub struct TokenClose<'a> {
+    /// Token program ID (SPL Token or Token-2022)
+    pub token_program: &'a Pubkey,
+    /// Token account to close
+    pub account: &'a AccountInfo,
+    /// Destination for rent lamports
+    pub destination: &'a AccountInfo,
+    /// Authority account (owner of the token account)
+    pub authority: &'a AccountInfo,
+}
+
+impl<'a> TokenClose<'a> {
+    /// Executes the token close without additional signers.
+    #[inline(always)]
+    pub fn invoke(&self) -> ProgramResult {
+        self.invoke_signed(&[])
+    }
+
+    /// Executes the token close with additional signers.
+    ///
+    /// # Arguments
+    /// * `signers` - Additional signers for the close operation
+    ///
+    /// # Returns
+    /// * `ProgramResult` - Success or error status
+    pub fn invoke_signed(&self, signers: &[Signer]) -> ProgramResult {
+        // account metadata
+        let account_metas: [AccountMeta; 3] = [
+            AccountMeta::writable(self.account.key()),
+            AccountMeta::writable(self.destination.key()),
+            AccountMeta::readonly_signer(self.authority.key()),
+        ];
+
+        // Instruction data layout:
+        // - [0]: instruction discriminator (1 byte, u8) - CloseAccount = 9
+        let instruction_data = [9u8];
+
+        let instruction = Instruction {
+            program_id: self.token_program,
+            accounts: &account_metas,
+            data: &instruction_data,
+        };
+
+        invoke_signed(
+            &instruction,
+            &[self.account, self.destination, self.authority],
+            signers,
+        )
+    }
+}
+
 /// Builds a restricted keys array for transaction signing.
 ///
 /// This function creates an array of public keys that are restricted from being
