@@ -308,7 +308,7 @@ fn perform_replace_all_operation(
 
         // Update boundaries of all roles after this one
         let mut cursor = 0;
-        for _i in 0..swig_roles.len() / Position::LEN {
+        while cursor < (swig_roles.len() + size_diff as usize) {
             if cursor + Position::LEN > swig_roles.len() {
                 break;
             }
