@@ -116,6 +116,10 @@ pub enum SwigError {
     SignV1CannotBeUsedWithSwigV2,
     /// SignV2 instruction cannot be used with Swig v1 accounts
     SignV2CannotBeUsedWithSwigV1,
+    /// Token account still has a non-zero balance
+    TokenAccountNotEmpty,
+    /// Wallet has excess SOL balance (beyond rent-exempt minimum)
+    WalletNotEmpty,
 }
 
 /// Implements conversion from SwigError to ProgramError.
