@@ -4,24 +4,24 @@ use alloy_signer_local::LocalSigner;
 use common::*;
 use litesvm::{types::TransactionMetadata, LiteSVM};
 use litesvm_token::spl_token;
-use solana_program::{pubkey::Pubkey, system_program};
 use solana_sdk::{
     account::ReadableAccount,
     clock::Clock,
     message::{v0, VersionedMessage},
+    pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     transaction::VersionedTransaction,
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_interface::{
     program_id, AuthorityConfig, ClientAction, CreateInstruction, CreateSessionInstruction,
     SignInstruction,
 };
 use swig_state::{
     action::{
-        all::All, manage_authority::ManageAuthority, program_scope::ProgramScope,
-        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
+        all::All, manage_authority::ManageAuthority, sol_limit::SolLimit,
+        sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
     },
     authority::{
         ed25519::{CreateEd25519SessionAuthority, ED25519Authority, Ed25519SessionAuthority},
@@ -107,7 +107,7 @@ pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), S
                         let mut hasher = solana_sdk::keccak::Hasher::default();
                         hasher.hash(authority_hex.as_bytes());
                         let hash = hasher.result();
-                        let address = format!("0x{}", hex::encode(&hash.0[12..32]));
+                        let address = format!("0x{}", hex::encode(&hash.as_bytes()[12..32]));
                         format!(
                             "{} \n║ │  ├─ odometer: {:?}",
                             address,
@@ -190,8 +190,12 @@ pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), S
             }
 
             // Check Program Scope
-            if let Some(action) = Role::get_action::<ProgramScope>(&role, &spl_token::ID.to_bytes())
-                .map_err(|_| SwigError::AuthorityNotFound)?
+            // Use find_program_scope_in_role instead of Role::get_action because
+            // ProgramScope contains u128 fields that require 16-byte alignment,
+            // but action data in the swig account may not be properly aligned
+            // for off-chain use.
+            if let Some(action) =
+                crate::types::find_program_scope_in_role(&role, &spl_token::ID.to_bytes())
             {
                 let program_id = Pubkey::from(action.program_id);
                 let target_account = Pubkey::from(action.target_account);

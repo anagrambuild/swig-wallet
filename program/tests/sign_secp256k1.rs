@@ -8,15 +8,16 @@ use alloy_primitives::B256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::{LocalSigner, PrivateKeySigner};
 use common::*;
+use solana_address::Address;
 use solana_sdk::{
     clock::Clock,
     instruction::InstructionError,
     message::{v0, VersionedMessage},
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     transaction::{TransactionError, VersionedTransaction},
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_interface::{AuthorityConfig, ClientAction, CreateSessionInstruction};
 use swig_state::{
     action::all::All,
@@ -852,7 +853,7 @@ fn test_secp256k1_replay_scenario_1() {
         &[
             sign_ix, // Reusing the same instruction with the old counter value (should fail)
             solana_sdk::instruction::Instruction {
-                program_id: spl_memo::ID,
+                program_id: Address::from(spl_memo::ID.to_bytes()),
                 accounts: vec![solana_sdk::instruction::AccountMeta::new(
                     context.default_payer.pubkey(),
                     true,
@@ -1034,7 +1035,7 @@ fn test_secp256k1_replay_scenario_2() {
         &[
             sign_ix, // sending the same instruction again
             solana_sdk::instruction::Instruction {
-                program_id: spl_memo::ID,
+                program_id: Address::from(spl_memo::ID.to_bytes()),
                 accounts: vec![solana_sdk::instruction::AccountMeta::new(
                     context.default_payer.pubkey(),
                     true,

@@ -1,5 +1,6 @@
-use solana_program::{system_instruction, system_program};
 use solana_sdk::signature::{Keypair, Signer};
+use solana_sdk_ids::system_program;
+use solana_system_interface::instruction as system_instruction;
 
 use super::*;
 use crate::client_role::Ed25519ClientRole;

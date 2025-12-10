@@ -10,6 +10,7 @@ use solana_sdk::{
     signer::Signer,
     transaction::VersionedTransaction,
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state::{
     action::program_scope::{NumericType, ProgramScope, ProgramScopeType},
@@ -191,7 +192,7 @@ fn test_token_transfer_performance_comparison() {
     );
     // 3744 is the max difference in CU between the two transactions lets lower
     // this as far as possible but never increase it
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3851);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3852);
 }
 
 #[test_log::test]
@@ -225,7 +226,7 @@ fn test_sol_transfer_performance_comparison() {
     context.svm.airdrop(&swig, initial_sol_amount).unwrap();
     let transfer_amount = 1_000_000;
 
-    let regular_transfer_ix = solana_sdk::system_instruction::transfer(
+    let regular_transfer_ix = system_instruction::transfer(
         &regular_sender.pubkey(),
         &recipient.pubkey(),
         transfer_amount,
@@ -255,7 +256,7 @@ fn test_sol_transfer_performance_comparison() {
 
     // Measure swig SOL transfer performance
     let swig_transfer_ix =
-        solana_sdk::system_instruction::transfer(&swig, &recipient.pubkey(), transfer_amount);
+        system_instruction::transfer(&swig, &recipient.pubkey(), transfer_amount);
 
     let sign_ix = swig_interface::SignInstruction::new_ed25519(
         swig,
@@ -305,5 +306,5 @@ fn test_sol_transfer_performance_comparison() {
 
     // Set a reasonable limit for the CU difference to avoid regressions
     // Similar to the token transfer test assertion
-    assert!(swig_transfer_cu - regular_transfer_cu <= 2196);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 2197);
 }

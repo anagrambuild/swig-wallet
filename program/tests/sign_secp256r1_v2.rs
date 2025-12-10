@@ -12,9 +12,9 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     transaction::{TransactionError, VersionedTransaction},
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state::{
     action::all::All,

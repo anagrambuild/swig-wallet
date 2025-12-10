@@ -1,10 +1,9 @@
 //! Shank IDL build script.
 
-use {
-    anyhow::anyhow,
-    shank_idl::{extract_idl, manifest::Manifest, ParseIdlOpts},
-    std::{env, fs, path::Path},
-};
+use std::{env, fs, path::Path};
+
+use anyhow::anyhow;
+use shank_idl::{extract_idl, manifest::Manifest, ParseIdlOpts};
 
 fn main() {
     println!("cargo:rerun-if-changed=src/");

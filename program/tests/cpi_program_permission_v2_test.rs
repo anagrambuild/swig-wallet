@@ -9,9 +9,9 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     transaction::{TransactionError, VersionedTransaction},
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state::{
     action::program::Program,
@@ -52,7 +52,7 @@ fn test_cpi_signing_requires_program_permission_v2() {
 
     // Create Program action for system program and SolLimit for transfers
     let system_program_action = Program {
-        program_id: solana_sdk::system_program::ID.to_bytes(),
+        program_id: solana_sdk_ids::system_program::ID.to_bytes(),
     };
 
     let _txn = add_authority_with_ed25519_root(
