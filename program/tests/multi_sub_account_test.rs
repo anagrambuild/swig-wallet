@@ -1015,3 +1015,390 @@ fn test_legacy_instruction_format_backwards_compatibility() {
     println!("  - Their transactions will be parsed as index 0 sub-accounts");
     println!("  - The PDA derivation remains backwards compatible");
 }
+
+/// Test that adding a role with duplicate SubAccount indices fails
+#[test_log::test]
+fn test_add_role_rejects_duplicate_sub_account_indices() {
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    // Try to add a new role with two SubAccount actions that have the same index
+    let new_authority = Keypair::new();
+    
+    let actions = vec![
+        ClientAction::SubAccount(SubAccount::new_for_creation(5)), // index 5
+        ClientAction::SubAccount(SubAccount::new_for_creation(5)), // duplicate index 5
+    ];
+
+    let result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: new_authority.pubkey().as_ref(),
+        },
+        actions,
+    );
+
+    // Should fail with InvalidAuthorityData error
+    assert!(
+        result.is_err(),
+        "Adding role with duplicate SubAccount indices should fail"
+    );
+    
+    // Verify it's the right error
+    if let Err(e) = result {
+        let error_msg = format!("{:?}", e);
+        assert!(
+            error_msg.contains("Custom") || error_msg.contains("InvalidAuthorityData"),
+            "Expected InvalidAuthorityData error, got: {}",
+            error_msg
+        );
+    }
+}
+
+/// Test that adding a role with multiple SubAccount actions with different indices succeeds
+#[test_log::test]
+fn test_add_role_accepts_different_sub_account_indices() {
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    // Add a new role with multiple SubAccount actions with different indices
+    let new_authority = Keypair::new();
+    
+    let actions = vec![
+        ClientAction::SubAccount(SubAccount::new_for_creation(0)), // index 0
+        ClientAction::SubAccount(SubAccount::new_for_creation(5)), // index 5
+        ClientAction::SubAccount(SubAccount::new_for_creation(10)), // index 10
+    ];
+
+    let result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: new_authority.pubkey().as_ref(),
+        },
+        actions,
+    );
+
+    // Should succeed
+    assert!(
+        result.is_ok(),
+        "Adding role with different SubAccount indices should succeed: {:?}",
+        result.err()
+    );
+    
+    // Verify the role was created with 3 SubAccount actions
+    let swig_account_data = context.svm.get_account(&swig_key).unwrap();
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data.data).unwrap();
+    
+    // Find the newly created role (should be role_id 1)
+    let role = swig_with_roles.get_role(1).unwrap().unwrap();
+    let sub_account_actions = role.get_all_actions_of_type::<SubAccount>().unwrap();
+    
+    assert_eq!(sub_account_actions.len(), 3, "Should have 3 SubAccount actions");
+    assert_eq!(sub_account_actions[0].sub_account_index, 0);
+    assert_eq!(sub_account_actions[1].sub_account_index, 5);
+    assert_eq!(sub_account_actions[2].sub_account_index, 10);
+}
+
+/// Helper function to update authority with ReplaceAll operation
+fn update_authority_replace_all(
+    context: &mut SwigTestContext,
+    swig_pubkey: &Pubkey,
+    existing_ed25519_authority: &Keypair,
+    authority_to_update_id: u32,
+    new_actions: Vec<ClientAction>,
+) -> anyhow::Result<litesvm::types::TransactionMetadata> {
+    use swig_interface::{UpdateAuthorityData, UpdateAuthorityInstruction};
+    use solana_sdk::message::v0;
+    
+    context.svm.expire_blockhash();
+    let payer_pubkey = context.default_payer.pubkey();
+    let swig_account = context
+        .svm
+        .get_account(swig_pubkey)
+        .ok_or(anyhow::anyhow!("Swig account not found"))?;
+    let swig = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
+    let role_id = swig
+        .lookup_role_id(existing_ed25519_authority.pubkey().as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to lookup role id {:?}", e))?
+        .unwrap();
+
+    let update_authority_ix = UpdateAuthorityInstruction::new_with_ed25519_authority(
+        *swig_pubkey,
+        payer_pubkey,
+        existing_ed25519_authority.pubkey(),
+        role_id,
+        authority_to_update_id,
+        UpdateAuthorityData::ReplaceAll(new_actions),
+    )?;
+
+    let msg = v0::Message::try_compile(
+        &payer_pubkey,
+        &[update_authority_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to compile message {:?}", e))?;
+
+    let tx = solana_sdk::transaction::VersionedTransaction::try_new(
+        solana_sdk::message::VersionedMessage::V0(msg),
+        &[&context.default_payer, existing_ed25519_authority],
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to create transaction {:?}", e))?;
+
+    let result = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+
+    Ok(result)
+}
+
+/// Helper function to update authority with AddActions operation
+fn update_authority_add_actions(
+    context: &mut SwigTestContext,
+    swig_pubkey: &Pubkey,
+    existing_ed25519_authority: &Keypair,
+    authority_to_update_id: u32,
+    actions_to_add: Vec<ClientAction>,
+) -> anyhow::Result<litesvm::types::TransactionMetadata> {
+    use swig_interface::{UpdateAuthorityData, UpdateAuthorityInstruction};
+    use solana_sdk::message::v0;
+    
+    context.svm.expire_blockhash();
+    let payer_pubkey = context.default_payer.pubkey();
+    let swig_account = context
+        .svm
+        .get_account(swig_pubkey)
+        .ok_or(anyhow::anyhow!("Swig account not found"))?;
+    let swig = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
+    let role_id = swig
+        .lookup_role_id(existing_ed25519_authority.pubkey().as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to lookup role id {:?}", e))?
+        .unwrap();
+
+    let update_authority_ix = UpdateAuthorityInstruction::new_with_ed25519_authority(
+        *swig_pubkey,
+        payer_pubkey,
+        existing_ed25519_authority.pubkey(),
+        role_id,
+        authority_to_update_id,
+        UpdateAuthorityData::AddActions(actions_to_add),
+    )?;
+
+    let msg = v0::Message::try_compile(
+        &payer_pubkey,
+        &[update_authority_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to compile message {:?}", e))?;
+
+    let tx = solana_sdk::transaction::VersionedTransaction::try_new(
+        solana_sdk::message::VersionedMessage::V0(msg),
+        &[&context.default_payer, existing_ed25519_authority],
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to create transaction {:?}", e))?;
+
+    let result = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+
+    Ok(result)
+}
+
+/// Test that updating authority with ReplaceAll rejects duplicate SubAccount indices
+#[test_log::test]
+fn test_update_authority_replace_all_rejects_duplicate_indices() {
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    // Add a second authority with initial actions
+    let second_authority = Keypair::new();
+    let actions = vec![ClientAction::SubAccount(SubAccount::new_for_creation(0))];
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        actions,
+    )
+    .unwrap();
+
+    // Try to update with duplicate SubAccount indices
+    let new_actions = vec![
+        ClientAction::SubAccount(SubAccount::new_for_creation(3)),
+        ClientAction::SubAccount(SubAccount::new_for_creation(3)), // duplicate
+    ];
+
+    let result = update_authority_replace_all(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        1, // authority_id 1 (the second authority)
+        new_actions,
+    );
+
+    // Should fail
+    assert!(
+        result.is_err(),
+        "Updating authority with duplicate SubAccount indices should fail"
+    );
+}
+
+/// Test that updating authority with AddActions rejects when it creates duplicates
+#[test_log::test]
+fn test_update_authority_add_actions_rejects_duplicate_indices() {
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    // Add a second authority with initial SubAccount action at index 5
+    let second_authority = Keypair::new();
+    let initial_actions = vec![ClientAction::SubAccount(SubAccount::new_for_creation(5))];
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        initial_actions,
+    )
+    .unwrap();
+
+    // Try to add another SubAccount action with the same index (5)
+    let actions_to_add = vec![ClientAction::SubAccount(SubAccount::new_for_creation(5))];
+
+    let result = update_authority_add_actions(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        1, // authority_id 1 (the second authority)
+        actions_to_add,
+    );
+
+    // Should fail because combining existing (index 5) + new (index 5) creates duplicate
+    assert!(
+        result.is_err(),
+        "Adding SubAccount action with duplicate index should fail"
+    );
+}
+
+/// Test that updating authority with AddActions succeeds with different indices
+#[test_log::test]
+fn test_update_authority_add_actions_accepts_different_indices() {
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    // Add a second authority with initial SubAccount action at index 0
+    let second_authority = Keypair::new();
+    let initial_actions = vec![ClientAction::SubAccount(SubAccount::new_for_creation(0))];
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        initial_actions,
+    )
+    .unwrap();
+
+    // Add more SubAccount actions with different indices
+    let actions_to_add = vec![
+        ClientAction::SubAccount(SubAccount::new_for_creation(5)),
+        ClientAction::SubAccount(SubAccount::new_for_creation(10)),
+    ];
+
+    let result = update_authority_add_actions(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        1, // authority_id 1 (the second authority)
+        actions_to_add,
+    );
+
+    // Should succeed
+    assert!(
+        result.is_ok(),
+        "Adding SubAccount actions with different indices should succeed: {:?}",
+        result.err()
+    );
+
+    // Verify we now have 3 SubAccount actions (0, 5, 10)
+    let swig_account_data = context.svm.get_account(&swig_key).unwrap();
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data.data).unwrap();
+    let role = swig_with_roles.get_role(1).unwrap().unwrap();
+    let sub_account_actions = role.get_all_actions_of_type::<SubAccount>().unwrap();
+
+    assert_eq!(
+        sub_account_actions.len(),
+        3,
+        "Should have 3 SubAccount actions"
+    );
+    
+    // Collect and sort indices for verification
+    let mut indices: Vec<u8> = sub_account_actions
+        .iter()
+        .map(|a| a.sub_account_index)
+        .collect();
+    indices.sort();
+    
+    assert_eq!(indices, vec![0, 5, 10], "Should have indices 0, 5, and 10");
+}

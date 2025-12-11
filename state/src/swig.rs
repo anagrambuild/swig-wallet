@@ -429,7 +429,38 @@ impl<'a> SwigBuilder<'a> {
         position.id = self.swig.role_counter;
         cursor += Position::LEN;
         cursor += authority_length;
-        // todo check actions for duplicates
+
+        // Validate that there are no duplicate SubAccount indices in the actions
+        // This prevents security issues where multiple actions could point to the same
+        // sub-account index. Only perform this check if there are SubAccount actions.
+        let mut seen_sub_account_indices = alloc::vec::Vec::new();
+        let mut validation_cursor = 0;
+        let mut has_sub_account_actions = false;
+        
+        for _i in 0..num_actions {
+            let header = &actions_data[validation_cursor..validation_cursor + Action::LEN];
+            let action_header = unsafe { Action::load_unchecked(header)? };
+            validation_cursor += Action::LEN;
+            let action_slice = &actions_data
+                [validation_cursor..validation_cursor + action_header.length() as usize];
+            validation_cursor += action_header.length() as usize;
+
+            // Check for duplicate SubAccount indices only if we have SubAccount actions
+            if action_header.permission()? == crate::action::Permission::SubAccount {
+                has_sub_account_actions = true;
+                use crate::action::sub_account::SubAccount;
+                if action_slice.len() == SubAccount::LEN {
+                    let sub_account_action = unsafe { SubAccount::load_unchecked(action_slice)? };
+                    let index = sub_account_action.sub_account_index;
+
+                    if seen_sub_account_indices.contains(&index) {
+                        return Err(SwigStateError::InvalidAuthorityData.into());
+                    }
+                    seen_sub_account_indices.push(index);
+                }
+            }
+        }
+
         let mut action_cursor = 0;
         let actions_start_cursor_pos = cursor;
         for _i in 0..num_actions {
