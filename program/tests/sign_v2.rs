@@ -2198,10 +2198,10 @@ fn test_sign_v1_rejected_by_swig_v2() {
     );
     assert_eq!(
         result.unwrap_err().err,
-        TransactionError::InstructionError(0, InstructionError::Custom(45))
+        TransactionError::InstructionError(0, InstructionError::Custom(49))
     );
 
-    println!("✅ Test passed: Swig v2 correctly rejects SignV1 instruction with error code 45");
+    println!("✅ Test passed: Swig v2 correctly rejects SignV1 instruction with error code 49");
 }
 
 #[test_log::test]

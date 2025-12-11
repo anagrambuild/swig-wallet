@@ -66,7 +66,7 @@ fn setup_test_with_sub_account_authority(
             authority_type: AuthorityType::Ed25519,
             authority: sub_account_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SubAccount(SubAccount::new_for_creation())],
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation(0))],
     )?;
 
     Ok((swig_key, root_authority, sub_account_authority, id))
@@ -102,7 +102,7 @@ fn setup_test_with_sub_account_authority_fail_with_invalid_layout(
             authority_type: AuthorityType::Ed25519,
             authority: sub_account_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SubAccount(SubAccount::new([1; 32]))],
+        vec![ClientAction::SubAccount(SubAccount::new([1; 32], 0))],
     );
 
     assert!(res.is_err());
@@ -1006,6 +1006,7 @@ fn test_all_permission_cannot_create_sub_account() {
         sub_account,
         all_permission_role_id,
         sub_account_bump,
+        0, // sub_account_index
     )
     .unwrap();
 
@@ -1082,7 +1083,7 @@ fn test_all_and_sub_account_permission_can_create_sub_account() {
         },
         vec![
             ClientAction::All(All {}),
-            ClientAction::SubAccount(SubAccount::new_for_creation()),
+            ClientAction::SubAccount(SubAccount::new_for_creation(0)),
         ],
     )
     .unwrap();

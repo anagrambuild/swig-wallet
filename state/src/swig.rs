@@ -97,6 +97,49 @@ pub fn sub_account_signer<'a>(
     ]
 }
 
+/// Generates the seeds for a sub-account with index.
+/// Index 0 uses legacy 3-seed derivation for backwards compatibility.
+/// Indices 1-254 use new 4-seed derivation with index.
+#[inline(always)]
+pub fn sub_account_seeds_with_index<'a>(
+    swig_id: &'a [u8],
+    role_id: &'a [u8],
+    index: &'a [u8; 1],
+) -> [&'a [u8]; 4] {
+    [b"sub-account".as_ref(), swig_id, role_id, index]
+}
+
+/// Generates the seeds for a sub-account with index and bump seed.
+/// Index 0 uses legacy 3-seed derivation for backwards compatibility.
+/// Indices 1-254 use new 4-seed derivation with index.
+#[inline(always)]
+pub fn sub_account_seeds_with_index_and_bump<'a>(
+    swig_id: &'a [u8],
+    role_id: &'a [u8],
+    index: &'a [u8; 1],
+    bump: &'a [u8],
+) -> [&'a [u8]; 5] {
+    [b"sub-account".as_ref(), swig_id, role_id, index, bump]
+}
+
+/// Creates a signer seeds array for a sub-account with index.
+/// Index 0 uses legacy 4-seed derivation for backwards compatibility.
+/// Indices 1-254 use new 5-seed derivation with index.
+pub fn sub_account_signer_with_index<'a>(
+    swig_id: &'a [u8],
+    role_id: &'a [u8],
+    index: &'a [u8; 1],
+    bump: &'a [u8; 1],
+) -> [Seed<'a>; 5] {
+    [
+        b"sub-account".as_ref().into(),
+        swig_id.into(),
+        role_id.into(),
+        index.into(),
+        bump.as_ref().into(),
+    ]
+}
+
 /// Represents a Swig sub-account with its associated metadata.
 // #[repr(C, align(8))]
 // #[derive(Debug, PartialEq, NoPadding)]

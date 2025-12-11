@@ -1513,6 +1513,7 @@ impl CreateSubAccountInstruction {
         sub_account: Pubkey,
         role_id: u32,
         sub_account_bump: u8,
+        sub_account_index: u8,
     ) -> anyhow::Result<Instruction> {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
@@ -1522,7 +1523,7 @@ impl CreateSubAccountInstruction {
             AccountMeta::new_readonly(authority, true),
         ];
 
-        let args = CreateSubAccountV1Args::new(role_id, sub_account_bump);
+        let args = CreateSubAccountV1Args::new(role_id, sub_account_bump, sub_account_index);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -1542,6 +1543,7 @@ impl CreateSubAccountInstruction {
         sub_account: Pubkey,
         role_id: u32,
         sub_account_bump: u8,
+        sub_account_index: u8,
     ) -> anyhow::Result<Instruction>
     where
         F: FnMut(&[u8]) -> [u8; 65],
@@ -1553,7 +1555,7 @@ impl CreateSubAccountInstruction {
             AccountMeta::new_readonly(system_program::ID, false),
         ];
 
-        let args = CreateSubAccountV1Args::new(role_id, sub_account_bump);
+        let args = CreateSubAccountV1Args::new(role_id, sub_account_bump, sub_account_index);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -1594,6 +1596,7 @@ impl CreateSubAccountInstruction {
         sub_account: Pubkey,
         role_id: u32,
         sub_account_bump: u8,
+        sub_account_index: u8,
         public_key: &[u8; 33],
     ) -> anyhow::Result<Vec<Instruction>>
     where
@@ -1607,7 +1610,7 @@ impl CreateSubAccountInstruction {
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
 
-        let args = CreateSubAccountV1Args::new(role_id, sub_account_bump);
+        let args = CreateSubAccountV1Args::new(role_id, sub_account_bump, sub_account_index);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;

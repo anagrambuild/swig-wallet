@@ -203,14 +203,16 @@ pub enum Command {
     },
     /// Create a sub-account for the wallet
     CreateSubAccount {
-        #[arg(short, long)]
+        #[arg(short = 't', long)]
         authority_type: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         authority: Option<String>,
-        #[arg(short, long)]
+        #[arg(short = 'k', long)]
         authority_kp: Option<String>,
-        #[arg(short, long = "swig-id")]
+        #[arg(short = 'i', long = "swig-id")]
         id: String,
+        #[arg(short = 'x', long, default_value_t = 0, help = "Sub-account index (0-254)")]
+        sub_account_index: u8,
     },
     /// Transfer from a sub-account
     TransferFromSubAccount {

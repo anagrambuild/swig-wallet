@@ -294,6 +294,7 @@ impl ClientRole for Ed25519ClientRole {
                 sub_account,
                 role_id,
                 sub_account_bump,
+                0, // Default to index 0 for backwards compatibility
             )?,
         ])
     }
@@ -626,6 +627,7 @@ impl ClientRole for Secp256k1ClientRole {
                 sub_account,
                 role_id,
                 sub_account_bump,
+                0, // Default to index 0 for backwards compatibility
             )?,
         ])
     }
@@ -996,6 +998,7 @@ impl ClientRole for Secp256r1ClientRole {
             sub_account,
             role_id,
             sub_account_bump,
+            0, // Default to index 0 for backwards compatibility
             &self.authority,
         )?;
 

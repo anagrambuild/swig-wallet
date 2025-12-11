@@ -508,18 +508,35 @@ pub fn setup_ata(
         .map_err(|_| anyhow::anyhow!("Failed to create associated token account"))
 }
 
-// Helper to create a sub-account
-pub fn create_sub_account(
+// Helper to create a sub-account with a specific index
+pub fn create_sub_account_with_index(
     context: &mut SwigTestContext,
     swig_account: &Pubkey,
     authority: &Keypair,
     role_id: u32,
     id: [u8; 32],
+    sub_account_index: u8,
 ) -> anyhow::Result<Pubkey> {
-    // Derive the sub-account address (keeping PDA for deterministic addressing)
     let role_id_bytes = role_id.to_le_bytes();
-    let (sub_account, sub_account_bump) =
-        Pubkey::find_program_address(&sub_account_seeds(&id, &role_id_bytes), &program_id());
+    
+    // Derive PDA based on index
+    // Index 0 uses legacy derivation (3 seeds) for backwards compatibility
+    // Index 1+ uses new derivation (4 seeds) with index
+    let (sub_account, sub_account_bump) = if sub_account_index == 0 {
+        // Legacy derivation
+        Pubkey::find_program_address(
+            &sub_account_seeds(&id, &role_id_bytes),
+            &program_id()
+        )
+    } else {
+        // New derivation with index
+        use swig_state::swig::sub_account_seeds_with_index;
+        let index_bytes = [sub_account_index];
+        Pubkey::find_program_address(
+            &sub_account_seeds_with_index(&id, &role_id_bytes, &index_bytes),
+            &program_id()
+        )
+    };
 
     // Create the instruction to create a sub-account
     let create_sub_account_ix = CreateSubAccountInstruction::new_with_ed25519_authority(
@@ -529,6 +546,7 @@ pub fn create_sub_account(
         sub_account,
         role_id,
         sub_account_bump,
+        sub_account_index,
     )
     .map_err(|e| anyhow::anyhow!("Failed to create sub-account instruction: {:?}", e))?;
 
@@ -551,6 +569,17 @@ pub fn create_sub_account(
         .map_err(|e| anyhow::anyhow!("Failed to create sub-account: {:?}", e))?;
 
     Ok(sub_account)
+}
+
+// Helper to create a sub-account (backwards compatible - defaults to index 0)
+pub fn create_sub_account(
+    context: &mut SwigTestContext,
+    swig_account: &Pubkey,
+    authority: &Keypair,
+    role_id: u32,
+    id: [u8; 32],
+) -> anyhow::Result<Pubkey> {
+    create_sub_account_with_index(context, swig_account, authority, role_id, id, 0)
 }
 
 // Helper to toggle a sub-account's enabled state
@@ -773,7 +802,7 @@ pub fn add_sub_account_permission(
             authority_type: AuthorityType::Ed25519,
             authority: authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SubAccount(SubAccount::new_for_creation())],
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation(0))],
     )
     .map_err(|e| anyhow::anyhow!("Failed to create add authority instruction {:?}", e))?;
 
@@ -804,6 +833,78 @@ pub fn add_sub_account_permission(
         .map_err(|e| anyhow::anyhow!("Failed to add SubAccount permission: {:?}", e))?;
 
     Ok(bench)
+}
+
+// Helper to setup a swig account with multiple sub-account permissions
+pub fn setup_with_multiple_sub_account_permissions(
+    context: &mut SwigTestContext,
+    num_sub_accounts: u8,
+) -> anyhow::Result<(Pubkey, Keypair, Keypair, [u8; 32])> {
+    let root_authority = Keypair::new();
+    let sub_account_authority = Keypair::new();
+    
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&sub_account_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(context, &root_authority, id)?;
+    
+    // Build SubAccount actions for each index
+    let mut actions = Vec::new();
+    for i in 0..num_sub_accounts {
+        actions.push(ClientAction::SubAccount(SubAccount::new_for_creation(i)));
+    }
+    
+    // Add authority with multiple SubAccount permissions
+    add_authority_with_ed25519_root(
+        context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: sub_account_authority.pubkey().as_ref(),
+        },
+        actions,
+    )?;
+    
+    Ok((swig_key, root_authority, sub_account_authority, id))
+}
+
+// Helper to setup test with multiple created sub-accounts
+pub fn setup_with_multiple_sub_accounts(
+    context: &mut SwigTestContext,
+    num_sub_accounts: u8,
+) -> anyhow::Result<(Pubkey, Keypair, Keypair, [u8; 32], Vec<Pubkey>)> {
+    let (swig_key, root_authority, sub_account_authority, id) =
+        setup_with_multiple_sub_account_permissions(context, num_sub_accounts)?;
+    
+    let role_id = 1; // The sub-account authority has role_id 1
+    let mut sub_accounts = Vec::new();
+    
+    // Create all sub-accounts sequentially
+    for i in 0..num_sub_accounts {
+        if i > 0 {
+            context.svm.warp_to_slot((i as u64) * 10 + 100);
+            context.svm.expire_blockhash();
+        }
+        let sub_account = create_sub_account_with_index(
+            context,
+            &swig_key,
+            &sub_account_authority,
+            role_id,
+            id,
+            i,
+        )?;
+        sub_accounts.push(sub_account);
+    }
+    
+    Ok((swig_key, root_authority, sub_account_authority, id, sub_accounts))
 }
 
 #[test_log::test]
