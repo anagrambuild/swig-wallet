@@ -453,7 +453,8 @@ impl SwigInstructionBuilder {
     ///
     /// * `instructions` - Vector of instructions to sign with the sub-account
     /// * `current_slot` - Optional current slot number (required for Secp256k1)
-    /// * `sub_account_index` - Optional index for multiple sub-accounts (0-254, defaults to 0)
+    /// * `sub_account_index` - Optional index for multiple sub-accounts (0-254,
+    ///   defaults to 0)
     ///
     /// # Returns
     ///
@@ -485,7 +486,7 @@ impl SwigInstructionBuilder {
     ) -> Result<Vec<Instruction>, SwigError> {
         let role_id_bytes = self.role_id.to_le_bytes();
         let swig_id_bytes = self.swig_id;
-        
+
         let (sub_account, _) = if sub_account_index == 0 {
             // Legacy derivation for index 0
             Pubkey::find_program_address(

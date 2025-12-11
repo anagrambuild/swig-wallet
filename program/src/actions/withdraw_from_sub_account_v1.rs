@@ -183,7 +183,8 @@ pub fn withdraw_from_sub_account_v1(
 
     // Validate permissions and get sub-account metadata
     // Different logic based on permission type:
-    // 1. SubAccount permission: Use action from current role (already validated it exists)
+    // 1. SubAccount permission: Use action from current role (already validated it
+    //    exists)
     // 2. ManageAuthority: MUST have SubAccount action on current role
     // 3. All permission: Search all roles to find the SubAccount action
 

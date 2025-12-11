@@ -1550,7 +1550,8 @@ impl CreateSubAccountInstruction {
         )
     }
 
-    /// Creates a create sub-account instruction with Ed25519 authority and a specific index.
+    /// Creates a create sub-account instruction with Ed25519 authority and a
+    /// specific index.
     ///
     /// # Arguments
     /// * `sub_account_index` - Index for the sub-account (0-254).
@@ -1609,7 +1610,8 @@ impl CreateSubAccountInstruction {
         )
     }
 
-    /// Creates a create sub-account instruction with Secp256k1 authority and a specific index.
+    /// Creates a create sub-account instruction with Secp256k1 authority and a
+    /// specific index.
     ///
     /// # Arguments
     /// * `sub_account_index` - Index for the sub-account (0-254).
@@ -1695,7 +1697,8 @@ impl CreateSubAccountInstruction {
         )
     }
 
-    /// Creates a create sub-account instruction with Secp256r1 authority and a specific index.
+    /// Creates a create sub-account instruction with Secp256r1 authority and a
+    /// specific index.
     ///
     /// # Arguments
     /// * `sub_account_index` - Index for the sub-account (0-254).
@@ -2148,7 +2151,8 @@ impl WithdrawFromSubAccountInstruction {
         )
     }
 
-    /// Withdraws SOL from a sub-account at a specific index with Secp256k1 authority
+    /// Withdraws SOL from a sub-account at a specific index with Secp256k1
+    /// authority
     pub fn new_with_secp256k1_authority_with_index<F>(
         swig_account: Pubkey,
         payer: Pubkey,
@@ -2176,7 +2180,8 @@ impl WithdrawFromSubAccountInstruction {
         )
     }
 
-    /// Withdraws SOL from a sub-account at a specific index with Secp256r1 authority
+    /// Withdraws SOL from a sub-account at a specific index with Secp256r1
+    /// authority
     pub fn new_with_secp256r1_authority_with_index<F>(
         swig_account: Pubkey,
         payer: Pubkey,
@@ -2237,7 +2242,8 @@ impl WithdrawFromSubAccountInstruction {
         )
     }
 
-    /// Withdraws tokens from a sub-account at a specific index with Secp256k1 authority
+    /// Withdraws tokens from a sub-account at a specific index with Secp256k1
+    /// authority
     pub fn new_token_with_secp256k1_authority_with_index<F>(
         swig_account: Pubkey,
         payer: Pubkey,
@@ -2271,7 +2277,8 @@ impl WithdrawFromSubAccountInstruction {
         )
     }
 
-    /// Withdraws tokens from a sub-account at a specific index with Secp256r1 authority
+    /// Withdraws tokens from a sub-account at a specific index with Secp256r1
+    /// authority
     pub fn new_token_with_secp256r1_authority_with_index<F>(
         swig_account: Pubkey,
         payer: Pubkey,
@@ -2468,7 +2475,8 @@ impl SubAccountSignInstruction {
         Ok(vec![secp256r1_verify_ix, main_ix])
     }
 
-    /// Signs instructions with a sub-account at a specific index using Ed25519 authority
+    /// Signs instructions with a sub-account at a specific index using Ed25519
+    /// authority
     pub fn new_with_ed25519_authority_with_index(
         swig_account: Pubkey,
         swig_id: &[u8; 32],
@@ -2487,7 +2495,8 @@ impl SubAccountSignInstruction {
         )
     }
 
-    /// Signs instructions with a sub-account at a specific index using Secp256k1 authority
+    /// Signs instructions with a sub-account at a specific index using
+    /// Secp256k1 authority
     pub fn new_with_secp256k1_authority_with_index<F>(
         swig_account: Pubkey,
         swig_id: &[u8; 32],
@@ -2511,7 +2520,8 @@ impl SubAccountSignInstruction {
         )
     }
 
-    /// Signs instructions with a sub-account at a specific index using Secp256r1 authority
+    /// Signs instructions with a sub-account at a specific index using
+    /// Secp256r1 authority
     pub fn new_with_secp256r1_authority_with_index<F>(
         swig_account: Pubkey,
         swig_id: &[u8; 32],
@@ -2709,7 +2719,8 @@ impl ToggleSubAccountInstruction {
 
     // ========== Methods with index support ==========
 
-    /// Toggles (enables/disables) a sub-account at a specific index using Ed25519 authority
+    /// Toggles (enables/disables) a sub-account at a specific index using
+    /// Ed25519 authority
     pub fn new_with_ed25519_authority_with_index(
         swig_account: Pubkey,
         authority: Pubkey,

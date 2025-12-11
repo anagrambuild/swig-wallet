@@ -890,13 +890,15 @@ fn test_sign_with_indexed_sub_accounts() {
     );
 }
 
-/// Test backwards compatibility: Verify that the instruction format with index byte = 0
-/// (which is what legacy v1.3.3 SDK sends as padding) is correctly interpreted as index 0.
+/// Test backwards compatibility: Verify that the instruction format with index
+/// byte = 0 (which is what legacy v1.3.3 SDK sends as padding) is correctly
+/// interpreted as index 0.
 ///
 /// This test demonstrates that:
 /// 1. Legacy SDKs (v1.3.3) send a struct with 7 bytes of padding (all zeros)
-/// 2. The new format reads the first padding byte (offset 8) as the index field  
-/// 3. When that byte is 0 (from legacy padding), it's correctly treated as index 0
+/// 2. The new format reads the first padding byte (offset 8) as the index field
+/// 3. When that byte is 0 (from legacy padding), it's correctly treated as
+///    index 0
 /// 4. The sub-account uses legacy 3-seed PDA derivation (backwards compatible)
 #[test_log::test]
 fn test_legacy_instruction_format_backwards_compatibility() {

@@ -40,20 +40,24 @@ use crate::{
 ///
 /// This struct supports backwards compatibility with v1.3.3 and earlier:
 /// - In v1.3.3 (legacy): This struct had 7 bytes of padding at the end
-/// - In v1.3.4+ (new): The first padding byte became `sub_account_index`, leaving 6 bytes of padding
-/// 
+/// - In v1.3.4+ (new): The first padding byte became `sub_account_index`,
+///   leaving 6 bytes of padding
+///
 /// Both versions are the same total size (16 bytes aligned), which means:
-/// - Legacy transactions: The index byte position contains 0 (from padding) → treated as index 0
-/// - New transactions: The index byte position contains the actual index (0-254)
+/// - Legacy transactions: The index byte position contains 0 (from padding) →
+///   treated as index 0
+/// - New transactions: The index byte position contains the actual index
+///   (0-254)
 ///
 /// # Fields
 /// * `discriminator` - The instruction type identifier
 /// * `_padding1` - Padding bytes for alignment
 /// * `role_id` - ID of the role creating the sub-account
 /// * `sub_account_bump` - Bump seed for sub-account PDA derivation
-/// * `sub_account_index` - Index of this sub-account (0-254). For backwards compatibility,
-///   legacy transactions will have 0 here (from padding)
-/// * `_padding2` - Additional padding bytes for alignment (6 bytes in new format, was 7 in legacy)
+/// * `sub_account_index` - Index of this sub-account (0-254). For backwards
+///   compatibility, legacy transactions will have 0 here (from padding)
+/// * `_padding2` - Additional padding bytes for alignment (6 bytes in new
+///   format, was 7 in legacy)
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct CreateSubAccountV1Args {
@@ -115,11 +119,12 @@ pub struct CreateSubAccountV1<'a> {
 
 impl<'a> CreateSubAccountV1<'a> {
     /// Parses the instruction data bytes into a CreateSubAccountV1 instance.
-    /// 
+    ///
     /// This function supports backwards compatibility with v1.3.3 and earlier.
-    /// The legacy format (v1.3.3) had 7 bytes of padding where the new format has
-    /// the sub_account_index field (1 byte) followed by 6 bytes of padding.
-    /// Since both are the same total size, we can parse both formats identically:
+    /// The legacy format (v1.3.3) had 7 bytes of padding where the new format
+    /// has the sub_account_index field (1 byte) followed by 6 bytes of
+    /// padding. Since both are the same total size, we can parse both
+    /// formats identically:
     /// - Legacy: The index field position contains 0 (from padding) → index 0
     /// - New: The index field position contains the actual index value
     ///
@@ -138,7 +143,7 @@ impl<'a> CreateSubAccountV1<'a> {
 
         let (args_data, authority_payload) = data.split_at(CreateSubAccountV1Args::LEN);
         let args = unsafe { CreateSubAccountV1Args::load_unchecked(args_data)? };
-        
+
         Ok(Self {
             role_id: args.role_id,
             sub_account_bump: args.sub_account_bump,
