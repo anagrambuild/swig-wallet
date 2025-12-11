@@ -37,7 +37,7 @@ use swig_state::{
         secp256k1::{hex_encode, AccountsPayload},
         AuthorityType,
     },
-    swig::swig_account_seeds,
+    swig::{sub_account_seeds, sub_account_seeds_with_index, swig_account_seeds},
     IntoBytes, Transmutable,
 };
 
@@ -150,6 +150,29 @@ pub fn program_id() -> Pubkey {
 
 pub fn swig_key(id: String) -> Pubkey {
     Pubkey::find_program_address(&swig_account_seeds(id.as_bytes()), &program_id()).0
+}
+
+/// Derives the sub-account PDA for a given swig ID, role ID, and index.
+/// Index 0 uses legacy 3-seed derivation for backwards compatibility.
+/// Index 1-254 uses new 4-seed derivation with index.
+pub fn derive_sub_account_pda(
+    swig_id: &[u8; 32],
+    role_id: u32,
+    sub_account_index: u8,
+) -> (Pubkey, u8) {
+    let role_id_bytes = role_id.to_le_bytes();
+
+    if sub_account_index == 0 {
+        // Legacy derivation for backwards compatibility
+        Pubkey::find_program_address(&sub_account_seeds(swig_id, &role_id_bytes), &program_id())
+    } else {
+        // New derivation with index
+        let index_bytes = [sub_account_index];
+        Pubkey::find_program_address(
+            &sub_account_seeds_with_index(swig_id, &role_id_bytes, &index_bytes),
+            &program_id(),
+        )
+    }
 }
 
 pub struct AuthorityConfig<'a> {
@@ -1528,7 +1551,7 @@ impl CreateSubAccountInstruction {
     }
 
     /// Creates a create sub-account instruction with Ed25519 authority and a specific index.
-    /// 
+    ///
     /// # Arguments
     /// * `sub_account_index` - Index for the sub-account (0-254).
     pub fn new_with_ed25519_authority_with_index(
@@ -1587,7 +1610,7 @@ impl CreateSubAccountInstruction {
     }
 
     /// Creates a create sub-account instruction with Secp256k1 authority and a specific index.
-    /// 
+    ///
     /// # Arguments
     /// * `sub_account_index` - Index for the sub-account (0-254).
     pub fn new_with_secp256k1_authority_with_index<F>(
@@ -1673,7 +1696,7 @@ impl CreateSubAccountInstruction {
     }
 
     /// Creates a create sub-account instruction with Secp256r1 authority and a specific index.
-    /// 
+    ///
     /// # Arguments
     /// * `sub_account_index` - Index for the sub-account (0-254).
     pub fn new_with_secp256r1_authority_with_index<F>(
@@ -2101,6 +2124,190 @@ impl WithdrawFromSubAccountInstruction {
 
         Ok(vec![secp256r1_verify_ix, main_ix])
     }
+
+    /// Withdraws SOL from a sub-account at a specific index
+    pub fn new_with_ed25519_authority_with_index(
+        swig_account: Pubkey,
+        authority: Pubkey,
+        payer: Pubkey,
+        swig_id: &[u8; 32],
+        swig_wallet_address: Pubkey,
+        role_id: u32,
+        sub_account_index: u8,
+        amount: u64,
+    ) -> anyhow::Result<Instruction> {
+        let (sub_account, _) = derive_sub_account_pda(swig_id, role_id, sub_account_index);
+        Self::new_with_ed25519_authority(
+            swig_account,
+            authority,
+            payer,
+            sub_account,
+            swig_wallet_address,
+            role_id,
+            amount,
+        )
+    }
+
+    /// Withdraws SOL from a sub-account at a specific index with Secp256k1 authority
+    pub fn new_with_secp256k1_authority_with_index<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority_payload_fn: F,
+        current_slot: u64,
+        swig_id: &[u8; 32],
+        swig_wallet_address: Pubkey,
+        role_id: u32,
+        sub_account_index: u8,
+        amount: u64,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let (sub_account, _) = derive_sub_account_pda(swig_id, role_id, sub_account_index);
+        Self::new_with_secp256k1_authority(
+            swig_account,
+            payer,
+            authority_payload_fn,
+            current_slot,
+            sub_account,
+            swig_wallet_address,
+            role_id,
+            amount,
+        )
+    }
+
+    /// Withdraws SOL from a sub-account at a specific index with Secp256r1 authority
+    pub fn new_with_secp256r1_authority_with_index<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        swig_id: &[u8; 32],
+        swig_wallet_address: Pubkey,
+        role_id: u32,
+        sub_account_index: u8,
+        amount: u64,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let (sub_account, _) = derive_sub_account_pda(swig_id, role_id, sub_account_index);
+        Self::new_with_secp256r1_authority(
+            swig_account,
+            payer,
+            authority_payload_fn,
+            current_slot,
+            counter,
+            sub_account,
+            swig_wallet_address,
+            role_id,
+            amount,
+            public_key,
+        )
+    }
+
+    /// Withdraws tokens from a sub-account at a specific index
+    pub fn new_token_with_ed25519_authority_with_index(
+        swig_account: Pubkey,
+        authority: Pubkey,
+        payer: Pubkey,
+        swig_id: &[u8; 32],
+        swig_wallet_address: Pubkey,
+        sub_account_token: Pubkey,
+        swig_token: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        sub_account_index: u8,
+        amount: u64,
+    ) -> anyhow::Result<Instruction> {
+        let (sub_account, _) = derive_sub_account_pda(swig_id, role_id, sub_account_index);
+        Self::new_token_with_ed25519_authority(
+            swig_account,
+            authority,
+            payer,
+            sub_account,
+            swig_wallet_address,
+            sub_account_token,
+            swig_token,
+            token_program,
+            role_id,
+            amount,
+        )
+    }
+
+    /// Withdraws tokens from a sub-account at a specific index with Secp256k1 authority
+    pub fn new_token_with_secp256k1_authority_with_index<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority_payload_fn: F,
+        current_slot: u64,
+        swig_id: &[u8; 32],
+        swig_wallet_address: Pubkey,
+        sub_account_token: Pubkey,
+        swig_token: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        sub_account_index: u8,
+        amount: u64,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let (sub_account, _) = derive_sub_account_pda(swig_id, role_id, sub_account_index);
+        Self::new_token_with_secp256k1_authority(
+            swig_account,
+            payer,
+            authority_payload_fn,
+            current_slot,
+            sub_account,
+            swig_wallet_address,
+            sub_account_token,
+            swig_token,
+            token_program,
+            role_id,
+            amount,
+        )
+    }
+
+    /// Withdraws tokens from a sub-account at a specific index with Secp256r1 authority
+    pub fn new_token_with_secp256r1_authority_with_index<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        swig_id: &[u8; 32],
+        swig_wallet_address: Pubkey,
+        sub_account_token: Pubkey,
+        swig_token: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        sub_account_index: u8,
+        amount: u64,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let (sub_account, _) = derive_sub_account_pda(swig_id, role_id, sub_account_index);
+        Self::new_token_with_secp256r1_authority(
+            swig_account,
+            payer,
+            authority_payload_fn,
+            current_slot,
+            counter,
+            sub_account,
+            swig_wallet_address,
+            sub_account_token,
+            swig_token,
+            token_program,
+            role_id,
+            amount,
+            public_key,
+        )
+    }
 }
 
 pub struct SubAccountSignInstruction;
@@ -2259,6 +2466,77 @@ impl SubAccountSignInstruction {
         };
 
         Ok(vec![secp256r1_verify_ix, main_ix])
+    }
+
+    /// Signs instructions with a sub-account at a specific index using Ed25519 authority
+    pub fn new_with_ed25519_authority_with_index(
+        swig_account: Pubkey,
+        swig_id: &[u8; 32],
+        authority: Pubkey,
+        role_id: u32,
+        sub_account_index: u8,
+        instructions: Vec<Instruction>,
+    ) -> anyhow::Result<Instruction> {
+        let (sub_account, _) = derive_sub_account_pda(swig_id, role_id, sub_account_index);
+        Self::new_with_ed25519_authority(
+            swig_account,
+            sub_account,
+            authority,
+            role_id,
+            instructions,
+        )
+    }
+
+    /// Signs instructions with a sub-account at a specific index using Secp256k1 authority
+    pub fn new_with_secp256k1_authority_with_index<F>(
+        swig_account: Pubkey,
+        swig_id: &[u8; 32],
+        authority_payload_fn: F,
+        current_slot: u64,
+        role_id: u32,
+        sub_account_index: u8,
+        instructions: Vec<Instruction>,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let (sub_account, _) = derive_sub_account_pda(swig_id, role_id, sub_account_index);
+        Self::new_with_secp256k1_authority(
+            swig_account,
+            sub_account,
+            authority_payload_fn,
+            current_slot,
+            role_id,
+            instructions,
+        )
+    }
+
+    /// Signs instructions with a sub-account at a specific index using Secp256r1 authority
+    pub fn new_with_secp256r1_authority_with_index<F>(
+        swig_account: Pubkey,
+        swig_id: &[u8; 32],
+        authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        role_id: u32,
+        sub_account_index: u8,
+        instructions: Vec<Instruction>,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let (sub_account, _) = derive_sub_account_pda(swig_id, role_id, sub_account_index);
+        Self::new_with_secp256r1_authority(
+            swig_account,
+            sub_account,
+            authority_payload_fn,
+            current_slot,
+            counter,
+            role_id,
+            instructions,
+            public_key,
+        )
     }
 }
 
@@ -2427,6 +2705,91 @@ impl ToggleSubAccountInstruction {
         };
 
         Ok(vec![secp256r1_verify_ix, main_ix])
+    }
+
+    // ========== Methods with index support ==========
+
+    /// Toggles (enables/disables) a sub-account at a specific index using Ed25519 authority
+    pub fn new_with_ed25519_authority_with_index(
+        swig_account: Pubkey,
+        authority: Pubkey,
+        payer: Pubkey,
+        swig_id: &[u8; 32],
+        role_id: u32,
+        auth_role_id: u32,
+        sub_account_index: u8,
+        enabled: bool,
+    ) -> anyhow::Result<Instruction> {
+        let (sub_account, _) = derive_sub_account_pda(swig_id, role_id, sub_account_index);
+        Self::new_with_ed25519_authority(
+            swig_account,
+            authority,
+            payer,
+            sub_account,
+            role_id,
+            auth_role_id,
+            enabled,
+        )
+    }
+
+    /// Toggles a sub-account at a specific index using Secp256k1 authority
+    pub fn new_with_secp256k1_authority_with_index<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority_payload_fn: F,
+        current_slot: u64,
+        swig_id: &[u8; 32],
+        role_id: u32,
+        auth_role_id: u32,
+        sub_account_index: u8,
+        enabled: bool,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let (sub_account, _) = derive_sub_account_pda(swig_id, role_id, sub_account_index);
+        Self::new_with_secp256k1_authority(
+            swig_account,
+            payer,
+            authority_payload_fn,
+            current_slot,
+            sub_account,
+            role_id,
+            auth_role_id,
+            enabled,
+        )
+    }
+
+    /// Toggles a sub-account at a specific index using Secp256r1 authority
+    pub fn new_with_secp256r1_authority_with_index<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        swig_id: &[u8; 32],
+        role_id: u32,
+        auth_role_id: u32,
+        sub_account_index: u8,
+        enabled: bool,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let (sub_account, _) = derive_sub_account_pda(swig_id, role_id, sub_account_index);
+        Self::new_with_secp256r1_authority(
+            swig_account,
+            payer,
+            authority_payload_fn,
+            current_slot,
+            counter,
+            sub_account,
+            role_id,
+            auth_role_id,
+            enabled,
+            public_key,
+        )
     }
 }
 

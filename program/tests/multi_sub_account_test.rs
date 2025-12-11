@@ -483,7 +483,7 @@ fn test_max_index_rejected() {
 fn test_non_sequential_sub_account_creation() {
     println!("Starting non-sequential sub-account creation test");
     let mut context = setup_test_context().unwrap();
-    
+
     // Setup with permissions for indices 1, 3, 5, 6, and 10
     println!("Setting up test context with permissions for indices 0-10");
     let (swig_key, root_authority, sub_account_authority, id) =
@@ -494,7 +494,10 @@ fn test_non_sequential_sub_account_creation() {
 
     // Create sub-accounts in non-sequential order: 5, 3, 1, 6, 10, 0
     let test_indices = vec![5, 3, 1, 6, 10, 0];
-    println!("Will create sub-accounts in non-sequential order: {:?}", test_indices);
+    println!(
+        "Will create sub-accounts in non-sequential order: {:?}",
+        test_indices
+    );
     let mut created_sub_accounts = Vec::new();
 
     for &index in &test_indices {
@@ -508,19 +511,30 @@ fn test_non_sequential_sub_account_creation() {
             index,
         )
         .unwrap();
-        println!("Successfully created sub-account at index {}: {}", index, sub_account);
+        println!(
+            "Successfully created sub-account at index {}: {}",
+            index, sub_account
+        );
 
         // Verify the PDA derivation is correct for this index
         let role_id_bytes = role_id.to_le_bytes();
         let expected_sub_account = if index == 0 {
             // Index 0 uses legacy derivation
-            println!("Verifying index {} using legacy derivation (3 seeds)", index);
-            let (pda, _) =
-                Pubkey::find_program_address(&sub_account_seeds(&id, &role_id_bytes), &program_id());
+            println!(
+                "Verifying index {} using legacy derivation (3 seeds)",
+                index
+            );
+            let (pda, _) = Pubkey::find_program_address(
+                &sub_account_seeds(&id, &role_id_bytes),
+                &program_id(),
+            );
             pda
         } else {
             // Index 1+ uses new derivation with index
-            println!("Verifying index {} using new derivation (4 seeds with index)", index);
+            println!(
+                "Verifying index {} using new derivation (4 seeds with index)",
+                index
+            );
             let index_bytes = [index];
             let (pda, _) = Pubkey::find_program_address(
                 &sub_account_seeds_with_index(&id, &role_id_bytes, &index_bytes),
@@ -543,7 +557,10 @@ fn test_non_sequential_sub_account_creation() {
     // Verify all sub-accounts were created successfully
     println!("Verifying all sub-accounts were created successfully");
     assert_eq!(created_sub_accounts.len(), test_indices.len());
-    println!("Verified: Created {} sub-accounts as expected", created_sub_accounts.len());
+    println!(
+        "Verified: Created {} sub-accounts as expected",
+        created_sub_accounts.len()
+    );
 
     // Verify all sub-accounts have unique addresses
     println!("Checking that all sub-account addresses are unique");
@@ -554,7 +571,10 @@ fn test_non_sequential_sub_account_creation() {
         created_sub_accounts.len(),
         "All sub-accounts should have unique addresses"
     );
-    println!("Verified: All {} sub-accounts have unique addresses", unique_addresses.len());
+    println!(
+        "Verified: All {} sub-accounts have unique addresses",
+        unique_addresses.len()
+    );
 
     // Verify the SubAccount actions in on-chain state
     println!("Reading on-chain state to verify SubAccount actions");
@@ -562,14 +582,21 @@ fn test_non_sequential_sub_account_creation() {
     let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data.data).unwrap();
     let role = swig_with_roles.get_role(role_id).unwrap().unwrap();
     let all_sub_account_actions = role.get_all_actions_of_type::<SubAccount>().unwrap();
-    println!("Found {} total SubAccount actions on role {}", all_sub_account_actions.len(), role_id);
+    println!(
+        "Found {} total SubAccount actions on role {}",
+        all_sub_account_actions.len(),
+        role_id
+    );
 
     // Filter to only populated sub-accounts (non-zero address)
     let populated_sub_account_actions: Vec<_> = all_sub_account_actions
         .iter()
         .filter(|action| action.sub_account != [0u8; 32])
         .collect();
-    println!("Found {} populated SubAccount actions (with non-zero addresses)", populated_sub_account_actions.len());
+    println!(
+        "Found {} populated SubAccount actions (with non-zero addresses)",
+        populated_sub_account_actions.len()
+    );
 
     assert_eq!(
         populated_sub_account_actions.len(),
@@ -596,7 +623,10 @@ fn test_non_sequential_sub_account_creation() {
             "SubAccount action should have correct address for index {}",
             expected_index
         );
-        println!("Verified: Index {} has correct address in on-chain state", expected_index);
+        println!(
+            "Verified: Index {} has correct address in on-chain state",
+            expected_index
+        );
     }
 
     println!(
@@ -604,4 +634,382 @@ fn test_non_sequential_sub_account_creation() {
         created_sub_accounts.len(),
         test_indices
     );
+}
+
+/// Test withdrawing from sub-accounts at different indices
+#[test_log::test]
+fn test_withdraw_from_indexed_sub_accounts() {
+    println!("Starting withdraw from indexed sub-accounts test");
+    let mut context = setup_test_context().unwrap();
+
+    println!("Setting up with permissions for indices 0-2");
+    let (swig_key, root_authority, sub_account_authority, id) =
+        setup_with_multiple_sub_account_permissions(&mut context, 3).unwrap();
+
+    let role_id = 1;
+    let test_indices = vec![0, 1, 2];
+
+    // Create sub-accounts and fund them
+    println!("Creating and funding sub-accounts");
+    let mut sub_accounts = Vec::new();
+    for &index in &test_indices {
+        let sub_account = create_sub_account_with_index(
+            &mut context,
+            &swig_key,
+            &sub_account_authority,
+            role_id,
+            id,
+            index,
+        )
+        .unwrap();
+        println!("Created sub-account at index {}: {}", index, sub_account);
+
+        // Fund the sub-account
+        context.svm.airdrop(&sub_account, 10_000_000_000).unwrap();
+        println!("Funded sub-account at index {} with 10 SOL", index);
+
+        sub_accounts.push((index, sub_account));
+        context.svm.warp_to_slot(10);
+        context.svm.expire_blockhash();
+    }
+
+    // Test withdrawing from each sub-account
+    println!("Testing withdrawals from each indexed sub-account");
+    for (index, sub_account) in &sub_accounts {
+        println!("Testing withdrawal from sub-account at index {}", index);
+
+        let balance_before = context.svm.get_account(sub_account).unwrap().lamports;
+        println!("Balance before withdrawal: {} lamports", balance_before);
+
+        let result = withdraw_from_sub_account(
+            &mut context,
+            &swig_key,
+            sub_account,
+            &sub_account_authority,
+            role_id,
+            1_000_000_000, // Withdraw 1 SOL
+        );
+
+        if result.is_err() {
+            println!(
+                "Error withdrawing from index {}: {:?}",
+                index,
+                result.as_ref().err()
+            );
+        }
+        assert!(
+            result.is_ok(),
+            "Withdrawal from index {} should succeed",
+            index
+        );
+
+        let balance_after = context.svm.get_account(sub_account).unwrap().lamports;
+        println!("Balance after withdrawal: {} lamports", balance_after);
+
+        assert!(
+            balance_after < balance_before,
+            "Balance should decrease after withdrawal from index {}",
+            index
+        );
+        println!("Successfully withdrew from sub-account at index {}", index);
+
+        context.svm.warp_to_slot(10);
+        context.svm.expire_blockhash();
+    }
+
+    println!(
+        "Test completed: Successfully withdrew from {} indexed sub-accounts",
+        sub_accounts.len()
+    );
+}
+
+/// Test toggling (enable/disable) sub-accounts at different indices
+#[test_log::test]
+fn test_toggle_indexed_sub_accounts() {
+    println!("Starting toggle indexed sub-accounts test");
+    let mut context = setup_test_context().unwrap();
+
+    println!("Setting up with permissions for indices 0-2");
+    let (swig_key, root_authority, sub_account_authority, id) =
+        setup_with_multiple_sub_account_permissions(&mut context, 3).unwrap();
+
+    let role_id = 1;
+    let test_indices = vec![0, 1, 2];
+
+    // Create sub-accounts
+    println!("Creating sub-accounts");
+    let mut sub_accounts = Vec::new();
+    for &index in &test_indices {
+        let sub_account = create_sub_account_with_index(
+            &mut context,
+            &swig_key,
+            &sub_account_authority,
+            role_id,
+            id,
+            index,
+        )
+        .unwrap();
+        println!("Created sub-account at index {}: {}", index, sub_account);
+
+        sub_accounts.push((index, sub_account));
+        context.svm.warp_to_slot(10);
+        context.svm.expire_blockhash();
+    }
+
+    // Test toggling each sub-account
+    println!("Testing toggle operations on each indexed sub-account");
+    for (index, sub_account) in &sub_accounts {
+        println!("Disabling sub-account at index {}", index);
+
+        let result = toggle_sub_account(
+            &mut context,
+            &swig_key,
+            sub_account,
+            &sub_account_authority,
+            role_id,
+            role_id,
+            false, // Disable
+        );
+
+        assert!(result.is_ok(), "Disabling index {} should succeed", index);
+        println!("Successfully disabled sub-account at index {}", index);
+
+        context.svm.warp_to_slot(10);
+        context.svm.expire_blockhash();
+
+        // Re-enable
+        println!("Re-enabling sub-account at index {}", index);
+        let result = toggle_sub_account(
+            &mut context,
+            &swig_key,
+            sub_account,
+            &sub_account_authority,
+            role_id,
+            role_id,
+            true, // Enable
+        );
+
+        assert!(result.is_ok(), "Re-enabling index {} should succeed", index);
+        println!("Successfully re-enabled sub-account at index {}", index);
+
+        context.svm.warp_to_slot(10);
+        context.svm.expire_blockhash();
+    }
+
+    println!(
+        "Test completed: Successfully toggled {} indexed sub-accounts",
+        sub_accounts.len()
+    );
+}
+
+/// Test signing instructions with sub-accounts at different indices
+#[test_log::test]
+fn test_sign_with_indexed_sub_accounts() {
+    use solana_sdk::system_instruction;
+
+    println!("Starting sign with indexed sub-accounts test");
+    let mut context = setup_test_context().unwrap();
+
+    println!("Setting up with permissions for indices 0-2");
+    let (swig_key, root_authority, sub_account_authority, id) =
+        setup_with_multiple_sub_account_permissions(&mut context, 3).unwrap();
+
+    let role_id = 1;
+    let test_indices = vec![0, 1, 2];
+
+    // Create sub-accounts and fund them
+    println!("Creating and funding sub-accounts");
+    let mut sub_accounts = Vec::new();
+    for &index in &test_indices {
+        let sub_account = create_sub_account_with_index(
+            &mut context,
+            &swig_key,
+            &sub_account_authority,
+            role_id,
+            id,
+            index,
+        )
+        .unwrap();
+        println!("Created sub-account at index {}: {}", index, sub_account);
+
+        // Fund the sub-account
+        context.svm.airdrop(&sub_account, 10_000_000_000).unwrap();
+        println!("Funded sub-account at index {} with 10 SOL", index);
+
+        sub_accounts.push((index, sub_account));
+        context.svm.warp_to_slot(10);
+        context.svm.expire_blockhash();
+    }
+
+    // Test signing with each sub-account
+    println!("Testing sub-account sign operations with each indexed sub-account");
+    for (index, sub_account) in &sub_accounts {
+        println!("Testing sign with sub-account at index {}", index);
+
+        let recipient = Keypair::new();
+        let transfer_ix = system_instruction::transfer(sub_account, &recipient.pubkey(), 1_000_000);
+
+        let balance_before = context.svm.get_account(sub_account).unwrap().lamports;
+        println!("Sub-account balance before: {} lamports", balance_before);
+
+        let result = sub_account_sign(
+            &mut context,
+            &swig_key,
+            sub_account,
+            &sub_account_authority,
+            role_id,
+            vec![transfer_ix],
+        );
+
+        assert!(
+            result.is_ok(),
+            "Signing with index {} should succeed",
+            index
+        );
+
+        let balance_after = context.svm.get_account(sub_account).unwrap().lamports;
+        println!("Sub-account balance after: {} lamports", balance_after);
+
+        assert!(
+            balance_after < balance_before,
+            "Balance should decrease after signing transfer from index {}",
+            index
+        );
+        println!(
+            "Successfully signed and executed transfer with sub-account at index {}",
+            index
+        );
+
+        context.svm.warp_to_slot(10);
+        context.svm.expire_blockhash();
+    }
+
+    println!(
+        "Test completed: Successfully signed with {} indexed sub-accounts",
+        sub_accounts.len()
+    );
+}
+
+/// Test backwards compatibility: Verify that the instruction format with index byte = 0
+/// (which is what legacy v1.3.3 SDK sends as padding) is correctly interpreted as index 0.
+///
+/// This test demonstrates that:
+/// 1. Legacy SDKs (v1.3.3) send a struct with 7 bytes of padding (all zeros)
+/// 2. The new format reads the first padding byte (offset 8) as the index field  
+/// 3. When that byte is 0 (from legacy padding), it's correctly treated as index 0
+/// 4. The sub-account uses legacy 3-seed PDA derivation (backwards compatible)
+#[test_log::test]
+fn test_legacy_instruction_format_backwards_compatibility() {
+    println!("Testing backwards compatibility with legacy format");
+    println!();
+
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+    let sub_account_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&sub_account_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    // Add authority with SubAccount permission for index 0
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: sub_account_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation(0))],
+    )
+    .unwrap();
+
+    let role_id: u32 = 1;
+
+    println!("Test Plan:");
+    println!("  1. Create sub-account using the SDK method (simulates v1.3.3 SDK behavior)");
+    println!("  2. Verify it creates sub-account with index 0");
+    println!("  3. Verify it uses legacy 3-seed PDA derivation");
+    println!();
+
+    // Use the standard SDK method which internally passes index 0
+    // This simulates what v1.3.3 SDK does (passes 0 in the padding byte position)
+    let sub_account =
+        create_sub_account(&mut context, &swig_key, &sub_account_authority, role_id, id).unwrap();
+
+    println!("Sub-account created successfully: {}", sub_account);
+
+    // Verify it used legacy 3-seed PDA derivation (index 0)
+    let role_id_bytes = role_id.to_le_bytes();
+    let (expected_legacy_pda, _) =
+        Pubkey::find_program_address(&sub_account_seeds(&id, &role_id_bytes), &program_id());
+
+    assert_eq!(
+        sub_account, expected_legacy_pda,
+        "Sub-account should use legacy 3-seed PDA derivation (backwards compatible)"
+    );
+    println!("Confirmed: Uses legacy 3-seed PDA derivation");
+
+    // Verify the SubAccount action has index 0
+    let swig_account_data = context.svm.get_account(&swig_key).unwrap();
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data.data).unwrap();
+    let role = swig_with_roles.get_role(role_id).unwrap().unwrap();
+
+    let mut cursor = 0;
+    let mut found = false;
+
+    for _i in 0..role.position.num_actions() {
+        let action_header =
+            unsafe { Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN]) }.unwrap();
+        cursor += Action::LEN;
+
+        if action_header.permission().unwrap() == Permission::SubAccount {
+            let sub_account_action = unsafe {
+                SubAccount::load_unchecked(&role.actions[cursor..cursor + SubAccount::LEN])
+            }
+            .unwrap();
+
+            if sub_account_action.sub_account == sub_account.to_bytes() {
+                println!("Found SubAccount action:");
+                println!(
+                    "     - Index: {} (parsed from byte at offset 8)",
+                    sub_account_action.sub_account_index
+                );
+                println!("     - Enabled: {}", sub_account_action.enabled);
+
+                assert_eq!(
+                    sub_account_action.sub_account_index, 0,
+                    "Should have index 0 (from legacy padding byte)"
+                );
+                found = true;
+                break;
+            }
+        }
+
+        cursor = action_header.boundary() as usize;
+    }
+
+    assert!(found, "SubAccount action should exist");
+
+    println!();
+    println!("BACKWARDS COMPATIBILITY TEST PASSED!");
+    println!();
+    println!("Summary:");
+    println!("  ✓ Legacy SDK format (with 0 in padding) works correctly");
+    println!("  ✓ Parsed as index 0 (from the padding byte at offset 8)");
+    println!("  ✓ Uses legacy 3-seed PDA derivation (fully backwards compatible)");
+    println!("  ✓ No breaking changes for existing v1.3.3 integrations");
+    println!();
+    println!("This proves that:");
+    println!("  - Existing deployed integrations using v1.3.3 SDK will continue to work");
+    println!("  - Their transactions will be parsed as index 0 sub-accounts");
+    println!("  - The PDA derivation remains backwards compatible");
 }
