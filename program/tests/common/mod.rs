@@ -536,7 +536,7 @@ pub fn create_sub_account_with_index(
     };
 
     // Create the instruction to create a sub-account
-    let create_sub_account_ix = CreateSubAccountInstruction::new_with_ed25519_authority(
+    let create_sub_account_ix = CreateSubAccountInstruction::new_with_ed25519_authority_with_index(
         *swig_account,
         authority.pubkey(),
         authority.pubkey(),

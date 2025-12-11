@@ -170,6 +170,8 @@ fn test_create_multiple_sub_accounts_sequential() {
 /// Test that sequential indices are enforced
 #[test_log::test]
 fn test_enforce_sequential_indices() {
+    // NOTE: This test now validates that indices do NOT need to be sequential
+    // Changed from enforcing sequential to allowing flexible order
     let mut context = setup_test_context().unwrap();
     let (swig_key, root_authority, sub_account_authority, id) =
         setup_with_multiple_sub_account_permissions(&mut context, 3).unwrap();
@@ -190,17 +192,16 @@ fn test_enforce_sequential_indices() {
     context.svm.warp_to_slot(10);
     context.svm.expire_blockhash();
 
-    // Try to create index 2 (skipping index 1) - should FAIL
-    let result = create_sub_account_with_index(
+    // Create index 2 (skipping index 1) - should now SUCCEED
+    let sub_account_2 = create_sub_account_with_index(
         &mut context,
         &swig_key,
         &sub_account_authority,
         role_id,
         id,
         2,
-    );
-
-    assert!(result.is_err(), "Should not allow skipping index 1");
+    )
+    .unwrap();
 
     context.svm.warp_to_slot(20);
     context.svm.expire_blockhash();
@@ -216,21 +217,7 @@ fn test_enforce_sequential_indices() {
     )
     .unwrap();
 
-    context.svm.warp_to_slot(30);
-    context.svm.expire_blockhash();
-
-    // Now create index 2 - should succeed
-    let sub_account_2 = create_sub_account_with_index(
-        &mut context,
-        &swig_key,
-        &sub_account_authority,
-        role_id,
-        id,
-        2,
-    )
-    .unwrap();
-
-    // Verify all created successfully in order
+    // Verify all created successfully in non-sequential order
     assert_ne!(sub_account_0, sub_account_1);
     assert_ne!(sub_account_1, sub_account_2);
     assert_ne!(sub_account_0, sub_account_2);
@@ -488,4 +475,133 @@ fn test_max_index_rejected() {
         255,
     );
     assert!(result.is_err(), "Index 255 should be rejected");
+}
+
+/// Test creating sub-accounts in non-sequential order
+/// This tests that indices can be created out of order (e.g., 5, 3, 1, 6)
+#[test_log::test]
+fn test_non_sequential_sub_account_creation() {
+    println!("Starting non-sequential sub-account creation test");
+    let mut context = setup_test_context().unwrap();
+    
+    // Setup with permissions for indices 1, 3, 5, 6, and 10
+    println!("Setting up test context with permissions for indices 0-10");
+    let (swig_key, root_authority, sub_account_authority, id) =
+        setup_with_multiple_sub_account_permissions(&mut context, 11).unwrap();
+    println!("Test context setup complete. Swig account: {}", swig_key);
+
+    let role_id = 1;
+
+    // Create sub-accounts in non-sequential order: 5, 3, 1, 6, 10, 0
+    let test_indices = vec![5, 3, 1, 6, 10, 0];
+    println!("Will create sub-accounts in non-sequential order: {:?}", test_indices);
+    let mut created_sub_accounts = Vec::new();
+
+    for &index in &test_indices {
+        println!("Creating sub-account with index {}", index);
+        let sub_account = create_sub_account_with_index(
+            &mut context,
+            &swig_key,
+            &sub_account_authority,
+            role_id,
+            id,
+            index,
+        )
+        .unwrap();
+        println!("Successfully created sub-account at index {}: {}", index, sub_account);
+
+        // Verify the PDA derivation is correct for this index
+        let role_id_bytes = role_id.to_le_bytes();
+        let expected_sub_account = if index == 0 {
+            // Index 0 uses legacy derivation
+            println!("Verifying index {} using legacy derivation (3 seeds)", index);
+            let (pda, _) =
+                Pubkey::find_program_address(&sub_account_seeds(&id, &role_id_bytes), &program_id());
+            pda
+        } else {
+            // Index 1+ uses new derivation with index
+            println!("Verifying index {} using new derivation (4 seeds with index)", index);
+            let index_bytes = [index];
+            let (pda, _) = Pubkey::find_program_address(
+                &sub_account_seeds_with_index(&id, &role_id_bytes, &index_bytes),
+                &program_id(),
+            );
+            pda
+        };
+
+        assert_eq!(
+            sub_account, expected_sub_account,
+            "Sub-account PDA should match expected for index {}",
+            index
+        );
+        println!("PDA derivation verified for index {}", index);
+
+        created_sub_accounts.push((index, sub_account));
+    }
+    println!("Created {} sub-accounts total", created_sub_accounts.len());
+
+    // Verify all sub-accounts were created successfully
+    println!("Verifying all sub-accounts were created successfully");
+    assert_eq!(created_sub_accounts.len(), test_indices.len());
+    println!("Verified: Created {} sub-accounts as expected", created_sub_accounts.len());
+
+    // Verify all sub-accounts have unique addresses
+    println!("Checking that all sub-account addresses are unique");
+    let unique_addresses: std::collections::HashSet<_> =
+        created_sub_accounts.iter().map(|(_, addr)| addr).collect();
+    assert_eq!(
+        unique_addresses.len(),
+        created_sub_accounts.len(),
+        "All sub-accounts should have unique addresses"
+    );
+    println!("Verified: All {} sub-accounts have unique addresses", unique_addresses.len());
+
+    // Verify the SubAccount actions in on-chain state
+    println!("Reading on-chain state to verify SubAccount actions");
+    let swig_account_data = context.svm.get_account(&swig_key).unwrap();
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data.data).unwrap();
+    let role = swig_with_roles.get_role(role_id).unwrap().unwrap();
+    let all_sub_account_actions = role.get_all_actions_of_type::<SubAccount>().unwrap();
+    println!("Found {} total SubAccount actions on role {}", all_sub_account_actions.len(), role_id);
+
+    // Filter to only populated sub-accounts (non-zero address)
+    let populated_sub_account_actions: Vec<_> = all_sub_account_actions
+        .iter()
+        .filter(|action| action.sub_account != [0u8; 32])
+        .collect();
+    println!("Found {} populated SubAccount actions (with non-zero addresses)", populated_sub_account_actions.len());
+
+    assert_eq!(
+        populated_sub_account_actions.len(),
+        test_indices.len(),
+        "Should have {} populated SubAccount actions",
+        test_indices.len()
+    );
+
+    // Verify each created sub-account has a corresponding action with correct index
+    println!("Verifying each created sub-account matches on-chain state");
+    for (expected_index, expected_address) in &created_sub_accounts {
+        println!("Checking sub-account at index {}", expected_index);
+        let matching_action = populated_sub_account_actions
+            .iter()
+            .find(|action| action.sub_account_index == *expected_index)
+            .expect(&format!(
+                "Should find SubAccount action for index {}",
+                expected_index
+            ));
+
+        assert_eq!(
+            matching_action.sub_account,
+            expected_address.to_bytes(),
+            "SubAccount action should have correct address for index {}",
+            expected_index
+        );
+        println!("Verified: Index {} has correct address in on-chain state", expected_index);
+    }
+
+    println!(
+        "Test completed successfully: Created {} sub-accounts in non-sequential order: {:?}",
+        created_sub_accounts.len(),
+        test_indices
+    );
 }

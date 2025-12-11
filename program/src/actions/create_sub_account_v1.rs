@@ -249,39 +249,6 @@ pub fn create_sub_account_v1(
         return Err(SwigError::SubAccountActionNotFound.into());
     }
 
-    // SEQUENTIAL INDEX VALIDATION:
-    // If creating index N > 0, verify index N-1 exists and is populated
-    if sub_account_index > 0 {
-        let mut prev_index_exists = false;
-        let mut cursor = 0;
-
-        while cursor < end_pos {
-            let action_header =
-                unsafe { Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN])? };
-            cursor += Action::LEN;
-
-            if action_header.permission()? == Permission::SubAccount {
-                let action_obj = unsafe {
-                    SubAccount::load_unchecked(&role.actions[cursor..cursor + SubAccount::LEN])?
-                };
-
-                // Check if previous index exists and is created (not zeroed)
-                if action_obj.sub_account_index == sub_account_index - 1
-                    && action_obj.sub_account != [0u8; 32]
-                {
-                    prev_index_exists = true;
-                    break;
-                }
-            }
-
-            cursor = action_header.boundary() as usize;
-        }
-
-        if !prev_index_exists {
-            return Err(SwigError::SubAccountIndexNotSequential.into());
-        }
-    }
-
     // Derive sub-account PDA based on index
     // Index 0 uses legacy derivation (3 seeds) for backwards compatibility
     // Index 1+ uses new derivation (4 seeds) with index

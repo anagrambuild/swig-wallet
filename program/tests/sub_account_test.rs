@@ -1006,7 +1006,6 @@ fn test_all_permission_cannot_create_sub_account() {
         sub_account,
         all_permission_role_id,
         sub_account_bump,
-        0, // sub_account_index
     )
     .unwrap();
 

@@ -1506,7 +1506,32 @@ impl CreateSessionInstruction {
 pub struct CreateSubAccountInstruction;
 
 impl CreateSubAccountInstruction {
+    /// Creates a create sub-account instruction with Ed25519 authority.
+    /// Uses default index 0 for backwards compatibility.
     pub fn new_with_ed25519_authority(
+        swig_account: Pubkey,
+        authority: Pubkey,
+        payer: Pubkey,
+        sub_account: Pubkey,
+        role_id: u32,
+        sub_account_bump: u8,
+    ) -> anyhow::Result<Instruction> {
+        Self::new_with_ed25519_authority_with_index(
+            swig_account,
+            authority,
+            payer,
+            sub_account,
+            role_id,
+            sub_account_bump,
+            0,
+        )
+    }
+
+    /// Creates a create sub-account instruction with Ed25519 authority and a specific index.
+    /// 
+    /// # Arguments
+    /// * `sub_account_index` - Index for the sub-account (0-254).
+    pub fn new_with_ed25519_authority_with_index(
         swig_account: Pubkey,
         authority: Pubkey,
         payer: Pubkey,
@@ -1535,7 +1560,37 @@ impl CreateSubAccountInstruction {
         })
     }
 
+    /// Creates a create sub-account instruction with Secp256k1 authority.
+    /// Uses default index 0 for backwards compatibility.
     pub fn new_with_secp256k1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority_payload_fn: F,
+        current_slot: u64,
+        sub_account: Pubkey,
+        role_id: u32,
+        sub_account_bump: u8,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        Self::new_with_secp256k1_authority_with_index(
+            swig_account,
+            payer,
+            authority_payload_fn,
+            current_slot,
+            sub_account,
+            role_id,
+            sub_account_bump,
+            0,
+        )
+    }
+
+    /// Creates a create sub-account instruction with Secp256k1 authority and a specific index.
+    /// 
+    /// # Arguments
+    /// * `sub_account_index` - Index for the sub-account (0-254).
+    pub fn new_with_secp256k1_authority_with_index<F>(
         swig_account: Pubkey,
         payer: Pubkey,
         mut authority_payload_fn: F,
@@ -1587,7 +1642,41 @@ impl CreateSubAccountInstruction {
         })
     }
 
+    /// Creates a create sub-account instruction with Secp256r1 authority.
+    /// Uses default index 0 for backwards compatibility.
     pub fn new_with_secp256r1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        sub_account: Pubkey,
+        role_id: u32,
+        sub_account_bump: u8,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        Self::new_with_secp256r1_authority_with_index(
+            swig_account,
+            payer,
+            authority_payload_fn,
+            current_slot,
+            counter,
+            sub_account,
+            role_id,
+            sub_account_bump,
+            0,
+            public_key,
+        )
+    }
+
+    /// Creates a create sub-account instruction with Secp256r1 authority and a specific index.
+    /// 
+    /// # Arguments
+    /// * `sub_account_index` - Index for the sub-account (0-254).
+    pub fn new_with_secp256r1_authority_with_index<F>(
         swig_account: Pubkey,
         payer: Pubkey,
         mut authority_payload_fn: F,

@@ -698,7 +698,6 @@ fn test_all_but_manage_authority_cannot_create_sub_account() {
         sub_account,
         restricted_role_id,
         sub_account_bump,
-        0, // sub_account_index
     )
     .unwrap();
 
