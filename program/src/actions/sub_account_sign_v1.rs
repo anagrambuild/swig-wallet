@@ -196,6 +196,7 @@ pub fn sub_account_sign_v1(
     let sub_account_bump = sub_account.bump;
     let sub_account_role_id = sub_account.role_id;
     let sub_account_swig_id = sub_account.swig_id;
+    let sub_account_index = sub_account.sub_account_index;
     let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,
@@ -205,20 +206,50 @@ pub fn sub_account_sign_v1(
     )?;
     let role_id_bytes = sub_account_role_id.to_le_bytes();
     let bump_byte = [sub_account_bump];
-    let seeds = sub_account_signer(&sub_account_swig_id, &role_id_bytes, &bump_byte);
-    let signer = seeds.as_slice();
-    for ix in ix_iter {
-        if let Ok(instruction) = ix {
-            instruction.execute(
-                all_accounts,
-                ctx.accounts.sub_account.key(),
-                &[signer.into()],
-            )?;
 
-            // Check after each instruction that we haven't dropped below
-            // reserved lamports
-        } else {
-            return Err(SwigError::InstructionExecutionError.into());
+    // Derive signer seeds and execute instructions based on index
+    // Index 0 uses legacy 4-seed derivation for backwards compatibility
+    // Index 1+ uses new 5-seed derivation with index
+    if sub_account_index == 0 {
+        let seeds = sub_account_signer(&sub_account_swig_id, &role_id_bytes, &bump_byte);
+        let signer = seeds.as_slice();
+        for ix in ix_iter {
+            if let Ok(instruction) = ix {
+                instruction.execute(
+                    all_accounts,
+                    ctx.accounts.sub_account.key(),
+                    &[signer.into()],
+                )?;
+
+                // Check after each instruction that we haven't dropped below
+                // reserved lamports
+            } else {
+                return Err(SwigError::InstructionExecutionError.into());
+            }
+        }
+    } else {
+        use swig_state::swig::sub_account_signer_with_index;
+        let index_bytes = [sub_account_index];
+        let seeds = sub_account_signer_with_index(
+            &sub_account_swig_id,
+            &role_id_bytes,
+            &index_bytes,
+            &bump_byte,
+        );
+        let signer = seeds.as_slice();
+        for ix in ix_iter {
+            if let Ok(instruction) = ix {
+                instruction.execute(
+                    all_accounts,
+                    ctx.accounts.sub_account.key(),
+                    &[signer.into()],
+                )?;
+
+                // Check after each instruction that we haven't dropped below
+                // reserved lamports
+            } else {
+                return Err(SwigError::InstructionExecutionError.into());
+            }
         }
     }
 

@@ -18,10 +18,15 @@ use pinocchio::{
 use pinocchio_token::instructions::Transfer;
 use swig_assertions::*;
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, sub_account::SubAccount},
+    action::{
+        all::All, manage_authority::ManageAuthority, sub_account::SubAccount, Action, Permission,
+    },
     authority::AuthorityType,
     role::{Position, Role, RoleMut},
-    swig::{sub_account_signer, swig_wallet_address_seeds, Swig, SwigWithRoles},
+    swig::{
+        sub_account_seeds, sub_account_seeds_with_index, sub_account_signer,
+        sub_account_signer_with_index, swig_wallet_address_seeds, Swig, SwigWithRoles,
+    },
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
@@ -176,9 +181,15 @@ pub fn withdraw_from_sub_account_v1(
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
 
-    // Get sub-account metadata from the SubAccount action
-    // Validate permissions and sub-account relationship
-    if let Some(action) = sub_account_action {
+    // Validate permissions and get sub-account metadata
+    // Different logic based on permission type:
+    // 1. SubAccount permission: Use action from current role (already validated it
+    //    exists)
+    // 2. ManageAuthority: MUST have SubAccount action on current role
+    // 3. All permission: Search all roles to find the SubAccount action
+
+    let sub_account_metadata = if let Some(action) = sub_account_action {
+        // SubAccount or ManageAuthority with SubAccount action
         // Validate sub-account relationship
         if action.swig_id != swig.id {
             return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
@@ -189,29 +200,97 @@ pub fn withdraw_from_sub_account_v1(
         if !action.enabled {
             return Err(SwigError::InvalidSwigSubAccountDisabled.into());
         }
-    } else if all_action.is_some() || manage_authority_action.is_some() {
-        let permission_type = if all_action.is_some() {
-            "All"
-        } else {
-            "ManageAuthority"
-        };
+        Some((action.role_id, action.bump, action.sub_account_index))
+    } else if manage_authority_action.is_some() {
+        // ManageAuthority without SubAccount action = not allowed
+        msg!(
+            "ManageAuthority permission requires a SubAccount action for the specific sub-account"
+        );
+        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+    } else if all_action.is_some() {
+        // All permission: Search all roles to find which one has the SubAccount action
+        // for this sub-account address
+        // We need to do this search on a separate immutable view of the data
+        // Get the raw bytes again for searching
+        let swig_account_data_immutable = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
+        let swig_roles_immutable =
+            unsafe { swig_account_data_immutable.get_unchecked(Swig::LEN..) };
 
-        // For All permission, allow withdrawal from any sub-account (no validation
-        // needed) For ManageAuthority permission, restrict to sub-accounts
-        // created by the withdrawing role
-        if manage_authority_action.is_some() {
-            let role_id_bytes = withdraw.args.role_id.to_le_bytes();
-            let sub_account_seeds = swig_state::swig::sub_account_seeds(&swig.id, &role_id_bytes);
-            let (expected_sub_account, _expected_bump) =
-                pinocchio::pubkey::find_program_address(&sub_account_seeds, &crate::ID);
+        let mut found_action: Option<(u32, u8, u8)> = None;
+        let mut role_cursor = 0;
 
-            if expected_sub_account != *ctx.accounts.sub_account.key() {
-                return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
+        // Iterate through all roles
+        for _role_idx in 0..swig.roles {
+            if role_cursor >= swig_roles_immutable.len() {
+                break;
             }
+
+            // Read the Position header to get role metadata
+            let position = unsafe {
+                Position::load_unchecked(
+                    &swig_roles_immutable[role_cursor..role_cursor + Position::LEN],
+                )?
+            };
+
+            let authority_offset = role_cursor + Position::LEN;
+            let actions_offset = authority_offset + position.authority_length() as usize;
+            let role_boundary = position.boundary() as usize;
+
+            // Iterate through actions in this role
+            let mut action_cursor = actions_offset;
+            while action_cursor < role_boundary {
+                if action_cursor + Action::LEN > role_boundary {
+                    break;
+                }
+
+                let action_header = unsafe {
+                    Action::load_unchecked(
+                        &swig_roles_immutable[action_cursor..action_cursor + Action::LEN],
+                    )?
+                };
+                let action_data_start = action_cursor + Action::LEN;
+
+                if action_header.permission()? == Permission::SubAccount {
+                    let action_obj = unsafe {
+                        SubAccount::load_unchecked(
+                            &swig_roles_immutable
+                                [action_data_start..action_data_start + SubAccount::LEN],
+                        )?
+                    };
+
+                    // Check if this SubAccount action matches our sub-account address
+                    if action_obj.sub_account == *ctx.accounts.sub_account.key()
+                        && action_obj.swig_id == swig.id
+                        && action_obj.enabled
+                    {
+                        found_action = Some((
+                            action_obj.role_id,
+                            action_obj.bump,
+                            action_obj.sub_account_index,
+                        ));
+                        break;
+                    }
+                }
+
+                action_cursor = action_header.boundary() as usize;
+            }
+
+            if found_action.is_some() {
+                break;
+            }
+
+            // Move to next role
+            role_cursor = role_boundary;
         }
+
+        if found_action.is_none() {
+            return Err(SwigError::SubAccountActionNotFound.into());
+        }
+
+        found_action
     } else {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
-    }
+    };
 
     let (action_accounts_index, action_accounts_len) =
         if role.position.authority_type()? == AuthorityType::Secp256k1 {
@@ -221,41 +300,10 @@ pub fn withdraw_from_sub_account_v1(
         };
     let amount = withdraw.args.amount;
 
-    // For signing, we need the correct role_id and bump
-    // If we have a SubAccount action, use its metadata
-    // If we have All/ManageAuthority permission, we need to find which role created
-    // this sub-account
-    let (signing_role_id, signing_bump) = if let Some(action) = sub_account_action {
-        (action.role_id, action.bump)
-    } else {
-        // For All/ManageAuthority cases without SubAccount action, we need to find the
-        // role that created this sub-account We'll try different role IDs to
-        // see which one matches the given sub-account address
-        let mut found_role_id = None;
-        let mut found_bump = None;
-
-        // Try role IDs from 0 to some reasonable maximum (let's try up to 10)
-        for potential_role_id in 0u32..=10u32 {
-            let role_id_bytes = potential_role_id.to_le_bytes();
-            let sub_account_seeds = swig_state::swig::sub_account_seeds(&swig.id, &role_id_bytes);
-            let (derived_address, bump) =
-                pinocchio::pubkey::find_program_address(&sub_account_seeds, &crate::ID);
-
-            if derived_address == *ctx.accounts.sub_account.key() {
-                found_role_id = Some(potential_role_id);
-                found_bump = Some(bump);
-                break;
-            }
-        }
-
-        match (found_role_id, found_bump) {
-            (Some(role_id), Some(bump)) => (role_id, bump),
-            _ => {
-                msg!("Could not find the role_id that created this sub-account");
-                return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
-            },
-        }
-    };
+    // Extract signing parameters from the metadata we found above
+    // All paths now have the metadata (or we've already returned with an error)
+    let (signing_role_id, signing_bump, signing_index) =
+        sub_account_metadata.expect("sub_account_metadata should be Some at this point");
 
     if all_accounts.len() >= action_accounts_len {
         let token_account = &all_accounts[action_accounts_index + 2];
@@ -298,10 +346,23 @@ pub fn withdraw_from_sub_account_v1(
 
         let role_id_bytes = signing_role_id.to_le_bytes();
         let bump_byte = [signing_bump];
-        let seeds = sub_account_signer(&swig.id, &role_id_bytes, &bump_byte);
-        let signer = seeds.as_slice();
-        // Invoke the token transfer with the PDA signer
-        token_transfer.invoke_signed(&[signer.into()])?;
+
+        // Use correct signer seeds based on index
+        // Index 0 uses legacy 4-seed derivation for backwards compatibility
+        // Index 1+ uses new 5-seed derivation with index
+        if signing_index == 0 {
+            let seeds = sub_account_signer(&swig.id, &role_id_bytes, &bump_byte);
+            let signer = seeds.as_slice();
+            // Invoke the token transfer with the PDA signer
+            token_transfer.invoke_signed(&[signer.into()])?;
+        } else {
+            let index_bytes = [signing_index];
+            let seeds =
+                sub_account_signer_with_index(&swig.id, &role_id_bytes, &index_bytes, &bump_byte);
+            let signer = seeds.as_slice();
+            // Invoke the token transfer with the PDA signer
+            token_transfer.invoke_signed(&[signer.into()])?;
+        }
     } else {
         // SOL transfer from system-owned sub-account to swig account
         if amount > ctx.accounts.sub_account.lamports() {
@@ -312,16 +373,27 @@ pub fn withdraw_from_sub_account_v1(
         // Create system transfer instruction using PDA as signer
         let role_id_bytes = signing_role_id.to_le_bytes();
         let bump_byte = [signing_bump];
-        let seeds = sub_account_signer(&swig.id, &role_id_bytes, &bump_byte);
-        let signer = seeds.as_slice();
-        // Use system program transfer
+
+        // Use correct signer seeds based on index
+        // Index 0 uses legacy 4-seed derivation for backwards compatibility
+        // Index 1+ uses new 5-seed derivation with index
         let transfer_instruction = pinocchio_system::instructions::Transfer {
             from: ctx.accounts.sub_account,
             to: ctx.accounts.swig_wallet_address,
             lamports: amount,
         };
 
-        transfer_instruction.invoke_signed(&[signer.into()])?;
+        if signing_index == 0 {
+            let seeds = sub_account_signer(&swig.id, &role_id_bytes, &bump_byte);
+            let signer = seeds.as_slice();
+            transfer_instruction.invoke_signed(&[signer.into()])?;
+        } else {
+            let index_bytes = [signing_index];
+            let seeds =
+                sub_account_signer_with_index(&swig.id, &role_id_bytes, &index_bytes, &bump_byte);
+            let signer = seeds.as_slice();
+            transfer_instruction.invoke_signed(&[signer.into()])?;
+        }
     }
     Ok(())
 }

@@ -805,7 +805,7 @@ fn test_all_but_manage_authority_cannot_withdraw_from_sub_account() {
             authority_type: AuthorityType::Ed25519,
             authority: sub_account_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SubAccount(SubAccount::new_for_creation())],
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation(0))],
     )
     .unwrap();
 
@@ -975,7 +975,7 @@ fn test_all_but_manage_authority_cannot_sign_with_sub_account() {
             authority_type: AuthorityType::Ed25519,
             authority: sub_account_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SubAccount(SubAccount::new_for_creation())],
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation(0))],
     )
     .unwrap();
 
@@ -1122,7 +1122,7 @@ fn test_all_but_manage_authority_cannot_toggle_sub_account() {
             authority_type: AuthorityType::Ed25519,
             authority: sub_account_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::SubAccount(SubAccount::new_for_creation())],
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation(0))],
     )
     .unwrap();
 

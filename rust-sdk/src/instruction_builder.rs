@@ -10,7 +10,10 @@ use swig_state::{
         ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
         secp256r1::CreateSecp256r1SessionAuthority, AuthorityType,
     },
-    swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds},
+    swig::{
+        sub_account_seeds, sub_account_seeds_with_index, swig_account_seeds,
+        swig_wallet_address_seeds,
+    },
     IntoBytes,
 };
 
@@ -386,7 +389,9 @@ impl SwigInstructionBuilder {
     ///
     /// # Arguments
     ///
-    /// * `subaccount_id` - The ID of the subaccount to create
+    /// * `current_slot` - Optional current slot number (required for Secp256k1)
+    /// * `sub_account_index` - Optional index for multiple sub-accounts (0-254,
+    ///   defaults to 0)
     ///
     /// # Returns
     ///
@@ -396,12 +401,41 @@ impl SwigInstructionBuilder {
         &self,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
+        self.create_sub_account_with_index(current_slot, 0)
+    }
+
+    /// Creates a sub-account with a specific index
+    ///
+    /// # Arguments
+    ///
+    /// * `current_slot` - Optional current slot number (required for Secp256k1)
+    /// * `sub_account_index` - Index for the sub-account (0-254)
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the subaccount's public key or a
+    /// `SwigError`
+    pub fn create_sub_account_with_index(
+        &self,
+        current_slot: Option<u64>,
+        sub_account_index: u8,
+    ) -> Result<Vec<Instruction>, SwigError> {
         let role_id_bytes = self.role_id.to_le_bytes();
         let swig_id_bytes = self.swig_id;
-        let (sub_account, sub_account_bump) = Pubkey::find_program_address(
-            &sub_account_seeds(&swig_id_bytes, &role_id_bytes),
-            &swig_interface::program_id(),
-        );
+        let index_bytes = [sub_account_index];
+        let (sub_account, sub_account_bump) = if sub_account_index == 0 {
+            // Legacy path for index 0 - use 3-seed derivation
+            Pubkey::find_program_address(
+                &sub_account_seeds(&swig_id_bytes, &role_id_bytes),
+                &swig_interface::program_id(),
+            )
+        } else {
+            // New path for index 1-254 - use 4-seed derivation
+            Pubkey::find_program_address(
+                &sub_account_seeds_with_index(&swig_id_bytes, &role_id_bytes, &index_bytes),
+                &swig_interface::program_id(),
+            )
+        };
 
         self.client_role.create_sub_account_instruction(
             self.swig_account,
@@ -419,6 +453,8 @@ impl SwigInstructionBuilder {
     ///
     /// * `instructions` - Vector of instructions to sign with the sub-account
     /// * `current_slot` - Optional current slot number (required for Secp256k1)
+    /// * `sub_account_index` - Optional index for multiple sub-accounts (0-254,
+    ///   defaults to 0)
     ///
     /// # Returns
     ///
@@ -428,12 +464,43 @@ impl SwigInstructionBuilder {
         instructions: Vec<Instruction>,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
+        self.sign_instruction_with_sub_account_index(instructions, current_slot, 0)
+    }
+
+    /// Signs instructions with a sub-account at a specific index
+    ///
+    /// # Arguments
+    ///
+    /// * `instructions` - Vector of instructions to sign with the sub-account
+    /// * `current_slot` - Optional current slot number (required for Secp256k1)
+    /// * `sub_account_index` - Index for the sub-account (0-254)
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the signed instruction or a `SwigError`
+    pub fn sign_instruction_with_sub_account_index(
+        &self,
+        instructions: Vec<Instruction>,
+        current_slot: Option<u64>,
+        sub_account_index: u8,
+    ) -> Result<Vec<Instruction>, SwigError> {
         let role_id_bytes = self.role_id.to_le_bytes();
         let swig_id_bytes = self.swig_id;
-        let (sub_account, _) = Pubkey::find_program_address(
-            &sub_account_seeds(&swig_id_bytes, &role_id_bytes),
-            &swig_interface::program_id(),
-        );
+
+        let (sub_account, _) = if sub_account_index == 0 {
+            // Legacy derivation for index 0
+            Pubkey::find_program_address(
+                &sub_account_seeds(&swig_id_bytes, &role_id_bytes),
+                &swig_interface::program_id(),
+            )
+        } else {
+            // New derivation for index 1-254
+            let index_bytes = [sub_account_index];
+            Pubkey::find_program_address(
+                &sub_account_seeds_with_index(&swig_id_bytes, &role_id_bytes, &index_bytes),
+                &swig_interface::program_id(),
+            )
+        };
 
         self.client_role.sub_account_sign_instruction(
             self.swig_account,
