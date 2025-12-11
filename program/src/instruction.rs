@@ -205,8 +205,8 @@ pub enum SwigInstruction {
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
     #[account(1, writable, name="swig_wallet_address", desc="the swig wallet address PDA")]
     #[account(2, writable, name="destination", desc="rent destination")]
-    #[account(3, writable, name="token_account", desc="the token account to close")]
-    #[account(4, name="token_program", desc="the token program")]
+    // #[account(3, writable, name="token_account", desc="the token account to close")]
+    #[account(3, name="token_program", desc="the token program")]
     CloseTokenAccountV1 = 14,
 
     /// Closes the swig account and returns all lamports to destination.

@@ -65,9 +65,9 @@ fn test_close_token_account_ed25519() {
         swig_pubkey,
         swig_wallet_address,
         authority.pubkey(),
-        swig_token_ata,
         destination.pubkey(),
         spl_token::ID,
+        vec![swig_token_ata],
         0, // role_id
     )
     .unwrap();
@@ -146,9 +146,9 @@ fn test_close_token_account_v1_style_authority() {
         swig_pubkey,
         swig_wallet_address,
         authority.pubkey(),
-        swig_token_ata,
         destination.pubkey(),
         spl_token::ID,
+        vec![swig_token_ata],
         0,
     )
     .unwrap();
@@ -237,9 +237,9 @@ fn test_close_token_account_non_zero_balance_fails() {
         swig_pubkey,
         swig_wallet_address,
         authority.pubkey(),
-        swig_token_ata,
         destination.pubkey(),
         spl_token::ID,
+        vec![swig_token_ata],
         0,
     )
     .unwrap();
@@ -300,9 +300,9 @@ fn test_close_token_account_wrong_authority_fails() {
         swig_pubkey,
         swig_wallet_address,
         authority.pubkey(),
-        other_token_ata,
         destination.pubkey(),
         spl_token::ID,
+        vec![other_token_ata],
         0,
     )
     .unwrap();
@@ -382,9 +382,9 @@ fn test_close_token_account_permission_denied() {
         swig_pubkey,
         swig_wallet_address,
         limited_authority.pubkey(),
-        swig_token_ata,
         destination.pubkey(),
         spl_token::ID,
+        vec![swig_token_ata],
         1, // role_id for limited authority
     )
     .unwrap();
@@ -465,9 +465,9 @@ fn test_close_token_account_with_manage_authority() {
         swig_pubkey,
         swig_wallet_address,
         manage_authority.pubkey(),
-        swig_token_ata,
         destination.pubkey(),
         spl_token::ID,
+        vec![swig_token_ata],
         1, // role_id for manage_authority
     )
     .unwrap();
@@ -599,9 +599,9 @@ fn test_close_token_account_secp256k1() {
         signing_fn,
         0, // current_slot
         next_counter,
-        swig_token_ata,
         destination.pubkey(),
         spl_token::ID,
+        vec![swig_token_ata],
         0, // role_id
     )
     .unwrap();
@@ -708,9 +708,9 @@ fn test_close_token_account_secp256r1() {
         authority_fn,
         0, // current_slot
         1,
-        swig_token_ata,
         destination.pubkey(),
         spl_token::ID,
+        vec![swig_token_ata],
         0, // role_id
         &public_key,
     )
@@ -751,4 +751,109 @@ fn test_close_token_account_secp256r1() {
         .map(|a| a.lamports)
         .unwrap_or(0);
     assert_eq!(destination_balance, token_account_rent);
+}
+
+/// Happy path: Close multiple empty token accounts in a single transaction
+#[test_log::test]
+fn test_close_multiple_token_accounts_ed25519() {
+    let mut context = setup_test_context().unwrap();
+    let authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+
+    // Create swig wallet
+    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
+
+    // Get the swig wallet address
+    let (swig_wallet_address, _) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(&swig_pubkey.to_bytes()),
+        &program_id(),
+    );
+
+    // Create 3 different token mints and ATAs owned by swig_wallet_address
+    let mint1 = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let mint2 = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let mint3 = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+
+    let swig_token_ata1 = setup_ata(
+        &mut context.svm,
+        &mint1,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
+    let swig_token_ata2 = setup_ata(
+        &mut context.svm,
+        &mint2,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
+    let swig_token_ata3 = setup_ata(
+        &mut context.svm,
+        &mint3,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
+
+    // Record initial balances
+    let destination = Keypair::new();
+    context.svm.airdrop(&destination.pubkey(), 0).unwrap();
+
+    let rent1 = context.svm.get_account(&swig_token_ata1).unwrap().lamports;
+    let rent2 = context.svm.get_account(&swig_token_ata2).unwrap().lamports;
+    let rent3 = context.svm.get_account(&swig_token_ata3).unwrap().lamports;
+    let total_rent = rent1 + rent2 + rent3;
+
+    // Close all 3 token accounts in a single instruction
+    let close_ix = CloseTokenAccountV1Instruction::new_with_ed25519_authority(
+        swig_pubkey,
+        swig_wallet_address,
+        authority.pubkey(),
+        destination.pubkey(),
+        spl_token::ID,
+        vec![swig_token_ata1, swig_token_ata2, swig_token_ata3],
+        0, // role_id
+    )
+    .unwrap();
+
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                close_ix,
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    assert!(result.is_ok(), "Transaction failed: {:?}", result.err());
+
+    // Verify all token accounts are closed
+    for (name, ata) in [
+        ("ata1", swig_token_ata1),
+        ("ata2", swig_token_ata2),
+        ("ata3", swig_token_ata3),
+    ] {
+        let token_account = context.svm.get_account(&ata);
+        let is_closed = token_account.is_none() || token_account.as_ref().unwrap().lamports == 0;
+        assert!(is_closed, "Token account {} should be closed", name);
+    }
+
+    // Verify destination received all the rent
+    let destination_balance = context
+        .svm
+        .get_account(&destination.pubkey())
+        .map(|a| a.lamports)
+        .unwrap_or(0);
+    assert_eq!(
+        destination_balance, total_rent,
+        "Destination should have received rent from all 3 token accounts"
+    );
 }

@@ -2843,21 +2843,30 @@ impl CloseTokenAccountV1Instruction {
         swig_account: Pubkey,
         swig_wallet_address: Pubkey,
         authority: Pubkey,
-        token_account: Pubkey,
         destination: Pubkey,
         token_program: Pubkey,
+        token_accounts: Vec<Pubkey>,
         role_id: u32,
     ) -> anyhow::Result<Instruction> {
-        let accounts = vec![
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(destination, false),
-            AccountMeta::new(token_account, false),
+            // AccountMeta::new(token_account, false),
             AccountMeta::new_readonly(token_program, false),
             AccountMeta::new_readonly(authority, true),
         ];
 
-        let args = CloseTokenAccountV1Args::new(role_id);
+        let token_account_index = accounts.len();
+
+        let token_account_metas: Vec<AccountMeta> = token_accounts
+            .into_iter()
+            .map(|t| AccountMeta::new(t, false))
+            .collect();
+
+        accounts.extend(token_account_metas);
+
+        let args = CloseTokenAccountV1Args::new(role_id, token_account_index as u16);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -2865,7 +2874,7 @@ impl CloseTokenAccountV1Instruction {
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: [args_bytes, &[5]].concat(), // Ed25519 authority index
+            data: [args_bytes, &[4]].concat(), // Ed25519 authority index
         })
     }
 
@@ -2876,23 +2885,33 @@ impl CloseTokenAccountV1Instruction {
         mut authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
-        token_account: Pubkey,
         destination: Pubkey,
         token_program: Pubkey,
+        token_accounts: Vec<Pubkey>,
         role_id: u32,
     ) -> anyhow::Result<Instruction>
     where
         F: FnMut(&[u8]) -> [u8; 65],
     {
-        let accounts = vec![
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(destination, false),
-            AccountMeta::new(token_account, false),
+            // AccountMeta::new(token_account, false),
             AccountMeta::new_readonly(token_program, false),
         ];
 
-        let args = CloseTokenAccountV1Args::new(role_id);
+        let token_account_index = accounts.len();
+
+        let token_account_metas: Vec<AccountMeta> = token_accounts
+            .into_iter()
+            .map(|t| AccountMeta::new(t, false))
+            .collect();
+
+        accounts.extend(token_account_metas);
+
+        let args = CloseTokenAccountV1Args::new(role_id, token_account_index as u16);
+
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -2933,25 +2952,33 @@ impl CloseTokenAccountV1Instruction {
         mut authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
-        token_account: Pubkey,
         destination: Pubkey,
         token_program: Pubkey,
+        token_accounts: Vec<Pubkey>,
         role_id: u32,
         public_key: &[u8; 33],
     ) -> anyhow::Result<Vec<Instruction>>
     where
         F: FnMut(&[u8]) -> [u8; 64],
     {
-        let accounts = vec![
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(destination, false),
-            AccountMeta::new(token_account, false),
             AccountMeta::new_readonly(token_program, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
 
-        let args = CloseTokenAccountV1Args::new(role_id);
+        let token_account_index = accounts.len();
+
+        let token_account_metas: Vec<AccountMeta> = token_accounts
+            .into_iter()
+            .map(|t| AccountMeta::new(t, false))
+            .collect();
+
+        accounts.extend(token_account_metas);
+
+        let args = CloseTokenAccountV1Args::new(role_id, token_account_index as u16);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -2985,7 +3012,7 @@ impl CloseTokenAccountV1Instruction {
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
         authority_payload.extend_from_slice(&counter.to_le_bytes());
-        authority_payload.push(5); // instruction sysvar index
+        authority_payload.push(4); // instruction sysvar index
         authority_payload.extend_from_slice(&[0u8; 4]);
 
         let main_ix = Instruction {
