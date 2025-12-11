@@ -116,7 +116,7 @@ pub enum SwigError {
     SignV1CannotBeUsedWithSwigV2,
     /// SignV2 instruction cannot be used with Swig v1 accounts
     SignV2CannotBeUsedWithSwigV1,
-    
+
     // New errors added in v1.3.4+ for multi-sub-account support
     // These are placed at the end to maintain backward compatibility with existing error codes
     /// Invalid sub-account index (must be 0-254)

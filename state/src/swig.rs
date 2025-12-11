@@ -436,7 +436,7 @@ impl<'a> SwigBuilder<'a> {
         let mut seen_sub_account_indices = alloc::vec::Vec::new();
         let mut validation_cursor = 0;
         let mut has_sub_account_actions = false;
-        
+
         for _i in 0..num_actions {
             let header = &actions_data[validation_cursor..validation_cursor + Action::LEN];
             let action_header = unsafe { Action::load_unchecked(header)? };

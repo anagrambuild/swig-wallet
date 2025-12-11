@@ -2201,7 +2201,10 @@ fn test_sign_v1_rejected_by_swig_v2() {
         TransactionError::InstructionError(0, InstructionError::Custom(45))
     );
 
-    println!("✅ Test passed: Swig v2 correctly rejects SignV1 instruction with SignV1CannotBeUsedWithSwigV2 (error 45)");
+    println!(
+        "✅ Test passed: Swig v2 correctly rejects SignV1 instruction with \
+         SignV1CannotBeUsedWithSwigV2 (error 45)"
+    );
 }
 
 #[test_log::test]

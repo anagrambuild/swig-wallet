@@ -72,10 +72,12 @@ fn calculate_num_actions(actions_data: &[u8]) -> Result<u8, ProgramError> {
     Ok(count)
 }
 
-/// Validates that there are no duplicate SubAccount indices in the actions data.
+/// Validates that there are no duplicate SubAccount indices in the actions
+/// data.
 ///
 /// This prevents security issues where multiple actions could point to the same
-/// sub-account index. Only performs validation if SubAccount actions are present.
+/// sub-account index. Only performs validation if SubAccount actions are
+/// present.
 ///
 /// # Arguments
 /// * `actions_data` - Raw bytes containing action data
@@ -84,7 +86,7 @@ fn calculate_num_actions(actions_data: &[u8]) -> Result<u8, ProgramError> {
 /// * `Result<(), ProgramError>` - Ok if no duplicates, error otherwise
 fn validate_no_duplicate_sub_account_indices(actions_data: &[u8]) -> Result<(), ProgramError> {
     use swig_state::action::{sub_account::SubAccount, Permission};
-    
+
     let mut cursor = 0;
     let mut seen_indices = Vec::new();
     let mut has_sub_account_actions = false;
@@ -107,8 +109,9 @@ fn validate_no_duplicate_sub_account_indices(actions_data: &[u8]) -> Result<(), 
         if action_header.permission()? == Permission::SubAccount {
             has_sub_account_actions = true;
             if action_len == SubAccount::LEN {
-                let sub_account_action =
-                    unsafe { SubAccount::load_unchecked(&actions_data[cursor..cursor + action_len])? };
+                let sub_account_action = unsafe {
+                    SubAccount::load_unchecked(&actions_data[cursor..cursor + action_len])?
+                };
                 let index = sub_account_action.sub_account_index;
 
                 if seen_indices.contains(&index) {
@@ -333,7 +336,7 @@ fn perform_replace_all_operation(
 ) -> Result<i64, ProgramError> {
     // Validate no duplicate SubAccount indices before processing
     validate_no_duplicate_sub_account_indices(new_actions)?;
-    
+
     let new_actions_size = new_actions.len();
     let size_diff = new_actions_size as i64 - current_actions_size as i64;
 

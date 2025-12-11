@@ -1032,7 +1032,7 @@ fn test_add_role_rejects_duplicate_sub_account_indices() {
 
     // Try to add a new role with two SubAccount actions that have the same index
     let new_authority = Keypair::new();
-    
+
     let actions = vec![
         ClientAction::SubAccount(SubAccount::new_for_creation(5)), // index 5
         ClientAction::SubAccount(SubAccount::new_for_creation(5)), // duplicate index 5
@@ -1054,7 +1054,7 @@ fn test_add_role_rejects_duplicate_sub_account_indices() {
         result.is_err(),
         "Adding role with duplicate SubAccount indices should fail"
     );
-    
+
     // Verify it's the right error
     if let Err(e) = result {
         let error_msg = format!("{:?}", e);
@@ -1066,7 +1066,8 @@ fn test_add_role_rejects_duplicate_sub_account_indices() {
     }
 }
 
-/// Test that adding a role with multiple SubAccount actions with different indices succeeds
+/// Test that adding a role with multiple SubAccount actions with different
+/// indices succeeds
 #[test_log::test]
 fn test_add_role_accepts_different_sub_account_indices() {
     let mut context = setup_test_context().unwrap();
@@ -1082,7 +1083,7 @@ fn test_add_role_accepts_different_sub_account_indices() {
 
     // Add a new role with multiple SubAccount actions with different indices
     let new_authority = Keypair::new();
-    
+
     let actions = vec![
         ClientAction::SubAccount(SubAccount::new_for_creation(0)), // index 0
         ClientAction::SubAccount(SubAccount::new_for_creation(5)), // index 5
@@ -1106,16 +1107,20 @@ fn test_add_role_accepts_different_sub_account_indices() {
         "Adding role with different SubAccount indices should succeed: {:?}",
         result.err()
     );
-    
+
     // Verify the role was created with 3 SubAccount actions
     let swig_account_data = context.svm.get_account(&swig_key).unwrap();
     let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data.data).unwrap();
-    
+
     // Find the newly created role (should be role_id 1)
     let role = swig_with_roles.get_role(1).unwrap().unwrap();
     let sub_account_actions = role.get_all_actions_of_type::<SubAccount>().unwrap();
-    
-    assert_eq!(sub_account_actions.len(), 3, "Should have 3 SubAccount actions");
+
+    assert_eq!(
+        sub_account_actions.len(),
+        3,
+        "Should have 3 SubAccount actions"
+    );
     assert_eq!(sub_account_actions[0].sub_account_index, 0);
     assert_eq!(sub_account_actions[1].sub_account_index, 5);
     assert_eq!(sub_account_actions[2].sub_account_index, 10);
@@ -1129,9 +1134,9 @@ fn update_authority_replace_all(
     authority_to_update_id: u32,
     new_actions: Vec<ClientAction>,
 ) -> anyhow::Result<litesvm::types::TransactionMetadata> {
-    use swig_interface::{UpdateAuthorityData, UpdateAuthorityInstruction};
     use solana_sdk::message::v0;
-    
+    use swig_interface::{UpdateAuthorityData, UpdateAuthorityInstruction};
+
     context.svm.expire_blockhash();
     let payer_pubkey = context.default_payer.pubkey();
     let swig_account = context
@@ -1184,9 +1189,9 @@ fn update_authority_add_actions(
     authority_to_update_id: u32,
     actions_to_add: Vec<ClientAction>,
 ) -> anyhow::Result<litesvm::types::TransactionMetadata> {
-    use swig_interface::{UpdateAuthorityData, UpdateAuthorityInstruction};
     use solana_sdk::message::v0;
-    
+    use swig_interface::{UpdateAuthorityData, UpdateAuthorityInstruction};
+
     context.svm.expire_blockhash();
     let payer_pubkey = context.default_payer.pubkey();
     let swig_account = context
@@ -1231,7 +1236,8 @@ fn update_authority_add_actions(
     Ok(result)
 }
 
-/// Test that updating authority with ReplaceAll rejects duplicate SubAccount indices
+/// Test that updating authority with ReplaceAll rejects duplicate SubAccount
+/// indices
 #[test_log::test]
 fn test_update_authority_replace_all_rejects_duplicate_indices() {
     let mut context = setup_test_context().unwrap();
@@ -1282,7 +1288,8 @@ fn test_update_authority_replace_all_rejects_duplicate_indices() {
     );
 }
 
-/// Test that updating authority with AddActions rejects when it creates duplicates
+/// Test that updating authority with AddActions rejects when it creates
+/// duplicates
 #[test_log::test]
 fn test_update_authority_add_actions_rejects_duplicate_indices() {
     let mut context = setup_test_context().unwrap();
@@ -1323,7 +1330,8 @@ fn test_update_authority_add_actions_rejects_duplicate_indices() {
         actions_to_add,
     );
 
-    // Should fail because combining existing (index 5) + new (index 5) creates duplicate
+    // Should fail because combining existing (index 5) + new (index 5) creates
+    // duplicate
     assert!(
         result.is_err(),
         "Adding SubAccount action with duplicate index should fail"
@@ -1392,13 +1400,13 @@ fn test_update_authority_add_actions_accepts_different_indices() {
         3,
         "Should have 3 SubAccount actions"
     );
-    
+
     // Collect and sort indices for verification
     let mut indices: Vec<u8> = sub_account_actions
         .iter()
         .map(|a| a.sub_account_index)
         .collect();
     indices.sort();
-    
+
     assert_eq!(indices, vec![0, 5, 10], "Should have indices 0, 5, and 10");
 }

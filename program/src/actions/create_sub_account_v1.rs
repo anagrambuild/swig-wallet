@@ -137,14 +137,18 @@ impl<'a> CreateSubAccountV1<'a> {
     /// # Returns
     /// * `Result<Self, ProgramError>` - Parsed instruction or error
     pub fn from_instruction_bytes(data: &'a [u8]) -> Result<Self, ProgramError> {
-        // BACKWARDS COMPATIBILITY: Both legacy and new formats are the same size (16 bytes aligned)
-        // Legacy format (v1.3.3 and earlier): Had 7 zero-initialized padding bytes at the end
-        // New format (v1.3.4+): First padding byte became sub_account_index, 6 padding bytes remain
+        // BACKWARDS COMPATIBILITY: Both legacy and new formats are the same size (16
+        // bytes aligned) Legacy format (v1.3.3 and earlier): Had 7
+        // zero-initialized padding bytes at the end New format (v1.3.4+): First
+        // padding byte became sub_account_index, 6 padding bytes remain
         //
         // This works because:
-        // 1. Legacy transactions always had 0 in the index byte position (from zero-initialized padding)
-        // 2. New transactions explicitly set the index byte to the desired value (0-254)
-        // 3. Reading index byte as 0 for legacy transactions is correct (they use legacy PDA derivation)
+        // 1. Legacy transactions always had 0 in the index byte position (from
+        //    zero-initialized padding)
+        // 2. New transactions explicitly set the index byte to the desired value
+        //    (0-254)
+        // 3. Reading index byte as 0 for legacy transactions is correct (they use
+        //    legacy PDA derivation)
         if data.len() < CreateSubAccountV1Args::LEN {
             return Err(SwigError::InvalidSwigCreateInstructionDataTooShort.into());
         }
@@ -155,7 +159,8 @@ impl<'a> CreateSubAccountV1<'a> {
         Ok(Self {
             role_id: args.role_id,
             sub_account_bump: args.sub_account_bump,
-            sub_account_index: args.sub_account_index, // Will be 0 for legacy format (zero-initialized padding)
+            sub_account_index: args.sub_account_index, /* Will be 0 for legacy format
+                                                        * (zero-initialized padding) */
             authority_payload,
             data_payload: args_data,
         })
@@ -173,8 +178,9 @@ impl<'a> CreateSubAccountV1<'a> {
 /// # Sub-Account Indices
 /// Sub-account indices do NOT need to be sequential. They can be created in any
 /// order (e.g., 0, 5, 2, 10) to allow for parallel execution on a Swig wallet.
-/// Multiple parties can create sub-accounts with different indices simultaneously
-/// without conflicts, enabling better scalability and flexibility.
+/// Multiple parties can create sub-accounts with different indices
+/// simultaneously without conflicts, enabling better scalability and
+/// flexibility.
 ///
 /// # Arguments
 /// * `ctx` - The account context for sub-account creation
@@ -236,8 +242,8 @@ pub fn create_sub_account_v1(
 
     // Validate index is within bounds (0-254)
     // We support indices 0-254, which gives us 255 possible sub-accounts per role.
-    // Index 255 is reserved to potentially serve as a sentinel value or special marker
-    // in future versions if needed.
+    // Index 255 is reserved to potentially serve as a sentinel value or special
+    // marker in future versions if needed.
     if sub_account_index >= 255 {
         return Err(SwigError::InvalidSubAccountIndex.into());
     }
@@ -326,9 +332,10 @@ pub fn create_sub_account_v1(
         )?
     };
 
-    // CRITICAL SECURITY CHECK: Ensure no other SubAccount action uses this PDA address
-    // This prevents PDA collision attacks where an attacker could create multiple
-    // SubAccount actions pointing to the same underlying account
+    // CRITICAL SECURITY CHECK: Ensure no other SubAccount action uses this PDA
+    // address This prevents PDA collision attacks where an attacker could
+    // create multiple SubAccount actions pointing to the same underlying
+    // account
     let mut duplicate_check_cursor = 0;
     while duplicate_check_cursor < end_pos {
         let action_header = unsafe {
@@ -345,7 +352,8 @@ pub fn create_sub_account_v1(
                 )?
             };
 
-            // Check if any existing SubAccount action (that's already created) uses this PDA
+            // Check if any existing SubAccount action (that's already created) uses this
+            // PDA
             if existing_action.sub_account != [0u8; 32]
                 && existing_action.sub_account == *ctx.accounts.sub_account.key()
             {
