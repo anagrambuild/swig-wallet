@@ -429,9 +429,9 @@ impl<'c> SwigWallet<'c> {
 
     /// Creates a sub-account with a specific index for the current role
     ///
-    /// This allows creating multiple sub-accounts (up to 255) for a single role.
-    /// Index 0 uses the legacy 3-seed derivation, while indices 1-254 use the
-    /// new 4-seed derivation for backward compatibility.
+    /// This allows creating multiple sub-accounts (up to 255) for a single
+    /// role. Index 0 uses the legacy 3-seed derivation, while indices 1-254
+    /// use the new 4-seed derivation for backward compatibility.
     ///
     /// # Arguments
     ///
@@ -440,7 +440,10 @@ impl<'c> SwigWallet<'c> {
     /// # Returns
     ///
     /// Returns a `Result` containing the transaction signature or a `SwigError`
-    pub fn create_sub_account_with_index(&mut self, sub_account_index: u8) -> Result<Signature, SwigError> {
+    pub fn create_sub_account_with_index(
+        &mut self,
+        sub_account_index: u8,
+    ) -> Result<Signature, SwigError> {
         let instructions = self
             .instruction_builder
             .create_sub_account_with_index(Some(self.get_current_slot()?), sub_account_index)?;

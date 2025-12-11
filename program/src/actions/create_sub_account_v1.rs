@@ -51,8 +51,9 @@ pub struct CreateSubAccountV1Args {
     _padding1: u16,
     pub role_id: u32,
     pub sub_account_bump: u8,
-    /// Index of this sub-account (0-254). Enables multiple sub-accounts per role.
-    /// Index 0 uses legacy PDA derivation for backwards compatibility.
+    /// Index of this sub-account (0-254). Enables multiple sub-accounts per
+    /// role. Index 0 uses legacy PDA derivation for backwards
+    /// compatibility.
     pub sub_account_index: u8,
     _padding2: [u8; 6],
 }
@@ -188,105 +189,105 @@ pub fn create_sub_account_v1(
         )?;
     }
     let sub_account_index = create_sub_account.args.sub_account_index;
-    
+
     // Validate index is within bounds (0-254, reserve 255 for future use)
     if sub_account_index >= 255 {
         return Err(SwigError::InvalidSubAccountIndex.into());
     }
-    
+
     // First check if the role has SubAccount permission at all
     let mut has_sub_account_permission = false;
     let mut cursor = 0;
     let end_pos = role.actions.len();
-    
+
     while cursor < end_pos {
-        let action_header = unsafe {
-            Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN])?
-        };
+        let action_header =
+            unsafe { Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN])? };
         cursor += Action::LEN;
-        
+
         if action_header.permission()? == Permission::SubAccount {
             has_sub_account_permission = true;
             break;
         }
-        
+
         cursor = action_header.boundary() as usize;
     }
-    
+
     if !has_sub_account_permission {
         return Err(SwigError::AuthorityCannotCreateSubAccount.into());
     }
-    
+
     // Find the SubAccount action for this specific index
-    // We need custom logic to match by index since multiple SubAccount actions may exist
+    // We need custom logic to match by index since multiple SubAccount actions may
+    // exist
     let mut found_action_offset: Option<usize> = None;
     let mut cursor = 0;
-    
+
     while cursor < end_pos {
-        let action_header = unsafe {
-            Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN])?
-        };
+        let action_header =
+            unsafe { Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN])? };
         cursor += Action::LEN;
-        
+
         if action_header.permission()? == Permission::SubAccount {
             let action_obj = unsafe {
                 SubAccount::load_unchecked(&role.actions[cursor..cursor + SubAccount::LEN])?
             };
-            
+
             // Match on index and empty sub_account field (creation state)
-            if action_obj.sub_account_index == sub_account_index 
-                && action_obj.sub_account == [0u8; 32] {
+            if action_obj.sub_account_index == sub_account_index
+                && action_obj.sub_account == [0u8; 32]
+            {
                 found_action_offset = Some(cursor);
                 break;
             }
         }
-        
+
         cursor = action_header.boundary() as usize;
     }
-    
+
     if found_action_offset.is_none() {
         return Err(SwigError::SubAccountActionNotFound.into());
     }
-    
+
     // SEQUENTIAL INDEX VALIDATION:
     // If creating index N > 0, verify index N-1 exists and is populated
     if sub_account_index > 0 {
         let mut prev_index_exists = false;
         let mut cursor = 0;
-        
+
         while cursor < end_pos {
-            let action_header = unsafe {
-                Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN])?
-            };
+            let action_header =
+                unsafe { Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN])? };
             cursor += Action::LEN;
-            
+
             if action_header.permission()? == Permission::SubAccount {
                 let action_obj = unsafe {
                     SubAccount::load_unchecked(&role.actions[cursor..cursor + SubAccount::LEN])?
                 };
-                
+
                 // Check if previous index exists and is created (not zeroed)
                 if action_obj.sub_account_index == sub_account_index - 1
-                    && action_obj.sub_account != [0u8; 32] {
+                    && action_obj.sub_account != [0u8; 32]
+                {
                     prev_index_exists = true;
                     break;
                 }
             }
-            
+
             cursor = action_header.boundary() as usize;
         }
-        
+
         if !prev_index_exists {
             return Err(SwigError::SubAccountIndexNotSequential.into());
         }
     }
-    
+
     // Derive sub-account PDA based on index
     // Index 0 uses legacy derivation (3 seeds) for backwards compatibility
     // Index 1+ uses new derivation (4 seeds) with index
     let role_id_bytes = create_sub_account.args.role_id.to_le_bytes();
     let bump_byte = [create_sub_account.args.sub_account_bump];
-    
+
     let bump = if sub_account_index == 0 {
         // Legacy derivation for backwards compatibility
         let sub_account_seeds = sub_account_seeds_with_bump(&swig.id, &role_id_bytes, &bump_byte);
@@ -341,10 +342,10 @@ pub fn create_sub_account_v1(
     let action_offset = found_action_offset.unwrap();
     let sub_account_action_mut = unsafe {
         SubAccount::load_mut_unchecked(
-            &mut role.actions[action_offset..action_offset + SubAccount::LEN]
+            &mut role.actions[action_offset..action_offset + SubAccount::LEN],
         )?
     };
-    
+
     sub_account_action_mut
         .sub_account
         .copy_from_slice(ctx.accounts.sub_account.key().as_ref());

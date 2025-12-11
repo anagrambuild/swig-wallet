@@ -25,9 +25,9 @@ pub struct SubAccount {
     pub bump: u8,
     /// Whether the sub-account is enabled
     pub enabled: bool,
-    /// Index of this sub-account (0-254). Enables multiple sub-accounts per role.
-    /// Index 0 uses legacy PDA derivation for backwards compatibility.
-    /// Indices 1-254 use new derivation with index in seeds.
+    /// Index of this sub-account (0-254). Enables multiple sub-accounts per
+    /// role. Index 0 uses legacy PDA derivation for backwards
+    /// compatibility. Indices 1-254 use new derivation with index in seeds.
     pub sub_account_index: u8,
     _padding: u8,
     /// ID of the role associated with this sub-account
@@ -180,8 +180,8 @@ mod tests {
         assert_eq!(bytes.len(), 72);
 
         // Verify struct layout:
-        // 32 (sub_account) + 1 (bump) + 1 (enabled) + 1 (sub_account_index) + 1 (padding) + 4 (role_id) + 32
-        // (swig_id) = 72
+        // 32 (sub_account) + 1 (bump) + 1 (enabled) + 1 (sub_account_index) + 1
+        // (padding) + 4 (role_id) + 32 (swig_id) = 72
         let expected_size = 32 + 1 + 1 + 1 + 1 + 4 + 32;
         assert_eq!(expected_size, 72);
         assert_eq!(SubAccount::LEN, expected_size);

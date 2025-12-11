@@ -390,7 +390,8 @@ impl SwigInstructionBuilder {
     /// # Arguments
     ///
     /// * `current_slot` - Optional current slot number (required for Secp256k1)
-    /// * `sub_account_index` - Optional index for multiple sub-accounts (0-254, defaults to 0)
+    /// * `sub_account_index` - Optional index for multiple sub-accounts (0-254,
+    ///   defaults to 0)
     ///
     /// # Returns
     ///

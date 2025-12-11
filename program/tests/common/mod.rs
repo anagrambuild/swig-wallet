@@ -518,23 +518,20 @@ pub fn create_sub_account_with_index(
     sub_account_index: u8,
 ) -> anyhow::Result<Pubkey> {
     let role_id_bytes = role_id.to_le_bytes();
-    
+
     // Derive PDA based on index
     // Index 0 uses legacy derivation (3 seeds) for backwards compatibility
     // Index 1+ uses new derivation (4 seeds) with index
     let (sub_account, sub_account_bump) = if sub_account_index == 0 {
         // Legacy derivation
-        Pubkey::find_program_address(
-            &sub_account_seeds(&id, &role_id_bytes),
-            &program_id()
-        )
+        Pubkey::find_program_address(&sub_account_seeds(&id, &role_id_bytes), &program_id())
     } else {
         // New derivation with index
         use swig_state::swig::sub_account_seeds_with_index;
         let index_bytes = [sub_account_index];
         Pubkey::find_program_address(
             &sub_account_seeds_with_index(&id, &role_id_bytes, &index_bytes),
-            &program_id()
+            &program_id(),
         )
     };
 
@@ -842,7 +839,7 @@ pub fn setup_with_multiple_sub_account_permissions(
 ) -> anyhow::Result<(Pubkey, Keypair, Keypair, [u8; 32])> {
     let root_authority = Keypair::new();
     let sub_account_authority = Keypair::new();
-    
+
     context
         .svm
         .airdrop(&root_authority.pubkey(), 10_000_000_000)
@@ -851,16 +848,16 @@ pub fn setup_with_multiple_sub_account_permissions(
         .svm
         .airdrop(&sub_account_authority.pubkey(), 10_000_000_000)
         .unwrap();
-    
+
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_ed25519(context, &root_authority, id)?;
-    
+
     // Build SubAccount actions for each index
     let mut actions = Vec::new();
     for i in 0..num_sub_accounts {
         actions.push(ClientAction::SubAccount(SubAccount::new_for_creation(i)));
     }
-    
+
     // Add authority with multiple SubAccount permissions
     add_authority_with_ed25519_root(
         context,
@@ -872,7 +869,7 @@ pub fn setup_with_multiple_sub_account_permissions(
         },
         actions,
     )?;
-    
+
     Ok((swig_key, root_authority, sub_account_authority, id))
 }
 
@@ -883,10 +880,10 @@ pub fn setup_with_multiple_sub_accounts(
 ) -> anyhow::Result<(Pubkey, Keypair, Keypair, [u8; 32], Vec<Pubkey>)> {
     let (swig_key, root_authority, sub_account_authority, id) =
         setup_with_multiple_sub_account_permissions(context, num_sub_accounts)?;
-    
+
     let role_id = 1; // The sub-account authority has role_id 1
     let mut sub_accounts = Vec::new();
-    
+
     // Create all sub-accounts sequentially
     for i in 0..num_sub_accounts {
         if i > 0 {
@@ -903,8 +900,14 @@ pub fn setup_with_multiple_sub_accounts(
         )?;
         sub_accounts.push(sub_account);
     }
-    
-    Ok((swig_key, root_authority, sub_account_authority, id, sub_accounts))
+
+    Ok((
+        swig_key,
+        root_authority,
+        sub_account_authority,
+        id,
+        sub_accounts,
+    ))
 }
 
 #[test_log::test]

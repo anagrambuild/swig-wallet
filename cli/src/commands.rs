@@ -471,8 +471,15 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                 return Err(anyhow!("Sub-account index must be between 0 and 254"));
             }
 
-            let signature = ctx.wallet.as_mut().unwrap().create_sub_account_with_index(sub_account_index)?;
-            println!("Sub-account created successfully with index {}!", sub_account_index);
+            let signature = ctx
+                .wallet
+                .as_mut()
+                .unwrap()
+                .create_sub_account_with_index(sub_account_index)?;
+            println!(
+                "Sub-account created successfully with index {}!",
+                sub_account_index
+            );
             println!("Signature: {}", signature);
             Ok(())
         },
