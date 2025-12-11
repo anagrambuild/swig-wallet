@@ -663,41 +663,6 @@ fn create_test_secp256r1_keypair() -> (openssl::ec::EcKey<openssl::pkey::Private
     (signing_key, pubkey_array)
 }
 
-/// Helper function to get the current signature counter for a secp256r1 authority
-fn get_secp256r1_counter(
-    context: &SwigTestContext,
-    swig_key: &Pubkey,
-    public_key: &[u8; 33],
-) -> Result<u32, String> {
-    let swig_account = context
-        .svm
-        .get_account(swig_key)
-        .ok_or("Swig account not found")?;
-    let swig = SwigWithRoles::from_bytes(&swig_account.data)
-        .map_err(|e| format!("Failed to parse swig data: {:?}", e))?;
-
-    let role_id = swig
-        .lookup_role_id(public_key)
-        .map_err(|e| format!("Failed to lookup role: {:?}", e))?
-        .ok_or("Authority not found in swig account")?;
-
-    let role = swig
-        .get_role(role_id)
-        .map_err(|e| format!("Failed to get role: {:?}", e))?
-        .ok_or("Role not found")?;
-
-    if matches!(role.authority.authority_type(), AuthorityType::Secp256r1) {
-        let secp_authority = role
-            .authority
-            .as_any()
-            .downcast_ref::<Secp256r1Authority>()
-            .ok_or("Failed to downcast to Secp256r1Authority")?;
-        Ok(secp_authority.signature_odometer)
-    } else {
-        Err("Authority is not a Secp256r1Authority".to_string())
-    }
-}
-
 /// Happy path: Close an empty token account with Secp256r1 authority
 #[test_log::test]
 fn test_close_token_account_secp256r1() {
@@ -730,10 +695,6 @@ fn test_close_token_account_secp256r1() {
     context.svm.airdrop(&destination.pubkey(), 0).unwrap();
     let token_account_rent = context.svm.get_account(&swig_token_ata).unwrap().lamports;
 
-    // Get the current counter
-    let current_counter = get_secp256r1_counter(&context, &swig_pubkey, &public_key).unwrap();
-    let next_counter = current_counter + 1;
-
     // Create authority function that signs the message hash
     let authority_fn = |message_hash: &[u8]| -> [u8; 64] {
         use solana_secp256r1_program::sign_message;
@@ -746,7 +707,7 @@ fn test_close_token_account_secp256r1() {
         swig_wallet_address,
         authority_fn,
         0, // current_slot
-        next_counter,
+        1,
         swig_token_ata,
         destination.pubkey(),
         spl_token::ID,

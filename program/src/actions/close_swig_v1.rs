@@ -147,7 +147,6 @@ pub fn close_swig_v1(
     }
 
     // Store swig values before dropping borrow
-    let _swig_id = swig.id;
     let wallet_bump = swig.wallet_bump;
     let swig_data_len = swig_account_data.len();
 
@@ -168,8 +167,6 @@ pub fn close_swig_v1(
     }
 
     // Transfer lamports from swig_wallet_address to destination (if any)
-    // swig_wallet_address is a system-owned account, so we need to use CPI
-    // with the PDA signer to transfer.
     if wallet_lamports > 0 {
         let bump = [wallet_bump];
         let seeds = swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &bump);
@@ -181,13 +178,25 @@ pub fn close_swig_v1(
         .invoke_signed(&[seeds.as_slice().into()])?;
     }
 
+    // Calculate rent for closed account (1 byte for discriminator)
+    let closed_account_rent = rent.minimum_balance(1);
+
+    // Transfer excess lamports to destination, keeping rent for 1 byte
+    let lamports_to_transfer = swig_lamports.saturating_sub(closed_account_rent);
+
     unsafe {
-        *ctx.accounts.swig.borrow_mut_lamports_unchecked() = 0;
-        *ctx.accounts.destination.borrow_mut_lamports_unchecked() += swig_lamports;
+        *ctx.accounts.swig.borrow_mut_lamports_unchecked() = closed_account_rent;
+        *ctx.accounts.destination.borrow_mut_lamports_unchecked() += lamports_to_transfer;
     }
 
-    // Resize account to 0 to fully close it
-    ctx.accounts.swig.close()?;
+    // Resize account to 1 byte
+    ctx.accounts.swig.resize(1)?;
+
+    // Set discriminator to ClosedSwigAccount (255) to mark as permanently closed
+    unsafe {
+        let swig_data = ctx.accounts.swig.borrow_mut_data_unchecked();
+        swig_data[0] = Discriminator::ClosedSwigAccount as u8;
+    }
 
     Ok(())
 }

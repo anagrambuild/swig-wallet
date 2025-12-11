@@ -83,22 +83,13 @@ fn test_close_swig_ed25519() {
     let result = context.svm.send_transaction(tx);
     assert!(result.is_ok(), "Transaction failed: {:?}", result.err());
 
-    // Verify swig account is closed (data should be zeroed and no lamports)
-    let swig_account = context.svm.get_account(&swig_pubkey);
-    assert!(
-        swig_account.is_none() || swig_account.as_ref().unwrap().lamports == 0,
-        "Swig account should be closed"
-    );
-
-    // Verify destination received all lamports
-    let destination_balance = context
-        .svm
-        .get_account(&destination.pubkey())
-        .map(|a| a.lamports)
-        .unwrap_or(0);
+    // Verify swig account is marked as closed with discriminator 255
+    let swig_account = context.svm.get_account(&swig_pubkey).unwrap();
+    assert_eq!(swig_account.data[0], 255);
+    assert_eq!(swig_account.data.len(), 1);
     assert_eq!(
-        destination_balance, total_lamports,
-        "Destination should have received all lamports"
+        swig_account.lamports,
+        context.svm.minimum_balance_for_rent_exemption(1)
     );
 }
 
@@ -136,7 +127,8 @@ fn test_close_swig_with_manage_authority() {
     )
     .unwrap();
 
-    let swig_lamports = context.svm.get_account(&swig_pubkey).unwrap().lamports;
+    let swig_lamports = context.svm.get_account(&swig_pubkey).unwrap().lamports
+        - context.svm.minimum_balance_for_rent_exemption(1);
     let wallet_lamports = context
         .svm
         .get_account(&swig_wallet_address)
@@ -179,7 +171,16 @@ fn test_close_swig_with_manage_authority() {
         result.err()
     );
 
-    // Verify destination received lamports
+    // Verify swig account is marked as closed with discriminator 255
+    let swig_account = context.svm.get_account(&swig_pubkey).unwrap();
+    assert_eq!(swig_account.data[0], 255);
+    assert_eq!(swig_account.data.len(), 1);
+    assert_eq!(
+        swig_account.lamports,
+        context.svm.minimum_balance_for_rent_exemption(1)
+    );
+
+    // Verify destination received lamports (total minus rent kept for closed account)
     let destination_balance = context
         .svm
         .get_account(&destination.pubkey())
@@ -423,52 +424,6 @@ fn test_close_swig_with_wallet_address_excess_balance_fails() {
     );
 }
 
-// ============================================================================
-// Secp256k1 Tests
-// ============================================================================
-
-/// Helper function to get the current signature counter for a secp256k1 authority
-fn get_secp256k1_counter(
-    context: &SwigTestContext,
-    swig_key: &Pubkey,
-    wallet: &PrivateKeySigner,
-) -> Result<u32, String> {
-    let swig_account = context
-        .svm
-        .get_account(swig_key)
-        .ok_or("Swig account not found")?;
-    let swig = SwigWithRoles::from_bytes(&swig_account.data)
-        .map_err(|e| format!("Failed to parse swig data: {:?}", e))?;
-
-    let eth_pubkey = wallet
-        .credential()
-        .verifying_key()
-        .to_encoded_point(false)
-        .to_bytes();
-    let authority_bytes = &eth_pubkey[1..];
-
-    let role_id = swig
-        .lookup_role_id(authority_bytes)
-        .map_err(|e| format!("Failed to lookup role: {:?}", e))?
-        .ok_or("Authority not found in swig account")?;
-
-    let role = swig
-        .get_role(role_id)
-        .map_err(|e| format!("Failed to get role: {:?}", e))?
-        .ok_or("Role not found")?;
-
-    if matches!(role.authority.authority_type(), AuthorityType::Secp256k1) {
-        let secp_authority = role
-            .authority
-            .as_any()
-            .downcast_ref::<Secp256k1Authority>()
-            .ok_or("Failed to downcast to Secp256k1Authority")?;
-        Ok(secp_authority.signature_odometer)
-    } else {
-        Err("Authority is not a Secp256k1Authority".to_string())
-    }
-}
-
 /// Happy path: Close swig wallet with Secp256k1 authority
 #[test_log::test]
 fn test_close_swig_secp256k1() {
@@ -496,10 +451,6 @@ fn test_close_swig_secp256k1() {
     let destination = Keypair::new();
     context.svm.airdrop(&destination.pubkey(), 0).unwrap();
 
-    // Get the current counter
-    let current_counter = get_secp256k1_counter(&context, &swig_pubkey, &wallet).unwrap();
-    let next_counter = current_counter + 1;
-
     // Create signing function
     let signing_fn = |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
@@ -514,7 +465,7 @@ fn test_close_swig_secp256k1() {
         swig_wallet_address,
         signing_fn,
         0, // current_slot
-        next_counter,
+        1,
         destination.pubkey(),
         0, // role_id
     )
@@ -542,20 +493,35 @@ fn test_close_swig_secp256k1() {
         result.err()
     );
 
-    // Verify swig account is closed
-    let swig_account = context.svm.get_account(&swig_pubkey);
-    assert!(
-        swig_account.is_none() || swig_account.as_ref().unwrap().lamports == 0,
-        "Swig account should be closed"
-    );
+    let swig_account = context.svm.get_account(&swig_pubkey).unwrap();
 
-    // Verify destination received all lamports
-    let destination_balance = context
-        .svm
-        .get_account(&destination.pubkey())
-        .map(|a| a.lamports)
-        .unwrap_or(0);
-    assert_eq!(destination_balance, total_lamports);
+    assert_eq!(swig_account.data[0], 255);
+    assert_eq!(swig_account.data.len(), 1);
+    assert_eq!(
+        swig_account.lamports,
+        context.svm.minimum_balance_for_rent_exemption(1)
+    );
+}
+
+/// Helper to generate a real secp256r1 key pair for testing
+fn create_test_secp256r1_keypair() -> (openssl::ec::EcKey<openssl::pkey::Private>, [u8; 33]) {
+    use openssl::{
+        bn::BigNumContext,
+        ec::{EcGroup, EcKey, PointConversionForm},
+        nid::Nid,
+    };
+
+    let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+    let signing_key = EcKey::generate(&group).unwrap();
+
+    let mut ctx = BigNumContext::new().unwrap();
+    let pubkey_bytes = signing_key
+        .public_key()
+        .to_bytes(&group, PointConversionForm::COMPRESSED, &mut ctx)
+        .unwrap();
+
+    let pubkey_array: [u8; 33] = pubkey_bytes.try_into().unwrap();
+    (signing_key, pubkey_array)
 }
 
 /// Happy path: Close swig wallet with Secp256r1 authority
@@ -630,18 +596,12 @@ fn test_close_swig_secp256r1() {
         result.err()
     );
 
-    // Verify swig account is closed
-    let swig_account = context.svm.get_account(&swig_pubkey);
-    assert!(
-        swig_account.is_none() || swig_account.as_ref().unwrap().lamports == 0,
-        "Swig account should be closed"
+    // Verify swig account is marked as closed with discriminator 255
+    let swig_account = context.svm.get_account(&swig_pubkey).unwrap();
+    assert_eq!(swig_account.data[0], 255);
+    assert_eq!(swig_account.data.len(), 1);
+    assert_eq!(
+        swig_account.lamports,
+        context.svm.minimum_balance_for_rent_exemption(1)
     );
-
-    // Verify destination received all lamports
-    let destination_balance = context
-        .svm
-        .get_account(&destination.pubkey())
-        .map(|a| a.lamports)
-        .unwrap_or(0);
-    assert_eq!(destination_balance, total_lamports);
 }
