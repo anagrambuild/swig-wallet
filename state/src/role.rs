@@ -13,6 +13,14 @@ use crate::{
     IntoBytes, Transmutable, TransmutableMut,
 };
 
+#[derive(Debug, PartialEq, Copy, Clone)]
+#[repr(u8)]
+pub enum RoleType {
+    Regular,
+    Developer,
+    IDP,
+}
+
 /// Represents a position in the role system with associated metadata.
 ///
 /// A position defines the structure of a role by specifying its authority type,
@@ -26,7 +34,9 @@ pub struct Position {
     pub authority_length: u16,
     /// Number of actions associated with this position
     pub num_actions: u16,
-    padding: u16,
+    /// Role type (0: regular role, 1: developer created role, 3: idp created role)
+    pub role_type: u8,
+    padding: u8,
     /// Unique identifier for this position
     pub id: u32,
     /// Boundary marker for position data
@@ -239,6 +249,27 @@ impl Position {
             num_actions,
             padding: 0,
             id,
+            role_type: 0,
+            boundary,
+        }
+    }
+
+    /// Creates a new Position with the role type parameters.
+    pub fn new_with_role_type(
+        authority_type: AuthorityType,
+        id: u32,
+        role_type: u8,
+        length: u16,
+        num_actions: u16,
+        boundary: u32,
+    ) -> Self {
+        Self {
+            authority_type: authority_type as u16,
+            authority_length: length,
+            num_actions,
+            padding: 0,
+            id,
+            role_type,
             boundary,
         }
     }
@@ -266,6 +297,11 @@ impl Position {
     /// Returns the boundary marker for this position.
     pub fn boundary(&self) -> u32 {
         self.boundary
+    }
+
+    /// Returns the role type of this position.
+    pub fn role_type(&self) -> u8 {
+        self.role_type
     }
 }
 
