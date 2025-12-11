@@ -1,7 +1,8 @@
-//! Module for closing a single token account owned by a Swig wallet.
+//! Module for closing token accounts owned by a Swig wallet.
 //!
-//! This module implements closing of an SPL token account,
-//! returning rent to a specified destination.
+//! This module implements closing of SPL token accounts,
+//! returning rent to a specified destination. Supports closing
+//! multiple token accounts in a single transaction.
 
 use no_padding::NoPadding;
 use pinocchio::{
@@ -34,15 +35,15 @@ use crate::{
 #[derive(Debug, NoPadding)]
 pub struct CloseTokenAccountV1Args {
     pub discriminator: SwigInstruction,
-    pub _padding: [u8; 2],
+    pub token_account_offset: u16,
     pub role_id: u32,
 }
 
 impl CloseTokenAccountV1Args {
-    pub fn new(role_id: u32) -> Self {
+    pub fn new(role_id: u32, token_account_offset: u16) -> Self {
         Self {
             discriminator: SwigInstruction::CloseTokenAccountV1,
-            _padding: [0; 2],
+            token_account_offset,
             role_id,
         }
     }
@@ -79,8 +80,10 @@ impl<'a> CloseTokenAccountV1<'a> {
     }
 }
 
-/// Closes a single token account owned by the Swig wallet.
+/// Closes one or more token accounts owned by the Swig wallet.
 ///
+/// All token accounts must belong to the same token program (SPL Token or Token-2022).
+/// Token accounts are passed as remaining accounts starting at `token_account_offset`.
 pub fn close_token_account_v1(
     ctx: Context<CloseTokenAccountV1Accounts>,
     accounts: &[AccountInfo],
@@ -154,25 +157,17 @@ pub fn close_token_account_v1(
     let swig_id = swig.id;
     let swig_bump = swig.bump;
 
-    // Verify the token account is owned by a token program
+    // Verify the token program is valid
     let token_program_id = ctx.accounts.token_program.key();
     if token_program_id != &SPL_TOKEN_ID && token_program_id != &SPL_TOKEN_2022_ID {
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    let token_account_owner = ctx.accounts.token_account.owner();
-    if token_account_owner != token_program_id {
-        return Err(SwigError::OwnerMismatchTokenAccount.into());
+    // Get the token accounts from remaining accounts
+    let token_account_offset = close_ix.args.token_account_offset as usize;
+    if token_account_offset >= accounts.len() {
+        return Err(SwigError::InvalidInstructionDataTooShort.into());
     }
-
-    // Read token account data using unchecked borrow (no runtime borrow tracking)
-    let token_data = unsafe { ctx.accounts.token_account.borrow_data_unchecked() };
-    if token_data.len() < 72 {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    // Token account authority is at bytes 32-64
-    let token_authority = &token_data[32..64];
 
     // Determine expected authority based on V1/V2
     // V2: expect swig_wallet_address as authority
@@ -190,40 +185,62 @@ pub fn close_token_account_v1(
         )
     };
 
-    // First check the expected authority
-    let use_expected = unsafe { sol_memcmp(token_authority, expected_authority.as_ref(), 32) == 0 };
-    // Only check fallback if expected didn't match (handles unmigrated token accounts)
-    let use_fallback = !use_expected
-        && unsafe { sol_memcmp(token_authority, fallback_authority.as_ref(), 32) == 0 };
+    // Pre-compute signers for both cases
+    let wallet_bump_bytes = [wallet_bump];
+    let wallet_seeds =
+        swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &wallet_bump_bytes);
+    let swig_bump_bytes = [swig_bump];
+    let swig_seeds = swig_account_signer(&swig_id, &swig_bump_bytes);
 
-    if !use_expected && !use_fallback {
-        return Err(SwigError::InvalidSwigTokenAccountOwner.into());
-    }
+    // Process each token account
+    for token_account in &accounts[token_account_offset..] {
+        // Verify token account is owned by the token program
+        let token_account_owner = token_account.owner();
+        if token_account_owner != token_program_id {
+            return Err(SwigError::OwnerMismatchTokenAccount.into());
+        }
 
-    // Determine which authority to use for signing
-    let use_wallet_as_signer = (is_v2 && use_expected) || (!is_v2 && use_fallback);
+        // Read token account data using unchecked borrow (no runtime borrow tracking)
+        let token_data = unsafe { token_account.borrow_data_unchecked() };
+        if token_data.len() < 72 {
+            return Err(ProgramError::InvalidAccountData);
+        }
 
-    // Close the token account via CPI using TokenClose utility
-    let token_close = TokenClose {
-        token_program: token_program_id,
-        account: ctx.accounts.token_account,
-        destination: ctx.accounts.destination,
-        authority: if use_wallet_as_signer {
-            ctx.accounts.swig_wallet_address
+        // Token account authority is at bytes 32-64
+        let token_authority = &token_data[32..64];
+
+        // First check the expected authority
+        let use_expected =
+            unsafe { sol_memcmp(token_authority, expected_authority.as_ref(), 32) == 0 };
+        // Only check fallback if expected didn't match (handles unmigrated token accounts)
+        let use_fallback = !use_expected
+            && unsafe { sol_memcmp(token_authority, fallback_authority.as_ref(), 32) == 0 };
+
+        if !use_expected && !use_fallback {
+            return Err(SwigError::InvalidSwigTokenAccountOwner.into());
+        }
+
+        // Determine which authority to use for signing
+        let use_wallet_as_signer = (is_v2 && use_expected) || (!is_v2 && use_fallback);
+
+        // Close the token account via CPI using TokenClose utility
+        let token_close = TokenClose {
+            token_program: token_program_id,
+            account: token_account,
+            destination: ctx.accounts.destination,
+            authority: if use_wallet_as_signer {
+                ctx.accounts.swig_wallet_address
+            } else {
+                ctx.accounts.swig
+            },
+        };
+
+        // Invoke with appropriate signer
+        if use_wallet_as_signer {
+            token_close.invoke_signed(&[wallet_seeds.as_slice().into()])?;
         } else {
-            ctx.accounts.swig
-        },
-    };
-
-    // Invoke with appropriate signer
-    if use_wallet_as_signer {
-        let bump = [wallet_bump];
-        let seeds = swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &bump);
-        token_close.invoke_signed(&[seeds.as_slice().into()])?;
-    } else {
-        let bump = [swig_bump];
-        let seeds = swig_account_signer(&swig_id, &bump);
-        token_close.invoke_signed(&[seeds.as_slice().into()])?;
+            token_close.invoke_signed(&[swig_seeds.as_slice().into()])?;
+        }
     }
 
     Ok(())
