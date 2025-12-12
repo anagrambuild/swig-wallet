@@ -310,7 +310,9 @@ impl Permission {
                     }));
                 },
                 Permission::SubAccount { sub_account } => {
-                    actions.push(ClientAction::SubAccount(SubAccount::new(sub_account)));
+                    // Note: sub_account_index will be extracted from the actual data
+                    // For now, default to 0 for backwards compatibility
+                    actions.push(ClientAction::SubAccount(SubAccount::new(sub_account, 0)));
                 },
                 Permission::Stake { amount, recurring } => match recurring {
                     Some(config) => {

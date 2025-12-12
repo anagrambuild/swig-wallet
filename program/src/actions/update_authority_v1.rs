@@ -72,6 +72,61 @@ fn calculate_num_actions(actions_data: &[u8]) -> Result<u8, ProgramError> {
     Ok(count)
 }
 
+/// Validates that there are no duplicate SubAccount indices in the actions
+/// data.
+///
+/// This prevents security issues where multiple actions could point to the same
+/// sub-account index. Only performs validation if SubAccount actions are
+/// present.
+///
+/// # Arguments
+/// * `actions_data` - Raw bytes containing action data
+///
+/// # Returns
+/// * `Result<(), ProgramError>` - Ok if no duplicates, error otherwise
+fn validate_no_duplicate_sub_account_indices(actions_data: &[u8]) -> Result<(), ProgramError> {
+    use swig_state::action::{sub_account::SubAccount, Permission};
+
+    let mut cursor = 0;
+    let mut seen_indices = Vec::new();
+    let mut has_sub_account_actions = false;
+
+    while cursor < actions_data.len() {
+        if cursor + Action::LEN > actions_data.len() {
+            break;
+        }
+
+        let action_header =
+            unsafe { Action::load_unchecked(&actions_data[cursor..cursor + Action::LEN])? };
+        cursor += Action::LEN;
+
+        let action_len = action_header.length() as usize;
+        if cursor + action_len > actions_data.len() {
+            break;
+        }
+
+        // Check for duplicate SubAccount indices only if we have SubAccount actions
+        if action_header.permission()? == Permission::SubAccount {
+            has_sub_account_actions = true;
+            if action_len == SubAccount::LEN {
+                let sub_account_action = unsafe {
+                    SubAccount::load_unchecked(&actions_data[cursor..cursor + action_len])?
+                };
+                let index = sub_account_action.sub_account_index;
+
+                if seen_indices.contains(&index) {
+                    return Err(SwigStateError::InvalidAuthorityData.into());
+                }
+                seen_indices.push(index);
+            }
+        }
+
+        cursor += action_len;
+    }
+
+    Ok(())
+}
+
 /// Struct representing the complete update authority instruction data.
 ///
 /// # Fields
@@ -279,6 +334,9 @@ fn perform_replace_all_operation(
     new_actions: &[u8],
     authority_to_update_id: u32,
 ) -> Result<i64, ProgramError> {
+    // Validate no duplicate SubAccount indices before processing
+    validate_no_duplicate_sub_account_indices(new_actions)?;
+
     let new_actions_size = new_actions.len();
     let size_diff = new_actions_size as i64 - current_actions_size as i64;
 
@@ -398,6 +456,11 @@ fn perform_add_actions_operation(
 
     // Add new actions
     combined_actions.extend_from_slice(new_actions);
+
+    // Validate the combined actions for duplicate SubAccount indices
+    // Note: perform_replace_all_operation will also validate, but we do it here
+    // explicitly to catch issues with the combination of existing + new actions
+    validate_no_duplicate_sub_account_indices(&combined_actions)?;
 
     // Use replace_all logic with combined actions
     perform_replace_all_operation(

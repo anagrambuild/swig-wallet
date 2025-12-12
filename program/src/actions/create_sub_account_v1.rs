@@ -15,17 +15,10 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::*;
 use swig_state::{
-    action::{
-        all::All, manage_authority::ManageAuthority, sub_account::SubAccount, ActionLoader,
-        Actionable,
-    },
-    authority::AuthorityType,
+    action::sub_account::SubAccount,
     role::RoleMut,
-    swig::{
-        sub_account_seeds_with_bump, sub_account_signer, swig_account_seeds_with_bump,
-        swig_account_signer, Swig,
-    },
-    Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
+    swig::{sub_account_seeds_with_bump, sub_account_seeds_with_index_and_bump, Swig},
+    Discriminator, IntoBytes, Transmutable, TransmutableMut,
 };
 
 use crate::{
@@ -38,12 +31,26 @@ use crate::{
 
 /// Arguments for creating a new sub-account in a Swig wallet.
 ///
+/// This struct supports backwards compatibility with v1.3.3 and earlier:
+/// - In v1.3.3 (legacy): This struct had 7 bytes of padding at the end
+/// - In v1.3.4+ (new): The first padding byte became `sub_account_index`,
+///   leaving 6 bytes of padding
+///
+/// Both versions are the same total size (16 bytes aligned), which means:
+/// - Legacy transactions: The index byte position contains 0 (from padding) →
+///   treated as index 0
+/// - New transactions: The index byte position contains the actual index
+///   (0-254)
+///
 /// # Fields
 /// * `discriminator` - The instruction type identifier
 /// * `_padding1` - Padding bytes for alignment
 /// * `role_id` - ID of the role creating the sub-account
 /// * `sub_account_bump` - Bump seed for sub-account PDA derivation
-/// * `_padding2` - Additional padding bytes for alignment
+/// * `sub_account_index` - Index of this sub-account (0-254). For backwards
+///   compatibility, legacy transactions will have 0 here (from padding)
+/// * `_padding2` - Additional padding bytes for alignment (6 bytes in new
+///   format, was 7 in legacy)
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct CreateSubAccountV1Args {
@@ -51,7 +58,11 @@ pub struct CreateSubAccountV1Args {
     _padding1: u16,
     pub role_id: u32,
     pub sub_account_bump: u8,
-    _padding2: [u8; 7],
+    /// Index of this sub-account (0-254). Enables multiple sub-accounts per
+    /// role. Index 0 uses legacy PDA derivation for backwards
+    /// compatibility.
+    pub sub_account_index: u8,
+    _padding2: [u8; 6],
 }
 
 impl CreateSubAccountV1Args {
@@ -60,13 +71,18 @@ impl CreateSubAccountV1Args {
     /// # Arguments
     /// * `role_id` - ID of the role creating the sub-account
     /// * `sub_account_bump` - Bump seed for sub-account PDA derivation
-    pub fn new(role_id: u32, sub_account_bump: u8) -> Self {
+    /// * `sub_account_index` - Index for this sub-account (0-254)
+    pub fn new(role_id: u32, sub_account_bump: u8, sub_account_index: u8) -> Self {
         Self {
             discriminator: SwigInstruction::CreateSubAccountV1,
             _padding1: 0,
             role_id,
             sub_account_bump,
-            _padding2: [0; 7],
+            sub_account_index,
+            // Explicitly zero-initialize padding for backwards compatibility
+            // This ensures that when serialized, the padding bytes are always zero,
+            // which is critical for proper deserialization of legacy transactions
+            _padding2: [0; 6],
         }
     }
 }
@@ -84,11 +100,15 @@ impl IntoBytes for CreateSubAccountV1Args {
 /// Struct representing the complete create sub-account instruction data.
 ///
 /// # Fields
-/// * `args` - The sub-account creation arguments
+/// * `role_id` - The role ID creating the sub-account
+/// * `sub_account_bump` - Bump seed for PDA derivation
+/// * `sub_account_index` - Index of the sub-account (0-254)
 /// * `authority_payload` - Authority-specific payload data
 /// * `data_payload` - Raw instruction data payload
 pub struct CreateSubAccountV1<'a> {
-    pub args: &'a CreateSubAccountV1Args,
+    pub role_id: u32,
+    pub sub_account_bump: u8,
+    pub sub_account_index: u8,
     pub authority_payload: &'a [u8],
     pub data_payload: &'a [u8],
 }
@@ -96,23 +116,44 @@ pub struct CreateSubAccountV1<'a> {
 impl<'a> CreateSubAccountV1<'a> {
     /// Parses the instruction data bytes into a CreateSubAccountV1 instance.
     ///
+    /// This function supports backwards compatibility with v1.3.3 and earlier.
+    /// The legacy format (v1.3.3) had 7 bytes of padding where the new format
+    /// has the sub_account_index field (1 byte) followed by 6 bytes of
+    /// padding. Since both are the same total size, we can parse both
+    /// formats identically:
+    /// - Legacy: The index field position contains 0 (from padding) → index 0
+    /// - New: The index field position contains the actual index value
+    ///
     /// # Arguments
     /// * `data` - Raw instruction data bytes
     ///
     /// # Returns
     /// * `Result<Self, ProgramError>` - Parsed instruction or error
     pub fn from_instruction_bytes(data: &'a [u8]) -> Result<Self, ProgramError> {
+        // BACKWARDS COMPATIBILITY: Both legacy and new formats are the same size (16
+        // bytes aligned) Legacy format (v1.3.3 and earlier): Had 7
+        // zero-initialized padding bytes at the end New format (v1.3.4+): First
+        // padding byte became sub_account_index, 6 padding bytes remain
+        //
+        // This works because:
+        // 1. Legacy transactions always had 0 in the index byte position (from
+        //    zero-initialized padding)
+        // 2. New transactions explicitly set the index byte to the desired value
+        //    (0-254)
+        // 3. Reading index byte as 0 for legacy transactions is correct (they use
+        //    legacy PDA derivation)
         if data.len() < CreateSubAccountV1Args::LEN {
             return Err(SwigError::InvalidSwigCreateInstructionDataTooShort.into());
         }
 
-        // Split the data into args and the rest (authority payload)
         let (args_data, authority_payload) = data.split_at(CreateSubAccountV1Args::LEN);
-
         let args = unsafe { CreateSubAccountV1Args::load_unchecked(args_data)? };
 
         Ok(Self {
-            args,
+            role_id: args.role_id,
+            sub_account_bump: args.sub_account_bump,
+            sub_account_index: args.sub_account_index, /* Will be 0 for legacy format
+                                                        * (zero-initialized padding) */
             authority_payload,
             data_payload: args_data,
         })
@@ -126,6 +167,13 @@ impl<'a> CreateSubAccountV1<'a> {
 /// 2. Verifies the role has sub-account creation permission
 /// 3. Derives and validates the sub-account address
 /// 4. Creates and initializes the sub-account with proper settings
+///
+/// # Sub-Account Indices
+/// Sub-account indices do NOT need to be sequential. They can be created in any
+/// order (e.g., 0, 5, 2, 10) to allow for parallel execution on a Swig wallet.
+/// Multiple parties can create sub-accounts with different indices
+/// simultaneously without conflicts, enabling better scalability and
+/// flexibility.
 ///
 /// # Arguments
 /// * `ctx` - The account context for sub-account creation
@@ -159,7 +207,7 @@ pub fn create_sub_account_v1(
     let swig = unsafe { Swig::load_unchecked(swig_header)? };
 
     // Get the role using the role_id from the instruction
-    let role_opt = Swig::get_mut_role(create_sub_account.args.role_id, swig_roles)?;
+    let role_opt = Swig::get_mut_role(create_sub_account.role_id, swig_roles)?;
     if role_opt.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
@@ -183,33 +231,69 @@ pub fn create_sub_account_v1(
             slot,
         )?;
     }
-    // Check if the role has the required permissions (All or SubAccount)
-    let has_all_permission = {
-        let all_action = RoleMut::get_action_mut::<All>(role.actions, &[])?;
-        all_action.is_some()
-    };
+    let sub_account_index = create_sub_account.sub_account_index;
 
-    let has_sub_account_permission = {
-        let sub_account_action = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?;
-        sub_account_action.is_some()
-    };
-
-    // Even if role has `All` action, it must have a `SubAccount` action before it
-    // can create a `SubAccount`
-    if !has_sub_account_permission {
-        return Err(SwigError::AuthorityCannotCreateSubAccount.into());
+    // Validate index is within bounds (0-254)
+    // We support indices 0-254, which gives us 255 possible sub-accounts per role.
+    // Index 255 is reserved to potentially serve as a sentinel value or special
+    // marker in future versions if needed.
+    if sub_account_index >= 255 {
+        return Err(SwigError::InvalidSubAccountIndex.into());
     }
-    // Derive the sub-account address using the authority index as seed (keeping PDA
-    // for deterministic addressing)
-    let role_id_bytes = create_sub_account.args.role_id.to_le_bytes();
-    let bump_byte = [create_sub_account.args.sub_account_bump];
-    let sub_account_seeds = sub_account_seeds_with_bump(&swig.id, &role_id_bytes, &bump_byte);
-    // Check that sub_account passed in matches derived address
-    let bump = check_self_pda(
-        &sub_account_seeds,
-        ctx.accounts.sub_account.key(),
-        SwigError::InvalidSeedSwigAccount,
-    )?;
+
+    // Derive sub-account PDA based on index
+    // Index 0 uses legacy derivation (3 seeds) for backwards compatibility
+    // Index 1+ uses new derivation (4 seeds) with index
+    let role_id_bytes = create_sub_account.role_id.to_le_bytes();
+    let bump_byte = [create_sub_account.sub_account_bump];
+
+    let bump = if sub_account_index == 0 {
+        // Legacy derivation for backwards compatibility
+        let sub_account_seeds = sub_account_seeds_with_bump(&swig.id, &role_id_bytes, &bump_byte);
+        check_self_pda(
+            &sub_account_seeds,
+            ctx.accounts.sub_account.key(),
+            SwigError::InvalidSeedSwigAccount,
+        )?
+    } else {
+        // New derivation with index
+        let index_bytes = [sub_account_index];
+        let sub_account_seeds = sub_account_seeds_with_index_and_bump(
+            &swig.id,
+            &role_id_bytes,
+            &index_bytes,
+            &bump_byte,
+        );
+        check_self_pda(
+            &sub_account_seeds,
+            ctx.accounts.sub_account.key(),
+            SwigError::InvalidSeedSwigAccount,
+        )?
+    };
+
+    // Prepare match data for finding SubAccount action by index
+    // Format: [index (1 byte), zeros (32 bytes)] to match by index + zeroed
+    // sub_account
+    let mut match_data = [0u8; 33];
+    match_data[0] = sub_account_index;
+    // Remaining 32 bytes are zeros, which means "match zeroed sub_account field"
+
+    // Validation checks using get_action_mut which handles both checking and
+    // returning mutable ref First, check if the role has any SubAccount
+    // permission and find the one for this index
+    let sub_account_action_mut =
+        match RoleMut::get_action_mut::<SubAccount>(role.actions, &match_data)? {
+            Some(action) => action,
+            None => {
+                // Check if the role has any SubAccount permission at all for a better error
+                // message Use empty match data to find any SubAccount with
+                // zeroed sub_account
+                if RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?.is_none() {
+                    return Err(SwigError::AuthorityCannotCreateSubAccount.into());
+                }
+                return Err(SwigError::SubAccountActionNotFound.into());
+            },
+        };
 
     // Transfer lamports to the sub_account to make it system-owned and rent-exempt
     // This follows the same pattern as swig_wallet_address creation in create_v1.rs
@@ -237,17 +321,14 @@ pub fn create_sub_account_v1(
         .invoke()?;
     }
 
-    // Update the SubAccount action to store all sub-account metadata
-    if let Some(sub_account_action_mut) = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?
-    {
-        sub_account_action_mut
-            .sub_account
-            .copy_from_slice(ctx.accounts.sub_account.key().as_ref());
-        sub_account_action_mut.bump = create_sub_account.args.sub_account_bump;
-        sub_account_action_mut.enabled = true; // Default to enabled
-        sub_account_action_mut.role_id = create_sub_account.args.role_id;
-        sub_account_action_mut.swig_id = swig.id;
-    }
+    sub_account_action_mut
+        .sub_account
+        .copy_from_slice(ctx.accounts.sub_account.key().as_ref());
+    sub_account_action_mut.bump = create_sub_account.sub_account_bump;
+    sub_account_action_mut.enabled = true; // Default to enabled
+    sub_account_action_mut.role_id = create_sub_account.role_id;
+    sub_account_action_mut.swig_id = swig.id;
+    sub_account_action_mut.sub_account_index = sub_account_index;
 
     Ok(())
 }

@@ -88,6 +88,21 @@ swig list-authorities --swig-id <ID>
 swig balance --swig-id <ID>
 ```
 
+#### Create Sub-Account
+
+Create a sub-account for the wallet:
+
+```bash
+swig create-sub-account --swig-id <ID>
+```
+
+Create multiple sub-accounts using the index parameter (0-254):
+
+```bash
+swig create-sub-account --swig-id <ID> --sub-account-index 1
+swig create-sub-account --swig-id <ID> --sub-account-index 2
+```
+
 ### Global Options
 
 These options can be used with any command:

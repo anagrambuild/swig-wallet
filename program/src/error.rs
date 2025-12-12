@@ -116,6 +116,19 @@ pub enum SwigError {
     SignV1CannotBeUsedWithSwigV2,
     /// SignV2 instruction cannot be used with Swig v1 accounts
     SignV2CannotBeUsedWithSwigV1,
+
+    // New errors added in v1.3.4+ for multi-sub-account support
+    // These are placed at the end to maintain backward compatibility with existing error codes
+    /// Invalid sub-account index (must be 0-254)
+    InvalidSubAccountIndex,
+    /// Sub-account index mismatch between action and instruction
+    SubAccountIndexMismatch,
+    /// Sub-account action not found for the specified index.
+    /// Note: Sub-account indices do NOT need to be sequential - they can be
+    /// created in any order (e.g., 0, 5, 2, 10). This allows for parallel
+    /// execution on a Swig wallet where multiple parties can create
+    /// sub-accounts with different indices simultaneously without conflicts.
+    SubAccountActionNotFound,
 }
 
 /// Implements conversion from SwigError to ProgramError.
