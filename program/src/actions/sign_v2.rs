@@ -15,6 +15,7 @@ use pinocchio::{
 use pinocchio_pubkey::from_str;
 use swig_assertions::*;
 use swig_compact_instructions::InstructionIterator;
+use swig_developer_state::DeveloperAccount;
 use swig_state::{
     action::{
         all::All,
@@ -36,12 +37,13 @@ use swig_state::{
         token_recurring_limit::TokenRecurringLimit,
         Action, Permission,
     },
-    role::RoleMut,
+    role::{RoleMut, RoleType},
     swig::{swig_account_signer, swig_wallet_address_signer, Swig},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
 use crate::{
+    actions::{validate_signer, validate_subscription},
     error::SwigError,
     instruction::{
         accounts::{Context, SignV2Accounts},
@@ -210,6 +212,7 @@ pub fn sign_v2(
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
     let role = role.unwrap();
+    let role_type = role.position.role_type;
     let clock = Clock::get()?;
     let slot = clock.slot;
     if role.authority.session_based() {
@@ -226,6 +229,29 @@ pub fn sign_v2(
             sign_v2.instruction_payload,
             slot,
         )?;
+    }
+    if role_type == RoleType::Developer as u8 {
+        // Check if the developer account exists
+        // Get the account which is classified as DeveloperAccount
+        let developer_account_index = account_classifiers
+            .iter()
+            .enumerate()
+            .find(|(index, classifier)| {
+                matches!(classifier, AccountClassification::DeveloperAccount { .. })
+            })
+            .map(|(index, _)| index);
+        if developer_account_index.is_none() {
+            return Err(SwigAuthenticateError::PermissionDeniedInvalidDeveloperAccount.into());
+        }
+        let developer_account = all_accounts.get(developer_account_index.unwrap()).unwrap();
+        // Check if the developer account is expired
+        let developer_account_data = unsafe { developer_account.borrow_data_unchecked() };
+        let developer_account = DeveloperAccount::from_bytes(developer_account_data)?;
+        validate_subscription(&developer_account, slot)?;
+        let instruction_signer = all_accounts
+            .get(unsafe { *sign_v2.authority_payload.get_unchecked(0) as usize })
+            .unwrap();
+        validate_signer(&developer_account, instruction_signer.key())?;
     }
     let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(

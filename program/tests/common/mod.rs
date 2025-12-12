@@ -1,7 +1,11 @@
 use alloy_signer_local::{LocalSigner, PrivateKeySigner};
 use anyhow::Result;
-use litesvm::{types::TransactionMetadata, LiteSVM};
+use litesvm::{
+    types::{TransactionMetadata, TransactionResult},
+    LiteSVM,
+};
 use litesvm_token::{spl_token, CreateAssociatedTokenAccount, CreateMint, MintTo};
+use pinocchio_pubkey::derive_address;
 use solana_sdk::{
     compute_budget::ComputeBudgetInstruction,
     instruction::Instruction,
@@ -11,16 +15,21 @@ use solana_sdk::{
     signer::Signer,
     transaction::VersionedTransaction,
 };
+use swig_developer_state::DeveloperAccount;
 use swig_interface::{
     swig, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
-    CreateSubAccountInstruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
+    CreateSubAccountInstruction, RoleType, SubAccountSignInstruction, ToggleSubAccountInstruction,
     WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, sub_account::SubAccount},
+    action::{
+        all::All, manage_authority::ManageAuthority, permissions_to_mask, sub_account::SubAccount,
+        Permission,
+    },
     authority::{
-        ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
-        secp256r1::CreateSecp256r1SessionAuthority, AuthorityType,
+        authorities_to_mask, ed25519::CreateEd25519SessionAuthority,
+        secp256k1::CreateSecp256k1SessionAuthority, secp256r1::CreateSecp256r1SessionAuthority,
+        AuthorityType,
     },
     swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
     IntoBytes, Transmutable,
@@ -93,6 +102,69 @@ pub fn add_authority_with_ed25519_root<'a>(
         &[
             context.default_payer.insecure_clone(),
             existing_ed25519_authority.insecure_clone(),
+        ],
+    )
+    .unwrap();
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+    Ok(bench)
+}
+
+pub fn add_authority_with_ed25519_root_and_role_type<'a>(
+    context: &mut SwigTestContext,
+    swig_pubkey: &Pubkey,
+    existing_ed25519_authority: &Keypair,
+    new_authority: AuthorityConfig,
+    actions: Vec<ClientAction>,
+    role_type: RoleType,
+    developer: &Keypair,
+    developer_account: Pubkey,
+) -> anyhow::Result<TransactionMetadata> {
+    context.svm.expire_blockhash();
+    let payer_pubkey = context.default_payer.pubkey();
+    let swig_account = context
+        .svm
+        .get_account(swig_pubkey)
+        .ok_or(anyhow::anyhow!("Swig account not found"))?;
+    let swig = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
+    let role_id = swig
+        .lookup_role_id(existing_ed25519_authority.pubkey().as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to lookup role id {:?}", e))?
+        .unwrap();
+
+    let developer_pubkey = developer.pubkey();
+
+    let add_authority_ix = AddAuthorityInstruction::new_with_ed25519_authority_and_role_type(
+        *swig_pubkey,
+        context.default_payer.pubkey(),
+        existing_ed25519_authority.pubkey(),
+        role_id,
+        new_authority,
+        actions,
+        role_type,
+        Some(developer_account),
+        Some(developer_pubkey),
+    )
+    .map_err(|e| anyhow::anyhow!("Failed to create add authority instruction {:?}", e))?;
+    let msg = v0::Message::try_compile(
+        &payer_pubkey,
+        &[
+            ComputeBudgetInstruction::set_compute_unit_limit(10000000),
+            add_authority_ix,
+        ],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[
+            context.default_payer.insecure_clone(),
+            existing_ed25519_authority.insecure_clone(),
+            developer.insecure_clone(),
         ],
     )
     .unwrap();
@@ -857,4 +929,107 @@ fn test_compressed_key_generation() {
     );
 
     println!("✓ Compressed key generation test passed");
+}
+
+use swig_developer_interface::{
+    find_developer_account_address, CreateDeveloperAccountInstruction,
+    UpdateDeveloperAccountInstruction, DEV_PROGRAM_ID,
+};
+
+pub fn create_developer_account(
+    context: &mut SwigTestContext,
+    developer: &Pubkey,
+) -> Result<Pubkey> {
+    context
+        .svm
+        .add_program_from_file(
+            Pubkey::from(DEV_PROGRAM_ID),
+            "/Users/santhosh/Documents/anagram/swig/swig-developer-account-program/target/deploy/swig_developer_program.so".to_string(),
+        )
+        .unwrap();
+    context.svm.airdrop(developer, 10_000_000_000).unwrap();
+
+    let (derived_developer_account_pda, bump) = find_developer_account_address(developer.as_ref());
+
+    let signers = [developer.to_bytes(), Pubkey::default().to_bytes()];
+
+    let action_type_mask = permissions_to_mask(vec![Permission::SolLimit, Permission::ProgramAll]);
+    let authority_type_mask = authorities_to_mask(vec![AuthorityType::Ed25519]);
+
+    let create_developer_account_ix = CreateDeveloperAccountInstruction::new(
+        context.default_payer.pubkey(),
+        derived_developer_account_pda,
+        signers,
+        action_type_mask,
+        developer.to_bytes(),
+        100,
+        authority_type_mask,
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[create_developer_account_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])?;
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_ok(),
+        "Failed to create developer account: {:?}",
+        result.err()
+    );
+    Ok(derived_developer_account_pda)
+}
+
+pub fn create_developer_account_with_custom_properties(
+    context: &mut SwigTestContext,
+    developer: Pubkey,
+    expiry_slot: u64,
+    authority_type_mask: u64,
+) -> Result<Pubkey> {
+    context
+        .svm
+        .add_program_from_file(
+            Pubkey::from(DEV_PROGRAM_ID),
+            "/Users/santhosh/Documents/anagram/swig/swig-developer-account-program/target/deploy/swig_developer_program.so".to_string(),
+        )
+        .unwrap();
+    context.svm.airdrop(&developer, 10_000_000_000).unwrap();
+
+    let (derived_developer_account_pda, bump) =
+        find_developer_account_address(&developer.to_bytes());
+
+    let signers = [developer.to_bytes(), Pubkey::default().to_bytes()];
+
+    let action_type_mask = permissions_to_mask(vec![Permission::SolLimit, Permission::ProgramAll]);
+
+    let create_developer_account_ix = CreateDeveloperAccountInstruction::new(
+        context.default_payer.pubkey(),
+        derived_developer_account_pda,
+        signers,
+        action_type_mask,
+        developer.to_bytes(),
+        expiry_slot,
+        authority_type_mask,
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[create_developer_account_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])?;
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_ok(),
+        "Failed to create developer account: {:?}",
+        result.err()
+    );
+    Ok(derived_developer_account_pda)
 }

@@ -88,6 +88,8 @@ pub enum AccountClassification {
         /// The sub-account's lamport balance
         lamports: u64,
     },
+    /// A developer account with its lamport balance
+    DeveloperAccount {},
 }
 
 /// Error types related to state management operations.
@@ -178,6 +180,15 @@ pub enum SwigAuthenticateError {
     PermissionDeniedTokenDestinationLimitExceeded,
     /// Token destination recurring limit exceeded
     PermissionDeniedRecurringTokenDestinationLimitExceeded,
+
+    /// Invalid developer account
+    PermissionDeniedInvalidDeveloperSigner,
+    /// Invalid developer role type
+    PermissionDeniedInvalidDeveloperRoleType,
+    /// Expired subscription
+    PermissionDeniedExpiredSubscription,
+    /// Invalid developer account
+    PermissionDeniedInvalidDeveloperAccount,
 }
 
 impl From<SwigStateError> for ProgramError {

@@ -6,15 +6,17 @@ use pinocchio::{
     account_info::AccountInfo,
     msg,
     program_error::ProgramError,
+    pubkey::Pubkey,
     sysvars::{clock::Clock, rent::Rent, Sysvar},
     ProgramResult,
 };
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
+use swig_developer_state::DeveloperAccount;
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority},
+    action::{all::All, manage_authority::ManageAuthority, Action},
     authority::{authority_type_to_length, AuthorityType},
-    role::Position,
+    role::{Position, RoleType},
     swig::{Swig, SwigBuilder},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
@@ -61,7 +63,8 @@ pub struct AddAuthorityV1Args {
     pub actions_data_len: u16,
     pub new_authority_type: u16,
     pub num_actions: u8,
-    _padding: [u8; 3],
+    pub role_type: u8,
+    _padding: [u8; 2],
     pub acting_role_id: u32,
 }
 
@@ -84,6 +87,7 @@ impl AddAuthorityV1Args {
         new_authority_data_len: u16,
         actions_data_len: u16,
         num_actions: u8,
+        role_type: u8,
     ) -> Self {
         Self {
             instruction: SwigInstruction::AddAuthorityV1,
@@ -92,7 +96,8 @@ impl AddAuthorityV1Args {
             new_authority_data_len,
             actions_data_len,
             num_actions,
-            _padding: [0; 3],
+            role_type,
+            _padding: [0; 2],
         }
     }
 }
@@ -209,6 +214,23 @@ pub fn add_authority_v1(
         if all.is_none() && manage_authority.is_none() {
             return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
         }
+
+        if add_authority_v1.args.role_type == RoleType::Developer as u8 {
+            let developer_account = all_accounts.get(all_accounts.len() - 2).unwrap();
+            let developer = all_accounts.get(all_accounts.len() - 1).unwrap();
+
+            let developer_account_data = unsafe { developer_account.borrow_data_unchecked() };
+            let developer_acc = DeveloperAccount::from_bytes(developer_account_data).unwrap();
+
+            validate_signer(&developer_acc, developer.key())?;
+
+            validate_subscription(&developer_acc, Clock::get()?.slot)?;
+
+            validate_new_role_type(&developer_acc, add_authority_v1.args.role_type)?;
+
+            validate_new_actions(&developer_acc, add_authority_v1.actions)?;
+        }
+
         let new_authority_length = authority_type_to_length(&new_authority_type)?;
         let role_size = Position::LEN + new_authority_length + add_authority_v1.actions.len();
 
@@ -239,10 +261,63 @@ pub fn add_authority_v1(
     };
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let mut swig_builder = SwigBuilder::new_from_bytes(swig_account_data)?;
-    swig_builder.add_role(
+    swig_builder.add_role_with_role_type(
         new_authority_type,
         add_authority_v1.authority_data,
         add_authority_v1.actions,
+        add_authority_v1.args.role_type as u8,
     )?;
+    Ok(())
+}
+
+pub fn validate_new_actions(
+    developer_account: &DeveloperAccount,
+    actions: &[u8],
+) -> Result<(), ProgramError> {
+    let permissions = developer_account.action_type_mask;
+
+    let mut cursor = 0;
+    while cursor < actions.len() {
+        let action = unsafe { Action::load_unchecked(&actions[cursor..cursor + Action::LEN])? };
+        // If the permission is not in the developer account's action type mask, return an error
+        if permissions & (1 << (action.permission()? as u16)) == 0 {
+            return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+        }
+        cursor = action.boundary() as usize;
+    }
+    Ok(())
+}
+
+pub fn validate_new_role_type(
+    developer_account: &DeveloperAccount,
+    role_type: u8,
+) -> Result<(), ProgramError> {
+    let authority_mask = developer_account.authority_type_mask;
+    if authority_mask & (1 << (role_type as u16)) == 0 {
+        return Err(SwigAuthenticateError::PermissionDeniedInvalidDeveloperRoleType.into());
+    }
+    Ok(())
+}
+
+pub fn validate_subscription(
+    developer_account: &DeveloperAccount,
+    slot: u64,
+) -> Result<(), ProgramError> {
+    let valid_subscriptions = developer_account.expiry;
+    if valid_subscriptions < slot {
+        return Err(SwigAuthenticateError::PermissionDeniedExpiredSubscription.into());
+    }
+    Ok(())
+}
+
+pub fn validate_signer(
+    developer_account: &DeveloperAccount,
+    signer: &Pubkey,
+) -> Result<(), ProgramError> {
+    if signer.ne(&developer_account.primary_signer)
+        && signer.ne(&developer_account.secondary_signer)
+    {
+        return Err(SwigAuthenticateError::PermissionDeniedInvalidDeveloperSigner.into());
+    }
     Ok(())
 }

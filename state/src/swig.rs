@@ -18,7 +18,7 @@ use crate::{
         secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority},
         Authority, AuthorityInfo, AuthorityType,
     },
-    role::{Position, Role, RoleMut},
+    role::{Position, Role, RoleMut, RoleType},
     Discriminator, IntoBytes, SwigStateError, Transmutable, TransmutableMut,
 };
 
@@ -311,6 +311,30 @@ impl<'a> SwigBuilder<'a> {
         authority_data: &[u8],
         actions_data: &'a [u8],
     ) -> Result<(), ProgramError> {
+        self.add_role_with_role_type(
+            authority_type,
+            authority_data,
+            actions_data,
+            RoleType::Regular as u8,
+        )
+    }
+
+    /// Adds a new role to the Swig account.
+    ///
+    /// # Arguments
+    /// * `authority_type` - The type of authority for this role
+    /// * `authority_data` - Raw bytes containing the authority data
+    /// * `actions_data` - Raw bytes containing the actions data
+    ///
+    /// # Returns
+    /// * `Result<(), ProgramError>` - Success or error status
+    pub fn add_role_with_role_type(
+        &mut self,
+        authority_type: AuthorityType,
+        authority_data: &[u8],
+        actions_data: &'a [u8],
+        role_type: u8,
+    ) -> Result<(), ProgramError> {
         // Calculate the actual number of actions from the actions data
         let num_actions = Self::calculate_num_actions(actions_data)?;
 
@@ -382,6 +406,7 @@ impl<'a> SwigBuilder<'a> {
         position.authority_type = authority_type as u16;
         position.authority_length = authority_length as u16;
         position.num_actions = num_actions as u16;
+        position.role_type = role_type;
         position.boundary = boundary as u32;
         position.id = self.swig.role_counter;
         cursor += Position::LEN;

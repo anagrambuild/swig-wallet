@@ -26,6 +26,7 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_pubkey::{declare_id, pubkey};
+use swig_developer_state::DEVELOPER_PROGRAM_ID;
 use swig_state::{
     action::{
         program_scope::{NumericType, ProgramScope},
@@ -429,6 +430,7 @@ unsafe fn classify_account(
                 Ok(AccountClassification::None)
             }
         },
+        &DEVELOPER_PROGRAM_ID => Ok(AccountClassification::DeveloperAccount {}),
         _ => {
             if index > 0 {
                 // Use the program scope cache if available

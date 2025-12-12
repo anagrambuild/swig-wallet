@@ -229,6 +229,8 @@ impl CreateInstruction {
     }
 }
 
+// re export RoleType
+pub use swig_state::role::RoleType;
 pub struct AddAuthorityInstruction;
 impl AddAuthorityInstruction {
     pub fn new_with_ed25519_authority(
@@ -239,12 +241,47 @@ impl AddAuthorityInstruction {
         new_authority_config: AuthorityConfig,
         actions: Vec<ClientAction>,
     ) -> anyhow::Result<Instruction> {
-        let accounts = vec![
+        Self::new_with_ed25519_authority_and_role_type(
+            swig_account,
+            payer,
+            authority,
+            acting_role_id,
+            new_authority_config,
+            actions,
+            RoleType::Regular,
+            None,
+            None,
+        )
+    }
+
+    pub fn new_with_ed25519_authority_and_role_type(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority: Pubkey,
+        acting_role_id: u32,
+        new_authority_config: AuthorityConfig,
+        actions: Vec<ClientAction>,
+        role_type: RoleType,
+        developer_account: Option<Pubkey>,
+        developer: Option<Pubkey>,
+    ) -> anyhow::Result<Instruction> {
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
+
+        if let Some(developer_account) = developer_account {
+            accounts.push(AccountMeta::new(developer_account, false));
+            if let Some(developer) = developer {
+                accounts.push(AccountMeta::new(developer, true));
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Developer and developer account are required"
+                ));
+            }
+        }
 
         let mut write = Vec::new();
         let mut action_bytes = Vec::new();
@@ -260,6 +297,7 @@ impl AddAuthorityInstruction {
             new_authority_config.authority.len() as u16,
             action_bytes.len() as u16,
             num_actions,
+            role_type as u8,
         );
 
         write.extend_from_slice(args.into_bytes().unwrap());
@@ -286,11 +324,53 @@ impl AddAuthorityInstruction {
     where
         F: FnMut(&[u8]) -> [u8; 65],
     {
-        let accounts = vec![
+        Self::new_with_secp256k1_authority_and_role_type(
+            swig_account,
+            payer,
+            authority_payload_fn,
+            current_slot,
+            counter,
+            acting_role_id,
+            new_authority_config,
+            actions,
+            RoleType::Regular,
+            None,
+            None,
+        )
+    }
+
+    pub fn new_with_secp256k1_authority_and_role_type<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        acting_role_id: u32,
+        new_authority_config: AuthorityConfig,
+        actions: Vec<ClientAction>,
+        role_type: RoleType,
+        developer_account: Option<Pubkey>,
+        developer: Option<Pubkey>,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
             AccountMeta::new_readonly(system_program::ID, false),
         ];
+        if let Some(developer_account) = developer_account {
+            accounts.push(AccountMeta::new(developer_account, false));
+            if let Some(developer) = developer {
+                accounts.push(AccountMeta::new(developer, true));
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Developer and developer account are required"
+                ));
+            }
+        }
+
         let mut action_bytes = Vec::new();
         let num_actions = actions.len() as u8;
         for action in actions {
@@ -304,6 +384,7 @@ impl AddAuthorityInstruction {
             new_authority_config.authority.len() as u16,
             action_bytes.len() as u16,
             num_actions,
+            role_type as u8,
         );
         let arg_bytes = args
             .into_bytes()
@@ -359,12 +440,56 @@ impl AddAuthorityInstruction {
     where
         F: FnMut(&[u8]) -> [u8; 64],
     {
-        let accounts = vec![
+        Self::new_with_secp256r1_authority_and_role_type(
+            swig_account,
+            payer,
+            authority_payload_fn,
+            current_slot,
+            counter,
+            acting_role_id,
+            public_key,
+            new_authority_config,
+            actions,
+            RoleType::Regular,
+            None,
+            None,
+        )
+    }
+
+    pub fn new_with_secp256r1_authority_and_role_type<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        acting_role_id: u32,
+        public_key: &[u8; 33],
+        new_authority_config: AuthorityConfig,
+        actions: Vec<ClientAction>,
+        role_type: RoleType,
+        developer_account: Option<Pubkey>,
+        developer: Option<Pubkey>,
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
+
+        if let Some(developer_account) = developer_account {
+            accounts.push(AccountMeta::new(developer_account, false));
+            if let Some(developer) = developer {
+                accounts.push(AccountMeta::new(developer, true));
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Developer and developer account are required"
+                ));
+            }
+        }
 
         let mut action_bytes = Vec::new();
         let num_actions = actions.len() as u8;
@@ -380,6 +505,7 @@ impl AddAuthorityInstruction {
             new_authority_config.authority.len() as u16,
             action_bytes.len() as u16,
             num_actions,
+            role_type as u8,
         );
         let args_bytes = args
             .into_bytes()
@@ -797,6 +923,277 @@ impl SignV2Instruction {
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+        let (mut accounts, ixs) =
+            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        for account in &mut accounts {
+            if transaction_signers
+                .iter()
+                .any(|signer| signer == &account.pubkey)
+            {
+                account.is_signer = true;
+            }
+        }
+        let ix_bytes = ixs.into_bytes();
+        let args = swig::actions::sign_v2::SignV2Args::new(role_id, ix_bytes.len() as u16);
+
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        // Create the message hash for secp256r1 authentication
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        // Compute message hash (keccak for secp256r1 compatibility)
+        let slot_bytes = current_slot.to_le_bytes();
+        let counter_bytes = counter.to_le_bytes();
+        let message_hash = keccak::hash(
+            &[
+                &ix_bytes,
+                &account_payload_bytes,
+                &slot_bytes[..],
+                &counter_bytes[..],
+            ]
+            .concat(),
+        )
+        .to_bytes();
+
+        // Get signature from authority function
+        let signature = authority_payload_fn(&message_hash);
+
+        // Create secp256r1 verify instruction
+        let secp256r1_verify_ix =
+            new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
+
+        // For secp256r1, the authority payload includes slot, counter, instruction
+        // index, and padding Must be at least 17 bytes to satisfy
+        // secp256r1_authority_authenticate() requirements
+        let instruction_sysvar_index = 3; // Instructions sysvar is at index 3 for SignV2
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
+        authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
+        authority_payload.push(instruction_sysvar_index as u8); // 1 byte: index of instruction sysvar
+        authority_payload.extend_from_slice(&[0u8; 4]); // 4 bytes padding to meet 17 byte minimum
+
+        let main_ix = Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [arg_bytes, &ix_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![secp256r1_verify_ix, main_ix])
+    }
+}
+
+pub struct SignV2DeveloperInstruction;
+impl SignV2DeveloperInstruction {
+    pub fn new_ed25519(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        authority: Pubkey,
+        inner_instruction: Instruction,
+        role_id: u32,
+        developer_account: Pubkey,
+    ) -> anyhow::Result<Instruction> {
+        Self::new_ed25519_with_signers(
+            swig_account,
+            swig_wallet_address,
+            authority,
+            inner_instruction,
+            role_id,
+            &[],
+            developer_account,
+        )
+    }
+
+    pub fn new_ed25519_with_signers(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        authority: Pubkey,
+        inner_instruction: Instruction,
+        role_id: u32,
+        transaction_signers: &[Pubkey],
+        developer_account: Pubkey,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(developer_account, false),
+        ];
+        let (mut accounts, ixs) =
+            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        for account in &mut accounts {
+            if transaction_signers
+                .iter()
+                .any(|signer| signer == &account.pubkey)
+            {
+                account.is_signer = true;
+            }
+        }
+        let ix_bytes = ixs.into_bytes();
+        let args = swig::actions::sign_v2::SignV2Args::new(role_id, ix_bytes.len() as u16);
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [arg_bytes, &ix_bytes, &[2]].concat(),
+        })
+    }
+
+    pub fn new_secp256k1<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        inner_instruction: Instruction,
+        role_id: u32,
+        developer_account: Pubkey,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        Self::new_secp256k1_with_signers(
+            swig_account,
+            swig_wallet_address,
+            authority_payload_fn,
+            current_slot,
+            counter,
+            inner_instruction,
+            role_id,
+            &[],
+            developer_account,
+        )
+    }
+
+    pub fn new_secp256k1_with_signers<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        inner_instruction: Instruction,
+        role_id: u32,
+        transaction_signers: &[Pubkey],
+        developer_account: Pubkey,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new(developer_account, false),
+        ];
+        let (mut accounts, ixs) =
+            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        for account in &mut accounts {
+            if transaction_signers
+                .iter()
+                .any(|signer| signer == &account.pubkey)
+            {
+                account.is_signer = true;
+            }
+        }
+        let ix_bytes = ixs.into_bytes();
+        let args = swig::actions::sign_v2::SignV2Args::new(role_id, ix_bytes.len() as u16);
+
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let mut signature_bytes = Vec::new();
+        signature_bytes.extend_from_slice(&ix_bytes);
+
+        let nonced_payload = prepare_secp256k1_payload(
+            current_slot,
+            counter,
+            &signature_bytes,
+            &account_payload_bytes,
+            &[],
+        );
+        let signature = authority_payload_fn(&nonced_payload);
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&counter.to_le_bytes());
+        authority_payload.extend_from_slice(&signature);
+
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [arg_bytes, &ix_bytes, &authority_payload].concat(),
+        })
+    }
+
+    pub fn new_secp256r1<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        inner_instruction: Instruction,
+        role_id: u32,
+        public_key: &[u8; 33],
+        developer_account: Pubkey,
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        Self::new_secp256r1_with_signers(
+            swig_account,
+            swig_wallet_address,
+            authority_payload_fn,
+            current_slot,
+            counter,
+            inner_instruction,
+            role_id,
+            public_key,
+            &[],
+            developer_account,
+        )
+    }
+
+    pub fn new_secp256r1_with_signers<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        inner_instruction: Instruction,
+        role_id: u32,
+        public_key: &[u8; 33],
+        transaction_signers: &[Pubkey],
+        developer_account: Pubkey,
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+            AccountMeta::new(developer_account, false),
         ];
         let (mut accounts, ixs) =
             compact_instructions(swig_account, accounts, vec![inner_instruction]);
