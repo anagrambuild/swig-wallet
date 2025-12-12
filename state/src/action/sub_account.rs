@@ -93,25 +93,45 @@ impl<'a> Actionable<'a> for SubAccount {
 
     /// Checks if this sub-account permission matches the provided data.
     ///
-    /// For sub-account creation, matches against empty data (since sub_account
-    /// is initially zeroed). For toggle/withdraw operations, matches
-    /// against the actual sub-account pubkey.
+    /// Supports multiple match formats:
+    /// - Empty data `&[]`: Matches any SubAccount with zeroed sub_account field
+    ///   (legacy behavior, finds first available for creation)
+    /// - 32-byte data: Matches by sub_account pubkey (for toggle/withdraw)
+    /// - 33-byte data `[index, pubkey...]`: Matches by index AND pubkey/zeros
+    ///   - If pubkey is all zeros: matches SubAccount with this index that has
+    ///     zeroed sub_account (for creation with specific index)
+    ///   - If pubkey is non-zero: matches SubAccount with this index AND pubkey
     ///
     /// # Arguments
-    /// * `data` - The data to match against (empty for creation, pubkey for
-    ///   operations)
+    /// * `data` - The data to match against
     ///
     /// # Returns
     /// * `true` if the data matches this sub-account permission
     /// * `false` if the data doesn't match
     fn match_data(&self, data: &[u8]) -> bool {
         if data.is_empty() {
-            // For sub-account creation, match against zeroed sub_account field
+            // For sub-account creation (legacy), match against zeroed sub_account field
             sol_assert_bytes_eq(&self.sub_account, &[0u8; 32], 32);
             self.sub_account == [0u8; 32]
         } else if data.len() == 32 {
             // For other operations, match against the actual sub-account pubkey
             sol_assert_bytes_eq(&self.sub_account, data, 32)
+        } else if data.len() == 33 {
+            // Match by index (first byte) and pubkey (remaining 32 bytes)
+            let index = data[0];
+            let pubkey = &data[1..33];
+
+            if self.sub_account_index != index {
+                return false;
+            }
+
+            // If pubkey is all zeros, match against zeroed sub_account field
+            // If pubkey is non-zero, match against the actual pubkey
+            if pubkey == [0u8; 32] {
+                self.sub_account == [0u8; 32]
+            } else {
+                sol_assert_bytes_eq(&self.sub_account, pubkey, 32)
+            }
         } else {
             false
         }

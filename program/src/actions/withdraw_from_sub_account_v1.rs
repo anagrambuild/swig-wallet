@@ -2,30 +2,22 @@
 /// This module implements functionality to transfer both SOL and SPL tokens
 /// from sub-accounts back to their parent wallet, with proper authentication
 /// and permission checks.
-use core::mem::MaybeUninit;
-
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
-    instruction::Signer,
     memory::sol_memcmp,
     msg,
     program_error::ProgramError,
-    pubkey::Pubkey,
     sysvars::{clock::Clock, Sysvar},
     ProgramResult,
 };
-use pinocchio_token::instructions::Transfer;
 use swig_assertions::*;
 use swig_state::{
-    action::{
-        all::All, manage_authority::ManageAuthority, sub_account::SubAccount, Action, Permission,
-    },
+    action::{all::All, manage_authority::ManageAuthority, sub_account::SubAccount},
     authority::AuthorityType,
-    role::{Position, Role, RoleMut},
     swig::{
-        sub_account_seeds, sub_account_seeds_with_index, sub_account_signer,
-        sub_account_signer_with_index, swig_wallet_address_seeds, Swig, SwigWithRoles,
+        sub_account_signer, sub_account_signer_with_index, swig_wallet_address_seeds, Swig,
+        SwigWithRoles,
     },
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
@@ -182,87 +174,49 @@ pub fn withdraw_from_sub_account_v1(
     }
 
     // Validate permissions and get sub-account metadata
-    // Different logic based on permission type:
-    // 1. SubAccount permission: Use action from current role (already validated it
-    //    exists)
-    // 2. ManageAuthority: MUST have SubAccount action on current role
-    // 3. All permission: Search all roles to find the SubAccount action
+    // Permission logic:
+    // 1. SubAccount permission: Use action from current role, must be enabled
+    // 2. All/ManageAuthority: Search all roles to find the SubAccount action, can
+    //    withdraw even if sub-account is disabled (authority override)
+
+    let has_authority_override = all_action.is_some() || manage_authority_action.is_some();
 
     let sub_account_metadata = if let Some(action) = sub_account_action {
-        // SubAccount or ManageAuthority with SubAccount action
+        // Found SubAccount action matching this sub-account address on current role
         // Validate sub-account relationship
         if action.swig_id != swig.id {
             return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
         }
-        if action.role_id != withdraw.args.role_id {
-            return Err(SwigError::InvalidSwigSubAccountRoleIdMismatch.into());
-        }
-        if !action.enabled {
+
+        // Only check enabled if we don't have authority override
+        // Authority holders (All/ManageAuthority) can withdraw even from disabled
+        // sub-accounts
+        if !has_authority_override && !action.enabled {
             return Err(SwigError::InvalidSwigSubAccountDisabled.into());
         }
         Some((action.role_id, action.bump, action.sub_account_index))
-    } else if manage_authority_action.is_some() {
-        // ManageAuthority without SubAccount action = not allowed
-        msg!(
-            "ManageAuthority permission requires a SubAccount action for the specific sub-account"
-        );
-        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
-    } else if all_action.is_some() {
-        // All permission: Search all roles to find which one has the SubAccount action
-        // for this sub-account address
-        // We need to do this search on a separate immutable view of the data
-        // Get the raw bytes again for searching
+    } else if has_authority_override {
+        // All/ManageAuthority permission: Search all roles to find the SubAccount
+        // action for this sub-account address (since it might be on a different
+        // role)
         let swig_account_data_immutable = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
-        let swig_roles_immutable =
-            unsafe { swig_account_data_immutable.get_unchecked(Swig::LEN..) };
+        let swig_with_roles = SwigWithRoles::from_bytes(swig_account_data_immutable)?;
 
+        // Search through all roles to find a SubAccount action matching this
+        // sub-account Uses 32-byte match format (sub_account pubkey) via
+        // get_action
+        let sub_account_key = ctx.accounts.sub_account.key();
         let mut found_action: Option<(u32, u8, u8)> = None;
-        let mut role_cursor = 0;
 
-        // Iterate through all roles
-        for _role_idx in 0..swig.roles {
-            if role_cursor >= swig_roles_immutable.len() {
-                break;
-            }
-
-            // Read the Position header to get role metadata
-            let position = unsafe {
-                Position::load_unchecked(
-                    &swig_roles_immutable[role_cursor..role_cursor + Position::LEN],
-                )?
-            };
-
-            let authority_offset = role_cursor + Position::LEN;
-            let actions_offset = authority_offset + position.authority_length() as usize;
-            let role_boundary = position.boundary() as usize;
-
-            // Iterate through actions in this role
-            let mut action_cursor = actions_offset;
-            while action_cursor < role_boundary {
-                if action_cursor + Action::LEN > role_boundary {
-                    break;
-                }
-
-                let action_header = unsafe {
-                    Action::load_unchecked(
-                        &swig_roles_immutable[action_cursor..action_cursor + Action::LEN],
-                    )?
-                };
-                let action_data_start = action_cursor + Action::LEN;
-
-                if action_header.permission()? == Permission::SubAccount {
-                    let action_obj = unsafe {
-                        SubAccount::load_unchecked(
-                            &swig_roles_immutable
-                                [action_data_start..action_data_start + SubAccount::LEN],
-                        )?
-                    };
-
-                    // Check if this SubAccount action matches our sub-account address
-                    if action_obj.sub_account == *ctx.accounts.sub_account.key()
-                        && action_obj.swig_id == swig.id
-                        && action_obj.enabled
-                    {
+        for role_id in 0..swig.role_counter {
+            if let Some(search_role) = swig_with_roles.get_role(role_id)? {
+                // Use get_action with 32-byte match format (sub_account pubkey)
+                if let Some(action_obj) =
+                    search_role.get_action::<SubAccount>(sub_account_key.as_ref())?
+                {
+                    // Verify swig_id matches
+                    if action_obj.swig_id == swig.id {
+                        // Authority override can withdraw even from disabled sub-accounts
                         found_action = Some((
                             action_obj.role_id,
                             action_obj.bump,
@@ -271,16 +225,7 @@ pub fn withdraw_from_sub_account_v1(
                         break;
                     }
                 }
-
-                action_cursor = action_header.boundary() as usize;
             }
-
-            if found_action.is_some() {
-                break;
-            }
-
-            // Move to next role
-            role_cursor = role_boundary;
         }
 
         if found_action.is_none() {

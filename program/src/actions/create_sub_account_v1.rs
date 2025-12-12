@@ -15,17 +15,10 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::*;
 use swig_state::{
-    action::{
-        all::All, manage_authority::ManageAuthority, sub_account::SubAccount, Action, ActionLoader,
-        Actionable, Permission,
-    },
-    authority::AuthorityType,
+    action::sub_account::SubAccount,
     role::RoleMut,
-    swig::{
-        sub_account_seeds_with_bump, sub_account_seeds_with_index_and_bump, sub_account_signer,
-        swig_account_seeds_with_bump, swig_account_signer, Swig,
-    },
-    Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
+    swig::{sub_account_seeds_with_bump, sub_account_seeds_with_index_and_bump, Swig},
+    Discriminator, IntoBytes, Transmutable, TransmutableMut,
 };
 
 use crate::{
@@ -248,60 +241,6 @@ pub fn create_sub_account_v1(
         return Err(SwigError::InvalidSubAccountIndex.into());
     }
 
-    // First check if the role has SubAccount permission at all
-    let mut has_sub_account_permission = false;
-    let mut cursor = 0;
-    let end_pos = role.actions.len();
-
-    while cursor < end_pos {
-        let action_header =
-            unsafe { Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN])? };
-        cursor += Action::LEN;
-
-        if action_header.permission()? == Permission::SubAccount {
-            has_sub_account_permission = true;
-            break;
-        }
-
-        cursor = action_header.boundary() as usize;
-    }
-
-    if !has_sub_account_permission {
-        return Err(SwigError::AuthorityCannotCreateSubAccount.into());
-    }
-
-    // Find the SubAccount action for this specific index
-    // We need custom logic to match by index since multiple SubAccount actions may
-    // exist
-    let mut found_action_offset: Option<usize> = None;
-    let mut cursor = 0;
-
-    while cursor < end_pos {
-        let action_header =
-            unsafe { Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN])? };
-        cursor += Action::LEN;
-
-        if action_header.permission()? == Permission::SubAccount {
-            let action_obj = unsafe {
-                SubAccount::load_unchecked(&role.actions[cursor..cursor + SubAccount::LEN])?
-            };
-
-            // Match on index and empty sub_account field (creation state)
-            if action_obj.sub_account_index == sub_account_index
-                && action_obj.sub_account == [0u8; 32]
-            {
-                found_action_offset = Some(cursor);
-                break;
-            }
-        }
-
-        cursor = action_header.boundary() as usize;
-    }
-
-    if found_action_offset.is_none() {
-        return Err(SwigError::SubAccountActionNotFound.into());
-    }
-
     // Derive sub-account PDA based on index
     // Index 0 uses legacy derivation (3 seeds) for backwards compatibility
     // Index 1+ uses new derivation (4 seeds) with index
@@ -332,37 +271,29 @@ pub fn create_sub_account_v1(
         )?
     };
 
-    // CRITICAL SECURITY CHECK: Ensure no other SubAccount action uses this PDA
-    // address This prevents PDA collision attacks where an attacker could
-    // create multiple SubAccount actions pointing to the same underlying
-    // account
-    let mut duplicate_check_cursor = 0;
-    while duplicate_check_cursor < end_pos {
-        let action_header = unsafe {
-            Action::load_unchecked(
-                &role.actions[duplicate_check_cursor..duplicate_check_cursor + Action::LEN],
-            )?
+    // Prepare match data for finding SubAccount action by index
+    // Format: [index (1 byte), zeros (32 bytes)] to match by index + zeroed
+    // sub_account
+    let mut match_data = [0u8; 33];
+    match_data[0] = sub_account_index;
+    // Remaining 32 bytes are zeros, which means "match zeroed sub_account field"
+
+    // Validation checks using get_action_mut which handles both checking and
+    // returning mutable ref First, check if the role has any SubAccount
+    // permission and find the one for this index
+    let sub_account_action_mut =
+        match RoleMut::get_action_mut::<SubAccount>(role.actions, &match_data)? {
+            Some(action) => action,
+            None => {
+                // Check if the role has any SubAccount permission at all for a better error
+                // message Use empty match data to find any SubAccount with
+                // zeroed sub_account
+                if RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?.is_none() {
+                    return Err(SwigError::AuthorityCannotCreateSubAccount.into());
+                }
+                return Err(SwigError::SubAccountActionNotFound.into());
+            },
         };
-        duplicate_check_cursor += Action::LEN;
-
-        if action_header.permission()? == Permission::SubAccount {
-            let existing_action = unsafe {
-                SubAccount::load_unchecked(
-                    &role.actions[duplicate_check_cursor..duplicate_check_cursor + SubAccount::LEN],
-                )?
-            };
-
-            // Check if any existing SubAccount action (that's already created) uses this
-            // PDA
-            if existing_action.sub_account != [0u8; 32]
-                && existing_action.sub_account == *ctx.accounts.sub_account.key()
-            {
-                return Err(SwigError::SubAccountAlreadyExists.into());
-            }
-        }
-
-        duplicate_check_cursor = action_header.boundary() as usize;
-    }
 
     // Transfer lamports to the sub_account to make it system-owned and rent-exempt
     // This follows the same pattern as swig_wallet_address creation in create_v1.rs
@@ -389,14 +320,6 @@ pub fn create_sub_account_v1(
         }
         .invoke()?;
     }
-
-    // Update the SubAccount action to store all sub-account metadata
-    let action_offset = found_action_offset.unwrap();
-    let sub_account_action_mut = unsafe {
-        SubAccount::load_mut_unchecked(
-            &mut role.actions[action_offset..action_offset + SubAccount::LEN],
-        )?
-    };
 
     sub_account_action_mut
         .sub_account

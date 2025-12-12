@@ -890,6 +890,178 @@ fn test_sign_with_indexed_sub_accounts() {
     );
 }
 
+/// Test that creating a swig wallet with duplicate SubAccount indices fails.
+///
+/// This validates the duplicate index check in SwigBuilder::add_role which is
+/// called during the create instruction flow.
+#[test_log::test]
+fn test_create_swig_rejects_duplicate_sub_account_indices() {
+    use solana_sdk::message::v0;
+    use swig_interface::CreateInstruction;
+    use swig_state::swig::{swig_account_seeds, swig_wallet_address_seeds};
+
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, swig_bump) =
+        Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
+    // Try to create a swig with duplicate SubAccount indices (both index 0)
+    let actions_with_duplicates = vec![
+        ClientAction::All(swig_state::action::all::All {}),
+        ClientAction::SubAccount(SubAccount::new_for_creation(0)),
+        ClientAction::SubAccount(SubAccount::new_for_creation(0)), // duplicate index!
+    ];
+
+    let create_ix = CreateInstruction::new(
+        swig_key,
+        swig_bump,
+        context.default_payer.pubkey(),
+        swig_wallet_address,
+        wallet_address_bump,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: root_authority.pubkey().as_ref(),
+        },
+        actions_with_duplicates,
+        id,
+    )
+    .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[create_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = solana_sdk::transaction::VersionedTransaction::try_new(
+        solana_sdk::message::VersionedMessage::V0(msg),
+        &[&context.default_payer],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+
+    // Should fail due to duplicate SubAccount indices
+    assert!(
+        result.is_err(),
+        "Creating swig with duplicate SubAccount indices should fail"
+    );
+
+    // Verify the swig account was not created
+    assert!(
+        context.svm.get_account(&swig_key).is_none(),
+        "Swig account should not exist after failed creation"
+    );
+}
+
+/// Test that creating a swig wallet with different SubAccount indices succeeds.
+#[test_log::test]
+fn test_create_swig_accepts_different_sub_account_indices() {
+    use solana_sdk::message::v0;
+    use swig_interface::CreateInstruction;
+    use swig_state::swig::{swig_account_seeds, swig_wallet_address_seeds};
+
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, swig_bump) =
+        Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
+    // Create a swig with different SubAccount indices (0, 1, 5)
+    let actions_with_different_indices = vec![
+        ClientAction::All(swig_state::action::all::All {}),
+        ClientAction::SubAccount(SubAccount::new_for_creation(0)),
+        ClientAction::SubAccount(SubAccount::new_for_creation(1)),
+        ClientAction::SubAccount(SubAccount::new_for_creation(5)),
+    ];
+
+    let create_ix = CreateInstruction::new(
+        swig_key,
+        swig_bump,
+        context.default_payer.pubkey(),
+        swig_wallet_address,
+        wallet_address_bump,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: root_authority.pubkey().as_ref(),
+        },
+        actions_with_different_indices,
+        id,
+    )
+    .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[create_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = solana_sdk::transaction::VersionedTransaction::try_new(
+        solana_sdk::message::VersionedMessage::V0(msg),
+        &[&context.default_payer],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+
+    // Should succeed
+    assert!(
+        result.is_ok(),
+        "Creating swig with different SubAccount indices should succeed: {:?}",
+        result.err()
+    );
+
+    // Verify the swig account was created with correct SubAccount actions
+    let swig_account_data = context.svm.get_account(&swig_key).unwrap();
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data.data).unwrap();
+    let role = swig_with_roles.get_role(0).unwrap().unwrap();
+    let sub_account_actions = role.get_all_actions_of_type::<SubAccount>().unwrap();
+
+    assert_eq!(
+        sub_account_actions.len(),
+        3,
+        "Should have 3 SubAccount actions"
+    );
+
+    // Verify indices 0, 1, 5
+    let mut indices: Vec<u8> = sub_account_actions
+        .iter()
+        .map(|a| a.sub_account_index)
+        .collect();
+    indices.sort();
+    assert_eq!(indices, vec![0, 1, 5], "Should have indices 0, 1, and 5");
+
+    // All should be unpopulated (not created yet)
+    for action in &sub_account_actions {
+        assert_eq!(
+            action.sub_account, [0u8; 32],
+            "SubAccount action at index {} should be zeroed (not created)",
+            action.sub_account_index
+        );
+    }
+}
+
 /// Test backwards compatibility: Verify that the instruction format with index
 /// byte = 0 (which is what legacy v1.3.3 SDK sends as padding) is correctly
 /// interpreted as index 0.
@@ -1338,6 +1510,250 @@ fn test_update_authority_add_actions_rejects_duplicate_indices() {
     );
 }
 
+/// Test that you cannot create two sub-accounts with the same index under the
+/// same role.
+///
+/// This test validates that:
+/// 1. Creating a sub-account with index 0 succeeds
+/// 2. Attempting to create another sub-account with index 0 fails
+///
+/// The program prevents this by:
+/// - Using match_data to find SubAccount actions with matching index AND zeroed
+///   sub_account field
+/// - Once a sub-account is created, its sub_account field is populated with the
+///   PDA address
+/// - Subsequent creation attempts for the same index won't find a matching
+///   (zeroed) action
+#[test_log::test]
+fn test_cannot_create_duplicate_sub_account_same_index() {
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+    let sub_account_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&sub_account_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    // Add authority with SubAccount permission for index 0
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: sub_account_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation(0))],
+    )
+    .unwrap();
+
+    let role_id = 1;
+
+    // First creation should succeed
+    let sub_account_first = create_sub_account_with_index(
+        &mut context,
+        &swig_key,
+        &sub_account_authority,
+        role_id,
+        id,
+        0,
+    )
+    .unwrap();
+
+    // Verify the first sub-account was created successfully
+    let sub_account_data = context.svm.get_account(&sub_account_first).unwrap();
+    assert_eq!(sub_account_data.owner, solana_sdk::system_program::id());
+
+    // Warp to ensure different blockhash
+    context.svm.warp_to_slot(10);
+    context.svm.expire_blockhash();
+
+    // Second creation with same index should FAIL
+    // Because the SubAccount action's sub_account field is now populated,
+    // the match_data check for [index, zeros...] won't find it
+    let result = create_sub_account_with_index(
+        &mut context,
+        &swig_key,
+        &sub_account_authority,
+        role_id,
+        id,
+        0,
+    );
+
+    assert!(
+        result.is_err(),
+        "Creating a second sub-account with the same index should fail"
+    );
+
+    // Verify the error is AuthorityCannotCreateSubAccount (error code 36)
+    // This happens because:
+    // 1. After the first creation, the SubAccount action's sub_account field is
+    //    populated
+    // 2. When trying to create again, the match_data [index, zeros...] won't find
+    //    it (since sub_account is no longer zeros)
+    // 3. The fallback check for any SubAccount with zeroed sub_account also fails
+    // 4. Result: AuthorityCannotCreateSubAccount (no available SubAccount slot)
+    let error_msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        error_msg.contains("Custom(36)"),
+        "Expected AuthorityCannotCreateSubAccount error (code 36), got: {}",
+        error_msg
+    );
+
+    // Verify only one sub-account exists
+    let swig_account_data = context.svm.get_account(&swig_key).unwrap();
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data.data).unwrap();
+    let role = swig_with_roles.get_role(role_id).unwrap().unwrap();
+    let sub_account_actions = role.get_all_actions_of_type::<SubAccount>().unwrap();
+
+    assert_eq!(
+        sub_account_actions.len(),
+        1,
+        "Should still have only 1 SubAccount action"
+    );
+    assert_eq!(
+        sub_account_actions[0].sub_account,
+        sub_account_first.to_bytes(),
+        "The SubAccount action should contain the first sub-account's address"
+    );
+    assert_eq!(sub_account_actions[0].sub_account_index, 0);
+}
+
+/// Test that you cannot create two sub-accounts with the same index even when
+/// multiple SubAccount permissions exist for different indices.
+///
+/// Scenario:
+/// - Role has SubAccount permissions for indices 0, 1, 2
+/// - Create sub-account with index 1 (succeeds)
+/// - Try to create another sub-account with index 1 (should fail)
+/// - Creating sub-accounts with indices 0 and 2 should still work
+#[test_log::test]
+fn test_cannot_create_duplicate_sub_account_with_multiple_permissions() {
+    let mut context = setup_test_context().unwrap();
+
+    // Setup with permissions for indices 0, 1, 2
+    let (swig_key, _root_authority, sub_account_authority, id) =
+        setup_with_multiple_sub_account_permissions(&mut context, 3).unwrap();
+
+    let role_id = 1;
+
+    // Create sub-account with index 1 first (not 0, to test non-sequential)
+    let sub_account_1 = create_sub_account_with_index(
+        &mut context,
+        &swig_key,
+        &sub_account_authority,
+        role_id,
+        id,
+        1,
+    )
+    .unwrap();
+
+    // Verify sub-account 1 was created
+    let sub_account_data = context.svm.get_account(&sub_account_1).unwrap();
+    assert_eq!(sub_account_data.owner, solana_sdk::system_program::id());
+
+    context.svm.warp_to_slot(10);
+    context.svm.expire_blockhash();
+
+    // Try to create another sub-account with index 1 - should fail
+    let duplicate_result = create_sub_account_with_index(
+        &mut context,
+        &swig_key,
+        &sub_account_authority,
+        role_id,
+        id,
+        1,
+    );
+
+    assert!(
+        duplicate_result.is_err(),
+        "Creating duplicate sub-account with index 1 should fail"
+    );
+
+    // Verify it's the SubAccountActionNotFound error (code 49) because:
+    // - The SubAccount action for index 1 exists but its sub_account field is
+    //   populated
+    // - There are still other SubAccount actions with zeroed sub_account (indices
+    //   0, 2)
+    // - So the role HAS SubAccount permissions, but none for index 1 with zeroed
+    //   sub_account
+    let error_msg = format!("{:?}", duplicate_result.unwrap_err());
+    assert!(
+        error_msg.contains("Custom(49)"),
+        "Expected SubAccountActionNotFound error (code 49), got: {}",
+        error_msg
+    );
+
+    context.svm.warp_to_slot(20);
+    context.svm.expire_blockhash();
+
+    // Creating sub-account with index 0 should still work
+    let sub_account_0 = create_sub_account_with_index(
+        &mut context,
+        &swig_key,
+        &sub_account_authority,
+        role_id,
+        id,
+        0,
+    )
+    .unwrap();
+    assert_ne!(sub_account_0, sub_account_1);
+
+    context.svm.warp_to_slot(30);
+    context.svm.expire_blockhash();
+
+    // Creating sub-account with index 2 should still work
+    let sub_account_2 = create_sub_account_with_index(
+        &mut context,
+        &swig_key,
+        &sub_account_authority,
+        role_id,
+        id,
+        2,
+    )
+    .unwrap();
+    assert_ne!(sub_account_2, sub_account_0);
+    assert_ne!(sub_account_2, sub_account_1);
+
+    // Verify all 3 sub-accounts exist and have unique addresses
+    let swig_account_data = context.svm.get_account(&swig_key).unwrap();
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data.data).unwrap();
+    let role = swig_with_roles.get_role(role_id).unwrap().unwrap();
+    let sub_account_actions = role.get_all_actions_of_type::<SubAccount>().unwrap();
+
+    // Count populated sub-account actions
+    let populated_actions: Vec<_> = sub_account_actions
+        .iter()
+        .filter(|a| a.sub_account != [0u8; 32])
+        .collect();
+
+    assert_eq!(
+        populated_actions.len(),
+        3,
+        "Should have 3 populated SubAccount actions"
+    );
+
+    // Verify indices 0, 1, 2 are all populated
+    let mut indices: Vec<u8> = populated_actions
+        .iter()
+        .map(|a| a.sub_account_index)
+        .collect();
+    indices.sort();
+    assert_eq!(
+        indices,
+        vec![0, 1, 2],
+        "Should have indices 0, 1, 2 populated"
+    );
+}
+
 /// Test that updating authority with AddActions succeeds with different indices
 #[test_log::test]
 fn test_update_authority_add_actions_accepts_different_indices() {
@@ -1409,4 +1825,243 @@ fn test_update_authority_add_actions_accepts_different_indices() {
     indices.sort();
 
     assert_eq!(indices, vec![0, 5, 10], "Should have indices 0, 5, and 10");
+}
+
+/// Test that you cannot add a SubAccount action with a duplicate index,
+/// regardless of whether the sub-account has been created or not.
+///
+/// This test validates the full lifecycle:
+/// 1. Create a swig wallet with an authority that has SubAccount permission for
+///    index 0
+/// 2. Create first sub-account with index 0 (succeeds)
+/// 3. Try adding another SubAccount action to the same role with index 0
+///    (should fail)
+/// 4. Add SubAccount action with index 1 to the same role (succeeds)
+/// 5. Create sub-account with index 1 (succeeds)
+/// 6. Try adding another SubAccount action to the same role with index 1
+///    (should fail)
+/// 7. Add SubAccount action with index 2 (succeeds, but don't create the
+///    sub-account)
+/// 8. Try adding another SubAccount action with index 2 (should fail even
+///    without creation)
+#[test_log::test]
+fn test_cannot_add_duplicate_sub_account_action_after_creation() {
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+    let sub_account_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&sub_account_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    // Step 1: Add authority with SubAccount permission for index 0
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: sub_account_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation(0))],
+    )
+    .unwrap();
+
+    let sub_account_role_id = 1;
+
+    // Step 2: Create first sub-account with index 0
+    let sub_account_0 = create_sub_account_with_index(
+        &mut context,
+        &swig_key,
+        &sub_account_authority,
+        sub_account_role_id,
+        id,
+        0,
+    )
+    .unwrap();
+
+    // Verify sub-account 0 was created
+    let sub_account_data = context.svm.get_account(&sub_account_0).unwrap();
+    assert_eq!(sub_account_data.owner, solana_sdk::system_program::id());
+
+    context.svm.warp_to_slot(10);
+    context.svm.expire_blockhash();
+
+    // Step 3: Try adding another SubAccount action with index 0 - should FAIL
+    // because index 0 already exists on this role (even though it's been
+    // created/populated)
+    let add_duplicate_0_result = update_authority_add_actions(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        sub_account_role_id,
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation(0))],
+    );
+
+    assert!(
+        add_duplicate_0_result.is_err(),
+        "Adding SubAccount action with duplicate index 0 should fail"
+    );
+
+    // Verify the error indicates duplicate index rejection
+    let error_msg = format!("{:?}", add_duplicate_0_result.unwrap_err());
+    // The error should be related to duplicate SubAccount indices
+    assert!(
+        error_msg.contains("Custom"),
+        "Expected a custom error, got: {}",
+        error_msg
+    );
+
+    context.svm.warp_to_slot(20);
+    context.svm.expire_blockhash();
+
+    // Step 4: Add SubAccount action with index 1 - should succeed
+    let add_index_1_result = update_authority_add_actions(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        sub_account_role_id,
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation(1))],
+    );
+
+    assert!(
+        add_index_1_result.is_ok(),
+        "Adding SubAccount action with index 1 should succeed: {:?}",
+        add_index_1_result.err()
+    );
+
+    context.svm.warp_to_slot(30);
+    context.svm.expire_blockhash();
+
+    // Step 5: Create sub-account with index 1
+    let sub_account_1 = create_sub_account_with_index(
+        &mut context,
+        &swig_key,
+        &sub_account_authority,
+        sub_account_role_id,
+        id,
+        1,
+    )
+    .unwrap();
+
+    // Verify sub-account 1 was created and is different from sub-account 0
+    assert_ne!(sub_account_0, sub_account_1);
+    let sub_account_1_data = context.svm.get_account(&sub_account_1).unwrap();
+    assert_eq!(sub_account_1_data.owner, solana_sdk::system_program::id());
+
+    context.svm.warp_to_slot(40);
+    context.svm.expire_blockhash();
+
+    // Step 6: Try adding another SubAccount action with index 1 - should FAIL
+    let add_duplicate_1_result = update_authority_add_actions(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        sub_account_role_id,
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation(1))],
+    );
+
+    assert!(
+        add_duplicate_1_result.is_err(),
+        "Adding SubAccount action with duplicate index 1 should fail"
+    );
+
+    context.svm.warp_to_slot(50);
+    context.svm.expire_blockhash();
+
+    // Step 7: Add SubAccount action with index 2 - should succeed
+    // (we won't create the sub-account yet)
+    let add_index_2_result = update_authority_add_actions(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        sub_account_role_id,
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation(2))],
+    );
+
+    assert!(
+        add_index_2_result.is_ok(),
+        "Adding SubAccount action with index 2 should succeed: {:?}",
+        add_index_2_result.err()
+    );
+
+    context.svm.warp_to_slot(60);
+    context.svm.expire_blockhash();
+
+    // Step 8: Try adding another SubAccount action with index 2 - should FAIL
+    // even though the sub-account hasn't been created yet, the action already
+    // exists
+    let add_duplicate_2_result = update_authority_add_actions(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        sub_account_role_id,
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation(2))],
+    );
+
+    assert!(
+        add_duplicate_2_result.is_err(),
+        "Adding SubAccount action with duplicate index 2 should fail (even without creation)"
+    );
+
+    // Verify final state: role should have exactly 3 SubAccount actions (indices 0,
+    // 1, and 2)
+    let swig_account_data = context.svm.get_account(&swig_key).unwrap();
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data.data).unwrap();
+    let role = swig_with_roles
+        .get_role(sub_account_role_id)
+        .unwrap()
+        .unwrap();
+    let sub_account_actions = role.get_all_actions_of_type::<SubAccount>().unwrap();
+
+    assert_eq!(
+        sub_account_actions.len(),
+        3,
+        "Should have exactly 3 SubAccount actions"
+    );
+
+    // Verify indices 0, 1, and 2 exist
+    let mut indices: Vec<u8> = sub_account_actions
+        .iter()
+        .map(|a| a.sub_account_index)
+        .collect();
+    indices.sort();
+    assert_eq!(indices, vec![0, 1, 2], "Should have indices 0, 1, and 2");
+
+    // Verify populated vs unpopulated state
+    // Index 0 and 1 should be populated (created), index 2 should be unpopulated
+    // (not created)
+    for action in &sub_account_actions {
+        match action.sub_account_index {
+            0 => {
+                assert_eq!(
+                    action.sub_account,
+                    sub_account_0.to_bytes(),
+                    "Index 0 should have sub_account_0's address"
+                );
+            },
+            1 => {
+                assert_eq!(
+                    action.sub_account,
+                    sub_account_1.to_bytes(),
+                    "Index 1 should have sub_account_1's address"
+                );
+            },
+            2 => {
+                assert_eq!(
+                    action.sub_account, [0u8; 32],
+                    "Index 2 should still be zeroed (not created yet)"
+                );
+            },
+            _ => panic!("Unexpected sub_account_index: {}", action.sub_account_index),
+        }
+    }
 }
