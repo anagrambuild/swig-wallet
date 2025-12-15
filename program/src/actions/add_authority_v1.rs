@@ -12,7 +12,7 @@ use pinocchio::{
 };
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
-use swig_developer_state::DeveloperAccount;
+use swig_developer_state::{DeveloperAccount, DEVELOPER_PROGRAM_ID};
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, Action},
     authority::{authority_type_to_length, AuthorityType},
@@ -218,6 +218,12 @@ pub fn add_authority_v1(
         if add_authority_v1.args.role_type == RoleType::Developer as u8 {
             let developer_account = all_accounts.get(all_accounts.len() - 2).unwrap();
             let developer = all_accounts.get(all_accounts.len() - 1).unwrap();
+
+            if developer_account.owner().ne(&DEVELOPER_PROGRAM_ID)
+                || developer_account.data_is_empty()
+            {
+                return Err(SwigAuthenticateError::PermissionDeniedInvalidDeveloperAccount.into());
+            }
 
             let developer_account_data = unsafe { developer_account.borrow_data_unchecked() };
             let developer_acc = DeveloperAccount::from_bytes(developer_account_data).unwrap();
