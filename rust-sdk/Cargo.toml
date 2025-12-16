@@ -26,6 +26,10 @@ spl-associated-token-account = "7.0.0"
 spl-token = "8.0.0"
 solana-account-decoder-client-types = "2.0"
 
+# Pin critical dependencies to prevent version conflicts
+serde = "=1.0.219"
+serde_derive = "=1.0.219"
+
 [dev-dependencies]
 test-log = "0.2"
 rand = "0.8"
