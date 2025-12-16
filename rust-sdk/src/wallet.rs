@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use alloy_primitives::{Address, B256};
 #[cfg(all(feature = "rust_sdk_test", test))]
 use litesvm::LiteSVM;
@@ -8,7 +10,6 @@ use solana_client::{
     rpc_client::RpcClient, rpc_request::TokenAccountsFilter, rpc_response::RpcKeyedAccount,
 };
 use solana_program::{hash::Hash, instruction::Instruction, pubkey::Pubkey};
-use std::str::FromStr;
 use solana_sdk::{
     account::ReadableAccount,
     address_lookup_table::{state::AddressLookupTable, AddressLookupTableAccount},
@@ -769,7 +770,6 @@ impl<'c> SwigWallet<'c> {
             "║ Balance: {} SOL",
             swig_account.lamports() as f64 / 1_000_000_000.0
         );
-
 
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
         {
@@ -1829,14 +1829,17 @@ impl<'c> SwigWallet<'c> {
     /// Retrieves all token balances for the Swig wallet
     ///
     /// This method fetches all token accounts owned by the Swig wallet for both
-    /// SPL Token and Token-2022 programs, returning structured balance information.
+    /// SPL Token and Token-2022 programs, returning structured balance
+    /// information.
     ///
-    /// **Note**: This method is only available in production builds. It is not available
-    /// in test mode because LiteSVM does not support querying accounts by owner/program.
+    /// **Note**: This method is only available in production builds. It is not
+    /// available in test mode because LiteSVM does not support querying
+    /// accounts by owner/program.
     ///
     /// # Returns
     ///
-    /// Returns a `Result` containing a vector of `TokenBalance` structs or a `SwigError`
+    /// Returns a `Result` containing a vector of `TokenBalance` structs or a
+    /// `SwigError`
     ///
     /// # Example
     ///
@@ -1857,7 +1860,9 @@ impl<'c> SwigWallet<'c> {
         )?;
 
         for account in token_accounts {
-            if let Some(balance) = parse_token_account_rpc(&account, crate::types::TokenProgram::SplToken)? {
+            if let Some(balance) =
+                parse_token_account_rpc(&account, crate::types::TokenProgram::SplToken)?
+            {
                 balances.push(balance);
             }
         }
@@ -1868,7 +1873,9 @@ impl<'c> SwigWallet<'c> {
         )?;
 
         for account in token_accounts_22 {
-            if let Some(balance) = parse_token_account_rpc(&account, crate::types::TokenProgram::Token2022)? {
+            if let Some(balance) =
+                parse_token_account_rpc(&account, crate::types::TokenProgram::Token2022)?
+            {
                 balances.push(balance);
             }
         }
@@ -1888,39 +1895,37 @@ fn build_current_role(role_id: u32, role: &Role) -> crate::types::CurrentRole {
     }
 }
 
-
 pub(crate) fn parse_token_account_rpc(
     account: &RpcKeyedAccount,
     program: crate::types::TokenProgram,
 ) -> Result<Option<crate::types::TokenBalance>, SwigError> {
     use solana_account_decoder_client_types::UiAccountData;
-    
+
     if let UiAccountData::Json(parsed) = &account.account.data {
         if let Some(token_info) = parsed.parsed.get("info") {
             let mint_str = token_info["mint"]
                 .as_str()
                 .ok_or(SwigError::InvalidSwigData)?;
-            let mint = Pubkey::from_str(mint_str)
-                .map_err(|_| SwigError::InvalidSwigData)?;
-            
+            let mint = Pubkey::from_str(mint_str).map_err(|_| SwigError::InvalidSwigData)?;
+
             let token_account_str = &account.pubkey;
-            let token_account = Pubkey::from_str(token_account_str)
-                .map_err(|_| SwigError::InvalidSwigData)?;
-            
+            let token_account =
+                Pubkey::from_str(token_account_str).map_err(|_| SwigError::InvalidSwigData)?;
+
             let balance = token_info["tokenAmount"]["amount"]
                 .as_str()
                 .and_then(|s| s.parse::<u64>().ok())
                 .ok_or(SwigError::InvalidSwigData)?;
-            
+
             let decimals = token_info["tokenAmount"]["decimals"]
                 .as_u64()
                 .ok_or(SwigError::InvalidSwigData)? as u8;
-            
+
             // uiAmount can be null for very large balances, so we keep the default
             let ui_amount = token_info["tokenAmount"]["uiAmount"]
                 .as_f64()
                 .unwrap_or(0.0);
-            
+
             return Ok(Some(crate::types::TokenBalance {
                 mint,
                 token_account,
@@ -1931,7 +1936,7 @@ pub(crate) fn parse_token_account_rpc(
             }));
         }
     }
-    
+
     Ok(None)
 }
 

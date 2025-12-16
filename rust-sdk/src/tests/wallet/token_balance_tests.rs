@@ -1,15 +1,15 @@
-use super::*;
-use crate::types::{TokenBalance, TokenProgram};
+use serde_json::json;
 use solana_account_decoder_client_types::{UiAccount, UiAccountData, UiAccountEncoding};
 use solana_client::rpc_response::RpcKeyedAccount;
-use serde_json::json;
 
+use super::*;
+use crate::types::{TokenBalance, TokenProgram};
 
 #[test_log::test]
 fn test_parse_spl_token_account() {
     let account_pubkey = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".to_string();
     let mint_pubkey = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"; // USDC
-    
+
     let parsed_data = json!({
         "info": {
             "mint": mint_pubkey,
@@ -32,20 +32,20 @@ fn test_parse_spl_token_account() {
             data: UiAccountData::Json(solana_account_decoder_client_types::ParsedAccount {
                 program: "spl-token".to_string(),
                 parsed: parsed_data,
-                space: 165,  
+                space: 165,
             }),
             executable: false,
             rent_epoch: 0,
-            space: Some(165),  
+            space: Some(165),
         },
     };
 
     let result = crate::wallet::parse_token_account_rpc(&rpc_account, TokenProgram::SplToken);
-    
+
     assert!(result.is_ok());
     let balance = result.unwrap();
     assert!(balance.is_some());
-    
+
     let balance = balance.unwrap();
     assert_eq!(balance.mint.to_string(), mint_pubkey);
     assert_eq!(balance.balance, 1000000);
@@ -54,12 +54,11 @@ fn test_parse_spl_token_account() {
     assert!(matches!(balance.program, TokenProgram::SplToken));
 }
 
-
 #[test_log::test]
 fn test_parse_token2022_account() {
     let account_pubkey = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb".to_string();
     let mint_pubkey = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"; // USDC on Token-2022
-    
+
     let parsed_data = json!({
         "info": {
             "mint": mint_pubkey,
@@ -91,11 +90,11 @@ fn test_parse_token2022_account() {
     };
 
     let result = crate::wallet::parse_token_account_rpc(&rpc_account, TokenProgram::Token2022);
-    
+
     assert!(result.is_ok());
     let balance = result.unwrap();
     assert!(balance.is_some());
-    
+
     let balance = balance.unwrap();
     assert_eq!(balance.mint.to_string(), mint_pubkey);
     assert_eq!(balance.balance, 500000000);
@@ -103,7 +102,6 @@ fn test_parse_token2022_account() {
     assert_eq!(balance.ui_amount, 0.5);
     assert!(matches!(balance.program, TokenProgram::Token2022));
 }
-
 
 #[test_log::test]
 fn test_parse_zero_balance_account() {
@@ -138,11 +136,11 @@ fn test_parse_zero_balance_account() {
     };
 
     let result = crate::wallet::parse_token_account_rpc(&rpc_account, TokenProgram::SplToken);
-    
+
     assert!(result.is_ok());
     let balance = result.unwrap();
     assert!(balance.is_some());
-    
+
     let balance = balance.unwrap();
     assert_eq!(balance.balance, 0);
     assert_eq!(balance.ui_amount, 0.0);
@@ -163,10 +161,10 @@ fn test_parse_non_json_account() {
     };
 
     let result = crate::wallet::parse_token_account_rpc(&rpc_account, TokenProgram::SplToken);
-    
+
     assert!(result.is_ok());
     let balance = result.unwrap();
-    assert!(balance.is_none()); 
+    assert!(balance.is_none());
 }
 
 #[test_log::test]
@@ -193,7 +191,7 @@ fn test_parse_account_missing_info() {
     };
 
     let result = crate::wallet::parse_token_account_rpc(&rpc_account, TokenProgram::SplToken);
-    
+
     assert!(result.is_ok());
     let balance = result.unwrap();
     assert!(balance.is_none()); // Should return None when info is missing
