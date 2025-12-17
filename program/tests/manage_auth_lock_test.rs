@@ -6,6 +6,7 @@ use common::*;
 use litesvm::types::FailedTransactionMetadata;
 use litesvm_token::spl_token;
 use solana_sdk::{
+    instruction::InstructionError,
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
@@ -174,6 +175,14 @@ fn auth_locks_for_role(env: &TestEnv, role_id: u32) -> Vec<AuthorizationLock> {
 
 fn global_auth_locks(env: &TestEnv) -> Vec<AuthorizationLock> {
     auth_locks_for_role(env, 0)
+}
+
+fn assert_authlock_failed(res: Result<(), FailedTransactionMetadata>) {
+    let err = res.expect_err("expected transaction to fail");
+    match err.err {
+        TransactionError::InstructionError(_, InstructionError::Custom(_)) => {},
+        other => panic!("unexpected error: {:?}", other),
+    }
 }
 
 /// 1) Add and then remove the `ManageAuthorizationLocks` action from an authority.
@@ -365,7 +374,7 @@ fn test_authlock_add_fails_when_balance_lower_than_amount() {
     );
 
     println!("res: {:?}", res);
-    assert!(res.is_err());
+    assert_authlock_failed(res);
 }
 
 /// 6) Global cache updates when adding and removing auth‑locks.
@@ -482,7 +491,117 @@ fn test_authlock_global_cache_with_multiple_authorities_and_expiry() {
     assert_eq!(global[0].amount, 2_000_000);
 }
 
-/// 8) Global cache and per‑authority state with multiple authorities and expiry propagation.
+/// 8) Modify fails with `InvalidAuthorizationLockNotFound` when the mint does not exist.
+#[test_log::test]
+fn test_authlock_modify_fails_when_lock_not_found() {
+    let mut env = setup_env(5_000_000, 0);
+
+    // Authority with ManageAuthorizationLocks and SOL limit.
+    let (_auth, role_id) = add_authority_with_actions(
+        &mut env,
+        vec![
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
+            ClientAction::SolLimit(SolLimit { amount: 4_000_000 }),
+        ],
+    );
+
+    // Add one lock for mint [0; 32].
+    run_manage_auth_lock(
+        &mut env,
+        1,
+        role_id,
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
+                mint: [0u8; 32],
+                amount: 1_000_000,
+                expires_at: 1_000,
+            },
+        )]),
+    )
+    .unwrap();
+
+    // Now attempt to modify a lock for a *different* mint; should hit
+    // `InvalidAuthorizationLockNotFound`.
+    let res = run_manage_auth_lock(
+        &mut env,
+        1,
+        role_id,
+        ManageAuthLockData::ModifyAuthorizationLock(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
+                mint: [1u8; 32],
+                amount: 2_000_000,
+                expires_at: 2_000,
+            },
+        )]),
+    );
+
+    assert_authlock_failed(res);
+}
+
+/// 9) Add path fails with `ContainsNonAuthorizationLockAction` when a non‑authlock
+/// action is encoded inside the authlock payload.
+#[test_log::test]
+fn test_authlock_add_contains_non_authlock_action_error() {
+    let mut env = setup_env(5_000_000, 0);
+
+    let (_auth, role_id) = add_authority_with_actions(
+        &mut env,
+        vec![ClientAction::ManageAuthorizationLocks(
+            ManageAuthorizationLocks {},
+        )],
+    );
+
+    let res = run_manage_auth_lock(
+        &mut env,
+        1,
+        role_id,
+        ManageAuthLockData::AddAuthorizationLocks(vec![
+            // This non‑authlock action inside the authlock payload should trigger the error.
+            ClientAction::SolLimit(SolLimit { amount: 1_000_000 }),
+            ClientAction::AuthorizationLock(AuthorizationLock {
+                mint: [0u8; 32],
+                amount: 500_000,
+                expires_at: 1_000,
+            }),
+        ]),
+    );
+
+    assert_authlock_failed(res);
+}
+
+/// 10) Adding a token authlock without a corresponding ATA yields
+/// `AssociatedTokenAccountNotFound`.
+#[test_log::test]
+fn test_authlock_associated_token_account_not_found_error() {
+    let mut env = setup_env(5_000_000, 0);
+
+    let (_auth, role_id) = add_authority_with_actions(
+        &mut env,
+        vec![ClientAction::ManageAuthorizationLocks(
+            ManageAuthorizationLocks {},
+        )],
+    );
+
+    // Create a mint that does NOT have an ATA for the swig wallet.
+    let orphan_mint = setup_mint(&mut env.context.svm, &env.context.default_payer).unwrap();
+
+    let res = run_manage_auth_lock(
+        &mut env,
+        1,
+        role_id,
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
+                mint: orphan_mint.to_bytes(),
+                amount: 1_000_000,
+                expires_at: 1_000,
+            },
+        )]),
+    );
+
+    assert_authlock_failed(res);
+}
+
+/// 11) Global cache and per‑authority state with multiple authorities and expiry propagation.
 ///
 /// Scenario:
 /// - Authority A gets a lock L1 with expiry E.
