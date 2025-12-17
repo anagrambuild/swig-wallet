@@ -201,10 +201,12 @@ pub enum SwigInstruction {
     ///
     /// Required accounts:
     /// 1. `[writable]` Swig wallet account
+    /// 2.  Swig wallet address account
     /// 2. `[writable, signer]` Payer account
     /// 3. System program account
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
-    #[account(1, writable, signer, name="payer", desc="the payer")]
-    #[account(2, name="system_program", desc="the system program")]
+    #[account(1, name="swig_wallet_address", desc="the swig wallet address")]
+    #[account(2, writable, signer, name="payer", desc="the payer")]
+    #[account(3, name="system_program", desc="the system program")]
     ManageAuthLockV1 = 14,
 }

@@ -150,6 +150,26 @@ fn test_authlock_add_authority_with_manage_authlock_and_authorization_lock() {
 
     let (swig_key, swig_create_txn) =
         create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id())
+            .0;
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
+    mint_to(
+        &mut context.svm,
+        &mint,
+        &context.default_payer,
+        &swig_ata,
+        3_000_000,
+    )
+    .unwrap();
+
     let second_authority = Keypair::new();
     context
         .svm
@@ -171,7 +191,7 @@ fn test_authlock_add_authority_with_manage_authlock_and_authorization_lock() {
                 expires_at: 1000000,
             }),
             ClientAction::AuthorizationLock(AuthorizationLock {
-                mint: [1u8; 32],
+                mint: mint.to_bytes(),
                 amount: 2_000_000,
                 expires_at: 2000000,
             }),
@@ -211,8 +231,6 @@ fn test_authlock_add_authority_with_manage_authlock_and_authorization_lock() {
     let action = role_2.get_action::<ManageAuthorizationLocks>(&[]).unwrap();
     assert!(action.is_some());
 
-    /// UPDATE AUTHORITY WITH AUTHORIZATION LOCKS
-    /// updating the authority role with authorization locks
     let new_actions: Vec<ClientAction> = vec![
         ClientAction::SolLimit(SolLimit { amount: 1000000 }),
         ClientAction::AuthorizationLock(AuthorizationLock {
@@ -221,7 +239,7 @@ fn test_authlock_add_authority_with_manage_authlock_and_authorization_lock() {
             expires_at: 1000000,
         }),
         ClientAction::AuthorizationLock(AuthorizationLock {
-            mint: [1u8; 32],
+            mint: mint.to_bytes(),
             amount: 2_000_000,
             expires_at: 2000000,
         }),
@@ -248,7 +266,7 @@ fn test_authlock_add_authority_with_manage_authlock_and_authorization_lock() {
             expires_at: 1000000,
         }),
         ClientAction::AuthorizationLock(AuthorizationLock {
-            mint: [1u8; 32],
+            mint: mint.to_bytes(),
             amount: 2_000_000,
             expires_at: 2000000,
         }),
@@ -277,7 +295,7 @@ fn test_authlock_add_authority_with_manage_authlock_and_authorization_lock() {
             expires_at: 1000000,
         }),
         ClientAction::AuthorizationLock(AuthorizationLock {
-            mint: [1u8; 32],
+            mint: mint.to_bytes(),
             amount: 2_000_000,
             expires_at: 2000000,
         }),
@@ -330,6 +348,8 @@ fn test_authlock_manage_with_one_added_authority() {
 
     let id = rand::random::<[u8; 32]>();
 
+    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+
     let (swig_key, swig_create_txn) =
         create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
     let second_authority = Keypair::new();
@@ -353,7 +373,7 @@ fn test_authlock_manage_with_one_added_authority() {
                 expires_at: 1000000,
             }),
             ClientAction::AuthorizationLock(AuthorizationLock {
-                mint: [1u8; 32],
+                mint: mint.to_bytes(),
                 amount: 2_000_000,
                 expires_at: 2000000,
             }),
@@ -371,9 +391,16 @@ fn test_authlock_manage_with_one_added_authority() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::ManageAuthorizationLocks(
-            ManageAuthorizationLocks {},
-        )],
+        vec![
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
+            ClientAction::SolLimit(SolLimit {
+                amount: 1_000_000_000,
+            }),
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: mint.to_bytes(),
+                current_amount: 2_000_000,
+            }),
+        ],
     );
     assert!(result.is_ok());
 
@@ -389,9 +416,38 @@ fn test_authlock_manage_with_one_added_authority() {
         AuthorityType::Ed25519
     );
     assert_eq!(role_2.position.authority_length(), 32);
-    assert_eq!(role_2.position.num_actions(), 1);
+    assert_eq!(role_2.position.num_actions(), 3);
     let action = role_2.get_action::<ManageAuthorizationLocks>(&[]).unwrap();
     assert!(action.is_some());
+
+    println!("starting test =================================================");
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id())
+            .0;
+
+    println!("swig wallet address: {:?}", swig_wallet_address.to_bytes());
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
+
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
+    println!("swig_ata: {:?}, mint: {:?}", swig_ata, mint);
+
+    mint_to(
+        &mut context.svm,
+        &mint,
+        &context.default_payer,
+        &swig_ata,
+        3_000_000,
+    )
+    .unwrap();
 
     /// UPDATE AUTHORITY WITH AUTHORIZATION LOCKS
     /// updating the authority role with authorization locks
@@ -402,7 +458,7 @@ fn test_authlock_manage_with_one_added_authority() {
             expires_at: 1000000,
         }),
         ClientAction::AuthorizationLock(AuthorizationLock {
-            mint: [1u8; 32],
+            mint: mint.to_bytes(),
             amount: 2_000_000,
             expires_at: 2000000,
         }),
@@ -420,14 +476,6 @@ fn test_authlock_manage_with_one_added_authority() {
     )
     .unwrap();
 
-    println!(
-        "swig_authority.pubkey(): {:?}",
-        swig_authority.pubkey().to_bytes()
-    );
-    println!(
-        "context.default_payer.pubkey(): {:?}",
-        context.default_payer.pubkey().to_bytes()
-    );
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
         &[manage_auth_lock_instruction],
@@ -443,9 +491,9 @@ fn test_authlock_manage_with_one_added_authority() {
     .unwrap();
 
     let result = context.svm.send_transaction(tx);
+    println!("result: {:?}", result);
 
     assert!(result.is_ok());
-    println!("result: {:?}", result);
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
@@ -455,7 +503,7 @@ fn test_authlock_manage_with_one_added_authority() {
     assert_eq!(role_2.authority.authority_type(), AuthorityType::Ed25519);
     assert!(!role_2.authority.session_based());
     let actions = role_2.get_all_actions().unwrap();
-    assert_eq!(actions.len(), 3);
+    assert_eq!(actions.len(), 5);
     println!(
         "actions[0]: {:?}",
         role_2
@@ -469,7 +517,9 @@ fn test_authlock_manage_with_one_added_authority() {
     );
     println!(
         "actions[2]: {:?}",
-        role_2.get_action::<AuthorizationLock>(&[1u8; 32]).unwrap()
+        role_2
+            .get_action::<AuthorizationLock>(&mint.as_ref())
+            .unwrap()
     );
 
     // Remove the first authorization lock
@@ -510,17 +560,19 @@ fn test_authlock_manage_with_one_added_authority() {
     assert_eq!(role_2.authority.authority_type(), AuthorityType::Ed25519);
     assert!(!role_2.authority.session_based());
     let actions = role_2.get_all_actions().unwrap();
-    assert_eq!(actions.len(), 2);
+    assert_eq!(actions.len(), 4);
     assert!(role_2
         .get_action::<ManageAuthorizationLocks>(&[])
         .unwrap()
         .is_some());
     println!(
         "actions[1]: {:?}",
-        role_2.get_action::<AuthorizationLock>(&[1u8; 32]).unwrap()
+        role_2
+            .get_action::<AuthorizationLock>(&mint.as_ref())
+            .unwrap()
     );
     assert!(role_2
-        .get_action::<AuthorizationLock>(&[1u8; 32])
+        .get_action::<AuthorizationLock>(&mint.as_ref())
         .unwrap()
         .is_some());
 
@@ -528,7 +580,7 @@ fn test_authlock_manage_with_one_added_authority() {
     let modify_auth_lock_data =
         ManageAuthLockData::ModifyAuthorizationLock(vec![ClientAction::AuthorizationLock(
             AuthorizationLock {
-                mint: [1u8; 32],
+                mint: mint.to_bytes(),
                 amount: 3_000_000,
                 expires_at: 3000000,
             },
@@ -569,17 +621,19 @@ fn test_authlock_manage_with_one_added_authority() {
     assert_eq!(role_2.authority.authority_type(), AuthorityType::Ed25519);
     assert!(!role_2.authority.session_based());
     let actions = role_2.get_all_actions().unwrap();
-    assert_eq!(actions.len(), 2);
+    assert_eq!(actions.len(), 4);
     assert!(role_2
         .get_action::<ManageAuthorizationLocks>(&[])
         .unwrap()
         .is_some());
     println!(
         "actions[1]: {:?}",
-        role_2.get_action::<AuthorizationLock>(&[1u8; 32]).unwrap()
+        role_2
+            .get_action::<AuthorizationLock>(&mint.as_ref())
+            .unwrap()
     );
     assert!(role_2
-        .get_action::<AuthorizationLock>(&[1u8; 32])
+        .get_action::<AuthorizationLock>(&mint.as_ref())
         .unwrap()
         .is_some());
 }
@@ -598,6 +652,30 @@ fn test_authlock_manage_with_two_added_authorities() {
 
     let (swig_key, swig_create_txn) =
         create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id())
+            .0;
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
+    mint_to(
+        &mut context.svm,
+        &mint,
+        &context.default_payer,
+        &swig_ata,
+        3_000_000,
+    )
+    .unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
+
     let second_authority = Keypair::new();
     context
         .svm
@@ -613,9 +691,16 @@ fn test_authlock_manage_with_two_added_authorities() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::ManageAuthorizationLocks(
-            ManageAuthorizationLocks {},
-        )],
+        vec![
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
+            ClientAction::SolLimit(SolLimit {
+                amount: 1_000_000_000,
+            }),
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: mint.to_bytes(),
+                current_amount: 2_000_000,
+            }),
+        ],
     );
     assert!(result.is_ok());
 
@@ -631,7 +716,7 @@ fn test_authlock_manage_with_two_added_authorities() {
         AuthorityType::Ed25519
     );
     assert_eq!(role_2.position.authority_length(), 32);
-    assert_eq!(role_2.position.num_actions(), 1);
+    assert_eq!(role_2.position.num_actions(), 3);
     let action = role_2.get_action::<ManageAuthorizationLocks>(&[]).unwrap();
     assert!(action.is_some());
 
@@ -646,7 +731,7 @@ fn test_authlock_manage_with_two_added_authorities() {
             expires_at: 550,
         }),
         ClientAction::AuthorizationLock(AuthorizationLock {
-            mint: [1u8; 32],
+            mint: mint.to_bytes(),
             amount: 2_000_000,
             expires_at: 0,
         }),
@@ -664,14 +749,6 @@ fn test_authlock_manage_with_two_added_authorities() {
     )
     .unwrap();
 
-    println!(
-        "swig_authority.pubkey(): {:?}",
-        swig_authority.pubkey().to_bytes()
-    );
-    println!(
-        "context.default_payer.pubkey(): {:?}",
-        context.default_payer.pubkey().to_bytes()
-    );
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
         &[manage_auth_lock_instruction],
@@ -701,7 +778,7 @@ fn test_authlock_manage_with_two_added_authorities() {
     assert_eq!(role_2.authority.authority_type(), AuthorityType::Ed25519);
     assert!(!role_2.authority.session_based());
     let actions = role_2.get_all_actions().unwrap();
-    assert_eq!(actions.len(), 2);
+    assert_eq!(actions.len(), 4);
     println!(
         "actions[0]: {:?}",
         role_2
@@ -715,7 +792,9 @@ fn test_authlock_manage_with_two_added_authorities() {
     );
     println!(
         "actions[2]: {:?}",
-        role_2.get_action::<AuthorizationLock>(&[1u8; 32]).unwrap()
+        role_2
+            .get_action::<AuthorizationLock>(&mint.to_bytes())
+            .unwrap()
     );
 
     display_swig(&swig_key, &swig_account.data, swig_account.lamports);
@@ -735,9 +814,16 @@ fn test_authlock_manage_with_two_added_authorities() {
             authority_type: AuthorityType::Ed25519,
             authority: third_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::ManageAuthorizationLocks(
-            ManageAuthorizationLocks {},
-        )],
+        vec![
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
+            ClientAction::SolLimit(SolLimit {
+                amount: 1_000_000_000,
+            }),
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: mint.to_bytes(),
+                current_amount: 5_000_000,
+            }),
+        ],
     );
     assert!(result.is_ok());
 
@@ -753,7 +839,7 @@ fn test_authlock_manage_with_two_added_authorities() {
         AuthorityType::Ed25519
     );
     assert_eq!(role_3.position.authority_length(), 32);
-    assert_eq!(role_3.position.num_actions(), 1);
+    assert_eq!(role_3.position.num_actions(), 3);
     let action = role_3.get_action::<ManageAuthorizationLocks>(&[]).unwrap();
     assert!(action.is_some());
 
@@ -766,12 +852,12 @@ fn test_authlock_manage_with_two_added_authorities() {
     let new_actions: Vec<ClientAction> = vec![
         ClientAction::AuthorizationLock(AuthorizationLock {
             mint: [0u8; 32],
-            amount: 33333333,
+            amount: 2_222_222,
             expires_at: 500,
         }),
         ClientAction::AuthorizationLock(AuthorizationLock {
-            mint: [1u8; 32],
-            amount: 33333333,
+            mint: mint.to_bytes(),
+            amount: 2_222_222,
             expires_at: 500,
         }),
     ];
@@ -788,14 +874,6 @@ fn test_authlock_manage_with_two_added_authorities() {
     )
     .unwrap();
 
-    println!(
-        "swig_authority.pubkey(): {:?}",
-        swig_authority.pubkey().to_bytes()
-    );
-    println!(
-        "context.default_payer.pubkey(): {:?}",
-        context.default_payer.pubkey().to_bytes()
-    );
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
         &[manage_auth_lock_instruction],
@@ -812,8 +890,9 @@ fn test_authlock_manage_with_two_added_authorities() {
 
     let result = context.svm.send_transaction(tx);
 
-    assert!(result.is_ok());
     println!("result: {:?}", result);
+
+    assert!(result.is_ok());
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
@@ -823,7 +902,7 @@ fn test_authlock_manage_with_two_added_authorities() {
     assert_eq!(role_2.authority.authority_type(), AuthorityType::Ed25519);
     assert!(!role_3.authority.session_based());
     let actions = role_3.get_all_actions().unwrap();
-    assert_eq!(actions.len(), 3);
+    assert_eq!(actions.len(), 5);
     println!(
         "actions[0]: {:?}",
         role_2
@@ -837,7 +916,9 @@ fn test_authlock_manage_with_two_added_authorities() {
     );
     println!(
         "actions[2]: {:?}",
-        role_2.get_action::<AuthorizationLock>(&[1u8; 32]).unwrap()
+        role_2
+            .get_action::<AuthorizationLock>(&mint.to_bytes())
+            .unwrap()
     );
 
     display_swig(&swig_key, &swig_account.data, swig_account.lamports);
@@ -852,7 +933,9 @@ fn test_authlock_manage_with_two_added_authorities() {
     );
     println!(
         "action with 1 mint: {:?}",
-        role_0.get_action::<AuthorizationLock>(&[1u8; 32]).unwrap()
+        role_0
+            .get_action::<AuthorizationLock>(&mint.to_bytes())
+            .unwrap()
     );
 }
 
@@ -872,6 +955,30 @@ fn test_authlock_flow_with_different_expiries() {
     let (swig_key, _swig_create_txn) =
         create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
 
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id())
+            .0;
+    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
+    mint_to(
+        &mut context.svm,
+        &mint,
+        &context.default_payer,
+        &swig_ata,
+        6_000_000,
+    )
+    .unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
+
     // Step 2: Add secondary auth
     let second_authority = Keypair::new();
     context
@@ -887,9 +994,16 @@ fn test_authlock_flow_with_different_expiries() {
             authority_type: AuthorityType::Ed25519,
             authority: second_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::ManageAuthorizationLocks(
-            ManageAuthorizationLocks {},
-        )],
+        vec![
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
+            ClientAction::SolLimit(SolLimit {
+                amount: 1_000_000_000,
+            }),
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: mint.to_bytes(),
+                current_amount: 3_000_000,
+            }),
+        ],
     );
     assert!(result.is_ok());
 
@@ -901,7 +1015,7 @@ fn test_authlock_flow_with_different_expiries() {
             expires_at: 500, // First expiry time
         }),
         ClientAction::AuthorizationLock(AuthorizationLock {
-            mint: [1u8; 32],
+            mint: mint.to_bytes(),
             amount: 2_000_000,
             expires_at: 500, // First expiry time
         }),
@@ -934,12 +1048,29 @@ fn test_authlock_flow_with_different_expiries() {
     .unwrap();
 
     let result = context.svm.send_transaction(tx);
+    println!("result: {:?}", result);
     assert!(result.is_ok());
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     display_swig(&swig_key, &swig_account.data, swig_account.lamports);
 
     // Step 4: Add third authority and display swig
+    let mint2 = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let swig_ata2 = setup_ata(
+        &mut context.svm,
+        &mint2,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
+    mint_to(
+        &mut context.svm,
+        &mint2,
+        &context.default_payer,
+        &swig_ata2,
+        5_000_000,
+    )
+    .unwrap();
     let third_authority = Keypair::new();
     context
         .svm
@@ -954,9 +1085,20 @@ fn test_authlock_flow_with_different_expiries() {
             authority_type: AuthorityType::Ed25519,
             authority: third_authority.pubkey().as_ref(),
         },
-        vec![ClientAction::ManageAuthorizationLocks(
-            ManageAuthorizationLocks {},
-        )],
+        vec![
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
+            ClientAction::SolLimit(SolLimit {
+                amount: 1_000_000_000,
+            }),
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: mint.to_bytes(),
+                current_amount: 3_000_000,
+            }),
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: mint2.to_bytes(),
+                current_amount: 5_000_000,
+            }),
+        ],
     );
     assert!(result.is_ok());
 
@@ -968,12 +1110,12 @@ fn test_authlock_flow_with_different_expiries() {
             expires_at: 100, // Different expiry time (1000 vs 500)
         }),
         ClientAction::AuthorizationLock(AuthorizationLock {
-            mint: [1u8; 32],
+            mint: mint.to_bytes(),
             amount: 3_000_000,
             expires_at: 1000, // Different expiry time (1000 vs 500)
         }),
         ClientAction::AuthorizationLock(AuthorizationLock {
-            mint: [3u8; 32],
+            mint: mint2.to_bytes(),
             amount: 4_000_000,
             expires_at: 1000, // Different expiry time (1000 vs 500)
         }),
@@ -1012,20 +1154,10 @@ fn test_authlock_flow_with_different_expiries() {
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     display_swig(&swig_key, &swig_account.data, swig_account.lamports);
 
-    context.svm.warp_to_slot(500);
+    context.svm.warp_to_slot(600);
 
-    let modify_auth_lock_data = ManageAuthLockData::ModifyAuthorizationLock(vec![
-        ClientAction::AuthorizationLock(AuthorizationLock {
-            mint: [1u8; 32],
-            amount: 3_000_000,
-            expires_at: 3000000,
-        }),
-        ClientAction::AuthorizationLock(AuthorizationLock {
-            mint: [0u8; 32],
-            amount: 4_000_000,
-            expires_at: 3000000,
-        }),
-    ]);
+    let modify_auth_lock_data =
+        ManageAuthLockData::RemoveAuthorizationLocks(vec![[0u8; 32], mint.to_bytes()]);
     let modify_auth_lock_instruction = ManageAuthLockInstruction::new_with_ed25519_authority(
         swig_key,
         context.default_payer.pubkey(),
@@ -1062,7 +1194,7 @@ fn test_authlock_flow_with_different_expiries() {
 
 //     // Create initial wallet with Ed25519 authority
 //     let root_authority = Keypair::new();
-//     let id = [1u8; 32]; // Use a fixed ID for testing
+//     let id = mint; // Use a fixed ID for testing
 //     let (swig, _) = create_swig_ed25519(&mut context, &root_authority, id)?;
 
 //     // Add a second authority that we can update (since we can't update root
@@ -1113,7 +1245,7 @@ fn test_authlock_flow_with_different_expiries() {
 //             expires_at: 1000000,
 //         }),
 //         ClientAction::AuthorizationLock(AuthorizationLock {
-//             mint: [1u8; 32],
+//             mint: mint,
 //             amount: 2000000,
 //             expires_at: 2000000,
 //         }),
@@ -1150,7 +1282,7 @@ fn test_authlock_flow_with_different_expiries() {
 //     assert_eq!(auth_lock_actions[0].expires_at, 1000000);
 
 //     // Verify the second authorization lock
-//     assert_eq!(auth_lock_actions[1].mint, [1u8; 32]);
+//     assert_eq!(auth_lock_actions[1].mint, mint);
 //     assert_eq!(auth_lock_actions[1].amount, 2000000);
 //     assert_eq!(auth_lock_actions[1].expires_at, 2000000);
 
@@ -1169,7 +1301,7 @@ fn test_authlock_flow_with_different_expiries() {
 //     assert_eq!(global_auth_lock_actions[0].expires_at, 1000000);
 
 //     // Verify the global cache has the second authorization lock
-//     assert_eq!(global_auth_lock_actions[1].mint, [1u8; 32]);
+//     assert_eq!(global_auth_lock_actions[1].mint, mint);
 //     assert_eq!(global_auth_lock_actions[1].amount, 2000000);
 //     assert_eq!(global_auth_lock_actions[1].expires_at, 2000000);
 
@@ -1324,7 +1456,7 @@ fn test_authlock_flow_with_different_expiries() {
 //             expires_at: 1000000,
 //         }),
 //         ClientAction::AuthorizationLock(AuthorizationLock {
-//             mint: [1u8; 32],
+//             mint: mint,
 //             amount: 2000000,
 //             expires_at: 2000000,
 //         }),
@@ -1376,7 +1508,7 @@ fn test_authlock_flow_with_different_expiries() {
 //     assert_eq!(auth_lock_actions_before[0].expires_at, 1000000);
 
 //     // Verify the second authorization lock
-//     assert_eq!(auth_lock_actions_before[1].mint, [1u8; 32]);
+//     assert_eq!(auth_lock_actions_before[1].mint, mint);
 //     assert_eq!(auth_lock_actions_before[1].amount, 2000000);
 //     assert_eq!(auth_lock_actions_before[1].expires_at, 2000000);
 
@@ -1395,7 +1527,7 @@ fn test_authlock_flow_with_different_expiries() {
 //     assert_eq!(global_auth_lock_actions_before[0].expires_at, 1000000);
 
 //     // Verify the global cache has the second authorization lock
-//     assert_eq!(global_auth_lock_actions_before[1].mint, [1u8; 32]);
+//     assert_eq!(global_auth_lock_actions_before[1].mint, mint);
 //     assert_eq!(global_auth_lock_actions_before[1].amount, 2000000);
 //     assert_eq!(global_auth_lock_actions_before[1].expires_at, 2000000);
 
@@ -1441,7 +1573,7 @@ fn test_authlock_flow_with_different_expiries() {
 //     assert_eq!(auth_lock_actions_after.len(), 1);
 
 //     // Verify the remaining authorization lock is the second one
-//     assert_eq!(auth_lock_actions_after[0].mint, [1u8; 32]);
+//     assert_eq!(auth_lock_actions_after[0].mint, mint);
 //     assert_eq!(auth_lock_actions_after[0].amount, 2000000);
 //     assert_eq!(auth_lock_actions_after[0].expires_at, 2000000);
 
@@ -1455,7 +1587,7 @@ fn test_authlock_flow_with_different_expiries() {
 //     assert_eq!(global_auth_lock_actions_after.len(), 1);
 
 //     // Verify the global cache has the remaining authorization lock
-//     assert_eq!(global_auth_lock_actions_after[0].mint, [1u8; 32]);
+//     assert_eq!(global_auth_lock_actions_after[0].mint, mint);
 //     assert_eq!(global_auth_lock_actions_after[0].amount, 2000000);
 //     assert_eq!(global_auth_lock_actions_after[0].expires_at, 2000000);
 
@@ -1509,7 +1641,7 @@ fn test_authlock_flow_with_different_expiries() {
 //             expires_at: 1000000,
 //         }),
 //         ClientAction::AuthorizationLock(AuthorizationLock {
-//             mint: [1u8; 32],
+//             mint: mint,
 //             amount: 2000000,
 //             expires_at: 2000000,
 //         }),
@@ -1560,7 +1692,7 @@ fn test_authlock_flow_with_different_expiries() {
 //     assert_eq!(global_auth_lock_actions[0].expires_at, 1000000);
 
 //     // Verify the global cache has the second authorization lock
-//     assert_eq!(global_auth_lock_actions[1].mint, [1u8; 32]);
+//     assert_eq!(global_auth_lock_actions[1].mint, mint);
 //     assert_eq!(global_auth_lock_actions[1].amount, 2000000);
 //     assert_eq!(global_auth_lock_actions[1].expires_at, 2000000);
 
@@ -1600,7 +1732,7 @@ fn test_authlock_flow_with_different_expiries() {
 //             expires_at: 3000000,
 //         }),
 //         ClientAction::AuthorizationLock(AuthorizationLock {
-//             mint: [1u8; 32],
+//             mint: mint,
 //             amount: 2000000,
 //             expires_at: 500000,
 //         }),
@@ -1652,7 +1784,7 @@ fn test_authlock_flow_with_different_expiries() {
 //     assert_eq!(global_auth_lock_actions[0].expires_at, 1000000);
 
 //     // Verify the global cache has the second authorization lock
-//     assert_eq!(global_auth_lock_actions[1].mint, [1u8; 32]);
+//     assert_eq!(global_auth_lock_actions[1].mint, mint);
 //     assert_eq!(global_auth_lock_actions[1].amount, 4000000);
 //     assert_eq!(global_auth_lock_actions[1].expires_at, 500000);
 
@@ -1691,7 +1823,7 @@ fn test_authlock_flow_with_different_expiries() {
 //     assert_eq!(global_auth_lock_actions[0].expires_at, 1000000);
 
 //     // Verify the global cache has the second authorization lock
-//     assert_eq!(global_auth_lock_actions[1].mint, [1u8; 32]);
+//     assert_eq!(global_auth_lock_actions[1].mint, mint);
 //     assert_eq!(global_auth_lock_actions[1].amount, 4000000);
 //     assert_eq!(global_auth_lock_actions[1].expires_at, 500000);
 
@@ -1743,7 +1875,7 @@ fn test_authlock_flow_with_different_expiries() {
 //     assert_eq!(global_auth_lock_actions_after_remove[0].amount, 3000000);
 //     assert_eq!(global_auth_lock_actions_after_remove[0].expires_at, 3000000);
 
-//     assert_eq!(global_auth_lock_actions_after_remove[1].mint, [1u8; 32]);
+//     assert_eq!(global_auth_lock_actions_after_remove[1].mint, mint);
 //     assert_eq!(global_auth_lock_actions_after_remove[1].amount, 4000000);
 //     assert_eq!(global_auth_lock_actions_after_remove[1].expires_at, 500000);
 
@@ -1758,7 +1890,7 @@ fn test_authlock_flow_with_different_expiries() {
 //         .get_all_actions_of_type::<AuthorizationLock>()
 //         .unwrap();
 //     assert_eq!(second_auth_lock_actions_after.len(), 1);
-//     assert_eq!(second_auth_lock_actions_after[0].mint, [1u8; 32]);
+//     assert_eq!(second_auth_lock_actions_after[0].mint, mint);
 
 //     // Check third authority still has 2 authorization locks (unchanged)
 //     let third_role = swig_data.get_role(3).unwrap().unwrap();
@@ -1782,7 +1914,7 @@ fn test_authlock_flow_with_different_expiries() {
 //     assert_eq!(global_auth_lock_actions_after[0].amount, 3000000);
 //     assert_eq!(global_auth_lock_actions_after[0].expires_at, 3000000);
 
-//     assert_eq!(global_auth_lock_actions_after[1].mint, [1u8; 32]);
+//     assert_eq!(global_auth_lock_actions_after[1].mint, mint);
 //     assert_eq!(global_auth_lock_actions_after[1].amount, 4000000);
 //     assert_eq!(global_auth_lock_actions_after[1].expires_at, 500000);
 
@@ -1836,7 +1968,7 @@ fn test_authlock_flow_with_different_expiries() {
 //             expires_at: 1000000,
 //         }),
 //         ClientAction::AuthorizationLock(AuthorizationLock {
-//             mint: [1u8; 32],
+//             mint: mint,
 //             amount: 2000000,
 //             expires_at: 2000000,
 //         }),
@@ -1886,7 +2018,7 @@ fn test_authlock_flow_with_different_expiries() {
 //     assert_eq!(auth_lock_actions_before[0].expires_at, 1000000);
 
 //     // Verify the second authorization lock
-//     assert_eq!(auth_lock_actions_before[1].mint, [1u8; 32]);
+//     assert_eq!(auth_lock_actions_before[1].mint, mint);
 //     assert_eq!(auth_lock_actions_before[1].amount, 2000000);
 //     assert_eq!(auth_lock_actions_before[1].expires_at, 2000000);
 
@@ -1905,7 +2037,7 @@ fn test_authlock_flow_with_different_expiries() {
 //     assert_eq!(global_auth_lock_actions_before[0].expires_at, 1000000);
 
 //     // Verify the global cache has the second authorization lock
-//     assert_eq!(global_auth_lock_actions_before[1].mint, [1u8; 32]);
+//     assert_eq!(global_auth_lock_actions_before[1].mint, mint);
 //     assert_eq!(global_auth_lock_actions_before[1].amount, 2000000);
 //     assert_eq!(global_auth_lock_actions_before[1].expires_at, 2000000);
 
@@ -1976,7 +2108,7 @@ fn test_authlock_flow_with_different_expiries() {
 //     assert_eq!(authlock_actions[0].expires_at, 20);
 
 //     // Verify the second authorization lock remains unchanged
-//     assert_eq!(authlock_actions[1].mint, [1u8; 32]);
+//     assert_eq!(authlock_actions[1].mint, mint);
 //     assert_eq!(authlock_actions[1].amount, 2000000);
 //     assert_eq!(authlock_actions[1].expires_at, 2000000);
 
@@ -1995,7 +2127,7 @@ fn test_authlock_flow_with_different_expiries() {
 //     assert_eq!(global_auth_lock_actions_after[0].expires_at, 20);
 
 //     // Verify the global cache has the unchanged second authorization lock
-//     assert_eq!(global_auth_lock_actions_after[1].mint, [1u8; 32]);
+//     assert_eq!(global_auth_lock_actions_after[1].mint, mint);
 //     assert_eq!(global_auth_lock_actions_after[1].amount, 2000000);
 //     assert_eq!(global_auth_lock_actions_after[1].expires_at, 2000000);
 

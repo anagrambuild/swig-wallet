@@ -6,6 +6,8 @@ use solana_sdk::{
     system_program,
 };
 use solana_secp256r1_program::new_secp256r1_instruction_with_signature;
+use spl_associated_token_account::get_associated_token_address;
+
 pub use swig;
 use swig::actions::{
     add_authority_v1::AddAuthorityV1Args,
@@ -38,7 +40,7 @@ use swig_state::{
         secp256k1::{hex_encode, AccountsPayload},
         AuthorityType,
     },
-    swig::swig_account_seeds,
+    swig::{swig_account_seeds, swig_wallet_address_seeds},
     IntoBytes, Transmutable,
 };
 
@@ -1359,21 +1361,47 @@ pub enum ManageAuthLockData {
 }
 
 impl ManageAuthLockData {
-    fn to_operation_and_data(self) -> anyhow::Result<(u8, ManageAuthLockOperation, Vec<u8>)> {
+    fn to_operation_and_data(
+        self,
+    ) -> anyhow::Result<(u8, ManageAuthLockOperation, Vec<Pubkey>, Vec<u8>)> {
         match self {
             ManageAuthLockData::AddAuthorizationLocks(actions) => Ok((
                 actions.len() as u8,
                 ManageAuthLockOperation::AddAuthorizationLocks,
+                actions
+                    .iter()
+                    .map(|action| {
+                        if let ClientAction::AuthorizationLock(auth_lock) = action {
+                            Pubkey::new_from_array(auth_lock.mint)
+                        } else {
+                            Pubkey::new_from_array([0u8; 32])
+                        }
+                    })
+                    .collect::<Vec<Pubkey>>(),
                 Self::serialize_actions(actions)?,
             )),
             ManageAuthLockData::RemoveAuthorizationLocks(mints) => Ok((
                 mints.len() as u8,
                 ManageAuthLockOperation::RemoveAuthorizationLocks,
+                mints
+                    .iter()
+                    .map(|mint| Pubkey::new_from_array(*mint))
+                    .collect::<Vec<Pubkey>>(),
                 mints.iter().flat_map(|mint| mint.iter().copied()).collect(),
             )),
             ManageAuthLockData::ModifyAuthorizationLock(actions) => Ok((
                 actions.len() as u8,
                 ManageAuthLockOperation::ModifyAuthorizationLock,
+                actions
+                    .iter()
+                    .map(|action| {
+                        if let ClientAction::AuthorizationLock(auth_lock) = action {
+                            Pubkey::new_from_array(auth_lock.mint)
+                        } else {
+                            Pubkey::new_from_array([0u8; 32])
+                        }
+                    })
+                    .collect::<Vec<Pubkey>>(),
                 Self::serialize_actions(actions)?,
             )),
         }
@@ -1401,7 +1429,7 @@ impl ManageAuthLockInstruction {
         authority_to_update_id: u32,
         manage_auth_lock_data: ManageAuthLockData,
     ) -> anyhow::Result<Instruction> {
-        let (num_actions, operation, operation_data) =
+        let (num_actions, operation, mints, operation_data) =
             manage_auth_lock_data.to_operation_and_data()?;
         Self::build_ed25519_instruction(
             swig_account,
@@ -1410,6 +1438,7 @@ impl ManageAuthLockInstruction {
             acting_role_id,
             authority_to_update_id,
             operation,
+            mints,
             operation_data,
             num_actions,
         )
@@ -1422,16 +1451,27 @@ impl ManageAuthLockInstruction {
         acting_role_id: u32,
         authority_to_update_id: u32,
         operation: ManageAuthLockOperation,
+        mints: Vec<Pubkey>,
         operation_data: Vec<u8>,
         num_actions: u8,
     ) -> anyhow::Result<Instruction> {
-        let accounts = vec![
+        let swig_wallet_address = Pubkey::find_program_address(
+            &swig_wallet_address_seeds(swig_account.as_ref()),
+            &program_id(),
+        )
+        .0;
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
+            AccountMeta::new_readonly(swig_wallet_address, false),
             AccountMeta::new(payer, true),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
 
+        for mint in mints {
+            let ata = get_associated_token_address(&swig_wallet_address, &mint);
+            accounts.push(AccountMeta::new_readonly(ata, false));
+        }
         // Encode operation type in the first byte of the data
         let mut encoded_data = Vec::new();
         encoded_data.push(operation as u8);
@@ -1448,7 +1488,7 @@ impl ManageAuthLockInstruction {
         let mut write = Vec::new();
         write.extend_from_slice(args.into_bytes().unwrap());
         write.extend_from_slice(&encoded_data);
-        write.extend_from_slice(&[3]); // Ed25519 authority type
+        write.extend_from_slice(&[4]); // Ed25519 authority type
 
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
@@ -1471,7 +1511,7 @@ impl ManageAuthLockInstruction {
     where
         F: FnMut(&[u8]) -> [u8; 65],
     {
-        let (num_actions, operation, operation_data) =
+        let (num_actions, operation, mints, operation_data) =
             manage_auth_lock_data.to_operation_and_data()?;
         Self::build_secp256k1_instruction(
             swig_account,
@@ -1481,6 +1521,7 @@ impl ManageAuthLockInstruction {
             counter,
             acting_role_id,
             authority_to_update_id,
+            mints,
             operation,
             operation_data,
             num_actions,
@@ -1495,6 +1536,7 @@ impl ManageAuthLockInstruction {
         counter: u32,
         acting_role_id: u32,
         authority_to_update_id: u32,
+        mints: Vec<Pubkey>,
         operation: ManageAuthLockOperation,
         operation_data: Vec<u8>,
         num_actions: u8,
@@ -1502,11 +1544,24 @@ impl ManageAuthLockInstruction {
     where
         F: FnMut(&[u8]) -> [u8; 65],
     {
-        let accounts = vec![
+        let swig_wallet_address = Pubkey::find_program_address(
+            &swig_wallet_address_seeds(swig_account.as_ref()),
+            &program_id(),
+        )
+        .0;
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(payer, true),
             AccountMeta::new_readonly(system_program::ID, false),
         ];
+
+        for mint in mints {
+            accounts.push(AccountMeta::new_readonly(
+                get_associated_token_address(&swig_wallet_address, &mint),
+                false,
+            ));
+        }
 
         // Encode operation type in the first byte of the data
         let mut encoded_data = Vec::new();
@@ -1568,7 +1623,7 @@ impl ManageAuthLockInstruction {
     where
         F: FnMut(&[u8]) -> [u8; 64],
     {
-        let (num_actions, operation, operation_data) =
+        let (num_actions, operation, mints, operation_data) =
             manage_auth_lock_data.to_operation_and_data()?;
         Self::build_secp256r1_instruction(
             swig_account,
@@ -1578,6 +1633,7 @@ impl ManageAuthLockInstruction {
             counter,
             acting_role_id,
             authority_to_update_id,
+            mints,
             operation,
             operation_data,
             public_key,
@@ -1593,6 +1649,7 @@ impl ManageAuthLockInstruction {
         counter: u32,
         acting_role_id: u32,
         authority_to_update_id: u32,
+        mints: Vec<Pubkey>,
         operation: ManageAuthLockOperation,
         operation_data: Vec<u8>,
         public_key: &[u8; 33],
@@ -1601,12 +1658,24 @@ impl ManageAuthLockInstruction {
     where
         F: FnMut(&[u8]) -> [u8; 64],
     {
-        let accounts = vec![
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
+        let swig_wallet_address = Pubkey::find_program_address(
+            &swig_wallet_address_seeds(swig_account.as_ref()),
+            &program_id(),
+        )
+        .0;
+
+        for mint in mints {
+            accounts.push(AccountMeta::new_readonly(
+                get_associated_token_address(&swig_wallet_address, &mint),
+                false,
+            ));
+        }
 
         // Encode operation type in the first byte of the data
         let mut encoded_data = Vec::new();

@@ -520,6 +520,14 @@
           ]
         },
         {
+          "name": "swigWalletAddress",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the swig wallet address"
+          ]
+        },
+        {
           "name": "payer",
           "isMut": true,
           "isSigner": true,

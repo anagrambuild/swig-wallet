@@ -121,6 +121,12 @@ pub enum SwigError {
     InvalidAuthorizationLockNotFound,
     /// Contains non-authorization lock action
     ContainsNonAuthorizationLockAction,
+    /// Authorization lock amount too low
+    InvalidAuthorizationLockAmountExceeded,
+    /// Authorization lock token base required
+    AuthlockBaseActionRequired,
+    /// Associated token account not found
+    AssociatedTokenAccountNotFound,
 }
 
 /// Implements conversion from SwigError to ProgramError.

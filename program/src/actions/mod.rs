@@ -227,5 +227,5 @@ fn process_manage_auth_lock_v1(
     data: &[u8],
 ) -> ProgramResult {
     let account_ctx = ManageAuthLockV1Accounts::context(accounts)?;
-    manage_auth_lock_v1(account_ctx, data, accounts)
+    manage_auth_lock_v1(account_ctx, data, accounts, account_classification)
 }
