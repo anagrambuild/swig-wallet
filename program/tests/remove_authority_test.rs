@@ -1010,3 +1010,268 @@ fn test_create_remove_authority_with_balance_checks() {
 
     assert_eq!(diff, 0);
 }
+
+/// Test: Cannot remove authority with active authorization locks.
+/// An authority with active (non-expired) authorization locks cannot be removed.
+#[test_log::test]
+fn test_remove_authority_with_active_auth_lock_fails() {
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    // Add an authority with ManageAuthorizationLocks permission
+    let lock_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&lock_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    use swig_state::action::manage_authlock::ManageAuthorizationLocks;
+    use swig_state::action::program_all::ProgramAll;
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: lock_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ProgramAll(ProgramAll {}),
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
+        ],
+    )
+    .unwrap();
+
+    // Get the role ID for the lock authority
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let lock_role_id = swig
+        .lookup_role_id(lock_authority.pubkey().as_ref())
+        .unwrap()
+        .expect("lock authority must exist");
+
+    // Add an authorization lock that expires in the future
+    use swig_interface::ManageAuthLockData;
+    use swig_state::action::authlock::AuthorizationLock;
+    let manage_lock_ix = swig_interface::ManageAuthLockInstruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        1, // Acting role (root)
+        lock_role_id,
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
+                mint: [0u8; 32], // SOL
+                amount: 50_000_000,
+                expires_at: 10000, // Expires far in the future
+            },
+        )]),
+    )
+    .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[manage_lock_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )
+    .unwrap();
+
+    context.svm.send_transaction(tx).unwrap();
+
+    // Now try to remove the authority with the active lock - should FAIL
+    let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        1,            // Acting role ID (root)
+        lock_role_id, // Remove the authority with active lock
+    )
+    .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[remove_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_err(),
+        "Should not be able to remove authority with active authorization lock"
+    );
+}
+
+/// Test: Can remove authority with expired authorization locks.
+/// An authority with expired authorization locks can be safely removed.
+#[test_log::test]
+fn test_remove_authority_with_authorization_lock() {
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    use solana_sdk::pubkey::Pubkey;
+    use swig_state::swig::swig_wallet_address_seeds;
+
+    let swig_wallet =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id())
+            .0;
+
+    context.svm.airdrop(&swig_wallet, 10_000_000_000).unwrap();
+
+    // Add an authority with ManageAuthorizationLocks permission
+    let lock_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&lock_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    use swig_state::action::manage_authlock::ManageAuthorizationLocks;
+    use swig_state::action::program_all::ProgramAll;
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: lock_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::ManageAuthorizationLocks(
+            ManageAuthorizationLocks {},
+        )],
+    )
+    .unwrap();
+
+    // Get the role ID for the lock authority
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let lock_role_id = swig
+        .lookup_role_id(lock_authority.pubkey().as_ref())
+        .unwrap()
+        .expect("lock authority must exist");
+
+    // Add an authorization lock that expires at slot 100
+    use swig_interface::ManageAuthLockData;
+    use swig_state::action::authlock::AuthorizationLock;
+    let manage_lock_ix = swig_interface::ManageAuthLockInstruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        1, // Acting role (root)
+        lock_role_id,
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
+                mint: [0u8; 32], // SOL
+                amount: 50_000_000,
+                expires_at: 100, // Expires at slot 100
+            },
+        )]),
+    )
+    .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[manage_lock_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )
+    .unwrap();
+
+    context.svm.send_transaction(tx).unwrap();
+
+    // Now try to remove the authority with the expired lock - should SUCCEED
+    let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        1,            // Acting role ID (root)
+        lock_role_id, // Remove the authority with expired lock
+    )
+    .unwrap();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[remove_ix.clone()],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    println!("result: {:?}", result);
+    assert!(
+        result.is_err(),
+        "Should NOT be able to remove authority with active authorization lock"
+    );
+
+    // Warp to a slot after the lock has expired
+    context.svm.warp_to_slot(200);
+    context.svm.expire_blockhash();
+
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[remove_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    println!("result: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Should be able to remove authority with expired authorization lock"
+    );
+
+    // Verify the authority was removed
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 2, "Authority should have been removed");
+}
