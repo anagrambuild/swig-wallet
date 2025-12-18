@@ -468,6 +468,66 @@ impl Swig {
         }
     }
 
+    pub fn get_role_boundary(id: u32, roles: &[u8]) -> Result<(usize, usize), ProgramError> {
+        let mut cursor = 0;
+        let roles_len = roles.len();
+        if roles_len < Swig::LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        for _i in 0..roles_len {
+            let offset = cursor + Position::LEN;
+            let position =
+                unsafe { Position::load_unchecked(roles.get_unchecked(cursor..offset))? };
+            if position.id() == id {
+                return Ok((cursor, position.boundary() as usize));
+            }
+            cursor = position.boundary() as usize;
+        }
+        Err(SwigStateError::RoleNotFound.into())
+    }
+
+    pub fn get_role_by_boundary(
+        start_boundary: usize,
+        _end_boundary: usize,
+        role_data: &mut [u8],
+    ) -> Result<Option<RoleMut<'_>>, ProgramError> {
+        let (position, remaining) = unsafe { role_data.split_at_mut_unchecked(Position::LEN) };
+        let position = unsafe { Position::load_unchecked(position)? };
+        let authority_length = position.authority_length() as usize;
+        let (authority, actions) = unsafe { remaining.split_at_mut_unchecked(authority_length) };
+
+        let auth: &mut dyn AuthorityInfo = match position.authority_type()? {
+            AuthorityType::Ed25519 => unsafe { ED25519Authority::load_mut_unchecked(authority)? },
+            AuthorityType::Ed25519Session => unsafe {
+                Ed25519SessionAuthority::load_mut_unchecked(authority)?
+            },
+            AuthorityType::Secp256k1 => unsafe {
+                Secp256k1Authority::load_mut_unchecked(authority)?
+            },
+            AuthorityType::Secp256k1Session => unsafe {
+                Secp256k1SessionAuthority::load_mut_unchecked(authority)?
+            },
+            AuthorityType::Secp256r1 => unsafe {
+                Secp256r1Authority::load_mut_unchecked(authority)?
+            },
+            AuthorityType::Secp256r1Session => unsafe {
+                Secp256r1SessionAuthority::load_mut_unchecked(authority)?
+            },
+            _ => return Err(ProgramError::InvalidAccountData),
+        };
+
+        let action_data_end =
+            position.boundary() as usize - (start_boundary + Position::LEN + authority_length);
+        let (actions, _rest) = unsafe { actions.split_at_mut_unchecked(action_data_end) };
+        let role = RoleMut {
+            position,
+            authority: auth,
+            num_actions: position.num_actions() as u8,
+            actions,
+        };
+        return Ok(Some(role));
+    }
+
     /// Gets a mutable reference to a role by ID.
     pub fn get_mut_role(id: u32, roles: &mut [u8]) -> Result<Option<RoleMut<'_>>, ProgramError> {
         let mut cursor = 0;

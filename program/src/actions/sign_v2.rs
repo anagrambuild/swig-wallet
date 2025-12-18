@@ -19,6 +19,7 @@ use swig_state::{
     action::{
         all::All,
         all_but_manage_authority::AllButManageAuthority,
+        authlock::AuthorizationLock,
         program::Program,
         program_all::ProgramAll,
         program_curated::ProgramCurated,
@@ -47,7 +48,7 @@ use crate::{
         accounts::{Context, SignV2Accounts},
         SwigInstruction,
     },
-    util::hash_except,
+    util::{authority_ops::recompute_auth_lock_for_mint, hash_except},
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
 };
 // use swig_instructions::InstructionIterator;
@@ -205,11 +206,36 @@ pub fn sign_v2(
     }
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
-    let role = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)?;
+
+    // Get teh role 0 data
+    let (cache_start_boundary, cache_end_boundary) = Swig::get_role_boundary(0, swig_roles)?;
+    let cache_role_data = unsafe {
+        core::slice::from_raw_parts_mut(
+            swig_roles.get_unchecked_mut(cache_start_boundary) as *mut u8,
+            cache_end_boundary - cache_start_boundary,
+        )
+    };
+    let cache_role =
+        Swig::get_role_by_boundary(cache_start_boundary, cache_end_boundary, cache_role_data)?;
+    if cache_role.is_none() {
+        return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+    }
+    let cache_role = cache_role.unwrap();
+
+    // Get the role data for the signer role
+    let (start_boundary, end_boundary) = Swig::get_role_boundary(sign_v2.args.role_id, swig_roles)?;
+    let role_data = unsafe {
+        core::slice::from_raw_parts_mut(
+            swig_roles.get_unchecked_mut(start_boundary) as *mut u8,
+            end_boundary - start_boundary,
+        )
+    };
+    let role = Swig::get_role_by_boundary(start_boundary, end_boundary, role_data)?;
     if role.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
     let role = role.unwrap();
+
     let clock = Clock::get()?;
     let slot = clock.slot;
     if role.authority.session_based() {
@@ -458,9 +484,10 @@ pub fn sign_v2(
                     let rent_exempt_minimum =
                         pinocchio::sysvars::rent::Rent::get()?.minimum_balance(account_data.len());
 
+                    let mut swig_wallet_balance = 0;
                     // Make sure that the withdrawal
                     if matches!(account, AccountClassification::ThisSwigV2 { .. }) {
-                        let swig_wallet_balance = ctx.accounts.swig_wallet_address.lamports();
+                        swig_wallet_balance = ctx.accounts.swig_wallet_address.lamports();
                         let swig_wallet_rent_exempt_minimum =
                             pinocchio::sysvars::rent::Rent::get()?
                                 .minimum_balance(ctx.accounts.swig_wallet_address.data_len());
@@ -480,6 +507,29 @@ pub fn sign_v2(
                     if total_sol_spent > 0 {
                         // First check general SOL limits
                         let mut general_limit_applied = false;
+
+                        if let Some(cache_role_action) = RoleMut::get_action_mut::<AuthorizationLock>(
+                            cache_role.actions,
+                            &[0u8; 32],
+                        )? {
+                            let mut valid_auth_lock_exists = true;
+                            if cache_role_action.is_expired(slot) {
+                                // Update the cache role by checking all the auth lock actions and updating the cache role with the new auth lock
+                                let new_auth_lock =
+                                    recompute_auth_lock_for_mint(swig_roles, &[0u8; 32], slot)?;
+                                if new_auth_lock.is_some() {
+                                    let new_auth_lock = new_auth_lock.unwrap();
+                                    cache_role_action
+                                        .update(new_auth_lock.amount, new_auth_lock.expires_at);
+                                } else {
+                                    valid_auth_lock_exists = false;
+                                    cache_role_action.update(0, 0);
+                                }
+                            }
+                            if valid_auth_lock_exists {
+                                cache_role_action.run(swig_wallet_balance)?;
+                            }
+                        }
 
                         if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])? {
                             action.run(total_sol_spent)?;
@@ -608,6 +658,32 @@ pub fn sign_v2(
                                 let mut combined_key = [0u8; 64];
                                 combined_key[..32].copy_from_slice(mint);
                                 combined_key[32..].copy_from_slice(destination.as_ref());
+
+                                if let Some(cache_role_action) = RoleMut::get_action_mut::<
+                                    AuthorizationLock,
+                                >(
+                                    cache_role.actions, mint
+                                )? {
+                                    if cache_role_action.is_expired(slot) {
+                                        // Update the cache role by checking all the auth lock actions and updating the cache role with the new auth lock
+                                        let mint_array: &[u8; 32] = mint
+                                            .try_into()
+                                            .map_err(|_| ProgramError::InvalidAccountData)?;
+                                        let new_auth_lock = recompute_auth_lock_for_mint(
+                                            swig_roles, mint_array, slot,
+                                        )?;
+                                        if new_auth_lock.is_some() {
+                                            let new_auth_lock = new_auth_lock.unwrap();
+                                            cache_role_action.update(
+                                                new_auth_lock.amount,
+                                                new_auth_lock.expires_at,
+                                            );
+                                        } else {
+                                            cache_role_action.update(0, 0);
+                                        }
+                                    }
+                                    cache_role_action.run(current_token_balance)?;
+                                }
 
                                 // First check recurring destination limits
                                 if let Some(action) = RoleMut::get_action_mut::<

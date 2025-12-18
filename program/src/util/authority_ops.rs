@@ -1,8 +1,11 @@
 use pinocchio::{msg, program_error::ProgramError};
 use swig_state::{
     action::{authlock::AuthorizationLock, Action, Actionable, Permission, IX_SPECIFIC_ACTIONS},
+    role::Position,
     SwigStateError, Transmutable,
 };
+
+use crate::actions::manage_auth_lock_v1::find_auth_lock_for_mint;
 
 pub fn check_new_actions_validity(new_actions: &[u8]) -> Result<(), ProgramError> {
     let mut cursor = 0;
@@ -79,4 +82,70 @@ pub fn get_all_actions_of_type<'a, A: Actionable<'a>>(
         cursor = action.boundary() as usize;
     }
     Ok(matched_actions)
+}
+
+/// Recomputes the aggregated authorization lock for a specific mint from all active roles.
+///
+/// This function iterates through all roles (except the global role ID 0) and aggregates
+/// the authorization locks for the specified mint. Only non-expired locks are included.
+///
+/// # Arguments
+/// * `roles` - Raw bytes containing all role data
+/// * `mint` - The mint to compute the lock for
+/// * `current_slot` - Current slot number to check expiry
+///
+/// # Returns
+/// * `Result<AuthorizationLock, ProgramError>` - The aggregated lock
+pub fn recompute_auth_lock_for_mint(
+    roles: &[u8],
+    mint: &[u8; 32],
+    current_slot: u64,
+) -> Result<Option<AuthorizationLock>, ProgramError> {
+    let mut total_amount = 0u64;
+    let mut earliest_expiry = u64::MAX;
+
+    // Iterate all roles (except ID 0 which is the global cache role)
+    let mut cursor = 0;
+    while cursor < roles.len() {
+        if cursor + Position::LEN > roles.len() {
+            break;
+        }
+
+        let position = unsafe { Position::load_unchecked(&roles[cursor..cursor + Position::LEN])? };
+
+        // Skip global cache role
+        if position.id() == 0 {
+            cursor = position.boundary() as usize;
+            continue;
+        }
+
+        // Calculate actions data range
+        let actions_start = cursor + Position::LEN + position.authority_length() as usize;
+        let actions_end = position.boundary() as usize;
+
+        if actions_start < actions_end && actions_end <= roles.len() {
+            let actions_data = unsafe { roles.get_unchecked(actions_start..actions_end) };
+
+            // Check for AuthorizationLock with this mint
+            if let Some(lock) = find_auth_lock_for_mint(actions_data, mint)? {
+                // Only include non-expired locks
+                if !lock.is_expired(current_slot) {
+                    total_amount = total_amount.saturating_add(lock.amount);
+                    earliest_expiry = earliest_expiry.min(lock.expires_at);
+                }
+            }
+        }
+
+        cursor = position.boundary() as usize;
+    }
+
+    if total_amount == 0 {
+        return Ok(None);
+    }
+
+    Ok(Some(AuthorizationLock::new(
+        *mint,
+        total_amount,
+        earliest_expiry,
+    )))
 }

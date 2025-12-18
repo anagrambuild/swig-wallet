@@ -278,6 +278,7 @@ impl<'a> ManageAuthLockV1<'a> {
         match self.get_operation()? {
             ManageAuthLockOperation::ModifyAuthorizationLock
             | ManageAuthLockOperation::AddAuthorizationLocks => {
+                let mut mints = Vec::new();
                 if self.operation_data.len() <= 1 {
                     return Err(ProgramError::InvalidInstructionData);
                 }
@@ -305,6 +306,10 @@ impl<'a> ManageAuthLockV1<'a> {
                                     ..cursor + Action::LEN + AuthorizationLock::LEN],
                             )?
                         };
+                        if mints.contains(&auth_lock.mint) {
+                            return Err(SwigError::InvalidAuthorizationLockMintAlreadyExists.into());
+                        }
+                        mints.push(auth_lock.mint);
                         auth_locks.push(auth_lock);
                     } else {
                         return Err(SwigError::ContainsNonAuthorizationLockAction.into());
@@ -915,19 +920,15 @@ pub fn manage_auth_lock_v1(
                     if auth_lock.amount > wallet_balance {
                         return Err(SwigError::InvalidAuthorizationLockAmountExceeded.into());
                     }
-                    msg!("verified SOL balance");
                 } else {
-                    msg!("account classification: {:?}", account_classification);
                     // Find the token account that matches the auth lock mint
                     let token_account =
                         account_classification
                             .iter()
                             .enumerate()
                             .find_map(|(index, account)| {
-                                msg!("account classification: {:?}", account);
                                 if matches!(account, AccountClassification::SwigTokenAccount { .. })
                                 {
-                                    msg!("token account with mint: {:?}", auth_lock.mint);
                                     let account_info = &all_accounts[index];
                                     let data = unsafe { &account_info.borrow_data_unchecked() };
                                     let mint = unsafe { data.get_unchecked(TOKEN_MINT_RANGE) };
@@ -943,7 +944,6 @@ pub fn manage_auth_lock_v1(
                                 }
                             });
 
-                    msg!("Token account is some: {:?}", token_account.is_some());
                     let token_account = match token_account {
                         Some(account) => account,
                         None => {
@@ -1234,4 +1234,47 @@ fn create_new_actions_for_cache(
     }
 
     Ok(data)
+}
+
+/// Finds an authorization lock for a specific mint in the actions data.
+///
+/// # Arguments
+/// * `actions_data` - Raw bytes containing action data
+/// * `mint` - The mint to search for
+///
+/// # Returns
+/// * `Result<Option<&AuthorizationLock>, ProgramError>` - The lock if found, or None
+pub fn find_auth_lock_for_mint<'a>(
+    actions_data: &'a [u8],
+    mint: &[u8; 32],
+) -> Result<Option<&'a AuthorizationLock>, ProgramError> {
+    let mut cursor = 0;
+    while cursor < actions_data.len() {
+        if cursor + Action::LEN > actions_data.len() {
+            break;
+        }
+
+        let action =
+            unsafe { Action::load_unchecked(&actions_data[cursor..cursor + Action::LEN])? };
+        cursor += Action::LEN;
+
+        if action.permission()? == Permission::AuthorizationLock {
+            let action_len = action.length() as usize;
+            if cursor + action_len > actions_data.len() {
+                break;
+            }
+
+            let auth_lock = unsafe {
+                AuthorizationLock::load_unchecked(&actions_data[cursor..cursor + action_len])?
+            };
+
+            if auth_lock.mint == *mint {
+                return Ok(Some(auth_lock));
+            }
+        }
+
+        cursor = action.boundary() as usize;
+    }
+
+    Ok(None)
 }

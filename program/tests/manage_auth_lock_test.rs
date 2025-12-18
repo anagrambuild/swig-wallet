@@ -308,26 +308,23 @@ fn test_authlock_add_fails_without_manageauthlock_permission() {
 fn test_authlock_add_in_add_role_fails() {
     let mut env = setup_env(0, 0);
 
-    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        add_authority_with_ed25519_root(
-            &mut env.context,
-            &env.swig,
-            &env.root_authority,
-            AuthorityConfig {
-                authority_type: AuthorityType::Ed25519,
-                authority: Keypair::new().pubkey().as_ref(),
-            },
-            vec![
-                ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
-                ClientAction::AuthorizationLock(AuthorizationLock {
-                    mint: [0u8; 32],
-                    amount: 1_000_000,
-                    expires_at: 500,
-                }),
-            ],
-        )
-        .unwrap();
-    }));
+    let res = add_authority_with_ed25519_root(
+        &mut env.context,
+        &env.swig,
+        &env.root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: Keypair::new().pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
+            ClientAction::AuthorizationLock(AuthorizationLock {
+                mint: [0u8; 32],
+                amount: 1_000_000,
+                expires_at: 500,
+            }),
+        ],
+    );
 
     // Helper currently unwraps on error, so we just assert that it panicked.
     assert!(res.is_err());

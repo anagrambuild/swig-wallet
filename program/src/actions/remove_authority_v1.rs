@@ -11,7 +11,7 @@ use pinocchio::{
 };
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority},
+    action::{all::All, authlock::AuthorizationLock, manage_authority::ManageAuthority},
     swig::{Swig, SwigBuilder},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
@@ -206,6 +206,15 @@ pub fn remove_authority_v1(
 
         if role_to_remove.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+        }
+        let current_slot = Clock::get()?.slot;
+
+        let role_to_remove = role_to_remove.unwrap();
+        let auth_locks = role_to_remove.get_all_actions_of_type::<AuthorizationLock>()?;
+        for auth_lock in auth_locks {
+            if auth_lock.expires_at > current_slot {
+                return Err(SwigError::InvalidAuthorizationLockMintAlreadyExists.into());
+            }
         }
     }
 

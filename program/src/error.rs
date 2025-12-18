@@ -127,6 +127,8 @@ pub enum SwigError {
     AuthlockBaseActionRequired,
     /// Associated token account not found
     AssociatedTokenAccountNotFound,
+    /// Authorization lock mint already exists
+    InvalidAuthorizationLockMintAlreadyExists,
 }
 
 /// Implements conversion from SwigError to ProgramError.
