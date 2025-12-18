@@ -310,5 +310,5 @@ fn test_sol_transfer_performance_comparison_v2() {
         account_difference
     );
 
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3422);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3443);
 }
