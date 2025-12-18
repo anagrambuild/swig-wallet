@@ -1,18 +1,18 @@
 [workspace]
 resolver = "2"
 members = [
-    "program",
-    "interface",
-    "instructions",
-    "state",
-    "assertions",
-    "no-padding",
-    "rust-sdk",
-    "cli",
+  "program",
+  "interface",
+  "instructions",
+  "state",
+  "assertions",
+  "no-padding",
+  "rust-sdk",
+  "cli",
 ]
 
 [workspace.package]
-version = "1.3.2"
+version = "1.3.3"
 authors = ["SWIG Team"]
 documentation = "https://build.onswig.com"
 
