@@ -29,7 +29,7 @@ fn should_manage_authorities_successfully() {
         .unwrap();
 
     // Verify both authorities exist
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
     assert!(swig_wallet
         .get_role_id(&secondary_authority.pubkey().to_bytes())
         .is_ok());
@@ -40,7 +40,7 @@ fn should_manage_authorities_successfully() {
         .unwrap();
 
     // Verify authority was removed
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
     assert!(swig_wallet
         .get_role_id(&secondary_authority.pubkey().to_bytes())
         .is_err());
@@ -60,7 +60,7 @@ fn should_manage_authorities_successfully() {
         .unwrap();
 
     // Verify third authority was added
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 4);
     assert!(swig_wallet
         .get_role_id(&third_authority.pubkey().to_bytes())
         .is_ok());
@@ -68,7 +68,7 @@ fn should_manage_authorities_successfully() {
     // Switch to third authority
     swig_wallet
         .switch_authority(
-            2,
+            3,
             Box::new(Ed25519ClientRole::new(third_authority.pubkey())),
             Some(&third_authority),
         )
@@ -123,7 +123,7 @@ fn should_add_secp256k1_authority() {
         .unwrap();
 
     // Verify both authorities exist
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
     assert!(swig_wallet.get_role_id(&secp_pubkey.as_ref()[1..]).is_ok());
 
     // Remove secondary authority
@@ -132,7 +132,7 @@ fn should_add_secp256k1_authority() {
         .unwrap();
 
     // Verify authority was removed
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
     assert!(swig_wallet.get_role_id(&secp_pubkey.as_ref()[1..]).is_err());
 
     // Add third authority with recurring permissions
@@ -150,7 +150,7 @@ fn should_add_secp256k1_authority() {
         .unwrap();
 
     // Verify third authority was added
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 4);
     assert!(swig_wallet
         .get_role_id(&third_authority.pubkey().to_bytes())
         .is_ok());
@@ -158,7 +158,7 @@ fn should_add_secp256k1_authority() {
     // Switch to third authority
     swig_wallet
         .switch_authority(
-            2,
+            3,
             Box::new(Ed25519ClientRole::new(third_authority.pubkey())),
             Some(&third_authority),
         )
@@ -193,7 +193,7 @@ fn should_switch_authority_and_payer() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
             Some(&secondary_authority),
         )
@@ -202,7 +202,7 @@ fn should_switch_authority_and_payer() {
     swig_wallet.switch_payer(&secondary_authority).unwrap();
 
     // Verify authority switch and payer change
-    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 1);
+    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 2);
     assert_eq!(swig_wallet.get_fee_payer(), secondary_authority.pubkey());
 }
 
@@ -226,7 +226,7 @@ fn should_update_authority_replace_all() {
         .unwrap();
 
     // Verify old authority exists
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
     assert!(swig_wallet
         .get_role_id(&new_authority.pubkey().to_bytes())
         .is_ok());
@@ -245,7 +245,7 @@ fn should_update_authority_replace_all() {
     swig_wallet.update_authority(1, update_data).unwrap();
 
     // Verify the replacement
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
 
     let role_permissions = swig_wallet.get_role_permissions(1).unwrap();
     println!("role permissions: {:?}", role_permissions);
@@ -282,16 +282,16 @@ fn should_update_authority_remove_actions_by_index() {
         )
         .unwrap();
 
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
-    let role_permissions = swig_wallet.get_role_permissions(1).unwrap();
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
+    let role_permissions = swig_wallet.get_role_permissions(2).unwrap();
     assert_eq!(role_permissions.len(), 2);
 
     let update_data = UpdateAuthorityData::RemoveActionsByIndex(vec![1]);
-    swig_wallet.update_authority(1, update_data).unwrap();
+    swig_wallet.update_authority(2, update_data).unwrap();
 
-    let role_permissions = swig_wallet.get_role_permissions(1).unwrap();
+    let role_permissions = swig_wallet.get_role_permissions(2).unwrap();
 
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
 
     assert_eq!(role_permissions.len(), 1);
     assert_eq!(
@@ -325,17 +325,17 @@ fn should_update_authority_remove_actions_by_type() {
         )
         .unwrap();
 
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
-    let role_permissions = swig_wallet.get_role_permissions(1).unwrap();
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
+    let role_permissions = swig_wallet.get_role_permissions(2).unwrap();
     assert_eq!(role_permissions.len(), 2);
 
     let update_data =
         UpdateAuthorityData::RemoveActionsByType(vec![Permission::ManageAuthority {}]);
-    swig_wallet.update_authority(1, update_data).unwrap();
+    swig_wallet.update_authority(2, update_data).unwrap();
 
-    let role_permissions = swig_wallet.get_role_permissions(1).unwrap();
+    let role_permissions = swig_wallet.get_role_permissions(2).unwrap();
 
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
 
     assert_eq!(role_permissions.len(), 1);
     assert_eq!(
@@ -363,7 +363,7 @@ fn should_update_authority_add_actions() {
         )
         .unwrap();
 
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
     let role_permissions = swig_wallet.get_role_permissions(1).unwrap();
     assert_eq!(role_permissions.len(), 1);
 
@@ -375,7 +375,7 @@ fn should_update_authority_add_actions() {
 
     let role_permissions = swig_wallet.get_role_permissions(1).unwrap();
 
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
 
     assert_eq!(role_permissions.len(), 2);
     assert_eq!(

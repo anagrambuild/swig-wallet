@@ -12,8 +12,8 @@ fn should_create_ed25519_wallet() {
 
     // Verify wallet was created successfully
     assert!(swig_wallet.get_swig_account().is_ok());
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 1);
-    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 0);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 1);
 
     let swig_pubkey = swig_wallet.get_swig_account().unwrap();
     let swig_data = swig_wallet.litesvm().get_account(&swig_pubkey).unwrap();
@@ -58,6 +58,6 @@ fn should_create_secp256k1_wallet() {
 
     // Verify wallet was created successfully
     assert!(swig_wallet.get_swig_account().is_ok());
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 1);
-    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 0);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
+    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 1);
 }

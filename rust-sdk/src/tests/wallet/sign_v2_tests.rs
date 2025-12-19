@@ -26,7 +26,7 @@ fn should_sign_v2_transfer_with_ed25519_within_limits() {
 
     let sig = swig_wallet.sign_v2(vec![transfer_ix], None).unwrap();
     assert!(sig != solana_sdk::signature::Signature::default());
-    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 0);
+    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 1);
 }
 
 #[test_log::test]
@@ -58,7 +58,7 @@ fn should_sign_v2_fail_transfer_beyond_limits() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
             Some(&secondary_authority),
         )
@@ -183,7 +183,7 @@ fn should_sign_v2_with_secp256k1_authority_transfers_sol() {
     };
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Secp256k1ClientRole::new(secp_pubkey, Box::new(signing_fn))),
             None,
         )
@@ -236,7 +236,7 @@ fn should_sign_v2_secp256r1_transfer() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Secp256r1ClientRole::new(public_key, Box::new(authority_fn))),
             None,
         )
@@ -314,7 +314,7 @@ fn should_sign_v2_token_recurring_limit_enforced() {
     // Switch to the limited token authority
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(second_authority.pubkey())),
             Some(&second_authority),
         )

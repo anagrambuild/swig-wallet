@@ -11,7 +11,7 @@ fn test_create_sub_account() {
     let mut context = setup_test_context().unwrap();
     let swig_id = [3u8; 32];
     let authority = Keypair::new();
-    let role_id = 0;
+    let role_id = 1;
 
     // First create the Swig account
     let (swig_key, _, _) = create_swig_ed25519(&mut context, &authority, swig_id).unwrap();

@@ -63,12 +63,12 @@ fn should_token_transfer_with_program_scope() {
     let swig_data = swig_wallet.litesvm().get_account(&swig_pubkey).unwrap();
     let swig_with_roles = SwigWithRoles::from_bytes(&swig_data.data).unwrap();
 
-    assert_eq!(swig_with_roles.state.roles, 2);
+    assert_eq!(swig_with_roles.state.roles, 3);
 
     // Switch to the new authority
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(new_authority.pubkey())),
             Some(&new_authority),
         )
@@ -158,12 +158,12 @@ fn should_token_transfer_with_recurring_limit_program_scope() {
     let swig_data = swig_wallet.litesvm().get_account(&swig_pubkey).unwrap();
     let swig_with_roles = SwigWithRoles::from_bytes(&swig_data.data).unwrap();
 
-    assert_eq!(swig_with_roles.state.roles, 2);
+    assert_eq!(swig_with_roles.state.roles, 3);
 
     // Switch to the new authority
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(new_authority.pubkey())),
             Some(&new_authority),
         )

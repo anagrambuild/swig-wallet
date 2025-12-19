@@ -38,7 +38,7 @@ fn test_create_ed25519_session() {
             CreateEd25519SessionAuthority::new(swig_authority.pubkey().to_bytes(), [0; 32], 100),
         )),
         context.default_payer.pubkey(),
-        0,
+        1,
     );
 
     let create_ix = swig_ix_builder.build_swig_account().unwrap();
@@ -67,8 +67,8 @@ fn test_create_ed25519_session() {
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 1);
-    let role = swig.get_role(0).unwrap().unwrap();
+    assert_eq!(swig.state.roles, 2);
+    let role = swig.get_role(1).unwrap().unwrap();
 
     assert_eq!(
         role.authority.authority_type(),
@@ -115,7 +115,7 @@ fn test_create_ed25519_session() {
         .map_err(|e| SwigError::InvalidSwigData)
         .unwrap();
 
-    let role = swig_with_roles.get_role(0).unwrap().unwrap();
+    let role = swig_with_roles.get_role(1).unwrap().unwrap();
     let auth: &Ed25519SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
 }
 
@@ -154,7 +154,7 @@ fn test_create_secp256k1_session() {
             Box::new(signing_fn),
         )),
         context.default_payer.pubkey(),
-        0,
+        1,
     );
 
     let create_ix = swig_ix_builder.build_swig_account().unwrap();
@@ -192,8 +192,8 @@ fn test_create_secp256k1_session() {
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 1);
-    let role = swig.get_role(0).unwrap().unwrap();
+    assert_eq!(swig.state.roles, 2);
+    let role = swig.get_role(1).unwrap().unwrap();
 
     assert_eq!(
         role.authority.authority_type(),
@@ -254,6 +254,6 @@ fn test_create_secp256k1_session() {
         .map_err(|e| SwigError::InvalidSwigData)
         .unwrap();
 
-    let role = swig_with_roles.get_role(0).unwrap().unwrap();
+    let role = swig_with_roles.get_role(1).unwrap().unwrap();
     let auth: &Secp256k1SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
 }

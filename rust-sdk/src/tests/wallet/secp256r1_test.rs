@@ -130,7 +130,7 @@ fn test_secp256r1_basic_signing() {
     // Switch to the secp256r1 authority
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Secp256r1ClientRole::new(public_key, signing_fn)),
             None,
         )
@@ -203,7 +203,7 @@ fn test_secp256r1_counter_increment() {
     // Switch to the secp256r1 authority
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Secp256r1ClientRole::new(public_key, dummy_signing_fn)),
             None,
         )
@@ -241,7 +241,7 @@ fn test_secp256r1_replay_protection() {
     // Switch to the secp256r1 authority
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Secp256r1ClientRole::new(public_key, signing_fn)),
             None,
         )
@@ -341,7 +341,7 @@ fn test_secp256r1_add_authority() {
 
     // Verify the authority was added
     let role_count = swig_wallet.get_role_count().unwrap();
-    assert_eq!(role_count, 2, "Authority count should be 2");
+    assert_eq!(role_count, 3, "Authority count should be 2");
 
     println!("✓ Successfully added Secp256r1 authority");
     println!("✓ Authority count increased to 2");
@@ -371,7 +371,7 @@ fn test_secp256r1_add_authority_with_secp256r1() {
     // Switch to the secp256r1 authority
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Secp256r1ClientRole::new(public_key, signing_fn)),
             None,
         )
@@ -400,7 +400,7 @@ fn test_secp256r1_add_authority_with_secp256r1() {
 
     // Verify the authority was added
     let role_count = swig_wallet.get_role_count().unwrap();
-    assert_eq!(role_count, 3, "Authority count should be 3");
+    assert_eq!(role_count, 4, "Authority count should be 3");
 
     // Verify the counter was incremented
     let new_counter = get_secp256r1_counter(&mut swig_wallet, &public_key).unwrap();
@@ -477,12 +477,12 @@ fn test_secp256r1_session_authority_odometer() {
 
     // Verify the session authority structure is correctly initialized
     let role_count = swig_wallet.get_role_count().unwrap();
-    assert_eq!(role_count, 2, "Role count should be 2");
+    assert_eq!(role_count, 3, "Role count should be 2");
 
-    let authority_type = swig_wallet.get_authority_type(1).unwrap();
+    let authority_type = swig_wallet.get_authority_type(2).unwrap();
     assert_eq!(authority_type, AuthorityType::Secp256r1Session);
 
-    let is_session_based = swig_wallet.is_session_based(1).unwrap();
+    let is_session_based = swig_wallet.is_session_based(2).unwrap();
     assert!(
         is_session_based,
         "Session authority should be session-based"
@@ -514,7 +514,7 @@ fn test_secp256r1_invalid_signature_error() {
     // Switch to the secp256r1 authority with invalid signing function
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Secp256r1ClientRole::new(public_key, invalid_signing_fn)),
             None,
         )
@@ -570,7 +570,7 @@ fn test_secp256r1_odometer_wrapping() {
     // Switch to the secp256r1 authority
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Secp256r1ClientRole::new(public_key, signing_fn)),
             None,
         )
@@ -655,15 +655,11 @@ fn test_secp256r1_authority_management() {
     // Verify all authorities were added
     let role_count = swig_wallet.get_role_count().unwrap();
     assert_eq!(
-        role_count, 4,
-        "Should have 4 roles (1 Ed25519 + 3 Secp256r1)"
+        role_count, 5,
+        "Should have 5 roles (global authority + 1 Ed25519 + 3 Secp256r1)"
     );
 
     // Verify authority types
-    assert_eq!(
-        swig_wallet.get_authority_type(1).unwrap(),
-        AuthorityType::Secp256r1
-    );
     assert_eq!(
         swig_wallet.get_authority_type(2).unwrap(),
         AuthorityType::Secp256r1
@@ -672,19 +668,23 @@ fn test_secp256r1_authority_management() {
         swig_wallet.get_authority_type(3).unwrap(),
         AuthorityType::Secp256r1
     );
+    assert_eq!(
+        swig_wallet.get_authority_type(4).unwrap(),
+        AuthorityType::Secp256r1
+    );
 
     // Verify authority identities
-    let auth1_identity = swig_wallet.get_authority_identity(1).unwrap();
+    let auth1_identity = swig_wallet.get_authority_identity(2).unwrap();
     assert_eq!(auth1_identity, auth1_pubkey);
 
-    let auth2_identity = swig_wallet.get_authority_identity(2).unwrap();
+    let auth2_identity = swig_wallet.get_authority_identity(3).unwrap();
     assert_eq!(auth2_identity, auth2_pubkey);
 
-    let auth3_identity = swig_wallet.get_authority_identity(3).unwrap();
+    let auth3_identity = swig_wallet.get_authority_identity(4).unwrap();
     assert_eq!(auth3_identity, auth3_pubkey);
 
     // Verify permissions
-    let auth1_permissions = swig_wallet.get_role_permissions(1).unwrap();
+    let auth1_permissions = swig_wallet.get_role_permissions(2).unwrap();
     assert_eq!(auth1_permissions.len(), 1);
     assert!(matches!(
         auth1_permissions[0],
@@ -694,7 +694,7 @@ fn test_secp256r1_authority_management() {
         }
     ));
 
-    let auth2_permissions = swig_wallet.get_role_permissions(2).unwrap();
+    let auth2_permissions = swig_wallet.get_role_permissions(3).unwrap();
     assert_eq!(auth2_permissions.len(), 1);
     assert!(matches!(
         auth2_permissions[0],
@@ -704,7 +704,7 @@ fn test_secp256r1_authority_management() {
         }
     ));
 
-    let auth3_permissions = swig_wallet.get_role_permissions(3).unwrap();
+    let auth3_permissions = swig_wallet.get_role_permissions(4).unwrap();
     assert_eq!(auth3_permissions.len(), 1);
     assert!(matches!(auth3_permissions[0], Permission::All));
 
