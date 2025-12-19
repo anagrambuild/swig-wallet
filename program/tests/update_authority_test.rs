@@ -843,6 +843,14 @@ fn test_update_authority_multiple_shrinks() -> anyhow::Result<()> {
             token_mint: [1u8; 32],
             current_amount: 2000000,
         }),
+        ClientAction::TokenLimit(TokenLimit {
+            token_mint: [2u8; 32],
+            current_amount: 3000000,
+        }),
+        ClientAction::TokenLimit(TokenLimit {
+            token_mint: [3u8; 32],
+            current_amount: 4000000,
+        }),
     ];
     add_authority_with_ed25519_root(
         &mut context,
@@ -878,6 +886,8 @@ fn test_update_authority_multiple_shrinks() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to lookup role id: {:?}", e))?
         .unwrap();
 
+    println!("swig role data: {:?}", &swig_account.data[Swig::LEN..]);
+
     // First shrink: remove 2 actions from role 1
     let update_ix = UpdateAuthorityInstruction::new_with_ed25519_authority(
         swig,
@@ -898,10 +908,12 @@ fn test_update_authority_multiple_shrinks() -> anyhow::Result<()> {
         solana_sdk::message::VersionedMessage::V0(msg),
         &[&context.default_payer, &root_authority],
     )?;
-    context
+    let result = context
         .svm
         .send_transaction(tx)
         .map_err(|e| anyhow::anyhow!("Failed to send transaction: {:?}", e))?;
+
+    println!("Transaction logs: {}", result.pretty_logs());
 
     // Verify after first shrink
     let swig_account = context.svm.get_account(&swig).unwrap();
@@ -913,7 +925,7 @@ fn test_update_authority_multiple_shrinks() -> anyhow::Result<()> {
         .unwrap();
     assert_eq!(
         role1.position.num_actions(),
-        3,
+        5,
         "Role 1 should have 3 actions after first shrink"
     );
 
@@ -926,6 +938,7 @@ fn test_update_authority_multiple_shrinks() -> anyhow::Result<()> {
         2,
         "Role 2 should still have 2 actions"
     );
+    println!("swig role data: {:?}", &swig_account.data[Swig::LEN..]);
 
     // Second shrink: remove 1 more action from role 1
     context.svm.expire_blockhash();
@@ -935,7 +948,7 @@ fn test_update_authority_multiple_shrinks() -> anyhow::Result<()> {
         root_authority.pubkey(),
         role_id,
         1,
-        UpdateAuthorityData::RemoveActionsByIndex(vec![0u16]),
+        UpdateAuthorityData::RemoveActionsByIndex(vec![0u16, 1u16, 2u16]),
     )?;
 
     let msg = solana_sdk::message::v0::Message::try_compile(
@@ -948,15 +961,19 @@ fn test_update_authority_multiple_shrinks() -> anyhow::Result<()> {
         solana_sdk::message::VersionedMessage::V0(msg),
         &[&context.default_payer, &root_authority],
     )?;
-    context
+    let result = context
         .svm
         .send_transaction(tx)
         .map_err(|e| anyhow::anyhow!("Failed to send transaction: {:?}", e))?;
+
+    println!("Transaction logs: {}", result.pretty_logs());
 
     // Verify after second shrink
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
         .map_err(|e| anyhow::anyhow!("Failed to deserialize swig: {:?}", e))?;
+    println!("swig role data: {:?}", &swig_account.data[Swig::LEN..]);
+
     let role1 = swig_data
         .get_role(1)
         .map_err(|e| anyhow::anyhow!("Failed to get role 1: {:?}", e))?

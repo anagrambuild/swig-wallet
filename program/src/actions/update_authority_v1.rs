@@ -299,6 +299,10 @@ fn perform_replace_all_operation(
                 }
             }
         } else {
+            msg!(
+                "shrinking with remaining_data_len: {:?}",
+                remaining_data_len
+            );
             // Shrinking: shift data to the left
             if remaining_data_len > 0 {
                 let new_role_end = (role_end as i64 + size_diff) as usize;
@@ -307,6 +311,9 @@ fn perform_replace_all_operation(
         }
 
         // Update boundaries of all roles after this one
+        msg!("swig_roles len: {:?}", swig_roles.len());
+        msg!("size_diff: {:?}", size_diff);
+        msg!("role_end: {:?}", role_end);
         let mut cursor = 0;
         while cursor < (swig_roles.len() + size_diff as usize) {
             if cursor + Position::LEN > swig_roles.len() {
@@ -316,9 +323,24 @@ fn perform_replace_all_operation(
                 Position::load_mut_unchecked(&mut swig_roles[cursor..cursor + Position::LEN])?
             };
 
+            msg!(
+                "before update position id: {:?} bytes: {:?} boundary: {:?} boundary bytes: {:?}",
+                position.id(),
+                position.id().to_le_bytes(),
+                position.boundary(),
+                position.boundary().to_le_bytes()
+            );
+
             if position.boundary() as usize > role_end {
                 position.boundary = (position.boundary() as i64 + size_diff) as u32;
             }
+            msg!(
+                "after update position id: {:?} bytes: {:?} boundary: {:?} boundary bytes: {:?}",
+                position.id(),
+                position.id().to_le_bytes(),
+                position.boundary(),
+                position.boundary().to_le_bytes()
+            );
 
             // Update the position for the role we're updating
             if position.id() == authority_to_update_id {
@@ -691,6 +713,10 @@ pub fn update_authority_v1(
 
     // Get fresh references to the swig account data after reallocation
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+    msg!(
+        "swig data len after reallocation: {}",
+        swig_account_data.len()
+    );
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let _swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
 
