@@ -814,8 +814,8 @@ fn test_update_authority_multiple_shrinks() -> anyhow::Result<()> {
         &root_authority,
         third_config,
         vec![
-            ClientAction::All(All {}),
             ClientAction::SolLimit(SolLimit { amount: 5000000 }),
+            ClientAction::All(All {}),
         ],
     )?;
 

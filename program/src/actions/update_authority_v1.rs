@@ -738,6 +738,7 @@ pub fn update_authority_v1(
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let _swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
 
+    let mut size_diff = 0;
     // Now perform the operation with the reallocated account
     match operation {
         AuthorityUpdateOperation::ReplaceAll => {
@@ -766,7 +767,7 @@ pub fn update_authority_v1(
         },
         AuthorityUpdateOperation::RemoveActionsByType => {
             let remove_types = update_authority_v1.get_remove_types()?;
-            perform_remove_by_type_operation(
+            size_diff = perform_remove_by_type_operation(
                 swig_roles,
                 swig_data_len,
                 authority_offset,
@@ -778,7 +779,7 @@ pub fn update_authority_v1(
         },
         AuthorityUpdateOperation::RemoveActionsByIndex => {
             let remove_indices = update_authority_v1.get_remove_indices()?;
-            perform_remove_by_index_operation(
+            size_diff = perform_remove_by_index_operation(
                 swig_roles,
                 swig_data_len,
                 authority_offset,
@@ -788,6 +789,31 @@ pub fn update_authority_v1(
                 update_authority_v1.args.authority_to_update_id,
             )?;
         },
+    }
+
+    if size_diff < 0 {
+        let new_size = (swig_data_len as i64 + size_diff) as usize;
+        let aligned_size =
+            core::alloc::Layout::from_size_align(new_size, core::mem::size_of::<u64>())
+                .map_err(|_| SwigError::InvalidAlignment)?
+                .pad_to_align()
+                .size();
+
+        ctx.accounts.swig.resize(aligned_size)?;
+
+        let cost = Rent::get()?.minimum_balance(aligned_size);
+        let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
+
+        let additional_cost = current_lamports.saturating_sub(cost);
+
+        if additional_cost > 0 {
+            unsafe {
+                *ctx.accounts.swig.borrow_mut_lamports_unchecked() =
+                    current_lamports - additional_cost;
+                *ctx.accounts.payer.borrow_mut_lamports_unchecked() =
+                    ctx.accounts.payer.lamports() + additional_cost;
+            };
+        }
     }
 
     Ok(())
