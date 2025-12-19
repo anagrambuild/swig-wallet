@@ -514,7 +514,8 @@ pub fn sign_v2(
                         )? {
                             let mut valid_auth_lock_exists = true;
                             if cache_role_action.is_expired(slot) {
-                                // Update the cache role by checking all the auth lock actions and updating the cache role with the new auth lock
+                                // Update the cache role by checking all the auth lock actions and
+                                // updating the cache role with the new auth lock
                                 let new_auth_lock =
                                     recompute_auth_lock_for_mint(swig_roles, &[0u8; 32], slot)?;
                                 if new_auth_lock.is_some() {
@@ -665,7 +666,9 @@ pub fn sign_v2(
                                     cache_role.actions, mint
                                 )? {
                                     if cache_role_action.is_expired(slot) {
-                                        // Update the cache role by checking all the auth lock actions and updating the cache role with the new auth lock
+                                        // Update the cache role by checking all the auth lock
+                                        // actions and updating the cache role with the new auth
+                                        // lock
                                         let mint_array: &[u8; 32] = mint
                                             .try_into()
                                             .map_err(|_| ProgramError::InvalidAccountData)?;

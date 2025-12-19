@@ -44,7 +44,8 @@ struct TestEnv {
     swig_ata: Pubkey,
 }
 
-/// Create a Swig with an Ed25519 root authority and a funded wallet + token mint.
+/// Create a Swig with an Ed25519 root authority and a funded wallet + token
+/// mint.
 fn setup_env(initial_sol: u64, initial_tokens: u64) -> TestEnv {
     let mut context = setup_test_context().unwrap();
     let root_authority = Keypair::new();
@@ -94,7 +95,8 @@ fn setup_env(initial_sol: u64, initial_tokens: u64) -> TestEnv {
     }
 }
 
-/// Add a new Ed25519 authority with the given actions and return the keypair + role id.
+/// Add a new Ed25519 authority with the given actions and return the keypair +
+/// role id.
 fn add_authority_with_actions(env: &mut TestEnv, actions: Vec<ClientAction>) -> (Keypair, u32) {
     let new_authority = Keypair::new();
     env.context
@@ -185,7 +187,8 @@ fn assert_authlock_failed(res: Result<(), FailedTransactionMetadata>) {
     }
 }
 
-/// 1) Happy path: add auth‑locks for an authority that has ManageAuthorizationLocks and
+/// 1) Happy path: add auth‑locks for an authority that has
+///    ManageAuthorizationLocks and
 /// sufficient SOL and token balances. Also verify global cache.
 #[test_log::test]
 fn test_authlock_signv2_happy_path() {
@@ -294,7 +297,8 @@ fn test_authlock_signv2_happy_path() {
     assert!(result.is_ok());
 }
 
-/// 1) Happy path: add auth‑locks for an authority that has ManageAuthorizationLocks and
+/// 1) Happy path: add auth‑locks for an authority that has
+///    ManageAuthorizationLocks and
 /// sufficient SOL and token balances. Also verify global cache.
 #[test_log::test]
 fn test_authlock_signv2_expiry_and_global_cache() {
@@ -479,13 +483,13 @@ fn test_authlock_signv2_partial_expiry_sol() {
         &mut env,
         1,
         role_id1,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 30_000_000,
                 expires_at: 500,
-            }),
-        ]),
+            },
+        )]),
     );
     assert!(result.is_ok());
 
@@ -501,17 +505,18 @@ fn test_authlock_signv2_partial_expiry_sol() {
         &mut env,
         1,
         role_id2,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 20_000_000,
                 expires_at: 1000,
-            }),
-        ]),
+            },
+        )]),
     );
     assert!(result.is_ok());
 
-    // Verify global cache: should have 50M locked (30M + 20M) with earliest expiry 500
+    // Verify global cache: should have 50M locked (30M + 20M) with earliest expiry
+    // 500
     let global = global_auth_locks(&env);
     assert_eq!(global.len(), 1);
     assert_eq!(global[0].mint, [0u8; 32]);
@@ -560,7 +565,10 @@ fn test_authlock_signv2_partial_expiry_sol() {
 
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&transfer_auth]).unwrap();
     let result = env.context.svm.send_transaction(tx);
-    assert!(result.is_ok(), "Transfer should succeed after auth1's lock expired");
+    assert!(
+        result.is_ok(),
+        "Transfer should succeed after auth1's lock expired"
+    );
 
     // Verify global cache updated: should now show 20M locked with expiry 1000
     let global = global_auth_locks(&env);
@@ -589,13 +597,13 @@ fn test_authlock_signv2_multiple_locks_transfer_fail() {
         &mut env,
         1,
         role_id1,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 40_000_000,
                 expires_at: 1000,
-            }),
-        ]),
+            },
+        )]),
     );
     assert!(result.is_ok());
 
@@ -611,13 +619,13 @@ fn test_authlock_signv2_multiple_locks_transfer_fail() {
         &mut env,
         1,
         role_id2,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 35_000_000,
                 expires_at: 1500,
-            }),
-        ]),
+            },
+        )]),
     );
     assert!(result.is_ok());
 
@@ -647,7 +655,8 @@ fn test_authlock_signv2_multiple_locks_transfer_fail() {
     // Warp to slot 500 (both locks still active)
     env.context.svm.warp_to_slot(500);
 
-    // Try to transfer 30M SOL (should fail: 100M total - 75M locked = 25M available)
+    // Try to transfer 30M SOL (should fail: 100M total - 75M locked = 25M
+    // available)
     let transfer_ix =
         system_instruction::transfer(&env.swig_wallet, &recipient.pubkey(), 30_000_000);
     let sign_ix = SignV2Instruction::new_ed25519(
@@ -669,11 +678,15 @@ fn test_authlock_signv2_multiple_locks_transfer_fail() {
 
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&transfer_auth]).unwrap();
     let result = env.context.svm.send_transaction(tx);
-    assert!(result.is_err(), "Transfer should fail when exceeding available balance");
+    assert!(
+        result.is_err(),
+        "Transfer should fail when exceeding available balance"
+    );
 }
 
 /// Test: Three authorities with SOL locks at different expiry times.
-/// Warp through multiple time periods and verify global cache updates correctly at each stage.
+/// Warp through multiple time periods and verify global cache updates correctly
+/// at each stage.
 #[test_log::test]
 fn test_authlock_signv2_cascading_expirations() {
     let mut env = setup_env(200_000_000, 0); // 200M SOL
@@ -690,13 +703,13 @@ fn test_authlock_signv2_cascading_expirations() {
         &mut env,
         1,
         role_id1,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 30_000_000,
                 expires_at: 400,
-            }),
-        ]),
+            },
+        )]),
     );
     assert!(result.is_ok());
 
@@ -712,13 +725,13 @@ fn test_authlock_signv2_cascading_expirations() {
         &mut env,
         1,
         role_id2,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 25_000_000,
                 expires_at: 800,
-            }),
-        ]),
+            },
+        )]),
     );
     assert!(result.is_ok());
 
@@ -734,13 +747,13 @@ fn test_authlock_signv2_cascading_expirations() {
         &mut env,
         1,
         role_id3,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 20_000_000,
                 expires_at: 1200,
-            }),
-        ]),
+            },
+        )]),
     );
     assert!(result.is_ok());
 
@@ -790,7 +803,10 @@ fn test_authlock_signv2_cascading_expirations() {
 
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&transfer_auth]).unwrap();
     let result = env.context.svm.send_transaction(tx);
-    assert!(result.is_ok(), "Transfer should succeed with 45M locked (25M + 20M)");
+    assert!(
+        result.is_ok(),
+        "Transfer should succeed with 45M locked (25M + 20M)"
+    );
 
     // Verify global cache: 45M locked, expiry 800
     let global = global_auth_locks(&env);
@@ -821,7 +837,10 @@ fn test_authlock_signv2_cascading_expirations() {
 
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&transfer_auth]).unwrap();
     let result = env.context.svm.send_transaction(tx);
-    assert!(result.is_ok(), "Transfer should succeed with only 20M locked");
+    assert!(
+        result.is_ok(),
+        "Transfer should succeed with only 20M locked"
+    );
 
     // Verify global cache: 20M locked, expiry 1200
     let global = global_auth_locks(&env);
@@ -852,7 +871,10 @@ fn test_authlock_signv2_cascading_expirations() {
 
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&transfer_auth]).unwrap();
     let result = env.context.svm.send_transaction(tx);
-    assert!(result.is_ok(), "Transfer should succeed with no locks active");
+    assert!(
+        result.is_ok(),
+        "Transfer should succeed with no locks active"
+    );
 
     // Verify global cache: no active locks
     let global = global_auth_locks(&env);
@@ -887,13 +909,13 @@ fn test_authlock_signv2_token_locks_partial_expiry() {
         &mut env,
         1,
         role_id1,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: mint_bytes,
                 amount: 1_000_000_000,
                 expires_at: 600,
-            }),
-        ]),
+            },
+        )]),
     );
     assert!(result.is_ok());
 
@@ -909,13 +931,13 @@ fn test_authlock_signv2_token_locks_partial_expiry() {
         &mut env,
         1,
         role_id2,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: mint_bytes,
                 amount: 1_500_000_000,
                 expires_at: 1200,
-            }),
-        ]),
+            },
+        )]),
     );
     assert!(result.is_ok());
 
@@ -979,10 +1001,14 @@ fn test_authlock_signv2_token_locks_partial_expiry() {
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&transfer_auth]).unwrap();
     let result = env.context.svm.send_transaction(tx);
     println!("Transfer result: {:?}", result);
-    assert!(result.is_ok(), "Transfer should succeed after auth1's lock expired");
+    assert!(
+        result.is_ok(),
+        "Transfer should succeed after auth1's lock expired"
+    );
 
-    // Note: Global cache update behavior for token locks may differ from SOL locks
-    // The important thing is that the transfer succeeded, indicating the lock check worked correctly
+    // Note: Global cache update behavior for token locks may differ from SOL
+    // locks The important thing is that the transfer succeeded, indicating
+    // the lock check worked correctly
 }
 
 /// Test: Mix of SOL and token locks with different expiries.
@@ -1068,7 +1094,8 @@ fn test_authlock_signv2_mixed_sol_token_locks() {
         .airdrop(&recipient.pubkey(), 10_000_000_000)
         .unwrap();
 
-    // Warp to slot 700 (SOL: auth1 expired, auth2 active; Token: auth2 expired, auth1 active)
+    // Warp to slot 700 (SOL: auth1 expired, auth2 active; Token: auth2 expired,
+    // auth1 active)
     env.context.svm.warp_to_slot(700);
 
     // Transfer SOL - should have 30M locked (only auth2's lock active)
@@ -1094,10 +1121,14 @@ fn test_authlock_signv2_mixed_sol_token_locks() {
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&transfer_auth]).unwrap();
     let result = env.context.svm.send_transaction(tx);
     println!("SOL transfer result: {:?}", result);
-    assert!(result.is_ok(), "SOL transfer should succeed with 30M locked");
+    assert!(
+        result.is_ok(),
+        "SOL transfer should succeed with 30M locked"
+    );
 
     // Note: Global cache is updated during SOL transfers
-    // Verifying the transfer succeeded demonstrates the lock mechanism is working
+    // Verifying the transfer succeeded demonstrates the lock mechanism is
+    // working
 }
 
 /// Test: Same authority with multiple locks on different mints.
@@ -1120,28 +1151,29 @@ fn test_authlock_signv2_same_authority_multiple_locks() {
         &mut env,
         1,
         role_id1,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 25_000_000,
                 expires_at: 500,
-            }),
-        ]),
+            },
+        )]),
     );
     assert!(result.is_ok());
 
-    // Same authority: Add token lock (1B tokens, expires 1000) - different mint, so allowed
+    // Same authority: Add token lock (1B tokens, expires 1000) - different mint, so
+    // allowed
     let result = run_manage_auth_lock(
         &mut env,
         1,
         role_id1,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: mint_bytes,
                 amount: 1_000_000_000,
                 expires_at: 1000,
-            }),
-        ]),
+            },
+        )]),
     );
     assert!(result.is_ok());
 
@@ -1204,7 +1236,10 @@ fn test_authlock_signv2_same_authority_multiple_locks() {
 
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&transfer_auth]).unwrap();
     let result = env.context.svm.send_transaction(tx);
-    assert!(result.is_ok(), "Transfer should succeed with 25M SOL locked");
+    assert!(
+        result.is_ok(),
+        "Transfer should succeed with 25M SOL locked"
+    );
 
     // After SOL lock expires - only token lock active
     env.context.svm.warp_to_slot(600);
@@ -1231,7 +1266,10 @@ fn test_authlock_signv2_same_authority_multiple_locks() {
 
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&transfer_auth]).unwrap();
     let result = env.context.svm.send_transaction(tx);
-    assert!(result.is_ok(), "Transfer should succeed after SOL lock expired");
+    assert!(
+        result.is_ok(),
+        "Transfer should succeed after SOL lock expired"
+    );
 
     // Verify global cache updated for SOL, but token lock still active
     let global = global_auth_locks(&env);
@@ -1266,13 +1304,13 @@ fn test_authlock_signv2_exact_expiry_boundary() {
         &mut env,
         1,
         role_id,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 50_000_000,
                 expires_at: 1000,
-            }),
-        ]),
+            },
+        )]),
     );
     assert!(result.is_ok());
 
@@ -1316,7 +1354,10 @@ fn test_authlock_signv2_exact_expiry_boundary() {
 
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&transfer_auth]).unwrap();
     let result = env.context.svm.send_transaction(tx);
-    assert!(result.is_err(), "Transfer should fail at slot 999 when lock is still active");
+    assert!(
+        result.is_err(),
+        "Transfer should fail at slot 999 when lock is still active"
+    );
 }
 
 /// Test: Large number of authorities with overlapping locks.
@@ -1349,13 +1390,13 @@ fn test_authlock_signv2_many_overlapping_locks() {
             &mut env,
             1,
             role_id,
-            ManageAuthLockData::AddAuthorizationLocks(vec![
-                ClientAction::AuthorizationLock(AuthorizationLock {
+            ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+                AuthorizationLock {
                     mint: [0u8; 32],
                     amount: *amount,
                     expires_at: *expiry,
-                }),
-            ]),
+                },
+            )]),
         );
         assert!(result.is_ok());
 
@@ -1407,7 +1448,10 @@ fn test_authlock_signv2_many_overlapping_locks() {
 
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&transfer_auth]).unwrap();
     let result = env.context.svm.send_transaction(tx);
-    assert!(result.is_err(), "Transfer should fail when exceeding available balance");
+    assert!(
+        result.is_err(),
+        "Transfer should fail when exceeding available balance"
+    );
 
     // Transfer exactly available amount (should succeed)
     let transfer_ix =
@@ -1431,11 +1475,14 @@ fn test_authlock_signv2_many_overlapping_locks() {
 
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&transfer_auth]).unwrap();
     let result = env.context.svm.send_transaction(tx);
-    assert!(result.is_ok(), "Transfer should succeed with exact available amount");
+    assert!(
+        result.is_ok(),
+        "Transfer should succeed with exact available amount"
+    );
 }
 
-/// Performance test: Measure CPU overhead of global lock updates during SOL transfers.
-/// Compares SignV2 performance with and without authorization locks.
+/// Performance test: Measure CPU overhead of global lock updates during SOL
+/// transfers. Compares SignV2 performance with and without authorization locks.
 #[test_log::test]
 fn test_authlock_signv2_sol_transfer_performance() {
     // Test 1: SOL transfer WITHOUT authorization locks (baseline)
@@ -1515,13 +1562,13 @@ fn test_authlock_signv2_sol_transfer_performance() {
         &mut env_with_locks,
         1,
         role_id1,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 100_000_000,
                 expires_at: 1000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -1536,13 +1583,13 @@ fn test_authlock_signv2_sol_transfer_performance() {
         &mut env_with_locks,
         1,
         role_id2,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 80_000_000,
                 expires_at: 2000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -1557,13 +1604,13 @@ fn test_authlock_signv2_sol_transfer_performance() {
         &mut env_with_locks,
         1,
         role_id3,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 70_000_000,
                 expires_at: 3000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -1638,7 +1685,10 @@ fn test_authlock_signv2_sol_transfer_performance() {
         cu_overhead, cu_overhead_percent
     );
     println!("Account Difference: {} accounts", account_diff);
-    println!("Global lock update overhead per lock: ~{} CU", cu_overhead / 3);
+    println!(
+        "Global lock update overhead per lock: ~{} CU",
+        cu_overhead / 3
+    );
 
     // Verify the transfer succeeded
     assert!(result_with_locks.logs.len() > 0);
@@ -1655,8 +1705,9 @@ fn test_authlock_signv2_sol_transfer_performance() {
     println!("  - Checking available balance against locked amounts");
 }
 
-/// Performance test: Measure CPU overhead of global lock updates during token transfers.
-/// Compares SignV2 token transfer performance with and without authorization locks.
+/// Performance test: Measure CPU overhead of global lock updates during token
+/// transfers. Compares SignV2 token transfer performance with and without
+/// authorization locks.
 #[test_log::test]
 fn test_authlock_signv2_token_transfer_performance() {
     // Test 1: Token transfer WITHOUT authorization locks (baseline)
@@ -1753,13 +1804,13 @@ fn test_authlock_signv2_token_transfer_performance() {
         &mut env_with_locks,
         1,
         role_id1,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: mint_bytes_with_locks,
                 amount: 1_000_000_000,
                 expires_at: 1000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -1774,13 +1825,13 @@ fn test_authlock_signv2_token_transfer_performance() {
         &mut env_with_locks,
         1,
         role_id2,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: mint_bytes_with_locks,
                 amount: 800_000_000,
                 expires_at: 2000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -1795,13 +1846,13 @@ fn test_authlock_signv2_token_transfer_performance() {
         &mut env_with_locks,
         1,
         role_id3,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: mint_bytes_with_locks,
                 amount: 700_000_000,
                 expires_at: 3000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -1816,13 +1867,13 @@ fn test_authlock_signv2_token_transfer_performance() {
         &mut env_with_locks,
         1,
         role_id4,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: mint_bytes_with_locks,
                 amount: 500_000_000,
                 expires_at: 4000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -1910,7 +1961,10 @@ fn test_authlock_signv2_token_transfer_performance() {
         cu_overhead, cu_overhead_percent
     );
     println!("Account Difference: {} accounts", account_diff);
-    println!("Global lock check overhead per lock: ~{} CU", cu_overhead / 4);
+    println!(
+        "Global lock check overhead per lock: ~{} CU",
+        cu_overhead / 4
+    );
 
     // Verify the transfer succeeded
     assert!(result_with_locks.logs.len() > 0);
@@ -1928,7 +1982,8 @@ fn test_authlock_signv2_token_transfer_performance() {
 }
 
 /// Performance test: Compare overhead when locks expire vs when they're active.
-/// This tests the performance difference in global cache updates during expiration.
+/// This tests the performance difference in global cache updates during
+/// expiration.
 #[test_log::test]
 fn test_authlock_signv2_expiration_performance() {
     println!("\n=== Authorization Lock Expiration Performance ===");
@@ -1948,13 +2003,13 @@ fn test_authlock_signv2_expiration_performance() {
         &mut env_active,
         1,
         role_id1,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 50_000_000,
                 expires_at: 10000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -1969,13 +2024,13 @@ fn test_authlock_signv2_expiration_performance() {
         &mut env_active,
         1,
         role_id2,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 40_000_000,
                 expires_at: 11000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -1990,13 +2045,13 @@ fn test_authlock_signv2_expiration_performance() {
         &mut env_active,
         1,
         role_id3,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 30_000_000,
                 expires_at: 12000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -2011,13 +2066,13 @@ fn test_authlock_signv2_expiration_performance() {
         &mut env_active,
         1,
         role_id4,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 20_000_000,
                 expires_at: 13000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -2032,13 +2087,13 @@ fn test_authlock_signv2_expiration_performance() {
         &mut env_active,
         1,
         role_id5,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 10_000_000,
                 expires_at: 14000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -2095,7 +2150,8 @@ fn test_authlock_signv2_expiration_performance() {
     println!("With 5 ACTIVE locks:");
     println!("  Compute Units: {}", cu_active);
 
-    // Test 2: Transfer with SOME EXPIRED locks (5 separate authorities, 2 expired, 3 active)
+    // Test 2: Transfer with SOME EXPIRED locks (5 separate authorities, 2 expired,
+    // 3 active)
     let mut env_partial = setup_env(500_000_000, 0);
 
     // Authority 1: Expires at 5000 (WILL BE EXPIRED)
@@ -2110,13 +2166,13 @@ fn test_authlock_signv2_expiration_performance() {
         &mut env_partial,
         1,
         role_p1,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 50_000_000,
                 expires_at: 5000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -2132,13 +2188,13 @@ fn test_authlock_signv2_expiration_performance() {
         &mut env_partial,
         1,
         role_p2,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 40_000_000,
                 expires_at: 6000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -2154,13 +2210,13 @@ fn test_authlock_signv2_expiration_performance() {
         &mut env_partial,
         1,
         role_p3,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 30_000_000,
                 expires_at: 12000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -2176,13 +2232,13 @@ fn test_authlock_signv2_expiration_performance() {
         &mut env_partial,
         1,
         role_p4,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 20_000_000,
                 expires_at: 13000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -2198,13 +2254,13 @@ fn test_authlock_signv2_expiration_performance() {
         &mut env_partial,
         1,
         role_p5,
-        ManageAuthLockData::AddAuthorizationLocks(vec![
-            ClientAction::AuthorizationLock(AuthorizationLock {
+        ManageAuthLockData::AddAuthorizationLocks(vec![ClientAction::AuthorizationLock(
+            AuthorizationLock {
                 mint: [0u8; 32],
                 amount: 10_000_000,
                 expires_at: 14000,
-            }),
-        ]),
+            },
+        )]),
     )
     .unwrap();
 
@@ -2251,11 +2307,9 @@ fn test_authlock_signv2_expiration_performance() {
     )
     .unwrap();
 
-    let tx_partial = VersionedTransaction::try_new(
-        VersionedMessage::V0(msg_partial),
-        &[&transfer_auth_partial],
-    )
-    .unwrap();
+    let tx_partial =
+        VersionedTransaction::try_new(VersionedMessage::V0(msg_partial), &[&transfer_auth_partial])
+            .unwrap();
 
     let result_partial = env_partial
         .context
@@ -2270,10 +2324,11 @@ fn test_authlock_signv2_expiration_performance() {
     // Compare
     let cu_diff = cu_partial as i64 - cu_active as i64;
     println!("\n=== Performance Comparison ===");
-    println!("CU difference (partial expired - all active): {} CU", cu_diff);
     println!(
-        "This shows the overhead of processing expired locks and updating global cache"
+        "CU difference (partial expired - all active): {} CU",
+        cu_diff
     );
+    println!("This shows the overhead of processing expired locks and updating global cache");
 
     if cu_diff > 0 {
         println!("Expiration processing adds {} CU overhead", cu_diff);

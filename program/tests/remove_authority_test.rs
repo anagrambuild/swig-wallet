@@ -1042,8 +1042,7 @@ fn test_remove_authority_with_authorization_lock() {
         .airdrop(&lock_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    use swig_state::action::manage_authlock::ManageAuthorizationLocks;
-    use swig_state::action::program_all::ProgramAll;
+    use swig_state::action::{manage_authlock::ManageAuthorizationLocks, program_all::ProgramAll};
     add_authority_with_ed25519_root(
         &mut context,
         &swig_key,

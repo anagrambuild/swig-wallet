@@ -53,7 +53,8 @@ use token_recurring_limit::TokenRecurringLimit;
 
 use crate::{IntoBytes, SwigStateError, Transmutable, TransmutableMut};
 
-// These are actions that are specific to the IX and not part of the regular action system like add role or update role.
+// These are actions that are specific to the IX and not part of the regular
+// action system like add role or update role.
 pub const IX_SPECIFIC_ACTIONS: [Permission; 1] = [Permission::AuthorizationLock];
 
 /// Represents an action in the Swig wallet system.

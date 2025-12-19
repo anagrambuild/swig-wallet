@@ -1419,7 +1419,8 @@ mod tests {
         );
 
         // Test finding a role and then getting it
-        // Since the role is 0, it is treated as the global role, so it should have 0 actions
+        // Since the role is 0, it is treated as the global role, so it should have 0
+        // actions
         println!("Testing get_role with lookup_role_id result");
         if let Some(role_id) = swig_with_roles.lookup_role_id(&authority1.public_key)? {
             let role = swig_with_roles.get_role(role_id)?.unwrap();

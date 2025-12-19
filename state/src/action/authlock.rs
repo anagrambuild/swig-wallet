@@ -97,7 +97,6 @@ impl AuthorizationLock {
     /// Compare and update the values to be used for the global config file
     ///
     ///
-    ///
     pub fn update_for_global(&mut self, amount: u64, expires_at: u64) {
         self.amount += amount;
         if expires_at < self.expires_at {

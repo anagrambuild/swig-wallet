@@ -1,7 +1,8 @@
 //! ManageAuthorizationLocks action type.
 //!
-//! This module defines the ManageAuthorizationLocks action type which represents
-//! the permission to manage authorization locks within the Swig wallet system.
+//! This module defines the ManageAuthorizationLocks action type which
+//! represents the permission to manage authorization locks within the Swig
+//! wallet system.
 
 use pinocchio::program_error::ProgramError;
 
@@ -9,9 +10,9 @@ use super::{Actionable, Permission};
 use crate::{IntoBytes, Transmutable, TransmutableMut};
 /// Represents the permission to manage authorization locks.
 ///
-/// This is a marker struct that grants permission to manage authorization locks.
-/// The actual locks are stored as individual AuthorizationLock instances that follow
-/// this header in the action data.
+/// This is a marker struct that grants permission to manage authorization
+/// locks. The actual locks are stored as individual AuthorizationLock instances
+/// that follow this header in the action data.
 pub struct ManageAuthorizationLocks;
 
 impl ManageAuthorizationLocks {

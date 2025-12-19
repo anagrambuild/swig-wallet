@@ -84,10 +84,12 @@ pub fn get_all_actions_of_type<'a, A: Actionable<'a>>(
     Ok(matched_actions)
 }
 
-/// Recomputes the aggregated authorization lock for a specific mint from all active roles.
+/// Recomputes the aggregated authorization lock for a specific mint from all
+/// active roles.
 ///
-/// This function iterates through all roles (except the global role ID 0) and aggregates
-/// the authorization locks for the specified mint. Only non-expired locks are included.
+/// This function iterates through all roles (except the global role ID 0) and
+/// aggregates the authorization locks for the specified mint. Only non-expired
+/// locks are included.
 ///
 /// # Arguments
 /// * `roles` - Raw bytes containing all role data

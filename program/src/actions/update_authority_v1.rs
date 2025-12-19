@@ -327,7 +327,8 @@ fn perform_replace_all_operation(
             // Update the position for the role we're updating
             if position.id() == authority_to_update_id {
                 position.boundary = (position.boundary() as i64 + size_diff) as u32;
-                // Also add a condition in unwrap that will return 0 if authority_to_update_id is 0 and error is returned
+                // Also add a condition in unwrap that will return 0 if authority_to_update_id
+                // is 0 and error is returned
                 let num_actions = if authority_to_update_id == 0 {
                     calculate_num_actions(new_actions).unwrap_or(0) as u16
                 } else {

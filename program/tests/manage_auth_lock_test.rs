@@ -44,7 +44,8 @@ struct TestEnv {
     swig_ata: Pubkey,
 }
 
-/// Create a Swig with an Ed25519 root authority and a funded wallet + token mint.
+/// Create a Swig with an Ed25519 root authority and a funded wallet + token
+/// mint.
 fn setup_env(initial_sol: u64, initial_tokens: u64) -> TestEnv {
     let mut context = setup_test_context().unwrap();
     let root_authority = Keypair::new();
@@ -94,7 +95,8 @@ fn setup_env(initial_sol: u64, initial_tokens: u64) -> TestEnv {
     }
 }
 
-/// Add a new Ed25519 authority with the given actions and return the keypair + role id.
+/// Add a new Ed25519 authority with the given actions and return the keypair +
+/// role id.
 fn add_authority_with_actions(env: &mut TestEnv, actions: Vec<ClientAction>) -> (Keypair, u32) {
     let new_authority = Keypair::new();
     env.context
@@ -185,7 +187,8 @@ fn assert_authlock_failed(res: Result<(), FailedTransactionMetadata>) {
     }
 }
 
-/// 1) Add and then remove the `ManageAuthorizationLocks` action from an authority.
+/// 1) Add and then remove the `ManageAuthorizationLocks` action from an
+///    authority.
 #[test_log::test]
 fn test_authlock_add_and_remove_manage_authlock_permission_action() {
     let mut env = setup_env(0, 0);
@@ -207,7 +210,8 @@ fn test_authlock_add_and_remove_manage_authlock_permission_action() {
         .unwrap()
         .is_some());
 
-    // Now replace actions with just ProgramAll, effectively removing ManageAuthorizationLocks.
+    // Now replace actions with just ProgramAll, effectively removing
+    // ManageAuthorizationLocks.
     update_authority_with_ed25519_root(
         &mut env.context,
         &env.swig,
@@ -226,7 +230,8 @@ fn test_authlock_add_and_remove_manage_authlock_permission_action() {
         .is_none());
 }
 
-/// 2) Happy path: add auth‑locks for an authority that has ManageAuthorizationLocks and
+/// 2) Happy path: add auth‑locks for an authority that has
+///    ManageAuthorizationLocks and
 /// sufficient SOL and token balances. Also verify global cache.
 #[test_log::test]
 fn test_authlock_add_for_authority_with_manageauthlock_and_balances() {
@@ -274,7 +279,8 @@ fn test_authlock_add_for_authority_with_manageauthlock_and_balances() {
     assert_eq!(global.len(), 2);
 }
 
-/// 3) Failure: adding auth‑locks to an authority that does NOT have ManageAuthorizationLocks.
+/// 3) Failure: adding auth‑locks to an authority that does NOT have
+///    ManageAuthorizationLocks.
 #[test_log::test]
 fn test_authlock_add_fails_without_manageauthlock_permission() {
     let mut env = setup_env(5_000_000, 3_000_000);
@@ -299,11 +305,13 @@ fn test_authlock_add_fails_without_manageauthlock_permission() {
         )]),
     );
 
-    // Program should reject this; we only assert it fails, not the exact error code.
+    // Program should reject this; we only assert it fails, not the exact error
+    // code.
     assert!(res.is_err());
 }
 
-/// 4) Failure: trying to define AuthorizationLock actions directly when *adding* an authority.
+/// 4) Failure: trying to define AuthorizationLock actions directly when
+///    *adding* an authority.
 #[test_log::test]
 fn test_authlock_add_in_add_role_fails() {
     let mut env = setup_env(0, 0);
@@ -415,13 +423,14 @@ fn test_authlock_global_cache_add_and_remove() {
     assert!(global_auth_locks(&env).is_empty());
 }
 
-/// 7) Global cache and per‑authority state with multiple authorities and expiry propagation.
+/// 7) Global cache and per‑authority state with multiple authorities and expiry
+///    propagation.
 ///
 /// Scenario:
 /// - Authority A gets a lock L1 with expiry E.
 /// - Warp to slot E+1.
-/// - Authority B adds a lock L2 on the same mint.
-///   This operation should prune the expired L1 from A and from the global cache.
+/// - Authority B adds a lock L2 on the same mint. This operation should prune
+///   the expired L1 from A and from the global cache.
 #[test_log::test]
 fn test_authlock_global_cache_with_multiple_authorities_and_expiry() {
     let mut env = setup_env(5_000_000, 3_000_000);
@@ -463,7 +472,8 @@ fn test_authlock_global_cache_with_multiple_authorities_and_expiry() {
     // Advance beyond expiry.
     env.context.svm.warp_to_slot(501);
 
-    // L2 on authority B with later expiry; this should trigger cache/expiry maintenance.
+    // L2 on authority B with later expiry; this should trigger cache/expiry
+    // maintenance.
     run_manage_auth_lock(
         &mut env,
         1,
@@ -488,7 +498,8 @@ fn test_authlock_global_cache_with_multiple_authorities_and_expiry() {
     assert_eq!(global[0].amount, 2_000_000);
 }
 
-/// 8) Modify fails with `InvalidAuthorizationLockNotFound` when the mint does not exist.
+/// 8) Modify fails with `InvalidAuthorizationLockNotFound` when the mint does
+///    not exist.
 #[test_log::test]
 fn test_authlock_modify_fails_when_lock_not_found() {
     let mut env = setup_env(5_000_000, 0);
@@ -535,7 +546,8 @@ fn test_authlock_modify_fails_when_lock_not_found() {
     assert_authlock_failed(res);
 }
 
-/// 9) Add path fails with `ContainsNonAuthorizationLockAction` when a non‑authlock
+/// 9) Add path fails with `ContainsNonAuthorizationLockAction` when a
+///    non‑authlock
 /// action is encoded inside the authlock payload.
 #[test_log::test]
 fn test_authlock_add_contains_non_authlock_action_error() {
@@ -598,13 +610,14 @@ fn test_authlock_associated_token_account_not_found_error() {
     assert_authlock_failed(res);
 }
 
-/// 11) Global cache and per‑authority state with multiple authorities and expiry propagation.
+/// 11) Global cache and per‑authority state with multiple authorities and
+///     expiry propagation.
 ///
 /// Scenario:
 /// - Authority A gets a lock L1 with expiry E.
 /// - Warp to slot E+1.
-/// - Authority B adds a lock L2 on the same mint.
-///   This operation should prune the expired L1 from A and from the global cache.
+/// - Authority B adds a lock L2 on the same mint. This operation should prune
+///   the expired L1 from A and from the global cache.
 #[test_log::test]
 fn test_authlock_global_cache_with_multiple_authorities_and_expiry_v2() {
     let mut env = setup_env(5_000_000, 3_000_000);
@@ -646,7 +659,8 @@ fn test_authlock_global_cache_with_multiple_authorities_and_expiry_v2() {
     // Advance beyond expiry.
     // env.context.svm.warp_to_slot(501);
 
-    // L2 on authority B with later expiry; this should trigger cache/expiry maintenance.
+    // L2 on authority B with later expiry; this should trigger cache/expiry
+    // maintenance.
     run_manage_auth_lock(
         &mut env,
         1,

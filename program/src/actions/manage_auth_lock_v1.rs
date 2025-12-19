@@ -388,7 +388,8 @@ fn perform_replace_all_operation(
             // Update the position for the role we're updating
             if position.id() == authority_to_update_id {
                 position.boundary = (position.boundary() as i64 + size_diff) as u32;
-                // Also add a condition in unwrap that will return 0 if authority_to_update_id is 0 and error is returned
+                // Also add a condition in unwrap that will return 0 if authority_to_update_id
+                // is 0 and error is returned
                 let num_actions = if authority_to_update_id == 0 {
                     calculate_num_actions(new_actions).unwrap_or(0) as u16
                 } else {
@@ -907,7 +908,8 @@ pub fn manage_auth_lock_v1(
             let mut new_actions_for_cache = Vec::new();
             // Cache update logic
             for auth_lock in cache_auth_locks {
-                // Check the balance of the wallet so that the amount that is being locked is less than the balance of the wallet
+                // Check the balance of the wallet so that the amount that is being locked is
+                // less than the balance of the wallet
                 if auth_lock.mint == [0; 32] {
                     let wallet_balance = account_classification
                         .iter()
@@ -967,7 +969,8 @@ pub fn manage_auth_lock_v1(
                     RoleMut::get_action_mut::<AuthorizationLock>(actions, &auth_lock.mint)?
                 {
                     if action.amount == 0 {
-                        // Remove the action by performing a remove by mints operation done separately
+                        // Remove the action by performing a remove by mints
+                        // operation done separately
                     } else {
                         action.update(auth_lock.amount, auth_lock.expires_at);
                     }
@@ -1120,7 +1123,8 @@ pub fn get_cache_data(
     }
     let mut expired_auth_locks = Vec::new();
 
-    // Iterate through the role_data and update the auth lock for each which is there in the mint.
+    // Iterate through the role_data and update the auth lock for each which is
+    // there in the mint.
     let mut cursor = 0;
 
     while cursor < roles.len() {
@@ -1159,7 +1163,8 @@ pub fn get_cache_data(
                             ..actions_cursor + Action::LEN + AuthorizationLock::LEN,
                     ))?
                 };
-                // call the auth_lock.update_cache with the corresponding cache_auth_locks where the mint is the auth_lock.mint
+                // call the auth_lock.update_cache with the corresponding cache_auth_locks where
+                // the mint is the auth_lock.mint
                 if let Some(cache_lock) = cache_auth_locks
                     .iter_mut()
                     .find(|lock| lock.mint == auth_lock.mint)
@@ -1243,7 +1248,8 @@ fn create_new_actions_for_cache(
 /// * `mint` - The mint to search for
 ///
 /// # Returns
-/// * `Result<Option<&AuthorizationLock>, ProgramError>` - The lock if found, or None
+/// * `Result<Option<&AuthorizationLock>, ProgramError>` - The lock if found, or
+///   None
 pub fn find_auth_lock_for_mint<'a>(
     actions_data: &'a [u8],
     mint: &[u8; 32],
