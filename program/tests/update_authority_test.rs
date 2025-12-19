@@ -422,7 +422,7 @@ fn test_update_authority_ed25519_remove_by_index_with_multiple_actions() -> anyh
         context.default_payer.pubkey(),
         root_authority.pubkey(),
         role_id,
-        1, // authority_id 1 (the second authority)
+        2, // authority_id 2 (the second authority)
         UpdateAuthorityData::RemoveActionsByIndex(indices_to_remove),
     )?;
 
@@ -467,7 +467,7 @@ fn test_update_authority_ed25519_remove_by_index_with_multiple_actions() -> anyh
 
     // Verify role 1 has 4 actions after removing 2 (started with 6)
     let role = swig_data
-        .get_role(1)
+        .get_role(2)
         .map_err(|e| anyhow::anyhow!("Failed to get role 1: {:?}", e))?
         .unwrap();
     let role_actions = role
@@ -490,7 +490,7 @@ fn test_update_authority_ed25519_remove_by_index_with_multiple_actions() -> anyh
 
     // Verify subsequent roles are still accessible
     let role2 = swig_data
-        .get_role(2)
+        .get_role(3)
         .map_err(|e| anyhow::anyhow!("Failed to get role 2: {:?}", e))?
         .unwrap();
     assert_eq!(
@@ -500,7 +500,7 @@ fn test_update_authority_ed25519_remove_by_index_with_multiple_actions() -> anyh
     );
 
     let role3 = swig_data
-        .get_role(3)
+        .get_role(4)
         .map_err(|e| anyhow::anyhow!("Failed to get role 3: {:?}", e))?
         .unwrap();
     assert_eq!(
@@ -595,15 +595,15 @@ fn test_update_authority_boundary_correctness_on_shrink() -> anyhow::Result<()> 
 
     // Get positions before update
     let role1_before = swig_data_before
-        .get_role(1)
+        .get_role(2)
         .map_err(|e| anyhow::anyhow!("Failed to get role 1: {:?}", e))?
         .unwrap();
     let role2_before = swig_data_before
-        .get_role(2)
+        .get_role(3)
         .map_err(|e| anyhow::anyhow!("Failed to get role 2: {:?}", e))?
         .unwrap();
     let role3_before = swig_data_before
-        .get_role(3)
+        .get_role(4)
         .map_err(|e| anyhow::anyhow!("Failed to get role 3: {:?}", e))?
         .unwrap();
 
@@ -638,7 +638,7 @@ fn test_update_authority_boundary_correctness_on_shrink() -> anyhow::Result<()> 
         context.default_payer.pubkey(),
         root_authority.pubkey(),
         role_id,
-        1, // Update role 1
+        2, // Update role 2
         UpdateAuthorityData::RemoveActionsByIndex(indices_to_remove),
     )?;
 
@@ -668,7 +668,7 @@ fn test_update_authority_boundary_correctness_on_shrink() -> anyhow::Result<()> 
 
     // Verify role 1 has 2 actions remaining (was 4, removed 2)
     let role1_after = swig_data_after
-        .get_role(1)
+        .get_role(2)
         .map_err(|e| anyhow::anyhow!("Failed to get role 1: {:?}", e))?
         .unwrap();
     println!(
@@ -684,7 +684,7 @@ fn test_update_authority_boundary_correctness_on_shrink() -> anyhow::Result<()> 
 
     // Verify role 2 is still accessible and has correct actions
     let role2_after = swig_data_after
-        .get_role(2)
+        .get_role(3)
         .map_err(|e| anyhow::anyhow!("Failed to get role 2: {:?}", e))?
         .unwrap();
     println!(
@@ -700,7 +700,7 @@ fn test_update_authority_boundary_correctness_on_shrink() -> anyhow::Result<()> 
 
     // Verify role 3 is still accessible and has correct actions
     let role3_after = swig_data_after
-        .get_role(3)
+        .get_role(4)
         .map_err(|e| anyhow::anyhow!("Failed to get role 3: {:?}", e))?
         .unwrap();
     println!(
@@ -758,7 +758,7 @@ fn test_update_authority_boundary_correctness_on_shrink() -> anyhow::Result<()> 
         role_count += 1;
     }
 
-    assert_eq!(role_count, 4, "Should have 4 roles total");
+    assert_eq!(role_count, 5, "Should have 5 roles total");
 
     Ok(())
 }
@@ -833,7 +833,7 @@ fn test_update_authority_multiple_shrinks() -> anyhow::Result<()> {
         context.default_payer.pubkey(),
         root_authority.pubkey(),
         role_id,
-        1,
+        2,
         UpdateAuthorityData::RemoveActionsByIndex(vec![0u16, 1u16]),
     )?;
 
@@ -857,7 +857,7 @@ fn test_update_authority_multiple_shrinks() -> anyhow::Result<()> {
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
         .map_err(|e| anyhow::anyhow!("Failed to deserialize swig: {:?}", e))?;
     let role1 = swig_data
-        .get_role(1)
+        .get_role(2)
         .map_err(|e| anyhow::anyhow!("Failed to get role 1: {:?}", e))?
         .unwrap();
     assert_eq!(
@@ -867,7 +867,7 @@ fn test_update_authority_multiple_shrinks() -> anyhow::Result<()> {
     );
 
     let role2 = swig_data
-        .get_role(2)
+        .get_role(3)
         .map_err(|e| anyhow::anyhow!("Failed to get role 2: {:?}", e))?
         .unwrap();
     assert_eq!(
@@ -883,7 +883,7 @@ fn test_update_authority_multiple_shrinks() -> anyhow::Result<()> {
         context.default_payer.pubkey(),
         root_authority.pubkey(),
         role_id,
-        1,
+        2,
         UpdateAuthorityData::RemoveActionsByIndex(vec![0u16]),
     )?;
 
@@ -907,7 +907,7 @@ fn test_update_authority_multiple_shrinks() -> anyhow::Result<()> {
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
         .map_err(|e| anyhow::anyhow!("Failed to deserialize swig: {:?}", e))?;
     let role1 = swig_data
-        .get_role(1)
+        .get_role(2)
         .map_err(|e| anyhow::anyhow!("Failed to get role 1: {:?}", e))?
         .unwrap();
     assert_eq!(
@@ -917,7 +917,7 @@ fn test_update_authority_multiple_shrinks() -> anyhow::Result<()> {
     );
 
     let role2 = swig_data
-        .get_role(2)
+        .get_role(3)
         .map_err(|e| anyhow::anyhow!("Failed to get role 2: {:?}", e))?
         .unwrap();
     assert_eq!(
@@ -987,11 +987,11 @@ fn test_update_authority_boundary_correctness_on_grow() -> anyhow::Result<()> {
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
         .map_err(|e| anyhow::anyhow!("Failed to deserialize swig: {:?}", e))?;
     let role1_before = swig_data
-        .get_role(1)
+        .get_role(2)
         .map_err(|e| anyhow::anyhow!("Failed to get role 1: {:?}", e))?
         .unwrap();
     let role2_before = swig_data
-        .get_role(2)
+        .get_role(3)
         .map_err(|e| anyhow::anyhow!("Failed to get role 2: {:?}", e))?
         .unwrap();
     println!("BEFORE GROW:");
@@ -1018,7 +1018,7 @@ fn test_update_authority_boundary_correctness_on_grow() -> anyhow::Result<()> {
         context.default_payer.pubkey(),
         root_authority.pubkey(),
         role_id,
-        1,
+        2,
         UpdateAuthorityData::AddActions(additional_actions),
     )?;
 
@@ -1043,11 +1043,11 @@ fn test_update_authority_boundary_correctness_on_grow() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to deserialize swig: {:?}", e))?;
 
     let role1_after = swig_data
-        .get_role(1)
+        .get_role(2)
         .map_err(|e| anyhow::anyhow!("Failed to get role 1: {:?}", e))?
         .unwrap();
     let role2_after = swig_data
-        .get_role(2)
+        .get_role(3)
         .map_err(|e| anyhow::anyhow!("Failed to get role 2: {:?}", e))?
         .unwrap();
 
@@ -1141,13 +1141,13 @@ fn test_update_authority_shrink_last_role() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to lookup role id: {:?}", e))?
         .unwrap();
 
-    // Remove 2 actions from the last role (role 1)
+    // Remove 2 actions from the last role (role 2)
     let update_ix = UpdateAuthorityInstruction::new_with_ed25519_authority(
         swig,
         context.default_payer.pubkey(),
         root_authority.pubkey(),
         role_id,
-        1,
+        2,
         UpdateAuthorityData::RemoveActionsByIndex(vec![0u16, 1u16]),
     )?;
 
@@ -1172,7 +1172,7 @@ fn test_update_authority_shrink_last_role() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to deserialize swig: {:?}", e))?;
 
     let role1 = swig_data
-        .get_role(1)
+        .get_role(2)
         .map_err(|e| anyhow::anyhow!("Failed to get role 1: {:?}", e))?
         .unwrap();
     assert_eq!(
@@ -1183,7 +1183,7 @@ fn test_update_authority_shrink_last_role() -> anyhow::Result<()> {
 
     // Root role should still be accessible
     let role0 = swig_data
-        .get_role(0)
+        .get_role(1)
         .map_err(|e| anyhow::anyhow!("Failed to get role 0: {:?}", e))?
         .unwrap();
     assert_eq!(
