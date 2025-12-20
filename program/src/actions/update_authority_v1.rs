@@ -12,7 +12,7 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, Action},
+    action::{all::All, manage_authority::ManageAuthority, Action, Permission},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::{Swig, SwigBuilder},
@@ -25,6 +25,8 @@ use crate::{
         accounts::{Context, UpdateAuthorityV1Accounts},
         SwigInstruction,
     },
+    util::permission_utils::{check_valid_permissions, get_permissions, permissions_to_mask},
+    SWIG_ENTERPRISE_ID,
 };
 
 /// Calculates the actual number of actions in the provided actions data.
@@ -236,6 +238,27 @@ impl<'a> UpdateAuthorityV1<'a> {
         }
     }
 
+    /// Gets the operation data as actions for ReplaceAll and AddActions
+    /// operations.
+    pub fn get_permissions_from_data(&self) -> Result<Option<Vec<Permission>>, ProgramError> {
+        match self.get_operation()? {
+            AuthorityUpdateOperation::ReplaceAll => {
+                if self.is_new_format() {
+                    // New format: skip first byte (operation type)
+                    Ok(Some(get_permissions(&self.operation_data[1..])?))
+                } else {
+                    // Old format: all data is actions
+                    Ok(Some(get_permissions(self.operation_data)?))
+                }
+            },
+            AuthorityUpdateOperation::AddActions => {
+                // New format only: skip first byte (operation type)
+                Ok(Some(get_permissions(&self.operation_data[1..])?))
+            },
+            _ => Ok(None),
+        }
+    }
+
     /// Gets the operation data as action type discriminators for
     /// RemoveActionsByType.
     pub fn get_remove_types(&self) -> Result<&[u8], ProgramError> {
@@ -323,7 +346,13 @@ fn perform_replace_all_operation(
             // Update the position for the role we're updating
             if position.id() == authority_to_update_id {
                 position.boundary = (position.boundary() as i64 + size_diff) as u32;
-                position.num_actions = calculate_num_actions(new_actions)? as u16;
+                // Also add a condition in unwrap that will return 0 if authority_to_update_id is 0 and error is returned
+                let num_actions = if authority_to_update_id == 0 {
+                    calculate_num_actions(new_actions).unwrap_or(0) as u16
+                } else {
+                    calculate_num_actions(new_actions)? as u16
+                };
+                position.num_actions = num_actions;
             }
 
             cursor = position.boundary() as usize;
@@ -335,7 +364,12 @@ fn perform_replace_all_operation(
                 &mut swig_roles[authority_offset..authority_offset + Position::LEN],
             )?
         };
-        position.num_actions = calculate_num_actions(new_actions)? as u16;
+        let num_actions = if authority_to_update_id == 0 {
+            calculate_num_actions(new_actions).unwrap_or(0) as u16
+        } else {
+            calculate_num_actions(new_actions)? as u16
+        };
+        position.num_actions = num_actions;
     }
 
     if actions_offset + new_actions_size > swig_roles.len() {
@@ -436,7 +470,7 @@ fn perform_remove_by_type_operation(
         let action_len = action_header.length() as usize;
         let total_action_size = Action::LEN + action_len;
 
-        if cursor + total_action_size > current_actions.len() {
+        if cursor + total_action_size > current_actions.len() && authority_to_update_id != 0 {
             return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
         }
 
@@ -453,7 +487,7 @@ fn perform_remove_by_type_operation(
     }
 
     // Ensure we don't remove all actions
-    if filtered_actions.is_empty() {
+    if filtered_actions.is_empty() && authority_to_update_id != 0 {
         return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
     }
 
@@ -511,7 +545,7 @@ fn perform_remove_by_index_operation(
     }
 
     // Ensure we don't remove all actions
-    if filtered_actions.is_empty() {
+    if filtered_actions.is_empty() && authority_to_update_id != 0 {
         return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
     }
 
@@ -604,6 +638,49 @@ pub fn update_authority_v1(
 
     if all.is_none() && manage_authority.is_none() {
         return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
+    }
+
+    if swig.swig_type == 1 {
+        let enterprise_account = ctx
+            .remaining_accounts
+            .get(1)
+            .ok_or(SwigError::EnterpriseAccountNotFound)?;
+
+        if enterprise_account.owner().ne(&SWIG_ENTERPRISE_ID) {
+            return Err(SwigError::InvalidEnterpriseAccount.into());
+        }
+
+        // check the data inside the enterprise account. ie fetch the enterprise owner
+        if enterprise_account.data_len() == 96 {
+            let enterprise_data = unsafe { enterprise_account.borrow_data_unchecked() };
+            let enterprise_owner = &enterprise_data[..32];
+
+            let subscription_end = u64::from_le_bytes(
+                enterprise_data[72..80]
+                    .try_into()
+                    .map_err(|_| SwigError::InvalidEnterpriseData)?,
+            );
+
+            if subscription_end < Clock::get()?.slot {
+                return Err(SwigError::EnterpriseSubscriptionExpired.into());
+            }
+
+            let permissions = update_authority_v1.get_permissions_from_data()?;
+
+            if let Some(permissions) = permissions {
+                let permissions_mask = permissions_to_mask(permissions);
+
+                let enterprise_allowed_permissions = u64::from_le_bytes(
+                    enterprise_data[80..88]
+                        .try_into()
+                        .map_err(|_| SwigError::InvalidEnterpriseData)?,
+                );
+
+                if !check_valid_permissions(enterprise_allowed_permissions, permissions_mask) {
+                    return Err(SwigError::InvalidEnterprisePermissions.into());
+                }
+            }
+        }
     }
 
     // Verify the authority to update exists and calculate size difference

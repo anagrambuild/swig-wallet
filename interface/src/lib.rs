@@ -201,6 +201,7 @@ impl CreateInstruction {
             initial_authority.authority_type,
             initial_authority.authority.len() as u16,
             wallet_address_bump,
+            0,
         );
         let mut write = Vec::new();
         write.extend_from_slice(
@@ -229,6 +230,56 @@ impl CreateInstruction {
     }
 }
 
+pub struct CreateEnterpriseInstruction;
+impl CreateEnterpriseInstruction {
+    pub fn new(
+        swig_account: Pubkey,
+        swig_bump_seed: u8,
+        payer: Pubkey,
+        swig_wallet_address: Pubkey,
+        wallet_address_bump: u8,
+        initial_authority: AuthorityConfig,
+        actions: Vec<ClientAction>,
+        id: [u8; 32],
+        enterprise_account: Pubkey,
+    ) -> anyhow::Result<Instruction> {
+        let create = CreateV1Args::new(
+            id,
+            swig_bump_seed,
+            initial_authority.authority_type,
+            initial_authority.authority.len() as u16,
+            wallet_address_bump,
+            1,
+        );
+        let mut write = Vec::new();
+        write.extend_from_slice(
+            create
+                .into_bytes()
+                .map_err(|e| anyhow::anyhow!("Failed to serialize create {:?}", e))?,
+        );
+        write.extend_from_slice(initial_authority.authority);
+        let mut action_bytes = Vec::new();
+        for action in actions {
+            action
+                .write(&mut action_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize action {:?}", e))?;
+        }
+        write.append(&mut action_bytes);
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts: vec![
+                AccountMeta::new(swig_account, false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new(swig_wallet_address, false),
+                AccountMeta::new(system_program::ID, false),
+                AccountMeta::new(Pubkey::from(swig::SWIG_ENTERPRISE_ID), false),
+                AccountMeta::new(enterprise_account, false),
+            ],
+            data: write,
+        })
+    }
+}
+
 pub struct AddAuthorityInstruction;
 impl AddAuthorityInstruction {
     pub fn new_with_ed25519_authority(
@@ -244,6 +295,50 @@ impl AddAuthorityInstruction {
             AccountMeta::new(payer, true),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(authority, true),
+        ];
+
+        let mut write = Vec::new();
+        let mut action_bytes = Vec::new();
+        let num_actions = actions.len() as u8;
+        for action in actions {
+            action
+                .write(&mut action_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize action {:?}", e))?;
+        }
+        let args = AddAuthorityV1Args::new(
+            acting_role_id,
+            new_authority_config.authority_type,
+            new_authority_config.authority.len() as u16,
+            action_bytes.len() as u16,
+            num_actions,
+        );
+
+        write.extend_from_slice(args.into_bytes().unwrap());
+        write.extend_from_slice(new_authority_config.authority);
+        write.extend_from_slice(&action_bytes);
+        write.extend_from_slice(&[3]);
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: write,
+        })
+    }
+
+    pub fn new_with_ed25519_authority_enterprise(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority: Pubkey,
+        acting_role_id: u32,
+        new_authority_config: AuthorityConfig,
+        actions: Vec<ClientAction>,
+        enterprise_account: Pubkey,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new(enterprise_account, false),
         ];
 
         let mut write = Vec::new();
@@ -623,6 +718,26 @@ impl SignV2Instruction {
             inner_instruction,
             role_id,
             &[],
+            None,
+        )
+    }
+
+    pub fn new_ed25519_enterprise(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        authority: Pubkey,
+        inner_instruction: Instruction,
+        role_id: u32,
+        enterprise_account: Pubkey,
+    ) -> anyhow::Result<Instruction> {
+        Self::new_ed25519_with_signers(
+            swig_account,
+            swig_wallet_address,
+            authority,
+            inner_instruction,
+            role_id,
+            &[],
+            Some(enterprise_account),
         )
     }
 
@@ -633,12 +748,16 @@ impl SignV2Instruction {
         inner_instruction: Instruction,
         role_id: u32,
         transaction_signers: &[Pubkey],
+        enterprise_account: Option<Pubkey>,
     ) -> anyhow::Result<Instruction> {
-        let accounts = vec![
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new_readonly(authority, true),
         ];
+        if let Some(enterprise_account) = enterprise_account {
+            accounts.push(AccountMeta::new(enterprise_account, false));
+        }
         let (mut accounts, ixs) =
             compact_instructions(swig_account, accounts, vec![inner_instruction]);
         for account in &mut accounts {
@@ -1084,6 +1203,30 @@ impl UpdateAuthorityInstruction {
             authority_to_update_id,
             operation,
             operation_data,
+            None,
+        )
+    }
+
+    /// Update authority using Ed25519 signature.
+    pub fn new_with_ed25519_authority_enterprise(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority: Pubkey,
+        acting_role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+        enterprise_account: Pubkey,
+    ) -> anyhow::Result<Instruction> {
+        let (operation, operation_data) = update_data.to_operation_and_data()?;
+        Self::build_ed25519_instruction(
+            swig_account,
+            payer,
+            authority,
+            acting_role_id,
+            authority_to_update_id,
+            operation,
+            operation_data,
+            Some(enterprise_account),
         )
     }
 
@@ -1095,13 +1238,18 @@ impl UpdateAuthorityInstruction {
         authority_to_update_id: u32,
         operation: AuthorityUpdateOperation,
         operation_data: Vec<u8>,
+        enterprise_account: Option<Pubkey>,
     ) -> anyhow::Result<Instruction> {
-        let accounts = vec![
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
+
+        if let Some(enterprise_account) = enterprise_account {
+            accounts.push(AccountMeta::new(enterprise_account, false));
+        }
 
         // Encode operation type in the first byte of the data
         let mut encoded_data = Vec::new();

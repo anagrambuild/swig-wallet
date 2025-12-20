@@ -191,7 +191,7 @@ fn test_update_authority_ed25519_add_actions() -> anyhow::Result<()> {
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
         .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
-    let role = swig_data.get_role(1).unwrap().unwrap();
+    let role = swig_data.get_role(2).unwrap().unwrap();
 
     println!("role: {:?}", role.get_all_actions());
     let role_actions = role.get_all_actions().unwrap();
@@ -324,7 +324,7 @@ fn test_update_authority_ed25519_remove_by_index() -> anyhow::Result<()> {
         context.default_payer.pubkey(),
         root_authority.pubkey(),
         role_id,
-        1, // authority_id 1 (the second authority)
+        2, // authority_id 2 (the second authority)
         UpdateAuthorityData::RemoveActionsByIndex(indices_to_remove),
     )?;
 

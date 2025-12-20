@@ -49,7 +49,7 @@ fn test_create_swig_account_with_ed25519_authority() {
     let (swig_key, _) = Pubkey::find_program_address(&swig_account_seeds(&swig_id), &program_id());
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let root_role = swig_data.get_role(0).unwrap().unwrap();
+    let root_role = swig_data.get_role(1).unwrap().unwrap();
 
     assert_eq!(swig_data.state.id, swig_id);
     assert_eq!(swig_data.state.roles, 1);
@@ -98,7 +98,7 @@ fn test_create_swig_account_with_secp256k1_authority() {
     let (swig_key, _) = Pubkey::find_program_address(&swig_account_seeds(&swig_id), &program_id());
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let root_role = swig_data.get_role(0).unwrap().unwrap();
+    let root_role = swig_data.get_role(1).unwrap().unwrap();
 
     assert_eq!(swig_data.state.id, swig_id);
     assert_eq!(swig_data.state.roles, 1);

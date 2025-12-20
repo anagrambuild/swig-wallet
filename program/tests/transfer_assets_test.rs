@@ -90,7 +90,7 @@ fn test_transfer_assets_sol_basic() {
         swig_wallet_address_pubkey,
         authority.pubkey(),
         context.default_payer.pubkey(),
-        0, // role_id
+        1, // role_id
     );
 
     let message = VersionedMessage::V0(
@@ -332,7 +332,7 @@ fn test_transfer_assets_no_excess_lamports() {
         swig_wallet_address_pubkey,
         authority.pubkey(),
         context.default_payer.pubkey(),
-        0,
+        1,
     );
 
     let message = VersionedMessage::V0(
@@ -464,7 +464,7 @@ fn test_transfer_assets_spl_token_invalid_destination() {
             swig_wallet_address_pubkey,
             authority.pubkey(), // authority is the payer
             authority.pubkey(),
-            0, // role_id
+            1, // role_id
         )
         .unwrap()
         .data,

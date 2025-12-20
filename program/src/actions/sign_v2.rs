@@ -7,6 +7,7 @@ use core::mem::MaybeUninit;
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
+    msg,
     program_error::ProgramError,
     pubkey::Pubkey,
     sysvars::{clock::Clock, Sysvar},
@@ -48,7 +49,7 @@ use crate::{
         SwigInstruction,
     },
     util::hash_except,
-    AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
+    AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SWIG_ENTERPRISE_ID, SYSTEM_PROGRAM_ID,
 };
 // use swig_instructions::InstructionIterator;
 
@@ -205,11 +206,55 @@ pub fn sign_v2(
     }
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
-    let role = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)?;
-    if role.is_none() {
-        return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+
+    if swig.swig_type == 1 {
+        for account in ctx.remaining_accounts {
+            msg!("remaining account: {:?}", account.key());
+        }
+        let enterprise_account = ctx
+            .remaining_accounts
+            .get(0)
+            .ok_or(SwigError::EnterpriseAccountNotFound)?;
+
+        if enterprise_account.owner().ne(&SWIG_ENTERPRISE_ID) {
+            return Err(SwigError::InvalidEnterpriseAccount.into());
+        }
+
+        // check the data inside the enterprise account. ie fetch the enterprise owner
+        if enterprise_account.data_len() == 96 {
+            let enterprise_data = unsafe { enterprise_account.borrow_data_unchecked() };
+            let enterprise_owner = &enterprise_data[..32];
+
+            let subscription_end = u64::from_le_bytes(
+                enterprise_data[72..80]
+                    .try_into()
+                    .map_err(|_| SwigError::InvalidEnterpriseData)?,
+            );
+
+            if subscription_end < Clock::get()?.slot {
+                return Err(SwigError::EnterpriseSubscriptionExpired.into());
+            }
+        }
     }
-    let role = role.unwrap();
+
+    // Get offsets first without mutable borrowing
+    let global_role_offsets = Swig::get_role_offsets(0, swig_roles)?;
+    if global_role_offsets.is_none() {
+        return Err(SwigError::GlobalRoleNotFound.into());
+    }
+    let (global_role_start, global_role_end) = global_role_offsets.unwrap();
+
+    let (global_role, user_roles) = swig_roles.split_at_mut(global_role_end);
+    let global_role = Swig::get_role_from_role_data_slice(
+        &mut global_role[global_role_start..global_role_end],
+        global_role_start,
+        global_role_end,
+    )?
+    .unwrap();
+    let user_role =
+        Swig::get_mut_role_without_global(sign_v2.args.role_id, user_roles, global_role_end)?;
+    let role = user_role.unwrap();
+
     let clock = Clock::get()?;
     let slot = clock.slot;
     if role.authority.session_based() {

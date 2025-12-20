@@ -33,6 +33,8 @@ use swig_state::{
 
 use crate::error::SwigError;
 
+pub mod permission_utils;
+
 /// Cache for program scope information to optimize lookups.
 ///
 /// This struct maintains a mapping of target account public keys to their

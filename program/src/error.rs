@@ -116,6 +116,24 @@ pub enum SwigError {
     SignV1CannotBeUsedWithSwigV2,
     /// SignV2 instruction cannot be used with Swig v1 accounts
     SignV2CannotBeUsedWithSwigV1,
+
+    /// Global role not found
+    GlobalRoleNotFound,
+
+    /// Invalid enterprise account
+    EnterpriseAccountNotFound,
+    /// Invalid enterprise account
+    InvalidEnterpriseAccount,
+    /// Invalid enterprise owner mismatch
+    InvalidEnterpriseOwnerMismatch,
+    /// Enterprise max wallets exceeded
+    EnterpriseMaxWalletsExceeded,
+    /// Enterprise data is invalid
+    InvalidEnterpriseData,
+    /// Enterprise subscription expired
+    EnterpriseSubscriptionExpired,
+    /// Invalid enterprise permissions
+    InvalidEnterprisePermissions,
 }
 
 /// Implements conversion from SwigError to ProgramError.
