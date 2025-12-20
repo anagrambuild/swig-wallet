@@ -15,10 +15,10 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     sysvar::{clock::Clock, rent::Rent},
     transaction::{TransactionError, VersionedTransaction},
 };
+use solana_system_interface::instruction as system_instruction;
 use swig::actions::sign_v1::SignV1Args;
 use swig_interface::{compact_instructions, AuthorityConfig, ClientAction};
 use swig_state::{
@@ -82,7 +82,7 @@ fn test_transfer_sol_with_additional_authority() {
         vec![
             ClientAction::SolLimit(SolLimit { amount: amount / 2 }),
             ClientAction::Program(Program {
-                program_id: solana_sdk::system_program::ID.to_bytes(),
+                program_id: solana_sdk_ids::system_program::ID.to_bytes(),
             }),
         ],
     )
@@ -394,7 +394,7 @@ fn test_fail_transfer_sol_with_additional_authority_not_enough() {
         vec![
             ClientAction::SolLimit(SolLimit { amount: 1000 }),
             ClientAction::Program(Program {
-                program_id: solana_sdk::system_program::ID.to_bytes(),
+                program_id: solana_sdk_ids::system_program::ID.to_bytes(),
             }),
         ],
     )
@@ -640,7 +640,7 @@ fn test_transfer_sol_with_recurring_limit() {
                 current_amount: 500,
             }),
             ClientAction::Program(Program {
-                program_id: solana_sdk::system_program::ID.to_bytes(),
+                program_id: solana_sdk_ids::system_program::ID.to_bytes(),
             }),
         ],
     )
@@ -799,7 +799,7 @@ fn test_transfer_sol_with_recurring_limit_window_reset() {
                 current_amount: 500,
             }),
             ClientAction::Program(Program {
-                program_id: solana_sdk::system_program::ID.to_bytes(),
+                program_id: solana_sdk_ids::system_program::ID.to_bytes(),
             }),
         ],
     )
@@ -1252,7 +1252,7 @@ fn test_sol_limit_cpi_enforcement() {
                 amount: LAMPORTS_PER_SOL,
             }),
             ClientAction::Program(Program {
-                program_id: solana_sdk::system_program::ID.to_bytes(),
+                program_id: solana_sdk_ids::system_program::ID.to_bytes(),
             }),
         ],
     )
@@ -1409,7 +1409,7 @@ fn test_sol_limit_cpi_enforcement_no_sol_limit() {
             authority: second_authority.pubkey().as_ref(),
         },
         vec![ClientAction::Program(Program {
-            program_id: solana_sdk::system_program::ID.to_bytes(),
+            program_id: solana_sdk_ids::system_program::ID.to_bytes(),
         })],
     )
     .unwrap();

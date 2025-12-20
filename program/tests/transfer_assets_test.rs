@@ -6,18 +6,18 @@ mod common;
 use common::*;
 use litesvm::types::TransactionMetadata;
 use litesvm_token::spl_token;
+use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
-    compute_budget::ComputeBudgetInstruction,
     instruction::{AccountMeta, Instruction},
     message::{v0, VersionedMessage},
     program_pack::Pack,
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     sysvar::rent::Rent,
     transaction::VersionedTransaction,
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_interface::{swig, TransferAssetsV1Instruction};
 use swig_state::{
     action::all::All,
@@ -241,7 +241,7 @@ fn test_transfer_assets_unmigrated_account() {
     let wallet_account = solana_sdk::account::Account {
         lamports: 0,
         data: vec![],
-        owner: solana_sdk::system_program::ID,
+        owner: solana_sdk_ids::system_program::ID,
         executable: false,
         rent_epoch: u64::MAX,
     };
@@ -453,7 +453,7 @@ fn test_transfer_assets_spl_token_invalid_destination() {
             AccountMeta::new(swig_pubkey, false),
             AccountMeta::new(swig_wallet_address_pubkey, false),
             AccountMeta::new(authority.pubkey(), true), // authority is the payer
-            AccountMeta::new_readonly(solana_sdk::system_program::ID, false),
+            AccountMeta::new_readonly(solana_sdk_ids::system_program::ID, false),
             // Token transfer accounts: source, destination, token_program
             AccountMeta::new(source_ata, false),
             AccountMeta::new(malicious_dest_ata, false), // malicious destination

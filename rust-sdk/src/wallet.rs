@@ -4,22 +4,22 @@ use litesvm::LiteSVM;
 #[cfg(all(feature = "rust_sdk_test", test))]
 use litesvm_token::CreateAssociatedTokenAccount;
 use solana_account_decoder_client_types::{ParsedAccount, UiAccountData};
+use solana_address_lookup_table_interface::state::AddressLookupTable;
 use solana_client::{
     rpc_client::RpcClient, rpc_request::TokenAccountsFilter, rpc_response::RpcKeyedAccount,
 };
+use solana_commitment_config::CommitmentConfig;
 use solana_program::{hash::Hash, instruction::Instruction, pubkey::Pubkey};
 use solana_sdk::{
     account::ReadableAccount,
-    address_lookup_table::{state::AddressLookupTable, AddressLookupTableAccount},
     clock::Clock,
-    commitment_config::CommitmentConfig,
-    message::{v0, VersionedMessage},
+    message::{v0, AddressLookupTableAccount, VersionedMessage},
     pubkey,
     rent::Rent,
     signature::{Keypair, Signature, Signer},
-    system_instruction::{self, SystemInstruction},
     transaction::{Transaction, VersionedTransaction},
 };
+use solana_system_interface::instruction as system_instruction;
 use spl_associated_token_account::{
     get_associated_token_address, instruction::create_associated_token_account,
 };
@@ -27,9 +27,8 @@ use spl_token::ID as TOKEN_PROGRAM_ID;
 use swig_interface::{swig, swig_key};
 use swig_state::{
     action::{
-        all::All, manage_authority::ManageAuthority, program_scope::ProgramScope,
-        sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
-        sol_recurring_destination_limit::SolRecurringDestinationLimit,
+        all::All, manage_authority::ManageAuthority, sol_destination_limit::SolDestinationLimit,
+        sol_limit::SolLimit, sol_recurring_destination_limit::SolRecurringDestinationLimit,
         sol_recurring_limit::SolRecurringLimit, sub_account::SubAccount,
         token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
         token_recurring_destination_limit::TokenRecurringDestinationLimit,
@@ -859,7 +858,7 @@ impl<'c> SwigWallet<'c> {
                             let mut hasher = solana_sdk::keccak::Hasher::default();
                             hasher.hash(authority_hex.as_bytes());
                             let hash = hasher.result();
-                            let address = format!("0x{}", hex::encode(&hash.0[12..32]));
+                            let address = format!("0x{}", hex::encode(&hash.as_bytes()[12..32]));
                             address
                         },
                         AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
@@ -1030,8 +1029,11 @@ impl<'c> SwigWallet<'c> {
                 }
 
                 // Check Program Scopes
-                let program_scopes = Role::get_all_actions_of_type::<ProgramScope>(&role)
-                    .map_err(|_| SwigError::AuthorityNotFound)?;
+                // Use find_all_program_scopes_in_role instead of Role::get_all_actions_of_type
+                // because ProgramScope contains u128 fields that require 16-byte alignment,
+                // but action data in the swig account may not be properly aligned for off-chain
+                // use.
+                let program_scopes = crate::types::find_all_program_scopes_in_role(&role);
                 for (index, action) in program_scopes.iter().enumerate() {
                     let program_id = Pubkey::from(action.program_id);
                     let target_account = Pubkey::from(action.target_account);
@@ -1771,7 +1773,7 @@ impl<'c> SwigWallet<'c> {
                 let mut hasher = solana_sdk::keccak::Hasher::default();
                 hasher.hash(authority_hex.as_bytes());
                 let hash = hasher.result();
-                let address = format!("0x{}", hex::encode(&hash.0[12..32]));
+                let address = format!("0x{}", hex::encode(&hash.as_bytes()[12..32]));
                 Ok(address)
             },
             AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {

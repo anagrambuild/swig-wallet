@@ -100,7 +100,7 @@ fn should_add_secp256k1_authority() {
     let mut hasher = solana_sdk::keccak::Hasher::default();
     hasher.hash(authority_hex.as_bytes());
     let hash = hasher.result();
-    let address = format!("0x{}", hex::encode(&hash.0[12..32]));
+    let address = format!("0x{}", hex::encode(&hash.as_bytes()[12..32]));
     println!("address: {:?}", address);
 
     println!(

@@ -1,12 +1,13 @@
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
-use solana_program::{pubkey::Pubkey, system_instruction};
 use solana_sdk::{
     message::{v0, VersionedMessage},
+    pubkey::Pubkey,
     signature::{Keypair, Signer},
     transaction::VersionedTransaction,
 };
+use solana_system_interface::instruction as system_instruction;
 use swig_interface::program_id;
 use swig_state::{
     authority::AuthorityType,

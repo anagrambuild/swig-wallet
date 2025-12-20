@@ -736,6 +736,23 @@ mod tests {
         authority::{ed25519::ED25519Authority, secp256k1::CreateSecp256k1SessionAuthority},
     };
 
+    #[repr(C, align(8))]
+    struct AlignedBuffer<const N: usize>([u8; N]);
+
+    impl<const N: usize> AlignedBuffer<N> {
+        fn new() -> Self {
+            Self([0u8; N])
+        }
+
+        fn as_slice(&self) -> &[u8] {
+            &self.0
+        }
+
+        fn as_mut_slice(&mut self) -> &mut [u8] {
+            &mut self.0
+        }
+    }
+
     // Calculate exact buffer size needed for a test with N roles
     fn calculate_buffer_size(num_roles: usize, action_bytes_per_role: usize) -> usize {
         // Add extra buffer space to account for any alignment or boundary calculations
@@ -749,22 +766,27 @@ mod tests {
         action_bytes_per_role: usize,
     ) -> (Vec<u8>, [u8; 32], u8) {
         let buffer_size = calculate_buffer_size(num_roles, action_bytes_per_role);
-        let account_buffer = vec![0u8; buffer_size];
+        let mut account_buffer = vec![0u8; buffer_size + 8];
+        let offset = account_buffer.as_ptr().align_offset(8);
+        if offset != 0 {
+            account_buffer.drain(..offset);
+        }
+        account_buffer.truncate(buffer_size);
         let id = [1; 32];
         let bump = 255;
         (account_buffer, id, bump)
     }
 
     // Keep existing setup functions for backward compatibility
-    fn setup_test_buffer() -> ([u8; Swig::LEN + 256], [u8; 32], u8) {
-        let account_buffer = [0u8; Swig::LEN + 256];
+    fn setup_test_buffer() -> (AlignedBuffer<{ Swig::LEN + 256 }>, [u8; 32], u8) {
+        let account_buffer = AlignedBuffer::new();
         let id = [1; 32];
         let bump = 255;
         (account_buffer, id, bump)
     }
 
-    fn setup_large_test_buffer() -> ([u8; Swig::LEN + 512], [u8; 32], u8) {
-        let account_buffer = [0u8; Swig::LEN + 512];
+    fn setup_large_test_buffer() -> (AlignedBuffer<{ Swig::LEN + 512 }>, [u8; 32], u8) {
+        let account_buffer = AlignedBuffer::new();
         let id = [1; 32];
         let bump = 255;
         (account_buffer, id, bump)
@@ -786,12 +808,14 @@ mod tests {
         // assert_eq!(swig.reserved_lamports, 0);
 
         // Test builder creation and verify buffer state
-        let builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+        let buffer_slice = account_buffer.as_mut_slice();
+        let buffer_len = buffer_slice.len();
+        let builder = SwigBuilder::create(buffer_slice, swig).unwrap();
         assert_eq!(builder.swig.id, id);
         assert_eq!(builder.swig.bump, bump);
         assert_eq!(builder.swig.roles, 0);
         assert_eq!(builder.swig.role_counter, 0);
-        assert_eq!(builder.role_buffer.len(), account_buffer.len() - Swig::LEN);
+        assert_eq!(builder.role_buffer.len(), buffer_len - Swig::LEN);
     }
 
     #[test]
@@ -824,7 +848,7 @@ mod tests {
     fn test_add_single_role() {
         let (mut account_buffer, id, bump) = setup_test_buffer();
         let swig = Swig::new(id, bump, 0);
-        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+        let mut builder = SwigBuilder::create(account_buffer.as_mut_slice(), swig).unwrap();
 
         let authority = ED25519Authority {
             public_key: [2; 32],
@@ -853,7 +877,7 @@ mod tests {
         assert_eq!(builder.swig.role_counter, 1);
 
         // Verify role can be found and has correct data
-        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        let swig_with_roles = SwigWithRoles::from_bytes(account_buffer.as_slice()).unwrap();
         let role = swig_with_roles.get_role(0).unwrap().unwrap();
 
         // Verify authority type
@@ -873,7 +897,7 @@ mod tests {
     fn test_role_lookup() {
         let (mut account_buffer, id, bump) = setup_test_buffer();
         let swig = Swig::new(id, bump, 0);
-        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+        let mut builder = SwigBuilder::create(account_buffer.as_mut_slice(), swig).unwrap();
 
         let authority = ED25519Authority {
             public_key: [2; 32],
@@ -896,7 +920,7 @@ mod tests {
             )
             .unwrap();
 
-        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        let swig_with_roles = SwigWithRoles::from_bytes(account_buffer.as_slice()).unwrap();
 
         // Test successful role lookup
         let role = swig_with_roles.get_role(0).unwrap();
@@ -922,7 +946,7 @@ mod tests {
     fn test_multiple_roles() {
         let (mut account_buffer, id, bump) = setup_test_buffer();
         let swig = Swig::new(id, bump, 0);
-        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+        let mut builder = SwigBuilder::create(account_buffer.as_mut_slice(), swig).unwrap();
 
         let authority1 = ED25519Authority {
             public_key: [2; 32],
@@ -963,7 +987,7 @@ mod tests {
         assert_eq!(builder.swig.roles, 2);
         assert_eq!(builder.swig.role_counter, 2);
 
-        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        let swig_with_roles = SwigWithRoles::from_bytes(account_buffer.as_slice()).unwrap();
 
         // Verify roles have correct IDs and types
         let role1 = swig_with_roles.get_role(0).unwrap().unwrap();
@@ -985,7 +1009,7 @@ mod tests {
     fn test_get_mut_role() -> Result<(), ProgramError> {
         let (mut account_buffer, id, bump) = setup_test_buffer();
         let swig = Swig::new(id, bump, 0);
-        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+        let mut builder = SwigBuilder::create(account_buffer.as_mut_slice(), swig).unwrap();
 
         let authority = ED25519Authority {
             public_key: [2; 32],
@@ -1011,7 +1035,7 @@ mod tests {
             .unwrap();
 
         // Get a reference to the roles buffer for later modification
-        let roles_buffer = &mut account_buffer[Swig::LEN..];
+        let roles_buffer = &mut account_buffer.as_mut_slice()[Swig::LEN..];
 
         // Get mutable role and modify SolLimit
         let role_id = 0;
@@ -1042,7 +1066,7 @@ mod tests {
         }
 
         // Verify the change persisted
-        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        let swig_with_roles = SwigWithRoles::from_bytes(account_buffer.as_slice()).unwrap();
         let role = swig_with_roles.get_role(0)?.unwrap();
 
         // Navigate the actions data to find the SolLimit action
@@ -1076,7 +1100,7 @@ mod tests {
     fn test_multiple_actions_with_token_limit() -> Result<(), ProgramError> {
         let (mut account_buffer, id, bump) = setup_test_buffer();
         let swig = Swig::new(id, bump, 0);
-        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+        let mut builder = SwigBuilder::create(account_buffer.as_mut_slice(), swig).unwrap();
 
         let authority = ED25519Authority {
             public_key: [2; 32],
@@ -1125,7 +1149,7 @@ mod tests {
             .unwrap();
 
         // Get a reference to the roles buffer for later modification
-        let roles_buffer = &mut account_buffer[Swig::LEN..];
+        let roles_buffer = &mut account_buffer.as_mut_slice()[Swig::LEN..];
 
         // Get mutable role and modify TokenLimit
         let role_id = 0;
@@ -1172,7 +1196,7 @@ mod tests {
         }
 
         // Verify the changes persisted by checking each action
-        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        let swig_with_roles = SwigWithRoles::from_bytes(account_buffer.as_slice()).unwrap();
         let role = swig_with_roles.get_role(0)?.unwrap();
 
         // Navigate actions data to find both actions and verify changes
@@ -1220,7 +1244,7 @@ mod tests {
     fn test_lookup_role_id_comprehensive() -> Result<(), ProgramError> {
         let (mut account_buffer, id, bump) = setup_large_test_buffer();
         let swig = Swig::new(id, bump, 0);
-        let mut builder = SwigBuilder::create(&mut account_buffer, swig).unwrap();
+        let mut builder = SwigBuilder::create(account_buffer.as_mut_slice(), swig).unwrap();
 
         // Create authorities with different public keys
         let authority1 = ED25519Authority {
@@ -1274,7 +1298,7 @@ mod tests {
             .unwrap();
 
         // Create SwigWithRoles for testing
-        let swig_with_roles = SwigWithRoles::from_bytes(&account_buffer).unwrap();
+        let swig_with_roles = SwigWithRoles::from_bytes(account_buffer.as_slice()).unwrap();
 
         // Test basic lookup of each authority by public key
         println!("Looking up authority1");
@@ -1313,7 +1337,7 @@ mod tests {
         println!("Testing duplicate authority");
         let (mut new_buffer, _, _) = setup_large_test_buffer();
         let new_swig = Swig::new(id, bump, 0);
-        let mut new_builder = SwigBuilder::create(&mut new_buffer, new_swig).unwrap();
+        let mut new_builder = SwigBuilder::create(new_buffer.as_mut_slice(), new_swig).unwrap();
 
         // Add two roles with the same authority but different actions
         new_builder
@@ -1331,7 +1355,7 @@ mod tests {
             )
             .unwrap();
 
-        let new_swig_with_roles = SwigWithRoles::from_bytes(&new_buffer).unwrap();
+        let new_swig_with_roles = SwigWithRoles::from_bytes(new_buffer.as_slice()).unwrap();
         let duplicate_role_id = new_swig_with_roles.lookup_role_id(&authority1.public_key)?;
         assert_eq!(
             duplicate_role_id,

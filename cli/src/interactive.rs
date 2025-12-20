@@ -11,13 +11,9 @@ use openssl::{
     ec::{EcGroup, EcKey, EcPoint, PointConversionForm},
     nid::Nid,
 };
-use solana_sdk::{
-    pubkey::Pubkey,
-    signature::Keypair,
-    signer::Signer,
-    system_instruction::{self, transfer},
-};
+use solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::Signer};
 use solana_secp256r1_program;
+use solana_system_interface::instruction::{self as system_instruction, transfer};
 use swig_sdk::{
     authority::{
         ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
