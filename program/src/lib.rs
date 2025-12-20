@@ -142,7 +142,7 @@ pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
 /// * `true` if the account is v2 format (last 7 bytes are zero)
 /// * `false` if the account is v1 format (last 7 bytes contain non-zero values)
 #[inline(always)]
-unsafe fn is_swig_v2(data: &[u8]) -> bool {
+pub(crate) unsafe fn is_swig_v2(data: &[u8]) -> bool {
     let last_8_bytes_ptr = data.as_ptr().add(Swig::LEN - 8) as *const u64;
     let last_8_bytes = last_8_bytes_ptr.read_unaligned();
     last_8_bytes >> 8 == 0
