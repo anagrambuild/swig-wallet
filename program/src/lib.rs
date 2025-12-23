@@ -26,6 +26,7 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_pubkey::{declare_id, pubkey};
+use swig_compact_instructions::MAX_ACCOUNTS;
 use swig_state::{
     action::{
         program_scope::{NumericType, ProgramScope},
@@ -86,8 +87,8 @@ security_txt! {
 pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
     const AI: MaybeUninit<AccountInfo> = MaybeUninit::<AccountInfo>::uninit();
     const AC: MaybeUninit<AccountClassification> = MaybeUninit::<AccountClassification>::uninit();
-    let mut accounts = [AI; 100];
-    let mut classifiers = [AC; 100];
+    let mut accounts = [AI; MAX_ACCOUNTS];
+    let mut classifiers = [AC; MAX_ACCOUNTS];
     unsafe {
         execute(&mut ctx, &mut accounts, &mut classifiers)?;
     }
