@@ -17,18 +17,18 @@ use crate::{
 #[repr(C, align(8))]
 #[derive(Debug, PartialEq, no_padding::NoPadding)]
 pub struct CreateProgramExecSessionAuthority {
-    /// The program ID that must execute the preceding instruction
-    pub program_id: [u8; 32],
     /// Length of the instruction prefix to match (0-32)
     pub instruction_prefix_len: u8,
     /// Padding for alignment
     _padding: [u8; 7],
-    /// The instruction data prefix that must match
-    pub instruction_prefix: [u8; MAX_INSTRUCTION_PREFIX_LEN],
     /// The session key for temporary authentication
     pub session_key: [u8; 32],
     /// Maximum duration a session can be valid for
     pub max_session_length: u64,
+    /// The program ID that must execute the preceding instruction
+    pub program_id: [u8; 32],
+    /// The instruction data prefix that must match
+    pub instruction_prefix: [u8; MAX_INSTRUCTION_PREFIX_LEN],
 }
 
 impl CreateProgramExecSessionAuthority {
@@ -78,21 +78,20 @@ impl IntoBytes for CreateProgramExecSessionAuthority {
 #[repr(C, align(8))]
 #[derive(Debug, PartialEq, no_padding::NoPadding)]
 pub struct ProgramExecSessionAuthority {
-    /// The program ID that must execute the preceding instruction
-    pub program_id: [u8; 32],
     /// Length of the instruction prefix to match (0-32)
     pub instruction_prefix_len: u8,
     /// Padding for alignment
     _padding: [u8; 7],
-    /// The instruction data prefix that must match
-    pub instruction_prefix: [u8; MAX_INSTRUCTION_PREFIX_LEN],
-
     /// The current session key
     pub session_key: [u8; 32],
     /// Maximum allowed session duration
     pub max_session_length: u64,
     /// Slot when the current session expires
     pub current_session_expiration: u64,
+    /// The program ID that must execute the preceding instruction
+    pub program_id: [u8; 32],
+    /// The instruction data prefix that must match
+    pub instruction_prefix: [u8; MAX_INSTRUCTION_PREFIX_LEN],
 }
 
 impl ProgramExecSessionAuthority {
@@ -180,7 +179,10 @@ impl AuthorityInfo for ProgramExecSessionAuthority {
     }
 
     fn identity(&self) -> Result<&[u8], ProgramError> {
-        Ok(&self.instruction_prefix[..self.instruction_prefix_len as usize])
+        // program_id and instruction_prefix are contiguous in memory
+        let len = 32 + self.instruction_prefix_len as usize;
+        let bytes = unsafe { core::slice::from_raw_parts(self.program_id.as_ptr(), len) };
+        Ok(bytes)
     }
 
     fn signature_odometer(&self) -> Option<u32> {
@@ -194,21 +196,16 @@ impl AuthorityInfo for ProgramExecSessionAuthority {
     fn match_data(&self, data: &[u8]) -> bool {
         use swig_assertions::sol_assert_bytes_eq;
 
-        if data.len() < 33 {
-            return false;
-        }
-        let prefix_len = data[32] as usize;
-        if prefix_len != self.instruction_prefix_len as usize {
-            return false;
-        }
-        if data.len() != 33 + prefix_len {
+        // Data format should match identity(): program_id (32) + instruction_prefix (prefix_len)
+        let expected_len = 32 + self.instruction_prefix_len as usize;
+        if data.len() != expected_len {
             return false;
         }
         sol_assert_bytes_eq(&self.program_id, &data[..32], 32)
             && sol_assert_bytes_eq(
-                &self.instruction_prefix[..prefix_len],
-                &data[33..33 + prefix_len],
-                prefix_len,
+                &self.instruction_prefix[..self.instruction_prefix_len as usize],
+                &data[32..],
+                self.instruction_prefix_len as usize,
             )
     }
 
@@ -271,5 +268,161 @@ impl AuthorityInfo for ProgramExecSessionAuthority {
             &self.instruction_prefix,
             self.instruction_prefix_len as usize,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_session_authority(
+        program_id: [u8; 32],
+        prefix: &[u8],
+    ) -> ProgramExecSessionAuthority {
+        let mut instruction_prefix = [0u8; MAX_INSTRUCTION_PREFIX_LEN];
+        instruction_prefix[..prefix.len()].copy_from_slice(prefix);
+
+        ProgramExecSessionAuthority::new(
+            program_id,
+            prefix.len() as u8,
+            instruction_prefix,
+            [0u8; 32], // session_key
+            3600,      // max_session_length
+        )
+    }
+
+    #[test]
+    fn test_identity_returns_program_id_and_prefix() {
+        let program_id = [1u8; 32];
+        let prefix = [0x01, 0xAB, 0xCD];
+        let authority = create_test_session_authority(program_id, &prefix);
+
+        let identity = authority.identity().unwrap();
+
+        // Identity should be program_id (32 bytes) + instruction_prefix (prefix_len bytes)
+        assert_eq!(identity.len(), 32 + prefix.len());
+        assert_eq!(&identity[..32], &program_id);
+        assert_eq!(&identity[32..], &prefix);
+    }
+
+    #[test]
+    fn test_identity_with_33_byte_prefix() {
+        // Test the IDP use case: 1 byte discriminator + 32 byte sub_hash
+        let program_id = [2u8; 32];
+        let mut prefix = [0u8; 33];
+        prefix[0] = 0x01; // VerifyJwt discriminator
+        prefix[1..33].copy_from_slice(&[0xAB; 32]); // sub_hash
+
+        let authority = create_test_session_authority(program_id, &prefix);
+
+        let identity = authority.identity().unwrap();
+
+        assert_eq!(identity.len(), 65); // 32 + 33
+        assert_eq!(&identity[..32], &program_id);
+        assert_eq!(identity[32], 0x01); // discriminator
+        assert_eq!(&identity[33..65], &[0xAB; 32]); // sub_hash
+    }
+
+    #[test]
+    fn test_identity_with_zero_prefix_len() {
+        let program_id = [3u8; 32];
+        let authority = create_test_session_authority(program_id, &[]);
+
+        let identity = authority.identity().unwrap();
+
+        assert_eq!(identity.len(), 32);
+        assert_eq!(identity, &program_id);
+    }
+
+    #[test]
+    fn test_match_data_matches_identity() {
+        let program_id = [4u8; 32];
+        let prefix = [0x01, 0x02, 0x03, 0x04];
+        let authority = create_test_session_authority(program_id, &prefix);
+
+        let identity = authority.identity().unwrap();
+
+        // match_data should return true when given the identity
+        assert!(authority.match_data(identity));
+    }
+
+    #[test]
+    fn test_match_data_with_33_byte_prefix() {
+        let program_id = [5u8; 32];
+        let mut prefix = [0u8; 33];
+        prefix[0] = 0x01;
+        prefix[1..33].copy_from_slice(&[0xCD; 32]);
+
+        let authority = create_test_session_authority(program_id, &prefix);
+
+        let identity = authority.identity().unwrap();
+
+        assert!(authority.match_data(identity));
+        assert_eq!(identity.len(), 65);
+    }
+
+    #[test]
+    fn test_match_data_rejects_wrong_program_id() {
+        let program_id = [6u8; 32];
+        let prefix = [0x01, 0x02];
+        let authority = create_test_session_authority(program_id, &prefix);
+
+        // Create data with wrong program_id
+        let mut wrong_data = vec![7u8; 32];
+        wrong_data.extend_from_slice(&prefix);
+
+        assert!(!authority.match_data(&wrong_data));
+    }
+
+    #[test]
+    fn test_match_data_rejects_wrong_prefix() {
+        let program_id = [8u8; 32];
+        let prefix = [0x01, 0x02];
+        let authority = create_test_session_authority(program_id, &prefix);
+
+        // Create data with wrong prefix
+        let mut wrong_data = program_id.to_vec();
+        wrong_data.extend_from_slice(&[0xFF, 0xFF]);
+
+        assert!(!authority.match_data(&wrong_data));
+    }
+
+    #[test]
+    fn test_match_data_rejects_wrong_length() {
+        let program_id = [9u8; 32];
+        let prefix = [0x01, 0x02];
+        let authority = create_test_session_authority(program_id, &prefix);
+
+        // Too short
+        assert!(!authority.match_data(&program_id));
+
+        // Too long
+        let mut too_long = program_id.to_vec();
+        too_long.extend_from_slice(&[0x01, 0x02, 0x03]);
+        assert!(!authority.match_data(&too_long));
+    }
+
+    #[test]
+    fn test_struct_size() {
+        // Verify the struct size is as expected
+        // prefix_len(1) + padding(7) + session_key(32) + max_session_length(8) +
+        // current_session_expiration(8) + program_id(32) + instruction_prefix(40) = 128
+        assert_eq!(ProgramExecSessionAuthority::LEN, 128);
+    }
+
+    #[test]
+    fn test_program_id_and_instruction_prefix_are_contiguous() {
+        let program_id = [0xAA; 32];
+        let prefix = [0xBB; 10];
+        let authority = create_test_session_authority(program_id, &prefix);
+
+        // The identity() method relies on program_id and instruction_prefix being contiguous
+        // This test verifies the memory layout assumption
+        let identity = authority.identity().unwrap();
+
+        // First 32 bytes should be program_id
+        assert_eq!(&identity[..32], &program_id);
+        // Next prefix_len bytes should be instruction_prefix
+        assert_eq!(&identity[32..42], &prefix);
     }
 }

@@ -19,7 +19,7 @@ use pinocchio::{
     pubkey::Pubkey,
     ProgramResult,
 };
-
+pub const MAX_ACCOUNTS: usize = 254;
 /// Errors that can occur during instruction processing.
 #[repr(u32)]
 pub enum InstructionError {
@@ -282,10 +282,10 @@ where
         self.cursor = cursor;
         let num_accounts = num_accounts as usize;
         const AM_UNINIT: MaybeUninit<AccountMeta> = MaybeUninit::uninit();
-        let mut accounts = [AM_UNINIT; 64];
+        let mut accounts = [AM_UNINIT; MAX_ACCOUNTS];
         let mut infos = Vec::with_capacity(num_accounts);
         const INDEX_UNINIT: MaybeUninit<usize> = MaybeUninit::uninit();
-        let mut indexes = [INDEX_UNINIT; 64];
+        let mut indexes = [INDEX_UNINIT; MAX_ACCOUNTS];
         for i in 0..num_accounts {
             let (pubkey_index, cursor) = self.read_u8()?;
             self.cursor = cursor;

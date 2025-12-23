@@ -30,12 +30,12 @@ const IX_PREFIX_OFFSET: usize = 32 + 1 + 7; // program_id + instruction_prefix_l
 #[repr(C, align(8))]
 #[derive(Debug, PartialEq, no_padding::NoPadding)]
 pub struct ProgramExecAuthority {
-    /// The program ID that must execute the preceding instruction
-    pub program_id: [u8; 32],
-    /// Length of the instruction prefix to match (0-40)
     pub instruction_prefix_len: u8,
     /// Padding for alignment
     _padding: [u8; 7],
+    /// The program ID that must execute the preceding instruction
+    pub program_id: [u8; 32],
+    /// Length of the instruction prefix to match (0-40)
     pub instruction_prefix: [u8; MAX_INSTRUCTION_PREFIX_LEN],
 }
 
@@ -136,20 +136,15 @@ impl AuthorityInfo for ProgramExecAuthority {
     }
 
     fn match_data(&self, data: &[u8]) -> bool {
-        if data.len() < 32 {
+        // Data format should match identity(): program_id (32) + instruction_prefix (prefix_len)
+        let expected_len = 32 + self.instruction_prefix_len as usize;
+        if data.len() != expected_len {
             return false;
         }
-        // The identity slice spans the full struct (80 bytes) to include both program_id and instruction_prefix
-        // which are separated by instruction_prefix_len and padding
-        if data.len() != Self::LEN {
-            return false;
-        }
-        // The identity slice includes intermediate bytes (instruction_prefix_len + padding)
-        // so we need to read instruction_prefix from IX_PREFIX_OFFSET
         sol_assert_bytes_eq(&self.program_id, &data[..32], 32)
             && sol_assert_bytes_eq(
                 &self.instruction_prefix[..self.instruction_prefix_len as usize],
-                &data[IX_PREFIX_OFFSET..IX_PREFIX_OFFSET + self.instruction_prefix_len as usize],
+                &data[32..],
                 self.instruction_prefix_len as usize,
             )
     }
@@ -159,7 +154,10 @@ impl AuthorityInfo for ProgramExecAuthority {
     }
 
     fn identity(&self) -> Result<&[u8], ProgramError> {
-       Ok(&self.instruction_prefix[..self.instruction_prefix_len as usize])
+        // program_id and instruction_prefix are contiguous in memory
+        let len = 32 + self.instruction_prefix_len as usize;
+        let bytes = unsafe { core::slice::from_raw_parts(self.program_id.as_ptr(), len) };
+        Ok(bytes)
     }
 
     fn signature_odometer(&self) -> Option<u32> {
@@ -315,4 +313,136 @@ pub fn program_exec_authenticate(
     // (implied by the transaction being valid) with the correct program, data, and
     // accounts
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_authority(program_id: [u8; 32], prefix: &[u8]) -> ProgramExecAuthority {
+        let mut authority = ProgramExecAuthority::new(program_id, prefix.len() as u8);
+        authority.instruction_prefix[..prefix.len()].copy_from_slice(prefix);
+        authority
+    }
+
+    #[test]
+    fn test_identity_returns_program_id_and_prefix() {
+        let program_id = [1u8; 32];
+        let prefix = [0x01, 0xAB, 0xCD]; // 3-byte prefix (e.g., discriminator + sub_hash start)
+        let authority = create_test_authority(program_id, &prefix);
+
+        let identity = authority.identity().unwrap();
+
+        // Identity should be program_id (32 bytes) + instruction_prefix (prefix_len bytes)
+        assert_eq!(identity.len(), 32 + prefix.len());
+        assert_eq!(&identity[..32], &program_id);
+        assert_eq!(&identity[32..], &prefix);
+    }
+
+    #[test]
+    fn test_identity_with_33_byte_prefix() {
+        // Test the IDP use case: 1 byte discriminator + 32 byte sub_hash
+        let program_id = [2u8; 32];
+        let mut prefix = [0u8; 33];
+        prefix[0] = 0x01; // VerifyJwt discriminator
+        prefix[1..33].copy_from_slice(&[0xAB; 32]); // sub_hash
+
+        let authority = create_test_authority(program_id, &prefix);
+
+        let identity = authority.identity().unwrap();
+
+        assert_eq!(identity.len(), 65); // 32 + 33
+        assert_eq!(&identity[..32], &program_id);
+        assert_eq!(identity[32], 0x01); // discriminator
+        assert_eq!(&identity[33..65], &[0xAB; 32]); // sub_hash
+    }
+
+    #[test]
+    fn test_identity_with_zero_prefix_len() {
+        let program_id = [3u8; 32];
+        let authority = create_test_authority(program_id, &[]);
+
+        let identity = authority.identity().unwrap();
+
+        assert_eq!(identity.len(), 32);
+        assert_eq!(identity, &program_id);
+    }
+
+    #[test]
+    fn test_match_data_matches_identity() {
+        let program_id = [4u8; 32];
+        let prefix = [0x01, 0x02, 0x03, 0x04];
+        let authority = create_test_authority(program_id, &prefix);
+
+        let identity = authority.identity().unwrap();
+
+        // match_data should return true when given the identity
+        assert!(authority.match_data(identity));
+    }
+
+    #[test]
+    fn test_match_data_with_33_byte_prefix() {
+        let program_id = [5u8; 32];
+        let mut prefix = [0u8; 33];
+        prefix[0] = 0x01;
+        prefix[1..33].copy_from_slice(&[0xCD; 32]);
+
+        let authority = create_test_authority(program_id, &prefix);
+
+        let identity = authority.identity().unwrap();
+
+        assert!(authority.match_data(identity));
+        assert_eq!(identity.len(), 65);
+    }
+
+    #[test]
+    fn test_match_data_rejects_wrong_program_id() {
+        let program_id = [6u8; 32];
+        let prefix = [0x01, 0x02];
+        let authority = create_test_authority(program_id, &prefix);
+
+        // Create data with wrong program_id
+        let mut wrong_data = vec![7u8; 32]; // wrong program_id
+        wrong_data.extend_from_slice(&prefix);
+
+        assert!(!authority.match_data(&wrong_data));
+    }
+
+    #[test]
+    fn test_match_data_rejects_wrong_prefix() {
+        let program_id = [8u8; 32];
+        let prefix = [0x01, 0x02];
+        let authority = create_test_authority(program_id, &prefix);
+
+        // Create data with wrong prefix
+        let mut wrong_data = program_id.to_vec();
+        wrong_data.extend_from_slice(&[0xFF, 0xFF]); // wrong prefix
+
+        assert!(!authority.match_data(&wrong_data));
+    }
+
+    #[test]
+    fn test_match_data_rejects_wrong_length() {
+        let program_id = [9u8; 32];
+        let prefix = [0x01, 0x02];
+        let authority = create_test_authority(program_id, &prefix);
+
+        // Too short
+        assert!(!authority.match_data(&program_id));
+
+        // Too long
+        let mut too_long = program_id.to_vec();
+        too_long.extend_from_slice(&[0x01, 0x02, 0x03]);
+        assert!(!authority.match_data(&too_long));
+    }
+
+    #[test]
+    fn test_struct_size() {
+        // Verify the struct size is as expected
+        assert_eq!(
+            ProgramExecAuthority::LEN,
+            1 + 7 + 32 + 40 // prefix_len + padding + program_id + instruction_prefix
+        );
+        assert_eq!(ProgramExecAuthority::LEN, 80);
+    }
 }
