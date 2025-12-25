@@ -33,7 +33,7 @@ fn test_add_program_all_permission_with_ed25519() {
         swig,
         context.default_payer.pubkey(),
         authority.pubkey(),
-        0, // role_id for the root authority
+        1, // role_id for the root authority
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
             authority: new_authority.pubkey().as_ref(),
@@ -107,7 +107,7 @@ fn test_add_program_all_permission_with_secp256k1() {
         swig,
         context.default_payer.pubkey(),
         authority.pubkey(),
-        0, // role_id for the root authority
+        1, // role_id for the root authority
         AuthorityConfig {
             authority_type: AuthorityType::Secp256k1,
             authority: &new_secp_pubkey,
@@ -169,7 +169,7 @@ fn test_program_all_combines_with_other_permissions() {
         swig,
         context.default_payer.pubkey(),
         authority.pubkey(),
-        0, // role_id for the root authority
+        1, // role_id for the root authority
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
             authority: new_authority.pubkey().as_ref(),

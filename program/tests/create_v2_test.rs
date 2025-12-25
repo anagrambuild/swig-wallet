@@ -38,12 +38,11 @@ fn test_create_v2() {
     println!("Create CU {:?}", bench.compute_units_consumed);
     println!("logs: {:?}", bench.logs);
     if let Some(account) = context.svm.get_account(&swig_key) {
-        println!("swig_data: {:?}", account.data);
         let swig = SwigWithRoles::from_bytes(&account.data).unwrap();
 
-        assert_eq!(swig.state.roles, 1);
+        assert_eq!(swig.state.roles, 2);
         assert_eq!(swig.state.id, id);
-        assert_eq!(swig.state.role_counter, 1);
+        assert_eq!(swig.state.role_counter, 2);
     }
 }
 
@@ -112,7 +111,7 @@ fn test_create_basic_token_transfer_v2() {
         swig_wallet_address,
         swig_authority.pubkey(),
         ixd,
-        0, // role_id 0 for root authority
+        1, // Role ID 1 is the root authority
     )
     .unwrap();
 
@@ -162,7 +161,7 @@ fn test_create_and_sign_secp256k1_v2() {
     println!("logs: {:?}", bench.logs);
     if let Some(account) = context.svm.get_account(&swig_key) {
         let swig = SwigWithRoles::from_bytes(&account.data).unwrap();
-        let role = swig.get_role(0).unwrap().unwrap();
+        let role = swig.get_role(1).unwrap().unwrap(); // Role ID 1 is the root authority
         let secp_auth = role
             .authority
             .as_any()
@@ -176,9 +175,9 @@ fn test_create_and_sign_secp256k1_v2() {
             secp_auth.public_key,
             wallet.credential().verifying_key().to_sec1_bytes().as_ref()
         );
-        assert_eq!(swig.state.roles, 1);
+        assert_eq!(swig.state.roles, 2);
         assert_eq!(swig.state.id, id);
-        assert_eq!(swig.state.role_counter, 1);
+        assert_eq!(swig.state.role_counter, 2);
     }
 
     // Get the swig_wallet_address PDA for SignV2
@@ -224,7 +223,7 @@ fn test_create_and_sign_secp256k1_v2() {
         current_slot,
         1, // counter = 1 (first transaction)
         transfer_ix,
-        0, // Role ID 0
+        1, // Role ID 1
     )
     .unwrap();
 

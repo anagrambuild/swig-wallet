@@ -58,8 +58,8 @@ fn test_create_session_v2() {
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 1);
-    let role = swig.get_role(0).unwrap().unwrap();
+    assert_eq!(swig.state.roles, 2);
+    let role = swig.get_role(1).unwrap().unwrap();
 
     assert_eq!(
         role.authority.authority_type(),
@@ -84,7 +84,7 @@ fn test_create_session_v2() {
         swig_key,
         context.default_payer.pubkey(),
         swig_authority.pubkey(),
-        0, // Role ID 0 is the root authority
+        1, // Role ID 1 is the root authority
         session_key.pubkey(),
         session_duration,
     )
@@ -113,7 +113,7 @@ fn test_create_session_v2() {
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig.get_role(0).unwrap().unwrap();
+    let role = swig.get_role(1).unwrap().unwrap();
     assert_eq!(
         role.authority.authority_type(),
         AuthorityType::Ed25519Session
@@ -143,7 +143,7 @@ fn test_create_session_v2() {
         swig_wallet_address,
         session_key.pubkey(),
         dummy_ix,
-        0, // Role ID 0
+        1, // Role ID 1
     )
     .unwrap();
 
@@ -205,7 +205,7 @@ fn test_expired_session_v2() {
         swig_key,
         context.default_payer.pubkey(),
         swig_authority.pubkey(),
-        0, // Role ID 0 is the root authority
+        1, // Role ID 1 is the root authority
         session_key.pubkey(),
         session_duration,
     )
@@ -255,7 +255,7 @@ fn test_expired_session_v2() {
         swig_wallet_address,
         session_key.pubkey(),
         dummy_ix,
-        0, // Role ID 0
+        1, // Role ID 1
     )
     .unwrap();
 
@@ -422,7 +422,7 @@ fn test_session_key_refresh_ed25519_v2() {
         swig_wallet_address,
         session_key.pubkey(),
         dummy_ix,
-        0, // Role ID 0
+        1, // Role ID 1
     )
     .unwrap();
 
@@ -485,7 +485,7 @@ fn test_transfer_sol_with_session_v2() {
         swig_key,
         context.default_payer.pubkey(),
         swig_authority.pubkey(),
-        0, // Role ID 0 is the root authority
+        1, // Role ID 1 is the root authority
         session_key.pubkey(),
         session_duration,
     )
@@ -534,7 +534,7 @@ fn test_transfer_sol_with_session_v2() {
         swig_wallet_address,
         session_key.pubkey(),
         transfer_ix,
-        0, // Role ID 0
+        1, // Role ID 1
     )
     .unwrap();
 
@@ -614,8 +614,8 @@ fn test_secp256k1_session_v2() {
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 1);
-    let role = swig.get_role(0).unwrap().unwrap();
+    assert_eq!(swig.state.roles, 2);
+    let role = swig.get_role(1).unwrap().unwrap();
 
     assert_eq!(
         role.authority.authority_type(),
@@ -657,7 +657,7 @@ fn test_secp256k1_session_v2() {
         signing_fn,
         current_slot,
         1, // Counter for session authorities (starting from 1)
-        0, // Role ID 0 is the root authority
+        1, // Role ID 1 is the root authority
         session_key.pubkey(),
         session_duration,
     )
@@ -683,7 +683,7 @@ fn test_secp256k1_session_v2() {
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig.get_role(0).unwrap().unwrap();
+    let role = swig.get_role(1).unwrap().unwrap();
     assert_eq!(
         role.authority.authority_type(),
         AuthorityType::Secp256k1Session
@@ -718,7 +718,7 @@ fn test_secp256k1_session_v2() {
         swig_wallet_address,
         session_key.pubkey(),
         dummy_ix,
-        0, // Role ID 0
+        1, // Role ID 1
     )
     .unwrap();
 
@@ -785,7 +785,7 @@ fn test_session_key_refresh_secp256k1_v2() {
         signing_fn,
         current_slot,
         1, // Counter starts at 1
-        0, // Role ID 0
+        1, // Role ID 1
         session_key.pubkey(),
         50, // 50 slots
     )
@@ -813,7 +813,7 @@ fn test_session_key_refresh_secp256k1_v2() {
     // Verify initial session
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig.get_role(0).unwrap().unwrap();
+    let role = swig.get_role(1).unwrap().unwrap();
     let auth: &Secp256k1SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
     assert_eq!(auth.session_key, session_key.pubkey().to_bytes());
     assert_eq!(auth.signature_odometer, 1);
@@ -830,7 +830,7 @@ fn test_session_key_refresh_secp256k1_v2() {
         signing_fn,
         refresh_slot,
         2,                    // Increment counter for second signature
-        0,                    // Role ID 0
+        1,                    // Role ID 1 is the root authority
         session_key.pubkey(), // Same session key - this should work now
         80,                   // New duration: 80 slots
     )
@@ -858,7 +858,7 @@ fn test_session_key_refresh_secp256k1_v2() {
     // Verify the session was refreshed
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig.get_role(0).unwrap().unwrap();
+    let role = swig.get_role(1).unwrap().unwrap();
     let auth: &Secp256k1SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
     assert_eq!(auth.session_key, session_key.pubkey().to_bytes());
     assert_eq!(auth.signature_odometer, 2); // Should increment
@@ -898,7 +898,7 @@ fn test_session_extension_before_expiration_v2() {
         swig_key,
         context.default_payer.pubkey(),
         swig_authority.pubkey(),
-        0,
+        1, // Role ID 1 is the root authority
         session_key.pubkey(),
         10, // Very short duration
     )
@@ -931,7 +931,7 @@ fn test_session_extension_before_expiration_v2() {
         swig_key,
         context.default_payer.pubkey(),
         swig_authority.pubkey(),
-        0,
+        1,                    // Role ID 1 is the root authority
         session_key.pubkey(), // Same session key
         50,                   // Much longer duration
     )
@@ -963,7 +963,7 @@ fn test_session_extension_before_expiration_v2() {
     // Verify the session has new expiration
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig.get_role(0).unwrap().unwrap();
+    let role = swig.get_role(1).unwrap().unwrap();
     let auth: &Ed25519SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
     assert_eq!(auth.current_session_expiration, extension_slot + 50);
 
@@ -978,7 +978,7 @@ fn test_session_extension_before_expiration_v2() {
         swig_wallet_address,
         session_key.pubkey(),
         dummy_ix,
-        0,
+        1, // Role ID 1 is the root authority
     )
     .unwrap();
 
@@ -1036,7 +1036,7 @@ fn test_multiple_session_refreshes_v2() {
             swig_key,
             context.default_payer.pubkey(),
             swig_authority.pubkey(),
-            0,
+            1, // Role ID 1 is the root authority
             session_key.pubkey(),
             duration,
         )
@@ -1074,7 +1074,7 @@ fn test_multiple_session_refreshes_v2() {
         let current_slot = context.svm.get_sysvar::<Clock>().slot;
         let swig_account = context.svm.get_account(&swig_key).unwrap();
         let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-        let role = swig.get_role(0).unwrap().unwrap();
+        let role = swig.get_role(1).unwrap().unwrap();
         let auth: &Ed25519SessionAuthority = role.authority.as_any().downcast_ref().unwrap();
         assert_eq!(
             auth.current_session_expiration,
@@ -1093,7 +1093,7 @@ fn test_multiple_session_refreshes_v2() {
         swig_wallet_address,
         session_key.pubkey(),
         dummy_ix,
-        0,
+        1, // Role ID 1 is the root authority
     )
     .unwrap();
 

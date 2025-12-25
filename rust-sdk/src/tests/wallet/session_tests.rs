@@ -45,7 +45,7 @@ fn should_create_ed25519_session_authority() {
 
     // Verify session authority was created successfully
     assert!(swig_wallet.get_swig_account().is_ok());
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 1);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
     assert!(swig_wallet.get_balance().unwrap() > 0);
 }
 
@@ -85,5 +85,5 @@ fn should_create_secp256k1_session_authority() {
 
     // Verify session authority was created successfully
     assert!(swig_wallet.get_swig_account().is_ok());
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 1);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 2);
 }

@@ -98,7 +98,7 @@ fn test_transfer_sol_with_additional_authority() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         ixd,
-        1,
+        2,
     )
     .unwrap();
     let transfer_message = v0::Message::try_compile(
@@ -126,7 +126,7 @@ fn test_transfer_sol_with_additional_authority() {
     let swig_account = context.svm.get_account(&swig).unwrap();
 
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role1 = swig_state.get_role(1).unwrap().unwrap();
+    let role1 = swig_state.get_role(2).unwrap().unwrap();
     println!("role {:?}", role1.position);
     let action = role1.get_action::<SolLimit>(&[]).unwrap().unwrap();
     assert_eq!(action.amount, 0);
@@ -187,7 +187,7 @@ fn test_transfer_sol_all_with_authority() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         ixd,
-        1,
+        2,
     )
     .unwrap();
 
@@ -214,7 +214,7 @@ fn test_transfer_sol_all_with_authority() {
         swig_lamports_balance + initial_swig_balance - amount
     );
     let swig_state = SwigWithRoles::from_bytes(&swig_account_after.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
     assert!(role.get_action::<All>(&[]).unwrap().is_some());
 }
 
@@ -315,7 +315,7 @@ fn test_transfer_sol_and_tokens_with_mixed_permissions() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         token_ix,
-        1,
+        2,
     )
     .unwrap();
 
@@ -324,7 +324,7 @@ fn test_transfer_sol_and_tokens_with_mixed_permissions() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         sol_ix,
-        1,
+        2,
     )
     .unwrap();
 
@@ -356,7 +356,7 @@ fn test_transfer_sol_and_tokens_with_mixed_permissions() {
     assert_eq!(swig_token_balance.amount, 1000 - token_amount);
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
     assert!(role.get_action::<All>(&[]).unwrap().is_some());
 }
 
@@ -408,7 +408,7 @@ fn test_fail_transfer_sol_with_additional_authority_not_enough() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         ixd,
-        1, // new authority role id
+        2, // new authority role id
     )
     .unwrap();
     let transfer_message = v0::Message::try_compile(
@@ -477,7 +477,7 @@ fn fail_not_correct_authority() {
         fake_authority.pubkey(),
         fake_authority.pubkey(),
         ixd,
-        1, // new authority role id
+        2, // new authority role id
     )
     .unwrap();
     let transfer_message = v0::Message::try_compile(
@@ -573,7 +573,7 @@ fn fail_wrong_resource() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         ixd,
-        1,
+        2,
     )
     .unwrap();
 
@@ -656,7 +656,7 @@ fn test_transfer_sol_with_recurring_limit() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         ixd,
-        1,
+        2,
     )
     .unwrap();
 
@@ -683,7 +683,7 @@ fn test_transfer_sol_with_recurring_limit() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         ixd2,
-        1,
+        2,
     )
     .unwrap();
     context
@@ -720,7 +720,7 @@ fn test_transfer_sol_with_recurring_limit() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         ixd3,
-        1,
+        2,
     )
     .unwrap();
 
@@ -752,7 +752,7 @@ fn test_transfer_sol_with_recurring_limit() {
 
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
     let action = role.get_action::<SolRecurringLimit>(&[]).unwrap().unwrap();
     assert_eq!(action.current_amount, action.recurring_amount - amount3);
 }
@@ -815,7 +815,7 @@ fn test_transfer_sol_with_recurring_limit_window_reset() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         ixd,
-        1,
+        2,
     )
     .unwrap();
 
@@ -847,7 +847,7 @@ fn test_transfer_sol_with_recurring_limit_window_reset() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         ixd3,
-        1,
+        2,
     )
     .unwrap();
 
@@ -879,7 +879,7 @@ fn test_transfer_sol_with_recurring_limit_window_reset() {
 
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
     let action = role.get_action::<SolRecurringLimit>(&[]).unwrap().unwrap();
     assert_eq!(action.current_amount, action.recurring_amount - amount3);
 
@@ -986,7 +986,7 @@ fn test_transfer_token_with_recurring_limit() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         token_ix,
-        1,
+        2,
     )
     .unwrap();
 
@@ -1023,7 +1023,7 @@ fn test_transfer_token_with_recurring_limit() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         token_ix2,
-        1,
+        2,
     )
     .unwrap();
 
@@ -1070,7 +1070,7 @@ fn test_transfer_token_with_recurring_limit() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         token_ix3,
-        1,
+        2,
     )
     .unwrap();
 
@@ -1104,7 +1104,7 @@ fn test_transfer_token_with_recurring_limit() {
     // Verify the token recurring limit state
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
     let action = role
         .get_action::<TokenRecurringLimit>(&mint_pubkey.to_bytes())
         .unwrap()
@@ -1165,7 +1165,7 @@ fn test_transfer_between_swig_accounts() {
         sender_authority.pubkey(),
         sender_authority.pubkey(),
         transfer_ix,
-        0, // root authority role
+        1, // root authority role
     )
     .unwrap();
 
@@ -1283,7 +1283,7 @@ fn test_sol_limit_cpi_enforcement() {
     let instruction_payload = compact_ixs.into_bytes();
 
     // Prepare the `sign_v1` instruction manually
-    let sign_args = SignV1Args::new(1, instruction_payload.len() as u16); // Role ID 1 for limited_authority
+    let sign_args = SignV1Args::new(2, instruction_payload.len() as u16); // Role ID 1 for limited_authority
     let mut sign_ix_data = Vec::new();
     sign_ix_data.extend_from_slice(sign_args.into_bytes().unwrap());
     sign_ix_data.extend_from_slice(&instruction_payload);
@@ -1439,7 +1439,7 @@ fn test_sol_limit_cpi_enforcement_no_sol_limit() {
     let instruction_payload = compact_ixs.into_bytes();
 
     // Prepare the `sign_v1` instruction manually
-    let sign_args = SignV1Args::new(1, instruction_payload.len() as u16); // Role ID 1 for limited_authority
+    let sign_args = SignV1Args::new(2, instruction_payload.len() as u16); // Role ID 1 for limited_authority
     let mut sign_ix_data = Vec::new();
     sign_ix_data.extend_from_slice(sign_args.into_bytes().unwrap());
     sign_ix_data.extend_from_slice(&instruction_payload);
@@ -1669,7 +1669,7 @@ fn test_token_limit_cpi_enforcement() {
     let instruction_payload = compact_ixs.into_bytes();
 
     // Prepare the `sign_v1` instruction manually
-    let sign_args = SignV1Args::new(1, instruction_payload.len() as u16); // Role ID 1 for limited_authority
+    let sign_args = SignV1Args::new(2, instruction_payload.len() as u16); // Role ID 1 for limited_authority
     let mut sign_ix_data = Vec::new();
     sign_ix_data.extend_from_slice(sign_args.into_bytes().unwrap());
     sign_ix_data.extend_from_slice(&instruction_payload);
@@ -1862,7 +1862,7 @@ fn test_multiple_token_limits_cpi_enforcement() {
 
         println!(
             "Setup token {} of {}: mint={}",
-            i + 1,
+            i + 2,
             num_tokens,
             mint_pubkey
         );
@@ -1974,7 +1974,7 @@ fn test_multiple_token_limits_cpi_enforcement() {
     let instruction_payload = compact_ixs.into_bytes();
 
     // Prepare the `sign_v1` instruction manually
-    let sign_args = SignV1Args::new(1, instruction_payload.len() as u16); // Role ID 1 for limited_authority
+    let sign_args = SignV1Args::new(2, instruction_payload.len() as u16); // Role ID 1 for limited_authority
     let mut sign_ix_data = Vec::new();
     sign_ix_data.extend_from_slice(sign_args.into_bytes().unwrap());
     sign_ix_data.extend_from_slice(&instruction_payload);
@@ -2003,7 +2003,7 @@ fn test_multiple_token_limits_cpi_enforcement() {
             // Only log first 3 to avoid spam
             println!(
                 "Token {}: Initial Swig balance: {}, Initial recipient balance: {}",
-                i + 1,
+                i + 2,
                 swig_balance.amount,
                 recipient_balance.amount
             );
@@ -2125,7 +2125,7 @@ fn test_multiple_token_limits_cpi_enforcement() {
             // Only log first 3 to avoid spam
             println!(
                 "✅ Token {}: Balances unchanged - Swig: {}, Recipient: {}",
-                i + 1,
+                i + 2,
                 final_swig_balance.amount,
                 final_recipient_balance.amount
             );
@@ -2224,7 +2224,7 @@ fn test_token_transfer_through_secondary_authority() {
         recipient.pubkey(),
         recipient.pubkey(),
         ixd,
-        1,
+        2,
     )
     .unwrap();
 

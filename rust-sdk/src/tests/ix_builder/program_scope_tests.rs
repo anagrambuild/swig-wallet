@@ -90,7 +90,7 @@ fn test_token_transfer_with_program_scope() {
         id,
         Box::new(Ed25519ClientRole::new(swig_authority.pubkey())),
         context.default_payer.pubkey(),
-        0,
+        1,
     );
 
     let new_authority = Keypair::new();
@@ -254,7 +254,7 @@ fn test_recurring_limit_program_scope() {
         id,
         Box::new(Ed25519ClientRole::new(swig_authority.pubkey())),
         context.default_payer.pubkey(),
-        0,
+        1,
     );
 
     let new_authority = Keypair::new();
@@ -307,7 +307,7 @@ fn test_recurring_limit_program_scope() {
         id,
         Box::new(Ed25519ClientRole::new(new_authority.pubkey())),
         context.default_payer.pubkey(),
-        1,
+        2,
     );
 
     let transfer_ix = spl_token::instruction::transfer(

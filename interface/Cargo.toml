@@ -20,3 +20,4 @@ swig-compact-instructions = { path = "../instructions", default-features = false
 swig-state = { path = "../state" }
 anyhow = "1.0.75"
 solana-secp256r1-program = "2.2.1"
+spl-associated-token-account = "7.0.0"

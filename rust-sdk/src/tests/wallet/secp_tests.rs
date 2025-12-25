@@ -86,7 +86,7 @@ fn test_secp256k1_signature_reuse_error() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Secp256k1ClientRole::new(
                 secp_pubkey.clone().into(),
                 signing_fn,
@@ -168,7 +168,7 @@ fn test_secp256k1_invalid_signature_age_error() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Secp256k1ClientRole::new(
                 secp_pubkey.clone().into(),
                 signing_fn,
@@ -238,7 +238,7 @@ fn test_secp256k1_invalid_signature_error() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Secp256k1ClientRole::new(
                 secp_pubkey.clone().into(),
                 signing_fn,
@@ -300,7 +300,7 @@ fn test_secp256k1_invalid_hash_error() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Secp256k1ClientRole::new(
                 secp_pubkey.clone().into(),
                 signing_fn,
@@ -363,7 +363,7 @@ fn test_secp256k1_counter_increment() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Secp256k1ClientRole::new(
                 secp_pubkey.clone().into(),
                 signing_fn.clone(),
@@ -407,7 +407,7 @@ fn test_secp256k1_counter_increment() {
 
     swig_wallet
         .switch_authority(
-            0,
+            1,
             Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
             None,
         )
@@ -415,7 +415,7 @@ fn test_secp256k1_counter_increment() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Secp256k1ClientRole::new(
                 secp_pubkey.clone().into(),
                 signing_fn,
@@ -470,7 +470,7 @@ fn test_secp256k1_authority_odometer() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Secp256k1ClientRole::new(
                 secp_pubkey.clone().into(),
                 signing_fn,
@@ -543,7 +543,7 @@ fn test_secp256k1_odometer_wrapping() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Secp256k1ClientRole::new(
                 secp_pubkey.clone().into(),
                 signing_fn,

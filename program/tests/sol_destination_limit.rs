@@ -94,7 +94,7 @@ fn test_sol_destination_limit_basic() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         inner_ix,
-        1, // role_id
+        2, // role_id
     )
     .unwrap();
 
@@ -127,7 +127,7 @@ fn test_sol_destination_limit_basic() {
     // Verify destination limit was decremented
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
     let dest_limit = role
         .get_action::<SolDestinationLimit>(&recipient.pubkey().to_bytes())
         .unwrap()
@@ -205,7 +205,7 @@ fn test_general_sol_limit_hit_before_destination_limit() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         inner_ix,
-        1,
+        2,
     )
     .unwrap();
 
@@ -302,7 +302,7 @@ fn test_destination_limit_hit_before_general_sol_limit() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         inner_ix,
-        1,
+        2,
     )
     .unwrap();
 
@@ -406,7 +406,7 @@ fn test_multiple_destination_limits() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         inner_ix1,
-        1,
+        2,
     )
     .unwrap();
 
@@ -419,7 +419,7 @@ fn test_multiple_destination_limits() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         inner_ix2,
-        1,
+        2,
     )
     .unwrap();
 
@@ -442,7 +442,7 @@ fn test_multiple_destination_limits() {
     // Verify both limits were decremented correctly
     let swig_account_final = context.svm.get_account(&swig).unwrap();
     let swig_state_final = SwigWithRoles::from_bytes(&swig_account_final.data).unwrap();
-    let role_final = swig_state_final.get_role(1).unwrap().unwrap();
+    let role_final = swig_state_final.get_role(2).unwrap().unwrap();
 
     let dest_limit1 = role_final
         .get_action::<SolDestinationLimit>(&recipient1.pubkey().to_bytes())
@@ -520,7 +520,7 @@ fn test_sol_destination_limit_exceeds_limit() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         inner_ix,
-        1,
+        2,
     )
     .unwrap();
 
@@ -616,7 +616,7 @@ fn test_sol_destination_limit_with_general_limit() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         inner_ix,
-        1,
+        2,
     )
     .unwrap();
 
@@ -638,7 +638,7 @@ fn test_sol_destination_limit_with_general_limit() {
     // Verify both limits were decremented
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
 
     let general_limit = role.get_action::<SolLimit>(&[]).unwrap().unwrap();
     assert_eq!(general_limit.amount, general_limit_amount - transfer_amount);
@@ -731,7 +731,7 @@ fn test_sol_destination_limit_cpi_enforcement() {
     let instruction_payload = compact_ixs.into_bytes();
 
     // Prepare the `sign_v1` instruction manually
-    let sign_args = SignV1Args::new(1, instruction_payload.len() as u16); // Role ID 1 for limited_authority
+    let sign_args = SignV1Args::new(2, instruction_payload.len() as u16); // Role ID 1 for limited_authority
     let mut sign_ix_data = Vec::new();
     sign_ix_data.extend_from_slice(sign_args.into_bytes().unwrap());
     sign_ix_data.extend_from_slice(&instruction_payload);

@@ -8132,6 +8132,7 @@ dependencies = [
  "bytemuck",
  "solana-sdk",
  "solana-secp256r1-program",
+ "spl-associated-token-account",
  "swig",
  "swig-compact-instructions",
  "swig-state",

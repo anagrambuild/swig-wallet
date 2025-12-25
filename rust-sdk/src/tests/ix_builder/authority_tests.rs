@@ -21,7 +21,7 @@ fn test_add_authority_with_ed25519_root() {
     let mut context = setup_test_context().unwrap();
     let swig_id = [3u8; 32];
     let authority = Keypair::new();
-    let role_id = 0;
+    let role_id = 1;
 
     // First create the Swig account
     let (swig_key, swig_wallet_address, _) =
@@ -76,7 +76,7 @@ fn test_add_authority_with_ed25519_root() {
     // Verify the new authority was added
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_data.state.roles, 2); // Root authority + new authority
+    assert_eq!(swig_data.state.roles, 3); // Root authority + new authority
 }
 
 #[test_log::test]
@@ -84,7 +84,7 @@ fn test_add_authority_with_secp256k1_root() {
     let mut context = setup_test_context().unwrap();
     let swig_id = [7u8; 32];
     let payer = &context.default_payer;
-    let role_id = 0;
+    let role_id = 1;
 
     let wallet = LocalSigner::random();
     let secp_pubkey = wallet
@@ -170,7 +170,7 @@ fn test_add_authority_with_secp256k1_root() {
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_data.state.roles, 2); // Root authority + new authority
+    assert_eq!(swig_data.state.roles, 3); // Root authority + new authority
 }
 
 #[test_log::test]
@@ -179,7 +179,7 @@ fn test_remove_authority_with_ed25519_root() {
     let swig_id = [8u8; 32];
     let authority = Keypair::new();
     let authority_pubkey = authority.pubkey();
-    let role_id = 0;
+    let role_id = 1;
 
     let (swig_key, _, _) = create_swig_ed25519(&mut context, &authority, swig_id).unwrap();
 
@@ -224,7 +224,7 @@ fn test_remove_authority_with_ed25519_root() {
         result.err()
     );
 
-    let remove_auth_ix = builder.remove_authority(1, None).unwrap();
+    let remove_auth_ix = builder.remove_authority(2, None).unwrap();
     let msg = v0::Message::try_compile(
         &payer.pubkey(),
         &remove_auth_ix,
@@ -244,7 +244,7 @@ fn test_remove_authority_with_ed25519_root() {
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig_data.state.roles, 1); // Only root authority remains
+    assert_eq!(swig_data.state.roles, 2); // Only root authority remains
 }
 
 #[test_log::test]
@@ -253,7 +253,7 @@ fn test_switch_authority_and_payer() {
     let swig_id = [9u8; 32];
     let authority = Keypair::new();
     let payer = &context.default_payer;
-    let role_id = 0;
+    let role_id = 1;
 
     let mut builder = SwigInstructionBuilder::new(
         swig_id,
@@ -284,7 +284,7 @@ fn test_update_authority_with_ed25519_root() {
     let mut context = setup_test_context().unwrap();
     let swig_id = [10u8; 32];
     let authority = Keypair::new();
-    let role_id = 0;
+    let role_id = 1;
 
     // First create the Swig account
     let (swig_key, _, _) = create_swig_ed25519(&mut context, &authority, swig_id).unwrap();
@@ -377,7 +377,7 @@ fn test_update_authority_with_ed25519_root() {
     let swig_data = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
 
     // Check that the authority still exists
-    let role = swig_data.get_role(1).unwrap();
+    let role = swig_data.get_role(2).unwrap();
     assert!(role.is_some(), "Authority should still exist after update");
 
     let role = role.unwrap();

@@ -82,7 +82,7 @@ fn test_cpi_signing_requires_program_permission() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix,
-        1, // Second authority should be role_id 1
+        2, // Second authority should be role_id 2
     )
     .unwrap();
 
@@ -144,7 +144,7 @@ fn test_cpi_signing_requires_program_permission() {
         third_authority.pubkey(),
         third_authority.pubkey(),
         transfer_ix2,
-        2, // Third authority should be role_id 2
+        3, // Third authority should be role_id 3
     )
     .unwrap();
 
@@ -234,7 +234,7 @@ fn test_cpi_signing_without_program_permission_fails() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix,
-        1, // Second authority should be role_id 1
+        2, // Second authority should be role_id 2
     )
     .unwrap();
 
@@ -327,7 +327,7 @@ fn test_cpi_signing_with_program_all_permission() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix,
-        1,
+        2, // Second authority should be role_id 2
     )
     .unwrap();
 
@@ -418,7 +418,7 @@ fn test_cpi_signing_with_program_curated_permission() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix,
-        1,
+        2, // Second authority should be role_id 2
     )
     .unwrap();
 

@@ -33,7 +33,7 @@ fn should_transfer_within_limits() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
             Some(&secondary_authority),
         )
@@ -56,7 +56,7 @@ fn should_transfer_within_limits() {
 
     // Verify transfer was successful
     assert!(signature != solana_sdk::signature::Signature::default());
-    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 1);
+    assert_eq!(swig_wallet.get_current_role_id().unwrap(), 2);
 }
 
 #[test_log::test]
@@ -88,7 +88,7 @@ fn should_fail_transfer_beyond_limits() {
 
     swig_wallet
         .switch_authority(
-            1,
+            2,
             Box::new(Ed25519ClientRole::new(secondary_authority.pubkey())),
             Some(&secondary_authority),
         )
@@ -147,7 +147,7 @@ fn should_get_role_id() {
         .unwrap();
 
     // Verify authorities were added correctly
-    assert_eq!(swig_wallet.get_role_count().unwrap(), 3);
+    assert_eq!(swig_wallet.get_role_count().unwrap(), 4);
     assert!(swig_wallet
         .get_role_id(&authority_2.pubkey().to_bytes())
         .is_ok());
@@ -159,5 +159,5 @@ fn should_get_role_id() {
         .get_role_id(&authority_3.pubkey().to_bytes())
         .unwrap();
     println!("role_id: {:?}", role_id);
-    assert_eq!(role_id, 2);
+    assert_eq!(role_id, 3);
 }

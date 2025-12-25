@@ -137,7 +137,7 @@ fn test_token_destination_limit_basic() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix,
-        1,
+        2,
     )
     .unwrap();
 
@@ -179,7 +179,7 @@ fn test_token_destination_limit_basic() {
     // Verify destination limit was decremented
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
 
     let combined_key = [mint_pubkey.to_bytes(), recipient_ata.to_bytes()].concat();
     let dest_limit = role
@@ -288,7 +288,7 @@ fn test_token_destination_limit_exceeds_limit() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         transfer_ix,
-        1,
+        2,
     )
     .unwrap();
 
@@ -329,8 +329,8 @@ fn test_token_destination_limit_exceeds_limit() {
     // 300", "Program swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB consumed 24973 of
     // 200000 compute units", "Program swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB
     // failed: custom program error: 0xbd6"], inner_instructions: [[InnerInstruction
-    // { instruction: CompiledInstruction { program_id_index: 4, accounts: [1, 2,
-    // 3], data: [3, 44, 1, 0, 0, 0, 0, 0, 0] }, stack_height: 2 }]],
+    // { instruction: CompiledInstruction { program_id_index: 4, accounts: [2, 2,
+    // 3], data: [3, 44, 2, 0, 0, 0, 0, 0, 0] }, stack_height: 2 }]],
     // compute_units_consumed: 24973, return_data: TransactionReturnData {
     // program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, data: [] } } })
     assert_eq!(
@@ -480,7 +480,7 @@ fn test_multiple_token_destination_limits() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         token_ix1,
-        1,
+        2,
     )
     .unwrap();
 
@@ -536,7 +536,7 @@ fn test_multiple_token_destination_limits() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         token_ix2,
-        1,
+        2,
     )
     .unwrap();
 
@@ -577,7 +577,7 @@ fn test_multiple_token_destination_limits() {
 
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
 
     let combined_key1 = [mint_pubkey.to_bytes(), recipient1_ata.to_bytes()].concat();
     let combined_key2 = [mint_pubkey.to_bytes(), recipient2_ata.to_bytes()].concat();
@@ -749,7 +749,7 @@ fn test_token_destination_limit_different_mints() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         token_ix1,
-        1,
+        2,
     )
     .unwrap();
 
@@ -788,7 +788,7 @@ fn test_token_destination_limit_different_mints() {
         second_authority.pubkey(),
         second_authority.pubkey(),
         token_ix2,
-        1,
+        2,
     )
     .unwrap();
 
@@ -846,7 +846,7 @@ fn test_token_destination_limit_different_mints() {
 
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role = swig_state.get_role(1).unwrap().unwrap();
+    let role = swig_state.get_role(2).unwrap().unwrap();
 
     let combined_key1 = [mint1_pubkey.to_bytes(), recipient_ata1.to_bytes()].concat();
     let combined_key2 = [mint2_pubkey.to_bytes(), recipient_ata2.to_bytes()].concat();

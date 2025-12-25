@@ -116,6 +116,19 @@ pub enum SwigError {
     SignV1CannotBeUsedWithSwigV2,
     /// SignV2 instruction cannot be used with Swig v1 accounts
     SignV2CannotBeUsedWithSwigV1,
+
+    /// Authorization lock not found
+    InvalidAuthorizationLockNotFound,
+    /// Contains non-authorization lock action
+    ContainsNonAuthorizationLockAction,
+    /// Authorization lock amount too low
+    InvalidAuthorizationLockAmountExceeded,
+    /// Authorization lock token base required
+    AuthlockBaseActionRequired,
+    /// Associated token account not found
+    AssociatedTokenAccountNotFound,
+    /// Authorization lock mint already exists
+    InvalidAuthorizationLockMintAlreadyExists,
 }
 
 /// Implements conversion from SwigError to ProgramError.

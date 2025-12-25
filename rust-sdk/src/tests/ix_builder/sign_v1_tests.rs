@@ -23,7 +23,7 @@ fn test_sign_instruction_with_ed25519_authority() {
     let swig_id = [1u8; 32];
     let authority = Keypair::new();
     let payer = &context.default_payer;
-    let role_id = 0;
+    let role_id = 1;
 
     let builder = SwigInstructionBuilder::new(
         swig_id,
@@ -106,7 +106,7 @@ fn test_sign_instruction_with_secp256k1_authority() {
     let mut context = setup_test_context().unwrap();
     let swig_id = [6u8; 32];
     let payer = &context.default_payer;
-    let role_id = 0;
+    let role_id = 1;
 
     let wallet = LocalSigner::random();
     let secp_pubkey = wallet
