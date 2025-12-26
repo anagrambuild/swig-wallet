@@ -2384,7 +2384,8 @@ fn test_sign_v2_minimum_rent_check() {
         .airdrop(&swig_wallet_address, 1_000_000_000)
         .unwrap();
 
-    // Failure case - transfer amount is greater than the swig wallet balance and the rent exempt minimum
+    // Failure case - transfer amount is greater than the swig wallet balance and
+    // the rent exempt minimum
     let transfer_amount = 1_000_000_000 + 1; // swig wallet balance + 1
     let transfer_ix =
         system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
@@ -2430,7 +2431,8 @@ fn test_sign_v2_minimum_rent_check() {
 
     assert!(result.is_err(), "Transfer should be rejected");
 
-    // Success case - transfer amount is less than the swig wallet balance and the rent exempt minimum
+    // Success case - transfer amount is less than the swig wallet balance and the
+    // rent exempt minimum
     let transfer_amount = 1_000_000_000; // swig wallet balance
     let transfer_ix =
         system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
