@@ -178,6 +178,10 @@ pub enum SwigAuthenticateError {
     PermissionDeniedTokenDestinationLimitExceeded,
     /// Token destination recurring limit exceeded
     PermissionDeniedRecurringTokenDestinationLimitExceeded,
+    /// External kill switch has been triggered
+    PermissionDeniedExternalKillSwitchTriggered,
+    /// Invalid kill switch account
+    PermissionDeniedInvalidExternalKillSwitch,
 }
 
 impl From<SwigStateError> for ProgramError {

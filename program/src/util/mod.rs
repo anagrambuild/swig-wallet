@@ -20,6 +20,7 @@ use pinocchio::{
 };
 use swig_state::{
     action::{
+        external_kill_switch::ExternalKillSwitch,
         program_scope::{NumericType, ProgramScope},
         Action, Permission,
     },
@@ -28,7 +29,7 @@ use swig_state::{
     read_numeric_field,
     role::RoleMut,
     swig::{Swig, SwigWithRoles},
-    Transmutable,
+    SwigAuthenticateError, Transmutable,
 };
 
 use crate::error::SwigError;
@@ -414,4 +415,53 @@ pub fn hash_except(
     let res = 0;
 
     data_payload_hash
+}
+
+/// Validates external kill switch for a role if one exists.
+///
+/// This function checks if the specified role has an external kill switch
+/// configured and validates it against the external account. If the kill switch
+/// exists and the external account data doesn't match the expected data, it
+/// prevents the instruction from executing.
+///
+/// # Arguments
+/// * `role` - The role to check for kill switch actions
+/// * `all_accounts` - All accounts in the instruction (external account must be
+///   last)
+///
+/// # Returns
+/// * `Result<(), ProgramError>` - Ok if no kill switch or validation passes,
+///   Err if blocked
+///
+/// # Errors
+/// Returns error if:
+/// * External kill switch is configured but external account data doesn't match
+///   expected data
+/// * External account is not provided when kill switch is configured
+/// * External account key doesn't match the configured external account key
+pub fn validate_external_kill_switch(
+    role: &mut RoleMut,
+    all_accounts: &[AccountInfo],
+) -> Result<(), ProgramError> {
+    // Check if role has a kill switch action (only one allowed per role)
+    if let Some(kill_switch) = RoleMut::get_action_mut::<ExternalKillSwitch>(role.actions, &[])? {
+        // The external account must be the last account in the transaction
+        if all_accounts.is_empty() {
+            return Err(SwigAuthenticateError::PermissionDeniedInvalidExternalKillSwitch.into());
+        }
+
+        let last_account_index = all_accounts.len() - 1;
+        let external_account = unsafe { all_accounts.get_unchecked(last_account_index) };
+
+        // Verify the last account matches the expected external account key
+        if external_account.key().as_ref() != &kill_switch.external_account {
+            return Err(SwigAuthenticateError::PermissionDeniedInvalidExternalKillSwitch.into());
+        }
+
+        // Validate the external account data
+        let account_data = unsafe { external_account.borrow_data_unchecked() };
+        kill_switch.validate_external_account(&account_data)?;
+    }
+
+    Ok(())
 }

@@ -7,6 +7,7 @@
 
 pub mod all;
 pub mod all_but_manage_authority;
+pub mod external_kill_switch;
 pub mod manage_authority;
 pub mod program;
 pub mod program_all;
@@ -26,6 +27,7 @@ pub mod token_recurring_destination_limit;
 pub mod token_recurring_limit;
 use all::All;
 use all_but_manage_authority::AllButManageAuthority;
+use external_kill_switch::ExternalKillSwitch;
 use manage_authority::ManageAuthority;
 use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
@@ -163,6 +165,9 @@ pub enum Permission {
     /// Permission to perform recurring token operations with limits to specific
     /// destinations
     TokenRecurringDestinationLimit = 19,
+    /// External kill switch that can disable operations based on external
+    /// account state
+    ExternalKillSwitch = 20,
 }
 
 impl TryFrom<u16> for Permission {
@@ -172,7 +177,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=19 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=20 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -240,6 +245,7 @@ impl ActionLoader {
             Permission::TokenRecurringDestinationLimit => {
                 TokenRecurringDestinationLimit::valid_layout(data)
             },
+            Permission::ExternalKillSwitch => ExternalKillSwitch::valid_layout(data),
             _ => Ok(false),
         }
     }

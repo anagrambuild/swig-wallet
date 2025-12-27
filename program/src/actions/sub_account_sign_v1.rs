@@ -25,7 +25,7 @@ use crate::{
         accounts::{Context, SubAccountSignV1Accounts},
         SwigInstruction,
     },
-    util::build_restricted_keys,
+    util::{build_restricted_keys, validate_external_kill_switch},
     AccountClassification,
 };
 
@@ -147,10 +147,13 @@ pub fn sub_account_sign_v1(
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
 
-    let role = role_opt.unwrap();
+    let mut role = role_opt.unwrap();
 
     // Store authority info before authentication (to avoid borrow checker issues)
     let is_session_based = role.authority.session_based();
+
+    // Validate external kill switch if present
+    validate_external_kill_switch(&mut role, all_accounts)?;
 
     let clock = Clock::get()?;
     let slot = clock.slot;
