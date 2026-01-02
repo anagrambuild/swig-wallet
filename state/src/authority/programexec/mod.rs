@@ -139,13 +139,14 @@ impl AuthorityInfo for ProgramExecAuthority {
         if data.len() < 32 {
             return false;
         }
-        // The identity slice spans the full struct (80 bytes) to include both program_id and instruction_prefix
-        // which are separated by instruction_prefix_len and padding
+        // The identity slice spans the full struct (80 bytes) to include both
+        // program_id and instruction_prefix which are separated by
+        // instruction_prefix_len and padding
         if data.len() != Self::LEN {
             return false;
         }
-        // The identity slice includes intermediate bytes (instruction_prefix_len + padding)
-        // so we need to read instruction_prefix from IX_PREFIX_OFFSET
+        // The identity slice includes intermediate bytes (instruction_prefix_len +
+        // padding) so we need to read instruction_prefix from IX_PREFIX_OFFSET
         sol_assert_bytes_eq(&self.program_id, &data[..32], 32)
             && sol_assert_bytes_eq(
                 &self.instruction_prefix[..self.instruction_prefix_len as usize],
@@ -159,7 +160,7 @@ impl AuthorityInfo for ProgramExecAuthority {
     }
 
     fn identity(&self) -> Result<&[u8], ProgramError> {
-       Ok(&self.instruction_prefix[..self.instruction_prefix_len as usize])
+        Ok(&self.instruction_prefix[..self.instruction_prefix_len as usize])
     }
 
     fn signature_odometer(&self) -> Option<u32> {

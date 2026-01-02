@@ -155,7 +155,11 @@ pub fn swig_key_bytes(id: &[u8; 32]) -> Pubkey {
 }
 
 pub fn swig_wallet_address(config_address: &Pubkey) -> Pubkey {
-    Pubkey::find_program_address(&swig_wallet_address_seeds(config_address.as_ref()), &program_id()).0
+    Pubkey::find_program_address(
+        &swig_wallet_address_seeds(config_address.as_ref()),
+        &program_id(),
+    )
+    .0
 }
 
 pub struct AuthorityConfig<'a> {
