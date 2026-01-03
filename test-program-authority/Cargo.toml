@@ -1,0 +1,21 @@
+[package]
+name = "test-program-authority"
+version = "1.2.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "test_program_authority"
+
+[features]
+no-entrypoint = []
+test-sbf = []
+program_scope_test = []
+
+[dependencies]
+solana-program = "2.2.1"
+
+[dev-dependencies]
+solana-program-test = "2.2.1"
