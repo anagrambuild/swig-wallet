@@ -296,18 +296,20 @@ impl Permission {
                         (Some(_), None) => (ProgramScopeType::Basic as u64, 0, 0),
                     };
 
-                    actions.push(ClientAction::ProgramScope(ProgramScope {
+                    let mut program_scope = ProgramScope {
                         program_id: program_id.to_bytes(),
                         target_account: target_account.to_bytes(),
                         scope_type: scope_type as u64,
                         numeric_type: numeric_type as u64,
-                        current_amount: 0 as u128,
-                        limit: limit as u128,
+                        current_amount: [0; 16],
+                        limit: [0; 16],
                         window: window as u64,
                         last_reset: 0,
                         balance_field_start: balance_field_start.unwrap_or(0) as u64,
                         balance_field_end: balance_field_end.unwrap_or(0) as u64,
-                    }));
+                    };
+                    program_scope.set_limit_value(limit as u128);
+                    actions.push(ClientAction::ProgramScope(program_scope));
                 },
                 Permission::SubAccount { sub_account } => {
                     actions.push(ClientAction::SubAccount(SubAccount::new(sub_account)));
@@ -510,7 +512,7 @@ impl Permission {
                 target_account: Pubkey::new_from_array(action.target_account),
                 numeric_type: action.numeric_type,
                 limit: if action.scope_type > 0 {
-                    Some(action.limit as u64)
+                    Some(action.get_limit_value() as u64)
                 } else {
                     None
                 },

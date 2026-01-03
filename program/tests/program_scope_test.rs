@@ -74,18 +74,19 @@ fn test_token_transfer_with_program_scope() {
     )
     .unwrap();
 
-    let program_scope = ProgramScope {
+    let mut program_scope = ProgramScope {
         program_id: spl_token::ID.to_bytes(),
         target_account: swig_ata.to_bytes(), // Target the swig's token account
         scope_type: ProgramScopeType::Limit as u64,
         numeric_type: NumericType::U64 as u64,
-        current_amount: 0,
-        limit: 1000,
+        current_amount: [0; 16],
+        limit: [0; 16],
         window: 0,               // Not used for Limit type
         last_reset: 0,           // Not used for Limit type
         balance_field_start: 64, // SPL Token balance starts at byte 64
         balance_field_end: 72,   // SPL Token balance ends at byte 72 (u64 is 8 bytes)
     };
+    program_scope.set_limit_value(1000);
 
     let add_authority_result = add_authority_with_ed25519_root(
         &mut context,
@@ -406,8 +407,11 @@ fn read_program_scope_state(
                 // Check if this ProgramScope targets our account
                 if program_scope.target_account == target_bytes {
                     println!("Found ProgramScope for target account");
-                    println!("  Current amount: {}", program_scope.current_amount);
-                    println!("  Limit: {}", program_scope.limit);
+                    println!(
+                        "  Current amount: {}",
+                        program_scope.get_current_amount_value()
+                    );
+                    println!("  Limit: {}", program_scope.get_limit_value());
                     println!("  Last reset: {}", program_scope.last_reset);
                     println!(
                         "  Balance field indices: {}..{}",
@@ -437,7 +441,7 @@ fn read_program_scope_state(
                         }
                     }
 
-                    return Some(program_scope.current_amount);
+                    return Some(program_scope.get_current_amount_value());
                 }
             }
         }
@@ -514,18 +518,19 @@ fn test_recurring_limit_program_scope() {
     let window_size = 100;
     let transfer_limit = 500_u64;
 
-    let program_scope = ProgramScope {
+    let mut program_scope = ProgramScope {
         program_id: spl_token::ID.to_bytes(),
         target_account: swig_ata.to_bytes(),
         scope_type: ProgramScopeType::RecurringLimit as u64,
         numeric_type: NumericType::U64 as u64,
-        current_amount: 0,
-        limit: transfer_limit as u128,
+        current_amount: [0; 16],
+        limit: [0; 16],
         window: window_size,
         last_reset: 0,
         balance_field_start: 64,
         balance_field_end: 72,
     };
+    program_scope.set_limit_value(transfer_limit as u128);
 
     let add_authority_result = add_authority_with_ed25519_root(
         &mut context,
@@ -824,18 +829,19 @@ fn test_program_scope_token_limit_cpi_enforcement() {
         .unwrap();
 
     // Setup ProgramScope with Limit type for 500 tokens
-    let program_scope = ProgramScope {
+    let mut program_scope = ProgramScope {
         program_id: spl_token::ID.to_bytes(),
         target_account: swig_ata.to_bytes(),
         scope_type: ProgramScopeType::Limit as u64,
         numeric_type: NumericType::U64 as u64,
-        current_amount: 0,
-        limit: 500,
+        current_amount: [0; 16],
+        limit: [0; 16],
         window: 0,               // Not used for Limit type
         last_reset: 0,           // Not used for Limit type
         balance_field_start: 64, // SPL Token balance starts at byte 64
         balance_field_end: 72,   // SPL Token balance ends at byte 72 (u64 is 8 bytes)
     };
+    program_scope.set_limit_value(500);
 
     // Add authority with ProgramScope limit of 500 tokens
     add_authority_with_ed25519_root(
@@ -1041,18 +1047,19 @@ fn test_program_scope_balance_underflow_check() {
     .unwrap();
 
     // Define a ProgramScope with a limit of 1000 tokens
-    let program_scope = ProgramScope {
+    let mut program_scope = ProgramScope {
         program_id: spl_token::ID.to_bytes(),
         target_account: swig_ata.to_bytes(),
         scope_type: ProgramScopeType::Limit as u64,
         numeric_type: NumericType::U64 as u64,
-        current_amount: 0,
-        limit: 1000,
+        current_amount: [0; 16],
+        limit: [0; 16],
         window: 0,
         last_reset: 0,
         balance_field_start: 64,
         balance_field_end: 72,
     };
+    program_scope.set_limit_value(1000);
 
     // Add the authority with the ProgramScope
     add_authority_with_ed25519_root(

@@ -218,8 +218,11 @@ pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), S
                     }
                 );
                 if action.scope_type > 0 {
-                    println!("║ │  │  ├─ Limit: {} ", action.limit);
-                    println!("║ │  │  ├─ Current Usage: {} ", action.current_amount);
+                    println!("║ │  │  ├─ Limit: {} ", action.get_limit_value());
+                    println!(
+                        "║ │  │  ├─ Current Usage: {} ",
+                        action.get_current_amount_value()
+                    );
                 }
                 if action.scope_type == 2 {
                     println!("║ │  │  ├─ Window: {} slots", action.window);
