@@ -3698,7 +3698,7 @@ dependencies = [
 
 [[package]]
 name = "no-padding"
-version = "1.3.4"
+version = "1.4.0"
 dependencies = [
  "proc-macro2 1.0.94",
  "quote 1.0.40",
@@ -8833,7 +8833,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "swig"
-version = "1.3.4"
+version = "1.4.0"
 dependencies = [
  "alloy-primitives",
  "alloy-signer",
@@ -8876,7 +8876,7 @@ dependencies = [
 
 [[package]]
 name = "swig-assertions"
-version = "1.3.4"
+version = "1.4.0"
 dependencies = [
  "pinocchio 0.9.0",
  "pinocchio-pubkey 0.3.0",
@@ -8885,7 +8885,7 @@ dependencies = [
 
 [[package]]
 name = "swig-cli"
-version = "1.3.4"
+version = "1.4.0"
 dependencies = [
  "alloy-primitives",
  "alloy-signer",
@@ -8914,7 +8914,7 @@ dependencies = [
 
 [[package]]
 name = "swig-compact-instructions"
-version = "1.3.4"
+version = "1.4.0"
 dependencies = [
  "bs58",
  "pinocchio 0.9.0",
@@ -8924,7 +8924,7 @@ dependencies = [
 
 [[package]]
 name = "swig-interface"
-version = "1.3.4"
+version = "1.4.0"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -8937,7 +8937,7 @@ dependencies = [
 
 [[package]]
 name = "swig-sdk"
-version = "1.3.4"
+version = "1.4.0"
 dependencies = [
  "alloy-primitives",
  "alloy-signer",
@@ -8965,7 +8965,7 @@ dependencies = [
 
 [[package]]
 name = "swig-state"
-version = "1.3.4"
+version = "1.4.0"
 dependencies = [
  "agave-precompiles",
  "hex",
