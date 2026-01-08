@@ -37,7 +37,7 @@ use swig_state::{
         Action, Permission,
     },
     role::RoleMut,
-    swig::{swig_account_signer, swig_wallet_address_signer, Swig},
+    swig::{swig_account_signer, swig_wallet_address_signer, Swig, SwigWithRoles},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -178,16 +178,11 @@ pub fn sign_v2(
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
 
+    // Accept both V1 and V2 swig accounts for SignV2
     if !matches!(
         account_classifiers[0],
-        AccountClassification::ThisSwigV2 { .. }
+        AccountClassification::ThisSwigV2 { .. } | AccountClassification::ThisSwig { .. }
     ) {
-        if matches!(
-            account_classifiers[0],
-            AccountClassification::ThisSwig { .. }
-        ) {
-            return Err(SwigError::SignV2CannotBeUsedWithSwigV1.into());
-        }
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 
@@ -203,6 +198,11 @@ pub fn sign_v2(
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
+
+    // Store swig account data information for later authorization lock checks
+    let swig_data_ptr = swig_account_data.as_ptr();
+    let swig_data_len = swig_account_data.len();
+
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
     let role = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)?;
@@ -478,17 +478,54 @@ pub fn sign_v2(
                     }
 
                     if total_sol_spent > 0 {
-                        // First check general SOL limits
+                        // Check authorization locks first for SOL (mint = all zeros for native SOL)
+                        let sol_mint = [0u8; 32];
+                        let mut authorization_lock_applied = false;
                         let mut general_limit_applied = false;
 
-                        if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])? {
-                            action.run(total_sol_spent)?;
-                            general_limit_applied = true;
-                        } else if let Some(action) =
-                            RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])?
-                        {
-                            action.run(total_sol_spent, slot)?;
-                            general_limit_applied = true;
+                        // Create a SwigWithRoles to access authorization locks
+                        let swig_with_roles_result = unsafe {
+                            SwigWithRoles::from_bytes(core::slice::from_raw_parts(
+                                swig_data_ptr,
+                                swig_data_len,
+                            ))
+                        };
+
+                        if let Ok(swig_with_roles) = swig_with_roles_result {
+                            // Check all authorization locks for native SOL and this role
+                            let _ = swig_with_roles
+                                .for_each_authorization_lock_by_mint::<_, ProgramError>(
+                                    &sol_mint,
+                                    |lock| {
+                                        // Only consider locks for the current role
+                                        if lock.role_id == sign_v2.args.role_id {
+                                            // Check if lock is not expired and amount is sufficient
+                                            if lock.expiry_slot > slot
+                                                && total_sol_spent <= lock.amount
+                                            {
+                                                authorization_lock_applied = true;
+                                            }
+                                        }
+                                        Ok(())
+                                    },
+                                );
+                        }
+
+                        // If authorization lock was found and valid, skip regular limit checks
+                        if authorization_lock_applied {
+                            // Authorization lock allows this transaction, continue
+                        } else {
+                            // No valid authorization lock, check general SOL limits
+                            if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])?
+                            {
+                                action.run(total_sol_spent)?;
+                                general_limit_applied = true;
+                            } else if let Some(action) =
+                                RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])?
+                            {
+                                action.run(total_sol_spent, slot)?;
+                                general_limit_applied = true;
+                            }
                         }
 
                         // Only check destination limits if they exist
@@ -539,8 +576,11 @@ pub fn sign_v2(
                             }
                         }
 
-                        // If we have general limits OR destination limits exist, continue
-                        if general_limit_applied || has_sol_destination_limits(actions)? {
+                        // If we have authorization lock, general limits, OR destination limits exist, continue
+                        if authorization_lock_applied
+                            || general_limit_applied
+                            || has_sol_destination_limits(actions)?
+                        {
                             continue;
                         }
 
@@ -640,6 +680,47 @@ pub fn sign_v2(
                         // If a destination limit was applied, continue to next account
                         if destination_limit_applied {
                             continue 'account_loop;
+                        }
+
+                        // Check authorization locks first if mint is the right size
+                        if mint.len() == 32 {
+                            let mut mint_array = [0u8; 32];
+                            mint_array.copy_from_slice(mint);
+
+                            // Create a SwigWithRoles to access authorization locks using saved pointers
+                            let swig_with_roles_result = unsafe {
+                                SwigWithRoles::from_bytes(core::slice::from_raw_parts(
+                                    swig_data_ptr,
+                                    swig_data_len,
+                                ))
+                            };
+
+                            if let Ok(swig_with_roles) = swig_with_roles_result {
+                                let mut found_valid_lock = false;
+
+                                // Check all authorization locks for this mint and role
+                                let _ = swig_with_roles
+                                    .for_each_authorization_lock_by_mint::<_, ProgramError>(
+                                        &mint_array,
+                                        |lock| {
+                                            // Only consider locks for the current role
+                                            if lock.role_id == sign_v2.args.role_id {
+                                                // Check if lock is not expired and amount is sufficient
+                                                if lock.expiry_slot > slot
+                                                    && total_token_spent <= lock.amount
+                                                {
+                                                    found_valid_lock = true;
+                                                }
+                                            }
+                                            Ok(())
+                                        },
+                                    );
+
+                                // If we found a valid authorization lock, allow the transaction
+                                if found_valid_lock {
+                                    continue 'account_loop;
+                                }
+                            }
                         }
 
                         // Check regular token limits for outgoing transfers
@@ -767,6 +848,19 @@ pub fn sign_v2(
                 _ => {},
             }
         }
+    }
+
+    // Proactively cleanup expired authorization locks to reclaim space
+    // This runs after successful transaction execution, only if we have authorization locks
+    // We limit to 2 removals per transaction to avoid excessive compute usage
+    if swig.authorization_locks > 0 {
+        let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        let _ = crate::actions::remove_authorization_lock_v1::cleanup_expired_authorization_locks(
+            swig_account_data,
+            slot,
+            2, // Max 2 removals per transaction
+        );
+        // Ignore errors from cleanup - it's best effort and shouldn't fail the transaction
     }
 
     Ok(())
