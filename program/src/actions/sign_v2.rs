@@ -37,7 +37,7 @@ use swig_state::{
         Action, Permission,
     },
     role::RoleMut,
-    swig::{swig_account_signer, swig_wallet_address_signer, Swig},
+    swig::{swig_account_signer, swig_wallet_address_signer, Swig, SwigWithRoles},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -197,6 +197,11 @@ pub fn sign_v2(
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
+
+    // Store swig account data information for later authorization lock checks
+    let swig_data_ptr = swig_account_data.as_ptr();
+    let swig_data_len = swig_account_data.len();
+
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
     let role = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)?;
@@ -621,6 +626,47 @@ pub fn sign_v2(
                         // If a destination limit was applied, continue to next account
                         if destination_limit_applied {
                             continue 'account_loop;
+                        }
+
+                        // Check authorization locks first if mint is the right size
+                        if mint.len() == 32 {
+                            let mut mint_array = [0u8; 32];
+                            mint_array.copy_from_slice(mint);
+
+                            // Create a SwigWithRoles to access authorization locks using saved pointers
+                            let swig_with_roles_result = unsafe {
+                                SwigWithRoles::from_bytes(core::slice::from_raw_parts(
+                                    swig_data_ptr,
+                                    swig_data_len,
+                                ))
+                            };
+
+                            if let Ok(swig_with_roles) = swig_with_roles_result {
+                                let mut found_valid_lock = false;
+
+                                // Check all authorization locks for this mint and role
+                                let _ = swig_with_roles
+                                    .for_each_authorization_lock_by_mint::<_, ProgramError>(
+                                        &mint_array,
+                                        |lock| {
+                                            // Only consider locks for the current role
+                                            if lock.role_id == sign_v2.args.role_id {
+                                                // Check if lock is not expired and amount is sufficient
+                                                if lock.expiry_slot > slot
+                                                    && total_token_spent <= lock.amount
+                                                {
+                                                    found_valid_lock = true;
+                                                }
+                                            }
+                                            Ok(())
+                                        },
+                                    );
+
+                                // If we found a valid authorization lock, allow the transaction
+                                if found_valid_lock {
+                                    continue 'account_loop;
+                                }
+                            }
                         }
 
                         // Check regular token limits for outgoing transfers
