@@ -2128,7 +2128,7 @@ fn test_sign_v2_secp256r1_transfer() {
 //     let mut context = setup_test_context().unwrap();
 //     let swig_authority = Keypair::new();
 //     let recipient = Keypair::new();
-// 
+//
 //     context
 //         .svm
 //         .airdrop(&recipient.pubkey(), 10_000_000_000)
@@ -2137,14 +2137,16 @@ fn test_sign_v2_secp256r1_transfer() {
 //         .svm
 //         .airdrop(&swig_authority.pubkey(), 20_000_000_000)
 //         .unwrap();
-// 
+//
 //     let id = rand::random::<[u8; 32]>();
-//     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
-//     let (swig_wallet_address, _) =
-//         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
-// 
-//     let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
-// 
+//     let swig = Pubkey::find_program_address(&swig_account_seeds(&id),
+// &program_id()).0;     let (swig_wallet_address, _) =
+//         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.
+// as_ref()), &program_id());
+//
+//     let (_, _) = create_swig_ed25519(&mut context, &swig_authority,
+// id).unwrap();
+//
 //     let transfer_to_wallet_ix = system_instruction::transfer(
 //         &swig_authority.pubkey(),
 //         &swig_wallet_address,
@@ -2164,10 +2166,11 @@ fn test_sign_v2_secp256r1_transfer() {
 //     )
 //     .unwrap();
 //     context.svm.send_transaction(transfer_tx).unwrap();
-// 
+//
 //     let transfer_amount = 100_000_000;
-//     let transfer_ix = system_instruction::transfer(&swig, &recipient.pubkey(), transfer_amount);
-// 
+//     let transfer_ix = system_instruction::transfer(&swig,
+// &recipient.pubkey(), transfer_amount);
+//
 //     let sign_v1_ix = SignInstruction::new_ed25519(
 //         swig,
 //         swig_authority.pubkey(),
@@ -2176,7 +2179,7 @@ fn test_sign_v2_secp256r1_transfer() {
 //         0,
 //     )
 //     .unwrap();
-// 
+//
 //     let transfer_message = v0::Message::try_compile(
 //         &swig_authority.pubkey(),
 //         &[sign_v1_ix],
@@ -2184,13 +2187,13 @@ fn test_sign_v2_secp256r1_transfer() {
 //         context.svm.latest_blockhash(),
 //     )
 //     .unwrap();
-// 
+//
 //     let transfer_tx =
-//         VersionedTransaction::try_new(VersionedMessage::V0(transfer_message), &[&swig_authority])
-//             .unwrap();
-// 
+//         VersionedTransaction::try_new(VersionedMessage::V0(transfer_message),
+// &[&swig_authority])             .unwrap();
+//
 //     let result = context.svm.send_transaction(transfer_tx);
-// 
+//
 //     assert!(
 //         result.is_err(),
 //         "SignV1 instruction should be rejected by Swig v2 account"
@@ -2199,10 +2202,10 @@ fn test_sign_v2_secp256r1_transfer() {
 //         result.unwrap_err().err,
 //         TransactionError::InstructionError(0, InstructionError::Custom(45))
 //     );
-// 
-//     println!("✅ Test passed: Swig v2 correctly rejects SignV1 instruction with error code 45");
-// }
-// 
+//
+//     println!("✅ Test passed: Swig v2 correctly rejects SignV1 instruction
+// with error code 45"); }
+//
 #[test_log::test]
 fn test_sign_v2_token_transfer_through_secondary_authority() {
     let mut context = setup_test_context().unwrap();
