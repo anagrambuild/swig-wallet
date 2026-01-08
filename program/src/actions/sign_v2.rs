@@ -831,6 +831,19 @@ pub fn sign_v2(
         }
     }
 
+    // Proactively cleanup expired authorization locks to reclaim space
+    // This runs after successful transaction execution, only if we have authorization locks
+    // We limit to 2 removals per transaction to avoid excessive compute usage
+    if swig.authorization_locks > 0 {
+        let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        let _ = crate::actions::remove_authorization_lock_v1::cleanup_expired_authorization_locks(
+            swig_account_data,
+            slot,
+            2, // Max 2 removals per transaction
+        );
+        // Ignore errors from cleanup - it's best effort and shouldn't fail the transaction
+    }
+
     Ok(())
 }
 
