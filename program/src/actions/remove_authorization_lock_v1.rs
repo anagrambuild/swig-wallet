@@ -25,6 +25,11 @@ use crate::{
     },
 };
 
+/// Number of slots after expiry before an authorization lock can be removed by any
+/// authority with All or ManageAuthority permissions (not just the creator).
+/// Set to 5 Solana epochs (~2,160,000 slots = ~10 days at 400ms/slot)
+pub const EXPIRED_LOCK_CLEANUP_THRESHOLD_SLOTS: u64 = 5 * 432_000;
+
 /// Arguments for removing an authorization lock from a Swig wallet.
 ///
 /// # Fields
@@ -205,21 +210,43 @@ pub fn remove_authorization_lock_v1(
     let locks_after_start = lock_to_remove_end;
     let locks_after_end = auth_locks_start + (total_locks * lock_size);
 
-    // Validate role ownership - both All and ManageAuthorizationLocks permissions
-    // can only remove locks created by their own role
+    // Validate role ownership with expired lock cleanup exception
+    // Rules:
+    // 1. Role can always remove its own authorization locks
+    // 2. If lock is expired beyond cleanup threshold, any role with All or
+    //    ManageAuthority can remove it (proactive cleanup)
     if lock_to_remove_start + lock_size <= remaining_data.len() {
         // Zero-copy: cast the raw bytes directly to a reference
         let lock = unsafe {
             &*(remaining_data[lock_to_remove_start..lock_to_remove_end].as_ptr()
                 as *const AuthorizationLock)
         };
-        if lock.role_id != remove_lock.args.acting_role_id {
+
+        // Check if this is the lock creator or if cleanup is allowed
+        let is_lock_creator = lock.role_id == remove_lock.args.acting_role_id;
+        let is_expired_beyond_threshold =
+            lock.expiry_slot + EXPIRED_LOCK_CLEANUP_THRESHOLD_SLOTS < slot;
+        let can_cleanup = has_all_permission; // Only All permission can cleanup others' locks
+
+        if !is_lock_creator && !(is_expired_beyond_threshold && can_cleanup) {
             msg!(
-                "Permission denied: Role {} cannot remove authorization lock created by role {}",
+                "Permission denied: Role {} cannot remove authorization lock created by role {} \
+                 (lock not expired beyond cleanup threshold or missing All permission)",
                 remove_lock.args.acting_role_id,
                 lock.role_id
             );
             return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+        }
+
+        if is_expired_beyond_threshold && !is_lock_creator {
+            msg!(
+                "Cleaning up expired authorization lock: created by role {}, expired at slot {}, \
+                 current slot {}, cleanup performed by role {}",
+                lock.role_id,
+                lock.expiry_slot,
+                slot,
+                remove_lock.args.acting_role_id
+            );
         }
     }
 
@@ -258,4 +285,104 @@ pub fn remove_authorization_lock_v1(
     swig.authorization_locks -= 1;
 
     Ok(())
+}
+
+/// Proactively removes expired authorization locks that are beyond the cleanup threshold.
+/// This function can be called during SignV2 execution to reclaim space.
+///
+/// # Arguments
+/// * `swig_account_data` - Mutable reference to the swig account data
+/// * `current_slot` - Current slot number
+/// * `max_removals` - Maximum number of expired locks to remove in one call (to limit compute)
+///
+/// # Returns
+/// * `Result<usize, ProgramError>` - Number of locks removed, or error
+pub fn cleanup_expired_authorization_locks(
+    swig_account_data: &mut [u8],
+    current_slot: u64,
+    max_removals: usize,
+) -> Result<usize, ProgramError> {
+    if swig_account_data.len() < Swig::LEN {
+        return Ok(0);
+    }
+
+    let (swig_header, remaining_data) = swig_account_data.split_at_mut(Swig::LEN);
+    let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+
+    if swig.authorization_locks == 0 {
+        return Ok(0);
+    }
+
+    // Find the end of roles data to determine where authorization locks start
+    let mut roles_end = 0;
+    let mut cursor = 0;
+    for _i in 0..swig.roles {
+        if cursor + Position::LEN > remaining_data.len() {
+            return Err(SwigStateError::InvalidRoleData.into());
+        }
+        let position =
+            unsafe { Position::load_unchecked(&remaining_data[cursor..cursor + Position::LEN])? };
+        cursor = position.boundary() as usize;
+        roles_end = cursor;
+    }
+
+    let auth_locks_start = roles_end;
+    let lock_size = AuthorizationLock::LEN;
+    let mut total_locks = swig.authorization_locks as usize;
+    let mut removals = 0;
+    let cleanup_threshold = current_slot.saturating_sub(EXPIRED_LOCK_CLEANUP_THRESHOLD_SLOTS);
+
+    // Iterate backwards through locks to remove expired ones
+    // Going backwards makes removal easier as we don't need to adjust index
+    let mut lock_index = total_locks;
+    while lock_index > 0 && removals < max_removals {
+        lock_index -= 1;
+
+        let lock_start = auth_locks_start + (lock_index * lock_size);
+        let lock_end = lock_start + lock_size;
+
+        if lock_end > remaining_data.len() {
+            break;
+        }
+
+        // Check if this lock is expired beyond threshold
+        let lock = unsafe {
+            &*(remaining_data[lock_start..lock_end].as_ptr() as *const AuthorizationLock)
+        };
+
+        if lock.expiry_slot < cleanup_threshold {
+            // Remove this expired lock by shifting all locks after it down
+            if lock_index < total_locks - 1 {
+                let locks_after_count = total_locks - lock_index - 1;
+                let move_size = locks_after_count * lock_size;
+                let source_start = lock_end;
+                let source_end = auth_locks_start + (total_locks * lock_size);
+
+                if source_end <= remaining_data.len()
+                    && lock_start + move_size <= remaining_data.len()
+                {
+                    remaining_data.copy_within(source_start..source_end, lock_start);
+                }
+            }
+
+            total_locks -= 1;
+            removals += 1;
+
+            msg!(
+                "Proactively cleaned up expired authorization lock: role_id={}, expired at slot {}, current slot {}",
+                lock.role_id,
+                lock.expiry_slot,
+                current_slot
+            );
+        }
+    }
+
+    // Update the authorization locks count
+    if removals > 0 {
+        let (swig_header, _) = swig_account_data.split_at_mut(Swig::LEN);
+        let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+        swig.authorization_locks = total_locks as u16;
+    }
+
+    Ok(removals)
 }
