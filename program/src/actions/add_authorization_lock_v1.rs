@@ -409,7 +409,7 @@ fn validate_authorization_lock_against_balance(
             let balance = u64::from_le_bytes(
                 account_data[TOKEN_BALANCE_OFFSET..TOKEN_BALANCE_OFFSET + TOKEN_BALANCE_SIZE]
                     .try_into()
-                    .map_err(|_| ProgramError::InvalidAccountData)?
+                    .map_err(|_| ProgramError::InvalidAccountData)?,
             );
 
             if total_with_new_lock > balance {
