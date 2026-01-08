@@ -856,6 +856,26 @@ impl<'a> SwigWithRoles<'a> {
         }
     }
 
+    /// Gets all authorization locks for testing purposes.
+    /// Returns a tuple of (locks array, count) where count is the number of
+    /// locks found.
+    pub fn get_authorization_locks_for_test<const MAX_LOCKS: usize>(
+        &self,
+    ) -> Result<([Option<AuthorizationLock>; MAX_LOCKS], usize), ProgramError> {
+        let mut locks = [None; MAX_LOCKS];
+        let mut count = 0;
+
+        self.for_each_authorization_lock::<_, ProgramError>(|lock| {
+            if count < MAX_LOCKS {
+                locks[count] = Some(*lock);
+                count += 1;
+            }
+            Ok(())
+        })?;
+
+        Ok((locks, count))
+    }
+
     /// Finds a program scope by target account.
     pub fn find_program_scope_by_target(
         &self,
