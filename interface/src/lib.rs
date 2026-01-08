@@ -2848,8 +2848,8 @@ impl AddAuthorizationLockInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
             AccountMeta::new_readonly(system_program::ID, false),
-            AccountMeta::new_readonly(balance_account, false),
             AccountMeta::new_readonly(authority, true),
+            AccountMeta::new_readonly(balance_account, false),
         ];
 
         let args = AddAuthorizationLockV1Args::new(acting_role_id, token_mint, amount, expiry_slot);

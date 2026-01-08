@@ -57,6 +57,10 @@ fn test_authorization_lock_permission_enforcement() {
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_result.is_ok());
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 100_000_000_000)
+        .unwrap();
 
     println!("=== AUTHORIZATION LOCK PERMISSION ENFORCEMENT TEST ===");
     println!(
@@ -363,6 +367,10 @@ fn test_authorization_lock_invalid_role_handling() {
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_result.is_ok());
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 100_000_000_000)
+        .unwrap();
 
     println!("=== AUTHORIZATION LOCK INVALID ROLE HANDLING TEST ===");
     println!("Testing behavior with invalid role IDs");
@@ -487,6 +495,10 @@ fn test_authorization_lock_expiry_validation() {
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_result.is_ok());
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 100_000_000_000)
+        .unwrap();
 
     println!("=== AUTHORIZATION LOCK EXPIRY VALIDATION TEST ===");
     println!("Testing that already-expired authorization locks are rejected");
