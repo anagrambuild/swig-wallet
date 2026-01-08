@@ -98,6 +98,34 @@ pub fn sub_account_signer<'a>(
     ]
 }
 
+/// Represents an authorization lock for pre-authorizing token spending limits.
+#[repr(C, align(8))]
+#[derive(Debug, PartialEq, Copy, Clone, NoPadding)]
+pub struct AuthorizationLock {
+    /// Token mint public key that this lock applies to
+    pub token_mint: [u8; 32],
+    /// Maximum amount that can be spent
+    pub amount: u64,
+    /// Slot number when this lock expires
+    pub expiry_slot: u64,
+    /// Role ID that created this authorization lock
+    pub role_id: u32,
+    /// Padding to ensure struct has no padding
+    pub _padding: [u8; 4],
+}
+
+impl Transmutable for AuthorizationLock {
+    const LEN: usize = core::mem::size_of::<Self>();
+}
+
+impl TransmutableMut for AuthorizationLock {}
+
+impl IntoBytes for AuthorizationLock {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
+        Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
+    }
+}
+
 /// Builder for constructing and modifying Swig accounts.
 pub struct SwigBuilder<'a> {
     /// Buffer for role data
@@ -422,7 +450,10 @@ pub struct Swig {
     pub role_counter: u32,
     /// Wallet address bump seed
     pub wallet_bump: u8,
-    pub _padding: [u8; 7],
+    /// Number of authorization locks in this account
+    pub authorization_locks: u16,
+    /// Reserved bytes for future use
+    pub _reserved: [u8; 5],
 }
 
 impl Swig {
@@ -435,7 +466,8 @@ impl Swig {
             roles: 0,
             role_counter: 0,
             wallet_bump,
-            _padding: [0; 7],
+            authorization_locks: 0,
+            _reserved: [0; 5],
         }
     }
 
@@ -522,12 +554,12 @@ impl IntoBytes for Swig {
     }
 }
 
-/// Wrapper structure for a Swig account with its roles.
+/// Wrapper structure for a Swig account with its roles and authorization locks.
 pub struct SwigWithRoles<'a> {
     /// Reference to the Swig account state
     pub state: &'a Swig,
-    /// Raw bytes containing role data
-    roles: &'a [u8],
+    /// Raw bytes containing all data after the Swig header (roles + auth locks)
+    data: &'a [u8],
 }
 
 impl<'a> SwigWithRoles<'a> {
@@ -538,19 +570,44 @@ impl<'a> SwigWithRoles<'a> {
         }
 
         let state = unsafe { Swig::load_unchecked(&bytes[..Swig::LEN])? };
-        let roles = &bytes[Swig::LEN..];
+        let data = &bytes[Swig::LEN..];
 
-        Ok(SwigWithRoles { state, roles })
+        Ok(SwigWithRoles { state, data })
+    }
+
+    /// Gets the roles data slice from the combined data.
+    fn roles_data(&self) -> &[u8] {
+        let mut cursor = 0;
+        for _i in 0..self.state.roles {
+            if cursor + Position::LEN > self.data.len() {
+                return &[];
+            }
+            let position =
+                unsafe { Position::load_unchecked(&self.data[cursor..cursor + Position::LEN]) };
+            if let Ok(pos) = position {
+                cursor = pos.boundary() as usize;
+            } else {
+                return &[];
+            }
+        }
+        &self.data[..cursor]
+    }
+
+    /// Gets the authorization locks data slice from the combined data.
+    fn authorization_locks_data(&self) -> &[u8] {
+        let roles_end = self.roles_data().len();
+        &self.data[roles_end..]
     }
 
     /// Looks up a role ID by authority data.
     pub fn lookup_role_id(&'a self, authority_data: &'a [u8]) -> Result<Option<u32>, ProgramError> {
+        let roles = self.roles_data();
         let mut cursor = 0;
 
         for _i in 0..self.state.roles {
             let offset = cursor + Position::LEN;
             let position =
-                unsafe { Position::load_unchecked(self.roles.get_unchecked(cursor..offset))? };
+                unsafe { Position::load_unchecked(roles.get_unchecked(cursor..offset))? };
             let auth_type = position.authority_type()?;
             let auth_len = position.authority_length() as usize;
 
@@ -558,42 +615,42 @@ impl<'a> SwigWithRoles<'a> {
             let authority: &dyn AuthorityInfo = match auth_type {
                 AuthorityType::Ed25519 => unsafe {
                     ED25519Authority::load_unchecked(
-                        self.roles.get_unchecked(offset..offset + auth_len),
+                        roles.get_unchecked(offset..offset + auth_len),
                     )?
                 },
                 AuthorityType::Ed25519Session => unsafe {
                     Ed25519SessionAuthority::load_unchecked(
-                        self.roles.get_unchecked(offset..offset + auth_len),
+                        roles.get_unchecked(offset..offset + auth_len),
                     )?
                 },
                 AuthorityType::Secp256k1 => unsafe {
                     Secp256k1Authority::load_unchecked(
-                        self.roles.get_unchecked(offset..offset + auth_len),
+                        roles.get_unchecked(offset..offset + auth_len),
                     )?
                 },
                 AuthorityType::Secp256k1Session => unsafe {
                     Secp256k1SessionAuthority::load_unchecked(
-                        self.roles.get_unchecked(offset..offset + auth_len),
+                        roles.get_unchecked(offset..offset + auth_len),
                     )?
                 },
                 AuthorityType::Secp256r1 => unsafe {
                     Secp256r1Authority::load_unchecked(
-                        self.roles.get_unchecked(offset..offset + auth_len),
+                        roles.get_unchecked(offset..offset + auth_len),
                     )?
                 },
                 AuthorityType::Secp256r1Session => unsafe {
                     Secp256r1SessionAuthority::load_unchecked(
-                        self.roles.get_unchecked(offset..offset + auth_len),
+                        roles.get_unchecked(offset..offset + auth_len),
                     )?
                 },
                 AuthorityType::ProgramExec => unsafe {
                     ProgramExecAuthority::load_unchecked(
-                        self.roles.get_unchecked(offset..offset + auth_len),
+                        roles.get_unchecked(offset..offset + auth_len),
                     )?
                 },
                 AuthorityType::ProgramExecSession => unsafe {
                     ProgramExecSessionAuthority::load_unchecked(
-                        self.roles.get_unchecked(offset..offset + auth_len),
+                        roles.get_unchecked(offset..offset + auth_len),
                     )?
                 },
                 _ => return Err(ProgramError::InvalidAccountData),
@@ -615,57 +672,179 @@ impl<'a> SwigWithRoles<'a> {
 
     /// Gets a reference to a role by ID.
     pub fn get_role(&'a self, id: u32) -> Result<Option<Role<'a>>, ProgramError> {
+        let roles = self.roles_data();
         let mut cursor = 0;
         for _i in 0..self.state.roles {
             let offset = cursor + Position::LEN;
             let position =
-                unsafe { Position::load_unchecked(self.roles.get_unchecked(cursor..offset))? };
+                unsafe { Position::load_unchecked(roles.get_unchecked(cursor..offset))? };
             if position.id() == id {
                 let authority: &dyn AuthorityInfo =
                     match position.authority_type()? {
                         AuthorityType::Ed25519 => unsafe {
-                            ED25519Authority::load_unchecked(self.roles.get_unchecked(
+                            ED25519Authority::load_unchecked(roles.get_unchecked(
                                 offset..offset + position.authority_length() as usize,
                             ))?
                         },
                         AuthorityType::Ed25519Session => unsafe {
-                            Ed25519SessionAuthority::load_unchecked(self.roles.get_unchecked(
+                            Ed25519SessionAuthority::load_unchecked(roles.get_unchecked(
                                 offset..offset + position.authority_length() as usize,
                             ))?
                         },
                         AuthorityType::Secp256k1 => unsafe {
-                            Secp256k1Authority::load_unchecked(self.roles.get_unchecked(
+                            Secp256k1Authority::load_unchecked(roles.get_unchecked(
                                 offset..offset + position.authority_length() as usize,
                             ))?
                         },
                         AuthorityType::Secp256k1Session => unsafe {
-                            Secp256k1SessionAuthority::load_unchecked(self.roles.get_unchecked(
+                            Secp256k1SessionAuthority::load_unchecked(roles.get_unchecked(
                                 offset..offset + position.authority_length() as usize,
                             ))?
                         },
                         AuthorityType::Secp256r1 => unsafe {
-                            Secp256r1Authority::load_unchecked(self.roles.get_unchecked(
+                            Secp256r1Authority::load_unchecked(roles.get_unchecked(
                                 offset..offset + position.authority_length() as usize,
                             ))?
                         },
                         AuthorityType::Secp256r1Session => unsafe {
-                            Secp256r1SessionAuthority::load_unchecked(self.roles.get_unchecked(
+                            Secp256r1SessionAuthority::load_unchecked(roles.get_unchecked(
                                 offset..offset + position.authority_length() as usize,
                             ))?
                         },
                         AuthorityType::ProgramExec => unsafe {
-                            ProgramExecAuthority::load_unchecked(self.roles.get_unchecked(
+                            ProgramExecAuthority::load_unchecked(roles.get_unchecked(
                                 offset..offset + position.authority_length() as usize,
                             ))?
                         },
                         AuthorityType::ProgramExecSession => unsafe {
-                            ProgramExecSessionAuthority::load_unchecked(self.roles.get_unchecked(
+                            ProgramExecSessionAuthority::load_unchecked(roles.get_unchecked(
                                 offset..offset + position.authority_length() as usize,
                             ))?
                         },
                         _ => return Err(ProgramError::InvalidAccountData),
                     };
 
+                return Ok(Some(Role {
+                    position,
+                    authority,
+                    actions: unsafe {
+                        roles.get_unchecked(
+                            offset + position.authority_length() as usize
+                                ..position.boundary() as usize,
+                        )
+                    },
+                }));
+            }
+            cursor = position.boundary() as usize;
+        }
+        Ok(None)
+    }
+
+    /// Iterates over all authorization locks from the account, calling the
+    /// provided function for each lock. This is zero-copy - passes direct
+    /// references to the raw lock data.
+    pub fn for_each_authorization_lock<F, E>(&self, mut f: F) -> Result<(), E>
+    where
+        F: FnMut(&AuthorizationLock) -> Result<(), E>,
+        E: From<ProgramError>,
+    {
+        let auth_locks_data = self.authorization_locks_data();
+
+        let expected_size = self.state.authorization_locks as usize * AuthorizationLock::LEN;
+        if auth_locks_data.len() < expected_size {
+            return Err(ProgramError::InvalidAccountData.into());
+        }
+
+        let mut cursor = 0;
+        for _i in 0..self.state.authorization_locks {
+            if cursor + AuthorizationLock::LEN > auth_locks_data.len() {
+                break;
+            }
+            // Zero-copy: cast the raw bytes directly to a reference
+            let lock = unsafe {
+                &*(auth_locks_data[cursor..cursor + AuthorizationLock::LEN].as_ptr()
+                    as *const AuthorizationLock)
+            };
+            f(lock)?;
+            cursor += AuthorizationLock::LEN;
+        }
+
+        Ok(())
+    }
+
+    /// Iterates over authorization locks for a specific token mint, calling the
+    /// provided function for each matching lock.
+    pub fn for_each_authorization_lock_by_mint<F, E>(
+        &self,
+        mint: &[u8; 32],
+        mut f: F,
+    ) -> Result<(), E>
+    where
+        F: FnMut(&AuthorizationLock) -> Result<(), E>,
+        E: From<ProgramError>,
+    {
+        self.for_each_authorization_lock(|lock| {
+            if &lock.token_mint == mint {
+                f(lock)
+            } else {
+                Ok(())
+            }
+        })
+    }
+
+    /// Gets authorization locks created by a specific role ID.
+    /// Returns a tuple of (locks array, count) where count is the number of
+    /// locks found.
+    pub fn get_authorization_locks_by_role<const MAX_LOCKS: usize>(
+        &self,
+        role_id: u32,
+    ) -> Result<([Option<AuthorizationLock>; MAX_LOCKS], usize), ProgramError> {
+        let mut locks = [None; MAX_LOCKS];
+        let mut count = 0;
+
+        self.for_each_authorization_lock::<_, ProgramError>(|lock| {
+            if lock.role_id == role_id && count < MAX_LOCKS {
+                locks[count] = Some(*lock);
+                count += 1;
+            }
+            Ok(())
+        })?;
+
+        Ok((locks, count))
+    }
+
+    /// Iterates over authorization locks for a specific role ID and applies a
+    /// function to each. This is useful for operations that need to process
+    /// locks without collecting them into an array.
+    pub fn for_each_authorization_lock_by_role<F, E>(&self, role_id: u32, mut f: F) -> Result<(), E>
+    where
+        F: FnMut(&AuthorizationLock) -> Result<(), E>,
+        E: From<ProgramError>,
+    {
+        self.for_each_authorization_lock::<_, E>(|lock| {
+            if lock.role_id == role_id {
+                f(lock)
+            } else {
+                Ok(())
+            }
+        })
+    }
+
+    /// Gets a zero-copy reference to an authorization lock by index.
+    /// Returns None if the index is out of bounds.
+    pub fn get_authorization_lock_by_index(&self, index: usize) -> Option<&AuthorizationLock> {
+        if index >= self.state.authorization_locks as usize {
+            return None;
+        }
+
+        let auth_locks_data = self.authorization_locks_data();
+        let lock_offset = index * AuthorizationLock::LEN;
+
+        if lock_offset + AuthorizationLock::LEN > auth_locks_data.len() {
+            return None;
+        }
+
+        // Zero-copy: cast the raw bytes directly to a reference
                 return Ok(Some(Role {
                     position,
                     authority,

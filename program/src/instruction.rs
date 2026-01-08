@@ -75,6 +75,31 @@ pub enum SwigInstruction {
     #[account(0, name="deprecated", desc="deprecated instruction")]
     DeprecatedSignV1 = 4,
 
+    /// Adds an authorization lock to the wallet.
+    ///
+    /// Authorization locks pre-authorize token spending up to a specific amount
+    /// and expiry slot.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. System program account
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, name="system_program", desc="the system program")]
+    AddAuthorizationLockV1 = 12,
+
+    /// Removes an authorization lock from the wallet.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. System program account
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, name="system_program", desc="the system program")]
+    RemoveAuthorizationLockV1 = 13,
+
     /// Creates a new session for temporary authority.
     ///
     /// Required accounts:
