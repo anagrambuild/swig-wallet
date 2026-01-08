@@ -265,7 +265,7 @@ fn should_transfer_sol_within_destination_limit() {
         )
         .unwrap();
 
-    let swig_account = swig_wallet.get_swig_account().unwrap();
+    let swig_account = swig_wallet.get_swig_wallet_address().unwrap();
 
     // Airdrop funds to swig account
     swig_wallet
@@ -324,7 +324,7 @@ fn should_fail_transfer_sol_beyond_destination_limit() {
         )
         .unwrap();
 
-    let swig_account = swig_wallet.get_swig_account().unwrap();
+    let swig_account = swig_wallet.get_swig_wallet_address().unwrap();
 
     // Airdrop funds to swig account
     swig_wallet
@@ -380,7 +380,7 @@ fn should_transfer_sol_to_different_destination_without_limit() {
         )
         .unwrap();
 
-    let swig_account = swig_wallet.get_swig_account().unwrap();
+    let swig_account = swig_wallet.get_swig_wallet_address().unwrap();
 
     // Airdrop funds to swig account
     swig_wallet
@@ -443,7 +443,7 @@ fn should_combine_destination_and_general_limits() {
         )
         .unwrap();
 
-    let swig_account = swig_wallet.get_swig_account().unwrap();
+    let swig_account = swig_wallet.get_swig_wallet_address().unwrap();
 
     // Airdrop funds to swig account
     swig_wallet

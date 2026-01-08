@@ -136,7 +136,7 @@ fn test_secp256r1_basic_signing() {
         )
         .unwrap();
 
-    let swig_pubkey = swig_wallet.get_swig_account().unwrap();
+    let swig_pubkey = swig_wallet.get_swig_wallet_address().unwrap();
     swig_wallet
         .litesvm()
         .airdrop(&swig_pubkey, 10_000_000_000)
@@ -247,7 +247,7 @@ fn test_secp256r1_replay_protection() {
         )
         .unwrap();
 
-    let swig_pubkey = swig_wallet.get_swig_account().unwrap();
+    let swig_pubkey = swig_wallet.get_swig_wallet_address().unwrap();
     swig_wallet
         .litesvm()
         .airdrop(&swig_pubkey, 10_000_000_000)
@@ -377,7 +377,7 @@ fn test_secp256r1_add_authority_with_secp256r1() {
         )
         .unwrap();
 
-    let swig_pubkey = swig_wallet.get_swig_account().unwrap();
+    let swig_pubkey = swig_wallet.get_swig_wallet_address().unwrap();
     swig_wallet
         .litesvm()
         .airdrop(&swig_pubkey, 10_000_000_000)
@@ -520,7 +520,7 @@ fn test_secp256r1_invalid_signature_error() {
         )
         .unwrap();
 
-    let swig_pubkey = swig_wallet.get_swig_account().unwrap();
+    let swig_pubkey = swig_wallet.get_swig_wallet_address().unwrap();
     swig_wallet
         .litesvm()
         .airdrop(&swig_pubkey, 10_000_000_000)
@@ -576,7 +576,7 @@ fn test_secp256r1_odometer_wrapping() {
         )
         .unwrap();
 
-    let swig_pubkey = swig_wallet.get_swig_account().unwrap();
+    let swig_pubkey = swig_wallet.get_swig_wallet_address().unwrap();
     swig_wallet
         .litesvm()
         .airdrop(&swig_pubkey, 10_000_000_000)

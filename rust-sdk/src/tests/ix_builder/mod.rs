@@ -16,7 +16,6 @@ use solana_sdk::{
 };
 use swig_interface::{
     program_id, AuthorityConfig, ClientAction, CreateInstruction, CreateSessionInstruction,
-    SignInstruction,
 };
 use swig_state::{
     action::{

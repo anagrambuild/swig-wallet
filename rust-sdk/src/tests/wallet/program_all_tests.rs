@@ -127,7 +127,7 @@ fn should_allow_cpi_calls_with_program_all_permission() {
         .unwrap();
 
     // Airdrop funds to swig account
-    let swig_account = swig_wallet.get_swig_account().unwrap();
+    let swig_account = swig_wallet.get_swig_wallet_address().unwrap();
     swig_wallet
         .litesvm()
         .airdrop(&swig_account, 5_000_000_000)

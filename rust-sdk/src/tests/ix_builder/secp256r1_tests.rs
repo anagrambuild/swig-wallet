@@ -73,9 +73,10 @@ fn test_secp256r1_basic_signing() {
 
     let swig_key = builder.get_swig_account().unwrap();
 
-    convert_swig_to_v1(&mut context, &swig_key);
-
-    context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&builder.swig_wallet_address(), 10_000_000_000)
+        .unwrap();
 
     // Set up a recipient and transaction
     let recipient = Keypair::new();
@@ -240,9 +241,10 @@ fn test_secp256r1_replay_protection() {
 
     let swig_key = builder.get_swig_account().unwrap();
 
-    convert_swig_to_v1(&mut context, &swig_key);
-
-    context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&builder.swig_wallet_address(), 10_000_000_000)
+        .unwrap();
 
     // Set up transfer instruction
     let recipient = Keypair::new();
@@ -374,7 +376,10 @@ fn test_secp256r1_add_authority() {
     );
 
     let swig_key = builder.get_swig_account().unwrap();
-    context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&builder.swig_wallet_address(), 10_000_000_000)
+        .unwrap();
 
     // Create a real secp256r1 public key to add as second authority
     let (_, secp256r1_pubkey) = create_test_secp256r1_keypair();
@@ -610,7 +615,10 @@ fn test_secp256r1_add_authority_with_secp256r1() {
     );
 
     let swig_key = builder.get_swig_account().unwrap();
-    context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&builder.swig_wallet_address(), 10_000_000_000)
+        .unwrap();
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
 
