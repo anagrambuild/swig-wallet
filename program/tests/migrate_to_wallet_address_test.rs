@@ -80,7 +80,7 @@ fn create_migration_instruction(
     // Create instruction data: discriminator (u16) + wallet_address_bump (u8) +
     // padding to 8-byte alignment
     let mut instruction_data = Vec::new();
-    instruction_data.extend_from_slice(&14u16.to_le_bytes()); // MigrateToWalletAddressV1 = 14
+    instruction_data.extend_from_slice(&12u16.to_le_bytes()); // MigrateToWalletAddressV1 = 12
     instruction_data.push(wallet_address_bump); // wallet_address_bump (u8)
     instruction_data.extend_from_slice(&[0u8; 5]); // padding to 8-byte alignment
 
@@ -239,8 +239,6 @@ fn test_migrate_swig_to_wallet_address_basic() {
     assert_eq!(new_swig.roles, old_swig.roles);
     assert_eq!(new_swig.role_counter, old_swig.role_counter);
     assert_eq!(new_swig.wallet_bump, wallet_address_bump);
-    // Note: _padding1 and _reserved are private fields, so we can't directly assert them
-    // but they're initialized to 0 in the migration
     assert_eq!(new_swig.authorization_locks, 0);
 
     println!("✅ Migration test structure validated successfully!");

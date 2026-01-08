@@ -193,7 +193,7 @@ fn test_create_and_sign_secp256k1_v2() {
         .unwrap();
     context
         .svm
-        .airdrop(&swig_wallet_address, 100_000_000_000)
+        .airdrop(&swig_wallet_address, 10_000_000_000)
         .unwrap();
 
     // Get current slot and counter
