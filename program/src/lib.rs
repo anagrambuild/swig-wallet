@@ -323,14 +323,14 @@ unsafe fn classify_account(
             let first_account = accounts.get_unchecked(0).assume_init_ref();
             let first_data = first_account.borrow_data_unchecked();
 
-            // When the account is the new Swig account structure, it's safe to assume the
+            // When the account is a Swig account structure (V1 or V2), it's safe to assume the
             // account directly after will be the SwigWalletAddress. This is validated
-            // further down in instructions relevant to the V2 account structure via signer
+            // further down in instructions relevant to the account structure via signer
             // seeds.
+            // Accept both V1 and V2 swig accounts for SignV2
             if first_account.owner() == &crate::ID
                 && first_data.len() >= Swig::LEN
                 && *first_data.get_unchecked(0) == Discriminator::SwigConfigAccount as u8
-                && is_swig_v2(first_data)
             {
                 return Ok(AccountClassification::SwigWalletAddress);
             }
