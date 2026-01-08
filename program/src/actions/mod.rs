@@ -66,7 +66,7 @@ pub fn process_action(
     let ix = SwigInstruction::from_primitive(discriminator);
     match ix {
         SwigInstruction::CreateV1 => process_create_v1(accounts, data),
-        SwigInstruction::SignV1 => {
+        SwigInstruction::DeprecatedSignV1 => {
             msg!("SignV1 instruction is deprecated and no longer supported");
             Err(ProgramError::InvalidInstructionData)
         },

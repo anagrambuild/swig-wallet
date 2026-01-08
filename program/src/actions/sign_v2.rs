@@ -280,9 +280,9 @@ pub fn sign_v2(
                 let data = unsafe { account.borrow_data_unchecked() };
                 // For program scope, we need to get the actual program scope to know what to
                 // exclude, and include owner in hash
-                let owner = unsafe { all_accounts.get_unchecked(index).owner() };
+                let account_key = unsafe { all_accounts.get_unchecked(index).key() };
                 if let Some(program_scope) =
-                    RoleMut::get_action_mut::<ProgramScope>(role.actions, owner.as_ref())?
+                    RoleMut::get_action_mut::<ProgramScope>(role.actions, account_key.as_ref())?
                 {
                     let start = program_scope.balance_field_start as usize;
                     let end = program_scope.balance_field_end as usize;
@@ -401,10 +401,11 @@ pub fn sign_v2(
                         balance,
                         spent,
                     } => {
-                        let owner = unsafe { account.owner() };
-                        if let Some(program_scope) =
-                            RoleMut::get_action_mut::<ProgramScope>(role.actions, owner.as_ref())?
-                        {
+                        let account_key = unsafe { account.key() };
+                        if let Some(program_scope) = RoleMut::get_action_mut::<ProgramScope>(
+                            role.actions,
+                            account_key.as_ref(),
+                        )? {
                             let data = unsafe { account.borrow_data_unchecked() };
                             if let Ok(current) = program_scope.read_account_balance(data) {
                                 if current < *balance {
@@ -678,21 +679,15 @@ pub fn sign_v2(
                 } => {
                     let account_info = unsafe { all_accounts.get_unchecked(index) };
 
-                    // Get the role with the ProgramScope action
-                    let owner = unsafe { all_accounts.get_unchecked(index).owner() };
+                    // Get the role with the ProgramScope action using the account key (target_account)
+                    let account_key = unsafe { all_accounts.get_unchecked(index).key() };
                     let program_scope =
-                        RoleMut::get_action_mut::<ProgramScope>(actions, owner.as_ref())?;
+                        RoleMut::get_action_mut::<ProgramScope>(actions, account_key.as_ref())?;
 
                     match program_scope {
                         Some(program_scope) => {
-                            // First verify this is the target account
-                            let account_key =
-                                unsafe { all_accounts.get_unchecked(index).key().as_slice() };
-                            if account_key != program_scope.target_account {
-                                return Err(
-                                    SwigAuthenticateError::PermissionDeniedMissingPermission.into(),
-                                );
-                            }
+                            // The target_account verification is now implicit in the match_data check
+                            // that happens in get_action_mut, so we don't need to check again
 
                             // Get the current balance by using the program_scope's
                             // read_account_balance method

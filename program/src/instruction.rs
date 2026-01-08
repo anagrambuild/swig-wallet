@@ -70,10 +70,10 @@ pub enum SwigInstruction {
     /// DEPRECATED: Signs and executes a transaction (V1 accounts only).
     ///
     /// This instruction is no longer supported. Use SignV2 instead.
-    #[account(0, writable, signer, name="swig", desc="the swig smart wallet")]
-    #[account(1, writable, signer, name="payer", desc="the payer")]
-    #[account(2, name="system_program", desc="the system program")]
-    SignV1 = 4,
+    /// The discriminator value 4 is reserved to maintain backwards compatibility.
+    #[doc(hidden)]
+    #[account(0, name="deprecated", desc="deprecated instruction")]
+    DeprecatedSignV1 = 4,
 
     /// Creates a new session for temporary authority.
     ///
