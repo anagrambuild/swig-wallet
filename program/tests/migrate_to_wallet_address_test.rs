@@ -80,7 +80,7 @@ fn create_migration_instruction(
     // Create instruction data: discriminator (u16) + wallet_address_bump (u8) +
     // padding to 8-byte alignment
     let mut instruction_data = Vec::new();
-    instruction_data.extend_from_slice(&12u16.to_le_bytes()); // MigrateToWalletAddressV1 = 12
+    instruction_data.extend_from_slice(&14u16.to_le_bytes()); // MigrateToWalletAddressV1 = 14
     instruction_data.push(wallet_address_bump); // wallet_address_bump (u8)
     instruction_data.extend_from_slice(&[0u8; 5]); // padding to 8-byte alignment
 
