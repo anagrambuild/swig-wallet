@@ -53,6 +53,7 @@ fn test_expired_authorization_lock_cleanup_by_all_permission() {
     println!("=== EXPIRED AUTHORIZATION LOCK CLEANUP TEST ===");
     create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
     println!("✅ Swig account created (root has All permission)");
+    context.svm.airdrop(&swig_wallet_address, 100_000_000_000).unwrap();
 
     // Add limited authority with ManageAuthorizationLocks permission
     println!("Adding limited authority (role 1) with ManageAuthorizationLocks permission");
@@ -264,6 +265,7 @@ fn test_expired_authorization_lock_cleanup_requires_cleanup_permission() {
     create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
     let (swig_wallet_address, _) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    context.svm.airdrop(&swig_wallet_address, 100_000_000_000).unwrap();
 
     // Add first limited authority with ManageAuthorizationLocks
     add_authority_with_ed25519_root(
@@ -408,6 +410,7 @@ fn test_expired_authorization_lock_cleanup_by_manage_authority() {
     create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
     let (swig_wallet_address, _) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    context.svm.airdrop(&swig_wallet_address, 100_000_000_000).unwrap();
 
     // Add authority that will create the lock
     add_authority_with_ed25519_root(

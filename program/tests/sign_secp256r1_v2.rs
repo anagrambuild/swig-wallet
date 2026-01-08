@@ -113,7 +113,7 @@ fn test_secp256r1_basic_signing_v2() {
     // For SignV2, fund the swig_wallet_address instead of swig
     context
         .svm
-        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .airdrop(&swig_wallet_address, 100_000_000_000)
         .unwrap();
 
     // Set up a recipient and transaction
@@ -217,7 +217,7 @@ fn test_secp256r1_counter_increment_v2() {
     // For SignV2, fund the swig_wallet_address instead of swig
     context
         .svm
-        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .airdrop(&swig_wallet_address, 100_000_000_000)
         .unwrap();
 
     // Verify initial counter is 0
@@ -244,7 +244,7 @@ fn test_secp256r1_replay_protection_v2() {
     // For SignV2, fund the swig_wallet_address instead of swig
     context
         .svm
-        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .airdrop(&swig_wallet_address, 100_000_000_000)
         .unwrap();
 
     // Set up transfer instruction
@@ -366,7 +366,7 @@ fn test_secp256r1_add_authority_v2() {
     // For SignV2, fund the swig_wallet_address instead of swig
     context
         .svm
-        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .airdrop(&swig_wallet_address, 100_000_000_000)
         .unwrap();
 
     // Create a real secp256r1 public key to add as second authority
@@ -574,7 +574,7 @@ fn test_secp256r1_add_authority_with_secp256r1_v2() {
     // For SignV2, fund the swig_wallet_address instead of swig
     context
         .svm
-        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .airdrop(&swig_wallet_address, 100_000_000_000)
         .unwrap();
 
     // Create a second secp256r1 public key to add as a new authority
@@ -670,7 +670,7 @@ fn test_secp256r1_signature_offsets_bypass_allows_unauthorized_transfer_v2() {
     // Fund the swig_wallet_address
     context
         .svm
-        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .airdrop(&swig_wallet_address, 100_000_000_000)
         .unwrap();
 
     // Set up transfer transaction

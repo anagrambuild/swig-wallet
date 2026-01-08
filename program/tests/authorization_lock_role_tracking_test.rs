@@ -51,6 +51,10 @@ fn test_authorization_lock_role_tracking() {
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_result.is_ok());
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 100_000_000_000)
+        .unwrap();
 
     println!("=== AUTHORIZATION LOCK ROLE TRACKING TEST ===");
     println!(

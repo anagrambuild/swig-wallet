@@ -3,9 +3,9 @@
 mod common;
 use common::*;
 use solana_sdk::{
-    pubkey::Pubkey,
     clock::Clock,
     message::{v0, VersionedMessage},
+    pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
     transaction::VersionedTransaction,
@@ -15,8 +15,8 @@ use swig_interface::{
     RemoveAuthorizationLockInstruction,
 };
 use swig_state::{
-    swig::swig_wallet_address_seeds,
     action::{manage_authorization_locks::ManageAuthorizationLocks, token_limit::TokenLimit},
+    swig::swig_wallet_address_seeds,
     swig::SwigWithRoles,
     IntoBytes, Transmutable,
 };
@@ -58,8 +58,14 @@ fn test_remove_authorization_lock_role_ownership() {
     // Create swig account with root authority
     let swig_id = [1u8; 32];
     let (swig_pubkey, _) = create_swig_ed25519(&mut context, &root_authority, swig_id).unwrap();
-    let (swig_wallet_address, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_pubkey.as_ref()), &program_id());
+    let (swig_wallet_address, _) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(swig_pubkey.as_ref()),
+        &program_id(),
+    );
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 100_000_000_000)
+        .unwrap();
 
     // Add Role A with token limit and manage authorization locks permission
     let role_a_actions = vec![
@@ -293,8 +299,14 @@ fn test_remove_authorization_lock_all_permission_override() {
     // Create swig account with root authority
     let swig_id = [1u8; 32];
     let (swig_pubkey, _) = create_swig_ed25519(&mut context, &root_authority, swig_id).unwrap();
-    let (swig_wallet_address, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_pubkey.as_ref()), &program_id());
+    let (swig_wallet_address, _) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(swig_pubkey.as_ref()),
+        &program_id(),
+    );
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 100_000_000_000)
+        .unwrap();
 
     // Add Role A with limited permissions
     let role_a_actions = vec![

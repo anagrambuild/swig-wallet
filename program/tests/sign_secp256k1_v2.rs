@@ -99,7 +99,7 @@ fn test_secp256k1_basic_signing_v2() {
     // For SignV2, fund the swig_wallet_address instead of swig
     context
         .svm
-        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .airdrop(&swig_wallet_address, 100_000_000_000)
         .unwrap();
 
     // Set up a recipient and transaction
@@ -177,7 +177,7 @@ fn test_secp256k1_direct_signature_reuse_v2() {
     // For SignV2, fund the swig_wallet_address instead of swig
     context
         .svm
-        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .airdrop(&swig_wallet_address, 100_000_000_000)
         .unwrap();
     let payer2 = Keypair::new();
     context.svm.airdrop(&payer2.pubkey(), 1_000_000).unwrap();
@@ -357,7 +357,7 @@ fn test_secp256k1_old_signature_v2() {
     // For SignV2, fund the swig_wallet_address instead of swig
     context
         .svm
-        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .airdrop(&swig_wallet_address, 100_000_000_000)
         .unwrap();
 
     // Set up a recipient and transaction
@@ -445,7 +445,7 @@ fn test_secp256k1_add_authority_v2() {
     // For SignV2, fund the swig_wallet_address instead of swig
     context
         .svm
-        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .airdrop(&swig_wallet_address, 100_000_000_000)
         .unwrap();
 
     // Read the account data to verify initial state
@@ -603,7 +603,7 @@ fn test_secp256k1_add_ed25519_authority_v2() {
     // For SignV2, fund the swig_wallet_address instead of swig
     context
         .svm
-        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .airdrop(&swig_wallet_address, 100_000_000_000)
         .unwrap();
 
     // Create an ed25519 authority to add
@@ -723,7 +723,7 @@ fn test_secp256k1_replay_scenario_1_v2() {
     // For SignV2, fund the swig_wallet_address instead of swig
     context
         .svm
-        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .airdrop(&swig_wallet_address, 100_000_000_000)
         .unwrap();
 
     // Set up a recipient and transaction
@@ -927,7 +927,7 @@ fn test_secp256k1_replay_scenario_2_v2() {
     // For SignV2, fund the swig_wallet_address instead of swig
     context
         .svm
-        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .airdrop(&swig_wallet_address, 100_000_000_000)
         .unwrap();
 
     // Set up a recipient and transaction

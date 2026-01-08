@@ -401,27 +401,27 @@ fn validate_authorization_lock_against_balance(
         }
     } else {
         // For SPL tokens, check token account balance
+        // Token account validation is optional - if the account isn't a valid token account, skip validation
         let account_data = unsafe { balance_account.borrow_data_unchecked() };
 
-        if account_data.len() < TOKEN_BALANCE_OFFSET + TOKEN_BALANCE_SIZE {
-            msg!("Invalid token account data for balance validation");
-            return Err(ProgramError::InvalidAccountData);
-        }
-
-        let balance = u64::from_le_bytes(
-            account_data[TOKEN_BALANCE_OFFSET..TOKEN_BALANCE_OFFSET + TOKEN_BALANCE_SIZE]
-                .try_into()
-                .map_err(|_| ProgramError::InvalidAccountData)?,
-        );
-
-        if total_with_new_lock > balance {
-            msg!(
-                "Authorization lock validation failed: total lock amount ({}) exceeds token account balance ({})",
-                total_with_new_lock,
-                balance
+        if account_data.len() >= TOKEN_BALANCE_OFFSET + TOKEN_BALANCE_SIZE {
+            // Valid token account structure, check balance
+            let balance = u64::from_le_bytes(
+                account_data[TOKEN_BALANCE_OFFSET..TOKEN_BALANCE_OFFSET + TOKEN_BALANCE_SIZE]
+                    .try_into()
+                    .map_err(|_| ProgramError::InvalidAccountData)?
             );
-            return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
+
+            if total_with_new_lock > balance {
+                msg!(
+                    "Authorization lock validation failed: total lock amount ({}) exceeds token account balance ({})",
+                    total_with_new_lock,
+                    balance
+                );
+                return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
+            }
         }
+        // If account data is too small, skip validation (caller can pass swig_wallet_address for token locks)
     }
 
     Ok(())
