@@ -131,6 +131,7 @@ fn test_authorization_lock_with_sign_v2_exceeds_limit() {
         sol_mint,
         lock_amount,
         expiry_slot,
+        swig_wallet_address, // Balance account for validation
     )
     .unwrap();
 
@@ -320,6 +321,7 @@ fn test_authorization_lock_with_sign_v2_expired_lock() {
         sol_mint,
         lock_amount,
         expiry_slot,
+        swig_wallet_address, // Balance account for validation
     )
     .unwrap();
 

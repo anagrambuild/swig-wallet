@@ -106,6 +106,7 @@ fn test_expired_authorization_lock_cleanup_by_all_permission() {
         sol_mint,
         lock_amount,
         expiry_slot,
+        swig_wallet_address,
     )
     .unwrap();
 
@@ -261,6 +262,8 @@ fn test_expired_authorization_lock_cleanup_requires_cleanup_permission() {
 
     println!("=== CLEANUP PERMISSION TEST ===");
     create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     // Add first limited authority with ManageAuthorizationLocks
     add_authority_with_ed25519_root(
@@ -309,6 +312,7 @@ fn test_expired_authorization_lock_cleanup_requires_cleanup_permission() {
         sol_mint,
         1 * LAMPORTS_PER_SOL,
         expiry_slot,
+        swig_wallet_address,
     )
     .unwrap();
 
@@ -402,6 +406,8 @@ fn test_expired_authorization_lock_cleanup_by_manage_authority() {
 
     println!("=== CLEANUP BY MANAGE_AUTHORITY TEST ===");
     create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     // Add authority that will create the lock
     add_authority_with_ed25519_root(
@@ -451,6 +457,7 @@ fn test_expired_authorization_lock_cleanup_by_manage_authority() {
         sol_mint,
         1 * LAMPORTS_PER_SOL,
         expiry_slot,
+        swig_wallet_address,
     )
     .unwrap();
 

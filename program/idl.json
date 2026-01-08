@@ -240,6 +240,14 @@
           "docs": [
             "the system program"
           ]
+        },
+        {
+          "name": "balanceAccount",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "balance account for validation"
+          ]
         }
       ],
       "args": [],
