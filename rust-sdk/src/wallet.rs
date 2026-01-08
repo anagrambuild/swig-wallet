@@ -1395,7 +1395,7 @@ impl<'c> SwigWallet<'c> {
     /// Returns a `Result` containing the associated token address or a
     /// `SwigError`
     pub fn create_ata(&mut self, mint: &Pubkey) -> Result<Pubkey, SwigError> {
-        let swig_wallet_address = self.instruction_builder.get_swig_account()?;
+        let swig_wallet_address = self.get_swig_wallet_address()?;
         let associated_token_address = get_associated_token_address(&swig_wallet_address, &mint);
 
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
