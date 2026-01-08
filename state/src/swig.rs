@@ -562,7 +562,7 @@ pub struct SwigWithRoles<'a> {
     /// Reference to the Swig account state
     pub state: &'a Swig,
     /// Raw bytes containing all data after the Swig header (roles + auth locks)
-    data: &'a [u8],
+    roles: &'a [u8],
 }
 
 impl<'a> SwigWithRoles<'a> {
@@ -573,33 +573,33 @@ impl<'a> SwigWithRoles<'a> {
         }
 
         let state = unsafe { Swig::load_unchecked(&bytes[..Swig::LEN])? };
-        let data = &bytes[Swig::LEN..];
+        let roles = &bytes[Swig::LEN..];
 
-        Ok(SwigWithRoles { state, data })
+        Ok(SwigWithRoles { state, roles })
     }
 
     /// Gets the roles data slice from the combined data.
     fn roles_data(&self) -> &[u8] {
         let mut cursor = 0;
         for _i in 0..self.state.roles {
-            if cursor + Position::LEN > self.data.len() {
+            if cursor + Position::LEN > self.roles.len() {
                 return &[];
             }
             let position =
-                unsafe { Position::load_unchecked(&self.data[cursor..cursor + Position::LEN]) };
+                unsafe { Position::load_unchecked(&self.roles[cursor..cursor + Position::LEN]) };
             if let Ok(pos) = position {
                 cursor = pos.boundary() as usize;
             } else {
                 return &[];
             }
         }
-        &self.data[..cursor]
+        &self.roles[..cursor]
     }
 
     /// Gets the authorization locks data slice from the combined data.
     fn authorization_locks_data(&self) -> &[u8] {
         let roles_end = self.roles_data().len();
-        &self.data[roles_end..]
+        &self.roles[roles_end..]
     }
 
     /// Looks up a role ID by authority data.
@@ -856,10 +856,10 @@ impl<'a> SwigWithRoles<'a> {
         }
     }
 
-    /// Gets all authorization locks for testing purposes.
+    /// Gets all authorization locks.
     /// Returns a tuple of (locks array, count) where count is the number of
     /// locks found.
-    pub fn get_authorization_locks_for_test<const MAX_LOCKS: usize>(
+    pub fn get_authorization_locks<const MAX_LOCKS: usize>(
         &self,
     ) -> Result<([Option<AuthorizationLock>; MAX_LOCKS], usize), ProgramError> {
         let mut locks = [None; MAX_LOCKS];
