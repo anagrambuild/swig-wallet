@@ -318,7 +318,7 @@ fn validate_authorization_lock_against_limits<'a>(
 
         // Check against recurring SOL limit
         if let Ok(Some(sol_recurring_limit)) = acting_role.get_action::<SolRecurringLimit>(&[]) {
-            if total_with_new_lock > sol_recurring_limit.current_amount {
+            if total_with_new_lock > sol_recurring_limit.recurring_amount {
                 return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
             }
         }
