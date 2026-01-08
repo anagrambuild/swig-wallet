@@ -195,7 +195,7 @@ pub enum SwigInstruction {
     #[account(2, writable, signer, name="payer", desc="the payer")]
     #[account(3, writable, name="swig_wallet_address", desc="the swig wallet address account to create")]
     #[account(4, name="system_program", desc="the system program")]
-    MigrateToWalletAddressV1 = 12,
+    MigrateToWalletAddressV1 = 14,
 
     /// Transfers assets from the swig account to the swig wallet address.
     ///
@@ -213,5 +213,5 @@ pub enum SwigInstruction {
     #[account(1, writable, name="swig_wallet_address", desc="the swig wallet address (destination)")]
     #[account(2, writable, signer, name="payer", desc="the payer")]
     #[account(3, name="system_program", desc="the system program")]
-    TransferAssetsV1 = 13,
+    TransferAssetsV1 = 15,
 }

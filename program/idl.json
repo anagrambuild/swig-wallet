@@ -401,6 +401,74 @@
       }
     },
     {
+      "name": "AddAuthorizationLockV1",
+      "accounts": [
+        {
+          "name": "swig",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig smart wallet"
+          ]
+        },
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "the payer"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the system program"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 12
+      }
+    },
+    {
+      "name": "RemoveAuthorizationLockV1",
+      "accounts": [
+        {
+          "name": "swig",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig smart wallet"
+          ]
+        },
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "the payer"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the system program"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 13
+      }
+    },
+    {
       "name": "MigrateToWalletAddressV1",
       "accounts": [
         {
@@ -447,7 +515,7 @@
       "args": [],
       "discriminant": {
         "type": "u8",
-        "value": 12
+        "value": 14
       }
     },
     {
@@ -489,7 +557,7 @@
       "args": [],
       "discriminant": {
         "type": "u8",
-        "value": 13
+        "value": 15
       }
     }
   ],

@@ -450,10 +450,12 @@ pub struct Swig {
     pub role_counter: u32,
     /// Wallet address bump seed
     pub wallet_bump: u8,
+    /// Padding byte
+    _padding1: u8,
     /// Number of authorization locks in this account
     pub authorization_locks: u16,
     /// Reserved bytes for future use
-    pub _reserved: [u8; 5],
+    _reserved: [u8; 4],
 }
 
 impl Swig {
@@ -466,8 +468,9 @@ impl Swig {
             roles: 0,
             role_counter: 0,
             wallet_bump,
+            _padding1: 0,
             authorization_locks: 0,
-            _reserved: [0; 5],
+            _reserved: [0; 4],
         }
     }
 
@@ -845,20 +848,12 @@ impl<'a> SwigWithRoles<'a> {
         }
 
         // Zero-copy: cast the raw bytes directly to a reference
-                return Ok(Some(Role {
-                    position,
-                    authority,
-                    actions: unsafe {
-                        self.roles.get_unchecked(
-                            offset + position.authority_length() as usize
-                                ..position.boundary() as usize,
-                        )
-                    },
-                }));
-            }
-            cursor = position.boundary() as usize;
+        unsafe {
+            Some(
+                &*(auth_locks_data[lock_offset..lock_offset + AuthorizationLock::LEN].as_ptr()
+                    as *const AuthorizationLock),
+            )
         }
-        Ok(None)
     }
 
     /// Finds a program scope by target account.
