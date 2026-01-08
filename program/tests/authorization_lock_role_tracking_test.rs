@@ -17,7 +17,7 @@ use swig_state::{
     action::{
         all::All, manage_authorization_locks::ManageAuthorizationLocks, token_limit::TokenLimit,
     },
-    swig::{swig_account_seeds, AuthorizationLock, Swig, SwigWithRoles},
+    swig::{swig_account_seeds, swig_wallet_address_seeds, AuthorizationLock, Swig, SwigWithRoles},
     IntoBytes, Transmutable,
 };
 
@@ -47,6 +47,8 @@ fn test_authorization_lock_role_tracking() {
     // Create swig account
     let id = rand::random::<[u8; 32]>();
     let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
     let swig_create_result = create_swig_ed25519(&mut context, &swig_authority, id);
     assert!(swig_create_result.is_ok());
 
@@ -117,6 +119,7 @@ fn test_authorization_lock_role_tracking() {
         mint_pubkey.to_bytes(),
         500,
         expiry_slot,
+        swig_wallet_address,
     )
     .unwrap();
 
@@ -153,6 +156,7 @@ fn test_authorization_lock_role_tracking() {
         mint_pubkey.to_bytes(),
         300,
         expiry_slot,
+        swig_wallet_address,
     )
     .unwrap();
 
@@ -189,6 +193,7 @@ fn test_authorization_lock_role_tracking() {
         mint_pubkey.to_bytes(),
         100,
         expiry_slot,
+        swig_wallet_address,
     )
     .unwrap();
 
@@ -226,6 +231,7 @@ fn test_authorization_lock_role_tracking() {
         mint_pubkey.to_bytes(),
         200,
         expiry_slot,
+        swig_wallet_address,
     )
     .unwrap();
 

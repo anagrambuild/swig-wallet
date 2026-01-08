@@ -2842,11 +2842,13 @@ impl AddAuthorizationLockInstruction {
         token_mint: [u8; 32],
         amount: u64,
         expiry_slot: u64,
+        balance_account: Pubkey,
     ) -> anyhow::Result<Instruction> {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
             AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(balance_account, false),
             AccountMeta::new_readonly(authority, true),
         ];
 

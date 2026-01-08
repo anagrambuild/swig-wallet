@@ -3,6 +3,7 @@
 mod common;
 use common::*;
 use solana_sdk::{
+    pubkey::Pubkey,
     clock::Clock,
     message::{v0, VersionedMessage},
     signature::Keypair,
@@ -14,6 +15,7 @@ use swig_interface::{
     RemoveAuthorizationLockInstruction,
 };
 use swig_state::{
+    swig::swig_wallet_address_seeds,
     action::{manage_authorization_locks::ManageAuthorizationLocks, token_limit::TokenLimit},
     swig::SwigWithRoles,
     IntoBytes, Transmutable,
@@ -56,6 +58,8 @@ fn test_remove_authorization_lock_role_ownership() {
     // Create swig account with root authority
     let swig_id = [1u8; 32];
     let (swig_pubkey, _) = create_swig_ed25519(&mut context, &root_authority, swig_id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_pubkey.as_ref()), &program_id());
 
     // Add Role A with token limit and manage authorization locks permission
     let role_a_actions = vec![
@@ -126,6 +130,7 @@ fn test_remove_authorization_lock_role_ownership() {
         mint_pubkey.to_bytes(),
         auth_lock_amount,
         expiry_slot,
+        swig_wallet_address,
     )
     .unwrap();
 
@@ -288,6 +293,8 @@ fn test_remove_authorization_lock_all_permission_override() {
     // Create swig account with root authority
     let swig_id = [1u8; 32];
     let (swig_pubkey, _) = create_swig_ed25519(&mut context, &root_authority, swig_id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_pubkey.as_ref()), &program_id());
 
     // Add Role A with limited permissions
     let role_a_actions = vec![
@@ -352,6 +359,7 @@ fn test_remove_authorization_lock_all_permission_override() {
         mint_pubkey.to_bytes(),
         auth_lock_amount,
         expiry_slot,
+        swig_wallet_address,
     )
     .unwrap();
 

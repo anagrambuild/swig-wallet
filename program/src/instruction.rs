@@ -77,16 +77,15 @@ pub enum SwigInstruction {
 
     /// Adds an authorization lock to the wallet.
     ///
-    /// Authorization locks pre-authorize token spending up to a specific amount
-    /// and expiry slot.
-    ///
     /// Required accounts:
     /// 1. `[writable]` Swig wallet account
     /// 2. `[writable, signer]` Payer account
     /// 3. System program account
+    /// 4. `[]` Balance account (swig_wallet_address for SOL, token account for SPL tokens)
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
     #[account(1, writable, signer, name="payer", desc="the payer")]
     #[account(2, name="system_program", desc="the system program")]
+    #[account(3, name="balance_account", desc="balance account for validation")]
     AddAuthorizationLockV1 = 12,
 
     /// Removes an authorization lock from the wallet.

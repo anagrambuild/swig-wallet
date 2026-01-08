@@ -4,6 +4,7 @@
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
+    msg,
     program_error::ProgramError,
     sysvars::{clock::Clock, rent::Rent, Sysvar},
     ProgramResult,
@@ -202,6 +203,14 @@ pub fn add_authorization_lock_v1(
         &existing_locks_vec,
     )?;
 
+    // Validate the new lock against current balance (balance_account at index 4)
+    validate_authorization_lock_against_balance(
+        all_accounts,
+        add_lock.args.token_mint,
+        add_lock.args.amount,
+        &existing_locks_vec,
+    )?;
+
     // Re-borrow data after authentication
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let (swig_header, remaining_data) =
@@ -340,6 +349,78 @@ fn validate_authorization_lock_against_limits<'a>(
             if total_with_new_lock > token_recurring_limit.limit {
                 return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
             }
+        }
+    }
+
+    Ok(())
+}
+
+/// Validates that the authorization lock amount doesn't exceed the current balance.
+///
+/// # Arguments
+/// * `all_accounts` - All accounts (balance_account expected at index 4)
+/// * `token_mint` - Token mint (all zeros for native SOL)
+/// * `new_lock_amount` - Amount for the new lock
+/// * `existing_locks` - Existing authorization locks for this mint
+fn validate_authorization_lock_against_balance(
+    all_accounts: &[AccountInfo],
+    token_mint: [u8; 32],
+    new_lock_amount: u64,
+    existing_locks: &[AuthorizationLock],
+) -> ProgramResult {
+    const NATIVE_SOL_MINT: [u8; 32] = [0u8; 32];
+    const TOKEN_BALANCE_OFFSET: usize = 64;
+    const TOKEN_BALANCE_SIZE: usize = 8;
+
+    // Balance account is at index 4
+    if all_accounts.len() <= 4 {
+        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+    }
+
+    let balance_account = unsafe { all_accounts.get_unchecked(4) };
+
+    // Calculate total authorization lock amount with new lock
+    let existing_total = existing_locks
+        .iter()
+        .filter(|lock| lock.token_mint == token_mint)
+        .map(|lock| lock.amount)
+        .sum::<u64>();
+    let total_with_new_lock = existing_total.saturating_add(new_lock_amount);
+
+    if token_mint == NATIVE_SOL_MINT {
+        // For native SOL, check swig_wallet_address balance
+        let balance = balance_account.lamports();
+
+        if total_with_new_lock > balance {
+            msg!(
+                "Authorization lock validation failed: total lock amount ({}) exceeds swig_wallet_address balance ({})",
+                total_with_new_lock,
+                balance
+            );
+            return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
+        }
+    } else {
+        // For SPL tokens, check token account balance
+        let account_data = unsafe { balance_account.borrow_data_unchecked() };
+
+        if account_data.len() < TOKEN_BALANCE_OFFSET + TOKEN_BALANCE_SIZE {
+            msg!("Invalid token account data for balance validation");
+            return Err(ProgramError::InvalidAccountData);
+        }
+
+        let balance = u64::from_le_bytes(
+            account_data[TOKEN_BALANCE_OFFSET..TOKEN_BALANCE_OFFSET + TOKEN_BALANCE_SIZE]
+                .try_into()
+                .map_err(|_| ProgramError::InvalidAccountData)?,
+        );
+
+        if total_with_new_lock > balance {
+            msg!(
+                "Authorization lock validation failed: total lock amount ({}) exceeds token account balance ({})",
+                total_with_new_lock,
+                balance
+            );
+            return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
         }
     }
 
