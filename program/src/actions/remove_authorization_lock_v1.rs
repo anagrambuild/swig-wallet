@@ -11,7 +11,10 @@ use pinocchio::{
 };
 use swig_assertions::*;
 use swig_state::{
-    action::{all::All, manage_authorization_locks::ManageAuthorizationLocks},
+    action::{
+        all::All, manage_authority::ManageAuthority,
+        manage_authorization_locks::ManageAuthorizationLocks,
+    },
     role::Position,
     swig::{AuthorizationLock, Swig, SwigBuilder},
     Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut,
@@ -165,6 +168,7 @@ pub fn remove_authorization_lock_v1(
     let has_manage_auth_locks_permission = acting_role
         .get_action::<ManageAuthorizationLocks>(&[])?
         .is_some();
+    let has_manage_authority_permission = acting_role.get_action::<ManageAuthority>(&[])?.is_some();
 
     if !has_all_permission && !has_manage_auth_locks_permission {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
@@ -214,7 +218,7 @@ pub fn remove_authorization_lock_v1(
     // Rules:
     // 1. Role can always remove its own authorization locks
     // 2. If lock is expired beyond cleanup threshold, any role with All or
-    //    ManageAuthority can remove it (proactive cleanup)
+    //    ManageAuthority permission can remove it (proactive cleanup)
     if lock_to_remove_start + lock_size <= remaining_data.len() {
         // Zero-copy: cast the raw bytes directly to a reference
         let lock = unsafe {
@@ -226,12 +230,12 @@ pub fn remove_authorization_lock_v1(
         let is_lock_creator = lock.role_id == remove_lock.args.acting_role_id;
         let is_expired_beyond_threshold =
             lock.expiry_slot + EXPIRED_LOCK_CLEANUP_THRESHOLD_SLOTS < slot;
-        let can_cleanup = has_all_permission; // Only All permission can cleanup others' locks
+        let can_cleanup = has_all_permission || has_manage_authority_permission;
 
         if !is_lock_creator && !(is_expired_beyond_threshold && can_cleanup) {
             msg!(
                 "Permission denied: Role {} cannot remove authorization lock created by role {} \
-                 (lock not expired beyond cleanup threshold or missing All permission)",
+                 (lock not expired beyond cleanup threshold or missing All/ManageAuthority permission)",
                 remove_lock.args.acting_role_id,
                 lock.role_id
             );
@@ -297,7 +301,7 @@ pub fn remove_authorization_lock_v1(
 ///
 /// # Returns
 /// * `Result<usize, ProgramError>` - Number of locks removed, or error
-pub fn cleanup_expired_authorization_locks(
+pub(crate) fn cleanup_expired_authorization_locks(
     swig_account_data: &mut [u8],
     current_slot: u64,
     max_removals: usize,

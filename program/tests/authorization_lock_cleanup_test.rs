@@ -234,9 +234,9 @@ fn test_expired_authorization_lock_cleanup_by_all_permission() {
 }
 
 /// Test that expired authorization locks cannot be cleaned up by authorities
-/// without All permission, even after the cleanup threshold
+/// without All or ManageAuthority permission, even after the cleanup threshold
 #[test_log::test]
-fn test_expired_authorization_lock_cleanup_requires_all_permission() {
+fn test_expired_authorization_lock_cleanup_requires_cleanup_permission() {
     let mut context = setup_test_context().unwrap();
 
     let swig_authority = Keypair::new();
@@ -371,6 +371,155 @@ fn test_expired_authorization_lock_cleanup_requires_all_permission() {
     println!("✅ Correctly rejected: Cleanup requires All permission");
 
     println!("\n✅ TEST PASSED!");
-    println!("✅ Cleanup of expired locks requires All permission");
+    println!("✅ Cleanup of expired locks requires All or ManageAuthority permission");
+    println!("======================================================");
+}
+
+/// Test that expired authorization locks can be cleaned up by authorities with ManageAuthority permission
+#[test_log::test]
+fn test_expired_authorization_lock_cleanup_by_manage_authority() {
+    let mut context = setup_test_context().unwrap();
+
+    let swig_authority = Keypair::new();
+    let limited_authority = Keypair::new();
+    let cleanup_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 20_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&limited_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&cleanup_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+
+    println!("=== CLEANUP BY MANAGE_AUTHORITY TEST ===");
+    create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    // Add authority that will create the lock
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: limited_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::ManageAuthorizationLocks(
+            ManageAuthorizationLocks {},
+        )],
+    )
+    .unwrap();
+
+    // Add cleanup authority with ManageAuthority + ManageAuthorizationLocks permissions
+    // It needs ManageAuthorizationLocks to call the remove instruction, and ManageAuthority
+    // to cleanup locks created by other roles
+    use swig_state::action::manage_authority::ManageAuthority;
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: cleanup_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ManageAuthority(ManageAuthority {}),
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
+        ],
+    )
+    .unwrap();
+    println!("✅ Authorities created: role 1 (lock creator), role 2 (has ManageAuthority + ManageAuthorizationLocks)");
+
+    // Add lock
+    let sol_mint = [0u8; 32];
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    let expiry_slot = current_slot + 100;
+
+    let add_lock_ix = swig_interface::AddAuthorizationLockInstruction::new(
+        swig,
+        limited_authority.pubkey(),
+        context.default_payer.pubkey(),
+        1,
+        sol_mint,
+        1 * LAMPORTS_PER_SOL,
+        expiry_slot,
+    )
+    .unwrap();
+
+    let add_lock_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(
+            v0::Message::try_compile(
+                &context.default_payer.pubkey(),
+                &[add_lock_ix],
+                &[],
+                context.svm.latest_blockhash(),
+            )
+            .unwrap(),
+        ),
+        &[&context.default_payer, &limited_authority],
+    )
+    .unwrap();
+
+    context.svm.send_transaction(add_lock_tx).unwrap();
+    println!("✅ Authorization lock added by role 1");
+
+    // Warp past threshold
+    let cleanup_threshold_slots = 5 * 432_000;
+    let target_slot = expiry_slot + cleanup_threshold_slots + 1000;
+    context.svm.warp_to_slot(target_slot);
+    context.svm.expire_blockhash();
+    println!("✅ Warped past cleanup threshold");
+
+    // Remove by cleanup authority with ManageAuthority - should SUCCEED
+    println!("\nAttempting removal by role 2 (has ManageAuthority permission)");
+    println!("Expected: SUCCESS (expired beyond threshold, has ManageAuthority)");
+
+    let remove_lock_ix = swig_interface::RemoveAuthorizationLockInstruction::new(
+        swig,
+        cleanup_authority.pubkey(),
+        context.default_payer.pubkey(),
+        2,
+        0,
+    )
+    .unwrap();
+
+    let remove_lock_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(
+            v0::Message::try_compile(
+                &context.default_payer.pubkey(),
+                &[remove_lock_ix],
+                &[],
+                context.svm.latest_blockhash(),
+            )
+            .unwrap(),
+        ),
+        &[&context.default_payer, &cleanup_authority],
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(remove_lock_tx);
+    assert!(
+        result.is_ok(),
+        "Should be able to cleanup with ManageAuthority permission: {:?}",
+        result.err()
+    );
+    println!("✅ Expired lock successfully removed by authority with ManageAuthority");
+
+    // Verify
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig_with_roles.state.authorization_locks, 0);
+    println!("✅ Verified: Authorization lock count is now 0");
+
+    println!("\n✅ TEST PASSED!");
+    println!("✅ ManageAuthority permission can cleanup expired locks");
     println!("======================================================");
 }
