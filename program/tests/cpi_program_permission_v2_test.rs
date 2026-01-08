@@ -80,7 +80,7 @@ fn test_cpi_signing_requires_program_permission_v2() {
     // Airdrop to swig_wallet_address since that's what SignV2 uses for transfers
     context
         .svm
-        .airdrop(&swig_wallet_address, 100_000_000_000)
+        .airdrop(&swig_wallet_address, 10_000_000_000)
         .unwrap();
 
     // Test 1: CPI signing with correct Program permission should succeed (SignV2)
@@ -244,7 +244,7 @@ fn test_cpi_signing_without_program_permission_fails_v2() {
     // Airdrop to swig_wallet_address since that's what SignV2 uses for transfers
     context
         .svm
-        .airdrop(&swig_wallet_address, 100_000_000_000)
+        .airdrop(&swig_wallet_address, 10_000_000_000)
         .unwrap();
 
     // Test: CPI signing without Program permission should fail (SignV2)
@@ -347,7 +347,7 @@ fn test_cpi_signing_with_program_all_permission_v2() {
     // Airdrop to swig_wallet_address since that's what SignV2 uses for transfers
     context
         .svm
-        .airdrop(&swig_wallet_address, 100_000_000_000)
+        .airdrop(&swig_wallet_address, 10_000_000_000)
         .unwrap();
 
     // Test: CPI signing with ProgramAll permission should work for any program
@@ -448,7 +448,7 @@ fn test_cpi_signing_with_program_curated_permission_v2() {
     // Airdrop to swig_wallet_address since that's what SignV2 uses for transfers
     context
         .svm
-        .airdrop(&swig_wallet_address, 100_000_000_000)
+        .airdrop(&swig_wallet_address, 10_000_000_000)
         .unwrap();
 
     // Test 1: CPI signing with ProgramCurated permission should work for system

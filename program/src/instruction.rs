@@ -75,30 +75,6 @@ pub enum SwigInstruction {
     #[account(0, name="deprecated", desc="deprecated instruction")]
     DeprecatedSignV1 = 4,
 
-    /// Adds an authorization lock to the wallet.
-    ///
-    /// Required accounts:
-    /// 1. `[writable]` Swig wallet account
-    /// 2. `[writable, signer]` Payer account
-    /// 3. System program account
-    /// 4. `[]` Balance account (swig_wallet_address for SOL, token account for SPL tokens)
-    #[account(0, writable, name="swig", desc="the swig smart wallet")]
-    #[account(1, writable, signer, name="payer", desc="the payer")]
-    #[account(2, name="system_program", desc="the system program")]
-    #[account(3, name="balance_account", desc="balance account for validation")]
-    AddAuthorizationLockV1 = 12,
-
-    /// Removes an authorization lock from the wallet.
-    ///
-    /// Required accounts:
-    /// 1. `[writable]` Swig wallet account
-    /// 2. `[writable, signer]` Payer account
-    /// 3. System program account
-    #[account(0, writable, name="swig", desc="the swig smart wallet")]
-    #[account(1, writable, signer, name="payer", desc="the payer")]
-    #[account(2, name="system_program", desc="the system program")]
-    RemoveAuthorizationLockV1 = 13,
-
     /// Creates a new session for temporary authority.
     ///
     /// Required accounts:
@@ -194,7 +170,7 @@ pub enum SwigInstruction {
     #[account(2, writable, signer, name="payer", desc="the payer")]
     #[account(3, writable, name="swig_wallet_address", desc="the swig wallet address account to create")]
     #[account(4, name="system_program", desc="the system program")]
-    MigrateToWalletAddressV1 = 14,
+    MigrateToWalletAddressV1 = 12,
 
     /// Transfers assets from the swig account to the swig wallet address.
     ///
@@ -212,5 +188,29 @@ pub enum SwigInstruction {
     #[account(1, writable, name="swig_wallet_address", desc="the swig wallet address (destination)")]
     #[account(2, writable, signer, name="payer", desc="the payer")]
     #[account(3, name="system_program", desc="the system program")]
-    TransferAssetsV1 = 15,
+    TransferAssetsV1 = 13,
+
+    /// Adds an authorization lock to the wallet.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. System program account
+    /// 4. `[]` Balance account (swig_wallet_address for SOL, token account for SPL tokens)
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, name="system_program", desc="the system program")]
+    #[account(3, name="balance_account", desc="balance account for validation")]
+    AddAuthorizationLockV1 = 14,
+
+    /// Removes an authorization lock from the wallet.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. System program account
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, name="system_program", desc="the system program")]
+    RemoveAuthorizationLockV1 = 15,
 }

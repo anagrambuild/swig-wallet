@@ -247,7 +247,7 @@ fn test_all_but_manage_authority_can_transfer_tokens() {
 
     context
         .svm
-        .airdrop(&swig_wallet_address, 100_000_000_000)
+        .airdrop(&swig_wallet_address, 10_000_000_000)
         .unwrap();
     let token_amount = 500;
 
@@ -375,7 +375,7 @@ fn test_all_but_manage_authority_can_do_cpi_calls() {
 
     context
         .svm
-        .airdrop(&swig_wallet_address, 100_000_000_000)
+        .airdrop(&swig_wallet_address, 10_000_000_000)
         .unwrap();
     let sol_amount = 50;
     let token_amount = 500;
