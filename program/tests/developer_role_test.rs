@@ -31,13 +31,8 @@ fn test_developer_created_add_authority() {
 
     let developer = Keypair::new();
     let developer_account = create_developer_account(&mut context, &developer.pubkey()).unwrap();
-    println!("developer_account: {:?}", developer_account.to_bytes());
 
     let developer_account_data = context.svm.get_account(&developer_account).unwrap();
-    println!(
-        "developer_account_data: {:?}",
-        developer_account_data.data.len()
-    );
     let developer_account_data =
         DeveloperAccount::from_bytes(&developer_account_data.data).unwrap();
     println!("developer_account_data: {:?}", developer_account_data);

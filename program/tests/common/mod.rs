@@ -944,7 +944,7 @@ pub fn create_developer_account(
         .svm
         .add_program_from_file(
             Pubkey::from(DEV_PROGRAM_ID),
-            "/Users/santhosh/Documents/anagram/swig/swig-developer-account-program/target/deploy/swig_developer_program.so".to_string(),
+            "tests/common/swig_developer_program.so".to_string(),
         )
         .unwrap();
     context.svm.airdrop(developer, 10_000_000_000).unwrap();
@@ -994,7 +994,7 @@ pub fn create_developer_account_with_custom_properties(
         .svm
         .add_program_from_file(
             Pubkey::from(DEV_PROGRAM_ID),
-            "/Users/santhosh/Documents/anagram/swig/swig-developer-account-program/target/deploy/swig_developer_program.so".to_string(),
+            "tests/common/swig_developer_program.so".to_string(),
         )
         .unwrap();
     context.svm.airdrop(&developer, 10_000_000_000).unwrap();
