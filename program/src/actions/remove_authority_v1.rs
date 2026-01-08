@@ -205,6 +205,31 @@ pub fn remove_authority_v1(
         if role_to_remove.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
+
+        // Check if the role has any active (non-expired) authorization locks
+        // Roles with active locks cannot be removed
+        let clock = Clock::get()?;
+        let current_slot = clock.slot;
+        let swig_with_roles = swig_state::swig::SwigWithRoles::from_bytes(&swig_account_data)?;
+
+        let mut has_active_locks = false;
+        let _ = swig_with_roles.for_each_authorization_lock::<_, ProgramError>(|lock| {
+            if lock.role_id == remove_authority_v1.args.authority_to_remove_id {
+                // Check if this lock is still active (not expired)
+                if lock.expiry_slot > current_slot {
+                    has_active_locks = true;
+                }
+            }
+            Ok(())
+        });
+
+        if has_active_locks {
+            msg!(
+                "Cannot remove role {}: role has active authorization locks that have not expired",
+                remove_authority_v1.args.authority_to_remove_id
+            );
+            return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+        }
     }
 
     // Calculate the new size and remove the role
