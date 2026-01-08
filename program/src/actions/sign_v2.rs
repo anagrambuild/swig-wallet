@@ -182,12 +182,6 @@ pub fn sign_v2(
         account_classifiers[0],
         AccountClassification::ThisSwigV2 { .. }
     ) {
-        if matches!(
-            account_classifiers[0],
-            AccountClassification::ThisSwig { .. }
-        ) {
-            return Err(SwigError::SignV2CannotBeUsedWithSwigV1.into());
-        }
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 
@@ -259,8 +253,8 @@ pub fn sign_v2(
         }
 
         let hash = match account_classifier {
-            AccountClassification::ThisSwig { .. } | AccountClassification::ThisSwigV2 { .. } => {
-                // For ThisSwig accounts, hash the entire account data and owner to ensure no
+            AccountClassification::ThisSwigV2 { .. } => {
+                // For ThisSwigV2 accounts, hash the entire account data and owner to ensure no
                 // unexpected modifications. Lamports are handled separately in
                 // the permission check, but we still need to verify
                 // that the account data itself and ownership hasn't been tampered with
@@ -286,9 +280,9 @@ pub fn sign_v2(
                 let data = unsafe { account.borrow_data_unchecked() };
                 // For program scope, we need to get the actual program scope to know what to
                 // exclude, and include owner in hash
-                let owner = unsafe { all_accounts.get_unchecked(index).owner() };
+                let account_key = unsafe { all_accounts.get_unchecked(index).key() };
                 if let Some(program_scope) =
-                    RoleMut::get_action_mut::<ProgramScope>(role.actions, owner.as_ref())?
+                    RoleMut::get_action_mut::<ProgramScope>(role.actions, account_key.as_ref())?
                 {
                     let start = program_scope.balance_field_start as usize;
                     let end = program_scope.balance_field_end as usize;
@@ -407,10 +401,11 @@ pub fn sign_v2(
                         balance,
                         spent,
                     } => {
-                        let owner = unsafe { account.owner() };
-                        if let Some(program_scope) =
-                            RoleMut::get_action_mut::<ProgramScope>(role.actions, owner.as_ref())?
-                        {
+                        let account_key = unsafe { account.key() };
+                        if let Some(program_scope) = RoleMut::get_action_mut::<ProgramScope>(
+                            role.actions,
+                            account_key.as_ref(),
+                        )? {
                             let data = unsafe { account.borrow_data_unchecked() };
                             if let Ok(current) = program_scope.read_account_balance(data) {
                                 if current < *balance {
@@ -437,8 +432,7 @@ pub fn sign_v2(
     } else {
         'account_loop: for (index, account) in account_classifiers.iter_mut().enumerate() {
             match account {
-                AccountClassification::ThisSwig { lamports }
-                | AccountClassification::ThisSwigV2 { lamports } => {
+                AccountClassification::ThisSwigV2 { lamports } => {
                     let account_info = unsafe { all_accounts.get_unchecked(index) };
 
                     if account_info.is_writable() {
@@ -453,28 +447,15 @@ pub fn sign_v2(
 
                     let current_lamports = account_info.lamports();
                     let mut matched = false;
-                    // Ensure the account has some minimum balance for rent exemption
-                    let account_data = unsafe { account_info.borrow_data_unchecked() };
-                    let rent_exempt_minimum =
-                        pinocchio::sysvars::rent::Rent::get()?.minimum_balance(account_data.len());
 
-                    // Make sure that the withdrawal
-                    if matches!(account, AccountClassification::ThisSwigV2 { .. }) {
-                        let swig_wallet_balance = ctx.accounts.swig_wallet_address.lamports();
-                        let swig_wallet_rent_exempt_minimum =
-                            pinocchio::sysvars::rent::Rent::get()?
-                                .minimum_balance(ctx.accounts.swig_wallet_address.data_len());
-                        if swig_wallet_balance < swig_wallet_rent_exempt_minimum {
-                            return Err(
-                                SwigAuthenticateError::PermissionDeniedInsufficientBalance.into()
-                            );
-                        }
-                    } else if matches!(account, AccountClassification::ThisSwig { .. }) {
-                        if current_lamports < rent_exempt_minimum {
-                            return Err(
-                                SwigAuthenticateError::PermissionDeniedInsufficientBalance.into()
-                            );
-                        }
+                    // Make sure that the swig wallet address has sufficient balance
+                    let swig_wallet_balance = ctx.accounts.swig_wallet_address.lamports();
+                    let swig_wallet_rent_exempt_minimum = pinocchio::sysvars::rent::Rent::get()?
+                        .minimum_balance(ctx.accounts.swig_wallet_address.data_len());
+                    if swig_wallet_balance < swig_wallet_rent_exempt_minimum {
+                        return Err(
+                            SwigAuthenticateError::PermissionDeniedInsufficientBalance.into()
+                        );
                     }
 
                     if total_sol_spent > 0 {
@@ -698,21 +679,15 @@ pub fn sign_v2(
                 } => {
                     let account_info = unsafe { all_accounts.get_unchecked(index) };
 
-                    // Get the role with the ProgramScope action
-                    let owner = unsafe { all_accounts.get_unchecked(index).owner() };
+                    // Get the role with the ProgramScope action using the account key (target_account)
+                    let account_key = unsafe { all_accounts.get_unchecked(index).key() };
                     let program_scope =
-                        RoleMut::get_action_mut::<ProgramScope>(actions, owner.as_ref())?;
+                        RoleMut::get_action_mut::<ProgramScope>(actions, account_key.as_ref())?;
 
                     match program_scope {
                         Some(program_scope) => {
-                            // First verify this is the target account
-                            let account_key =
-                                unsafe { all_accounts.get_unchecked(index).key().as_slice() };
-                            if account_key != program_scope.target_account {
-                                return Err(
-                                    SwigAuthenticateError::PermissionDeniedMissingPermission.into(),
-                                );
-                            }
+                            // The target_account verification is now implicit in the match_data check
+                            // that happens in get_action_mut, so we don't need to check again
 
                             // Get the current balance by using the program_scope's
                             // read_account_balance method

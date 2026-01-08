@@ -18,8 +18,8 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::{
-    AuthorityConfig, ClientAction, CreateSubAccountInstruction, SignInstruction,
-    SubAccountSignInstruction, ToggleSubAccountInstruction, WithdrawFromSubAccountInstruction,
+    AuthorityConfig, ClientAction, CreateSubAccountInstruction, SignV2Instruction,
+    ToggleSubAccountInstruction, WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
     action::{

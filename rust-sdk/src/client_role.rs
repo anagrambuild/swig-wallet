@@ -1,7 +1,7 @@
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
     AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateSessionInstruction,
-    CreateSubAccountInstruction, RemoveAuthorityInstruction, SignInstruction, SignV2Instruction,
+    CreateSubAccountInstruction, RemoveAuthorityInstruction, SignV2Instruction,
     SubAccountSignInstruction, ToggleSubAccountInstruction, UpdateAuthorityData,
     UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
 };
@@ -22,6 +22,7 @@ pub trait ClientRole {
     fn sign_instruction(
         &self,
         swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
         payer: Pubkey,
         role_id: u32,
         instructions: Vec<Instruction>,
@@ -174,6 +175,7 @@ impl ClientRole for Ed25519ClientRole {
     fn sign_instruction(
         &self,
         swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
         payer: Pubkey,
         role_id: u32,
         instructions: Vec<Instruction>,
@@ -181,9 +183,9 @@ impl ClientRole for Ed25519ClientRole {
     ) -> Result<Vec<Instruction>, SwigError> {
         let mut signed_instructions = Vec::new();
         for instruction in instructions {
-            let swig_signed_instruction = SignInstruction::new_ed25519(
+            let swig_signed_instruction = SignV2Instruction::new_ed25519(
                 swig_account,
-                payer,
+                swig_wallet_address,
                 self.authority,
                 instruction,
                 role_id,
@@ -478,6 +480,7 @@ impl ClientRole for Secp256k1ClientRole {
     fn sign_instruction(
         &self,
         swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
         payer: Pubkey,
         role_id: u32,
         instructions: Vec<Instruction>,
@@ -487,9 +490,9 @@ impl ClientRole for Secp256k1ClientRole {
         let new_odometer = self.odometer.wrapping_add(1);
         let mut signed_instructions = Vec::new();
         for instruction in instructions {
-            let swig_signed_instruction = SignInstruction::new_secp256k1(
+            let swig_signed_instruction = SignV2Instruction::new_secp256k1(
                 swig_account,
-                payer,
+                swig_wallet_address,
                 &self.signing_fn,
                 current_slot,
                 new_odometer,
@@ -843,6 +846,7 @@ impl ClientRole for Secp256r1ClientRole {
     fn sign_instruction(
         &self,
         swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
         payer: Pubkey,
         role_id: u32,
         instructions: Vec<Instruction>,
@@ -852,9 +856,9 @@ impl ClientRole for Secp256r1ClientRole {
         let new_odometer = self.odometer.wrapping_add(1);
         let mut signed_instructions = Vec::new();
         for instruction in instructions {
-            let swig_signed_instruction = SignInstruction::new_secp256r1(
+            let swig_signed_instruction = SignV2Instruction::new_secp256r1(
                 swig_account,
-                payer,
+                swig_wallet_address,
                 &self.signing_fn,
                 current_slot,
                 new_odometer,
@@ -1198,6 +1202,7 @@ impl ClientRole for Ed25519SessionClientRole {
     fn sign_instruction(
         &self,
         swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
         payer: Pubkey,
         role_id: u32,
         instructions: Vec<Instruction>,
@@ -1208,9 +1213,9 @@ impl ClientRole for Ed25519SessionClientRole {
 
         let mut signed_instructions = Vec::new();
         for instruction in instructions {
-            let swig_signed_instruction = SignInstruction::new_ed25519(
+            let swig_signed_instruction = SignV2Instruction::new_ed25519(
                 swig_account,
-                payer,
+                swig_wallet_address,
                 session_key,
                 instruction,
                 role_id,
@@ -1529,6 +1534,7 @@ impl ClientRole for Secp256k1SessionClientRole {
     fn sign_instruction(
         &self,
         swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
         payer: Pubkey,
         role_id: u32,
         instructions: Vec<Instruction>,
@@ -1539,9 +1545,9 @@ impl ClientRole for Secp256k1SessionClientRole {
 
         let mut signed_instructions = Vec::new();
         for instruction in instructions {
-            let swig_signed_instruction = SignInstruction::new_ed25519(
+            let swig_signed_instruction = SignV2Instruction::new_ed25519(
                 swig_account,
-                payer,
+                swig_wallet_address,
                 session_key,
                 instruction,
                 role_id,
@@ -1875,6 +1881,7 @@ impl ClientRole for Secp256r1SessionClientRole {
     fn sign_instruction(
         &self,
         swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
         payer: Pubkey,
         role_id: u32,
         instructions: Vec<Instruction>,
@@ -1885,9 +1892,9 @@ impl ClientRole for Secp256r1SessionClientRole {
 
         let mut signed_instructions = Vec::new();
         for instruction in instructions {
-            let swig_signed_instruction = SignInstruction::new_ed25519(
+            let swig_signed_instruction = SignV2Instruction::new_ed25519(
                 swig_account,
-                payer,
+                swig_wallet_address,
                 session_key,
                 instruction,
                 role_id,
@@ -2289,6 +2296,7 @@ where
     fn sign_instruction(
         &self,
         swig_account: Pubkey,
+        _swig_wallet_address: Pubkey,
         payer: Pubkey,
         role_id: u32,
         instructions: Vec<Instruction>,

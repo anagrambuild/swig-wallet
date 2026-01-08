@@ -40,7 +40,7 @@
 │                          INSTRUCTION HANDLERS                         │
 │                                                                       │
 │  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐  ┌─────┐  │
-│  │ CreateV1       │  │ AddAuthorityV1 │  │ SignV1         │  │ ... │  │
+│  │ CreateV1       │  │ AddAuthorityV1 │  │ SignV2         │  │ ... │  │
 │  │                │  │                │  │                │  │     │  │
 │  │ - Initialize   │  │ - Add new      │  │ - Authenticate │  │     │  │
 │  │   Swig account │  │   authority    │  │ - Process      │  │     │  │
@@ -191,20 +191,20 @@
 └─────────────────────────┘
 ```
 
-## SignV1 (Transaction Excecution)
+## SignV2 (Transaction Execution)
 
 ```
 ┌─────────────────────────┐
 │ Client                  │
 │                         │
 │ - Creates transaction   │
-│   with SignV1           │
+│   with SignV2           │
 │   instruction           │
 └───────────┬─────────────┘
             │
             ▼
 ┌─────────────────────────┐
-│ SignV1 Instruction      │
+│ SignV2 Instruction      │
 │                         │
 │ - role_id               │
 │ - authority_payload     │
@@ -217,7 +217,7 @@
 │ Program Processor       │
 │                         │
 │ 1. Validate Swig account│
-│ 2. Load SignV1 data     │
+│ 2. Load SignV2 data     │
 │ 3. Lookup role by ID    │
 │ 4. Authenticate         │
 │    (Ed25519/Secp256k1)  │
@@ -242,7 +242,8 @@
 │ 1. Prepare accounts     │
 │ 2. Create CPI calls     │
 │ 3. Execute instructions │
-│    with Swig PDA signer │
+│    with wallet address  │
+│    PDA signer           │
 └───────────┬─────────────┘
             │
             ▼
@@ -342,7 +343,7 @@
 │  │ Swig Program    │       │ External        │                    │
 │  │                 │       │ Programs        │                    │
 │  │ - Processes     │──────►│                 │                    │
-│  │   SignV1        │       │ - Token Program │                    │
+│  │   SignV2        │       │ - Token Program │                    │
 │  │ - Authenticates │       │ - System Program│                    │
 │  │ - Checks        │       │ - Stake Program │                    │
 │  │   permissions   │       │ - Any program   │                    │
@@ -353,7 +354,7 @@
 │  ┌─────────────────────────────────────────────────────────────┐  │
 │  │ Cross-Program Invocation (CPI)                              │  │
 │  │                                                             │  │
-│  │ 1. SignV1 handler parses embedded instructions              │  │
+│  │ 1. SignV2 handler parses embedded instructions              │  │
 │  │ 2. For each instruction:                                    │  │
 │  │    - Maps required accounts                                 │  │
 │  │    - Verifies permissions                                   │  │

@@ -48,11 +48,6 @@ pub enum StakeAccountState {
 pub enum AccountClassification {
     /// No specific classification
     None,
-    /// A main Swig account with its lamport balance
-    ThisSwig {
-        /// The account's lamport balance
-        lamports: u64,
-    },
     /// A main Swig v2 account with its lamport balance
     ThisSwigV2 {
         /// The account's lamport balance

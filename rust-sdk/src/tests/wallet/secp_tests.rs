@@ -95,7 +95,7 @@ fn test_secp256k1_signature_reuse_error() {
         )
         .unwrap();
 
-    let swig_pubkey = &swig_wallet.get_swig_account().unwrap();
+    let swig_pubkey = &swig_wallet.get_swig_wallet_address().unwrap();
 
     swig_wallet
         .litesvm()
@@ -110,7 +110,7 @@ fn test_secp256k1_signature_reuse_error() {
 
     // First transaction should succeed
     let transfer_ix = system_instruction::transfer(
-        &swig_wallet.get_swig_account().unwrap(),
+        &swig_wallet.get_swig_wallet_address().unwrap(),
         &recipient.pubkey(),
         transfer_amount,
     );
@@ -123,7 +123,7 @@ fn test_secp256k1_signature_reuse_error() {
 
     // Try to reuse the same signature (this should fail)
     let transfer_ix2 = system_instruction::transfer(
-        &swig_wallet.get_swig_account().unwrap(),
+        &swig_wallet.get_swig_wallet_address().unwrap(),
         &recipient.pubkey(),
         transfer_amount,
     );
@@ -186,7 +186,7 @@ fn test_secp256k1_invalid_signature_age_error() {
 
     // Try to execute transaction with old signature
     let transfer_ix = system_instruction::transfer(
-        &swig_wallet.get_swig_account().unwrap(),
+        &swig_wallet.get_swig_wallet_address().unwrap(),
         &recipient.pubkey(),
         transfer_amount,
     );
@@ -252,7 +252,7 @@ fn test_secp256k1_invalid_signature_error() {
 
     // Try to execute transaction with invalid signature
     let transfer_ix = system_instruction::transfer(
-        &swig_wallet.get_swig_account().unwrap(),
+        &swig_wallet.get_swig_wallet_address().unwrap(),
         &recipient.pubkey(),
         transfer_amount,
     );
@@ -315,7 +315,7 @@ fn test_secp256k1_invalid_hash_error() {
 
     // Try to execute transaction with potentially corrupted data
     let transfer_ix = system_instruction::transfer(
-        &swig_wallet.get_swig_account().unwrap(),
+        &swig_wallet.get_swig_wallet_address().unwrap(),
         &recipient.pubkey(),
         transfer_amount,
     );
@@ -379,7 +379,7 @@ fn test_secp256k1_counter_increment() {
     let recipient = Keypair::new();
     let transfer_amount = 1_000_000;
 
-    let swig_pubkey = &swig_wallet.get_swig_account().unwrap();
+    let swig_pubkey = &swig_wallet.get_swig_wallet_address().unwrap();
 
     swig_wallet
         .litesvm()
@@ -455,7 +455,7 @@ fn test_secp256k1_authority_odometer() {
         .unwrap();
 
     // Fund the wallet
-    let swig_pubkey = &swig_wallet.get_swig_account().unwrap();
+    let swig_pubkey = &swig_wallet.get_swig_wallet_address().unwrap();
     swig_wallet
         .litesvm()
         .airdrop(&swig_pubkey, 10_000_000_000)
@@ -488,7 +488,7 @@ fn test_secp256k1_authority_odometer() {
 
     for i in 1..=3 {
         let transfer_ix = system_instruction::transfer(
-            &swig_wallet.get_swig_account().unwrap(),
+            &swig_wallet.get_swig_wallet_address().unwrap(),
             &recipient.pubkey(),
             transfer_amount,
         );
@@ -527,7 +527,7 @@ fn test_secp256k1_odometer_wrapping() {
         )
         .unwrap();
 
-    let swig_pubkey = &swig_wallet.get_swig_account().unwrap();
+    let swig_pubkey = &swig_wallet.get_swig_wallet_address().unwrap();
 
     swig_wallet
         .litesvm()
@@ -558,7 +558,7 @@ fn test_secp256k1_odometer_wrapping() {
     // Execute transactions to test odometer behavior
     for i in 1..=10 {
         let transfer_ix = system_instruction::transfer(
-            &swig_wallet.get_swig_account().unwrap(),
+            &swig_wallet.get_swig_wallet_address().unwrap(),
             &recipient.pubkey(),
             transfer_amount,
         );
