@@ -182,12 +182,6 @@ pub fn sign_v2(
         account_classifiers[0],
         AccountClassification::ThisSwigV2 { .. }
     ) {
-        if matches!(
-            account_classifiers[0],
-            AccountClassification::ThisSwig { .. }
-        ) {
-            return Err(SwigError::SignV2CannotBeUsedWithSwigV1.into());
-        }
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 
@@ -259,8 +253,8 @@ pub fn sign_v2(
         }
 
         let hash = match account_classifier {
-            AccountClassification::ThisSwig { .. } | AccountClassification::ThisSwigV2 { .. } => {
-                // For ThisSwig accounts, hash the entire account data and owner to ensure no
+            AccountClassification::ThisSwigV2 { .. } => {
+                // For ThisSwigV2 accounts, hash the entire account data and owner to ensure no
                 // unexpected modifications. Lamports are handled separately in
                 // the permission check, but we still need to verify
                 // that the account data itself and ownership hasn't been tampered with
@@ -437,8 +431,7 @@ pub fn sign_v2(
     } else {
         'account_loop: for (index, account) in account_classifiers.iter_mut().enumerate() {
             match account {
-                AccountClassification::ThisSwig { lamports }
-                | AccountClassification::ThisSwigV2 { lamports } => {
+                AccountClassification::ThisSwigV2 { lamports } => {
                     let account_info = unsafe { all_accounts.get_unchecked(index) };
 
                     if account_info.is_writable() {
@@ -453,28 +446,15 @@ pub fn sign_v2(
 
                     let current_lamports = account_info.lamports();
                     let mut matched = false;
-                    // Ensure the account has some minimum balance for rent exemption
-                    let account_data = unsafe { account_info.borrow_data_unchecked() };
-                    let rent_exempt_minimum =
-                        pinocchio::sysvars::rent::Rent::get()?.minimum_balance(account_data.len());
 
-                    // Make sure that the withdrawal
-                    if matches!(account, AccountClassification::ThisSwigV2 { .. }) {
-                        let swig_wallet_balance = ctx.accounts.swig_wallet_address.lamports();
-                        let swig_wallet_rent_exempt_minimum =
-                            pinocchio::sysvars::rent::Rent::get()?
-                                .minimum_balance(ctx.accounts.swig_wallet_address.data_len());
-                        if swig_wallet_balance < swig_wallet_rent_exempt_minimum {
-                            return Err(
-                                SwigAuthenticateError::PermissionDeniedInsufficientBalance.into()
-                            );
-                        }
-                    } else if matches!(account, AccountClassification::ThisSwig { .. }) {
-                        if current_lamports < rent_exempt_minimum {
-                            return Err(
-                                SwigAuthenticateError::PermissionDeniedInsufficientBalance.into()
-                            );
-                        }
+                    // Make sure that the swig wallet address has sufficient balance
+                    let swig_wallet_balance = ctx.accounts.swig_wallet_address.lamports();
+                    let swig_wallet_rent_exempt_minimum = pinocchio::sysvars::rent::Rent::get()?
+                        .minimum_balance(ctx.accounts.swig_wallet_address.data_len());
+                    if swig_wallet_balance < swig_wallet_rent_exempt_minimum {
+                        return Err(
+                            SwigAuthenticateError::PermissionDeniedInsufficientBalance.into()
+                        );
                     }
 
                     if total_sol_spent > 0 {

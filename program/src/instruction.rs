@@ -67,36 +67,13 @@ pub enum SwigInstruction {
     #[account(2, name="system_program", desc="the system program")]
     UpdateAuthorityV1 = 3,
 
-    /// Signs and executes a transaction.
+    /// DEPRECATED: Signs and executes a transaction (V1 accounts only).
     ///
-    /// The instruction data includes:
-    /// - Instruction payload with offset and length
-    /// - Authority payload with offset and length
-    /// Additional accounts may be required for CPI calls.
-    ///
-    /// Required accounts:
-    /// 1. `[writable, signer]` Swig wallet account
-    /// 2. `[writable, signer]` Payer account
-    /// 3. System program account
+    /// This instruction is no longer supported. Use SignV2 instead.
     #[account(0, writable, signer, name="swig", desc="the swig smart wallet")]
     #[account(1, writable, signer, name="payer", desc="the payer")]
     #[account(2, name="system_program", desc="the system program")]
     SignV1 = 4,
-     /// Signs and executes a transaction.
-    ///
-    /// The instruction data includes:
-    /// - Instruction payload with offset and length
-    /// - Authority payload with offset and length
-    /// Additional accounts may be required for CPI calls.
-    ///
-    /// Required accounts:
-    /// 1. `[writable]` Swig wallet account
-    /// 2. `[writable, signer]` Swig wallet address account
-    /// 3. System program account
-    #[account(0, writable, name="swig", desc="the swig smart wallet")]
-    #[account(1, writable, signer, name="swig_wallet_address", desc="the swig smart wallet address")]
-    #[account(2, name="system_program", desc="the system program")]
-    SignV2 = 11,
 
     /// Creates a new session for temporary authority.
     ///
@@ -159,6 +136,22 @@ pub enum SwigInstruction {
     #[account(1, signer, name="payer", desc="the payer")]
     #[account(2, writable, name="sub_account", desc="the sub account to toggle enabled state")]
     ToggleSubAccountV1 = 10,
+
+    /// Signs and executes a transaction (V2 accounts).
+    ///
+    /// The instruction data includes:
+    /// - Instruction payload with offset and length
+    /// - Authority payload with offset and length
+    /// Additional accounts may be required for CPI calls.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Swig wallet address account
+    /// 3. System program account
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="swig_wallet_address", desc="the swig smart wallet address")]
+    #[account(2, name="system_program", desc="the system program")]
+    SignV2 = 11,
 
     /// Migrates a Swig account to support wallet address feature.
     ///

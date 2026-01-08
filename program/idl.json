@@ -181,40 +181,6 @@
       }
     },
     {
-      "name": "SignV2",
-      "accounts": [
-        {
-          "name": "swig",
-          "isMut": true,
-          "isSigner": false,
-          "docs": [
-            "the swig smart wallet"
-          ]
-        },
-        {
-          "name": "swigWalletAddress",
-          "isMut": true,
-          "isSigner": true,
-          "docs": [
-            "the swig smart wallet address"
-          ]
-        },
-        {
-          "name": "systemProgram",
-          "isMut": false,
-          "isSigner": false,
-          "docs": [
-            "the system program"
-          ]
-        }
-      ],
-      "args": [],
-      "discriminant": {
-        "type": "u8",
-        "value": 11
-      }
-    },
-    {
       "name": "CreateSessionV1",
       "accounts": [
         {
@@ -414,6 +380,40 @@
       "discriminant": {
         "type": "u8",
         "value": 10
+      }
+    },
+    {
+      "name": "SignV2",
+      "accounts": [
+        {
+          "name": "swig",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig smart wallet"
+          ]
+        },
+        {
+          "name": "swigWalletAddress",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "the swig smart wallet address"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the system program"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 11
       }
     },
     {
