@@ -1097,3 +1097,125 @@ fn test_secp256k1_session_authority_odometer_v2() {
     println!("✓ Session authority has proper session-based behavior");
     println!("✓ All other fields remain intact after adding odometer");
 }
+
+#[test_log::test]
+fn test_secp256k1_compressed_key_creation_v2() {
+    let mut context = setup_test_context().unwrap();
+
+    // Generate a random Ethereum wallet
+    let wallet = LocalSigner::random();
+
+    let id = rand::random::<[u8; 32]>();
+
+    // Test that we can create a swig with a compressed key (use_compressed = true)
+    let (swig_key, _) =
+        create_swig_secp256k1_with_key_type(&mut context, &wallet, id, true).unwrap();
+
+    // If we get here, the compressed key creation succeeded
+    assert!(true, "Compressed key creation should succeed");
+
+    // Verify the swig was created with correct authority
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig_state.state.roles, 1, "Should have one role");
+
+    println!("✓ SignV2: Compressed key creation test passed");
+}
+
+#[test_log::test]
+fn test_secp256k1_compressed_key_full_signing_flow_v2() {
+    let mut context = setup_test_context().unwrap();
+
+    // Generate a random Ethereum wallet
+    let wallet = LocalSigner::random();
+
+    // Create a new swig with a compressed secp256k1 authority (use_compressed = true)
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) =
+        create_swig_secp256k1_with_key_type(&mut context, &wallet, id, true).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
+    // For SignV2, fund the swig_wallet_address instead of swig
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
+
+    // Set up a recipient and transaction
+    let recipient = Keypair::new();
+    context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
+    let transfer_amount = 5_000_000;
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+
+    // Create signing function for compressed key
+    let signing_fn = |payload: &[u8]| -> [u8; 65] {
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&payload[..32]);
+        let hash = B256::from(hash);
+        wallet.sign_hash_sync(&hash).unwrap().as_bytes()
+    };
+
+    // Get current slot for signing
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+
+    // Read the current counter value and calculate next counter
+    let current_counter = get_secp256k1_counter(&context, &swig_key, &wallet).unwrap();
+    let next_counter = current_counter + 1;
+
+    println!(
+        "Compressed key V2 test - Current counter: {}, using next counter: {}",
+        current_counter, next_counter
+    );
+
+    // Create and submit the transaction with compressed key using SignV2
+    let sign_ix = swig_interface::SignV2Instruction::new_secp256k1_with_signers(
+        swig_key,
+        swig_wallet_address,
+        signing_fn,
+        current_slot,
+        next_counter,
+        transfer_ix,
+        0, // Role ID 0
+        &[context.default_payer.pubkey()],
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
+
+    // Transaction should succeed with compressed key
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_ok(),
+        "SignV2 transaction with compressed key failed: {:?}",
+        result.err()
+    );
+
+    println!("✓ SignV2 compressed key signing transaction succeeded");
+    let logs = result.unwrap().logs;
+    println!("Transaction logs: {:?}", logs);
+
+    // Verify transfer was successful
+    let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
+    assert_eq!(recipient_account.lamports, 1_000_000 + transfer_amount);
+
+    // Verify the counter was incremented
+    let updated_counter = get_secp256k1_counter(&context, &swig_key, &wallet).unwrap();
+    assert_eq!(
+        updated_counter, next_counter,
+        "Counter should be incremented after successful transaction"
+    );
+
+    println!("✓ SignV2 compressed key full signing flow test completed successfully");
+}
