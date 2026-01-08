@@ -268,9 +268,7 @@ fn test_authorization_lock_role_tracking() {
     assert_eq!(swig_with_roles.state.authorization_locks, 4);
 
     println!("VERIFICATION - All authorization locks in account:");
-    let (all_locks, total_count) = swig_with_roles
-        .get_authorization_locks_for_test::<10>()
-        .unwrap();
+    let (all_locks, total_count) = swig_with_roles.get_authorization_locks::<10>().unwrap();
     println!("Total authorization locks: {}", total_count);
     for i in 0..total_count {
         if let Some(lock) = all_locks[i] {

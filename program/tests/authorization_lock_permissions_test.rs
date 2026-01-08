@@ -320,9 +320,7 @@ fn test_authorization_lock_permission_enforcement() {
     println!();
 
     println!("FINAL VERIFICATION:");
-    let (auth_locks, count) = swig_with_roles
-        .get_authorization_locks_for_test::<10>()
-        .unwrap();
+    let (auth_locks, count) = swig_with_roles.get_authorization_locks::<10>().unwrap();
     println!("Total authorization locks in account: {}", count);
     for i in 0..count {
         if let Some(lock) = auth_locks[i] {

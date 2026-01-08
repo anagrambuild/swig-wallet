@@ -803,4 +803,3 @@ pub fn update_authority_v1(
 
     Ok(())
 }
-
