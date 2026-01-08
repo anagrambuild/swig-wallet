@@ -67,7 +67,7 @@ pub fn process_action(
     match ix {
         SwigInstruction::CreateV1 => process_create_v1(accounts, data),
         SwigInstruction::DeprecatedSignV1 => {
-            msg!("SignV1 instruction is deprecated and no longer supported");
+            msg!("DEPRECATED. Use SignV2 instead. https://build.onswig.com/examples/v2_features for more details");
             Err(ProgramError::InvalidInstructionData)
         },
         SwigInstruction::SignV2 => process_sign_v2(accounts, account_classification, data),
