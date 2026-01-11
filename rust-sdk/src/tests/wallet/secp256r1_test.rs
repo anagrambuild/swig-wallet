@@ -153,7 +153,7 @@ fn test_secp256r1_basic_signing() {
         system_instruction::transfer(&swig_pubkey, &recipient.pubkey(), transfer_amount);
 
     // Sign and send the transaction
-    let result = swig_wallet.sign(vec![transfer_ix], None);
+    let result = swig_wallet.sign_v2(vec![transfer_ix], None);
     assert!(
         result.is_ok(),
         "Transaction should succeed with real secp256r1 signature: {:?}",
@@ -264,7 +264,7 @@ fn test_secp256r1_replay_protection() {
         system_instruction::transfer(&swig_pubkey, &recipient.pubkey(), transfer_amount);
 
     // First transaction - should succeed
-    let result1 = swig_wallet.sign(vec![transfer_ix.clone()], None);
+    let result1 = swig_wallet.sign_v2(vec![transfer_ix.clone()], None);
     assert!(
         result1.is_ok(),
         "First transaction should succeed: {:?}",
@@ -301,7 +301,7 @@ fn test_secp256r1_replay_protection() {
     )
     .unwrap();
 
-    let result2 = replay_wallet.sign(vec![transfer_ix], None);
+    let result2 = replay_wallet.sign_v2(vec![transfer_ix], None);
 
     assert!(
         result2.is_err(),
@@ -533,7 +533,7 @@ fn test_secp256r1_invalid_signature_error() {
         system_instruction::transfer(&swig_pubkey, &recipient.pubkey(), transfer_amount);
 
     // Try to execute transaction with invalid signature
-    let result = swig_wallet.sign(vec![transfer_ix], None);
+    let result = swig_wallet.sign_v2(vec![transfer_ix], None);
 
     // The transaction should fail due to invalid signature
     assert!(
@@ -590,7 +590,7 @@ fn test_secp256r1_odometer_wrapping() {
 
     // Execute multiple transactions to test odometer wrapping
     for i in 0..5 {
-        let result = swig_wallet.sign(vec![transfer_ix.clone()], None);
+        let result = swig_wallet.sign_v2(vec![transfer_ix.clone()], None);
         assert!(
             result.is_ok(),
             "Transaction {} should succeed: {:?}",

@@ -141,7 +141,7 @@ fn should_allow_cpi_calls_with_program_all_permission() {
     );
 
     // Execute the transfer (this should work because of ProgramAll permission)
-    let signature = swig_wallet.sign(vec![transfer_ix], None).unwrap();
+    let signature = swig_wallet.sign_v2(vec![transfer_ix], None).unwrap();
 
     assert!(signature != solana_sdk::signature::Signature::default());
 }

@@ -96,7 +96,7 @@ fn should_token_transfer_with_program_scope() {
     )
     .unwrap();
 
-    let sign_ix = swig_wallet.sign(vec![swig_transfer_ix], None).unwrap();
+    let sign_ix = swig_wallet.sign_v2(vec![swig_transfer_ix], None).unwrap();
 }
 
 #[test_log::test]
@@ -207,7 +207,7 @@ fn should_token_transfer_with_recurring_limit_program_scope() {
         )
         .unwrap();
 
-        let sign_ix = swig_wallet.sign(vec![swig_transfer_ix], None).unwrap();
+        let sign_ix = swig_wallet.sign_v2(vec![swig_transfer_ix], None).unwrap();
         transferred += transfer_batch;
 
         swig_wallet.litesvm().expire_blockhash();
@@ -238,7 +238,7 @@ fn should_token_transfer_with_recurring_limit_program_scope() {
     )
     .unwrap();
 
-    let sign_result = swig_wallet.sign(vec![swig_transfer_ix], None);
+    let sign_result = swig_wallet.sign_v2(vec![swig_transfer_ix], None);
     assert!(
         sign_result.is_err(),
         "Transfer should have failed due to limit"
@@ -262,7 +262,7 @@ fn should_token_transfer_with_recurring_limit_program_scope() {
     )
     .unwrap();
 
-    let sign_result = swig_wallet.sign(vec![swig_transfer_ix], None);
+    let sign_result = swig_wallet.sign_v2(vec![swig_transfer_ix], None);
     assert!(
         sign_result.is_ok(),
         "Token transfer after window reset failed: {:?}",

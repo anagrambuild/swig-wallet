@@ -91,7 +91,7 @@ fn test_secp256r1_basic_signing() {
 
     // Create signed instructions using the instruction builder
     let signed_instructions = builder
-        .sign_instruction(vec![transfer_ix], Some(current_slot))
+        .sign_v2_instruction(vec![transfer_ix], Some(current_slot))
         .unwrap();
 
     let message = v0::Message::try_compile(
@@ -261,7 +261,7 @@ fn test_secp256r1_replay_protection() {
 
     // First transaction - should succeed
     let signed_instructions1 = builder
-        .sign_instruction(vec![transfer_ix.clone()], Some(current_slot))
+        .sign_v2_instruction(vec![transfer_ix.clone()], Some(current_slot))
         .unwrap();
 
     let message1 = v0::Message::try_compile(
@@ -311,7 +311,7 @@ fn test_secp256r1_replay_protection() {
     );
 
     let signed_instructions2 = replay_builder
-        .sign_instruction(vec![transfer_ix], Some(current_slot))
+        .sign_v2_instruction(vec![transfer_ix], Some(current_slot))
         .unwrap();
 
     let message2 = v0::Message::try_compile(

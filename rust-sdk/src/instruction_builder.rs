@@ -110,33 +110,6 @@ impl SwigInstructionBuilder {
         Ok(instruction)
     }
 
-    /// Creates signed instructions for the provided instructions
-    ///
-    /// # Arguments
-    ///
-    /// * `instructions` - Vector of instructions to sign
-    /// * `current_slot` - Optional current slot number (required for Secp256k1)
-    ///
-    /// # Returns
-    ///
-    /// Returns a `Result` containing a vector of signed instructions or a
-    /// `SwigError`
-    pub fn sign_instruction(
-        &mut self,
-        instructions: Vec<Instruction>,
-        current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError> {
-        let swig_wallet_address = Self::swig_wallet_address_key(&self.swig_account);
-        self.client_role.sign_instruction(
-            self.swig_account,
-            swig_wallet_address,
-            self.payer,
-            self.role_id,
-            instructions,
-            current_slot,
-        )
-    }
-
     /// Creates a SignV2 instruction for signing transactions
     ///
     /// SignV2 instructions use the swig_wallet_address PDA as the transaction
