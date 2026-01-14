@@ -189,4 +189,28 @@ pub enum SwigInstruction {
     #[account(2, writable, signer, name="payer", desc="the payer")]
     #[account(3, name="system_program", desc="the system program")]
     TransferAssetsV1 = 13,
+
+    /// Adds an authorization lock to the wallet.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. System program account
+    /// 4. `[]` Balance account (swig_wallet_address for SOL, token account for SPL tokens)
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, name="system_program", desc="the system program")]
+    #[account(3, name="balance_account", desc="balance account for validation")]
+    AddAuthorizationLockV1 = 14,
+
+    /// Removes an authorization lock from the wallet.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. System program account
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, name="system_program", desc="the system program")]
+    RemoveAuthorizationLockV1 = 15,
 }

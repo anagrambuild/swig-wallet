@@ -114,6 +114,10 @@ pub enum SwigError {
     PermissionDeniedCannotUpdateRootAuthority,
     /// Reserved ID prefix, must use deterministic create ID
     ReservedIdPrefix,
+    /// Invalid authorization lock expiry slot (must be in the future)
+    InvalidAuthorizationLockExpiry,
+    /// Invalid authorization lock index provided
+    InvalidAuthorizationLockIndex,
 }
 
 /// Implements conversion from SwigError to ProgramError.
