@@ -304,8 +304,8 @@ fn validate_authorization_lock_against_limits<'a>(
     new_lock_amount: u64,
     existing_locks: &[AuthorizationLock],
 ) -> ProgramResult {
-    // Wrapped SOL mint address
-    const WRAPPED_SOL_MINT: [u8; 32] = pubkey!("So11111111111111111111111111111111111111112");
+    // Native SOL is represented as all zeros (not wrapped SOL mint)
+    const NATIVE_SOL_MINT: [u8; 32] = [0u8; 32];
 
     // Calculate total existing authorization lock amount for this token
     let existing_total = existing_locks
@@ -316,8 +316,8 @@ fn validate_authorization_lock_against_limits<'a>(
 
     let total_with_new_lock = existing_total.saturating_add(new_lock_amount);
 
-    // Check if this is the wrapped SOL mint
-    if token_mint == WRAPPED_SOL_MINT {
+    // Check if this is native SOL (all zeros)
+    if token_mint == NATIVE_SOL_MINT {
         // Check against SOL limits first
         if let Ok(Some(sol_limit)) = acting_role.get_action::<SolLimit>(&[]) {
             if total_with_new_lock > sol_limit.amount {
