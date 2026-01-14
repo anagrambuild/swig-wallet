@@ -293,45 +293,6 @@ impl<'c> SwigWallet<'c> {
         }
     }
 
-    /// Signs a transaction containing the provided instructions
-    ///
-    /// # Arguments
-    ///
-    /// * `inner_instructions` - Vector of instructions to include in the
-    ///   transaction
-    /// * `alt` - Optional slice of Address Lookup Table accounts
-    ///
-    /// # Returns
-    ///
-    /// Returns a `Result` containing the transaction signature or a `SwigError`
-    pub fn sign(
-        &mut self,
-        inner_instructions: Vec<Instruction>,
-        alt: Option<&[AddressLookupTableAccount]>,
-    ) -> Result<Signature, SwigError> {
-        let sign_ix = self
-            .instruction_builder
-            .sign_instruction(inner_instructions, Some(self.get_current_slot()?))?;
-
-        let alt = if alt.is_some() { alt.unwrap() } else { &[] };
-
-        let msg = v0::Message::try_compile(
-            &self.fee_payer.pubkey(),
-            &sign_ix,
-            alt,
-            self.get_current_blockhash()?,
-        )?;
-
-        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
-
-        let tx_result = self.send_and_confirm_transaction(tx);
-        if tx_result.is_ok() {
-            self.refresh_permissions()?;
-            self.instruction_builder.increment_odometer()?;
-        }
-        tx_result
-    }
-
     /// Signs instructions using the SignV2 instruction (which uses
     /// swig_wallet_address as authority)
     ///
@@ -1395,7 +1356,7 @@ impl<'c> SwigWallet<'c> {
     /// Returns a `Result` containing the associated token address or a
     /// `SwigError`
     pub fn create_ata(&mut self, mint: &Pubkey) -> Result<Pubkey, SwigError> {
-        let swig_wallet_address = self.instruction_builder.get_swig_account()?;
+        let swig_wallet_address = self.get_swig_wallet_address()?;
         let associated_token_address = get_associated_token_address(&swig_wallet_address, &mint);
 
         #[cfg(not(all(feature = "rust_sdk_test", test)))]

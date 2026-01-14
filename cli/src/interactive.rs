@@ -803,7 +803,7 @@ fn transfer_interactive(ctx: &mut SwigCliContext) -> Result<()> {
         .wallet
         .as_mut()
         .unwrap()
-        .sign(vec![transfer_instruction], None)?;
+        .sign_v2(vec![transfer_instruction], None)?;
 
     println!("Signature: {}", signature);
 

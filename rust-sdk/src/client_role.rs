@@ -1,7 +1,7 @@
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
     AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateSessionInstruction,
-    CreateSubAccountInstruction, RemoveAuthorityInstruction, SignInstruction, SignV2Instruction,
+    CreateSubAccountInstruction, RemoveAuthorityInstruction, SignV2Instruction,
     SubAccountSignInstruction, ToggleSubAccountInstruction, UpdateAuthorityData,
     UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
 };
@@ -18,16 +18,6 @@ use crate::{error::SwigError, types::Permission as ClientPermission};
 /// Trait for client-side role implementations that handle instruction creation
 /// for different authority types.
 pub trait ClientRole {
-    /// Creates a sign instruction for the given inner instructions
-    fn sign_instruction(
-        &self,
-        swig_account: Pubkey,
-        payer: Pubkey,
-        role_id: u32,
-        instructions: Vec<Instruction>,
-        current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError>;
-
     /// Creates an add authority instruction
     fn add_authority_instruction(
         &self,
@@ -171,28 +161,6 @@ impl Ed25519ClientRole {
 }
 
 impl ClientRole for Ed25519ClientRole {
-    fn sign_instruction(
-        &self,
-        swig_account: Pubkey,
-        payer: Pubkey,
-        role_id: u32,
-        instructions: Vec<Instruction>,
-        current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError> {
-        let mut signed_instructions = Vec::new();
-        for instruction in instructions {
-            let swig_signed_instruction = SignInstruction::new_ed25519(
-                swig_account,
-                payer,
-                self.authority,
-                instruction,
-                role_id,
-            )?;
-            signed_instructions.push(swig_signed_instruction);
-        }
-        Ok(signed_instructions)
-    }
-
     fn add_authority_instruction(
         &self,
         swig_account: Pubkey,
@@ -475,32 +443,6 @@ impl Secp256k1ClientRole {
 }
 
 impl ClientRole for Secp256k1ClientRole {
-    fn sign_instruction(
-        &self,
-        swig_account: Pubkey,
-        payer: Pubkey,
-        role_id: u32,
-        instructions: Vec<Instruction>,
-        current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError> {
-        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
-        let new_odometer = self.odometer.wrapping_add(1);
-        let mut signed_instructions = Vec::new();
-        for instruction in instructions {
-            let swig_signed_instruction = SignInstruction::new_secp256k1(
-                swig_account,
-                payer,
-                &self.signing_fn,
-                current_slot,
-                new_odometer,
-                instruction,
-                role_id,
-            )?;
-            signed_instructions.push(swig_signed_instruction);
-        }
-        Ok(signed_instructions)
-    }
-
     fn add_authority_instruction(
         &self,
         swig_account: Pubkey,
@@ -840,33 +782,6 @@ impl Secp256r1ClientRole {
 }
 
 impl ClientRole for Secp256r1ClientRole {
-    fn sign_instruction(
-        &self,
-        swig_account: Pubkey,
-        payer: Pubkey,
-        role_id: u32,
-        instructions: Vec<Instruction>,
-        current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError> {
-        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
-        let new_odometer = self.odometer.wrapping_add(1);
-        let mut signed_instructions = Vec::new();
-        for instruction in instructions {
-            let swig_signed_instruction = SignInstruction::new_secp256r1(
-                swig_account,
-                payer,
-                &self.signing_fn,
-                current_slot,
-                new_odometer,
-                instruction,
-                role_id,
-                &self.authority,
-            )?;
-            signed_instructions.extend(swig_signed_instruction);
-        }
-        Ok(signed_instructions)
-    }
-
     fn add_authority_instruction(
         &self,
         swig_account: Pubkey,
@@ -1195,31 +1110,6 @@ impl Ed25519SessionClientRole {
 }
 
 impl ClientRole for Ed25519SessionClientRole {
-    fn sign_instruction(
-        &self,
-        swig_account: Pubkey,
-        payer: Pubkey,
-        role_id: u32,
-        instructions: Vec<Instruction>,
-        _current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError> {
-        // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
-        let mut signed_instructions = Vec::new();
-        for instruction in instructions {
-            let swig_signed_instruction = SignInstruction::new_ed25519(
-                swig_account,
-                payer,
-                session_key,
-                instruction,
-                role_id,
-            )?;
-            signed_instructions.push(swig_signed_instruction);
-        }
-        Ok(signed_instructions)
-    }
-
     fn add_authority_instruction(
         &self,
         swig_account: Pubkey,
@@ -1526,31 +1416,6 @@ impl Secp256k1SessionClientRole {
 }
 
 impl ClientRole for Secp256k1SessionClientRole {
-    fn sign_instruction(
-        &self,
-        swig_account: Pubkey,
-        payer: Pubkey,
-        role_id: u32,
-        instructions: Vec<Instruction>,
-        _current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError> {
-        // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
-        let mut signed_instructions = Vec::new();
-        for instruction in instructions {
-            let swig_signed_instruction = SignInstruction::new_ed25519(
-                swig_account,
-                payer,
-                session_key,
-                instruction,
-                role_id,
-            )?;
-            signed_instructions.push(swig_signed_instruction);
-        }
-        Ok(signed_instructions)
-    }
-
     fn add_authority_instruction(
         &self,
         swig_account: Pubkey,
@@ -1872,31 +1737,6 @@ impl Secp256r1SessionClientRole {
 }
 
 impl ClientRole for Secp256r1SessionClientRole {
-    fn sign_instruction(
-        &self,
-        swig_account: Pubkey,
-        payer: Pubkey,
-        role_id: u32,
-        instructions: Vec<Instruction>,
-        _current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError> {
-        // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
-        let mut signed_instructions = Vec::new();
-        for instruction in instructions {
-            let swig_signed_instruction = SignInstruction::new_ed25519(
-                swig_account,
-                payer,
-                session_key,
-                instruction,
-                role_id,
-            )?;
-            signed_instructions.push(swig_signed_instruction);
-        }
-        Ok(signed_instructions)
-    }
-
     fn add_authority_instruction(
         &self,
         swig_account: Pubkey,
@@ -2286,19 +2126,6 @@ impl<F> ClientRole for ProgramExecClientRole<F>
 where
     F: Fn() -> Instruction,
 {
-    fn sign_instruction(
-        &self,
-        swig_account: Pubkey,
-        payer: Pubkey,
-        role_id: u32,
-        instructions: Vec<Instruction>,
-        _current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError> {
-        Err(SwigError::InterfaceError(
-            "ProgramExecClientRole only supports SignV2 instructions".to_string(),
-        ))
-    }
-
     fn add_authority_instruction(
         &self,
         swig_account: Pubkey,

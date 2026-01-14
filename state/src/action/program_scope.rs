@@ -424,11 +424,11 @@ impl<'a> Actionable<'a> for ProgramScope {
     /// Multiple program scopes can exist per role
     const REPEATABLE: bool = true;
 
-    /// Checks if this program scope matches the provided program ID.
+    /// Checks if this program scope matches the provided target account.
     ///
     /// # Arguments
-    /// * `data` - The program ID to check against (first 32 bytes)
+    /// * `data` - The target account pubkey to check against (first 32 bytes)
     fn match_data(&self, data: &[u8]) -> bool {
-        data[0..32] == self.program_id
+        data.len() >= 32 && data[0..32] == self.target_account
     }
 }

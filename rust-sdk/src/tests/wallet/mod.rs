@@ -7,7 +7,6 @@ pub mod program_scope_test;
 pub mod secp256r1_test;
 pub mod secp_tests;
 pub mod session_tests;
-pub mod sign_v1_tests;
 pub mod sign_v2_tests;
 pub mod sub_accounts_test;
 
@@ -56,20 +55,7 @@ fn setup_test_environment() -> (LiteSVM, Keypair) {
 }
 
 fn create_test_wallet(mut litesvm: LiteSVM, authority: &Keypair) -> SwigWallet {
-    create_test_wallet_with_version(litesvm, authority, true)
-}
-
-fn create_test_wallet_v2(mut litesvm: LiteSVM, authority: &Keypair) -> SwigWallet {
-    create_test_wallet_with_version(litesvm, authority, false)
-}
-
-fn create_test_wallet_with_version(
-    mut litesvm: LiteSVM,
-    authority: &Keypair,
-    convert_to_v1: bool,
-) -> SwigWallet {
-    // First create the wallet
-    let mut wallet = SwigWallet::new(
+    SwigWallet::new(
         [0; 32],
         Box::new(Ed25519ClientRole::new(authority.pubkey())),
         authority,
@@ -77,33 +63,9 @@ fn create_test_wallet_with_version(
         Some(authority),
         litesvm,
     )
-    .unwrap();
-
-    // Convert the swig account to V1 for tests that use SignV1
-    if convert_to_v1 {
-        convert_wallet_to_v1(&mut wallet);
-    }
-
-    wallet
+    .unwrap()
 }
 
-fn convert_wallet_to_v1(wallet: &mut SwigWallet) {
-    use swig_state::{swig::Swig, Transmutable};
-
-    let swig_key = wallet.get_swig();
-
-    let litesvm = wallet.litesvm();
-    let mut account = litesvm
-        .get_account(&swig_key)
-        .expect("Swig account should exist");
-
-    if account.data.len() >= Swig::LEN {
-        let last_8_start = Swig::LEN - 8;
-        let reserved_lamports: u64 = 256;
-        account.data[last_8_start..Swig::LEN].copy_from_slice(&reserved_lamports.to_le_bytes());
-    }
-
-    litesvm
-        .set_account(swig_key, account)
-        .expect("Failed to update account");
+fn create_test_wallet_v2(mut litesvm: LiteSVM, authority: &Keypair) -> SwigWallet {
+    create_test_wallet(litesvm, authority)
 }

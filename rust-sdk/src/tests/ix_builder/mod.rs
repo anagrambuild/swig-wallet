@@ -16,7 +16,6 @@ use solana_sdk::{
 };
 use swig_interface::{
     program_id, AuthorityConfig, ClientAction, CreateInstruction, CreateSessionInstruction,
-    SignInstruction,
 };
 use swig_state::{
     action::{
@@ -52,7 +51,6 @@ pub mod program_exec_tests;
 pub mod program_scope_tests;
 pub mod secp256r1_tests;
 pub mod session_tests;
-pub mod sign_v1_tests;
 pub mod sign_v2_tests;
 pub mod sub_account_test;
 pub mod swig_account_tests;

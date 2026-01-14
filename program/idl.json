@@ -147,30 +147,14 @@
       }
     },
     {
-      "name": "SignV1",
+      "name": "DeprecatedSignV1",
       "accounts": [
         {
-          "name": "swig",
-          "isMut": true,
-          "isSigner": true,
-          "docs": [
-            "the swig smart wallet"
-          ]
-        },
-        {
-          "name": "payer",
-          "isMut": true,
-          "isSigner": true,
-          "docs": [
-            "the payer"
-          ]
-        },
-        {
-          "name": "systemProgram",
+          "name": "deprecated",
           "isMut": false,
           "isSigner": false,
           "docs": [
-            "the system program"
+            "deprecated instruction"
           ]
         }
       ],
@@ -178,40 +162,6 @@
       "discriminant": {
         "type": "u8",
         "value": 4
-      }
-    },
-    {
-      "name": "SignV2",
-      "accounts": [
-        {
-          "name": "swig",
-          "isMut": true,
-          "isSigner": false,
-          "docs": [
-            "the swig smart wallet"
-          ]
-        },
-        {
-          "name": "swigWalletAddress",
-          "isMut": true,
-          "isSigner": true,
-          "docs": [
-            "the swig smart wallet address"
-          ]
-        },
-        {
-          "name": "systemProgram",
-          "isMut": false,
-          "isSigner": false,
-          "docs": [
-            "the system program"
-          ]
-        }
-      ],
-      "args": [],
-      "discriminant": {
-        "type": "u8",
-        "value": 11
       }
     },
     {
@@ -414,6 +364,40 @@
       "discriminant": {
         "type": "u8",
         "value": 10
+      }
+    },
+    {
+      "name": "SignV2",
+      "accounts": [
+        {
+          "name": "swig",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig smart wallet"
+          ]
+        },
+        {
+          "name": "swigWalletAddress",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "the swig smart wallet address"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the system program"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 11
       }
     },
     {
