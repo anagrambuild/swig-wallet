@@ -178,10 +178,9 @@ pub fn sign_v2(
 ) -> ProgramResult {
     check_stack_height(1, SwigError::Cpi)?;
 
-    // Accept both V1 and V2 swig accounts for SignV2
     if !matches!(
         account_classifiers[0],
-        AccountClassification::ThisSwigV2 { .. } | AccountClassification::ThisSwig { .. }
+        AccountClassification::ThisSwigV2 { .. }
     ) {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }

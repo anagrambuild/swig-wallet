@@ -401,74 +401,6 @@
       }
     },
     {
-      "name": "AddAuthorizationLockV1",
-      "accounts": [
-        {
-          "name": "swig",
-          "isMut": true,
-          "isSigner": false,
-          "docs": [
-            "the swig smart wallet"
-          ]
-        },
-        {
-          "name": "payer",
-          "isMut": true,
-          "isSigner": true,
-          "docs": [
-            "the payer"
-          ]
-        },
-        {
-          "name": "systemProgram",
-          "isMut": false,
-          "isSigner": false,
-          "docs": [
-            "the system program"
-          ]
-        }
-      ],
-      "args": [],
-      "discriminant": {
-        "type": "u8",
-        "value": 12
-      }
-    },
-    {
-      "name": "RemoveAuthorizationLockV1",
-      "accounts": [
-        {
-          "name": "swig",
-          "isMut": true,
-          "isSigner": false,
-          "docs": [
-            "the swig smart wallet"
-          ]
-        },
-        {
-          "name": "payer",
-          "isMut": true,
-          "isSigner": true,
-          "docs": [
-            "the payer"
-          ]
-        },
-        {
-          "name": "systemProgram",
-          "isMut": false,
-          "isSigner": false,
-          "docs": [
-            "the system program"
-          ]
-        }
-      ],
-      "args": [],
-      "discriminant": {
-        "type": "u8",
-        "value": 13
-      }
-    },
-    {
       "name": "MigrateToWalletAddressV1",
       "accounts": [
         {
@@ -515,7 +447,7 @@
       "args": [],
       "discriminant": {
         "type": "u8",
-        "value": 14
+        "value": 12
       }
     },
     {
@@ -535,6 +467,82 @@
           "isSigner": false,
           "docs": [
             "the swig wallet address (destination)"
+          ]
+        },
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "the payer"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the system program"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 13
+      }
+    },
+    {
+      "name": "AddAuthorizationLockV1",
+      "accounts": [
+        {
+          "name": "swig",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig smart wallet"
+          ]
+        },
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "the payer"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the system program"
+          ]
+        },
+        {
+          "name": "balanceAccount",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "balance account for validation"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 14
+      }
+    },
+    {
+      "name": "RemoveAuthorizationLockV1",
+      "accounts": [
+        {
+          "name": "swig",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig smart wallet"
           ]
         },
         {
