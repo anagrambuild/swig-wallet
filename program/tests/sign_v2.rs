@@ -19,7 +19,7 @@ use solana_sdk::{
     sysvar::{clock::Clock, rent::Rent},
     transaction::{TransactionError, VersionedTransaction},
 };
-use swig_interface::{AuthorityConfig, ClientAction, SignInstruction, SignV2Instruction};
+use swig_interface::{AuthorityConfig, ClientAction, SignV2Instruction};
 use swig_state::{
     action::{
         all::All, program::Program, program_all::ProgramAll, sol_limit::SolLimit,
@@ -2125,86 +2125,6 @@ fn test_sign_v2_secp256r1_transfer() {
 }
 
 #[test_log::test]
-fn test_sign_v1_rejected_by_swig_v2() {
-    let mut context = setup_test_context().unwrap();
-    let swig_authority = Keypair::new();
-    let recipient = Keypair::new();
-
-    context
-        .svm
-        .airdrop(&recipient.pubkey(), 10_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&swig_authority.pubkey(), 20_000_000_000)
-        .unwrap();
-
-    let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
-    let (swig_wallet_address, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
-
-    let (_, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
-
-    let transfer_to_wallet_ix = system_instruction::transfer(
-        &swig_authority.pubkey(),
-        &swig_wallet_address,
-        1_000_000_000,
-    );
-    let transfer_tx = VersionedTransaction::try_new(
-        VersionedMessage::V0(
-            v0::Message::try_compile(
-                &swig_authority.pubkey(),
-                &[transfer_to_wallet_ix],
-                &[],
-                context.svm.latest_blockhash(),
-            )
-            .unwrap(),
-        ),
-        &[&swig_authority],
-    )
-    .unwrap();
-    context.svm.send_transaction(transfer_tx).unwrap();
-
-    let transfer_amount = 100_000_000;
-    let transfer_ix = system_instruction::transfer(&swig, &recipient.pubkey(), transfer_amount);
-
-    let sign_v1_ix = SignInstruction::new_ed25519(
-        swig,
-        swig_authority.pubkey(),
-        swig_authority.pubkey(),
-        transfer_ix,
-        0,
-    )
-    .unwrap();
-
-    let transfer_message = v0::Message::try_compile(
-        &swig_authority.pubkey(),
-        &[sign_v1_ix],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-
-    let transfer_tx =
-        VersionedTransaction::try_new(VersionedMessage::V0(transfer_message), &[&swig_authority])
-            .unwrap();
-
-    let result = context.svm.send_transaction(transfer_tx);
-
-    assert!(
-        result.is_err(),
-        "SignV1 instruction should be rejected by Swig v2 account"
-    );
-    assert_eq!(
-        result.unwrap_err().err,
-        TransactionError::InstructionError(0, InstructionError::Custom(45))
-    );
-
-    println!("✅ Test passed: Swig v2 correctly rejects SignV1 instruction with error code 45");
-}
-
-#[test_log::test]
 fn test_sign_v2_token_transfer_through_secondary_authority() {
     let mut context = setup_test_context().unwrap();
 
@@ -2325,4 +2245,355 @@ fn test_sign_v2_token_transfer_through_secondary_authority() {
         "Compute units consumed for below limit transfer: {}",
         result.unwrap().compute_units_consumed
     );
+}
+
+#[test_log::test]
+fn test_sign_v2_minimum_rent_check() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    let different_payer = Keypair::new(); // This is the key difference - payer != authority
+    let recipient = Keypair::new();
+
+    // Setup accounts - fund both authority and payer
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 20_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&different_payer.pubkey(), 20_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+
+    // Create the swig account using the authority
+    let (_, _transaction_metadata) =
+        create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let secondary_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&secondary_authority.pubkey(), 1_000_000);
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: secondary_authority.pubkey().to_bytes().as_ref(),
+        },
+        vec![
+            ClientAction::ProgramAll(ProgramAll {}),
+            ClientAction::SolLimit(SolLimit {
+                amount: 3_000_000_000,
+            }),
+        ],
+    )
+    .unwrap();
+
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 1_000_000_000)
+        .unwrap();
+
+    // Failure case - transfer amount is greater than the swig wallet balance and
+    // the rent exempt minimum
+    let transfer_amount = 1_000_000_000 + 1; // swig wallet balance + 1
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+
+    // Create SignV2 instruction signed by the swig authority
+    let sign_v2_ix = SignV2Instruction::new_ed25519(
+        swig,
+        swig_wallet_address,
+        secondary_authority.pubkey(),
+        transfer_ix,
+        1, // role_id 0 for root authority
+    )
+    .unwrap();
+
+    // Build and execute transaction - payer signs but authority is different
+    let transfer_message = v0::Message::try_compile(
+        &different_payer.pubkey(),
+        &[sign_v2_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message),
+        &[&different_payer, &secondary_authority],
+    )
+    .unwrap();
+
+    let initial_recipient_balance = context
+        .svm
+        .get_account(&recipient.pubkey())
+        .unwrap()
+        .lamports;
+    let initial_swig_wallet_address_balance = context
+        .svm
+        .get_account(&swig_wallet_address)
+        .unwrap()
+        .lamports;
+
+    // Execute the transaction
+    let result = context.svm.send_transaction(transfer_tx);
+
+    assert!(result.is_err(), "Transfer should be rejected");
+
+    // Success case - transfer amount is less than the swig wallet balance and the
+    // rent exempt minimum
+    let transfer_amount = 1_000_000_000; // swig wallet balance
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+
+    // Create SignV2 instruction signed by the swig authority
+    let sign_v2_ix = SignV2Instruction::new_ed25519(
+        swig,
+        swig_wallet_address,
+        secondary_authority.pubkey(),
+        transfer_ix,
+        1, // role_id 0 for root authority
+    )
+    .unwrap();
+
+    // Build and execute transaction - payer signs but authority is different
+    let transfer_message = v0::Message::try_compile(
+        &different_payer.pubkey(),
+        &[sign_v2_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let transfer_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(transfer_message),
+        &[&different_payer, &secondary_authority],
+    )
+    .unwrap();
+
+    let initial_recipient_balance = context
+        .svm
+        .get_account(&recipient.pubkey())
+        .unwrap()
+        .lamports;
+    let initial_swig_wallet_address_balance = context
+        .svm
+        .get_account(&swig_wallet_address)
+        .unwrap()
+        .lamports;
+
+    // Execute the transaction
+    let result = context.svm.send_transaction(transfer_tx);
+
+    assert!(result.is_ok(), "Transfer should succeed");
+
+    // Verify the transfer was successful
+    let final_recipient_balance = context
+        .svm
+        .get_account(&recipient.pubkey())
+        .unwrap()
+        .lamports;
+    let final_swig_wallet_address_balance = context
+        .svm
+        .get_account(&swig_wallet_address)
+        .unwrap()
+        .lamports;
+
+    assert_eq!(
+        final_recipient_balance,
+        initial_recipient_balance + transfer_amount,
+        "Recipient should have received the transfer amount"
+    );
+
+    assert_eq!(
+        final_swig_wallet_address_balance,
+        initial_swig_wallet_address_balance - transfer_amount,
+        "Swig wallet address account should have the transfer amount deducted"
+    );
+
+    println!(
+        "✅ SignV2 test passed: Successfully transferred {} lamports with different payer ({}) \
+         and authority ({})",
+        transfer_amount,
+        different_payer.pubkey().to_string()[..8].to_string(),
+        swig_authority.pubkey().to_string()[..8].to_string()
+    );
+}
+
+/// Test that SOL limits are properly enforced when using SignV2 with CPI.
+/// This test attempts to bypass the spending limit by including an incoming
+/// transfer in the same transaction as an outgoing transfer that exceeds
+/// the limit. The test verifies that the SOL limit correctly accounts for
+/// the net outflow and blocks transactions that exceed the limit.
+#[test_log::test]
+fn test_sol_limit_cpi_enforcement_v2() {
+    let mut context = setup_test_context().unwrap();
+
+    let swig_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+
+    // Create the swig account
+    let _swig_create_txn = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    // Add a second authority with a 1 SOL spending limit
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    // Create a funding account that will send funds TO the swig wallet
+    let funding_account = Keypair::new();
+    context
+        .svm
+        .airdrop(&funding_account.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::SolLimit(SolLimit {
+                amount: LAMPORTS_PER_SOL,
+            }),
+            ClientAction::Program(Program {
+                program_id: solana_sdk::system_program::ID.to_bytes(),
+            }),
+        ],
+    )
+    .unwrap();
+
+    // Fund the swig wallet address
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 5 * LAMPORTS_PER_SOL)
+        .unwrap();
+
+    let transfer_amount: u64 = 2 * LAMPORTS_PER_SOL; // 2 SOL (exceeds the 1 SOL limit)
+
+    // Create a transfer instruction FROM swig_wallet_address to second_authority's wallet
+    // This should fail because it exceeds the spending limit
+    let withdraw_ix = system_instruction::transfer(
+        &swig_wallet_address,
+        &second_authority.pubkey(),
+        transfer_amount,
+    );
+
+    // Create SignV2 instruction for the withdrawal
+    let sign_v2_ix = SignV2Instruction::new_ed25519(
+        swig,
+        swig_wallet_address,
+        second_authority.pubkey(),
+        withdraw_ix,
+        1, // Role ID 1 for the limited authority
+    )
+    .unwrap();
+
+    // Get initial balances
+    let initial_authority_balance = context.svm.get_balance(&second_authority.pubkey()).unwrap();
+    let initial_swig_wallet_balance = context.svm.get_balance(&swig_wallet_address).unwrap();
+
+    println!(
+        "Initial Swig wallet balance: {} SOL",
+        initial_swig_wallet_balance / LAMPORTS_PER_SOL
+    );
+    println!(
+        "Initial Authority external wallet balance: {} SOL",
+        initial_authority_balance / LAMPORTS_PER_SOL
+    );
+    println!(
+        "Testing {} SOL limit enforcement with withdrawing {} SOL...",
+        LAMPORTS_PER_SOL / LAMPORTS_PER_SOL,
+        transfer_amount / LAMPORTS_PER_SOL
+    );
+
+    // Build the transaction
+    let test_message = v0::Message::try_compile(
+        &second_authority.pubkey(),
+        &[sign_v2_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let test_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(test_message),
+        &[&second_authority], // Authority signs the transaction
+    )
+    .unwrap();
+
+    let result = context.svm.send_transaction(test_tx);
+
+    // Transaction should fail due to spending limit validation
+    if !result.is_err() {
+        let unwrapped_result = result.clone().unwrap();
+        println!("unwrapped_result: {}", unwrapped_result.pretty_logs());
+    }
+
+    assert!(
+        result.is_err(),
+        "Transaction should fail due to spending limit validation"
+    );
+    let error = result.unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(0, InstructionError::Custom(3011))
+    );
+
+    println!("✅ SOL limit properly enforced: Transaction failed with spending limit error!");
+    println!("Error: {:?}", error.err);
+
+    // Verify that no funds were transferred
+    let final_authority_balance = context.svm.get_balance(&second_authority.pubkey()).unwrap();
+    let final_swig_wallet_balance = context.svm.get_balance(&swig_wallet_address).unwrap();
+
+    println!(
+        "After Swig wallet balance: {} SOL",
+        final_swig_wallet_balance / LAMPORTS_PER_SOL
+    );
+    println!(
+        "After Authority external wallet balance: {} SOL",
+        final_authority_balance / LAMPORTS_PER_SOL
+    );
+
+    // Authority balance may decrease due to transaction fees (paid even for failed transactions)
+    // But should NOT decrease by the transfer amount
+    assert!(
+        final_authority_balance >= initial_authority_balance - 10_000, // Allow for tx fees
+        "Authority balance should only decrease by tx fees, not by transfer amount"
+    );
+    assert!(
+        final_authority_balance < initial_authority_balance + transfer_amount,
+        "Authority should not have received the transfer"
+    );
+
+    // SWIG wallet balance should be unchanged (no net transfer occurred due to failed
+    // transaction)
+    assert_eq!(final_swig_wallet_balance, initial_swig_wallet_balance);
+
+    println!("✅ Balances verified: No funds were transferred due to spending limit enforcement");
 }

@@ -1644,6 +1644,12 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                         Box::new(sign_fn),
                     ))
                 },
+                AuthorityType::ProgramExec => {
+                    todo!()
+                },
+                AuthorityType::ProgramExecSession => {
+                    todo!()
+                },
                 AuthorityType::None => return Err(anyhow!("Cannot switch to None authority type")),
             };
 

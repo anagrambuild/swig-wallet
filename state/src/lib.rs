@@ -10,7 +10,9 @@ pub mod authority;
 pub mod constants;
 pub mod role;
 pub mod swig;
+pub mod transmute;
 pub mod util;
+pub use transmute::{IntoBytes, Transmutable, TransmutableMut};
 
 /// Represents the type discriminator for different account types in the system.
 #[repr(u8)]
@@ -46,11 +48,6 @@ pub enum StakeAccountState {
 pub enum AccountClassification {
     /// No specific classification
     None,
-    /// A main Swig account with its lamport balance
-    ThisSwig {
-        /// The account's lamport balance
-        lamports: u64,
-    },
     /// A main Swig v2 account with its lamport balance
     ThisSwigV2 {
         /// The account's lamport balance
@@ -178,6 +175,20 @@ pub enum SwigAuthenticateError {
     PermissionDeniedTokenDestinationLimitExceeded,
     /// Token destination recurring limit exceeded
     PermissionDeniedRecurringTokenDestinationLimitExceeded,
+    /// Program execution instruction is invalid
+    PermissionDeniedProgramExecInvalidInstruction,
+    /// Program execution program ID does not match
+    PermissionDeniedProgramExecInvalidProgram,
+    /// Program execution instruction data does not match prefix
+    PermissionDeniedProgramExecInvalidInstructionData,
+    /// Program execution missing required accounts
+    PermissionDeniedProgramExecMissingAccounts,
+    /// Program execution config account index mismatch
+    PermissionDeniedProgramExecInvalidConfigAccount,
+    /// Program execution wallet account index mismatch
+    PermissionDeniedProgramExecInvalidWalletAccount,
+    /// Program execution cannot be the Swig program
+    PermissionDeniedProgramExecCannotBeSwig,
 }
 
 impl From<SwigStateError> for ProgramError {
@@ -190,55 +201,4 @@ impl From<SwigAuthenticateError> for ProgramError {
     fn from(e: SwigAuthenticateError) -> Self {
         ProgramError::Custom(e as u32)
     }
-}
-
-/// Marker trait for types that can be safely cast from a raw pointer.
-///
-/// Types implementing this trait must guarantee that the cast is safe,
-/// ensuring proper field alignment and absence of padding bytes.
-pub trait Transmutable: Sized {
-    /// The length of the type in bytes.
-    ///
-    /// Must equal the total size of all fields in the type.
-    const LEN: usize;
-
-    /// Creates a reference to `Self` from a byte slice.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that `bytes` contains a valid representation of
-    /// the implementing type.
-    #[inline(always)]
-    unsafe fn load_unchecked(bytes: &[u8]) -> Result<&Self, ProgramError> {
-        if bytes.len() != Self::LEN {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        Ok(&*(bytes.as_ptr() as *const Self))
-    }
-}
-
-/// Marker trait for types that can be mutably cast from a raw pointer.
-///
-/// Types implementing this trait must guarantee that the mutable cast is safe,
-/// ensuring proper field alignment and absence of padding bytes.
-pub trait TransmutableMut: Transmutable {
-    /// Creates a mutable reference to `Self` from a mutable byte slice.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that `bytes` contains a valid representation of
-    /// the implementing type.
-    #[inline(always)]
-    unsafe fn load_mut_unchecked(bytes: &mut [u8]) -> Result<&mut Self, ProgramError> {
-        if bytes.len() != Self::LEN {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        Ok(&mut *(bytes.as_mut_ptr() as *mut Self))
-    }
-}
-
-/// Trait for types that can be converted into a byte slice representation.
-pub trait IntoBytes {
-    /// Converts the implementing type into a byte slice.
-    fn into_bytes(&self) -> Result<&[u8], ProgramError>;
 }

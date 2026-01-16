@@ -72,23 +72,26 @@ fn test_secp256r1_basic_signing() {
     );
 
     let swig_key = builder.get_swig_account().unwrap();
+    let swig_wallet_address = builder.swig_wallet_address();
 
-    convert_swig_to_v1(&mut context, &swig_key);
-
-    context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Set up a recipient and transaction
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 5_000_000;
-    let transfer_ix = system_instruction::transfer(&swig_key, &recipient.pubkey(), transfer_amount);
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     // Get current slot for signing
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
 
     // Create signed instructions using the instruction builder
     let signed_instructions = builder
-        .sign_instruction(vec![transfer_ix], Some(current_slot))
+        .sign_v2_instruction(vec![transfer_ix], Some(current_slot))
         .unwrap();
 
     let message = v0::Message::try_compile(
@@ -182,6 +185,7 @@ fn test_secp256r1_counter_increment() {
     );
 
     let swig_key = builder.get_swig_account().unwrap();
+    let swig_wallet_address = builder.swig_wallet_address();
 
     // Verify initial counter is 0
     let initial_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();
@@ -239,22 +243,25 @@ fn test_secp256r1_replay_protection() {
     );
 
     let swig_key = builder.get_swig_account().unwrap();
+    let swig_wallet_address = builder.swig_wallet_address();
 
-    convert_swig_to_v1(&mut context, &swig_key);
-
-    context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
 
     // Set up transfer instruction
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 1_000_000;
-    let transfer_ix = system_instruction::transfer(&swig_key, &recipient.pubkey(), transfer_amount);
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
 
     // First transaction - should succeed
     let signed_instructions1 = builder
-        .sign_instruction(vec![transfer_ix.clone()], Some(current_slot))
+        .sign_v2_instruction(vec![transfer_ix.clone()], Some(current_slot))
         .unwrap();
 
     let message1 = v0::Message::try_compile(
@@ -304,7 +311,7 @@ fn test_secp256r1_replay_protection() {
     );
 
     let signed_instructions2 = replay_builder
-        .sign_instruction(vec![transfer_ix], Some(current_slot))
+        .sign_v2_instruction(vec![transfer_ix], Some(current_slot))
         .unwrap();
 
     let message2 = v0::Message::try_compile(
@@ -374,7 +381,11 @@ fn test_secp256r1_add_authority() {
     );
 
     let swig_key = builder.get_swig_account().unwrap();
-    context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
+    let swig_wallet_address = builder.swig_wallet_address();
+    context
+        .svm
+        .airdrop(&builder.swig_wallet_address(), 10_000_000_000)
+        .unwrap();
 
     // Create a real secp256r1 public key to add as second authority
     let (_, secp256r1_pubkey) = create_test_secp256r1_keypair();
@@ -610,7 +621,11 @@ fn test_secp256r1_add_authority_with_secp256r1() {
     );
 
     let swig_key = builder.get_swig_account().unwrap();
-    context.svm.airdrop(&swig_key, 10_000_000_000).unwrap();
+    let swig_wallet_address = builder.swig_wallet_address();
+    context
+        .svm
+        .airdrop(&builder.swig_wallet_address(), 10_000_000_000)
+        .unwrap();
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
 

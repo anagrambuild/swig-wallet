@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 env:
-  RUST_VERSION: 1.84.0
+  RUST_VERSION: 1.89.0
   SOLANA_VERSION: 2.2.17
   CARGO_TERM_COLOR: always
   RUSTC_WRAPPER: sccache
@@ -16,7 +16,7 @@ env:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-m
     steps:
       - uses: actions/checkout@v4
 
@@ -73,13 +73,13 @@ jobs:
 
       - name: Run Program Scope Tests with nextest
         run: |
-          cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=program_scope_test
+          cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --exclude test-program-authority --features=program_scope_test
           mkdir -p target/nextest/reports
           cp target/nextest/ci/output.xml target/nextest/reports/program-scope-tests.xml
       
       - name: Run Rust SDK Tests with nextest
         run: |
-          cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=rust_sdk_test,program_scope_test
+          cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --exclude test-program-authority --features=rust_sdk_test,program_scope_test
           mkdir -p target/nextest/reports
           cp target/nextest/ci/output.xml target/nextest/reports/rust-sdk-tests.xml
 

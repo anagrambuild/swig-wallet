@@ -2,7 +2,7 @@ use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
     program_id, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
     CreateSessionInstruction, CreateSubAccountInstruction, RemoveAuthorityInstruction,
-    SignInstruction, SignV2Instruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
+    SignV2Instruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
     UpdateAuthorityData as InterfaceUpdateAuthorityData, WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
@@ -108,31 +108,6 @@ impl SwigInstructionBuilder {
             self.swig_id,
         )?;
         Ok(instruction)
-    }
-
-    /// Creates signed instructions for the provided instructions
-    ///
-    /// # Arguments
-    ///
-    /// * `instructions` - Vector of instructions to sign
-    /// * `current_slot` - Optional current slot number (required for Secp256k1)
-    ///
-    /// # Returns
-    ///
-    /// Returns a `Result` containing a vector of signed instructions or a
-    /// `SwigError`
-    pub fn sign_instruction(
-        &mut self,
-        instructions: Vec<Instruction>,
-        current_slot: Option<u64>,
-    ) -> Result<Vec<Instruction>, SwigError> {
-        self.client_role.sign_instruction(
-            self.swig_account,
-            self.payer,
-            self.role_id,
-            instructions,
-            current_slot,
-        )
     }
 
     /// Creates a SignV2 instruction for signing transactions
@@ -320,6 +295,23 @@ impl SwigInstructionBuilder {
     /// Returns the derived Swig account public key
     pub fn swig_key(id: &[u8; 32]) -> Pubkey {
         Pubkey::find_program_address(&swig_account_seeds(id), &program_id()).0
+    }
+
+    /// Derives the Swig wallet address public key from a Swig account pubkey
+    ///
+    /// # Arguments
+    ///
+    /// * `swig_account` - The Swig account public key
+    ///
+    /// # Returns
+    ///
+    /// Returns the derived Swig wallet address public key
+    pub fn swig_wallet_address_key(swig_account: &Pubkey) -> Pubkey {
+        Pubkey::find_program_address(
+            &swig_wallet_address_seeds(swig_account.as_ref()),
+            &program_id(),
+        )
+        .0
     }
 
     /// Derives the Swig wallet address public key from an ID

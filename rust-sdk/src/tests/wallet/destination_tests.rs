@@ -265,7 +265,7 @@ fn should_transfer_sol_within_destination_limit() {
         )
         .unwrap();
 
-    let swig_account = swig_wallet.get_swig_account().unwrap();
+    let swig_account = swig_wallet.get_swig_wallet_address().unwrap();
 
     // Airdrop funds to swig account
     swig_wallet
@@ -277,7 +277,7 @@ fn should_transfer_sol_within_destination_limit() {
     let transfer_amount = 100_000; // 0.0001 SOL (within limit)
     let transfer_ix = system_instruction::transfer(&swig_account, &destination, transfer_amount);
 
-    let signature = swig_wallet.sign(vec![transfer_ix], None).unwrap();
+    let signature = swig_wallet.sign_v2(vec![transfer_ix], None).unwrap();
     println!("signature: {:?}", signature);
 
     // Verify transfer was successful
@@ -324,7 +324,7 @@ fn should_fail_transfer_sol_beyond_destination_limit() {
         )
         .unwrap();
 
-    let swig_account = swig_wallet.get_swig_account().unwrap();
+    let swig_account = swig_wallet.get_swig_wallet_address().unwrap();
 
     // Airdrop funds to swig account
     swig_wallet
@@ -337,7 +337,7 @@ fn should_fail_transfer_sol_beyond_destination_limit() {
     let transfer_ix = system_instruction::transfer(&swig_account, &destination, transfer_amount);
 
     // This should fail due to destination limit
-    assert!(swig_wallet.sign(vec![transfer_ix], None).is_err());
+    assert!(swig_wallet.sign_v2(vec![transfer_ix], None).is_err());
 }
 
 #[test_log::test]
@@ -380,7 +380,7 @@ fn should_transfer_sol_to_different_destination_without_limit() {
         )
         .unwrap();
 
-    let swig_account = swig_wallet.get_swig_account().unwrap();
+    let swig_account = swig_wallet.get_swig_wallet_address().unwrap();
 
     // Airdrop funds to swig account
     swig_wallet
@@ -395,7 +395,7 @@ fn should_transfer_sol_to_different_destination_without_limit() {
 
     // This should fail because there's no general SOL permission, only
     // destination-specific
-    assert!(swig_wallet.sign(vec![transfer_ix], None).is_err());
+    assert!(swig_wallet.sign_v2(vec![transfer_ix], None).is_err());
 }
 
 #[test_log::test]
@@ -443,7 +443,7 @@ fn should_combine_destination_and_general_limits() {
         )
         .unwrap();
 
-    let swig_account = swig_wallet.get_swig_account().unwrap();
+    let swig_account = swig_wallet.get_swig_wallet_address().unwrap();
 
     // Airdrop funds to swig account
     swig_wallet
@@ -455,7 +455,7 @@ fn should_combine_destination_and_general_limits() {
     let transfer_amount = 100_000; // 0.0001 SOL (within destination limit)
     let transfer_ix = system_instruction::transfer(&swig_account, &destination, transfer_amount);
 
-    let signature = swig_wallet.sign(vec![transfer_ix], None).unwrap();
+    let signature = swig_wallet.sign_v2(vec![transfer_ix], None).unwrap();
     println!("signature: {:?}", signature);
 
     // Verify transfer was successful
@@ -470,5 +470,5 @@ fn should_combine_destination_and_general_limits() {
 
     // This should fail because when destination limits exist, you can only transfer
     // to destinations with specific limits
-    assert!(swig_wallet.sign(vec![transfer_ix], None).is_err());
+    assert!(swig_wallet.sign_v2(vec![transfer_ix], None).is_err());
 }

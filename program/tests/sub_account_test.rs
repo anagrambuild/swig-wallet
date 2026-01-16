@@ -18,8 +18,8 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::{
-    AuthorityConfig, ClientAction, CreateSubAccountInstruction, SignInstruction,
-    SubAccountSignInstruction, ToggleSubAccountInstruction, WithdrawFromSubAccountInstruction,
+    AuthorityConfig, ClientAction, CreateSubAccountInstruction, SignV2Instruction,
+    ToggleSubAccountInstruction, WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
     action::{
@@ -946,4 +946,230 @@ fn test_withdraw_token_from_sub_account() {
         spl_token::state::Account::unpack(&swig_ata_after_balance.data).unwrap();
     assert_eq!(sub_account_token_account.amount, 0);
     assert_eq!(swig_token_account.amount, initial_token_amount);
+}
+
+#[test_log::test]
+fn test_all_permission_cannot_create_sub_account() {
+    let mut context = setup_test_context().unwrap();
+
+    let root_authority = Keypair::new();
+    let all_permission_authority = Keypair::new();
+
+    // Airdrop to both authorities
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&all_permission_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+
+    // Create a swig account with the root authority
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    // Add an authority with ONLY All permission (not SubAccount permission)
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: all_permission_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
+
+    // Get the all permission authority's role ID
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let all_permission_role_id = swig_state
+        .lookup_role_id(all_permission_authority.pubkey().as_ref())
+        .unwrap()
+        .expect("All permission authority should exist");
+
+    // Derive the sub-account address that would be created
+    let role_id_bytes = all_permission_role_id.to_le_bytes();
+    let (sub_account, sub_account_bump) =
+        Pubkey::find_program_address(&sub_account_seeds(&id, &role_id_bytes), &program_id());
+
+    // Now attempt to create a sub-account using the all permission authority
+    // This should FAIL because All permission alone should not allow sub-account
+    // creation (requires explicit SubAccount permission)
+    let create_sub_account_ix = CreateSubAccountInstruction::new_with_ed25519_authority(
+        swig_key,
+        all_permission_authority.pubkey(),
+        all_permission_authority.pubkey(),
+        sub_account,
+        all_permission_role_id,
+        sub_account_bump,
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &all_permission_authority.pubkey(),
+        &[create_sub_account_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&all_permission_authority])
+            .unwrap();
+
+    let create_sub_account_result = context.svm.send_transaction(tx);
+
+    // The operation should fail - All permission should not allow sub-account
+    // creation without explicit SubAccount permission
+    assert!(
+        create_sub_account_result.is_err(),
+        "All permission should NOT be able to create sub-accounts without explicit SubAccount \
+         permission"
+    );
+
+    // Verify it's the AuthorityCannotCreateSubAccount error (error code 36 = 0x24)
+    let error_msg = format!("{:?}", create_sub_account_result.unwrap_err());
+    assert!(
+        error_msg.contains("Custom(36)"),
+        "Expected AuthorityCannotCreateSubAccount error (code 36), got: {}",
+        error_msg
+    );
+
+    // Verify no sub-account was created
+    let sub_account_result = context.svm.get_account(&sub_account);
+    assert!(
+        sub_account_result.is_none(),
+        "Sub-account should not have been created"
+    );
+}
+
+// Test that a role with both `All` and `SubAccount` permissions can create a
+// sub-account
+#[test_log::test]
+fn test_all_and_sub_account_permission_can_create_sub_account() {
+    let mut context = setup_test_context().unwrap();
+
+    let root_authority = Keypair::new();
+    let all_and_sub_account_authority = Keypair::new();
+
+    // Airdrop to both authorities
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&all_and_sub_account_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+
+    // Create a swig account with the root authority
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    // Add an authority with BOTH All and SubAccount permissions
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: all_and_sub_account_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::All(All {}),
+            ClientAction::SubAccount(SubAccount::new_for_creation()),
+        ],
+    )
+    .unwrap();
+
+    // Get the all and sub-account authority's role ID
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let all_and_sub_account_role_id = swig_state
+        .lookup_role_id(all_and_sub_account_authority.pubkey().as_ref())
+        .unwrap()
+        .expect("All and SubAccount permission authority should exist");
+
+    // Create the sub-account with the authority that has both All and SubAccount
+    // permissions
+    let sub_account = create_sub_account(
+        &mut context,
+        &swig_key,
+        &all_and_sub_account_authority,
+        all_and_sub_account_role_id,
+        id,
+    )
+    .unwrap();
+
+    // Verify the sub-account was created as a system program owned account (not
+    // program owned)
+    let sub_account_data = context.svm.get_account(&sub_account).unwrap();
+    assert_eq!(sub_account_data.owner, solana_sdk::system_program::id());
+
+    // Verify the sub-account data is now stored in the SubAccount action
+    let swig_account_data = context.svm.get_account(&swig_key).unwrap();
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_account_data.data).unwrap();
+    let role = swig_with_roles
+        .get_role(all_and_sub_account_role_id)
+        .unwrap()
+        .unwrap();
+
+    // Find the SubAccount action and verify its data
+    let mut cursor = 0;
+    let mut found_sub_account_action = false;
+
+    for _i in 0..role.position.num_actions() {
+        let action_header =
+            unsafe { Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN]) }.unwrap();
+        cursor += Action::LEN;
+
+        if action_header.permission().unwrap() == Permission::SubAccount {
+            let action_data = &role.actions[cursor..cursor + action_header.length() as usize];
+            let sub_account_action = unsafe { SubAccount::load_unchecked(action_data) }.unwrap();
+
+            // Verify the sub-account action contains the sub-account pubkey
+            assert_eq!(sub_account_action.sub_account, sub_account.to_bytes());
+            found_sub_account_action = true;
+            break;
+        }
+
+        cursor += action_header.length() as usize;
+    }
+
+    assert!(found_sub_account_action, "SubAccount action not found");
+
+    // Additional assertions to verify key requirements
+
+    // 1. Verify sub-account is system program owned
+    assert_eq!(
+        sub_account_data.owner,
+        solana_sdk::system_program::id(),
+        "Sub-account should be owned by system program"
+    );
+
+    // 2. Verify sub-account address is derived correctly from seeds
+    let role_id_bytes = all_and_sub_account_role_id.to_le_bytes();
+    let (expected_sub_account, _expected_bump) = solana_sdk::pubkey::Pubkey::find_program_address(
+        &[b"sub-account", &id, &role_id_bytes],
+        &program_id(),
+    );
+    assert_eq!(
+        sub_account, expected_sub_account,
+        "Sub-account address should match derived PDA"
+    );
+
+    // 3. Verify sub-account is funded with rent-exempt minimum balance
+    let rent = context.svm.get_sysvar::<solana_sdk::sysvar::rent::Rent>();
+    let minimum_balance = rent.minimum_balance(0); // 0 space for system account
+    assert!(
+        sub_account_data.lamports >= minimum_balance,
+        "Sub-account should have at least rent-exempt minimum balance. Has: {}, Required: {}",
+        sub_account_data.lamports,
+        minimum_balance
+    );
 }
