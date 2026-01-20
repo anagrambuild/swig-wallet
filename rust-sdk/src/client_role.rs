@@ -1355,7 +1355,11 @@ impl ClientRole for Ed25519SessionClientRole {
             self.session_key.to_bytes(),
             self.max_session_length,
         );
-        bytes.extend_from_slice(&authority.into_bytes().unwrap());
+        bytes.extend_from_slice(
+            authority
+                .into_bytes()
+                .map_err(|e| SwigError::InterfaceError(format!("{:?}", e)))?,
+        );
         Ok(bytes)
     }
 
@@ -1672,7 +1676,11 @@ impl ClientRole for Secp256k1SessionClientRole {
             self.session_key.to_bytes(),
             self.max_session_length,
         );
-        bytes.extend_from_slice(&authority.into_bytes().unwrap());
+        bytes.extend_from_slice(
+            authority
+                .into_bytes()
+                .map_err(|e| SwigError::InterfaceError(format!("{:?}", e)))?,
+        );
         Ok(bytes)
     }
 
@@ -2036,7 +2044,11 @@ impl ClientRole for Secp256r1SessionClientRole {
             self.session_key.to_bytes(),
             self.max_session_length,
         );
-        bytes.extend_from_slice(&authority.into_bytes().unwrap());
+        bytes.extend_from_slice(
+            authority
+                .into_bytes()
+                .map_err(|e| SwigError::InterfaceError(format!("{:?}", e)))?,
+        );
         Ok(bytes)
     }
 }
@@ -2375,8 +2387,7 @@ where
     }
 
     fn create_authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
-        // TODO: Implement this
-        Ok(self.authority_bytes()?)
+        Ok(self.authority_data())
     }
 
     fn odometer(&self) -> Result<u32, SwigError> {

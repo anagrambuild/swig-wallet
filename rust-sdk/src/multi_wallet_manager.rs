@@ -35,7 +35,7 @@
 //! let recipient = Keypair::new().pubkey();
 //!
 //! // Using async execute_batch for full control
-//! # async fn example(manager: &mut MultiWalletManager, wallet_ids: Vec<([u8; 32], u32)>, recipient: solana_sdk::pubkey::Pubkey) -> Result<(), swig_sdk::SwigError> {
+//! # async fn example(manager: &mut MultiWalletManager<'_>, wallet_ids: Vec<([u8; 32], u32)>, recipient: solana_sdk::pubkey::Pubkey) -> Result<(), swig_sdk::SwigError> {
 //! use solana_program::system_instruction;
 //! let result = manager.execute_batch(
 //!     wallet_ids,
@@ -1043,15 +1043,44 @@ impl<'c> MultiWalletManager<'c> {
                         let authority_bytes = authority_bytes;
 
                         tokio::spawn(async move {
-                            let _permit = semaphore.acquire().await.unwrap();
+                            let _permit = match semaphore.acquire().await {
+                                Ok(permit) => permit,
+                                Err(e) => {
+                                    return (
+                                        batch,
+                                        Err(format!("Failed to acquire semaphore: {}", e)),
+                                    );
+                                },
+                            };
 
                             let rpc_client = RpcClient::new_with_commitment(
                                 rpc_url,
                                 CommitmentConfig::confirmed(),
                             );
-                            let fee_payer = Keypair::from_bytes(&fee_payer_bytes).unwrap();
-                            let authority =
-                                authority_bytes.map(|b| Keypair::from_bytes(&b).unwrap());
+                            let fee_payer = match Keypair::from_bytes(&fee_payer_bytes) {
+                                Ok(kp) => kp,
+                                Err(e) => {
+                                    return (
+                                        batch,
+                                        Err(format!("Failed to create fee payer keypair: {}", e)),
+                                    );
+                                },
+                            };
+                            let authority = match authority_bytes {
+                                Some(b) => match Keypair::from_bytes(&b) {
+                                    Ok(kp) => Some(kp),
+                                    Err(e) => {
+                                        return (
+                                            batch,
+                                            Err(format!(
+                                                "Failed to create authority keypair: {}",
+                                                e
+                                            )),
+                                        );
+                                    },
+                                },
+                                None => None,
+                            };
 
                             let batch_result = Self::send_batch_static(
                                 &rpc_client,
@@ -1114,7 +1143,13 @@ impl<'c> MultiWalletManager<'c> {
                 sleep(Duration::from_millis(retry_delay_ms)).await;
             }
 
-            let blockhash = rpc_client.get_latest_blockhash().unwrap_or_default();
+            let blockhash = match rpc_client.get_latest_blockhash() {
+                Ok(hash) => hash,
+                Err(e) => {
+                    last_error = format!("Failed to get latest blockhash: {}", e);
+                    continue;
+                },
+            };
 
             let msg = match v0::Message::try_compile(
                 &fee_payer.pubkey(),

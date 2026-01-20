@@ -750,17 +750,18 @@ pub struct RoleInfo {
 }
 
 impl SwigInfo {
-    pub fn from_swig_with_roles(rpc_url: &str, swig_id: [u8; 32]) -> Self {
+    pub fn from_swig_with_roles(rpc_url: &str, swig_id: [u8; 32]) -> Result<Self, SwigError> {
         let swig_config_address = SwigInstructionBuilder::swig_key(&swig_id);
 
         let rpc_client = RpcClient::new(rpc_url);
 
-        let swig_data = rpc_client.get_account_data(&swig_config_address).unwrap();
-        let swig_with_roles = SwigWithRoles::from_bytes(&swig_data).unwrap();
+        let swig_data = rpc_client.get_account_data(&swig_config_address)?;
+        let swig_with_roles = SwigWithRoles::from_bytes(&swig_data)
+            .map_err(|e| SwigError::InterfaceError(format!("{:?}", e)))?;
 
         let swig_wallet_address = SwigInstructionBuilder::swig_wallet_address_from_id(&swig_id);
 
-        let wallet_balance = rpc_client.get_balance(&swig_wallet_address).unwrap();
+        let wallet_balance = rpc_client.get_balance(&swig_wallet_address)?;
 
         //Todo: Get token balances
 
@@ -768,20 +769,22 @@ impl SwigInfo {
         let role_counter = swig_with_roles.state.role_counter;
         let mut roles = Vec::new();
         for i in 0..swig_with_roles.state.role_counter {
-            let role = swig_with_roles.get_role(i).unwrap();
+            let role = swig_with_roles
+                .get_role(i)
+                .map_err(|e| SwigError::InterfaceError(format!("{:?}", e)))?;
             if let Some(role) = role {
                 roles.push(RoleInfo {
                     role_id: i,
                     num_actions: role.position.num_actions,
                     authority_type: role.authority.authority_type(),
                     authority_identity: role.authority.identity().unwrap_or_default().to_vec(),
-                    permissions: Permission::from_role(&role).unwrap(),
+                    permissions: Permission::from_role(&role)?,
                     session_based: role.authority.session_based(),
                 });
             }
         }
 
-        Self {
+        Ok(Self {
             swig_id,
             swig_config_address,
             swig_wallet_address,
@@ -790,6 +793,6 @@ impl SwigInfo {
             roles_count,
             role_counter,
             roles,
-        }
+        })
     }
 }

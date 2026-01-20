@@ -155,31 +155,79 @@ impl<'a> SwigWalletBuilder<'a> {
             .rpc_url
             .ok_or_else(|| SwigError::InterfaceError("rpc_url is required".to_string()))?;
 
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let mut litesvm = self.litesvm.ok_or_else(|| {
+            SwigError::InterfaceError("litesvm is required for tests".to_string())
+        })?;
+
+        let rpc_client =
+            RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::confirmed());
+
+        // Check if the Swig account already exists
+        let swig_account = SwigInstructionBuilder::swig_key(&swig_id);
+
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        {
-            SwigWallet::create(
-                swig_id,
-                client_role,
-                fee_payer,
-                rpc_url,
-                self.authority_keypair,
-            )
+        let swig_data = rpc_client.get_account_data(&swig_account);
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let swig_data = litesvm.get_account(&swig_account);
+
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let account_exists = swig_data.is_ok();
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let account_exists = swig_data.is_some();
+
+        if account_exists {
+            return Err(SwigError::WalletAlreadyExists(swig_id));
         }
 
+        let instruction_builder =
+            SwigInstructionBuilder::new(swig_id, client_role, fee_payer.pubkey(), 0);
+
+        let create_ix = instruction_builder.create_swig_account_instruction()?;
+
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let blockhash = rpc_client.get_latest_blockhash()?;
         #[cfg(all(feature = "rust_sdk_test", test))]
-        {
-            let litesvm = self.litesvm.ok_or_else(|| {
-                SwigError::InterfaceError("litesvm is required for tests".to_string())
-            })?;
-            SwigWallet::create(
-                swig_id,
-                client_role,
-                fee_payer,
-                rpc_url,
-                self.authority_keypair,
-                litesvm,
-            )
-        }
+        let blockhash = litesvm.latest_blockhash();
+
+        let msg = v0::Message::try_compile(&fee_payer.pubkey(), &[create_ix], &[], blockhash)?;
+
+        let tx = VersionedTransaction::try_new(
+            VersionedMessage::V0(msg),
+            &[fee_payer.insecure_clone()],
+        )?;
+
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let _signature = rpc_client.send_and_confirm_transaction(&tx)?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let _signature = litesvm.send_transaction(tx).unwrap().signature;
+
+        // Fetch the just-created account data to get the initial role
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let swig_data = rpc_client.get_account_data(&swig_account)?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let swig_data = litesvm.get_account(&swig_account).unwrap().data;
+
+        let swig_with_roles =
+            SwigWithRoles::from_bytes(&swig_data).map_err(|_e| SwigError::InvalidSwigData)?;
+        let role = swig_with_roles
+            .get_role(0)
+            .map_err(|_| SwigError::AuthorityNotFound)?;
+        let current_role = if let Some(role) = role {
+            build_current_role(0, &role)
+        } else {
+            return Err(SwigError::AuthorityNotFound);
+        };
+
+        Ok(SwigWallet {
+            instruction_builder,
+            rpc_client,
+            fee_payer,
+            #[cfg(all(feature = "rust_sdk_test", test))]
+            litesvm,
+            authority_keypair: self.authority_keypair,
+            current_role,
+        })
     }
 
     /// Loads an existing Swig wallet using the configured parameters
@@ -192,7 +240,7 @@ impl<'a> SwigWalletBuilder<'a> {
         let swig_id = self
             .swig_id
             .ok_or_else(|| SwigError::InterfaceError("swig_id is required".to_string()))?;
-        let client_role = self
+        let mut client_role = self
             .client_role
             .ok_or_else(|| SwigError::InterfaceError("client_role is required".to_string()))?;
         let fee_payer = self
@@ -202,31 +250,79 @@ impl<'a> SwigWalletBuilder<'a> {
             .rpc_url
             .ok_or_else(|| SwigError::InterfaceError("rpc_url is required".to_string()))?;
 
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let litesvm = self.litesvm.ok_or_else(|| {
+            SwigError::InterfaceError("litesvm is required for tests".to_string())
+        })?;
+
+        let rpc_client =
+            RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::confirmed());
+
+        // Check if the Swig account exists
+        let swig_account = SwigInstructionBuilder::swig_key(&swig_id);
+
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        {
-            SwigWallet::load(
-                swig_id,
-                client_role,
-                fee_payer,
-                rpc_url,
-                self.authority_keypair,
-            )
+        let swig_data = rpc_client.get_account_data(&swig_account);
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let swig_data = litesvm.get_account(&swig_account);
+
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let account_exists = swig_data.is_ok();
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let account_exists = swig_data.is_some();
+
+        if !account_exists {
+            return Err(SwigError::WalletNotFound(swig_id));
         }
 
+        // Safe unwrap because we know the account exists
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let swig_data = swig_data.unwrap();
         #[cfg(all(feature = "rust_sdk_test", test))]
-        {
-            let litesvm = self.litesvm.ok_or_else(|| {
-                SwigError::InterfaceError("litesvm is required for tests".to_string())
+        let swig_data = swig_data.unwrap().data;
+
+        let swig_with_roles =
+            SwigWithRoles::from_bytes(&swig_data).map_err(|_e| SwigError::InvalidSwigData)?;
+
+        let authority_bytes = client_role.authority_bytes()?;
+        let role_id = swig_with_roles
+            .lookup_role_id(authority_bytes.as_ref())
+            .map_err(|_| SwigError::AuthorityNotFound)?
+            .ok_or_else(|| {
+                SwigError::InvalidAuthority(format!(
+                    "Authority {} not found in wallet",
+                    hex::encode(&authority_bytes)
+                ))
             })?;
-            SwigWallet::load(
-                swig_id,
-                client_role,
-                fee_payer,
-                rpc_url,
-                self.authority_keypair,
-                litesvm,
-            )
-        }
+
+        // Get the role to verify it exists and has the correct type
+        let role = swig_with_roles
+            .get_role(role_id)
+            .map_err(|_| SwigError::AuthorityNotFound)?;
+
+        // Extract the role data for storage and update odometer if needed
+        let current_role = if let Some(role) = &role {
+            // Update odometer if this is a Secp256k1 authority
+            if let Some(odometer) = role.authority.signature_odometer() {
+                client_role.update_odometer(odometer)?;
+            }
+            build_current_role(role_id, role)
+        } else {
+            return Err(SwigError::AuthorityNotFound);
+        };
+
+        let instruction_builder =
+            SwigInstructionBuilder::new(swig_id, client_role, fee_payer.pubkey(), role_id);
+
+        Ok(SwigWallet {
+            instruction_builder,
+            rpc_client,
+            fee_payer,
+            #[cfg(all(feature = "rust_sdk_test", test))]
+            litesvm,
+            authority_keypair: self.authority_keypair,
+            current_role,
+        })
     }
 }
 
@@ -280,11 +376,10 @@ impl<'c> SwigWallet<'c> {
     /// Returns a `Result` containing the new `SwigWallet` instance or a
     /// `SwigError`
     ///
-    /// [`create`]: SwigWallet::create
-    /// [`load`]: SwigWallet::load
+    /// [`SwigWallet::builder`]: SwigWallet::builder
     #[deprecated(
         since = "0.1.0",
-        note = "Use `create()` to create a new wallet or `load()` to load an existing wallet instead"
+        note = "Use `SwigWallet::builder()...create()` to create a new wallet or `SwigWallet::builder()...load()` to load an existing wallet instead"
     )]
     pub fn new(
         swig_id: [u8; 32],
@@ -406,257 +501,6 @@ impl<'c> SwigWallet<'c> {
         }
     }
 
-    /// Creates a new Swig wallet account on-chain
-    ///
-    /// This method will fail if a wallet with the given `swig_id` already exists.
-    /// Use [`load`] to load an existing wallet instead.
-    ///
-    /// # Arguments
-    ///
-    /// * `swig_id` - The unique identifier for the Swig account
-    /// * `client_role` - The client role implementation specifying the type of
-    ///   signing authority
-    /// * `fee_payer` - The keypair that will pay for transactions
-    /// * `rpc_url` - The URL of the Solana RPC endpoint
-    /// * `authority_keypair` - Optional authority keypair (required for Ed25519
-    ///   authorities)
-    /// * `litesvm` - (test only) The LiteSVM instance for testing
-    ///
-    /// # Returns
-    ///
-    /// Returns a `Result` containing the new `SwigWallet` instance or a
-    /// `SwigError`
-    ///
-    /// # Errors
-    ///
-    /// * `WalletAlreadyExists` - If a wallet with the given `swig_id` already exists
-    /// * `SwigError` - Other errors that may occur during wallet creation
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use swig_sdk::{SwigWallet, Ed25519ClientRole};
-    /// use solana_sdk::signature::{Keypair, Signer};
-    ///
-    /// let fee_payer = Keypair::new();
-    /// let authority = Keypair::new();
-    /// let swig_id = [0u8; 32];
-    ///
-    /// let wallet = SwigWallet::create(
-    ///     swig_id,
-    ///     Box::new(Ed25519ClientRole::new(authority.pubkey())),
-    ///     &fee_payer,
-    ///     "https://api.mainnet-beta.solana.com".to_string(),
-    ///     Some(&authority),
-    /// )?;
-    /// # Ok::<(), swig_sdk::SwigError>(())
-    /// ```
-    ///
-    /// [`load`]: SwigWallet::load
-    pub fn create(
-        swig_id: [u8; 32],
-        mut client_role: Box<dyn ClientRole>,
-        fee_payer: &'c Keypair,
-        rpc_url: String,
-        authority_keypair: Option<&'c Keypair>,
-        #[cfg(all(feature = "rust_sdk_test", test))] mut litesvm: LiteSVM,
-    ) -> Result<Self, SwigError> {
-        let rpc_client =
-            RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::confirmed());
-
-        // Check if the Swig account already exists
-        let swig_account = SwigInstructionBuilder::swig_key(&swig_id);
-
-        #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        let swig_data = rpc_client.get_account_data(&swig_account);
-        #[cfg(all(feature = "rust_sdk_test", test))]
-        let swig_data = litesvm.get_account(&swig_account);
-
-        #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        let account_exists = swig_data.is_ok();
-        #[cfg(all(feature = "rust_sdk_test", test))]
-        let account_exists = swig_data.is_some();
-
-        if account_exists {
-            return Err(SwigError::WalletAlreadyExists(swig_id));
-        }
-
-        let instruction_builder =
-            SwigInstructionBuilder::new(swig_id, client_role, fee_payer.pubkey(), 0);
-
-        let create_ix = instruction_builder.create_swig_account_instruction()?;
-
-        #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        let blockhash = rpc_client.get_latest_blockhash()?;
-        #[cfg(all(feature = "rust_sdk_test", test))]
-        let blockhash = litesvm.latest_blockhash();
-
-        let msg = v0::Message::try_compile(&fee_payer.pubkey(), &[create_ix], &[], blockhash)?;
-
-        let tx = VersionedTransaction::try_new(
-            VersionedMessage::V0(msg),
-            &[fee_payer.insecure_clone()],
-        )?;
-
-        #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        let signature = rpc_client.send_and_confirm_transaction(&tx)?;
-        #[cfg(all(feature = "rust_sdk_test", test))]
-        let signature = litesvm.send_transaction(tx).unwrap().signature;
-
-        // Fetch the just-created account data to get the initial role
-        #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        let swig_data = rpc_client.get_account_data(&swig_account)?;
-        #[cfg(all(feature = "rust_sdk_test", test))]
-        let swig_data = litesvm.get_account(&swig_account).unwrap().data;
-
-        let swig_with_roles =
-            SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
-        let role = swig_with_roles
-            .get_role(0)
-            .map_err(|_| SwigError::AuthorityNotFound)?;
-        let current_role = if let Some(role) = role {
-            build_current_role(0, &role)
-        } else {
-            return Err(SwigError::AuthorityNotFound);
-        };
-
-        Ok(Self {
-            instruction_builder,
-            rpc_client,
-            fee_payer,
-            #[cfg(all(feature = "rust_sdk_test", test))]
-            litesvm,
-            authority_keypair,
-            current_role,
-        })
-    }
-
-    /// Loads an existing Swig wallet from the chain
-    ///
-    /// This method will fail if a wallet with the given `swig_id` does not exist.
-    /// Use [`create`] to create a new wallet instead.
-    ///
-    /// # Arguments
-    ///
-    /// * `swig_id` - The unique identifier for the Swig account
-    /// * `client_role` - The client role implementation specifying the type of
-    ///   signing authority
-    /// * `fee_payer` - The keypair that will pay for transactions
-    /// * `rpc_url` - The URL of the Solana RPC endpoint
-    /// * `authority_keypair` - Optional authority keypair (required for Ed25519
-    ///   authorities)
-    /// * `litesvm` - (test only) The LiteSVM instance for testing
-    ///
-    /// # Returns
-    ///
-    /// Returns a `Result` containing the loaded `SwigWallet` instance or a
-    /// `SwigError`
-    ///
-    /// # Errors
-    ///
-    /// * `WalletNotFound` - If a wallet with the given `swig_id` does not exist
-    /// * `AuthorityNotFound` - If the provided authority is not found in the wallet
-    /// * `SwigError` - Other errors that may occur during wallet loading
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use swig_sdk::{SwigWallet, Ed25519ClientRole};
-    /// use solana_sdk::signature::{Keypair, Signer};
-    ///
-    /// let fee_payer = Keypair::new();
-    /// let authority = Keypair::new();
-    /// let swig_id = [0u8; 32];
-    ///
-    /// let wallet = SwigWallet::load(
-    ///     swig_id,
-    ///     Box::new(Ed25519ClientRole::new(authority.pubkey())),
-    ///     &fee_payer,
-    ///     "https://api.mainnet-beta.solana.com".to_string(),
-    ///     Some(&authority),
-    /// )?;
-    /// # Ok::<(), swig_sdk::SwigError>(())
-    /// ```
-    ///
-    /// [`create`]: SwigWallet::create
-    pub fn load(
-        swig_id: [u8; 32],
-        mut client_role: Box<dyn ClientRole>,
-        fee_payer: &'c Keypair,
-        rpc_url: String,
-        authority_keypair: Option<&'c Keypair>,
-        #[cfg(all(feature = "rust_sdk_test", test))] mut litesvm: LiteSVM,
-    ) -> Result<Self, SwigError> {
-        let rpc_client =
-            RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::confirmed());
-
-        // Check if the Swig account exists
-        let swig_account = SwigInstructionBuilder::swig_key(&swig_id);
-
-        #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        let swig_data = rpc_client.get_account_data(&swig_account);
-        #[cfg(all(feature = "rust_sdk_test", test))]
-        let swig_data = litesvm.get_account(&swig_account);
-
-        #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        let account_exists = swig_data.is_ok();
-        #[cfg(all(feature = "rust_sdk_test", test))]
-        let account_exists = swig_data.is_some();
-
-        if !account_exists {
-            return Err(SwigError::WalletNotFound(swig_id));
-        }
-
-        // Safe unwrap because we know the account exists
-        #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        let swig_data = swig_data.unwrap();
-        #[cfg(all(feature = "rust_sdk_test", test))]
-        let swig_data = swig_data.unwrap().data;
-
-        let swig_with_roles =
-            SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
-
-        let authority_bytes = client_role.authority_bytes()?;
-        let role_id = swig_with_roles
-            .lookup_role_id(authority_bytes.as_ref())
-            .map_err(|_| SwigError::AuthorityNotFound)?
-            .ok_or_else(|| {
-                SwigError::InvalidAuthority(format!(
-                    "Authority {} not found in wallet",
-                    hex::encode(&authority_bytes)
-                ))
-            })?;
-
-        // Get the role to verify it exists and has the correct type
-        let role = swig_with_roles
-            .get_role(role_id)
-            .map_err(|_| SwigError::AuthorityNotFound)?;
-
-        // Extract the role data for storage and update odometer if needed
-        let current_role = if let Some(role) = &role {
-            // Update odometer if this is a Secp256k1 authority
-            if let Some(odometer) = role.authority.signature_odometer() {
-                client_role.update_odometer(odometer)?;
-            }
-            build_current_role(role_id, role)
-        } else {
-            return Err(SwigError::AuthorityNotFound);
-        };
-
-        let instruction_builder =
-            SwigInstructionBuilder::new(swig_id, client_role, fee_payer.pubkey(), role_id);
-
-        Ok(Self {
-            instruction_builder,
-            rpc_client,
-            fee_payer: &fee_payer,
-            #[cfg(all(feature = "rust_sdk_test", test))]
-            litesvm,
-            authority_keypair,
-            current_role,
-        })
-    }
-
     /// Creates a new builder for constructing a SwigWallet
     ///
     /// # Example
@@ -729,64 +573,6 @@ impl<'c> SwigWallet<'c> {
             // This is a limitation of the test setup
             Err(SwigError::InterfaceError(
                 "exists() is not available in test mode. Use load() instead.".to_string(),
-            ))
-        }
-    }
-
-    /// Convenience method to load a wallet by swig_id with default settings
-    ///
-    /// This is a shorthand for loading a wallet when you have minimal configuration.
-    /// For more control, use [`load`] or the builder pattern.
-    ///
-    /// # Arguments
-    ///
-    /// * `swig_id` - The unique identifier for the Swig account
-    /// * `client_role` - The client role implementation
-    /// * `fee_payer` - The keypair that will pay for transactions
-    /// * `rpc_url` - The URL of the Solana RPC endpoint
-    /// * `authority_keypair` - Optional authority keypair
-    ///
-    /// # Returns
-    ///
-    /// Returns a `Result` containing the loaded `SwigWallet` instance or a `SwigError`
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use swig_sdk::{SwigWallet, Ed25519ClientRole};
-    /// use solana_sdk::signature::{Keypair, Signer};
-    ///
-    /// let fee_payer = Keypair::new();
-    /// let authority = Keypair::new();
-    /// let swig_id = [0u8; 32];
-    ///
-    /// let wallet = SwigWallet::from_swig_id(
-    ///     swig_id,
-    ///     Box::new(Ed25519ClientRole::new(authority.pubkey())),
-    ///     &fee_payer,
-    ///     "https://api.mainnet-beta.solana.com".to_string(),
-    ///     Some(&authority),
-    /// )?;
-    /// # Ok::<(), swig_sdk::SwigError>(())
-    /// ```
-    ///
-    /// [`load`]: SwigWallet::load
-    pub fn from_swig_id(
-        swig_id: [u8; 32],
-        client_role: Box<dyn ClientRole>,
-        fee_payer: &'c Keypair,
-        rpc_url: String,
-        authority_keypair: Option<&'c Keypair>,
-    ) -> Result<Self, SwigError> {
-        #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        {
-            Self::load(swig_id, client_role, fee_payer, rpc_url, authority_keypair)
-        }
-
-        #[cfg(all(feature = "rust_sdk_test", test))]
-        {
-            Err(SwigError::InterfaceError(
-                "from_swig_id() is not available in test mode. Use load() instead.".to_string(),
             ))
         }
     }
@@ -864,7 +650,7 @@ impl<'c> SwigWallet<'c> {
     // Wallet Lifecycle Methods
     // ============================================================================
 
-    // (create, load, new, builder, exists, from_swig_id, get_info are above)
+    // (create, load, new, builder, exists, get_info are above)
 
     // ============================================================================
     // Authority Management Methods
@@ -927,7 +713,9 @@ impl<'c> SwigWallet<'c> {
         let swig_with_roles =
             SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
 
-        let authority_id = swig_with_roles.lookup_role_id(authority.as_ref()).unwrap();
+        let authority_id = swig_with_roles
+            .lookup_role_id(authority.as_ref())
+            .map_err(|e| SwigError::InterfaceError(format!("{:?}", e)))?;
 
         if let Some(authority_id) = authority_id {
             let instructions = self
@@ -1015,7 +803,7 @@ impl<'c> SwigWallet<'c> {
             .instruction_builder
             .sign_v2_instruction(inner_instructions, Some(self.get_current_slot()?))?;
 
-        let alt = if alt.is_some() { alt.unwrap() } else { &[] };
+        let alt = alt.unwrap_or(&[]);
 
         let msg = v0::Message::try_compile(
             &self.fee_payer.pubkey(),
@@ -1133,7 +921,7 @@ impl<'c> SwigWallet<'c> {
             .instruction_builder
             .sign_instruction_with_sub_account(instructions, Some(current_slot))?;
 
-        let alt = if alt.is_some() { alt.unwrap() } else { &[] };
+        let alt = alt.unwrap_or(&[]);
 
         let msg = v0::Message::try_compile(
             &self.fee_payer.pubkey(),
@@ -1378,7 +1166,9 @@ impl<'c> SwigWallet<'c> {
 
         let mut permissions: Vec<Permission> = Vec::new();
         for i in 0..swig_with_roles.state.role_counter {
-            let role = swig_with_roles.get_role(i).unwrap();
+            let role = swig_with_roles
+                .get_role(i)
+                .map_err(|e| SwigError::InterfaceError(format!("{:?}", e)))?;
             if let Some(role) = role {
                 if role
                     .authority
@@ -1417,7 +1207,7 @@ impl<'c> SwigWallet<'c> {
                         .map_err(|_| SwigError::AuthorityNotFound)?)
                     .is_some()
                     {
-                        println!("\t\tManage Authority permission exists");
+                        permissions.push(Permission::ManageAuthority);
                     }
                 }
             }
@@ -1544,12 +1334,12 @@ impl<'c> SwigWallet<'c> {
                     "║ ├─ Authority: {}",
                     match role.authority.authority_type() {
                         AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
-                            let authority = role.authority.identity().unwrap();
+                            let authority = role.authority.identity().unwrap_or_default();
                             let authority = bs58::encode(authority).into_string();
                             authority
                         },
                         AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
-                            let authority = role.authority.identity().unwrap();
+                            let authority = role.authority.identity().unwrap_or_default();
                             let mut authority_hex = vec![0x4];
                             authority_hex.extend_from_slice(authority);
                             let authority_hex = hex::encode(authority_hex);
@@ -1560,11 +1350,16 @@ impl<'c> SwigWallet<'c> {
                             address
                         },
                         AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
-                            let authority = role.authority.identity().unwrap();
+                            let authority = role.authority.identity().unwrap_or_default();
                             // For Secp256r1, display the compressed public key directly
                             format!("0x{}", hex::encode(authority))
                         },
-                        _ => todo!(),
+                        AuthorityType::ProgramExec | AuthorityType::ProgramExecSession => {
+                            let authority = role.authority.identity().unwrap_or_default();
+                            let authority = bs58::encode(authority).into_string();
+                            authority
+                        },
+                        AuthorityType::None => "None".to_string(),
                     }
                 );
 
@@ -1813,12 +1608,11 @@ impl<'c> SwigWallet<'c> {
         let swig_with_roles =
             SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
 
-        let role_id = swig_with_roles.lookup_role_id(authority.as_ref()).unwrap();
-        if role_id.is_some() {
-            Ok(role_id.unwrap())
-        } else {
-            Err(SwigError::AuthorityNotFound)
-        }
+        let role_id = swig_with_roles
+            .lookup_role_id(authority.as_ref())
+            .map_err(|e| SwigError::InterfaceError(format!("{:?}", e)))?
+            .ok_or(SwigError::AuthorityNotFound)?;
+        Ok(role_id)
     }
 
     /// Returns the role id of the Swig account
@@ -1946,13 +1740,11 @@ impl<'c> SwigWallet<'c> {
         let swig_with_roles =
             SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
 
-        let indexed_authority = swig_with_roles.lookup_role_id(authority.as_ref()).unwrap();
-
-        if indexed_authority.is_some() {
-            Ok(())
-        } else {
-            Err(SwigError::AuthorityNotFound)
-        }
+        swig_with_roles
+            .lookup_role_id(authority.as_ref())
+            .map_err(|e| SwigError::InterfaceError(format!("{:?}", e)))?
+            .ok_or(SwigError::AuthorityNotFound)?;
+        Ok(())
     }
 
     /// Creates a new session for the Swig wallet
@@ -2392,8 +2184,8 @@ impl<'c> SwigWallet<'c> {
     ///
     /// Returns a `Result` containing the public key for the swig account or a
     /// `SwigError`
-    pub fn get_swig(&self) -> Pubkey {
-        self.instruction_builder.get_swig_config_address().unwrap()
+    pub fn get_swig(&self) -> Result<Pubkey, SwigError> {
+        self.instruction_builder.get_swig_config_address()
     }
 
     /// Gets the authority identity for a specific role
