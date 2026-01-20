@@ -35,7 +35,7 @@ fn test_add_sol_destination_limit_with_ed25519() {
     );
 
     // Create Swig account
-    let ix = builder.build_swig_account().unwrap();
+    let ix = builder.create_swig_account_instruction().unwrap();
     let msg = v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
         .unwrap();
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[payer]).unwrap();
@@ -46,7 +46,7 @@ fn test_add_sol_destination_limit_with_ed25519() {
         result.err()
     );
 
-    let swig_key = builder.get_swig_account().unwrap();
+    let swig_key = builder.get_swig_config_address().unwrap();
     context.svm.airdrop(&swig_key, 1_000_000_000).unwrap();
 
     // Add a new authority with SOL destination limit
@@ -111,7 +111,7 @@ fn test_add_sol_recurring_destination_limit_with_ed25519() {
     );
 
     // Create Swig account
-    let ix = builder.build_swig_account().unwrap();
+    let ix = builder.create_swig_account_instruction().unwrap();
     let msg = v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
         .unwrap();
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[payer]).unwrap();
@@ -122,7 +122,7 @@ fn test_add_sol_recurring_destination_limit_with_ed25519() {
         result.err()
     );
 
-    let swig_key = builder.get_swig_account().unwrap();
+    let swig_key = builder.get_swig_config_address().unwrap();
     context.svm.airdrop(&swig_key, 1_000_000_000).unwrap();
 
     // Add a new authority with SOL recurring destination limit
@@ -188,7 +188,7 @@ fn test_add_token_destination_limit_with_ed25519() {
     );
 
     // Create Swig account
-    let ix = builder.build_swig_account().unwrap();
+    let ix = builder.create_swig_account_instruction().unwrap();
     let msg = v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
         .unwrap();
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[payer]).unwrap();
@@ -199,7 +199,7 @@ fn test_add_token_destination_limit_with_ed25519() {
         result.err()
     );
 
-    let swig_key = builder.get_swig_account().unwrap();
+    let swig_key = builder.get_swig_config_address().unwrap();
     context.svm.airdrop(&swig_key, 1_000_000_000).unwrap();
 
     // Add a new authority with token destination limit
@@ -266,7 +266,7 @@ fn test_add_token_recurring_destination_limit_with_ed25519() {
     );
 
     // Create Swig account
-    let ix = builder.build_swig_account().unwrap();
+    let ix = builder.create_swig_account_instruction().unwrap();
     let msg = v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
         .unwrap();
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[payer]).unwrap();
@@ -277,7 +277,7 @@ fn test_add_token_recurring_destination_limit_with_ed25519() {
         result.err()
     );
 
-    let swig_key = builder.get_swig_account().unwrap();
+    let swig_key = builder.get_swig_config_address().unwrap();
     context.svm.airdrop(&swig_key, 1_000_000_000).unwrap();
 
     // Add a new authority with token recurring destination limit
@@ -359,7 +359,7 @@ fn test_add_sol_destination_limit_with_secp256k1() {
     );
 
     // Create Swig account
-    let ix = builder.build_swig_account().unwrap();
+    let ix = builder.create_swig_account_instruction().unwrap();
     let msg = v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
         .unwrap();
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[payer]).unwrap();
@@ -370,7 +370,7 @@ fn test_add_sol_destination_limit_with_secp256k1() {
         result.err()
     );
 
-    let swig_key = builder.get_swig_account().unwrap();
+    let swig_key = builder.get_swig_config_address().unwrap();
     context.svm.airdrop(&swig_key, 1_000_000_000).unwrap();
 
     // Add a new authority with SOL destination limit
@@ -434,7 +434,7 @@ fn test_multiple_destination_limits() {
     );
 
     // Create Swig account
-    let ix = builder.build_swig_account().unwrap();
+    let ix = builder.create_swig_account_instruction().unwrap();
     let msg = v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
         .unwrap();
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[payer]).unwrap();
@@ -445,7 +445,7 @@ fn test_multiple_destination_limits() {
         result.err()
     );
 
-    let swig_key = builder.get_swig_account().unwrap();
+    let swig_key = builder.get_swig_config_address().unwrap();
     context.svm.airdrop(&swig_key, 1_000_000_000).unwrap();
 
     // Add a new authority with multiple destination limits

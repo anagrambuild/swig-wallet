@@ -43,7 +43,7 @@ fn test_create_ed25519_session() {
         0,
     );
 
-    let create_ix = swig_ix_builder.build_swig_account().unwrap();
+    let create_ix = swig_ix_builder.create_swig_account_instruction().unwrap();
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
@@ -63,7 +63,7 @@ fn test_create_ed25519_session() {
         result.err()
     );
 
-    let swig_key = swig_ix_builder.get_swig_account().unwrap();
+    let swig_key = swig_ix_builder.get_swig_config_address().unwrap();
 
     context.svm.airdrop(&swig_key, 50_000_000_000).unwrap();
 
@@ -157,7 +157,7 @@ fn test_create_secp256k1_session() {
         0,
     );
 
-    let create_ix = swig_ix_builder.build_swig_account().unwrap();
+    let create_ix = swig_ix_builder.create_swig_account_instruction().unwrap();
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
@@ -178,15 +178,15 @@ fn test_create_secp256k1_session() {
     );
 
     display_swig(
-        swig_ix_builder.get_swig_account().unwrap(),
+        swig_ix_builder.get_swig_config_address().unwrap(),
         &context
             .svm
-            .get_account(&swig_ix_builder.get_swig_account().unwrap())
+            .get_account(&swig_ix_builder.get_swig_config_address().unwrap())
             .unwrap(),
     )
     .unwrap();
 
-    let swig_key = swig_ix_builder.get_swig_account().unwrap();
+    let swig_key = swig_ix_builder.get_swig_config_address().unwrap();
 
     context.svm.airdrop(&swig_key, 50_000_000_000).unwrap();
 
@@ -239,10 +239,10 @@ fn test_create_secp256k1_session() {
     );
 
     display_swig(
-        swig_ix_builder.get_swig_account().unwrap(),
+        swig_ix_builder.get_swig_config_address().unwrap(),
         &context
             .svm
-            .get_account(&swig_ix_builder.get_swig_account().unwrap())
+            .get_account(&swig_ix_builder.get_swig_config_address().unwrap())
             .unwrap(),
     )
     .unwrap();

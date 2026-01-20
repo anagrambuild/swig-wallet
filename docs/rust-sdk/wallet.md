@@ -53,7 +53,7 @@ Adds a new authority to the wallet with specified permissions.
 ### Removing Authorities
 
 ```rust
-pub fn remove_authority(
+pub fn remove_authority_instruction(
     &mut self,
     authority: &[u8]
 ) -> Result<Signature, SwigError>
