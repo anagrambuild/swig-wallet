@@ -48,7 +48,10 @@ fn should_create_secp256k1_wallet() {
 
     let swig_wallet = SwigWallet::builder()
         .with_swig_id([0; 32])
-        .with_client_role(Box::new(Secp256k1ClientRole::new(secp_pubkey, Box::new(sign_fn))))
+        .with_client_role(Box::new(Secp256k1ClientRole::new(
+            secp_pubkey,
+            Box::new(sign_fn),
+        )))
         .with_fee_payer(&main_authority)
         .with_rpc_url("http://localhost:8899".to_string())
         .with_authority_keypair(Some(&main_authority))
