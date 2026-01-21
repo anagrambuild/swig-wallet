@@ -29,13 +29,13 @@ fn test_sign_v2_with_ed25519_authority_transfers_sol() {
     );
 
     // Create swig (also creates wallet address PDA)
-    let ix = builder.build_swig_account().unwrap();
+    let ix = builder.create_swig_account_instruction().unwrap();
     let msg = v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
         .unwrap();
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[payer]).unwrap();
     context.svm.send_transaction(tx).unwrap();
 
-    let swig_key = builder.get_swig_account().unwrap();
+    let swig_key = builder.get_swig_config_address().unwrap();
     let swig_wallet_address = builder.swig_wallet_address();
 
     // Fund the swig wallet address PDA
@@ -114,7 +114,7 @@ fn test_sign_v2_with_secp256k1_authority_transfers_sol() {
     );
 
     // Create swig
-    let ix = builder.build_swig_account().unwrap();
+    let ix = builder.create_swig_account_instruction().unwrap();
     let msg = v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
         .unwrap();
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[payer]).unwrap();
@@ -192,14 +192,14 @@ fn test_sign_v2_with_additional_authority_and_sol_limit() {
 
     // Create swig and fund wallet PDA
     {
-        let ix = builder.build_swig_account().unwrap();
+        let ix = builder.create_swig_account_instruction().unwrap();
         let msg =
             v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
                 .unwrap();
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[payer]).unwrap();
         context.svm.send_transaction(tx).unwrap();
     }
-    let swig = builder.get_swig_account().unwrap();
+    let swig = builder.get_swig_config_address().unwrap();
     let swig_wallet_address = builder.swig_wallet_address();
     context
         .svm
@@ -278,14 +278,14 @@ fn test_sign_v2_fail_with_insufficient_sol_limit() {
 
     // Create swig and fund wallet PDA
     {
-        let ix = builder.build_swig_account().unwrap();
+        let ix = builder.create_swig_account_instruction().unwrap();
         let msg =
             v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
                 .unwrap();
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[payer]).unwrap();
         context.svm.send_transaction(tx).unwrap();
     }
-    let swig = builder.get_swig_account().unwrap();
+    let swig = builder.get_swig_config_address().unwrap();
     let swig_wallet_address = builder.swig_wallet_address();
     context
         .svm
@@ -358,14 +358,14 @@ fn test_sign_v2_transfer_between_swig_accounts() {
         0,
     );
     {
-        let ix = sender_builder.build_swig_account().unwrap();
+        let ix = sender_builder.create_swig_account_instruction().unwrap();
         let msg =
             v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
                 .unwrap();
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[payer]).unwrap();
         context.svm.send_transaction(tx).unwrap();
     }
-    let sender_swig = sender_builder.get_swig_account().unwrap();
+    let sender_swig = sender_builder.get_swig_config_address().unwrap();
     let sender_wallet = sender_builder.swig_wallet_address();
     context.svm.airdrop(&sender_wallet, 5_000_000_000).unwrap();
 
@@ -378,14 +378,14 @@ fn test_sign_v2_transfer_between_swig_accounts() {
         0,
     );
     {
-        let ix = recipient_builder.build_swig_account().unwrap();
+        let ix = recipient_builder.create_swig_account_instruction().unwrap();
         let msg =
             v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
                 .unwrap();
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[payer]).unwrap();
         context.svm.send_transaction(tx).unwrap();
     }
-    let recipient_swig = recipient_builder.get_swig_account().unwrap();
+    let recipient_swig = recipient_builder.get_swig_config_address().unwrap();
 
     let transfer_ix = solana_program::system_instruction::transfer(
         &sender_wallet,
@@ -428,7 +428,7 @@ fn test_sign_v2_different_payer_and_authority() {
         0,
     );
     {
-        let ix = builder.build_swig_account().unwrap();
+        let ix = builder.create_swig_account_instruction().unwrap();
         let msg = v0::Message::try_compile(
             &different_payer.pubkey(),
             &[ix],
@@ -441,7 +441,10 @@ fn test_sign_v2_different_payer_and_authority() {
         context.svm.send_transaction(tx).unwrap();
     }
     let swig_wallet_address = builder.swig_wallet_address();
-    println!("swig_account: {:?}", builder.get_swig_account().unwrap());
+    println!(
+        "swig_account: {:?}",
+        builder.get_swig_config_address().unwrap()
+    );
     println!("swig_wallet_address: {:?}", swig_wallet_address);
 
     context
@@ -503,7 +506,7 @@ fn test_sign_v2_secp256r1_transfer() {
         0,
     );
     {
-        let ix = builder.build_swig_account().unwrap();
+        let ix = builder.create_swig_account_instruction().unwrap();
         let msg =
             v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
                 .unwrap();
@@ -516,7 +519,7 @@ fn test_sign_v2_secp256r1_transfer() {
         .airdrop(&swig_wallet_address, 1_000_000_000)
         .unwrap();
 
-    let swig_account = builder.get_swig_account().unwrap();
+    let swig_account = builder.get_swig_config_address().unwrap();
     let swig_data = context.svm.get_account(&swig_account).unwrap();
     let swig_with_roles = SwigWithRoles::from_bytes(&swig_data.data).unwrap();
     let role_id = swig_with_roles
@@ -566,14 +569,14 @@ fn test_sign_v2_token_recurring_limit() {
     );
     // Create swig
     {
-        let ix = builder.build_swig_account().unwrap();
+        let ix = builder.create_swig_account_instruction().unwrap();
         let msg =
             v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
                 .unwrap();
         let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[payer]).unwrap();
         context.svm.send_transaction(tx).unwrap();
     }
-    let swig = builder.get_swig_account().unwrap();
+    let swig = builder.get_swig_config_address().unwrap();
     let swig_wallet_address = builder.swig_wallet_address();
     context
         .svm

@@ -8,11 +8,11 @@ use super::*;
 use crate::client_role::{Ed25519ClientRole, Secp256k1ClientRole};
 
 #[test_log::test]
-fn should_get_swig_account_successfully() {
+fn should_get_swig_config_address_successfully() {
     let (mut litesvm, main_authority) = setup_test_environment();
     let swig_wallet = create_test_wallet(litesvm, &main_authority);
 
-    let swig_account = swig_wallet.get_swig_account().unwrap();
+    let swig_account = swig_wallet.get_swig_config_address().unwrap();
     assert!(swig_account != Pubkey::default());
     println!("Swig account: {}", swig_account);
 }

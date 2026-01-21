@@ -55,15 +55,15 @@ fn setup_test_environment() -> (LiteSVM, Keypair) {
 }
 
 fn create_test_wallet(mut litesvm: LiteSVM, authority: &Keypair) -> SwigWallet {
-    SwigWallet::new(
-        [0; 32],
-        Box::new(Ed25519ClientRole::new(authority.pubkey())),
-        authority,
-        "http://localhost:8899".to_string(),
-        Some(authority),
-        litesvm,
-    )
-    .unwrap()
+    SwigWallet::builder()
+        .with_swig_id([0; 32])
+        .with_client_role(Box::new(Ed25519ClientRole::new(authority.pubkey())))
+        .with_fee_payer(authority)
+        .with_rpc_url("http://localhost:8899".to_string())
+        .with_authority_keypair(Some(authority))
+        .with_litesvm(litesvm)
+        .create()
+        .unwrap()
 }
 
 fn create_test_wallet_v2(mut litesvm: LiteSVM, authority: &Keypair) -> SwigWallet {
