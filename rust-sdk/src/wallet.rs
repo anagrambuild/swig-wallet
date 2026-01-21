@@ -1217,12 +1217,15 @@ impl<'c> SwigWallet<'c> {
 
     /// Displays detailed information about the Swig wallet
     ///
+    /// deprecated
+    ///
     /// This includes account details, roles, and permissions for all
     /// authorities.
     ///
     /// # Returns
     ///
     /// Returns a `Result` containing unit type or a `SwigError`
+    #[deprecated()]
     pub fn display_swig(&self) -> Result<(), SwigError> {
         let swig_pubkey = self.get_swig_config_address()?;
         let swig_wallet_address = self.get_swig_wallet_address()?;
@@ -1264,7 +1267,7 @@ impl<'c> SwigWallet<'c> {
         println!("╔══════════════════════════════════════════════════════════════════");
         println!("║ SWIG WALLET DETAILS");
         println!("╠══════════════════════════════════════════════════════════════════");
-        println!("║ Config Account Address: {}", swig_pubkey);
+        println!("║ Swig Address: {}", swig_pubkey);
         println!("║ Wallet Address: {}", swig_wallet_address);
         println!(
             "║ Wallet Balance: {} SOL",

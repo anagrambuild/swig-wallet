@@ -956,7 +956,11 @@ impl<'c> MultiWalletManager<'c> {
             })?;
 
         let signers: Vec<&Keypair> = if let Some(authority) = self.authority_keypair {
-            vec![self.fee_payer, authority]
+            if authority.pubkey() == self.fee_payer.pubkey() {
+                vec![self.fee_payer]
+            } else {
+                vec![self.fee_payer, authority]
+            }
         } else {
             vec![self.fee_payer]
         };
@@ -1165,7 +1169,11 @@ impl<'c> MultiWalletManager<'c> {
             };
 
             let signers: Vec<&Keypair> = if let Some(auth) = authority {
-                vec![fee_payer, auth]
+                if auth.pubkey() == fee_payer.pubkey() {
+                    vec![fee_payer]
+                } else {
+                    vec![fee_payer, auth]
+                }
             } else {
                 vec![fee_payer]
             };
