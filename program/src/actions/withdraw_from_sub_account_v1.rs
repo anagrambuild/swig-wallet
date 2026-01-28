@@ -19,7 +19,6 @@ use pinocchio_token::instructions::Transfer;
 use swig_assertions::*;
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, sub_account::SubAccount},
-    authority::AuthorityType,
     role::{Position, Role, RoleMut},
     swig::{sub_account_signer, swig_wallet_address_seeds, Swig, SwigWithRoles},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
@@ -213,12 +212,8 @@ pub fn withdraw_from_sub_account_v1(
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
 
-    let (action_accounts_index, action_accounts_len) =
-        if role.position.authority_type()? == AuthorityType::Secp256k1 {
-            (3, 6)
-        } else {
-            (4, 7)
-        };
+    let action_accounts_index = 4;
+    let action_accounts_len = 7;
     let amount = withdraw.args.amount;
 
     // For signing, we need the correct role_id and bump

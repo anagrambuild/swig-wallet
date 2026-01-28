@@ -1827,6 +1827,7 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
+            AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new_readonly(system_program::ID, false),
         ];
@@ -1919,11 +1920,12 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
+            AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new(sub_account_token, false),
             AccountMeta::new(swig_token, false),
             AccountMeta::new_readonly(token_program, false),
-            AccountMeta::new_readonly(system_program::ID, false),
         ];
 
         let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
@@ -1977,9 +1979,9 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new_readonly(system_program::ID, false),
-            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
 
         let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
@@ -2061,12 +2063,12 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
             AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new(sub_account_token, false),
             AccountMeta::new(swig_token, false),
             AccountMeta::new_readonly(token_program, false),
-            AccountMeta::new_readonly(system_program::ID, false),
-            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
 
         let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
@@ -2113,7 +2115,7 @@ impl WithdrawFromSubAccountInstruction {
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
         authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
-        authority_payload.push(7); // this is the index of the instruction sysvar (account 7)
+        authority_payload.push(3); // this is the index of the instruction sysvar (account 3)
 
         let main_ix = Instruction {
             program_id: program_id(),

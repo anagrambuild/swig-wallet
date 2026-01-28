@@ -110,7 +110,7 @@ pub enum SwigInstruction {
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
     #[account(1, writable, signer, name="payer", desc="the payer")]
     #[account(2, writable, name="sub_account", desc="the sub account to withdraw from")]
-    #[account(3, writable, signer, name="authority", desc="the swig authority")]
+    #[account(3, name="authority_context", desc="authority context: signer for Ed25519, sysvar for Secp256r1, or placeholder for Secp256k1")]
     #[account(4, writable, name="swig_wallet_address", desc="the swig wallet address (destination)")]
     #[account(5, name="system_program", desc="the system program")]
     WithdrawFromSubAccountV1 = 7,
