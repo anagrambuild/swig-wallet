@@ -14,9 +14,12 @@ use solana_sdk::{
 };
 use swig_interface::{AuthorityConfig, ClientAction, SignV2Instruction};
 use swig_state::{
-    action::{manage_authority::ManageAuthority, program_all::ProgramAll},
+    action::{
+        manage_authority::ManageAuthority, manage_authorization_locks::ManageAuthorizationLocks,
+        program::Program, program_all::ProgramAll, sol_limit::SolLimit,
+    },
     authority::AuthorityType,
-    swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
+    swig::{swig_account_seeds, swig_wallet_address_seeds, AuthorizationLock, SwigWithRoles},
     Transmutable,
 };
 
@@ -86,9 +89,6 @@ fn test_authorization_lock_with_sign_v2_exceeds_limit() {
 
     // Add a second authority with ManageAuthority, ManageAuthorizationLocks, ProgramAll, and specific Program permissions
     // This gives it the ability to spend via system program and manage its own authorization locks
-    use swig_state::action::{
-        manage_authorization_locks::ManageAuthorizationLocks, program::Program,
-    };
     println!("Adding second authority with ManageAuthority, ManageAuthorizationLocks, ProgramAll, and System Program permissions");
     add_authority_with_ed25519_root(
         &mut context,
@@ -404,4 +404,210 @@ fn test_authorization_lock_with_sign_v2_expired_lock() {
     println!();
     println!("✅ EXPIRED AUTHORIZATION LOCK TEST COMPLETED!");
     println!("======================================================");
+}
+
+/// Helper to print swig wallet balance, sol limit, and auth locks after a withdraw.
+fn print_swig_details(
+    context: &SwigTestContext,
+    swig: &Pubkey,
+    swig_wallet_address: &Pubkey,
+    sol_mint: &[u8; 32],
+    label: &str,
+) {
+    let swig_acc = context.svm.get_account(swig).unwrap();
+    let swig_wallet_balance = context.svm.get_balance(swig_wallet_address).unwrap();
+    let swig_with_roles = SwigWithRoles::from_bytes(&swig_acc.data).unwrap();
+    let limited_authority_role = swig_with_roles.get_role(1).unwrap().unwrap();
+    println!("Swig details after {}:", label);
+    println!("--------------------------------");
+    println!(
+        "Swig wallet balance: {} lamports ({} SOL)",
+        swig_wallet_balance,
+        swig_wallet_balance as f64 / LAMPORTS_PER_SOL as f64
+    );
+    if let Some(sol_limit) = limited_authority_role.get_action::<SolLimit>(&[]).unwrap() {
+        println!(
+            "sol limit: {} lamports ({} SOL)",
+            sol_limit.amount,
+            sol_limit.amount as f64 / LAMPORTS_PER_SOL as f64
+        );
+    }
+    let (auth_locks, count) = swig_with_roles.get_authorization_locks_by_role::<10>(1).unwrap();
+    for i in 0..count {
+        if let Some(lock) = &auth_locks[i] {
+            if lock.token_mint == *sol_mint {
+                println!(
+                    "auth lock: {} lamports ({} SOL)",
+                    lock.amount,
+                    lock.amount as f64 / LAMPORTS_PER_SOL as f64
+                );
+            }
+        }
+    }
+    println!("--------------------------------");
+}
+
+/// Drain wallet test
+#[test_log::test]
+fn test_drain_wallet() {
+    let mut context = setup_test_context().unwrap();
+
+    let swig_authority = Keypair::new();
+    let limited_authority = Keypair::new();
+    let recipient = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 20_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&limited_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), 1_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+
+    println!("=== DRAIN WALLET TEST ===");
+    create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    println!("Swig account created");
+
+    let swig_initial_balance = 5 * LAMPORTS_PER_SOL;
+    let lock_amount = 2 * LAMPORTS_PER_SOL;
+    let sol_limit_amount = 3 * LAMPORTS_PER_SOL;
+
+    // Withdraw amounts in SOL; each entry triggers a transfer of that many SOL
+    let withdraws: Vec<u64> = vec![3, 1, 1];
+
+    context
+        .svm
+        .airdrop(&swig_wallet_address, swig_initial_balance)
+        .unwrap();
+    println!(
+        " Swig wallet funded with {} SOL",
+        swig_initial_balance as f64 / LAMPORTS_PER_SOL as f64
+    );
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: limited_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
+            ClientAction::SolLimit(SolLimit {
+                amount: sol_limit_amount,
+            }),
+            ClientAction::Program(Program {
+                program_id: solana_sdk::system_program::ID.to_bytes(),
+            }),
+        ],
+    )
+    .unwrap();
+    println!(
+        "Authority added with {} SOL limit and ManageAuthorizationLocks (role ID: 1)",
+        sol_limit_amount as f64 / LAMPORTS_PER_SOL as f64
+    );
+
+    let sol_mint = [0u8; 32];
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    let expiry_slot = current_slot + 10000;
+
+    let add_lock_ix = swig_interface::AddAuthorizationLockInstruction::new(
+        swig,
+        limited_authority.pubkey(),
+        context.default_payer.pubkey(),
+        1,
+        sol_mint,
+        lock_amount,
+        expiry_slot,
+        swig_wallet_address,
+    )
+    .unwrap();
+
+    let add_lock_tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(
+            v0::Message::try_compile(
+                &context.default_payer.pubkey(),
+                &[add_lock_ix],
+                &[],
+                context.svm.latest_blockhash(),
+            )
+            .unwrap(),
+        ),
+        &[&context.default_payer, &limited_authority],
+    )
+    .unwrap();
+
+    context.svm.send_transaction(add_lock_tx).unwrap();
+    println!(
+        "Authorization lock added for {} SOL",
+        lock_amount as f64 / LAMPORTS_PER_SOL as f64
+    );
+    println!();
+
+    for (i, sol_amount) in withdraws.iter().enumerate() {
+        let lamports = sol_amount * LAMPORTS_PER_SOL;
+        let test_num = i + 1;
+
+        println!(
+            "TEST {}: Attempting to withdraw {} lamports ({} SOL)",
+            test_num,
+            lamports,
+            *sol_amount
+        );
+
+        context.svm.expire_blockhash();
+
+        let transfer_ix =
+            system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), lamports);
+
+        let sign_v2_ix = SignV2Instruction::new_ed25519(
+            swig,
+            swig_wallet_address,
+            limited_authority.pubkey(),
+            transfer_ix,
+            1,
+        )
+        .unwrap();
+
+        let sign_v2_tx = VersionedTransaction::try_new(
+            VersionedMessage::V0(
+                v0::Message::try_compile(
+                    &limited_authority.pubkey(),
+                    &[sign_v2_ix],
+                    &[],
+                    context.svm.latest_blockhash(),
+                )
+                .unwrap(),
+            ),
+            &[&limited_authority],
+        )
+        .unwrap();
+
+        let result = context.svm.send_transaction(sign_v2_tx);
+        println!("result: {:?}", result.is_ok());
+        if let Err(e) = &result {
+            println!("error: {:?}", e);
+        }
+        println!();
+
+        print_swig_details(
+            &context,
+            &swig,
+            &swig_wallet_address,
+            &sol_mint,
+            &format!("withdraw {} ({} SOL)", test_num, sol_amount),
+        );
+        println!();
+    }
 }
