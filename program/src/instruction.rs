@@ -189,4 +189,42 @@ pub enum SwigInstruction {
     #[account(2, writable, signer, name="payer", desc="the payer")]
     #[account(3, name="system_program", desc="the system program")]
     TransferAssetsV1 = 13,
+
+    /// Closes a single token account owned by the swig wallet.
+    ///
+    /// The token account must have zero balance. Rent is returned to destination.
+    /// This instruction handles both V1 (swig as authority) and V2 (swig_wallet_address
+    /// as authority) token accounts automatically.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable]` Swig wallet address PDA
+    /// 3. `[writable]` Destination for rent
+    /// 4. `[writable]` Token account to close
+    /// 5. Token program (SPL Token or Token-2022)
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, name="swig_wallet_address", desc="the swig wallet address PDA")]
+    #[account(2, writable, name="destination", desc="rent destination")]
+    // #[account(3, writable, name="token_account", desc="the token account to close")]
+    #[account(3, name="token_program", desc="the token program")]
+    CloseTokenAccountV1 = 14,
+
+    /// Closes the swig account and returns all lamports to destination.
+    ///
+    /// This instruction should only be called after all token accounts
+    /// and sub-accounts have been closed. It handles both V1 and V2 accounts:
+    /// - Transfers all lamports from swig_wallet_address to destination (if any)
+    /// - Transfers all lamports from swig to destination
+    /// - Closes the swig account
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account to close
+    /// 2. `[writable]` Swig wallet address PDA
+    /// 3. `[writable]` Destination for all SOL and rent
+    /// 4. System program
+    #[account(0, writable, name="swig", desc="the swig smart wallet to close")]
+    #[account(1, writable, name="swig_wallet_address", desc="the swig wallet address PDA")]
+    #[account(2, writable, name="destination", desc="destination for SOL and rent")]
+    #[account(3, name="system_program", desc="the system program")]
+    CloseSwigV1 = 15,
 }

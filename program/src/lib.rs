@@ -95,6 +95,60 @@ pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
     Ok(())
 }
 
+/// Determines if a Swig account is v2 format by checking the last 7 bytes.
+///
+/// # Account Format Differences
+///
+/// **Swig V2** (last 8 bytes): `[wallet_bump: u8, _padding: [u8; 7]]`
+/// - Example bytes: `[253, 0, 0, 0, 0, 0, 0, 0]` where 253 is the bump seed
+/// - As little-endian u64: `0x0000000000000FD` (the wallet_bump in the lowest
+///   byte)
+/// - After right shift by 8: `0x000000000000000` (removes wallet_bump, leaves
+///   only padding)
+/// - Result: equals 0 ✓ → **V2 account**
+///
+/// **Swig V1** (last 8 bytes): `u64` value (typically role_counter,
+/// session_expiry, etc.)
+/// - Example values: 1, 2, 100, 256, 1000, etc.
+/// - Example bytes for 256: `[0, 1, 0, 0, 0, 0, 0, 0]` (little-endian)
+/// - As little-endian u64: `0x0000000000000100`
+/// - After right shift by 8: `0x0000000000000001` (non-zero in upper 7 bytes)
+/// - Result: non-zero ✓ → **V1 account**
+///
+/// # Why This Works
+///
+/// The key insight is that v2 accounts have 7 consecutive zero bytes (padding),
+/// while v1 accounts store a u64 value that, when interpreted as bytes, will
+/// almost certainly have at least one non-zero byte in positions other than the
+/// first byte. Even small u64 values like 1, 2, 100 will have zeros in the
+/// first byte but the actual value stored in subsequent bytes.
+///
+/// By reading the last 8 bytes as a u64 and right-shifting by 8 bits, we:
+/// 1. Remove the first byte (wallet_bump in v2, or low byte of u64 in v1)
+/// 2. Check if the remaining 7 bytes are all zeros
+///
+/// This is a zero-copy operation using a single unaligned u64 read, followed by
+/// a single shift and comparison, making it extremely efficient (3 CPU
+/// operations total).
+///
+/// # Safety
+///
+/// This function assumes `data.len() >= Swig::LEN` has been checked by the
+/// caller. Reading beyond the end of the slice would be undefined behavior.
+///
+/// # Arguments
+/// * `data` - The account data slice, must be `Swig::LEN` bytes
+///
+/// # Returns
+/// * `true` if the account is v2 format (last 7 bytes are zero)
+/// * `false` if the account is v1 format (last 7 bytes contain non-zero values)
+#[inline(always)]
+pub(crate) unsafe fn is_swig_v2(data: &[u8]) -> bool {
+    let last_8_bytes_ptr = data.as_ptr().add(Swig::LEN - 8) as *const u64;
+    let last_8_bytes = last_8_bytes_ptr.read_unaligned();
+    last_8_bytes >> 8 == 0
+}
+
 /// Core instruction execution function.
 ///
 /// This function processes all accounts in the instruction context, classifies
