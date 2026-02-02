@@ -47,7 +47,7 @@ use crate::{
         accounts::{Context, SignV2Accounts},
         SwigInstruction,
     },
-    util::hash_except,
+    util::{hash_except, sum_authorization_locks_for_mint},
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
 };
 // use swig_instructions::InstructionIterator;
@@ -464,9 +464,9 @@ pub fn sign_v2(
                     }
 
                     if total_sol_spent > 0 {
-                        // Check authorization locks first for SOL (mint = all zeros for native SOL)
+                        // Check authorization locks for SOL (mint = all zeros for native SOL)
+                        // Authorization locks are a CONSTRAINT: balance must stay >= total locked
                         let sol_mint = [0u8; 32];
-                        let mut authorization_lock_applied = false;
                         let mut general_limit_applied = false;
 
                         // Create a SwigWithRoles to access authorization locks
@@ -478,40 +478,31 @@ pub fn sign_v2(
                         };
 
                         if let Ok(swig_with_roles) = swig_with_roles_result {
-                            // Check all authorization locks for native SOL and this role
-                            let _ = swig_with_roles
-                                .for_each_authorization_lock_by_mint::<_, ProgramError>(
-                                    &sol_mint,
-                                    |lock| {
-                                        // Only consider locks for the current role
-                                        if lock.role_id == sign_v2.args.role_id {
-                                            // Check if lock is not expired and amount is sufficient
-                                            if lock.expiry_slot > slot
-                                                && total_sol_spent <= lock.amount
-                                            {
-                                                authorization_lock_applied = true;
-                                            }
-                                        }
-                                        Ok(())
-                                    },
+                            // Sum ALL non-expired authorization locks for SOL (across ALL roles)
+                            let total_locked_sol = sum_authorization_locks_for_mint(
+                                &swig_with_roles,
+                                &sol_mint,
+                                slot,
+                            )?;
+
+                            // Auth lock constraint: balance must stay >= locked amount
+                            if total_locked_sol > 0 && swig_wallet_balance < total_locked_sol {
+                                return Err(
+                                    SwigAuthenticateError::PermissionDeniedInsufficientBalance
+                                        .into(),
                                 );
+                            }
                         }
 
-                        // If authorization lock was found and valid, skip regular limit checks
-                        if authorization_lock_applied {
-                            // Authorization lock allows this transaction, continue
-                        } else {
-                            // No valid authorization lock, check general SOL limits
-                            if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])?
-                            {
-                                action.run(total_sol_spent)?;
-                                general_limit_applied = true;
-                            } else if let Some(action) =
-                                RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])?
-                            {
-                                action.run(total_sol_spent, slot)?;
-                                general_limit_applied = true;
-                            }
+                        // Check general SOL limits (auth lock is additional constraint, not bypass)
+                        if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])? {
+                            action.run(total_sol_spent)?;
+                            general_limit_applied = true;
+                        } else if let Some(action) =
+                            RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])?
+                        {
+                            action.run(total_sol_spent, slot)?;
+                            general_limit_applied = true;
                         }
 
                         // Only check destination limits if they exist
@@ -562,11 +553,8 @@ pub fn sign_v2(
                             }
                         }
 
-                        // If we have authorization lock, general limits, OR destination limits exist, continue
-                        if authorization_lock_applied
-                            || general_limit_applied
-                            || has_sol_destination_limits(actions)?
-                        {
+                        // Must have some permission to spend SOL (general limits or destination limits)
+                        if general_limit_applied || has_sol_destination_limits(actions)? {
                             continue;
                         }
 
@@ -668,7 +656,8 @@ pub fn sign_v2(
                             continue 'account_loop;
                         }
 
-                        // Check authorization locks first if mint is the right size
+                        // Check authorization locks - auth lock is a CONSTRAINT, not a bypass
+                        // Balance must stay >= total locked amount across ALL roles
                         if mint.len() == 32 {
                             let mut mint_array = [0u8; 32];
                             mint_array.copy_from_slice(mint);
@@ -682,34 +671,26 @@ pub fn sign_v2(
                             };
 
                             if let Ok(swig_with_roles) = swig_with_roles_result {
-                                let mut found_valid_lock = false;
+                                // Sum ALL non-expired authorization locks for this mint (across ALL roles)
+                                let total_locked_tokens = sum_authorization_locks_for_mint(
+                                    &swig_with_roles,
+                                    &mint_array,
+                                    slot,
+                                )?;
 
-                                // Check all authorization locks for this mint and role
-                                let _ = swig_with_roles
-                                    .for_each_authorization_lock_by_mint::<_, ProgramError>(
-                                        &mint_array,
-                                        |lock| {
-                                            // Only consider locks for the current role
-                                            if lock.role_id == sign_v2.args.role_id {
-                                                // Check if lock is not expired and amount is sufficient
-                                                if lock.expiry_slot > slot
-                                                    && total_token_spent <= lock.amount
-                                                {
-                                                    found_valid_lock = true;
-                                                }
-                                            }
-                                            Ok(())
-                                        },
+                                // Auth lock constraint: balance must stay >= locked amount
+                                if total_locked_tokens > 0
+                                    && current_token_balance < total_locked_tokens
+                                {
+                                    return Err(
+                                        SwigAuthenticateError::PermissionDeniedInsufficientBalance
+                                            .into(),
                                     );
-
-                                // If we found a valid authorization lock, allow the transaction
-                                if found_valid_lock {
-                                    continue 'account_loop;
                                 }
                             }
                         }
 
-                        // Check regular token limits for outgoing transfers
+                        // Check regular token limits for outgoing transfers (auth lock is additional constraint)
                         if let Some(action) = RoleMut::get_action_mut::<TokenLimit>(actions, mint)?
                         {
                             action.run(total_token_spent)?;
