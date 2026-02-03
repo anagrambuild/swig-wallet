@@ -657,9 +657,11 @@ pub fn update_authority_v1(
         });
 
         if has_active_locks {
-            // Role has active locks - prevent operations that could remove ManageAuthorizationLocks
+            // Role has active locks - prevent operations that could remove
+            // ManageAuthorizationLocks
             msg!(
-                "Cannot modify permissions for role {}: role has active authorization locks. Remove locks first.",
+                "Cannot modify permissions for role {}: role has active authorization locks. \
+                 Remove locks first.",
                 update_authority_v1.args.authority_to_update_id
             );
             return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());

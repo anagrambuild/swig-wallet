@@ -553,7 +553,8 @@ pub fn sign_v2(
                             }
                         }
 
-                        // Must have some permission to spend SOL (general limits or destination limits)
+                        // Must have some permission to spend SOL (general limits or destination
+                        // limits)
                         if general_limit_applied || has_sol_destination_limits(actions)? {
                             continue;
                         }
@@ -662,7 +663,8 @@ pub fn sign_v2(
                             let mut mint_array = [0u8; 32];
                             mint_array.copy_from_slice(mint);
 
-                            // Create a SwigWithRoles to access authorization locks using saved pointers
+                            // Create a SwigWithRoles to access authorization locks using saved
+                            // pointers
                             let swig_with_roles_result = unsafe {
                                 SwigWithRoles::from_bytes(core::slice::from_raw_parts(
                                     swig_data_ptr,
@@ -671,7 +673,8 @@ pub fn sign_v2(
                             };
 
                             if let Ok(swig_with_roles) = swig_with_roles_result {
-                                // Sum ALL non-expired authorization locks for this mint (across ALL roles)
+                                // Sum ALL non-expired authorization locks for this mint (across ALL
+                                // roles)
                                 let total_locked_tokens = sum_authorization_locks_for_mint(
                                     &swig_with_roles,
                                     &mint_array,
@@ -690,7 +693,8 @@ pub fn sign_v2(
                             }
                         }
 
-                        // Check regular token limits for outgoing transfers (auth lock is additional constraint)
+                        // Check regular token limits for outgoing transfers (auth lock is
+                        // additional constraint)
                         if let Some(action) = RoleMut::get_action_mut::<TokenLimit>(actions, mint)?
                         {
                             action.run(total_token_spent)?;
@@ -746,15 +750,17 @@ pub fn sign_v2(
                 } => {
                     let account_info = unsafe { all_accounts.get_unchecked(index) };
 
-                    // Get the role with the ProgramScope action using the account key (target_account)
+                    // Get the role with the ProgramScope action using the account key
+                    // (target_account)
                     let account_key = unsafe { all_accounts.get_unchecked(index).key() };
                     let program_scope =
                         RoleMut::get_action_mut::<ProgramScope>(actions, account_key.as_ref())?;
 
                     match program_scope {
                         Some(program_scope) => {
-                            // The target_account verification is now implicit in the match_data check
-                            // that happens in get_action_mut, so we don't need to check again
+                            // The target_account verification is now implicit in the match_data
+                            // check that happens in get_action_mut, so
+                            // we don't need to check again
 
                             // Get the current balance by using the program_scope's
                             // read_account_balance method
@@ -812,8 +818,9 @@ pub fn sign_v2(
     }
 
     // Proactively cleanup expired authorization locks to reclaim space
-    // This runs after successful transaction execution, only if we have authorization locks
-    // We limit to 2 removals per transaction to avoid excessive compute usage
+    // This runs after successful transaction execution, only if we have
+    // authorization locks We limit to 2 removals per transaction to avoid
+    // excessive compute usage
     if swig.authorization_locks > 0 {
         let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
         let _ = crate::actions::remove_authorization_lock_v1::cleanup_expired_authorization_locks(
@@ -821,7 +828,8 @@ pub fn sign_v2(
             slot,
             2, // Max 2 removals per transaction
         );
-        // Ignore errors from cleanup - it's best effort and shouldn't fail the transaction
+        // Ignore errors from cleanup - it's best effort and shouldn't fail the
+        // transaction
     }
 
     Ok(())

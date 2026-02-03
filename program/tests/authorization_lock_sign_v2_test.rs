@@ -87,11 +87,16 @@ fn test_authorization_lock_with_sign_v2_exceeds_limit() {
         wallet_funding_amount
     );
 
-    // Add a second authority with ManageAuthority, ManageAuthorizationLocks, ProgramAll, SolLimit, and Program permissions
-    // This gives it the ability to spend via system program and manage its own authorization locks
-    // NOTE: With the fixed auth lock semantics, auth lock is a CONSTRAINT (minimum balance), not a spending allowance
-    // So we need SolLimit to actually allow spending, and auth lock prevents balance going below the locked amount
-    println!("Adding second authority with ManageAuthority, ManageAuthorizationLocks, ProgramAll, SolLimit, and System Program permissions");
+    // Add a second authority with ManageAuthority, ManageAuthorizationLocks,
+    // ProgramAll, SolLimit, and Program permissions This gives it the ability
+    // to spend via system program and manage its own authorization locks
+    // NOTE: With the fixed auth lock semantics, auth lock is a CONSTRAINT (minimum
+    // balance), not a spending allowance So we need SolLimit to actually allow
+    // spending, and auth lock prevents balance going below the locked amount
+    println!(
+        "Adding second authority with ManageAuthority, ManageAuthorizationLocks, ProgramAll, \
+         SolLimit, and System Program permissions"
+    );
     add_authority_with_ed25519_root(
         &mut context,
         &swig,
@@ -117,7 +122,8 @@ fn test_authorization_lock_with_sign_v2_exceeds_limit() {
 
     // Add authorization lock to the limited authority's role (role 1)
     // With fixed semantics: auth lock = minimum balance that must be maintained
-    // With 10 SOL and 1 SOL auth lock, max spendable = 9 SOL (balance must stay >= 1 SOL)
+    // With 10 SOL and 1 SOL auth lock, max spendable = 9 SOL (balance must stay >=
+    // 1 SOL)
     let sol_mint = [0u8; 32];
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
     let lock_amount = 1 * LAMPORTS_PER_SOL; // Minimum balance of 1 SOL must be maintained
@@ -150,7 +156,8 @@ fn test_authorization_lock_with_sign_v2_exceeds_limit() {
             )
             .unwrap(),
         ),
-        &[&context.default_payer, &limited_authority], // Sign with limited_authority since it's acting
+        &[&context.default_payer, &limited_authority], /* Sign with limited_authority since it's
+                                                        * acting */
     )
     .unwrap();
 
@@ -161,7 +168,8 @@ fn test_authorization_lock_with_sign_v2_exceeds_limit() {
     // With new semantics: auth lock = minimum balance to maintain
     // Initial balance: 10 SOL, Auth lock: 1 SOL -> Max spendable: 9 SOL
 
-    // Test 1: Transfer 8 SOL - should SUCCEED (balance after: ~2 SOL >= 1 SOL locked)
+    // Test 1: Transfer 8 SOL - should SUCCEED (balance after: ~2 SOL >= 1 SOL
+    // locked)
     let within_limit_amount = 8 * LAMPORTS_PER_SOL;
     println!(
         "TEST 1: Attempting to transfer {} lamports (8 SOL) - balance will stay above lock",
@@ -208,8 +216,9 @@ fn test_authorization_lock_with_sign_v2_exceeds_limit() {
     println!("TEST 1 PASSED: Transaction succeeded (balance stays above locked amount)");
     println!();
 
-    // Test 2: Try to transfer 2 SOL - should FAIL (would bring balance below 1 SOL locked)
-    // After Test 1: balance ~= 2 SOL. Trying to spend 2 SOL would leave ~0 SOL < 1 SOL locked
+    // Test 2: Try to transfer 2 SOL - should FAIL (would bring balance below 1 SOL
+    // locked) After Test 1: balance ~= 2 SOL. Trying to spend 2 SOL would leave
+    // ~0 SOL < 1 SOL locked
     let transfer_amount = 2 * LAMPORTS_PER_SOL;
     println!(
         "TEST 2: Attempting to transfer {} lamports (2 SOL) - would violate auth lock",
@@ -251,9 +260,7 @@ fn test_authorization_lock_with_sign_v2_exceeds_limit() {
         result.is_err(),
         "Transaction should fail when it would bring balance below auth lock minimum"
     );
-    println!(
-        "TEST 2 PASSED: Transaction correctly FAILED (would violate auth lock constraint)"
-    );
+    println!("TEST 2 PASSED: Transaction correctly FAILED (would violate auth lock constraint)");
     println!();
     println!("AUTHORIZATION LOCK LIMIT ENFORCEMENT TEST PASSED!");
     println!("======================================================");
@@ -369,7 +376,10 @@ fn test_authorization_lock_with_sign_v2_expired_lock() {
         "Attempting to transfer {} lamports (1 SOL) with EXPIRED lock",
         transfer_amount
     );
-    println!("Expected: Transaction should SUCCEED (expired lock doesn't block, falls back to 'All' permission)");
+    println!(
+        "Expected: Transaction should SUCCEED (expired lock doesn't block, falls back to 'All' \
+         permission)"
+    );
 
     let transfer_ix =
         system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
@@ -403,19 +413,19 @@ fn test_authorization_lock_with_sign_v2_expired_lock() {
     // The transaction should fall back to other permissions (e.g., "All")
     assert!(
         result.is_ok(),
-        "Transaction should succeed when authorization lock is expired (falls back to 'All' permission): {:?}",
+        "Transaction should succeed when authorization lock is expired (falls back to 'All' \
+         permission): {:?}",
         result.err()
     );
-    println!(
-        "Transaction correctly SUCCEEDED with expired lock (fell back to 'All' permission)"
-    );
+    println!("Transaction correctly SUCCEEDED with expired lock (fell back to 'All' permission)");
     println!("   Expired locks don't block - they simply become ineffective");
     println!();
     println!("EXPIRED AUTHORIZATION LOCK TEST COMPLETED!");
     println!("======================================================");
 }
 
-/// Helper to print swig wallet balance, sol limit, and auth locks after a withdraw.
+/// Helper to print swig wallet balance, sol limit, and auth locks after a
+/// withdraw.
 fn print_swig_details(
     context: &SwigTestContext,
     swig: &Pubkey,
@@ -441,7 +451,9 @@ fn print_swig_details(
             sol_limit.amount as f64 / LAMPORTS_PER_SOL as f64
         );
     }
-    let (auth_locks, count) = swig_with_roles.get_authorization_locks_by_role::<10>(1).unwrap();
+    let (auth_locks, count) = swig_with_roles
+        .get_authorization_locks_by_role::<10>(1)
+        .unwrap();
     for i in 0..count {
         if let Some(lock) = &auth_locks[i] {
             if lock.token_mint == *sol_mint {
@@ -570,7 +582,8 @@ fn attempt_transfer(
     context.svm.send_transaction(sign_v2_tx).is_ok()
 }
 
-/// Test: Spending that brings balance exactly to the auth lock amount should succeed
+/// Test: Spending that brings balance exactly to the auth lock amount should
+/// succeed
 #[test_log::test]
 fn test_auth_lock_spend_to_exact_boundary_succeeds() {
     println!("=== TEST: Spend to exact auth lock boundary ===");
@@ -580,9 +593,18 @@ fn test_auth_lock_spend_to_exact_boundary_succeeds() {
     let limited_authority = Keypair::new();
     let recipient = Keypair::new();
 
-    context.svm.airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&limited_authority.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&limited_authority.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL)
+        .unwrap();
 
     // Setup: 5 SOL balance, 2 SOL auth lock, 10 SOL spending limit
     // Max spendable = 5 - 2 = 3 SOL
@@ -595,7 +617,8 @@ fn test_auth_lock_spend_to_exact_boundary_succeeds() {
         2 * LAMPORTS_PER_SOL,  // auth lock
     );
 
-    // Try to spend exactly 3 SOL - should succeed (balance goes to 2 SOL = auth lock)
+    // Try to spend exactly 3 SOL - should succeed (balance goes to 2 SOL = auth
+    // lock)
     let result = attempt_transfer(
         &mut context,
         swig,
@@ -606,13 +629,22 @@ fn test_auth_lock_spend_to_exact_boundary_succeeds() {
         1,
     );
 
-    assert!(result, "Spending to exact auth lock boundary should succeed");
+    assert!(
+        result,
+        "Spending to exact auth lock boundary should succeed"
+    );
     println!("Spending to exact boundary succeeded");
 
     // Verify final balance
     let balance = context.svm.get_balance(&swig_wallet_address).unwrap();
-    println!("Final balance: {} SOL", balance as f64 / LAMPORTS_PER_SOL as f64);
-    assert!(balance >= 2 * LAMPORTS_PER_SOL, "Balance should be at least 2 SOL");
+    println!(
+        "Final balance: {} SOL",
+        balance as f64 / LAMPORTS_PER_SOL as f64
+    );
+    assert!(
+        balance >= 2 * LAMPORTS_PER_SOL,
+        "Balance should be at least 2 SOL"
+    );
 }
 
 /// Test: Spending that would bring balance below auth lock should fail
@@ -625,9 +657,18 @@ fn test_auth_lock_prevents_spending_below_minimum() {
     let limited_authority = Keypair::new();
     let recipient = Keypair::new();
 
-    context.svm.airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&limited_authority.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&limited_authority.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL)
+        .unwrap();
 
     // Setup: 5 SOL balance, 2 SOL auth lock
     let (swig, swig_wallet_address) = setup_wallet_with_auth_lock(
@@ -655,7 +696,10 @@ fn test_auth_lock_prevents_spending_below_minimum() {
 
     // Verify balance unchanged
     let balance = context.svm.get_balance(&swig_wallet_address).unwrap();
-    assert!(balance >= 5 * LAMPORTS_PER_SOL, "Balance should be unchanged");
+    assert!(
+        balance >= 5 * LAMPORTS_PER_SOL,
+        "Balance should be unchanged"
+    );
 }
 
 /// Test: Sequential withdrawals that approach then violate auth lock
@@ -668,9 +712,18 @@ fn test_auth_lock_sequential_withdrawals() {
     let limited_authority = Keypair::new();
     let recipient = Keypair::new();
 
-    context.svm.airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&limited_authority.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&limited_authority.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL)
+        .unwrap();
 
     // Setup: 5 SOL balance, 2 SOL auth lock, 10 SOL sol limit
     let (swig, swig_wallet_address) = setup_wallet_with_auth_lock(
@@ -720,7 +773,10 @@ fn test_auth_lock_sequential_withdrawals() {
         LAMPORTS_PER_SOL / 2,
         1,
     );
-    assert!(!result3, "Third withdrawal should fail (would violate auth lock)");
+    assert!(
+        !result3,
+        "Third withdrawal should fail (would violate auth lock)"
+    );
     println!("Withdraw 0.5 SOL: correctly rejected");
 }
 
@@ -734,9 +790,18 @@ fn test_auth_lock_sol_limit_is_limiting_factor() {
     let limited_authority = Keypair::new();
     let recipient = Keypair::new();
 
-    context.svm.airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&limited_authority.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&limited_authority.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL)
+        .unwrap();
 
     // Setup: 10 SOL balance, 1 SOL auth lock, 2 SOL sol limit
     // Max spendable by sol_limit = 2 SOL
@@ -792,9 +857,18 @@ fn test_auth_lock_at_balance_boundary() {
     let limited_authority = Keypair::new();
     let recipient = Keypair::new();
 
-    context.svm.airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&limited_authority.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&limited_authority.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL)
+        .unwrap();
 
     // Setup: 2 SOL balance, 2 SOL auth lock
     // Balance exactly equals lock - cannot spend anything
@@ -820,7 +894,10 @@ fn test_auth_lock_at_balance_boundary() {
         1,
     );
 
-    assert!(!result, "Should not be able to spend anything when balance equals auth lock");
+    assert!(
+        !result,
+        "Should not be able to spend anything when balance equals auth lock"
+    );
     println!("Correctly prevented any spending when balance equals auth lock");
 }
 
@@ -829,8 +906,8 @@ fn test_auth_lock_at_balance_boundary() {
 // =============================================================================
 
 /// Test: Two authorities each have auth locks, total must be summed
-/// User requirement: "If two authorities each have 1 SOL and 2 SOL in auth lock,
-/// then the SOL balance cannot go below 3"
+/// User requirement: "If two authorities each have 1 SOL and 2 SOL in auth
+/// lock, then the SOL balance cannot go below 3"
 #[test_log::test]
 fn test_auth_lock_multiple_roles_summed() {
     println!("=== TEST: Multiple roles with auth locks - amounts must be summed ===");
@@ -841,10 +918,22 @@ fn test_auth_lock_multiple_roles_summed() {
     let authority_2 = Keypair::new();
     let recipient = Keypair::new();
 
-    context.svm.airdrop(&swig_authority.pubkey(), 30 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&authority_1.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&authority_2.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 30 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&authority_1.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&authority_2.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL)
+        .unwrap();
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
@@ -854,7 +943,10 @@ fn test_auth_lock_multiple_roles_summed() {
     create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
 
     // Fund wallet with 5 SOL
-    context.svm.airdrop(&swig_wallet_address, 5 * LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 5 * LAMPORTS_PER_SOL)
+        .unwrap();
     println!("Wallet funded with 5 SOL");
 
     // Add authority 1 (role_id = 1) with SolLimit and ManageAuthorizationLocks
@@ -868,7 +960,9 @@ fn test_auth_lock_multiple_roles_summed() {
         },
         vec![
             ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
-            ClientAction::SolLimit(SolLimit { amount: 10 * LAMPORTS_PER_SOL }),
+            ClientAction::SolLimit(SolLimit {
+                amount: 10 * LAMPORTS_PER_SOL,
+            }),
             ClientAction::Program(Program {
                 program_id: solana_sdk::system_program::ID.to_bytes(),
             }),
@@ -888,7 +982,9 @@ fn test_auth_lock_multiple_roles_summed() {
         },
         vec![
             ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
-            ClientAction::SolLimit(SolLimit { amount: 10 * LAMPORTS_PER_SOL }),
+            ClientAction::SolLimit(SolLimit {
+                amount: 10 * LAMPORTS_PER_SOL,
+            }),
             ClientAction::Program(Program {
                 program_id: solana_sdk::system_program::ID.to_bytes(),
             }),
@@ -983,7 +1079,10 @@ fn test_auth_lock_multiple_roles_summed() {
         3 * LAMPORTS_PER_SOL,
         1,
     );
-    assert!(!result1, "Should fail: 5 SOL - 3 SOL = 2 SOL < 3 SOL locked");
+    assert!(
+        !result1,
+        "Should fail: 5 SOL - 3 SOL = 2 SOL < 3 SOL locked"
+    );
     println!("Correctly rejected (balance would be 2 SOL < 3 SOL total locked)");
 
     // Test 2: Authority 1 tries to spend 2 SOL - should SUCCEED
@@ -998,7 +1097,10 @@ fn test_auth_lock_multiple_roles_summed() {
         2 * LAMPORTS_PER_SOL,
         1,
     );
-    assert!(result2, "Should succeed: 5 SOL - 2 SOL = 3 SOL >= 3 SOL locked");
+    assert!(
+        result2,
+        "Should succeed: 5 SOL - 2 SOL = 3 SOL >= 3 SOL locked"
+    );
     println!("Succeeded (balance 3 SOL = 3 SOL total locked)");
 
     // Test 3: Now authority 2 tries to spend anything - should FAIL
@@ -1030,9 +1132,18 @@ fn test_auth_lock_applies_with_all_permission() {
     let all_authority = Keypair::new();
     let recipient = Keypair::new();
 
-    context.svm.airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&all_authority.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&all_authority.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL)
+        .unwrap();
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
@@ -1040,7 +1151,10 @@ fn test_auth_lock_applies_with_all_permission() {
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
-    context.svm.airdrop(&swig_wallet_address, 5 * LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 5 * LAMPORTS_PER_SOL)
+        .unwrap();
 
     // Add authority with All permission AND ManageAuthorizationLocks
     use swig_state::action::all::All;
@@ -1108,8 +1222,9 @@ fn test_auth_lock_applies_with_all_permission() {
         1,
     );
 
-    // With current implementation, All permission bypasses all checks including auth lock
-    // This may be intentional or a design decision - documenting actual behavior
+    // With current implementation, All permission bypasses all checks including
+    // auth lock This may be intentional or a design decision - documenting
+    // actual behavior
     if result {
         println!("⚠️  All permission BYPASSES auth lock constraint");
         println!("   This may be intentional - All permission = unrestricted access");
@@ -1128,9 +1243,18 @@ fn test_auth_lock_multiple_locks_same_role_same_mint() {
     let limited_authority = Keypair::new();
     let recipient = Keypair::new();
 
-    context.svm.airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&limited_authority.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&limited_authority.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL)
+        .unwrap();
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
@@ -1138,7 +1262,10 @@ fn test_auth_lock_multiple_locks_same_role_same_mint() {
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
-    context.svm.airdrop(&swig_wallet_address, 10 * LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10 * LAMPORTS_PER_SOL)
+        .unwrap();
 
     add_authority_with_ed25519_root(
         &mut context,
@@ -1150,7 +1277,9 @@ fn test_auth_lock_multiple_locks_same_role_same_mint() {
         },
         vec![
             ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
-            ClientAction::SolLimit(SolLimit { amount: 20 * LAMPORTS_PER_SOL }),
+            ClientAction::SolLimit(SolLimit {
+                amount: 20 * LAMPORTS_PER_SOL,
+            }),
             ClientAction::Program(Program {
                 program_id: solana_sdk::system_program::ID.to_bytes(),
             }),
@@ -1273,10 +1402,22 @@ fn test_auth_lock_partial_expiry() {
     let authority_2 = Keypair::new();
     let recipient = Keypair::new();
 
-    context.svm.airdrop(&swig_authority.pubkey(), 30 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&authority_1.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&authority_2.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 30 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&authority_1.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&authority_2.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL)
+        .unwrap();
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
@@ -1284,7 +1425,10 @@ fn test_auth_lock_partial_expiry() {
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
-    context.svm.airdrop(&swig_wallet_address, 5 * LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 5 * LAMPORTS_PER_SOL)
+        .unwrap();
 
     // Add both authorities
     add_authority_with_ed25519_root(
@@ -1297,7 +1441,9 @@ fn test_auth_lock_partial_expiry() {
         },
         vec![
             ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
-            ClientAction::SolLimit(SolLimit { amount: 10 * LAMPORTS_PER_SOL }),
+            ClientAction::SolLimit(SolLimit {
+                amount: 10 * LAMPORTS_PER_SOL,
+            }),
             ClientAction::Program(Program {
                 program_id: solana_sdk::system_program::ID.to_bytes(),
             }),
@@ -1315,7 +1461,9 @@ fn test_auth_lock_partial_expiry() {
         },
         vec![
             ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
-            ClientAction::SolLimit(SolLimit { amount: 10 * LAMPORTS_PER_SOL }),
+            ClientAction::SolLimit(SolLimit {
+                amount: 10 * LAMPORTS_PER_SOL,
+            }),
             ClientAction::Program(Program {
                 program_id: solana_sdk::system_program::ID.to_bytes(),
             }),
@@ -1406,7 +1554,10 @@ fn test_auth_lock_partial_expiry() {
 
     // Warp time forward past lock 1's expiry
     println!();
-    println!("PHASE 2: Warping past lock 1 expiry (slot {})...", current_slot + 10);
+    println!(
+        "PHASE 2: Warping past lock 1 expiry (slot {})...",
+        current_slot + 10
+    );
     context.svm.warp_to_slot(current_slot + 50);
     context.svm.expire_blockhash();
 
@@ -1439,9 +1590,18 @@ fn test_auth_lock_with_recurring_limit() {
     let limited_authority = Keypair::new();
     let recipient = Keypair::new();
 
-    context.svm.airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&limited_authority.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&limited_authority.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL)
+        .unwrap();
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
@@ -1449,7 +1609,10 @@ fn test_auth_lock_with_recurring_limit() {
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
-    context.svm.airdrop(&swig_wallet_address, 10 * LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10 * LAMPORTS_PER_SOL)
+        .unwrap();
 
     // Add authority with SolRecurringLimit (resets every 100 slots)
     use swig_state::action::sol_recurring_limit::SolRecurringLimit;
@@ -1525,7 +1688,10 @@ fn test_auth_lock_with_recurring_limit() {
         5 * LAMPORTS_PER_SOL,
         1,
     );
-    assert!(result1, "Should succeed: 5 SOL within recurring limit, leaves 5 SOL > 3 SOL lock");
+    assert!(
+        result1,
+        "Should succeed: 5 SOL within recurring limit, leaves 5 SOL > 3 SOL lock"
+    );
     println!("Succeeded");
 
     // Balance now: 5 SOL, Lock: 3 SOL
@@ -1553,7 +1719,8 @@ fn test_auth_lock_with_recurring_limit() {
     context.svm.warp_to_slot(current_slot + 150);
     context.svm.expire_blockhash();
 
-    // Test 3: After reset, try to spend 3 SOL - should FAIL (auth lock still applies)
+    // Test 3: After reset, try to spend 3 SOL - should FAIL (auth lock still
+    // applies)
     println!("TEST 3: After limit reset, spend 3 SOL (auth lock still applies)");
     let result3 = attempt_transfer(
         &mut context,
@@ -1581,9 +1748,18 @@ fn test_auth_lock_different_mints_independent() {
     let limited_authority = Keypair::new();
     let recipient = Keypair::new();
 
-    context.svm.airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&limited_authority.pubkey(), 10 * LAMPORTS_PER_SOL).unwrap();
-    context.svm.airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 20 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&limited_authority.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), LAMPORTS_PER_SOL)
+        .unwrap();
 
     let id = rand::random::<[u8; 32]>();
     let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
@@ -1591,7 +1767,10 @@ fn test_auth_lock_different_mints_independent() {
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
     create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
-    context.svm.airdrop(&swig_wallet_address, 5 * LAMPORTS_PER_SOL).unwrap();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 5 * LAMPORTS_PER_SOL)
+        .unwrap();
 
     add_authority_with_ed25519_root(
         &mut context,
@@ -1603,7 +1782,9 @@ fn test_auth_lock_different_mints_independent() {
         },
         vec![
             ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks {}),
-            ClientAction::SolLimit(SolLimit { amount: 10 * LAMPORTS_PER_SOL }),
+            ClientAction::SolLimit(SolLimit {
+                amount: 10 * LAMPORTS_PER_SOL,
+            }),
             ClientAction::Program(Program {
                 program_id: solana_sdk::system_program::ID.to_bytes(),
             }),
@@ -1622,7 +1803,7 @@ fn test_auth_lock_different_mints_independent() {
         limited_authority.pubkey(),
         context.default_payer.pubkey(),
         1,
-        fake_token_mint, // Different mint!
+        fake_token_mint,        // Different mint!
         100 * LAMPORTS_PER_SOL, // Large lock amount
         expiry_slot,
         swig_wallet_address,
@@ -1659,7 +1840,10 @@ fn test_auth_lock_different_mints_independent() {
         4 * LAMPORTS_PER_SOL,
         1,
     );
-    assert!(result, "Should succeed: no SOL lock exists, token lock doesn't affect SOL");
+    assert!(
+        result,
+        "Should succeed: no SOL lock exists, token lock doesn't affect SOL"
+    );
     println!("SOL transfer succeeded (token lock doesn't affect SOL)");
 
     println!();

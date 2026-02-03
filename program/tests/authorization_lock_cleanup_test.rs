@@ -20,8 +20,8 @@ use swig_state::{
     Transmutable,
 };
 
-/// Test that expired authorization locks can be cleaned up by authorities with All permission
-/// after the cleanup threshold period has passed
+/// Test that expired authorization locks can be cleaned up by authorities with
+/// All permission after the cleanup threshold period has passed
 #[test_log::test]
 fn test_expired_authorization_lock_cleanup_by_all_permission() {
     let mut context = setup_test_context().unwrap();
@@ -387,7 +387,8 @@ fn test_expired_authorization_lock_cleanup_requires_cleanup_permission() {
     println!("======================================================");
 }
 
-/// Test that expired authorization locks can be cleaned up by authorities with ManageAuthority permission
+/// Test that expired authorization locks can be cleaned up by authorities with
+/// ManageAuthority permission
 #[test_log::test]
 fn test_expired_authorization_lock_cleanup_by_manage_authority() {
     let mut context = setup_test_context().unwrap();
@@ -436,9 +437,9 @@ fn test_expired_authorization_lock_cleanup_by_manage_authority() {
     )
     .unwrap();
 
-    // Add cleanup authority with ManageAuthority + ManageAuthorizationLocks permissions
-    // It needs ManageAuthorizationLocks to call the remove instruction, and ManageAuthority
-    // to cleanup locks created by other roles
+    // Add cleanup authority with ManageAuthority + ManageAuthorizationLocks
+    // permissions It needs ManageAuthorizationLocks to call the remove
+    // instruction, and ManageAuthority to cleanup locks created by other roles
     use swig_state::action::manage_authority::ManageAuthority;
     add_authority_with_ed25519_root(
         &mut context,
@@ -454,7 +455,10 @@ fn test_expired_authorization_lock_cleanup_by_manage_authority() {
         ],
     )
     .unwrap();
-    println!("✅ Authorities created: role 1 (lock creator), role 2 (has ManageAuthority + ManageAuthorizationLocks)");
+    println!(
+        "✅ Authorities created: role 1 (lock creator), role 2 (has ManageAuthority + \
+         ManageAuthorizationLocks)"
+    );
 
     // Add lock
     let sol_mint = [0u8; 32];

@@ -28,9 +28,9 @@ use crate::{
     },
 };
 
-/// Number of slots after expiry before an authorization lock can be removed by any
-/// authority with All or ManageAuthority permissions (not just the creator).
-/// Set to 5 Solana epochs (~2,160,000 slots = ~10 days at 400ms/slot)
+/// Number of slots after expiry before an authorization lock can be removed by
+/// any authority with All or ManageAuthority permissions (not just the
+/// creator). Set to 5 Solana epochs (~2,160,000 slots = ~10 days at 400ms/slot)
 pub const EXPIRED_LOCK_CLEANUP_THRESHOLD_SLOTS: u64 = 5 * 432_000;
 
 /// Arguments for removing an authorization lock from a Swig wallet.
@@ -235,7 +235,8 @@ pub fn remove_authorization_lock_v1(
         if !is_lock_creator && !(is_expired_beyond_threshold && can_cleanup) {
             msg!(
                 "Permission denied: Role {} cannot remove authorization lock created by role {} \
-                 (lock not expired beyond cleanup threshold or missing All/ManageAuthority permission)",
+                 (lock not expired beyond cleanup threshold or missing All/ManageAuthority \
+                 permission)",
                 remove_lock.args.acting_role_id,
                 lock.role_id
             );
@@ -291,13 +292,15 @@ pub fn remove_authorization_lock_v1(
     Ok(())
 }
 
-/// Proactively removes expired authorization locks that are beyond the cleanup threshold.
-/// This function can be called during SignV2 execution to reclaim space.
+/// Proactively removes expired authorization locks that are beyond the cleanup
+/// threshold. This function can be called during SignV2 execution to reclaim
+/// space.
 ///
 /// # Arguments
 /// * `swig_account_data` - Mutable reference to the swig account data
 /// * `current_slot` - Current slot number
-/// * `max_removals` - Maximum number of expired locks to remove in one call (to limit compute)
+/// * `max_removals` - Maximum number of expired locks to remove in one call (to
+///   limit compute)
 ///
 /// # Returns
 /// * `Result<usize, ProgramError>` - Number of locks removed, or error
@@ -373,7 +376,8 @@ pub(crate) fn cleanup_expired_authorization_locks(
             removals += 1;
 
             msg!(
-                "Proactively cleaned up expired authorization lock: role_id={}, expired at slot {}, current slot {}",
+                "Proactively cleaned up expired authorization lock: role_id={}, expired at slot \
+                 {}, current slot {}",
                 lock.role_id,
                 lock.expiry_slot,
                 current_slot

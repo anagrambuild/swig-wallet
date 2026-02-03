@@ -16,8 +16,7 @@ use swig_interface::{
 };
 use swig_state::{
     action::{manage_authorization_locks::ManageAuthorizationLocks, token_limit::TokenLimit},
-    swig::swig_wallet_address_seeds,
-    swig::SwigWithRoles,
+    swig::{swig_wallet_address_seeds, SwigWithRoles},
     IntoBytes, Transmutable,
 };
 
