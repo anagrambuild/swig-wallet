@@ -33,6 +33,37 @@ use swig_state::{
 
 use crate::error::SwigError;
 
+/// Sums all non-expired authorization lock amounts for a specific mint
+/// across ALL roles in the swig account.
+///
+/// This function is used during sign_v2 validation to ensure the wallet
+/// balance never drops below the total locked amount for any token/SOL.
+///
+/// # Arguments
+/// * `swig_with_roles` - The SwigWithRoles struct to iterate locks from
+/// * `mint` - The mint to sum locks for ([0u8; 32] for native SOL)
+/// * `current_slot` - Current slot to check expiry
+///
+/// # Returns
+/// * `Result<u64, ProgramError>` - Total locked amount for the mint
+pub fn sum_authorization_locks_for_mint(
+    swig_with_roles: &SwigWithRoles,
+    mint: &[u8; 32],
+    current_slot: u64,
+) -> Result<u64, ProgramError> {
+    let mut total_locked: u64 = 0;
+
+    swig_with_roles.for_each_authorization_lock_by_mint::<_, ProgramError>(mint, |lock| {
+        // Only include non-expired locks
+        if lock.expiry_slot > current_slot {
+            total_locked = total_locked.saturating_add(lock.amount);
+        }
+        Ok(())
+    })?;
+
+    Ok(total_locked)
+}
+
 /// Cache for program scope information to optimize lookups.
 ///
 /// This struct maintains a mapping of target account public keys to their
