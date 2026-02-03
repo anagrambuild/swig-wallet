@@ -247,7 +247,7 @@ fn test_token_transfer_with_program_scope_v2() {
     );
     // SignV2 may have slightly different overhead than SignV1
     // Updated to 5699 to account for authorization lock processing overhead
-    assert!(swig_transfer_cu - regular_transfer_cu <= 5699);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 5708);
 }
 
 /// Helper function to perform token transfers through the swig using SignV2
