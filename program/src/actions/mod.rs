@@ -6,11 +6,13 @@
 //! instruction's business logic.
 
 pub mod add_authority_v1;
+pub mod add_authorization_lock_v1;
 pub mod create_session_v1;
 pub mod create_sub_account_v1;
 pub mod create_v1;
 pub mod migrate_to_wallet_address_v1;
 pub mod remove_authority_v1;
+pub mod remove_authorization_lock_v1;
 pub mod sign_v2;
 pub mod sub_account_sign_v1;
 pub mod toggle_sub_account_v1;
@@ -22,18 +24,20 @@ use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
 
 use self::{
-    add_authority_v1::*, create_session_v1::*, create_sub_account_v1::*, create_v1::*,
-    migrate_to_wallet_address_v1::*, remove_authority_v1::*, sign_v2::*, sub_account_sign_v1::*,
+    add_authority_v1::*, add_authorization_lock_v1::*, create_session_v1::*,
+    create_sub_account_v1::*, create_v1::*, migrate_to_wallet_address_v1::*,
+    remove_authority_v1::*, remove_authorization_lock_v1::*, sign_v2::*, sub_account_sign_v1::*,
     toggle_sub_account_v1::*, transfer_assets_v1::*, update_authority_v1::*,
     withdraw_from_sub_account_v1::*,
 };
 use crate::{
     instruction::{
         accounts::{
-            AddAuthorityV1Accounts, CreateSessionV1Accounts, CreateSubAccountV1Accounts,
-            CreateV1Accounts, MigrateToWalletAddressV1Accounts, RemoveAuthorityV1Accounts,
-            SignV2Accounts, SubAccountSignV1Accounts, ToggleSubAccountV1Accounts,
-            TransferAssetsV1Accounts, UpdateAuthorityV1Accounts, WithdrawFromSubAccountV1Accounts,
+            AddAuthorityV1Accounts, AddAuthorizationLockV1Accounts, CreateSessionV1Accounts,
+            CreateSubAccountV1Accounts, CreateV1Accounts, MigrateToWalletAddressV1Accounts,
+            RemoveAuthorityV1Accounts, RemoveAuthorizationLockV1Accounts, SignV2Accounts,
+            SubAccountSignV1Accounts, ToggleSubAccountV1Accounts, TransferAssetsV1Accounts,
+            UpdateAuthorityV1Accounts, WithdrawFromSubAccountV1Accounts,
         },
         SwigInstruction,
     },
@@ -67,7 +71,10 @@ pub fn process_action(
     match ix {
         SwigInstruction::CreateV1 => process_create_v1(accounts, data),
         SwigInstruction::DeprecatedSignV1 => {
-            msg!("DEPRECATED. Use SignV2 instead. https://build.onswig.com/examples/v2_features for more details");
+            msg!(
+                "DEPRECATED. Use SignV2 instead. https://build.onswig.com/examples/v2_features \
+                 for more details"
+            );
             Err(ProgramError::InvalidInstructionData)
         },
         SwigInstruction::SignV2 => process_sign_v2(accounts, account_classification, data),
@@ -88,6 +95,12 @@ pub fn process_action(
         },
         SwigInstruction::TransferAssetsV1 => {
             process_transfer_assets_v1(accounts, account_classification, data)
+        },
+        SwigInstruction::AddAuthorizationLockV1 => {
+            process_add_authorization_lock_v1(accounts, data)
+        },
+        SwigInstruction::RemoveAuthorizationLockV1 => {
+            process_remove_authorization_lock_v1(accounts, data)
         },
     }
 }
@@ -202,4 +215,20 @@ fn process_transfer_assets_v1(
 ) -> ProgramResult {
     let account_ctx = TransferAssetsV1Accounts::context(accounts)?;
     transfer_assets_v1(account_ctx, accounts, data, account_classification)
+}
+
+/// Processes an AddAuthorizationLockV1 instruction.
+///
+/// Adds an authorization lock to the wallet.
+fn process_add_authorization_lock_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = AddAuthorizationLockV1Accounts::context(accounts)?;
+    add_authorization_lock_v1(account_ctx, data, accounts)
+}
+
+/// Processes a RemoveAuthorizationLockV1 instruction.
+///
+/// Removes an authorization lock from the wallet.
+fn process_remove_authorization_lock_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = RemoveAuthorizationLockV1Accounts::context(accounts)?;
+    remove_authorization_lock_v1(account_ctx, data, accounts)
 }

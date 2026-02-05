@@ -9,10 +9,12 @@ use solana_secp256r1_program::new_secp256r1_instruction_with_signature;
 pub use swig;
 use swig::actions::{
     add_authority_v1::AddAuthorityV1Args,
+    add_authorization_lock_v1::AddAuthorizationLockV1Args,
     create_session_v1::CreateSessionV1Args,
     create_sub_account_v1::CreateSubAccountV1Args,
     create_v1::CreateV1Args,
     remove_authority_v1::RemoveAuthorityV1Args,
+    remove_authorization_lock_v1::RemoveAuthorizationLockV1Args,
     sub_account_sign_v1::SubAccountSignV1Args,
     toggle_sub_account_v1::ToggleSubAccountV1Args,
     transfer_assets_v1::TransferAssetsV1Args,
@@ -23,10 +25,10 @@ pub use swig_compact_instructions::*;
 use swig_state::{
     action::{
         all::All, all_but_manage_authority::AllButManageAuthority,
-        manage_authority::ManageAuthority, program::Program, program_all::ProgramAll,
-        program_curated::ProgramCurated, program_scope::ProgramScope,
-        sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
-        sol_recurring_destination_limit::SolRecurringDestinationLimit,
+        manage_authority::ManageAuthority, manage_authorization_locks::ManageAuthorizationLocks,
+        program::Program, program_all::ProgramAll, program_curated::ProgramCurated,
+        program_scope::ProgramScope, sol_destination_limit::SolDestinationLimit,
+        sol_limit::SolLimit, sol_recurring_destination_limit::SolRecurringDestinationLimit,
         sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll, stake_limit::StakeLimit,
         stake_recurring_limit::StakeRecurringLimit, sub_account::SubAccount,
         token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
@@ -57,6 +59,7 @@ pub enum ClientAction {
     All(All),
     AllButManageAuthority(AllButManageAuthority),
     ManageAuthority(ManageAuthority),
+    ManageAuthorizationLocks(ManageAuthorizationLocks),
     SubAccount(SubAccount),
     StakeLimit(StakeLimit),
     StakeRecurringLimit(StakeRecurringLimit),
@@ -99,6 +102,10 @@ impl ClientAction {
                 AllButManageAuthority::LEN,
             ),
             ClientAction::ManageAuthority(_) => (Permission::ManageAuthority, ManageAuthority::LEN),
+            ClientAction::ManageAuthorizationLocks(_) => (
+                Permission::ManageAuthorizationLocks,
+                ManageAuthorizationLocks::LEN,
+            ),
             ClientAction::SubAccount(_) => (Permission::SubAccount, SubAccount::LEN),
             ClientAction::StakeLimit(_) => (Permission::StakeLimit, StakeLimit::LEN),
             ClientAction::StakeRecurringLimit(_) => {
@@ -132,6 +139,7 @@ impl ClientAction {
             ClientAction::All(action) => action.into_bytes(),
             ClientAction::AllButManageAuthority(action) => action.into_bytes(),
             ClientAction::ManageAuthority(action) => action.into_bytes(),
+            ClientAction::ManageAuthorizationLocks(action) => action.into_bytes(),
             ClientAction::SubAccount(action) => action.into_bytes(),
             ClientAction::StakeLimit(action) => action.into_bytes(),
             ClientAction::StakeRecurringLimit(action) => action.into_bytes(),
@@ -2822,5 +2830,69 @@ impl TransferAssetsV1Instruction {
 
         // Return both instructions - preceding instruction must come first
         Ok(vec![preceding_instruction, main_ix])
+    }
+}
+
+pub struct AddAuthorizationLockInstruction;
+
+impl AddAuthorizationLockInstruction {
+    pub fn new(
+        swig_account: Pubkey,
+        authority: Pubkey,
+        payer: Pubkey,
+        acting_role_id: u32,
+        token_mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+        balance_account: Pubkey,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new_readonly(balance_account, false),
+        ];
+
+        let args = AddAuthorizationLockV1Args::new(acting_role_id, token_mint, amount, expiry_slot);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &[3]].concat(),
+        })
+    }
+}
+
+pub struct RemoveAuthorizationLockInstruction;
+
+impl RemoveAuthorizationLockInstruction {
+    pub fn new(
+        swig_account: Pubkey,
+        authority: Pubkey,
+        payer: Pubkey,
+        acting_role_id: u32,
+        lock_index: u32,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(authority, true),
+        ];
+
+        let args = RemoveAuthorizationLockV1Args::new(acting_role_id, lock_index);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &[3]].concat(),
+        })
     }
 }

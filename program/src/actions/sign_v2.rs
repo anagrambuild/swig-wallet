@@ -37,7 +37,7 @@ use swig_state::{
         Action, Permission,
     },
     role::RoleMut,
-    swig::{swig_account_signer, swig_wallet_address_signer, Swig},
+    swig::{swig_account_signer, swig_wallet_address_signer, Swig, SwigWithRoles},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -47,7 +47,7 @@ use crate::{
         accounts::{Context, SignV2Accounts},
         SwigInstruction,
     },
-    util::hash_except,
+    util::{hash_except, sum_authorization_locks_for_mint},
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
 };
 // use swig_instructions::InstructionIterator;
@@ -197,6 +197,11 @@ pub fn sign_v2(
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
+
+    // Store swig account data information for later authorization lock checks
+    let swig_data_ptr = swig_account_data.as_ptr();
+    let swig_data_len = swig_account_data.len();
+
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
     let role = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)?;
@@ -459,9 +464,37 @@ pub fn sign_v2(
                     }
 
                     if total_sol_spent > 0 {
-                        // First check general SOL limits
+                        // Check authorization locks for SOL (mint = all zeros for native SOL)
+                        // Authorization locks are a CONSTRAINT: balance must stay >= total locked
+                        let sol_mint = [0u8; 32];
                         let mut general_limit_applied = false;
 
+                        // Create a SwigWithRoles to access authorization locks
+                        let swig_with_roles_result = unsafe {
+                            SwigWithRoles::from_bytes(core::slice::from_raw_parts(
+                                swig_data_ptr,
+                                swig_data_len,
+                            ))
+                        };
+
+                        if let Ok(swig_with_roles) = swig_with_roles_result {
+                            // Sum ALL non-expired authorization locks for SOL (across ALL roles)
+                            let total_locked_sol = sum_authorization_locks_for_mint(
+                                &swig_with_roles,
+                                &sol_mint,
+                                slot,
+                            )?;
+
+                            // Auth lock constraint: balance must stay >= locked amount
+                            if total_locked_sol > 0 && swig_wallet_balance < total_locked_sol {
+                                return Err(
+                                    SwigAuthenticateError::PermissionDeniedInsufficientBalance
+                                        .into(),
+                                );
+                            }
+                        }
+
+                        // Check general SOL limits (auth lock is additional constraint, not bypass)
                         if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])? {
                             action.run(total_sol_spent)?;
                             general_limit_applied = true;
@@ -520,7 +553,8 @@ pub fn sign_v2(
                             }
                         }
 
-                        // If we have general limits OR destination limits exist, continue
+                        // Must have some permission to spend SOL (general limits or destination
+                        // limits)
                         if general_limit_applied || has_sol_destination_limits(actions)? {
                             continue;
                         }
@@ -623,7 +657,44 @@ pub fn sign_v2(
                             continue 'account_loop;
                         }
 
-                        // Check regular token limits for outgoing transfers
+                        // Check authorization locks - auth lock is a CONSTRAINT, not a bypass
+                        // Balance must stay >= total locked amount across ALL roles
+                        if mint.len() == 32 {
+                            let mut mint_array = [0u8; 32];
+                            mint_array.copy_from_slice(mint);
+
+                            // Create a SwigWithRoles to access authorization locks using saved
+                            // pointers
+                            let swig_with_roles_result = unsafe {
+                                SwigWithRoles::from_bytes(core::slice::from_raw_parts(
+                                    swig_data_ptr,
+                                    swig_data_len,
+                                ))
+                            };
+
+                            if let Ok(swig_with_roles) = swig_with_roles_result {
+                                // Sum ALL non-expired authorization locks for this mint (across ALL
+                                // roles)
+                                let total_locked_tokens = sum_authorization_locks_for_mint(
+                                    &swig_with_roles,
+                                    &mint_array,
+                                    slot,
+                                )?;
+
+                                // Auth lock constraint: balance must stay >= locked amount
+                                if total_locked_tokens > 0
+                                    && current_token_balance < total_locked_tokens
+                                {
+                                    return Err(
+                                        SwigAuthenticateError::PermissionDeniedInsufficientBalance
+                                            .into(),
+                                    );
+                                }
+                            }
+                        }
+
+                        // Check regular token limits for outgoing transfers (auth lock is
+                        // additional constraint)
                         if let Some(action) = RoleMut::get_action_mut::<TokenLimit>(actions, mint)?
                         {
                             action.run(total_token_spent)?;
@@ -679,15 +750,17 @@ pub fn sign_v2(
                 } => {
                     let account_info = unsafe { all_accounts.get_unchecked(index) };
 
-                    // Get the role with the ProgramScope action using the account key (target_account)
+                    // Get the role with the ProgramScope action using the account key
+                    // (target_account)
                     let account_key = unsafe { all_accounts.get_unchecked(index).key() };
                     let program_scope =
                         RoleMut::get_action_mut::<ProgramScope>(actions, account_key.as_ref())?;
 
                     match program_scope {
                         Some(program_scope) => {
-                            // The target_account verification is now implicit in the match_data check
-                            // that happens in get_action_mut, so we don't need to check again
+                            // The target_account verification is now implicit in the match_data
+                            // check that happens in get_action_mut, so
+                            // we don't need to check again
 
                             // Get the current balance by using the program_scope's
                             // read_account_balance method
@@ -742,6 +815,21 @@ pub fn sign_v2(
                 _ => {},
             }
         }
+    }
+
+    // Proactively cleanup expired authorization locks to reclaim space
+    // This runs after successful transaction execution, only if we have
+    // authorization locks We limit to 2 removals per transaction to avoid
+    // excessive compute usage
+    if swig.authorization_locks > 0 {
+        let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        let _ = crate::actions::remove_authorization_lock_v1::cleanup_expired_authorization_locks(
+            swig_account_data,
+            slot,
+            2, // Max 2 removals per transaction
+        );
+        // Ignore errors from cleanup - it's best effort and shouldn't fail the
+        // transaction
     }
 
     Ok(())

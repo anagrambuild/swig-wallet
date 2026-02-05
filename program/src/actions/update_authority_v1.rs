@@ -635,8 +635,39 @@ pub fn update_authority_v1(
         (current_size, auth_offset, act_offset)
     };
 
-    // Calculate size difference first
+    // Check if the role has active authorization locks
+    // If so, prevent removing ManageAuthorizationLocks permission via update
     let operation = update_authority_v1.get_operation()?;
+    if matches!(
+        operation,
+        AuthorityUpdateOperation::ReplaceAll | AuthorityUpdateOperation::RemoveActionsByType
+    ) {
+        let clock = Clock::get()?;
+        let current_slot = clock.slot;
+        let swig_with_roles = swig_state::swig::SwigWithRoles::from_bytes(&swig_account_data)?;
+
+        let mut has_active_locks = false;
+        let _ = swig_with_roles.for_each_authorization_lock::<_, ProgramError>(|lock| {
+            if lock.role_id == update_authority_v1.args.authority_to_update_id {
+                if lock.expiry_slot > current_slot {
+                    has_active_locks = true;
+                }
+            }
+            Ok(())
+        });
+
+        if has_active_locks {
+            // Role has active locks - prevent operations that could remove
+            // ManageAuthorizationLocks
+            msg!(
+                "Cannot modify permissions for role {}: role has active authorization locks. \
+                 Remove locks first.",
+                update_authority_v1.args.authority_to_update_id
+            );
+            return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+        }
+    }
+
     let size_diff = match operation {
         AuthorityUpdateOperation::ReplaceAll => {
             let new_actions = update_authority_v1.get_actions_data()?;

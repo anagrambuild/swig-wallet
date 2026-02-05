@@ -1129,7 +1129,8 @@ fn test_secp256k1_compressed_key_full_signing_flow_v2() {
     // Generate a random Ethereum wallet
     let wallet = LocalSigner::random();
 
-    // Create a new swig with a compressed secp256k1 authority (use_compressed = true)
+    // Create a new swig with a compressed secp256k1 authority (use_compressed =
+    // true)
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) =
         create_swig_secp256k1_with_key_type(&mut context, &wallet, id, true).unwrap();

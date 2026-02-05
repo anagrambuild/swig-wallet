@@ -8,6 +8,7 @@
 pub mod all;
 pub mod all_but_manage_authority;
 pub mod manage_authority;
+pub mod manage_authorization_locks;
 pub mod program;
 pub mod program_all;
 pub mod program_curated;
@@ -27,6 +28,7 @@ pub mod token_recurring_limit;
 use all::All;
 use all_but_manage_authority::AllButManageAuthority;
 use manage_authority::ManageAuthority;
+use manage_authorization_locks::ManageAuthorizationLocks;
 use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 use program::Program;
@@ -163,6 +165,8 @@ pub enum Permission {
     /// Permission to perform recurring token operations with limits to specific
     /// destinations
     TokenRecurringDestinationLimit = 19,
+    /// Permission to manage authorization locks
+    ManageAuthorizationLocks = 20,
 }
 
 impl TryFrom<u16> for Permission {
@@ -172,7 +176,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=19 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=20 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -240,6 +244,7 @@ impl ActionLoader {
             Permission::TokenRecurringDestinationLimit => {
                 TokenRecurringDestinationLimit::valid_layout(data)
             },
+            Permission::ManageAuthorizationLocks => ManageAuthorizationLocks::valid_layout(data),
             _ => Ok(false),
         }
     }
