@@ -81,6 +81,22 @@ pub enum SwigError {
     /// Slot is required for this operation
     #[error("Slot is required for this operation")]
     SlotRequired,
+
+    /// Wallet already exists when trying to create a new one
+    #[error("Wallet already exists at swig_id: {0:?}")]
+    WalletAlreadyExists([u8; 32]),
+
+    /// Wallet not found when trying to load an existing one
+    #[error("Wallet not found at swig_id: {0:?}")]
+    WalletNotFound([u8; 32]),
+
+    /// Invalid authority provided (doesn't match wallet)
+    #[error("Invalid authority: {0}")]
+    InvalidAuthority(String),
+
+    /// Insufficient permissions for the requested operation
+    #[error("Insufficient permissions: {0}")]
+    InsufficientPermissions(String),
 }
 
 impl From<anyhow::Error> for SwigError {

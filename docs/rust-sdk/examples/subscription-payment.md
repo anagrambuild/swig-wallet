@@ -82,7 +82,7 @@ impl NYTSubscriptionService {
 
         // Create transfer instruction
         let payment = system_instruction::transfer(
-            &self.wallet.get_swig_account()?,
+            &self.wallet.get_swig_config_address()?,
             &nyt_treasury,
             10_000_000_000, // 10 SOL
         );

@@ -1,4 +1,5 @@
-use solana_program::pubkey::Pubkey;
+use solana_client::{rpc_client::RpcClient, rpc_request::TokenAccountsFilter};
+use solana_program::pubkey::{self, Pubkey};
 use swig_interface::ClientAction;
 use swig_state::{
     action::{
@@ -23,10 +24,14 @@ use swig_state::{
         token_recurring_limit::TokenRecurringLimit,
     },
     role::Role,
+    swig::SwigWithRoles,
     Transmutable,
 };
 
-use crate::SwigError;
+use crate::{client_role::ClientRole, SwigError, SwigInstructionBuilder};
+#[cfg(all(feature = "rust_sdk_test", test))]
+use litesvm::LiteSVM;
+use solana_sdk::signature::Keypair;
 
 /// Configuration for recurring limits that reset after a specified time window
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -653,16 +658,6 @@ impl Permission {
     }
 }
 
-/// Stores all details about the current role for a wallet session
-#[derive(Debug)]
-pub struct CurrentRole {
-    pub role_id: u32,
-    pub authority_type: swig_state::authority::AuthorityType,
-    pub authority_identity: Vec<u8>,
-    pub permissions: Vec<Permission>,
-    pub session_based: bool,
-}
-
 /// Represents the data that can be updated for an authority
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateAuthorityData {
@@ -698,5 +693,106 @@ impl UpdateAuthorityData {
                 InterfaceUpdateAuthorityData::RemoveActionsByIndex(indices.clone())
             },
         }
+    }
+}
+
+/// Configuration for creating or loading a Swig wallet
+///
+/// This struct simplifies parameter passing when creating or loading wallets.
+/// It encapsulates all the necessary configuration in a single struct.
+pub struct WalletConfig<'a> {
+    /// The unique identifier for the Swig account
+    pub swig_id: [u8; 32],
+    /// The client role implementation specifying the type of signing authority
+    pub client_role: Box<dyn ClientRole>,
+    /// The keypair that will pay for transactions
+    pub fee_payer: &'a Keypair,
+    /// The URL of the Solana RPC endpoint
+    pub rpc_url: String,
+    /// Optional authority keypair (required for Ed25519 authorities)
+    pub authority_keypair: Option<&'a Keypair>,
+    /// (test only) The LiteSVM instance for testing
+    #[cfg(all(feature = "rust_sdk_test", test))]
+    pub litesvm: Option<LiteSVM>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct SwigInfo {
+    pub swig_id: [u8; 32],
+    pub swig_config_address: Pubkey,
+    pub swig_wallet_address: Pubkey,
+
+    pub wallet_balance: u64,
+    pub token_balances: Option<Vec<TokenBalance>>,
+    pub roles_count: u16,
+    pub role_counter: u32,
+
+    pub roles: Vec<RoleInfo>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct TokenBalance {
+    pub mint: Pubkey,
+    pub amount: u64,
+    pub decimal: u8,
+}
+
+use swig_state::authority::AuthorityType;
+
+#[derive(Debug, PartialEq)]
+pub struct RoleInfo {
+    pub role_id: u32,
+    pub num_actions: u16,
+    pub authority_type: AuthorityType,
+    pub authority_identity: Vec<u8>,
+    pub permissions: Vec<Permission>,
+    pub session_based: bool,
+}
+
+impl SwigInfo {
+    pub fn from_swig_with_roles(rpc_url: &str, swig_id: [u8; 32]) -> Result<Self, SwigError> {
+        let swig_config_address = SwigInstructionBuilder::swig_key(&swig_id);
+
+        let rpc_client = RpcClient::new(rpc_url);
+
+        let swig_data = rpc_client.get_account_data(&swig_config_address)?;
+        let swig_with_roles = SwigWithRoles::from_bytes(&swig_data)
+            .map_err(|e| SwigError::InterfaceError(format!("{:?}", e)))?;
+
+        let swig_wallet_address = SwigInstructionBuilder::swig_wallet_address_from_id(&swig_id);
+
+        let wallet_balance = rpc_client.get_balance(&swig_wallet_address)?;
+
+        //Todo: Get token balances
+
+        let roles_count = swig_with_roles.state.roles;
+        let role_counter = swig_with_roles.state.role_counter;
+        let mut roles = Vec::new();
+        for i in 0..swig_with_roles.state.role_counter {
+            let role = swig_with_roles
+                .get_role(i)
+                .map_err(|e| SwigError::InterfaceError(format!("{:?}", e)))?;
+            if let Some(role) = role {
+                roles.push(RoleInfo {
+                    role_id: i,
+                    num_actions: role.position.num_actions,
+                    authority_type: role.authority.authority_type(),
+                    authority_identity: role.authority.identity().unwrap_or_default().to_vec(),
+                    permissions: Permission::from_role(&role)?,
+                    session_based: role.authority.session_based(),
+                });
+            }
+        }
+
+        Ok(Self {
+            swig_id,
+            swig_config_address,
+            swig_wallet_address,
+            wallet_balance,
+            token_balances: None,
+            roles_count,
+            role_counter,
+            roles,
+        })
     }
 }

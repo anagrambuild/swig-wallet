@@ -50,7 +50,7 @@ fn test_secp256r1_basic_signing() {
     );
 
     // Build the create instruction
-    let create_ix = builder.build_swig_account().unwrap();
+    let create_ix = builder.create_swig_account_instruction().unwrap();
 
     let message = v0::Message::try_compile(
         &context.default_payer.pubkey(),
@@ -71,7 +71,7 @@ fn test_secp256r1_basic_signing() {
         result.err()
     );
 
-    let swig_key = builder.get_swig_account().unwrap();
+    let swig_key = builder.get_swig_config_address().unwrap();
     let swig_wallet_address = builder.swig_wallet_address();
 
     context
@@ -163,7 +163,7 @@ fn test_secp256r1_counter_increment() {
     );
 
     // Build the create instruction
-    let create_ix = builder.build_swig_account().unwrap();
+    let create_ix = builder.create_swig_account_instruction().unwrap();
 
     let message = v0::Message::try_compile(
         &context.default_payer.pubkey(),
@@ -184,7 +184,7 @@ fn test_secp256r1_counter_increment() {
         result.err()
     );
 
-    let swig_key = builder.get_swig_account().unwrap();
+    let swig_key = builder.get_swig_config_address().unwrap();
     let swig_wallet_address = builder.swig_wallet_address();
 
     // Verify initial counter is 0
@@ -221,7 +221,7 @@ fn test_secp256r1_replay_protection() {
     );
 
     // Build the create instruction
-    let create_ix = builder.build_swig_account().unwrap();
+    let create_ix = builder.create_swig_account_instruction().unwrap();
 
     let message = v0::Message::try_compile(
         &context.default_payer.pubkey(),
@@ -242,7 +242,7 @@ fn test_secp256r1_replay_protection() {
         result.err()
     );
 
-    let swig_key = builder.get_swig_account().unwrap();
+    let swig_key = builder.get_swig_config_address().unwrap();
     let swig_wallet_address = builder.swig_wallet_address();
 
     context
@@ -359,7 +359,7 @@ fn test_secp256r1_add_authority() {
         0, // role_id
     );
 
-    let create_ix = builder.build_swig_account().unwrap();
+    let create_ix = builder.create_swig_account_instruction().unwrap();
 
     let message = v0::Message::try_compile(
         &context.default_payer.pubkey(),
@@ -380,7 +380,7 @@ fn test_secp256r1_add_authority() {
         result.err()
     );
 
-    let swig_key = builder.get_swig_account().unwrap();
+    let swig_key = builder.get_swig_config_address().unwrap();
     let swig_wallet_address = builder.swig_wallet_address();
     context
         .svm
@@ -599,7 +599,7 @@ fn test_secp256r1_add_authority_with_secp256r1() {
     );
 
     // Build the create instruction
-    let create_ix = builder.build_swig_account().unwrap();
+    let create_ix = builder.create_swig_account_instruction().unwrap();
 
     let message = v0::Message::try_compile(
         &context.default_payer.pubkey(),
@@ -620,7 +620,7 @@ fn test_secp256r1_add_authority_with_secp256r1() {
         result.err()
     );
 
-    let swig_key = builder.get_swig_account().unwrap();
+    let swig_key = builder.get_swig_config_address().unwrap();
     let swig_wallet_address = builder.swig_wallet_address();
     context
         .svm
