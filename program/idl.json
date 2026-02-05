@@ -268,11 +268,11 @@
           ]
         },
         {
-          "name": "authority",
-          "isMut": true,
-          "isSigner": true,
+          "name": "authorityContext",
+          "isMut": false,
+          "isSigner": false,
           "docs": [
-            "the swig authority"
+            "authority context: signer for Ed25519, sysvar for Secp256r1, or placeholder for Secp256k1"
           ]
         },
         {
