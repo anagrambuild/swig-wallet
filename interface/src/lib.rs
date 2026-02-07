@@ -25,10 +25,10 @@ pub use swig_compact_instructions::*;
 use swig_state::{
     action::{
         all::All, all_but_manage_authority::AllButManageAuthority,
-        manage_authority::ManageAuthority, program::Program, program_all::ProgramAll,
-        program_curated::ProgramCurated, program_scope::ProgramScope,
-        sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
-        sol_recurring_destination_limit::SolRecurringDestinationLimit,
+        close_swig_authority::CloseSwigAuthority, manage_authority::ManageAuthority,
+        program::Program, program_all::ProgramAll, program_curated::ProgramCurated,
+        program_scope::ProgramScope, sol_destination_limit::SolDestinationLimit,
+        sol_limit::SolLimit, sol_recurring_destination_limit::SolRecurringDestinationLimit,
         sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll, stake_limit::StakeLimit,
         stake_recurring_limit::StakeRecurringLimit, sub_account::SubAccount,
         token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
@@ -59,6 +59,7 @@ pub enum ClientAction {
     All(All),
     AllButManageAuthority(AllButManageAuthority),
     ManageAuthority(ManageAuthority),
+    CloseSwigAuthority(CloseSwigAuthority),
     SubAccount(SubAccount),
     StakeLimit(StakeLimit),
     StakeRecurringLimit(StakeRecurringLimit),
@@ -101,6 +102,9 @@ impl ClientAction {
                 AllButManageAuthority::LEN,
             ),
             ClientAction::ManageAuthority(_) => (Permission::ManageAuthority, ManageAuthority::LEN),
+            ClientAction::CloseSwigAuthority(_) => {
+                (Permission::CloseSwigAuthority, CloseSwigAuthority::LEN)
+            },
             ClientAction::SubAccount(_) => (Permission::SubAccount, SubAccount::LEN),
             ClientAction::StakeLimit(_) => (Permission::StakeLimit, StakeLimit::LEN),
             ClientAction::StakeRecurringLimit(_) => {
@@ -134,6 +138,7 @@ impl ClientAction {
             ClientAction::All(action) => action.into_bytes(),
             ClientAction::AllButManageAuthority(action) => action.into_bytes(),
             ClientAction::ManageAuthority(action) => action.into_bytes(),
+            ClientAction::CloseSwigAuthority(action) => action.into_bytes(),
             ClientAction::SubAccount(action) => action.into_bytes(),
             ClientAction::StakeLimit(action) => action.into_bytes(),
             ClientAction::StakeRecurringLimit(action) => action.into_bytes(),

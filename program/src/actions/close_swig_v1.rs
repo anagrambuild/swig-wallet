@@ -14,7 +14,9 @@ use pinocchio::{
 };
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority},
+    action::{
+        all::All, close_swig_authority::CloseSwigAuthority, manage_authority::ManageAuthority,
+    },
     swig::{swig_wallet_address_seeds, swig_wallet_address_signer, Swig},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
@@ -139,10 +141,11 @@ pub fn close_swig_v1(
         )?;
     }
 
-    // Check permissions
+    // Check permissions: must have All, ManageAuthority, or CloseSwigAuthority
     let has_all = role.get_action::<All>(&[])?.is_some();
     let has_manage = role.get_action::<ManageAuthority>(&[])?.is_some();
-    if !has_all && !has_manage {
+    let has_close = role.get_action::<CloseSwigAuthority>(&[])?.is_some();
+    if !has_all && !has_manage && !has_close {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
 
