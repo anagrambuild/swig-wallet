@@ -71,6 +71,10 @@ impl SwigInstructionBuilder {
 
     /// Creates an instruction to initialize a new Swig account
     ///
+    /// # Deprecated
+    ///
+    /// This method is deprecated. Use [`create_swig_account_instruction`] instead.
+    ///
     /// # Arguments
     ///
     /// * `self` - The SwigInstructionBuilder instance
@@ -79,7 +83,24 @@ impl SwigInstructionBuilder {
     ///
     /// Returns a `Result` containing the `Instruction` for creating a Swig
     /// account or a `SwigError`
+    ///
+    /// [`create_swig_account_instruction`]: SwigInstructionBuilder::create_swig_account_instruction
+    #[deprecated(note = "Use `create_swig_account_instruction` instead")]
     pub fn build_swig_account(&self) -> Result<Instruction, SwigError> {
+        self.create_swig_account_instruction()
+    }
+
+    /// Creates an instruction to initialize a new Swig account
+    ///
+    /// # Arguments
+    ///
+    /// * `self` - The SwigInstructionBuilder instance
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the `Instruction` for creating a Swig
+    /// account or a `SwigError`
+    pub fn create_swig_account_instruction(&self) -> Result<Instruction, SwigError> {
         let program_id = program_id();
         let (swig_account, swig_bump_seed) =
             Pubkey::find_program_address(&swig_account_seeds(&self.swig_id), &program_id);
@@ -90,7 +111,7 @@ impl SwigInstructionBuilder {
         );
 
         let authority_type = self.client_role.authority_type();
-        let auth_bytes = self.client_role.authority_bytes()?;
+        let auth_bytes = self.client_role.create_authority_bytes()?;
 
         let actions = vec![ClientAction::All(swig_state::action::all::All {})];
 
@@ -182,6 +203,30 @@ impl SwigInstructionBuilder {
 
     /// Creates an instruction to remove an authority from the wallet
     ///
+    /// # Deprecated
+    ///
+    /// This method is deprecated. Use [`remove_authority_instruction`] instead.
+    ///
+    /// # Arguments
+    ///
+    /// * `self` - The SwigInstructionBuilder instance
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the `Instruction` for removing an authority or a `SwigError`
+    ///
+    /// [`remove_authority_instruction`]: SwigInstructionBuilder::remove_authority_instruction
+    #[deprecated(note = "Use `remove_authority_instruction` instead")]
+    pub fn remove_authority(
+        &mut self,
+        authority_to_remove_id: u32,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.remove_authority_instruction(authority_to_remove_id, current_slot)
+    }
+
+    /// Creates an instruction to remove an authority from the wallet
+    ///
     /// # Arguments
     ///
     /// * `authority_to_remove_id` - The ID of the authority to remove
@@ -191,7 +236,7 @@ impl SwigInstructionBuilder {
     ///
     /// Returns a `Result` containing the remove authority instruction or a
     /// `SwigError`
-    pub fn remove_authority(
+    pub fn remove_authority_instruction(
         &mut self,
         authority_to_remove_id: u32,
         current_slot: Option<u64>,
@@ -207,6 +252,31 @@ impl SwigInstructionBuilder {
 
     /// Creates instructions to replace an existing authority with a new one
     ///
+    /// # Deprecated
+    ///
+    /// This method is deprecated. Use [`update_authority_instruction`] instead.
+    ///
+    /// # Arguments
+    ///
+    /// * `self` - The SwigInstructionBuilder instance
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the `Instruction` for replacing an authority or a `SwigError`
+    ///
+    /// [`update_authority_instruction`]: SwigInstructionBuilder::update_authority_instruction
+    #[deprecated(note = "Use `update_authority_instruction` instead")]
+    pub fn update_authority(
+        &mut self,
+        authority_to_replace_id: u32,
+        current_slot: Option<u64>,
+        update_data: UpdateAuthorityData,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.update_authority_instruction(authority_to_replace_id, current_slot, update_data)
+    }
+
+    /// Creates instructions to replace an existing authority with a new one
+    ///
     /// # Arguments
     ///
     /// * `authority_to_replace_id` - The ID of the authority to replace
@@ -218,7 +288,7 @@ impl SwigInstructionBuilder {
     /// # Returns
     ///
     /// Returns a `Result` containing a vector of instructions or a `SwigError`
-    pub fn update_authority(
+    pub fn update_authority_instruction(
         &mut self,
         authority_to_replace_id: u32,
         current_slot: Option<u64>,
@@ -267,11 +337,26 @@ impl SwigInstructionBuilder {
 
     /// Returns the public key of the Swig account
     ///
+    /// # Deprecated
+    ///
+    /// This method is deprecated. Use [`get_swig_config_address`] instead.
+    ///
     /// # Returns
     ///
     /// Returns a `Result` containing the Swig account's public key or a
     /// `SwigError`
+    #[deprecated(note = "Use `get_swig_config_address` instead")]
     pub fn get_swig_account(&self) -> Result<Pubkey, SwigError> {
+        self.get_swig_config_address()
+    }
+
+    /// Returns the public key of the Swig config account
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the Swig config account's public key or a
+    /// `SwigError`
+    pub fn get_swig_config_address(&self) -> Result<Pubkey, SwigError> {
         Ok(self.swig_account)
     }
 
@@ -297,24 +382,8 @@ impl SwigInstructionBuilder {
         Pubkey::find_program_address(&swig_account_seeds(id), &program_id()).0
     }
 
-    /// Derives the Swig wallet address public key from a Swig account pubkey
-    ///
-    /// # Arguments
-    ///
-    /// * `swig_account` - The Swig account public key
-    ///
-    /// # Returns
-    ///
-    /// Returns the derived Swig wallet address public key
-    pub fn swig_wallet_address_key(swig_account: &Pubkey) -> Pubkey {
-        Pubkey::find_program_address(
-            &swig_wallet_address_seeds(swig_account.as_ref()),
-            &program_id(),
-        )
-        .0
-    }
-
-    /// Derives the Swig wallet address public key from an ID
+    /// Derives the Swig wallet address public key from an ID,
+    /// This will act as the wallet for storing the assets and tokens for the Swig account.
     ///
     /// # Arguments
     ///
@@ -326,6 +395,25 @@ impl SwigInstructionBuilder {
     pub fn swig_wallet_address(&self) -> Pubkey {
         Pubkey::find_program_address(
             &swig_wallet_address_seeds(self.swig_account.as_ref()),
+            &program_id(),
+        )
+        .0
+    }
+
+    /// Derives the Swig wallet address public key from an ID,
+    /// This will act as the wallet for storing the assets and tokens for the Swig account.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The 32-byte identifier used to derive the Swig wallet address
+    ///
+    /// # Returns
+    ///
+    /// Returns the derived Swig wallet address public key
+    pub fn swig_wallet_address_from_id(id: &[u8; 32]) -> Pubkey {
+        let swig_account = SwigInstructionBuilder::swig_key(id);
+        Pubkey::find_program_address(
+            &swig_wallet_address_seeds(swig_account.as_ref()),
             &program_id(),
         )
         .0
@@ -376,6 +464,10 @@ impl SwigInstructionBuilder {
 
     /// Creates a Subaccount for the Swig account
     ///
+    /// # Deprecated
+    ///
+    /// This method is deprecated. Use [`create_sub_account_instruction`] instead.
+    ///
     /// # Arguments
     ///
     /// * `subaccount_id` - The ID of the subaccount to create
@@ -384,7 +476,29 @@ impl SwigInstructionBuilder {
     ///
     /// Returns a `Result` containing the subaccount's public key or a
     /// `SwigError`
+    ///
+    /// [`create_sub_account_instruction`]: SwigInstructionBuilder::create_sub_account_instruction
+    #[deprecated(note = "Use `create_sub_account_instruction` instead")]
     pub fn create_sub_account(
+        &self,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.create_sub_account_instruction(current_slot)
+    }
+
+    /// Creates an instruction to create a new sub-account
+    ///
+    /// # Arguments
+    ///
+    /// * `current_slot` - Optional current slot number (required for Secp256k1)
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the create sub-account instruction or a
+    /// `SwigError`
+    ///
+    /// [`create_sub_account_instruction`]: SwigInstructionBuilder::create_sub_account_instruction
+    pub fn create_sub_account_instruction(
         &self,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {

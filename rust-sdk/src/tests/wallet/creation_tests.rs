@@ -11,11 +11,11 @@ fn should_create_ed25519_wallet() {
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
 
     // Verify wallet was created successfully
-    assert!(swig_wallet.get_swig_account().is_ok());
+    assert!(swig_wallet.get_swig_config_address().is_ok());
     assert_eq!(swig_wallet.get_role_count().unwrap(), 1);
     assert_eq!(swig_wallet.get_current_role_id().unwrap(), 0);
 
-    let swig_pubkey = swig_wallet.get_swig_account().unwrap();
+    let swig_pubkey = swig_wallet.get_swig_config_address().unwrap();
     let swig_data = swig_wallet.litesvm().get_account(&swig_pubkey).unwrap();
     let swig_with_roles = SwigWithRoles::from_bytes(&swig_data.data).unwrap();
 
@@ -46,18 +46,21 @@ fn should_create_secp256k1_wallet() {
         sig
     };
 
-    let swig_wallet = SwigWallet::new(
-        [0; 32],
-        Box::new(Secp256k1ClientRole::new(secp_pubkey, Box::new(sign_fn))),
-        &main_authority,
-        "http://localhost:8899".to_string(),
-        Some(&main_authority),
-        litesvm,
-    )
-    .unwrap();
+    let swig_wallet = SwigWallet::builder()
+        .with_swig_id([0; 32])
+        .with_client_role(Box::new(Secp256k1ClientRole::new(
+            secp_pubkey,
+            Box::new(sign_fn),
+        )))
+        .with_fee_payer(&main_authority)
+        .with_rpc_url("http://localhost:8899".to_string())
+        .with_authority_keypair(Some(&main_authority))
+        .with_litesvm(litesvm)
+        .create()
+        .unwrap();
 
     // Verify wallet was created successfully
-    assert!(swig_wallet.get_swig_account().is_ok());
+    assert!(swig_wallet.get_swig_config_address().is_ok());
     assert_eq!(swig_wallet.get_role_count().unwrap(), 1);
     assert_eq!(swig_wallet.get_current_role_id().unwrap(), 0);
 }

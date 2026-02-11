@@ -1,4 +1,5 @@
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
+use solana_sdk::signer::Signer;
 use swig_interface::{
     AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateSessionInstruction,
     CreateSubAccountInstruction, RemoveAuthorityInstruction, SignV2Instruction,
@@ -125,6 +126,9 @@ pub trait ClientRole {
 
     /// Returns the authority bytes for creating the Swig account
     fn authority_bytes(&self) -> Result<Vec<u8>, SwigError>;
+
+    /// Create authority bytes for the authority
+    fn create_authority_bytes(&self) -> Result<Vec<u8>, SwigError>;
 
     /// Returns the odometer for the current authority if it is a Secp256k1
     /// authority
@@ -373,6 +377,10 @@ impl ClientRole for Ed25519ClientRole {
     }
 
     fn authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
+        Ok(self.authority.to_bytes().to_vec())
+    }
+
+    fn create_authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
         Ok(self.authority.to_bytes().to_vec())
     }
 
@@ -707,6 +715,10 @@ impl ClientRole for Secp256k1ClientRole {
             },
             _ => Err(SwigError::InvalidAuthorityType),
         }
+    }
+
+    fn create_authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
+        Ok(self.authority_bytes()?)
     }
 
     fn odometer(&self) -> Result<u32, SwigError> {
@@ -1053,6 +1065,10 @@ impl ClientRole for Secp256r1ClientRole {
         Ok(self.authority.to_vec())
     }
 
+    fn create_authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
+        Ok(self.authority_bytes()?)
+    }
+
     fn odometer(&self) -> Result<u32, SwigError> {
         Ok(self.odometer)
     }
@@ -1100,12 +1116,18 @@ impl ClientRole for Secp256r1ClientRole {
 
 /// Ed25519 Session authority implementation
 pub struct Ed25519SessionClientRole {
-    pub session_authority: CreateEd25519SessionAuthority,
+    pub root_authority: Pubkey,
+    pub session_key: Pubkey,
+    pub max_session_length: u64,
 }
 
 impl Ed25519SessionClientRole {
-    pub fn new(session_authority: CreateEd25519SessionAuthority) -> Self {
-        Self { session_authority }
+    pub fn new(root_authority: Pubkey, session_key: Pubkey, max_session_length: u64) -> Self {
+        Self {
+            root_authority,
+            session_key,
+            max_session_length,
+        }
     }
 }
 
@@ -1120,13 +1142,10 @@ impl ClientRole for Ed25519SessionClientRole {
         actions: Vec<ClientAction>,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         let instructions = AddAuthorityInstruction::new_with_ed25519_authority(
             swig_account,
             payer,
-            session_key,
+            self.session_key,
             role_id,
             AuthorityConfig {
                 authority_type: new_authority_type,
@@ -1146,14 +1165,11 @@ impl ClientRole for Ed25519SessionClientRole {
         authority_to_remove_id: u32,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         Ok(vec![
             RemoveAuthorityInstruction::new_with_ed25519_authority(
                 swig_account,
                 payer,
-                session_key,
+                self.session_key,
                 role_id,
                 authority_to_remove_id,
             )?,
@@ -1169,14 +1185,11 @@ impl ClientRole for Ed25519SessionClientRole {
         update_data: UpdateAuthorityData,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         Ok(vec![
             UpdateAuthorityInstruction::new_with_ed25519_authority(
                 swig_account,
                 payer,
-                session_key,
+                self.session_key,
                 role_id,
                 authority_to_update_id,
                 update_data,
@@ -1194,12 +1207,10 @@ impl ClientRole for Ed25519SessionClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         // For create_session, use the native authority type (Ed25519)
-        let authority = Pubkey::new_from_array(self.session_authority.public_key);
-
         Ok(vec![CreateSessionInstruction::new_with_ed25519_authority(
             swig_account,
             payer,
-            authority,
+            self.root_authority,
             role_id,
             session_key,
             session_duration,
@@ -1215,11 +1226,10 @@ impl ClientRole for Ed25519SessionClientRole {
         sub_account_bump: u8,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        let session_key = Pubkey::new_from_array(self.session_authority.public_key);
         Ok(vec![
             CreateSubAccountInstruction::new_with_ed25519_authority(
                 swig_account,
-                session_key,
+                self.session_key,
                 payer,
                 sub_account,
                 role_id,
@@ -1236,11 +1246,10 @@ impl ClientRole for Ed25519SessionClientRole {
         instructions: Vec<Instruction>,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        let session_key = Pubkey::new_from_array(self.session_authority.public_key);
         Ok(vec![SubAccountSignInstruction::new_with_ed25519_authority(
             swig_account,
             sub_account,
-            session_key,
+            self.session_key,
             role_id,
             instructions,
         )?])
@@ -1255,8 +1264,6 @@ impl ClientRole for Ed25519SessionClientRole {
         amount: u64,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        let session_key = Pubkey::new_from_array(self.session_authority.public_key);
-
         // Derive the swig wallet address
         let (swig_wallet_address, _) = Pubkey::find_program_address(
             &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
@@ -1266,7 +1273,7 @@ impl ClientRole for Ed25519SessionClientRole {
         Ok(vec![
             WithdrawFromSubAccountInstruction::new_with_ed25519_authority(
                 swig_account,
-                session_key,
+                self.session_key,
                 payer,
                 sub_account,
                 swig_wallet_address,
@@ -1288,8 +1295,6 @@ impl ClientRole for Ed25519SessionClientRole {
         amount: u64,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        let session_key = Pubkey::new_from_array(self.session_authority.public_key);
-
         // Derive the swig wallet address
         let (swig_wallet_address, _) = Pubkey::find_program_address(
             &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
@@ -1299,7 +1304,7 @@ impl ClientRole for Ed25519SessionClientRole {
         Ok(vec![
             WithdrawFromSubAccountInstruction::new_token_with_ed25519_authority(
                 swig_account,
-                session_key,
+                self.session_key,
                 payer,
                 sub_account,
                 swig_wallet_address,
@@ -1322,11 +1327,10 @@ impl ClientRole for Ed25519SessionClientRole {
         enabled: bool,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        let session_key = Pubkey::new_from_array(self.session_authority.public_key);
         Ok(vec![
             ToggleSubAccountInstruction::new_with_ed25519_authority(
                 swig_account,
-                session_key,
+                self.session_key,
                 payer,
                 sub_account,
                 role_id,
@@ -1341,7 +1345,22 @@ impl ClientRole for Ed25519SessionClientRole {
     }
 
     fn authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
-        Ok(self.session_authority.into_bytes().unwrap().to_vec())
+        Ok(self.root_authority.to_bytes().to_vec())
+    }
+
+    fn create_authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
+        let mut bytes = Vec::new();
+        let authority = CreateEd25519SessionAuthority::new(
+            self.root_authority.to_bytes(),
+            self.session_key.to_bytes(),
+            self.max_session_length,
+        );
+        bytes.extend_from_slice(
+            authority
+                .into_bytes()
+                .map_err(|e| SwigError::InterfaceError(format!("{:?}", e)))?,
+        );
+        Ok(bytes)
     }
 
     fn odometer(&self) -> Result<u32, SwigError> {
@@ -1368,11 +1387,10 @@ impl ClientRole for Ed25519SessionClientRole {
     ) -> Result<Vec<Instruction>, SwigError> {
         let mut signed_instructions = Vec::new();
         for instruction in instructions {
-            let session_key_pubkey = Pubkey::new_from_array(self.session_authority.session_key);
             let swig_signed_instruction = SignV2Instruction::new_ed25519_with_signers(
                 swig_account,
                 swig_wallet_address,
-                session_key_pubkey,
+                self.session_key,
                 instruction,
                 role_id,
                 transaction_signers,
@@ -1385,30 +1403,40 @@ impl ClientRole for Ed25519SessionClientRole {
 
 /// Secp256k1 Session authority implementation
 pub struct Secp256k1SessionClientRole {
-    pub session_authority: CreateSecp256k1SessionAuthority,
+    pub root_authority: [u8; 64],
+    pub session_key: Pubkey,
+    pub max_session_length: u64,
     pub signing_fn: Box<dyn Fn(&[u8]) -> [u8; 65]>,
     pub odometer: u32,
 }
 
 impl Secp256k1SessionClientRole {
     pub fn new(
-        session_authority: CreateSecp256k1SessionAuthority,
+        root_authority: [u8; 64],
+        session_key: Pubkey,
+        max_session_length: u64,
         signing_fn: Box<dyn Fn(&[u8]) -> [u8; 65]>,
     ) -> Self {
         Self {
-            session_authority,
+            root_authority,
+            session_key,
+            max_session_length,
             signing_fn,
             odometer: 0,
         }
     }
 
     pub fn new_with_odometer(
-        session_authority: CreateSecp256k1SessionAuthority,
+        root_authority: [u8; 64],
+        session_key: Pubkey,
+        max_session_length: u64,
         signing_fn: Box<dyn Fn(&[u8]) -> [u8; 65]>,
         odometer: u32,
     ) -> Self {
         Self {
-            session_authority,
+            root_authority,
+            session_key,
+            max_session_length,
             signing_fn,
             odometer,
         }
@@ -1426,13 +1454,10 @@ impl ClientRole for Secp256k1SessionClientRole {
         actions: Vec<ClientAction>,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         let instructions = AddAuthorityInstruction::new_with_ed25519_authority(
             swig_account,
             payer,
-            session_key,
+            self.session_key,
             role_id,
             AuthorityConfig {
                 authority_type: new_authority_type,
@@ -1452,14 +1477,11 @@ impl ClientRole for Secp256k1SessionClientRole {
         authority_to_remove_id: u32,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         Ok(vec![
             RemoveAuthorityInstruction::new_with_ed25519_authority(
                 swig_account,
                 payer,
-                session_key,
+                self.session_key,
                 role_id,
                 authority_to_remove_id,
             )?,
@@ -1475,14 +1497,11 @@ impl ClientRole for Secp256k1SessionClientRole {
         update_data: UpdateAuthorityData,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         Ok(vec![
             UpdateAuthorityInstruction::new_with_ed25519_authority(
                 swig_account,
                 payer,
-                session_key,
+                self.session_key,
                 role_id,
                 authority_to_update_id,
                 update_data,
@@ -1525,13 +1544,10 @@ impl ClientRole for Secp256k1SessionClientRole {
         sub_account_bump: u8,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         Ok(vec![
             CreateSubAccountInstruction::new_with_ed25519_authority(
                 swig_account,
-                session_key,
+                self.session_key,
                 payer,
                 sub_account,
                 role_id,
@@ -1548,13 +1564,10 @@ impl ClientRole for Secp256k1SessionClientRole {
         instructions: Vec<Instruction>,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         Ok(vec![SubAccountSignInstruction::new_with_ed25519_authority(
             swig_account,
             sub_account,
-            session_key,
+            self.session_key,
             role_id,
             instructions,
         )?])
@@ -1569,9 +1582,6 @@ impl ClientRole for Secp256k1SessionClientRole {
         amount: u64,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         // Derive the swig wallet address
         let (swig_wallet_address, _) = Pubkey::find_program_address(
             &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
@@ -1581,7 +1591,7 @@ impl ClientRole for Secp256k1SessionClientRole {
         Ok(vec![
             WithdrawFromSubAccountInstruction::new_with_ed25519_authority(
                 swig_account,
-                session_key,
+                self.session_key,
                 payer,
                 sub_account,
                 swig_wallet_address,
@@ -1604,7 +1614,6 @@ impl ClientRole for Secp256k1SessionClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
 
         // Derive the swig wallet address
         let (swig_wallet_address, _) = Pubkey::find_program_address(
@@ -1615,7 +1624,7 @@ impl ClientRole for Secp256k1SessionClientRole {
         Ok(vec![
             WithdrawFromSubAccountInstruction::new_token_with_ed25519_authority(
                 swig_account,
-                session_key,
+                self.session_key,
                 payer,
                 sub_account,
                 swig_wallet_address,
@@ -1639,12 +1648,10 @@ impl ClientRole for Secp256k1SessionClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         Ok(vec![
             ToggleSubAccountInstruction::new_with_ed25519_authority(
                 swig_account,
-                session_key,
+                self.session_key,
                 payer,
                 sub_account,
                 role_id,
@@ -1659,7 +1666,22 @@ impl ClientRole for Secp256k1SessionClientRole {
     }
 
     fn authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
-        Ok(self.session_authority.into_bytes().unwrap().to_vec())
+        Ok(self.root_authority.to_vec())
+    }
+
+    fn create_authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
+        let mut bytes = Vec::new();
+        let authority = CreateSecp256k1SessionAuthority::new(
+            self.root_authority,
+            self.session_key.to_bytes(),
+            self.max_session_length,
+        );
+        bytes.extend_from_slice(
+            authority
+                .into_bytes()
+                .map_err(|e| SwigError::InterfaceError(format!("{:?}", e)))?,
+        );
+        Ok(bytes)
     }
 
     fn odometer(&self) -> Result<u32, SwigError> {
@@ -1685,15 +1707,12 @@ impl ClientRole for Secp256k1SessionClientRole {
         _current_slot: Option<u64>,
         transaction_signers: &[Pubkey],
     ) -> Result<Vec<Instruction>, SwigError> {
-        // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         let mut signed_instructions = Vec::new();
         for instruction in instructions {
             let swig_signed_instruction = SignV2Instruction::new_ed25519_with_signers(
                 swig_account,
                 swig_wallet_address,
-                session_key,
+                self.session_key,
                 instruction,
                 role_id,
                 transaction_signers,
@@ -1706,30 +1725,40 @@ impl ClientRole for Secp256k1SessionClientRole {
 
 /// Secp256r1 Session authority implementation
 pub struct Secp256r1SessionClientRole {
-    pub session_authority: CreateSecp256r1SessionAuthority,
+    pub root_authority: [u8; 33],
+    pub session_key: Pubkey,
+    pub max_session_length: u64,
     pub signing_fn: Box<dyn Fn(&[u8]) -> [u8; 64]>,
     pub odometer: u32,
 }
 
 impl Secp256r1SessionClientRole {
     pub fn new(
-        session_authority: CreateSecp256r1SessionAuthority,
+        root_authority: [u8; 33],
+        session_key: Pubkey,
+        max_session_length: u64,
         signing_fn: Box<dyn Fn(&[u8]) -> [u8; 64]>,
     ) -> Self {
         Self {
-            session_authority,
+            root_authority,
+            session_key,
+            max_session_length,
             signing_fn,
             odometer: 0,
         }
     }
 
     pub fn new_with_odometer(
-        session_authority: CreateSecp256r1SessionAuthority,
+        root_authority: [u8; 33],
+        session_key: Pubkey,
+        max_session_length: u64,
         signing_fn: Box<dyn Fn(&[u8]) -> [u8; 64]>,
         odometer: u32,
     ) -> Self {
         Self {
-            session_authority,
+            root_authority,
+            session_key,
+            max_session_length,
             signing_fn,
             odometer,
         }
@@ -1748,12 +1777,10 @@ impl ClientRole for Secp256r1SessionClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         let instructions = AddAuthorityInstruction::new_with_ed25519_authority(
             swig_account,
             payer,
-            session_key,
+            self.session_key,
             role_id,
             AuthorityConfig {
                 authority_type: new_authority_type,
@@ -1774,13 +1801,11 @@ impl ClientRole for Secp256r1SessionClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         Ok(vec![
             RemoveAuthorityInstruction::new_with_ed25519_authority(
                 swig_account,
                 payer,
-                session_key,
+                self.session_key,
                 role_id,
                 authority_to_remove_id,
             )?,
@@ -1797,13 +1822,11 @@ impl ClientRole for Secp256r1SessionClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         Ok(vec![
             UpdateAuthorityInstruction::new_with_ed25519_authority(
                 swig_account,
                 payer,
-                session_key,
+                self.session_key,
                 role_id,
                 authority_to_update_id,
                 update_data,
@@ -1833,7 +1856,7 @@ impl ClientRole for Secp256r1SessionClientRole {
             role_id,
             session_key,
             session_duration,
-            &self.session_authority.public_key,
+            &self.root_authority,
         )?;
 
         Ok(instructions)
@@ -1849,12 +1872,10 @@ impl ClientRole for Secp256r1SessionClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         Ok(vec![
             CreateSubAccountInstruction::new_with_ed25519_authority(
                 swig_account,
-                session_key,
+                self.session_key,
                 payer,
                 sub_account,
                 role_id,
@@ -1872,12 +1893,10 @@ impl ClientRole for Secp256r1SessionClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         Ok(vec![SubAccountSignInstruction::new_with_ed25519_authority(
             swig_account,
             sub_account,
-            session_key,
+            self.session_key,
             role_id,
             instructions,
         )?])
@@ -1893,8 +1912,6 @@ impl ClientRole for Secp256r1SessionClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         // Derive the swig wallet address
         let (swig_wallet_address, _) = Pubkey::find_program_address(
             &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
@@ -1904,7 +1921,7 @@ impl ClientRole for Secp256r1SessionClientRole {
         Ok(vec![
             WithdrawFromSubAccountInstruction::new_with_ed25519_authority(
                 swig_account,
-                session_key,
+                self.session_key,
                 payer,
                 sub_account,
                 swig_wallet_address,
@@ -1927,8 +1944,6 @@ impl ClientRole for Secp256r1SessionClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         // Derive the swig wallet address
         let (swig_wallet_address, _) = Pubkey::find_program_address(
             &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
@@ -1938,7 +1953,7 @@ impl ClientRole for Secp256r1SessionClientRole {
         Ok(vec![
             WithdrawFromSubAccountInstruction::new_token_with_ed25519_authority(
                 swig_account,
-                session_key,
+                self.session_key,
                 payer,
                 sub_account,
                 swig_wallet_address,
@@ -1962,12 +1977,10 @@ impl ClientRole for Secp256r1SessionClientRole {
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         Ok(vec![
             ToggleSubAccountInstruction::new_with_ed25519_authority(
                 swig_account,
-                session_key,
+                self.session_key,
                 payer,
                 sub_account,
                 role_id,
@@ -1982,7 +1995,7 @@ impl ClientRole for Secp256r1SessionClientRole {
     }
 
     fn authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
-        Ok(self.session_authority.into_bytes().unwrap().to_vec())
+        Ok(self.root_authority.to_vec())
     }
 
     fn odometer(&self) -> Result<u32, SwigError> {
@@ -2009,14 +2022,12 @@ impl ClientRole for Secp256r1SessionClientRole {
         transaction_signers: &[Pubkey],
     ) -> Result<Vec<Instruction>, SwigError> {
         // Session authorities sign as Ed25519 with the session_key
-        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
-
         let mut signed_instructions = Vec::new();
         for instruction in instructions {
             let swig_signed_instruction = SignV2Instruction::new_ed25519_with_signers(
                 swig_account,
                 swig_wallet_address,
-                session_key,
+                self.session_key,
                 instruction,
                 role_id,
                 transaction_signers,
@@ -2024,6 +2035,21 @@ impl ClientRole for Secp256r1SessionClientRole {
             signed_instructions.push(swig_signed_instruction);
         }
         Ok(signed_instructions)
+    }
+
+    fn create_authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
+        let mut bytes = Vec::new();
+        let authority = CreateSecp256r1SessionAuthority::new(
+            self.root_authority,
+            self.session_key.to_bytes(),
+            self.max_session_length,
+        );
+        bytes.extend_from_slice(
+            authority
+                .into_bytes()
+                .map_err(|e| SwigError::InterfaceError(format!("{:?}", e)))?,
+        );
+        Ok(bytes)
     }
 }
 
@@ -2357,6 +2383,10 @@ where
     }
 
     fn authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
+        Ok(self.authority_data())
+    }
+
+    fn create_authority_bytes(&self) -> Result<Vec<u8>, SwigError> {
         Ok(self.authority_data())
     }
 

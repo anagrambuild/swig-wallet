@@ -27,7 +27,7 @@ fn get_secp256k1_counter(
 ) -> Result<u32, SwigError> {
     let role_id = swig_wallet.get_role_id(authority_pubkey)?;
 
-    let swig_account = swig_wallet.get_swig_account()?;
+    let swig_account = swig_wallet.get_swig_config_address()?;
     let account_data = swig_wallet
         .litesvm()
         .get_account(&swig_account)

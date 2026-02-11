@@ -108,7 +108,7 @@ fn test_add_authority_with_secp256k1_root() {
         role_id,
     );
 
-    let ix = builder.build_swig_account().unwrap();
+    let ix = builder.create_swig_account_instruction().unwrap();
     let msg = v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
         .unwrap();
 
@@ -121,7 +121,7 @@ fn test_add_authority_with_secp256k1_root() {
         result.err()
     );
 
-    let swig_key = builder.get_swig_account().unwrap();
+    let swig_key = builder.get_swig_config_address().unwrap();
 
     let new_authority = LocalSigner::random();
     let secp_pubkey_bytes = new_authority
@@ -224,7 +224,7 @@ fn test_remove_authority_with_ed25519_root() {
         result.err()
     );
 
-    let remove_auth_ix = builder.remove_authority(1, None).unwrap();
+    let remove_auth_ix = builder.remove_authority_instruction(1, None).unwrap();
     let msg = v0::Message::try_compile(
         &payer.pubkey(),
         &remove_auth_ix,
@@ -275,7 +275,7 @@ fn test_switch_authority_and_payer() {
     );
 
     builder.switch_payer(new_payer.pubkey()).unwrap();
-    let ix = builder.build_swig_account().unwrap();
+    let ix = builder.create_swig_account_instruction().unwrap();
     assert_eq!(ix.accounts[1].pubkey, new_payer.pubkey());
 }
 
@@ -348,7 +348,7 @@ fn test_update_authority_with_ed25519_root() {
     let update_data = UpdateAuthorityData::ReplaceAll(update_permissions);
 
     let update_ix = builder
-        .update_authority(1, Some(current_slot), update_data)
+        .update_authority_instruction(1, Some(current_slot), update_data)
         .unwrap();
 
     let msg = v0::Message::try_compile(

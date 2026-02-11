@@ -213,7 +213,7 @@ fn test_sub_account_token_operations() {
         setup_ata(swig_wallet.litesvm(), &mint, &sub_account, &main_authority).unwrap();
     // Derive swig_wallet_address PDA using the on-chain expected seeds (swig
     // account key)
-    let swig_account = swig_wallet.get_swig_account().unwrap();
+    let swig_account = swig_wallet.get_swig_config_address().unwrap();
     let (swig_wallet_address, _) = Pubkey::find_program_address(
         &swig_wallet_address_seeds(swig_account.as_ref()),
         &swig_interface::program_id(),

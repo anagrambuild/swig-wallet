@@ -87,7 +87,9 @@ fn test_sub_account_functionality() {
         sub_account_role_id,
     );
 
-    let create_sub_account_ix = sub_account_builder.create_sub_account(None).unwrap();
+    let create_sub_account_ix = sub_account_builder
+        .create_sub_account_instruction(None)
+        .unwrap();
 
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
