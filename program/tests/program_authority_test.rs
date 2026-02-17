@@ -1096,15 +1096,12 @@ fn test_program_exec_explicit_ix_index_success() {
     )
     .unwrap();
 
-    // Insert a dummy no-op instruction between the preceding ix and the sign ix.
+    // Insert a valid no-op instruction between the preceding ix and the sign ix.
     // This makes: [auth_ix(0), dummy(1), sign_ix(2)]
     // Without the explicit index, the sign_ix at index 2 would look at index 1
     // (the dummy) and fail. With target_ix_index=0 it looks at the correct one.
-    let dummy_ix = Instruction {
-        program_id: solana_sdk::system_program::ID,
-        accounts: vec![AccountMeta::new(swig_authority.pubkey(), true)],
-        data: vec![],
-    };
+    let dummy_ix =
+        system_instruction::transfer(&swig_authority.pubkey(), &swig_authority.pubkey(), 0);
     instructions.insert(1, dummy_ix);
 
     let message = v0::Message::try_compile(
