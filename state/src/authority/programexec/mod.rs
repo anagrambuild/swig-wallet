@@ -279,7 +279,7 @@ pub fn program_exec_authenticate(
                 );
             }
             idx
-        }
+        },
         None => {
             if current_index == 0 {
                 return Err(
@@ -287,7 +287,7 @@ pub fn program_exec_authenticate(
                 );
             }
             current_index - 1
-        }
+        },
     };
 
     // Get the target instruction
