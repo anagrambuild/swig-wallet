@@ -2120,6 +2120,45 @@ where
         )
         .map_err(|e| SwigError::InterfaceError(e.to_string()))
     }
+
+    /// Creates a sign instruction with an explicit transaction instruction
+    /// index to authenticate against.
+    ///
+    /// Instead of defaulting to the immediately preceding instruction
+    /// (`current_index - 1`), this method specifies which transaction
+    /// instruction index to verify via the `target_ix_index` parameter.
+    ///
+    /// # Arguments
+    /// * `swig_account` - The Swig wallet config account
+    /// * `swig_wallet_address` - The Swig wallet address PDA
+    /// * `payer` - The transaction fee payer
+    /// * `preceding_instruction` - The instruction that authenticates (placed
+    ///   before the sign instruction in the transaction)
+    /// * `inner_instruction` - The instruction to be signed by the Swig wallet
+    /// * `role_id` - The role ID that has ProgramExec authority
+    /// * `target_ix_index` - Transaction instruction index to authenticate
+    ///   against
+    pub fn sign_with_program_exec_ix_index(
+        &self,
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        inner_instruction: Instruction,
+        role_id: u32,
+        target_ix_index: u8,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        SignV2Instruction::new_program_exec_with_ix_index(
+            swig_account,
+            swig_wallet_address,
+            payer,
+            preceding_instruction,
+            inner_instruction,
+            role_id,
+            target_ix_index,
+        )
+        .map_err(|e| SwigError::InterfaceError(e.to_string()))
+    }
 }
 
 impl<F> ClientRole for ProgramExecClientRole<F>

@@ -174,13 +174,19 @@ impl AuthorityInfo for ProgramExecAuthority {
         _data_payload: &[u8],
         _slot: u64,
     ) -> Result<(), ProgramError> {
-        // authority_payload format: [instruction_sysvar_index: 1 byte]
-        // Config is always at index 0, wallet is always at index 0 (same as config)
-        if authority_payload.len() != 1 {
+        // authority_payload format:
+        //   1 byte:  [instruction_sysvar_index] -- authenticate against current_index - 1
+        //   2 bytes: [instruction_sysvar_index, target_ix_index] -- authenticate against target_ix_index
+        if authority_payload.is_empty() || authority_payload.len() > 2 {
             return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
         }
 
         let instruction_sysvar_index = authority_payload[0] as usize;
+        let target_ix_index = if authority_payload.len() == 2 {
+            Some(authority_payload[1])
+        } else {
+            None
+        };
         let config_account_index = 0; // Config is always the first account (swig account)
         let wallet_account_index = 1; // Wallet is the second account (swig wallet address)
 
@@ -192,6 +198,7 @@ impl AuthorityInfo for ProgramExecAuthority {
             &self.program_id,
             &self.instruction_prefix,
             self.instruction_prefix_len as usize,
+            target_ix_index,
         )
     }
 }
@@ -227,6 +234,8 @@ fn assert_program_exec_cant_be_swig(program_id: &[u8]) -> Result<(), ProgramErro
 /// * `expected_program_id` - The program ID that should have executed
 /// * `expected_instruction_prefix` - The instruction data prefix to match
 /// * `prefix_len` - Length of the prefix to match
+/// * `target_ix_index` - Optional explicit transaction instruction index to
+///   authenticate against. When `None`, defaults to `current_index - 1`.
 pub fn program_exec_authenticate(
     account_infos: &[AccountInfo],
     instruction_sysvar_index: usize,
@@ -235,6 +244,7 @@ pub fn program_exec_authenticate(
     expected_program_id: &[u8; 32],
     expected_instruction_prefix: &[u8; MAX_INSTRUCTION_PREFIX_LEN],
     prefix_len: usize,
+    target_ix_index: Option<u8>,
 ) -> Result<(), ProgramError> {
     // Get the sysvar instructions account
     let sysvar_instructions = account_infos
@@ -259,13 +269,29 @@ pub fn program_exec_authenticate(
     let ixs = unsafe { Instructions::new_unchecked(sysvar_instructions_data) };
     let current_index = ixs.load_current_index() as usize;
 
-    // Must have at least one preceding instruction
-    if current_index == 0 {
-        return Err(SwigAuthenticateError::PermissionDeniedProgramExecInvalidInstruction.into());
-    }
+    // Determine which instruction to verify
+    let verify_ix_index = match target_ix_index {
+        Some(idx) => {
+            let idx = idx as usize;
+            if idx >= current_index {
+                return Err(
+                    SwigAuthenticateError::PermissionDeniedProgramExecInvalidInstruction.into(),
+                );
+            }
+            idx
+        }
+        None => {
+            if current_index == 0 {
+                return Err(
+                    SwigAuthenticateError::PermissionDeniedProgramExecInvalidInstruction.into(),
+                );
+            }
+            current_index - 1
+        }
+    };
 
-    // Get the preceding instruction
-    let preceding_ix = unsafe { ixs.deserialize_instruction_unchecked(current_index - 1) };
+    // Get the target instruction
+    let preceding_ix = unsafe { ixs.deserialize_instruction_unchecked(verify_ix_index) };
     let num_accounts = u16::from_le_bytes(unsafe {
         *(preceding_ix.get_instruction_data().as_ptr() as *const [u8; 2])
     });
