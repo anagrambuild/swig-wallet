@@ -253,12 +253,19 @@ impl AuthorityInfo for ProgramExecSessionAuthority {
         _data_payload: &[u8],
         _slot: u64,
     ) -> Result<(), ProgramError> {
-        // authority_payload format: [instruction_sysvar_index: 1 byte]
-        if authority_payload.len() != 1 {
+        // authority_payload format:
+        //   1 byte:  [instruction_sysvar_index] -- authenticate against current_index - 1
+        //   2 bytes: [instruction_sysvar_index, target_ix_index] -- authenticate against target_ix_index
+        if authority_payload.is_empty() || authority_payload.len() > 2 {
             return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
         }
 
         let instruction_sysvar_index = authority_payload[0] as usize;
+        let target_ix_index = if authority_payload.len() == 2 {
+            Some(authority_payload[1])
+        } else {
+            None
+        };
         let config_account_index = 0;
         let wallet_account_index = 1;
 
@@ -270,6 +277,7 @@ impl AuthorityInfo for ProgramExecSessionAuthority {
             &self.program_id,
             &self.instruction_prefix,
             self.instruction_prefix_len as usize,
+            target_ix_index,
         )
     }
 }

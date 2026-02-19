@@ -997,3 +997,340 @@ fn test_program_exec_mismatched_wallet_fails() {
         println!("Got expected error: {:?}", err.err);
     }
 }
+
+/// Helper to build program exec sign instructions with an explicit transaction
+/// instruction index override. Uses the 2-byte authority payload format.
+fn build_program_exec_sign_instructions_with_ix_index(
+    swig_account: Pubkey,
+    swig_wallet_address: Pubkey,
+    payer: Pubkey,
+    preceding_instruction: Instruction,
+    inner_instruction: Instruction,
+    role_id: u32,
+    target_ix_index: u8,
+) -> anyhow::Result<Vec<Instruction>> {
+    use swig_interface::SignV2Instruction;
+
+    SignV2Instruction::new_program_exec_with_ix_index(
+        swig_account,
+        swig_wallet_address,
+        payer,
+        preceding_instruction,
+        inner_instruction,
+        role_id,
+        target_ix_index,
+    )
+}
+
+/// Test successful execution when specifying an explicit instruction index
+/// in the 2-byte authority payload. The authenticating instruction is placed
+/// at index 0, a no-op dummy is at index 1, and the swig sign instruction
+/// is at index 2. We pass target_ix_index=0 to authenticate against index 0
+/// rather than the default current_index - 1 (which would be index 1).
+#[test_log::test]
+fn test_program_exec_explicit_ix_index_success() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    let state_account = Keypair::new();
+
+    deploy_test_program(&mut context).expect("Failed to deploy test program");
+
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let swig_wallet =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
+
+    create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    context.svm.airdrop(&swig, 10_000_000).unwrap();
+    context.svm.airdrop(&swig_wallet, 10_000_000).unwrap();
+
+    let program_exec_data =
+        create_program_exec_authority_data(TEST_PROGRAM_ID, &VALID_DISCRIMINATOR);
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::ProgramExec,
+            authority: &program_exec_data,
+        },
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
+
+    set_test_program_state(&mut context, &state_account.pubkey(), false).unwrap();
+
+    context.svm.warp_to_slot(100);
+
+    // Instruction at index 0: the valid authenticating instruction
+    let test_program_ix = Instruction {
+        program_id: TEST_PROGRAM_ID,
+        accounts: vec![
+            AccountMeta::new_readonly(swig, false),
+            AccountMeta::new_readonly(swig_wallet, false),
+            AccountMeta::new_readonly(state_account.pubkey(), false),
+            AccountMeta::new_readonly(program_id(), false),
+        ],
+        data: VALID_DISCRIMINATOR.to_vec(),
+    };
+
+    // Inner instruction to be signed by swig
+    let inner_ix = system_instruction::transfer(&swig_wallet, &swig_authority.pubkey(), 1000);
+
+    // Build with explicit target_ix_index = 0
+    let mut instructions = build_program_exec_sign_instructions_with_ix_index(
+        swig,
+        swig_wallet,
+        swig_authority.pubkey(),
+        test_program_ix,
+        inner_ix,
+        1,
+        0, // target_ix_index: authenticate against instruction at index 0
+    )
+    .unwrap();
+
+    // Insert a valid no-op instruction between the preceding ix and the sign ix.
+    // This makes: [auth_ix(0), dummy(1), sign_ix(2)]
+    // Without the explicit index, the sign_ix at index 2 would look at index 1
+    // (the dummy) and fail. With target_ix_index=0 it looks at the correct one.
+    let dummy_ix =
+        system_instruction::transfer(&swig_authority.pubkey(), &swig_authority.pubkey(), 0);
+    instructions.insert(1, dummy_ix);
+
+    let message = v0::Message::try_compile(
+        &swig_authority.pubkey(),
+        &instructions,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&swig_authority]).unwrap();
+
+    let res = context.svm.send_transaction(tx);
+
+    if res.is_err() {
+        println!("Transaction failed: {:?}", res.as_ref().err());
+        if let Some(logs) = res.as_ref().err().map(|e| &e.meta.logs) {
+            for log in logs {
+                println!("{}", log);
+            }
+        }
+    }
+
+    assert!(
+        res.is_ok(),
+        "Transaction should succeed with explicit ix index pointing to valid instruction"
+    );
+}
+
+/// Test that specifying a target_ix_index >= current swig instruction index fails.
+/// The swig sign instruction is at index 1, and we pass target_ix_index=1
+/// (which equals the current index), so it should be rejected.
+#[test_log::test]
+fn test_program_exec_explicit_ix_index_not_preceding_fails() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    let state_account = Keypair::new();
+
+    deploy_test_program(&mut context).expect("Failed to deploy test program");
+
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let swig_wallet =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
+
+    create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    context.svm.airdrop(&swig, 10_000_000).unwrap();
+    context.svm.airdrop(&swig_wallet, 10_000_000).unwrap();
+
+    let program_exec_data =
+        create_program_exec_authority_data(TEST_PROGRAM_ID, &VALID_DISCRIMINATOR);
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::ProgramExec,
+            authority: &program_exec_data,
+        },
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
+
+    set_test_program_state(&mut context, &state_account.pubkey(), false).unwrap();
+
+    context.svm.warp_to_slot(100);
+
+    let test_program_ix = Instruction {
+        program_id: TEST_PROGRAM_ID,
+        accounts: vec![
+            AccountMeta::new_readonly(swig, false),
+            AccountMeta::new_readonly(swig_wallet, false),
+            AccountMeta::new_readonly(state_account.pubkey(), false),
+            AccountMeta::new_readonly(program_id(), false),
+        ],
+        data: VALID_DISCRIMINATOR.to_vec(),
+    };
+
+    let inner_ix = system_instruction::transfer(&swig_wallet, &swig_authority.pubkey(), 1000);
+
+    // target_ix_index=1 but the sign instruction IS at index 1, so idx >= current_index
+    let instructions = build_program_exec_sign_instructions_with_ix_index(
+        swig,
+        swig_wallet,
+        swig_authority.pubkey(),
+        test_program_ix,
+        inner_ix,
+        1,
+        1, // target_ix_index: points to the sign instruction itself (invalid)
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &swig_authority.pubkey(),
+        &instructions,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&swig_authority]).unwrap();
+
+    let res = context.svm.send_transaction(tx);
+
+    assert!(
+        res.is_err(),
+        "Transaction should fail when target_ix_index >= current instruction index"
+    );
+
+    if let Err(err) = res {
+        println!("Got expected error: {:?}", err.err);
+    }
+}
+
+/// Test that specifying an explicit instruction index that points to a wrong
+/// program fails with the expected error.
+#[test_log::test]
+fn test_program_exec_explicit_ix_index_wrong_program_fails() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    let state_account = Keypair::new();
+
+    deploy_test_program(&mut context).expect("Failed to deploy test program");
+
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let swig_wallet =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
+
+    create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    context.svm.airdrop(&swig, 10_000_000).unwrap();
+    context.svm.airdrop(&swig_wallet, 10_000_000).unwrap();
+
+    let program_exec_data =
+        create_program_exec_authority_data(TEST_PROGRAM_ID, &VALID_DISCRIMINATOR);
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::ProgramExec,
+            authority: &program_exec_data,
+        },
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
+
+    set_test_program_state(&mut context, &state_account.pubkey(), false).unwrap();
+
+    context.svm.warp_to_slot(100);
+
+    // Index 0: a wrong-program instruction (system program instead of TEST_PROGRAM_ID)
+    let wrong_program_ix = Instruction {
+        program_id: solana_sdk::system_program::ID,
+        accounts: vec![
+            AccountMeta::new_readonly(swig, false),
+            AccountMeta::new_readonly(swig_wallet, false),
+            AccountMeta::new(swig_authority.pubkey(), true),
+        ],
+        data: VALID_DISCRIMINATOR.to_vec(),
+    };
+
+    // Index 1: the valid authenticating instruction (so default would succeed)
+    let valid_program_ix = Instruction {
+        program_id: TEST_PROGRAM_ID,
+        accounts: vec![
+            AccountMeta::new_readonly(swig, false),
+            AccountMeta::new_readonly(swig_wallet, false),
+            AccountMeta::new_readonly(state_account.pubkey(), false),
+            AccountMeta::new_readonly(program_id(), false),
+        ],
+        data: VALID_DISCRIMINATOR.to_vec(),
+    };
+
+    let inner_ix = system_instruction::transfer(&swig_wallet, &swig_authority.pubkey(), 1000);
+
+    // Build the sign instruction using the valid_program_ix as the "preceding"
+    // instruction (it gets placed at index 1), but we target index 0 which has
+    // the wrong program
+    let mut instructions = build_program_exec_sign_instructions_with_ix_index(
+        swig,
+        swig_wallet,
+        swig_authority.pubkey(),
+        valid_program_ix,
+        inner_ix,
+        1,
+        0, // target_ix_index: points to index 0 which has the wrong program
+    )
+    .unwrap();
+
+    // Insert the wrong-program instruction at index 0
+    // Final order: [wrong_program(0), valid_program(1), sign(2)]
+    instructions.insert(0, wrong_program_ix);
+
+    let message = v0::Message::try_compile(
+        &swig_authority.pubkey(),
+        &instructions,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&swig_authority]).unwrap();
+
+    let res = context.svm.send_transaction(tx);
+
+    assert!(
+        res.is_err(),
+        "Transaction should fail when target_ix_index points to wrong program"
+    );
+
+    if let Err(err) = res {
+        println!("Got expected error: {:?}", err.err);
+    }
+}
