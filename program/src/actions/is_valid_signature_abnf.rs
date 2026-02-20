@@ -226,7 +226,10 @@ mod tests {
     #[test]
     fn parses_challenge_address_and_resources() {
         let challenge = b"example.com wants you to sign in with your Solana account:\n3KMf9P7w2nQx5R8tUvYcBdEghJkMNpQrS\n\nSign in to Swig\n\nURI: https://example.com\nVersion: 1\nChain ID: solana:devnet\nNonce: abcdef12\nIssued At: 2026-01-01T00:00:00Z\nResources:\n- urn:swig:v1:swig:swig123\n- urn:swig:v1:swig_wallet_address:3KMf9P7w2nQx5R8tUvYcBdEghJkMNpQrS\n- urn:swig:v1:swig_program:program123\n- urn:swig:v1:role_id:1\n- urn:swig:v1:scope:ProgramScope";
-        let parsed = parse_siws_challenge(challenge).unwrap();
+        let parsed = match parse_siws_challenge(challenge) {
+            Ok(parsed) => parsed,
+            Err(error) => panic!("parse_siws_challenge should succeed: {error:?}"),
+        };
         assert_eq!(parsed.address, "3KMf9P7w2nQx5R8tUvYcBdEghJkMNpQrS");
         assert_eq!(parsed.resources.len(), 5);
     }

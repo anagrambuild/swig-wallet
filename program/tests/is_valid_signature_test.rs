@@ -68,47 +68,66 @@ fn build_challenge(
     }
 }
 
+fn must<T, E: core::fmt::Debug>(result: Result<T, E>, context: &str) -> T {
+    match result {
+        Ok(value) => value,
+        Err(error) => panic!("{context}: {error:?}"),
+    }
+}
+
 #[test_log::test]
 fn test_is_valid_signature_ed25519_happy_path() {
-    let mut context = setup_test_context().unwrap();
+    let mut context = must(setup_test_context(), "setup test context");
     let swig_authority = Keypair::new();
-    context
-        .svm
-        .airdrop(&swig_authority.pubkey(), 1_000_000_000)
-        .unwrap();
+    must(
+        context.svm.airdrop(&swig_authority.pubkey(), 1_000_000_000),
+        "airdrop swig authority",
+    );
 
     let id = rand::random::<[u8; 32]>();
-    let (swig, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    let (swig, _) = must(
+        create_swig_ed25519(&mut context, &swig_authority, id),
+        "create swig ed25519",
+    );
     let (swig_wallet_address, _) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
-    let role_id = role_id_for_authority(&context, &swig, &swig_authority.pubkey()).unwrap();
+    let role_id = must(
+        role_id_for_authority(&context, &swig, &swig_authority.pubkey()),
+        "lookup role id for swig authority",
+    );
     let challenge = build_challenge(swig, swig_wallet_address, role_id, &["ProgramScope"]);
 
-    let validate_ix = IsValidSignatureInstruction::new_with_ed25519_authority(
-        swig,
-        swig_wallet_address,
-        swig_authority.pubkey(),
-        role_id,
-        &challenge,
-    )
-    .unwrap();
+    let validate_ix = must(
+        IsValidSignatureInstruction::new_with_ed25519_authority(
+            swig,
+            swig_wallet_address,
+            swig_authority.pubkey(),
+            role_id,
+            &challenge,
+        ),
+        "build is_valid_signature instruction",
+    );
 
-    let message = v0::Message::try_compile(
-        &context.default_payer.pubkey(),
-        &[validate_ix],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-    let tx = VersionedTransaction::try_new(
-        VersionedMessage::V0(message),
-        &[
-            context.default_payer.insecure_clone(),
-            swig_authority.insecure_clone(),
-        ],
-    )
-    .unwrap();
+    let message = must(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[validate_ix],
+            &[],
+            context.svm.latest_blockhash(),
+        ),
+        "compile transaction message",
+    );
+    let tx = must(
+        VersionedTransaction::try_new(
+            VersionedMessage::V0(message),
+            &[
+                context.default_payer.insecure_clone(),
+                swig_authority.insecure_clone(),
+            ],
+        ),
+        "build transaction",
+    );
 
     let result = context.svm.send_transaction(tx);
     assert!(result.is_ok(), "is_valid_signature should succeed");
@@ -116,37 +135,46 @@ fn test_is_valid_signature_ed25519_happy_path() {
 
 #[test_log::test]
 fn test_is_valid_signature_rejects_missing_scope_permission() {
-    let mut context = setup_test_context().unwrap();
+    let mut context = must(setup_test_context(), "setup test context");
     let swig_authority = Keypair::new();
     let limited_authority = Keypair::new();
-    context
-        .svm
-        .airdrop(&swig_authority.pubkey(), 1_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&limited_authority.pubkey(), 1_000_000_000)
-        .unwrap();
+    must(
+        context.svm.airdrop(&swig_authority.pubkey(), 1_000_000_000),
+        "airdrop swig authority",
+    );
+    must(
+        context
+            .svm
+            .airdrop(&limited_authority.pubkey(), 1_000_000_000),
+        "airdrop limited authority",
+    );
 
     let id = rand::random::<[u8; 32]>();
-    let (swig, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    let (swig, _) = must(
+        create_swig_ed25519(&mut context, &swig_authority, id),
+        "create swig ed25519",
+    );
     let (swig_wallet_address, _) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
-    add_authority_with_ed25519_root(
-        &mut context,
-        &swig,
-        &swig_authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::Ed25519,
-            authority: limited_authority.pubkey().as_ref(),
-        },
-        vec![ClientAction::SolLimit(SolLimit { amount: 1_000_000 })],
-    )
-    .unwrap();
+    must(
+        add_authority_with_ed25519_root(
+            &mut context,
+            &swig,
+            &swig_authority,
+            AuthorityConfig {
+                authority_type: AuthorityType::Ed25519,
+                authority: limited_authority.pubkey().as_ref(),
+            },
+            vec![ClientAction::SolLimit(SolLimit { amount: 1_000_000 })],
+        ),
+        "add limited authority",
+    );
 
-    let limited_role_id = role_id_for_authority(&context, &swig, &limited_authority.pubkey())
-        .unwrap();
+    let limited_role_id = must(
+        role_id_for_authority(&context, &swig, &limited_authority.pubkey()),
+        "lookup limited role id",
+    );
     let challenge = build_challenge(
         swig,
         swig_wallet_address,
@@ -154,110 +182,144 @@ fn test_is_valid_signature_rejects_missing_scope_permission() {
         &["ManageAuthority"],
     );
 
-    let validate_ix = IsValidSignatureInstruction::new_with_ed25519_authority(
-        swig,
-        swig_wallet_address,
-        limited_authority.pubkey(),
-        limited_role_id,
-        &challenge,
-    )
-    .unwrap();
+    let validate_ix = must(
+        IsValidSignatureInstruction::new_with_ed25519_authority(
+            swig,
+            swig_wallet_address,
+            limited_authority.pubkey(),
+            limited_role_id,
+            &challenge,
+        ),
+        "build is_valid_signature instruction",
+    );
 
-    let message = v0::Message::try_compile(
-        &context.default_payer.pubkey(),
-        &[validate_ix],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-    let tx = VersionedTransaction::try_new(
-        VersionedMessage::V0(message),
-        &[
-            context.default_payer.insecure_clone(),
-            limited_authority.insecure_clone(),
-        ],
-    )
-    .unwrap();
+    let message = must(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[validate_ix],
+            &[],
+            context.svm.latest_blockhash(),
+        ),
+        "compile transaction message",
+    );
+    let tx = must(
+        VersionedTransaction::try_new(
+            VersionedMessage::V0(message),
+            &[
+                context.default_payer.insecure_clone(),
+                limited_authority.insecure_clone(),
+            ],
+        ),
+        "build transaction",
+    );
 
     let result = context.svm.send_transaction(tx);
     assert!(
         result.is_err(),
         "is_valid_signature should reject missing scope permission"
     );
-    assert_eq!(
-        result.unwrap_err().err,
-        TransactionError::InstructionError(0, InstructionError::Custom(3006))
-    );
+    match result {
+        Ok(_) => panic!("expected missing scope permission failure"),
+        Err(error) => {
+            assert_eq!(
+                error.err,
+                TransactionError::InstructionError(0, InstructionError::Custom(3006))
+            );
+        },
+    }
 }
 
 #[test_log::test]
 fn test_is_valid_signature_rejects_role_resource_mismatch() {
-    let mut context = setup_test_context().unwrap();
+    let mut context = must(setup_test_context(), "setup test context");
     let swig_authority = Keypair::new();
-    context
-        .svm
-        .airdrop(&swig_authority.pubkey(), 1_000_000_000)
-        .unwrap();
+    must(
+        context.svm.airdrop(&swig_authority.pubkey(), 1_000_000_000),
+        "airdrop swig authority",
+    );
 
     let id = rand::random::<[u8; 32]>();
-    let (swig, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    let (swig, _) = must(
+        create_swig_ed25519(&mut context, &swig_authority, id),
+        "create swig ed25519",
+    );
     let (swig_wallet_address, _) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
 
-    let role_id = role_id_for_authority(&context, &swig, &swig_authority.pubkey()).unwrap();
+    let role_id = must(
+        role_id_for_authority(&context, &swig, &swig_authority.pubkey()),
+        "lookup role id for swig authority",
+    );
     let wrong_role_id = role_id + 1;
     let challenge = build_challenge(swig, swig_wallet_address, wrong_role_id, &["ProgramScope"]);
 
-    let validate_ix = IsValidSignatureInstruction::new_with_ed25519_authority(
-        swig,
-        swig_wallet_address,
-        swig_authority.pubkey(),
-        role_id,
-        &challenge,
-    )
-    .unwrap();
+    let validate_ix = must(
+        IsValidSignatureInstruction::new_with_ed25519_authority(
+            swig,
+            swig_wallet_address,
+            swig_authority.pubkey(),
+            role_id,
+            &challenge,
+        ),
+        "build is_valid_signature instruction",
+    );
 
-    let message = v0::Message::try_compile(
-        &context.default_payer.pubkey(),
-        &[validate_ix],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-    let tx = VersionedTransaction::try_new(
-        VersionedMessage::V0(message),
-        &[
-            context.default_payer.insecure_clone(),
-            swig_authority.insecure_clone(),
-        ],
-    )
-    .unwrap();
+    let message = must(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[validate_ix],
+            &[],
+            context.svm.latest_blockhash(),
+        ),
+        "compile transaction message",
+    );
+    let tx = must(
+        VersionedTransaction::try_new(
+            VersionedMessage::V0(message),
+            &[
+                context.default_payer.insecure_clone(),
+                swig_authority.insecure_clone(),
+            ],
+        ),
+        "build transaction",
+    );
 
     let result = context.svm.send_transaction(tx);
     assert!(
         result.is_err(),
         "is_valid_signature should reject mismatched role_id resource"
     );
-    assert_eq!(
-        result.unwrap_err().err,
-        TransactionError::InstructionError(0, InstructionError::Custom(3005))
-    );
+    match result {
+        Ok(_) => panic!("expected role resource mismatch failure"),
+        Err(error) => {
+            assert_eq!(
+                error.err,
+                TransactionError::InstructionError(0, InstructionError::Custom(3005))
+            );
+        },
+    }
 }
 
 #[test_log::test]
 fn test_is_valid_signature_rejects_malformed_abnf_challenge() {
-    let mut context = setup_test_context().unwrap();
+    let mut context = must(setup_test_context(), "setup test context");
     let swig_authority = Keypair::new();
-    context
-        .svm
-        .airdrop(&swig_authority.pubkey(), 1_000_000_000)
-        .unwrap();
+    must(
+        context.svm.airdrop(&swig_authority.pubkey(), 1_000_000_000),
+        "airdrop swig authority",
+    );
 
     let id = rand::random::<[u8; 32]>();
-    let (swig, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+    let (swig, _) = must(
+        create_swig_ed25519(&mut context, &swig_authority, id),
+        "create swig ed25519",
+    );
     let (swig_wallet_address, _) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
-    let role_id = role_id_for_authority(&context, &swig, &swig_authority.pubkey()).unwrap();
+    let role_id = must(
+        role_id_for_authority(&context, &swig, &swig_authority.pubkey()),
+        "lookup role id for swig authority",
+    );
 
     let malformed_challenge = b"example.com wants you to sign in with your Solana account:\n3KMf9P7w2nQx5R8tUvYcBdEghJkMNpQrS\n\nNonce: abcdef12\nVersion: 1";
 
@@ -265,7 +327,7 @@ fn test_is_valid_signature_rejects_malformed_abnf_challenge() {
         role_id,
         malformed_challenge.len() as u16,
     );
-    let arg_bytes = args.into_bytes().unwrap();
+    let arg_bytes = must(args.into_bytes(), "serialize args");
 
     let validate_ix = Instruction {
         program_id: program_id(),
@@ -277,29 +339,38 @@ fn test_is_valid_signature_rejects_malformed_abnf_challenge() {
         data: [arg_bytes, malformed_challenge, &[2]].concat(),
     };
 
-    let message = v0::Message::try_compile(
-        &context.default_payer.pubkey(),
-        &[validate_ix],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-    let tx = VersionedTransaction::try_new(
-        VersionedMessage::V0(message),
-        &[
-            context.default_payer.insecure_clone(),
-            swig_authority.insecure_clone(),
-        ],
-    )
-    .unwrap();
+    let message = must(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[validate_ix],
+            &[],
+            context.svm.latest_blockhash(),
+        ),
+        "compile transaction message",
+    );
+    let tx = must(
+        VersionedTransaction::try_new(
+            VersionedMessage::V0(message),
+            &[
+                context.default_payer.insecure_clone(),
+                swig_authority.insecure_clone(),
+            ],
+        ),
+        "build transaction",
+    );
 
     let result = context.svm.send_transaction(tx);
     assert!(
         result.is_err(),
         "is_valid_signature should reject malformed ABNF challenge"
     );
-    assert_eq!(
-        result.unwrap_err().err,
-        TransactionError::InstructionError(0, InstructionError::InvalidInstructionData)
-    );
+    match result {
+        Ok(_) => panic!("expected malformed challenge failure"),
+        Err(error) => {
+            assert_eq!(
+                error.err,
+                TransactionError::InstructionError(0, InstructionError::InvalidInstructionData)
+            );
+        },
+    }
 }

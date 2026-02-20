@@ -1,4 +1,3 @@
-use serde::{Deserialize, Serialize};
 use solana_sdk::{
     hash as sha256,
     instruction::{AccountMeta, Instruction},
@@ -46,8 +45,7 @@ use swig_state::{
 };
 
 /// SIWS challenge payload for Swig auth.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct SiwsChallengeV1 {
     /// RFC 4501 DNS authority requesting the signing.
     pub domain: String,
@@ -165,7 +163,10 @@ mod tests {
             ],
         };
 
-        let message = challenge.to_message_string().unwrap();
+        let message = match challenge.to_message_string() {
+            Ok(message) => message,
+            Err(error) => panic!("SIWS serialization should succeed: {error:?}"),
+        };
         assert!(message.starts_with(
             "example.com wants you to sign in with your Solana account:\n3KMf9P7w2nQx5R8tUvYcBdEghJkMNpQrS\n\nSign in to Swig\n\nURI: https://example.com/login"
         ));
@@ -429,7 +430,10 @@ impl AddAuthorityInstruction {
             num_actions,
         );
 
-        write.extend_from_slice(args.into_bytes().unwrap());
+        write.extend_from_slice(
+            args.into_bytes()
+                .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?,
+        );
         write.extend_from_slice(new_authority_config.authority);
         write.extend_from_slice(&action_bytes);
         write.extend_from_slice(&[3]);
@@ -478,8 +482,11 @@ impl AddAuthorityInstruction {
 
         let mut account_payload_bytes = Vec::new();
         for account in &accounts {
-            account_payload_bytes
-                .extend_from_slice(accounts_payload_from_meta(account).into_bytes().unwrap());
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
         }
 
         let mut signature_bytes = Vec::new();
@@ -1575,7 +1582,10 @@ impl UpdateAuthorityInstruction {
         );
 
         let mut write = Vec::new();
-        write.extend_from_slice(args.into_bytes().unwrap());
+        write.extend_from_slice(
+            args.into_bytes()
+                .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?,
+        );
         write.extend_from_slice(&encoded_data);
         write.extend_from_slice(&[3]); // Ed25519 authority type
 
@@ -1651,8 +1661,11 @@ impl UpdateAuthorityInstruction {
 
         let mut account_payload_bytes = Vec::new();
         for account in &accounts {
-            account_payload_bytes
-                .extend_from_slice(accounts_payload_from_meta(account).into_bytes().unwrap());
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
         }
 
         let mut signature_bytes = Vec::new();

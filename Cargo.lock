@@ -8928,7 +8928,6 @@ version = "1.4.0"
 dependencies = [
  "anyhow",
  "bytemuck",
- "serde",
  "solana-sdk",
  "solana-secp256r1-program",
  "swig",

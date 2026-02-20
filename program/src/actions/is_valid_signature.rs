@@ -138,11 +138,8 @@ pub fn is_valid_signature(
         return Err(SwigError::InvalidSeedSwigAccount.into());
     }
 
-    let role = Swig::get_mut_role(validate.args.role_id, swig_roles)?;
-    if role.is_none() {
-        return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-    }
-    let role = role.unwrap();
+    let role = Swig::get_mut_role(validate.args.role_id, swig_roles)?
+        .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
 
     let clock = Clock::get()?;
     let slot = clock.slot;
@@ -333,7 +330,10 @@ mod tests {
             "urn:swig:v1:role_id:7",
             "urn:swig:v1:scope:TokenLimit",
         ];
-        let parsed = parse_resources(&resources).unwrap();
+        let parsed = match parse_resources(&resources) {
+            Ok(parsed) => parsed,
+            Err(error) => panic!("parse_resources should succeed: {error:?}"),
+        };
         assert_eq!(parsed.swig, Some("swig123"));
         assert_eq!(parsed.swig_wallet_address, Some("wallet123"));
         assert_eq!(parsed.swig_program, Some("program123"));
