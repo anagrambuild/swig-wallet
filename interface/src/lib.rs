@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use solana_sdk::{
     hash as sha256,
     instruction::{AccountMeta, Instruction},
@@ -14,6 +15,7 @@ use swig::actions::{
     create_session_v1::CreateSessionV1Args,
     create_sub_account_v1::CreateSubAccountV1Args,
     create_v1::CreateV1Args,
+    is_valid_signature::IsValidSignatureArgs,
     remove_authority_v1::RemoveAuthorityV1Args,
     sub_account_sign_v1::SubAccountSignV1Args,
     toggle_sub_account_v1::ToggleSubAccountV1Args,
@@ -42,6 +44,138 @@ use swig_state::{
     swig::{swig_account_seeds, swig_wallet_address_seeds},
     IntoBytes, Transmutable,
 };
+
+/// SIWS challenge payload for Swig auth.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiwsChallengeV1 {
+    /// RFC 4501 DNS authority requesting the signing.
+    pub domain: String,
+    /// Base58 swig_wallet_address PDA that is being authenticated.
+    pub address: String,
+    /// Human-readable intent.
+    pub statement: Option<String>,
+    /// RFC 3986 URI subject of the signing.
+    pub uri: String,
+    /// SIWS version, typically "1".
+    pub version: String,
+    /// SIWS chain identifier.
+    pub chain_id: Option<String>,
+    /// Replay protection nonce.
+    pub nonce: String,
+    /// ISO 8601 timestamp.
+    pub issued_at: String,
+    /// Optional ISO 8601 expiry.
+    pub expiration_time: Option<String>,
+    /// Optional ISO 8601 not-before.
+    pub not_before: Option<String>,
+    /// Optional request identifier.
+    pub request_id: Option<String>,
+    /// SIWS resources carrying Swig context (swig, role_id, scopes, etc).
+    pub resources: Vec<String>,
+}
+
+impl SiwsChallengeV1 {
+    pub fn to_message_string(&self) -> anyhow::Result<String> {
+        if self.domain.is_empty() {
+            return Err(anyhow::anyhow!("SIWS domain cannot be empty"));
+        }
+        if self.address.is_empty() {
+            return Err(anyhow::anyhow!("SIWS address cannot be empty"));
+        }
+
+        let mut message = format!(
+            "{} wants you to sign in with your Solana account:\n{}",
+            self.domain, self.address
+        );
+
+        let mut advanced_fields = Vec::new();
+        advanced_fields.push(format!("URI: {}", self.uri));
+        advanced_fields.push(format!("Version: {}", self.version));
+        if let Some(chain_id) = self.chain_id.as_ref() {
+            advanced_fields.push(format!("Chain ID: {}", chain_id));
+        }
+        advanced_fields.push(format!("Nonce: {}", self.nonce));
+        advanced_fields.push(format!("Issued At: {}", self.issued_at));
+        if let Some(expiration_time) = self.expiration_time.as_ref() {
+            advanced_fields.push(format!("Expiration Time: {}", expiration_time));
+        }
+        if let Some(not_before) = self.not_before.as_ref() {
+            advanced_fields.push(format!("Not Before: {}", not_before));
+        }
+        if let Some(request_id) = self.request_id.as_ref() {
+            advanced_fields.push(format!("Request ID: {}", request_id));
+        }
+        if !self.resources.is_empty() {
+            let mut resources_field = String::from("Resources:");
+            for resource in &self.resources {
+                resources_field.push_str("\n- ");
+                resources_field.push_str(resource);
+            }
+            advanced_fields.push(resources_field);
+        }
+
+        if self.statement.is_some() || !advanced_fields.is_empty() {
+            message.push_str("\n\n");
+        }
+        if let Some(statement) = self.statement.as_ref() {
+            message.push_str(statement);
+            if !advanced_fields.is_empty() {
+                message.push_str("\n\n");
+            }
+        }
+        if !advanced_fields.is_empty() {
+            message.push_str(&advanced_fields.join("\n"));
+        }
+
+        Ok(message)
+    }
+
+    pub fn to_message_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        Ok(self.to_message_string()?.into_bytes())
+    }
+
+    pub fn to_json_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        self.to_message_bytes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SiwsChallengeV1;
+
+    #[test]
+    fn serializes_abnf_siws_message() {
+        let challenge = SiwsChallengeV1 {
+            domain: "example.com".to_string(),
+            address: "3KMf9P7w2nQx5R8tUvYcBdEghJkMNpQrS".to_string(),
+            statement: Some("Sign in to Swig".to_string()),
+            uri: "https://example.com/login".to_string(),
+            version: "1".to_string(),
+            chain_id: Some("solana:devnet".to_string()),
+            nonce: "abc123ef".to_string(),
+            issued_at: "2026-01-01T00:00:00Z".to_string(),
+            expiration_time: None,
+            not_before: None,
+            request_id: None,
+            resources: vec![
+                "urn:swig:v1:swig:swig123".to_string(),
+                "urn:swig:v1:role_id:1".to_string(),
+                "urn:swig:v1:scope:ProgramScope".to_string(),
+            ],
+        };
+
+        let message = challenge.to_message_string().unwrap();
+        assert!(message.starts_with(
+            "example.com wants you to sign in with your Solana account:\n3KMf9P7w2nQx5R8tUvYcBdEghJkMNpQrS\n\nSign in to Swig\n\nURI: https://example.com/login"
+        ));
+        assert!(message.contains("\nVersion: 1"));
+        assert!(message.contains("\nChain ID: solana:devnet"));
+        assert!(message.contains("\nNonce: abc123ef"));
+        assert!(message.contains("\nIssued At: 2026-01-01T00:00:00Z"));
+        assert!(message.contains("\nResources:\n- urn:swig:v1:swig:swig123"));
+    }
+}
 
 pub enum ClientAction {
     TokenLimit(TokenLimit),
@@ -934,6 +1068,187 @@ impl SignV2Instruction {
         };
 
         Ok(vec![secp256r1_verify_ix, main_ix])
+    }
+}
+
+pub struct IsValidSignatureInstruction;
+impl IsValidSignatureInstruction {
+    pub fn new_with_ed25519_authority(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        authority: Pubkey,
+        role_id: u32,
+        challenge: &SiwsChallengeV1,
+    ) -> anyhow::Result<Instruction> {
+        let challenge_bytes = challenge.to_message_bytes()?;
+        let args = IsValidSignatureArgs::new(role_id, challenge_bytes.len() as u16);
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts: vec![
+                AccountMeta::new(swig_account, false),
+                AccountMeta::new(swig_wallet_address, false),
+                AccountMeta::new_readonly(authority, true),
+            ],
+            data: [arg_bytes, &challenge_bytes, &[2]].concat(),
+        })
+    }
+
+    pub fn new_with_secp256k1_authority<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        role_id: u32,
+        challenge: &SiwsChallengeV1,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let challenge_bytes = challenge.to_message_bytes()?;
+        let args = IsValidSignatureArgs::new(role_id, challenge_bytes.len() as u16);
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ];
+
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let nonced_payload = prepare_secp256k1_payload(
+            current_slot,
+            counter,
+            &challenge_bytes,
+            &account_payload_bytes,
+            &[],
+        );
+        let signature = authority_payload_fn(&nonced_payload);
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&counter.to_le_bytes());
+        authority_payload.extend_from_slice(&signature);
+
+        Ok(Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [arg_bytes, &challenge_bytes, &authority_payload].concat(),
+        })
+    }
+
+    pub fn new_with_secp256r1_authority<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        role_id: u32,
+        challenge: &SiwsChallengeV1,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let challenge_bytes = challenge.to_message_bytes()?;
+        let args = IsValidSignatureArgs::new(role_id, challenge_bytes.len() as u16);
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let slot_bytes = current_slot.to_le_bytes();
+        let counter_bytes = counter.to_le_bytes();
+        let message_hash = keccak::hash(
+            &[
+                &challenge_bytes,
+                &account_payload_bytes,
+                &slot_bytes[..],
+                &counter_bytes[..],
+            ]
+            .concat(),
+        )
+        .to_bytes();
+        let signature = authority_payload_fn(&message_hash);
+
+        let secp256r1_verify_ix =
+            new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
+
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&counter.to_le_bytes());
+        authority_payload.push(3); // instructions sysvar index
+        authority_payload.extend_from_slice(&[0u8; 4]); // minimum payload length for secp256r1 auth
+
+        let main_ix = Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [arg_bytes, &challenge_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![secp256r1_verify_ix, main_ix])
+    }
+
+    pub fn new_with_program_exec_authority(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        role_id: u32,
+        challenge: &SiwsChallengeV1,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
+
+        let challenge_bytes = challenge.to_message_bytes()?;
+        let args = IsValidSignatureArgs::new(role_id, challenge_bytes.len() as u16);
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let mut accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(payer, true),
+        ];
+        let instruction_sysvar_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+
+        let authority_payload = vec![instruction_sysvar_index];
+        let main_ix = Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [arg_bytes, &challenge_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![preceding_instruction, main_ix])
     }
 }
 
