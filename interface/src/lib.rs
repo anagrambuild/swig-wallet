@@ -133,8 +133,21 @@ impl SiwsChallengeV1 {
         Ok(self.to_message_string()?.into_bytes())
     }
 
-    pub fn to_json_bytes(&self) -> anyhow::Result<Vec<u8>> {
+    /// Serializes this SIWS challenge to ABNF text bytes.
+    ///
+    /// This is equivalent to [`Self::to_message_bytes`], and is provided to
+    /// make the output format explicit for API consumers.
+    pub fn to_abnf_bytes(&self) -> anyhow::Result<Vec<u8>> {
         self.to_message_bytes()
+    }
+
+    /// Deprecated: this method returns ABNF text bytes, not JSON bytes.
+    #[deprecated(
+        since = "0.1.0",
+        note = "returns ABNF text bytes; use to_abnf_bytes() or to_message_bytes()"
+    )]
+    pub fn to_json_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        self.to_abnf_bytes()
     }
 }
 
