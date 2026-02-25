@@ -1092,8 +1092,8 @@ impl IsValidSignatureInstruction {
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts: vec![
-                AccountMeta::new(swig_account, false),
-                AccountMeta::new(swig_wallet_address, false),
+                AccountMeta::new_readonly(swig_account, false),
+                AccountMeta::new_readonly(swig_wallet_address, false),
                 AccountMeta::new_readonly(authority, true),
             ],
             data: [arg_bytes, &challenge_bytes, &[2]].concat(),
@@ -1119,8 +1119,8 @@ impl IsValidSignatureInstruction {
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         let accounts = vec![
-            AccountMeta::new(swig_account, false),
-            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(swig_account, false),
+            AccountMeta::new_readonly(swig_wallet_address, false),
             AccountMeta::new_readonly(system_program::ID, false),
         ];
 
@@ -1173,8 +1173,8 @@ impl IsValidSignatureInstruction {
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         let accounts = vec![
-            AccountMeta::new(swig_account, false),
-            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(swig_account, false),
+            AccountMeta::new_readonly(swig_wallet_address, false),
             AccountMeta::new_readonly(system_program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
@@ -1237,8 +1237,8 @@ impl IsValidSignatureInstruction {
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         let mut accounts = vec![
-            AccountMeta::new(swig_account, false),
-            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(swig_account, false),
+            AccountMeta::new_readonly(swig_wallet_address, false),
             AccountMeta::new_readonly(payer, true),
         ];
         let instruction_sysvar_index = accounts.len() as u8;

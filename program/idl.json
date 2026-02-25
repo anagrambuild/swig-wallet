@@ -581,7 +581,7 @@
       "accounts": [
         {
           "name": "swig",
-          "isMut": true,
+          "isMut": false,
           "isSigner": false,
           "docs": [
             "the swig smart wallet"
@@ -589,7 +589,7 @@
         },
         {
           "name": "swigWalletAddress",
-          "isMut": true,
+          "isMut": false,
           "isSigner": false,
           "docs": [
             "the swig wallet address PDA"

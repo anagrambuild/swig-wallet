@@ -236,14 +236,14 @@ pub enum SwigInstruction {
     /// `urn:swig:v1:scope:*` resources are allowed by the role.
     ///
     /// Required accounts:
-    /// 1. `[writable]` Swig wallet account
-    /// 2. `[writable]` Swig wallet address PDA
+    /// 1. Swig wallet account
+    /// 2. Swig wallet address PDA
     /// 3. Authority context:
     ///    - Ed25519: authority signer account
     ///    - Secp256r1: instructions sysvar passed via authority payload index
     ///    - Secp256k1 / ProgramExec: placeholder or sysvar per authority payload
-    #[account(0, writable, name="swig", desc="the swig smart wallet")]
-    #[account(1, writable, name="swig_wallet_address", desc="the swig wallet address PDA")]
+    #[account(0, name="swig", desc="the swig smart wallet")]
+    #[account(1, name="swig_wallet_address", desc="the swig wallet address PDA")]
     #[account(2, name="authority_context", desc="authority context account or placeholder")]
     IsValidSignature = 16,
 }

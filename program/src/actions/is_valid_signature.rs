@@ -17,7 +17,7 @@ use swig_assertions::{check_self_owned, check_stack_height, check_system_owner};
 use swig_state::{
     action::{Action, Permission},
     swig::{swig_wallet_address_seeds, Swig},
-    Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
+    Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
 use super::is_valid_signature_abnf::parse_siws_challenge;
@@ -124,13 +124,13 @@ pub fn is_valid_signature(
     let validate = IsValidSignature::from_instruction_bytes(data)?;
     let parsed_challenge = parse_siws_challenge(validate.challenge_payload)?;
 
-    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+    let swig_account_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 
-    let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
-    let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+    let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_unchecked(Swig::LEN) };
+    let swig = unsafe { Swig::load_unchecked(swig_header)? };
 
     let swig_wallet_seeds = swig_wallet_address_seeds(ctx.accounts.swig.key().as_ref());
     let (derived_wallet, _) = find_program_address(&swig_wallet_seeds, &crate::ID);
@@ -138,7 +138,10 @@ pub fn is_valid_signature(
         return Err(SwigError::InvalidSeedSwigAccount.into());
     }
 
-    let role = Swig::get_mut_role(validate.args.role_id, swig_roles)?
+    // `IsValidSignature` is intended for off-chain simulation and should not
+    // mutate on-chain authority state (e.g. secp signature odometers).
+    let mut swig_roles_for_auth = swig_roles.to_vec();
+    let role = Swig::get_mut_role(validate.args.role_id, &mut swig_roles_for_auth)?
         .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
 
     let clock = Clock::get()?;
