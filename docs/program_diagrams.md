@@ -1,4 +1,4 @@
-# Swig Program Architecture (v1.4.0)
+# Swig Program Architecture (v1.4.0, current)
 
 ## Overview
 
@@ -15,8 +15,8 @@
 
 Swig is a role-based smart wallet protocol for Solana. It enables multiple
 authorities with fine-grained permissions to operate a shared wallet through
-cross-program invocations (CPI), supporting four distinct signature schemes
-and 21 permission types.
+cross-program invocations (CPI), supporting four signature schemes
+(with session variants) and 21 permission types.
 
 ---
 
@@ -98,7 +98,8 @@ swig-wallet/
 │  │ Swig Config Account (PDA: ["swig", id])                         │  │
 │  │                                                                 │  │
 │  │ Stores configuration, roles, and permissions.                   │  │
-│  │ Does NOT hold assets directly.                                  │  │
+│  │ V2 wallets use swig_wallet_address for execution assets.        │  │
+│  │ (Legacy v1 balances may exist until migration transfer.)        │  │
 │  │                                                                 │  │
 │  │  discriminator  : u8       = 1 (SwigConfigAccount)              │  │
 │  │  bump           : u8       PDA bump seed                        │  │
@@ -153,7 +154,8 @@ accounts to track balances and enforce post-execution integrity checks.
 │  │ ProgramScope     │  Tracked account for program scope permission:   │
 │  │                  │  role_index, balance (u128), spent (u128)        │
 │  ├──────────────────┤                                                  │
-│  │ SwigSubAccount   │  Sub-account with lamport snapshot               │
+│  │ SwigSubAccount   │  Sub-account classification used by dedicated    │
+│  │                  │  sub-account instruction paths                   │
 │  ├──────────────────┤                                                  │
 │  │ None             │  Unrelated account                               │
 │  └──────────────────┘                                                  │
@@ -307,8 +309,8 @@ Four signature schemes, each with a session-key variant (8 authority types total
 │      │  ▼  │                                                          │
 │   Secp256k1     Verify via Secp256k1 precompile instruction.          │
 │   (EVM)         Replay protection via signature odometer.             │
-│                 Message = keccak256(payload || accounts || slot ||     │
-│                 counter). Max signature age: 150 slots.               │
+│                 Message is keccak256-based over signed payload data.  │
+│                 Max signature age: 60 slots.                          │
 │      │     │                                                          │
 │      │     ▼                                                          │
 │   Secp256r1     Verify via Secp256r1 precompile instruction.          │
@@ -631,10 +633,10 @@ deduplicated account indexes to minimize transaction size.
 ┌───────────────────────────────────────────────────────────────────────┐
 │                         ERROR CODE RANGES                             │
 │                                                                       │
-│  1000-1007   SwigStateError       Account/state data validation       │
-│  2000-2002   InstructionError     Compact instruction parsing         │
-│  3000-3039   SwigAuthenticateError Authentication + permission checks │
-│  6000+       SwigError            General program errors (~45 types)  │
+│  0-46       SwigError             General program/account errors       │
+│  1000-1007  SwigStateError        Account/state data validation        │
+│  2000-2002  InstructionError      Compact instruction parsing          │
+│  3000-3039  SwigAuthenticateError Authentication + permission checks  │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
