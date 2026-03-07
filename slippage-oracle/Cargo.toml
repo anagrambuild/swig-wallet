@@ -11,5 +11,9 @@ swig-assertions = { path = "../assertions" }
 [lib]
 crate-type = ["cdylib", "lib"]
 
+[dev-dependencies]
+litesvm = "0.6.1"
+solana-sdk = "2"
+
 [features]
 no-entrypoint = []

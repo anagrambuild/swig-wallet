@@ -23,9 +23,41 @@ pub fn process_instruction(
 }
 
 fn process_validate_trade(
-    _accounts: &[AccountInfo],
-    _data: &[u8],
+    accounts: &[AccountInfo],
+    data: &[u8],
 ) -> Result<(), ProgramError> {
-    // TODO: implement in Task 2
+    if accounts.len() < 2 {
+        return Err(OracleError::InvalidAccountCount.into());
+    }
+
+    if data.len() < 18 {
+        return Err(OracleError::InvalidInstruction.into());
+    }
+
+    let input_amount = u64::from_le_bytes(
+        data[0..8]
+            .try_into()
+            .map_err(|_| OracleError::InvalidInstruction)?,
+    );
+    let min_output_amount = u64::from_le_bytes(
+        data[8..16]
+            .try_into()
+            .map_err(|_| OracleError::InvalidInstruction)?,
+    );
+    let min_bps = u16::from_le_bytes(
+        data[16..18]
+            .try_into()
+            .map_err(|_| OracleError::InvalidInstruction)?,
+    );
+
+    let required_min = (input_amount as u128)
+        .checked_mul(min_bps as u128)
+        .ok_or(OracleError::ArithmeticOverflow)?
+        / 10000u128;
+
+    if (min_output_amount as u128) < required_min {
+        return Err(OracleError::SlippageExceeded.into());
+    }
+
     Ok(())
 }
