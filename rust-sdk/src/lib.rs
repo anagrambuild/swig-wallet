@@ -1,4 +1,5 @@
 // Public modules
+pub mod agent_role;
 pub mod client_role;
 pub mod error;
 pub mod instruction_builder;
