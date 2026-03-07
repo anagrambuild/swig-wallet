@@ -5,6 +5,7 @@ pub enum OracleError {
     SlippageExceeded = 0,
     InvalidInstruction = 1,
     InvalidAccountCount = 2,
+    /// Reserved for future on-chain Swig account validation.
     InvalidSwigAccount = 3,
     ArithmeticOverflow = 4,
 }

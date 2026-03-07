@@ -26,6 +26,9 @@ fn process_validate_trade(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> Result<(), ProgramError> {
+    // ProgramExec requires accounts[0] = swig_config and accounts[1] = swig_wallet.
+    // The oracle does not validate these accounts itself -- ProgramExec authentication
+    // on the Swig side independently verifies that these match the real Swig addresses.
     if accounts.len() < 2 {
         return Err(OracleError::InvalidAccountCount.into());
     }

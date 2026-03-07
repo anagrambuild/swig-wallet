@@ -71,6 +71,9 @@ impl AgentRoleConfig {
             &self.oracle_discriminator,
         );
 
+        // Session length is not encoded in authority_data -- the session is created
+        // via a separate CreateSession instruction that takes the max_length parameter.
+        // Here we only select the correct AuthorityType discriminant.
         let authority_type = if self.session_max_length.is_some() {
             AuthorityType::ProgramExecSession
         } else {

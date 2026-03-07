@@ -102,3 +102,39 @@ fn test_missing_accounts() {
     let result = svm.send_transaction(tx);
     assert!(result.is_err(), "should fail: missing accounts (InvalidAccountCount)");
 }
+
+#[test]
+fn test_zero_min_bps_always_passes() {
+    // Documents known limitation: agent can set min_bps=0 to bypass ratio check.
+    // Swig spending limits serve as the backstop.
+    let mut svm = LiteSVM::new();
+    let program_id = load_oracle(&mut svm);
+    let payer = Keypair::new();
+    svm.airdrop(&payer.pubkey(), 10_000_000_000).unwrap();
+
+    let swig_config = Pubkey::new_unique();
+    let swig_wallet = Pubkey::new_unique();
+
+    // 1000 input, 0 output, 0 bps -> required_min = 0, output 0 >= 0 -> pass
+    let ix = build_validate_trade_ix(program_id, swig_config, swig_wallet, 1000, 0, 0);
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(&[ix], Some(&payer.pubkey()), &[&payer], blockhash);
+    svm.send_transaction(tx).expect("min_bps=0 always passes (spending limits are the backstop)");
+}
+
+#[test]
+fn test_zero_input_amount_always_passes() {
+    // When input_amount is 0, required_min is always 0.
+    let mut svm = LiteSVM::new();
+    let program_id = load_oracle(&mut svm);
+    let payer = Keypair::new();
+    svm.airdrop(&payer.pubkey(), 10_000_000_000).unwrap();
+
+    let swig_config = Pubkey::new_unique();
+    let swig_wallet = Pubkey::new_unique();
+
+    let ix = build_validate_trade_ix(program_id, swig_config, swig_wallet, 0, 0, 9900);
+    let blockhash = svm.latest_blockhash();
+    let tx = Transaction::new_signed_with_payer(&[ix], Some(&payer.pubkey()), &[&payer], blockhash);
+    svm.send_transaction(tx).expect("zero input always passes");
+}
