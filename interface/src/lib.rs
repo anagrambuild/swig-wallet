@@ -3670,3 +3670,118 @@ impl CloseSwigV1Instruction {
         Ok(vec![secp256r1_verify_ix, main_ix])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_SYSVAR_ID;
+
+    #[test]
+    fn test_new_program_exec_includes_instructions_sysvar() {
+        let swig_account = Pubkey::new_unique();
+        let swig_wallet = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let target_program = Pubkey::new_unique();
+
+        let preceding_ix = Instruction {
+            program_id: target_program,
+            accounts: vec![],
+            data: vec![1, 2, 3],
+        };
+
+        let inner_ix = Instruction {
+            program_id: Pubkey::new_unique(),
+            accounts: vec![AccountMeta::new(Pubkey::new_unique(), false)],
+            data: vec![4, 5, 6],
+        };
+
+        let result = SignV2Instruction::new_program_exec(
+            swig_account,
+            swig_wallet,
+            payer,
+            preceding_ix,
+            inner_ix,
+            0,
+        )
+        .expect("should build program exec instructions");
+
+        assert_eq!(result.len(), 2, "should return preceding + sign instructions");
+
+        let sign_ix = &result[1];
+        assert_eq!(sign_ix.program_id, Pubkey::from(swig::ID));
+
+        let has_instructions_sysvar = sign_ix
+            .accounts
+            .iter()
+            .any(|a| a.pubkey == INSTRUCTIONS_SYSVAR_ID);
+        assert!(
+            has_instructions_sysvar,
+            "sign instruction must include the instructions sysvar account"
+        );
+
+        // The instructions sysvar should be read-only and not a signer
+        let sysvar_account = sign_ix
+            .accounts
+            .iter()
+            .find(|a| a.pubkey == INSTRUCTIONS_SYSVAR_ID)
+            .unwrap();
+        assert!(!sysvar_account.is_signer);
+        assert!(!sysvar_account.is_writable);
+    }
+
+    #[test]
+    fn test_new_program_exec_with_ix_index_includes_instructions_sysvar() {
+        let swig_account = Pubkey::new_unique();
+        let swig_wallet = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let target_program = Pubkey::new_unique();
+
+        let preceding_ix = Instruction {
+            program_id: target_program,
+            accounts: vec![],
+            data: vec![1, 2, 3],
+        };
+
+        let inner_ix = Instruction {
+            program_id: Pubkey::new_unique(),
+            accounts: vec![AccountMeta::new(Pubkey::new_unique(), false)],
+            data: vec![4, 5, 6],
+        };
+
+        let target_ix_index = 0u8;
+        let result = SignV2Instruction::new_program_exec_with_ix_index(
+            swig_account,
+            swig_wallet,
+            payer,
+            preceding_ix,
+            inner_ix,
+            0,
+            target_ix_index,
+        )
+        .expect("should build program exec with ix index instructions");
+
+        assert_eq!(result.len(), 2);
+
+        let sign_ix = &result[1];
+        let has_instructions_sysvar = sign_ix
+            .accounts
+            .iter()
+            .any(|a| a.pubkey == INSTRUCTIONS_SYSVAR_ID);
+        assert!(
+            has_instructions_sysvar,
+            "sign instruction must include the instructions sysvar account"
+        );
+    }
+
+    #[test]
+    fn test_build_program_exec_authority_payload_without_target() {
+        let payload = build_program_exec_authority_payload(5, None);
+        assert_eq!(payload, vec![5]);
+    }
+
+    #[test]
+    fn test_build_program_exec_authority_payload_with_target() {
+        let payload = build_program_exec_authority_payload(5, Some(2));
+        assert_eq!(payload, vec![5, 2]);
+    }
+}
