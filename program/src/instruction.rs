@@ -228,12 +228,11 @@ pub enum SwigInstruction {
     #[account(3, name="system_program", desc="the system program")]
     CloseSwigV1 = 15,
 
-    /// Validates an SIWS challenge and checks requested scope permissions.
+    /// Validates a raw payload signature for a Swig role.
     ///
     /// This instruction is designed for off-chain transaction simulation.
-    /// It authenticates the role authority against the SIWS challenge payload,
-    /// validates challenge resource bindings, and ensures all requested
-    /// `urn:swig:v1:scope:*` resources are allowed by the role.
+    /// It authenticates the role authority against an arbitrary payload and
+    /// verifies that the provided wallet accounts match the target Swig.
     ///
     /// Required accounts:
     /// 1. Swig wallet account

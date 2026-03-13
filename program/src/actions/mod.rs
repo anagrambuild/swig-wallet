@@ -12,7 +12,6 @@ pub mod create_session_v1;
 pub mod create_sub_account_v1;
 pub mod create_v1;
 pub mod is_valid_signature;
-mod is_valid_signature_abnf;
 pub mod migrate_to_wallet_address_v1;
 pub mod remove_authority_v1;
 pub mod sign_v2;
@@ -232,7 +231,7 @@ fn process_close_swig_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult
 
 /// Processes an IsValidSignature instruction.
 ///
-/// Validates an SIWS challenge and requested scope resources for a role.
+/// Validates that a role authority authenticated an arbitrary payload.
 fn process_is_valid_signature(
     accounts: &[AccountInfo],
     account_classification: &[AccountClassification],

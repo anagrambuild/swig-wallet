@@ -44,7 +44,7 @@ use swig_state::{
     IntoBytes, Transmutable,
 };
 
-/// SIWS challenge payload for Swig auth.
+/// Optional SIWS helper for constructing payload bytes client-side.
 #[derive(Debug, Clone)]
 pub struct SiwsChallengeV1 {
     /// RFC 4501 DNS authority requesting the signing.
@@ -872,7 +872,7 @@ impl SignV2Instruction {
     pub fn new_secp256k1<F>(
         swig_account: Pubkey,
         swig_wallet_address: Pubkey,
-        mut authority_payload_fn: F,
+        authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
         inner_instruction: Instruction,
@@ -963,7 +963,7 @@ impl SignV2Instruction {
     pub fn new_secp256r1<F>(
         swig_account: Pubkey,
         swig_wallet_address: Pubkey,
-        mut authority_payload_fn: F,
+        authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
         inner_instruction: Instruction,
@@ -1081,10 +1081,9 @@ impl IsValidSignatureInstruction {
         swig_wallet_address: Pubkey,
         authority: Pubkey,
         role_id: u32,
-        challenge: &SiwsChallengeV1,
+        payload: &[u8],
     ) -> anyhow::Result<Instruction> {
-        let challenge_bytes = challenge.to_message_bytes()?;
-        let args = IsValidSignatureArgs::new(role_id, challenge_bytes.len() as u16);
+        let args = IsValidSignatureArgs::new(role_id, payload.len() as u16);
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -1096,7 +1095,7 @@ impl IsValidSignatureInstruction {
                 AccountMeta::new_readonly(swig_wallet_address, false),
                 AccountMeta::new_readonly(authority, true),
             ],
-            data: [arg_bytes, &challenge_bytes, &[2]].concat(),
+            data: [arg_bytes, payload, &[2]].concat(),
         })
     }
 
@@ -1107,13 +1106,12 @@ impl IsValidSignatureInstruction {
         current_slot: u64,
         counter: u32,
         role_id: u32,
-        challenge: &SiwsChallengeV1,
+        payload: &[u8],
     ) -> anyhow::Result<Instruction>
     where
         F: FnMut(&[u8]) -> [u8; 65],
     {
-        let challenge_bytes = challenge.to_message_bytes()?;
-        let args = IsValidSignatureArgs::new(role_id, challenge_bytes.len() as u16);
+        let args = IsValidSignatureArgs::new(role_id, payload.len() as u16);
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -1133,13 +1131,8 @@ impl IsValidSignatureInstruction {
             );
         }
 
-        let nonced_payload = prepare_secp256k1_payload(
-            current_slot,
-            counter,
-            &challenge_bytes,
-            &account_payload_bytes,
-            &[],
-        );
+        let nonced_payload =
+            prepare_secp256k1_payload(current_slot, counter, payload, &account_payload_bytes, &[]);
         let signature = authority_payload_fn(&nonced_payload);
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
@@ -1149,7 +1142,7 @@ impl IsValidSignatureInstruction {
         Ok(Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [arg_bytes, &challenge_bytes, &authority_payload].concat(),
+            data: [arg_bytes, payload, &authority_payload].concat(),
         })
     }
 
@@ -1160,14 +1153,13 @@ impl IsValidSignatureInstruction {
         current_slot: u64,
         counter: u32,
         role_id: u32,
-        challenge: &SiwsChallengeV1,
+        payload: &[u8],
         public_key: &[u8; 33],
     ) -> anyhow::Result<Vec<Instruction>>
     where
         F: FnMut(&[u8]) -> [u8; 64],
     {
-        let challenge_bytes = challenge.to_message_bytes()?;
-        let args = IsValidSignatureArgs::new(role_id, challenge_bytes.len() as u16);
+        let args = IsValidSignatureArgs::new(role_id, payload.len() as u16);
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -1192,7 +1184,7 @@ impl IsValidSignatureInstruction {
         let counter_bytes = counter.to_le_bytes();
         let message_hash = keccak::hash(
             &[
-                &challenge_bytes,
+                payload,
                 &account_payload_bytes,
                 &slot_bytes[..],
                 &counter_bytes[..],
@@ -1214,7 +1206,7 @@ impl IsValidSignatureInstruction {
         let main_ix = Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [arg_bytes, &challenge_bytes, &authority_payload].concat(),
+            data: [arg_bytes, payload, &authority_payload].concat(),
         };
 
         Ok(vec![secp256r1_verify_ix, main_ix])
@@ -1226,12 +1218,11 @@ impl IsValidSignatureInstruction {
         payer: Pubkey,
         preceding_instruction: Instruction,
         role_id: u32,
-        challenge: &SiwsChallengeV1,
+        payload: &[u8],
     ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
 
-        let challenge_bytes = challenge.to_message_bytes()?;
-        let args = IsValidSignatureArgs::new(role_id, challenge_bytes.len() as u16);
+        let args = IsValidSignatureArgs::new(role_id, payload.len() as u16);
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -1248,7 +1239,7 @@ impl IsValidSignatureInstruction {
         let main_ix = Instruction {
             program_id: Pubkey::from(swig::ID),
             accounts,
-            data: [arg_bytes, &challenge_bytes, &authority_payload].concat(),
+            data: [arg_bytes, payload, &authority_payload].concat(),
         };
 
         Ok(vec![preceding_instruction, main_ix])

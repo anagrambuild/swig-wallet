@@ -7,20 +7,16 @@ use alloy_signer_local::{LocalSigner, PrivateKeySigner};
 use common::*;
 use solana_sdk::{
     clock::Clock,
-    instruction::{AccountMeta, Instruction, InstructionError},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    transaction::{TransactionError, VersionedTransaction},
+    transaction::VersionedTransaction,
 };
-use swig_interface::{AuthorityConfig, ClientAction, IsValidSignatureInstruction, SiwsChallengeV1};
+use swig_interface::IsValidSignatureInstruction;
 use swig_state::{
-    action::sol_limit::SolLimit,
-    authority::{secp256k1::Secp256k1Authority, secp256r1::Secp256r1Authority, AuthorityType},
-    swig::swig_wallet_address_seeds,
-    swig::SwigWithRoles,
-    IntoBytes,
+    authority::{secp256k1::Secp256k1Authority, secp256r1::Secp256r1Authority},
+    swig::{swig_wallet_address_seeds, SwigWithRoles},
 };
 
 fn role_id_for_authority(
@@ -142,40 +138,6 @@ fn create_test_secp256r1_keypair() -> (openssl::ec::EcKey<openssl::pkey::Private
     (signing_key, pubkey_array)
 }
 
-fn build_challenge(
-    swig: Pubkey,
-    swig_wallet_address: Pubkey,
-    role_id: u32,
-    scopes: &[&str],
-) -> SiwsChallengeV1 {
-    let mut resources = vec![
-        format!("urn:swig:v1:swig:{swig}"),
-        format!("urn:swig:v1:swig_wallet_address:{swig_wallet_address}"),
-        format!("urn:swig:v1:swig_program:{}", program_id()),
-        format!("urn:swig:v1:role_id:{role_id}"),
-    ];
-    resources.extend(
-        scopes
-            .iter()
-            .map(|scope| format!("urn:swig:v1:scope:{scope}")),
-    );
-
-    SiwsChallengeV1 {
-        domain: "example.com".to_string(),
-        address: swig_wallet_address.to_string(),
-        statement: Some("Sign in to Swig".to_string()),
-        uri: "https://example.com/login".to_string(),
-        version: "1".to_string(),
-        chain_id: Some("solana:devnet".to_string()),
-        nonce: "abc123ef".to_string(),
-        issued_at: "2026-01-01T00:00:00Z".to_string(),
-        expiration_time: None,
-        not_before: None,
-        request_id: None,
-        resources,
-    }
-}
-
 fn must<T, E: core::fmt::Debug>(result: Result<T, E>, context: &str) -> T {
     match result {
         Ok(value) => value,
@@ -183,8 +145,12 @@ fn must<T, E: core::fmt::Debug>(result: Result<T, E>, context: &str) -> T {
     }
 }
 
+fn arbitrary_payload() -> Vec<u8> {
+    vec![0, 255, 17, 42, b's', b'w', b'i', b'g']
+}
+
 #[test_log::test]
-fn test_is_valid_signature_ed25519_happy_path() {
+fn test_is_valid_signature_ed25519_accepts_arbitrary_payload() {
     let mut context = must(setup_test_context(), "setup test context");
     let swig_authority = Keypair::new();
     must(
@@ -199,12 +165,11 @@ fn test_is_valid_signature_ed25519_happy_path() {
     );
     let (swig_wallet_address, _) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
-
     let role_id = must(
         role_id_for_authority(&context, &swig, &swig_authority.pubkey()),
         "lookup role id for swig authority",
     );
-    let challenge = build_challenge(swig, swig_wallet_address, role_id, &["ProgramScope"]);
+    let payload = arbitrary_payload();
 
     let validate_ix = must(
         IsValidSignatureInstruction::new_with_ed25519_authority(
@@ -212,7 +177,7 @@ fn test_is_valid_signature_ed25519_happy_path() {
             swig_wallet_address,
             swig_authority.pubkey(),
             role_id,
-            &challenge,
+            &payload,
         ),
         "build is_valid_signature instruction",
     );
@@ -238,11 +203,15 @@ fn test_is_valid_signature_ed25519_happy_path() {
     );
 
     let result = context.svm.send_transaction(tx);
-    assert!(result.is_ok(), "is_valid_signature should succeed");
+    assert!(
+        result.is_ok(),
+        "ed25519 is_valid_signature should succeed for arbitrary payload: {:?}",
+        result.err()
+    );
 }
 
 #[test_log::test]
-fn test_is_valid_signature_secp256k1_happy_path() {
+fn test_is_valid_signature_secp256k1_accepts_arbitrary_payload_without_mutating_odometer() {
     let mut context = must(setup_test_context(), "setup test context");
     let wallet = LocalSigner::random();
 
@@ -258,16 +227,16 @@ fn test_is_valid_signature_secp256k1_happy_path() {
         role_id_for_authority_bytes(&context, &swig, &authority_bytes),
         "lookup role id for secp256k1 authority",
     );
-    let challenge = build_challenge(swig, swig_wallet_address, role_id, &["ProgramScope"]);
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
-    let next_counter = must(
+    let current_counter = must(
         secp256k1_signature_odometer(&context, &swig, &authority_bytes),
         "read secp256k1 odometer",
-    ) + 1;
+    );
+    let payload = arbitrary_payload();
 
-    let signing_fn = |payload: &[u8]| -> [u8; 65] {
+    let signing_fn = |message_hash: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
-        hash.copy_from_slice(&payload[..32]);
+        hash.copy_from_slice(&message_hash[..32]);
         wallet.sign_hash_sync(&B256::from(hash)).unwrap().as_bytes()
     };
 
@@ -277,9 +246,9 @@ fn test_is_valid_signature_secp256k1_happy_path() {
             swig_wallet_address,
             signing_fn,
             current_slot,
-            next_counter,
+            current_counter + 1,
             role_id,
-            &challenge,
+            &payload,
         ),
         "build is_valid_signature secp256k1 instruction",
     );
@@ -304,13 +273,22 @@ fn test_is_valid_signature_secp256k1_happy_path() {
     let result = context.svm.send_transaction(tx);
     assert!(
         result.is_ok(),
-        "secp256k1 is_valid_signature should succeed: {:?}",
+        "secp256k1 is_valid_signature should succeed for arbitrary payload: {:?}",
         result.err()
+    );
+
+    let final_counter = must(
+        secp256k1_signature_odometer(&context, &swig, &authority_bytes),
+        "read secp256k1 odometer after validation",
+    );
+    assert_eq!(
+        final_counter, current_counter,
+        "is_valid_signature must not mutate the secp256k1 odometer"
     );
 }
 
 #[test_log::test]
-fn test_is_valid_signature_secp256r1_happy_path() {
+fn test_is_valid_signature_secp256r1_accepts_arbitrary_payload_without_mutating_odometer() {
     let mut context = must(setup_test_context(), "setup test context");
     let (signing_key, public_key) = create_test_secp256r1_keypair();
 
@@ -325,12 +303,12 @@ fn test_is_valid_signature_secp256r1_happy_path() {
         role_id_for_authority_bytes(&context, &swig, &public_key),
         "lookup role id for secp256r1 authority",
     );
-    let challenge = build_challenge(swig, swig_wallet_address, role_id, &["ProgramScope"]);
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
-    let next_counter = must(
+    let current_counter = must(
         secp256r1_signature_odometer(&context, &swig, &public_key),
         "read secp256r1 odometer",
-    ) + 1;
+    );
+    let payload = arbitrary_payload();
 
     let signing_fn = |message_hash: &[u8]| -> [u8; 64] {
         use solana_secp256r1_program::sign_message;
@@ -343,9 +321,9 @@ fn test_is_valid_signature_secp256r1_happy_path() {
             swig_wallet_address,
             signing_fn,
             current_slot,
-            next_counter,
+            current_counter + 1,
             role_id,
-            &challenge,
+            &payload,
             &public_key,
         ),
         "build is_valid_signature secp256r1 instruction",
@@ -371,13 +349,22 @@ fn test_is_valid_signature_secp256r1_happy_path() {
     let result = context.svm.send_transaction(tx);
     assert!(
         result.is_ok(),
-        "secp256r1 is_valid_signature should succeed: {:?}",
+        "secp256r1 is_valid_signature should succeed for arbitrary payload: {:?}",
         result.err()
     );
+
+    let final_counter = must(
+        secp256r1_signature_odometer(&context, &swig, &public_key),
+        "read secp256r1 odometer after validation",
+    );
+    assert_eq!(
+        final_counter, current_counter,
+        "is_valid_signature must not mutate the secp256r1 odometer"
+    );
 }
 
 #[test_log::test]
-fn test_is_valid_signature_rejects_swig_resource_mismatch() {
+fn test_is_valid_signature_rejects_unknown_role_id() {
     let mut context = must(setup_test_context(), "setup test context");
     let swig_authority = Keypair::new();
     must(
@@ -392,21 +379,15 @@ fn test_is_valid_signature_rejects_swig_resource_mismatch() {
     );
     let (swig_wallet_address, _) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
-    let role_id = must(
-        role_id_for_authority(&context, &swig, &swig_authority.pubkey()),
-        "lookup role id for swig authority",
-    );
-
-    let mut challenge = build_challenge(swig, swig_wallet_address, role_id, &["ProgramScope"]);
-    challenge.resources[0] = format!("urn:swig:v1:swig:{}", Pubkey::new_unique());
+    let payload = arbitrary_payload();
 
     let validate_ix = must(
         IsValidSignatureInstruction::new_with_ed25519_authority(
             swig,
             swig_wallet_address,
             swig_authority.pubkey(),
-            role_id,
-            &challenge,
+            u32::MAX,
+            &payload,
         ),
         "build is_valid_signature instruction",
     );
@@ -432,500 +413,56 @@ fn test_is_valid_signature_rejects_swig_resource_mismatch() {
     );
 
     let result = context.svm.send_transaction(tx);
-    assert!(
-        result.is_err(),
-        "is_valid_signature should reject swig resource mismatch"
-    );
-    match result {
-        Ok(_) => panic!("expected swig resource mismatch failure"),
-        Err(error) => {
-            assert_eq!(
-                error.err,
-                TransactionError::InstructionError(0, InstructionError::Custom(3005))
-            );
-        },
-    }
+    assert!(result.is_err(), "unknown role_id should be rejected");
 }
 
 #[test_log::test]
-fn test_is_valid_signature_rejects_program_resource_mismatch() {
+fn test_is_valid_signature_rejects_tampered_secp256k1_payload() {
     let mut context = must(setup_test_context(), "setup test context");
-    let swig_authority = Keypair::new();
-    must(
-        context.svm.airdrop(&swig_authority.pubkey(), 1_000_000_000),
-        "airdrop swig authority",
-    );
+    let wallet = LocalSigner::random();
 
     let id = rand::random::<[u8; 32]>();
     let (swig, _) = must(
-        create_swig_ed25519(&mut context, &swig_authority, id),
-        "create swig ed25519",
+        create_swig_secp256k1(&mut context, &wallet, id),
+        "create swig secp256k1",
     );
     let (swig_wallet_address, _) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let authority_bytes = secp256k1_authority_bytes(&wallet);
     let role_id = must(
-        role_id_for_authority(&context, &swig, &swig_authority.pubkey()),
-        "lookup role id for swig authority",
+        role_id_for_authority_bytes(&context, &swig, &authority_bytes),
+        "lookup role id for secp256k1 authority",
     );
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    let current_counter = must(
+        secp256k1_signature_odometer(&context, &swig, &authority_bytes),
+        "read secp256k1 odometer",
+    );
+    let payload = arbitrary_payload();
 
-    let mut challenge = build_challenge(swig, swig_wallet_address, role_id, &["ProgramScope"]);
-    challenge.resources[2] = format!("urn:swig:v1:swig_program:{}", Pubkey::new_unique());
-
-    let validate_ix = must(
-        IsValidSignatureInstruction::new_with_ed25519_authority(
-            swig,
-            swig_wallet_address,
-            swig_authority.pubkey(),
-            role_id,
-            &challenge,
-        ),
-        "build is_valid_signature instruction",
-    );
-
-    let message = must(
-        v0::Message::try_compile(
-            &context.default_payer.pubkey(),
-            &[validate_ix],
-            &[],
-            context.svm.latest_blockhash(),
-        ),
-        "compile transaction message",
-    );
-    let tx = must(
-        VersionedTransaction::try_new(
-            VersionedMessage::V0(message),
-            &[
-                context.default_payer.insecure_clone(),
-                swig_authority.insecure_clone(),
-            ],
-        ),
-        "build transaction",
-    );
-
-    let result = context.svm.send_transaction(tx);
-    assert!(
-        result.is_err(),
-        "is_valid_signature should reject program id mismatch"
-    );
-    match result {
-        Ok(_) => panic!("expected program id mismatch failure"),
-        Err(error) => {
-            assert_eq!(
-                error.err,
-                TransactionError::InstructionError(0, InstructionError::Custom(3005))
-            );
-        },
-    }
-}
-
-#[test_log::test]
-fn test_is_valid_signature_rejects_challenge_wallet_address_mismatch() {
-    let mut context = must(setup_test_context(), "setup test context");
-    let swig_authority = Keypair::new();
-    must(
-        context.svm.airdrop(&swig_authority.pubkey(), 1_000_000_000),
-        "airdrop swig authority",
-    );
-
-    let id = rand::random::<[u8; 32]>();
-    let (swig, _) = must(
-        create_swig_ed25519(&mut context, &swig_authority, id),
-        "create swig ed25519",
-    );
-    let (swig_wallet_address, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
-    let role_id = must(
-        role_id_for_authority(&context, &swig, &swig_authority.pubkey()),
-        "lookup role id for swig authority",
-    );
-
-    let mut challenge = build_challenge(swig, swig_wallet_address, role_id, &["ProgramScope"]);
-    challenge.address = Pubkey::new_unique().to_string();
-
-    let validate_ix = must(
-        IsValidSignatureInstruction::new_with_ed25519_authority(
-            swig,
-            swig_wallet_address,
-            swig_authority.pubkey(),
-            role_id,
-            &challenge,
-        ),
-        "build is_valid_signature instruction",
-    );
-
-    let message = must(
-        v0::Message::try_compile(
-            &context.default_payer.pubkey(),
-            &[validate_ix],
-            &[],
-            context.svm.latest_blockhash(),
-        ),
-        "compile transaction message",
-    );
-    let tx = must(
-        VersionedTransaction::try_new(
-            VersionedMessage::V0(message),
-            &[
-                context.default_payer.insecure_clone(),
-                swig_authority.insecure_clone(),
-            ],
-        ),
-        "build transaction",
-    );
-
-    let result = context.svm.send_transaction(tx);
-    assert!(
-        result.is_err(),
-        "is_valid_signature should reject challenge address mismatch"
-    );
-    match result {
-        Ok(_) => panic!("expected challenge address mismatch failure"),
-        Err(error) => {
-            assert_eq!(
-                error.err,
-                TransactionError::InstructionError(0, InstructionError::Custom(3005))
-            );
-        },
-    }
-}
-
-#[test_log::test]
-fn test_is_valid_signature_rejects_duplicate_urn_resources() {
-    let mut context = must(setup_test_context(), "setup test context");
-    let swig_authority = Keypair::new();
-    must(
-        context.svm.airdrop(&swig_authority.pubkey(), 1_000_000_000),
-        "airdrop swig authority",
-    );
-
-    let id = rand::random::<[u8; 32]>();
-    let (swig, _) = must(
-        create_swig_ed25519(&mut context, &swig_authority, id),
-        "create swig ed25519",
-    );
-    let (swig_wallet_address, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
-    let role_id = must(
-        role_id_for_authority(&context, &swig, &swig_authority.pubkey()),
-        "lookup role id for swig authority",
-    );
-
-    let mut challenge = build_challenge(swig, swig_wallet_address, role_id, &["ProgramScope"]);
-    challenge.resources.push(format!("urn:swig:v1:swig:{swig}"));
-
-    let validate_ix = must(
-        IsValidSignatureInstruction::new_with_ed25519_authority(
-            swig,
-            swig_wallet_address,
-            swig_authority.pubkey(),
-            role_id,
-            &challenge,
-        ),
-        "build is_valid_signature instruction",
-    );
-
-    let message = must(
-        v0::Message::try_compile(
-            &context.default_payer.pubkey(),
-            &[validate_ix],
-            &[],
-            context.svm.latest_blockhash(),
-        ),
-        "compile transaction message",
-    );
-    let tx = must(
-        VersionedTransaction::try_new(
-            VersionedMessage::V0(message),
-            &[
-                context.default_payer.insecure_clone(),
-                swig_authority.insecure_clone(),
-            ],
-        ),
-        "build transaction",
-    );
-
-    let result = context.svm.send_transaction(tx);
-    assert!(
-        result.is_err(),
-        "duplicate URN resources should be rejected"
-    );
-    match result {
-        Ok(_) => panic!("expected duplicate URN rejection"),
-        Err(error) => {
-            assert_eq!(
-                error.err,
-                TransactionError::InstructionError(0, InstructionError::InvalidInstructionData)
-            );
-        },
-    }
-}
-
-#[test_log::test]
-fn test_is_valid_signature_allows_empty_scopes() {
-    let mut context = must(setup_test_context(), "setup test context");
-    let swig_authority = Keypair::new();
-    must(
-        context.svm.airdrop(&swig_authority.pubkey(), 1_000_000_000),
-        "airdrop swig authority",
-    );
-
-    let id = rand::random::<[u8; 32]>();
-    let (swig, _) = must(
-        create_swig_ed25519(&mut context, &swig_authority, id),
-        "create swig ed25519",
-    );
-    let (swig_wallet_address, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
-    let role_id = must(
-        role_id_for_authority(&context, &swig, &swig_authority.pubkey()),
-        "lookup role id for swig authority",
-    );
-    let challenge = build_challenge(swig, swig_wallet_address, role_id, &[]);
-
-    let validate_ix = must(
-        IsValidSignatureInstruction::new_with_ed25519_authority(
-            swig,
-            swig_wallet_address,
-            swig_authority.pubkey(),
-            role_id,
-            &challenge,
-        ),
-        "build is_valid_signature instruction",
-    );
-
-    let message = must(
-        v0::Message::try_compile(
-            &context.default_payer.pubkey(),
-            &[validate_ix],
-            &[],
-            context.svm.latest_blockhash(),
-        ),
-        "compile transaction message",
-    );
-    let tx = must(
-        VersionedTransaction::try_new(
-            VersionedMessage::V0(message),
-            &[
-                context.default_payer.insecure_clone(),
-                swig_authority.insecure_clone(),
-            ],
-        ),
-        "build transaction",
-    );
-
-    let result = context.svm.send_transaction(tx);
-    assert!(
-        result.is_ok(),
-        "is_valid_signature should allow challenge without scopes"
-    );
-}
-
-#[test_log::test]
-fn test_is_valid_signature_rejects_missing_scope_permission() {
-    let mut context = must(setup_test_context(), "setup test context");
-    let swig_authority = Keypair::new();
-    let limited_authority = Keypair::new();
-    must(
-        context.svm.airdrop(&swig_authority.pubkey(), 1_000_000_000),
-        "airdrop swig authority",
-    );
-    must(
-        context
-            .svm
-            .airdrop(&limited_authority.pubkey(), 1_000_000_000),
-        "airdrop limited authority",
-    );
-
-    let id = rand::random::<[u8; 32]>();
-    let (swig, _) = must(
-        create_swig_ed25519(&mut context, &swig_authority, id),
-        "create swig ed25519",
-    );
-    let (swig_wallet_address, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
-
-    must(
-        add_authority_with_ed25519_root(
-            &mut context,
-            &swig,
-            &swig_authority,
-            AuthorityConfig {
-                authority_type: AuthorityType::Ed25519,
-                authority: limited_authority.pubkey().as_ref(),
-            },
-            vec![ClientAction::SolLimit(SolLimit { amount: 1_000_000 })],
-        ),
-        "add limited authority",
-    );
-
-    let limited_role_id = must(
-        role_id_for_authority(&context, &swig, &limited_authority.pubkey()),
-        "lookup limited role id",
-    );
-    let challenge = build_challenge(
-        swig,
-        swig_wallet_address,
-        limited_role_id,
-        &["ManageAuthority"],
-    );
-
-    let validate_ix = must(
-        IsValidSignatureInstruction::new_with_ed25519_authority(
-            swig,
-            swig_wallet_address,
-            limited_authority.pubkey(),
-            limited_role_id,
-            &challenge,
-        ),
-        "build is_valid_signature instruction",
-    );
-
-    let message = must(
-        v0::Message::try_compile(
-            &context.default_payer.pubkey(),
-            &[validate_ix],
-            &[],
-            context.svm.latest_blockhash(),
-        ),
-        "compile transaction message",
-    );
-    let tx = must(
-        VersionedTransaction::try_new(
-            VersionedMessage::V0(message),
-            &[
-                context.default_payer.insecure_clone(),
-                limited_authority.insecure_clone(),
-            ],
-        ),
-        "build transaction",
-    );
-
-    let result = context.svm.send_transaction(tx);
-    assert!(
-        result.is_err(),
-        "is_valid_signature should reject missing scope permission"
-    );
-    match result {
-        Ok(_) => panic!("expected missing scope permission failure"),
-        Err(error) => {
-            assert_eq!(
-                error.err,
-                TransactionError::InstructionError(0, InstructionError::Custom(3006))
-            );
-        },
-    }
-}
-
-#[test_log::test]
-fn test_is_valid_signature_rejects_role_resource_mismatch() {
-    let mut context = must(setup_test_context(), "setup test context");
-    let swig_authority = Keypair::new();
-    must(
-        context.svm.airdrop(&swig_authority.pubkey(), 1_000_000_000),
-        "airdrop swig authority",
-    );
-
-    let id = rand::random::<[u8; 32]>();
-    let (swig, _) = must(
-        create_swig_ed25519(&mut context, &swig_authority, id),
-        "create swig ed25519",
-    );
-    let (swig_wallet_address, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
-
-    let role_id = must(
-        role_id_for_authority(&context, &swig, &swig_authority.pubkey()),
-        "lookup role id for swig authority",
-    );
-    let wrong_role_id = role_id + 1;
-    let challenge = build_challenge(swig, swig_wallet_address, wrong_role_id, &["ProgramScope"]);
-
-    let validate_ix = must(
-        IsValidSignatureInstruction::new_with_ed25519_authority(
-            swig,
-            swig_wallet_address,
-            swig_authority.pubkey(),
-            role_id,
-            &challenge,
-        ),
-        "build is_valid_signature instruction",
-    );
-
-    let message = must(
-        v0::Message::try_compile(
-            &context.default_payer.pubkey(),
-            &[validate_ix],
-            &[],
-            context.svm.latest_blockhash(),
-        ),
-        "compile transaction message",
-    );
-    let tx = must(
-        VersionedTransaction::try_new(
-            VersionedMessage::V0(message),
-            &[
-                context.default_payer.insecure_clone(),
-                swig_authority.insecure_clone(),
-            ],
-        ),
-        "build transaction",
-    );
-
-    let result = context.svm.send_transaction(tx);
-    assert!(
-        result.is_err(),
-        "is_valid_signature should reject mismatched role_id resource"
-    );
-    match result {
-        Ok(_) => panic!("expected role resource mismatch failure"),
-        Err(error) => {
-            assert_eq!(
-                error.err,
-                TransactionError::InstructionError(0, InstructionError::Custom(3005))
-            );
-        },
-    }
-}
-
-#[test_log::test]
-fn test_is_valid_signature_rejects_malformed_abnf_challenge() {
-    let mut context = must(setup_test_context(), "setup test context");
-    let swig_authority = Keypair::new();
-    must(
-        context.svm.airdrop(&swig_authority.pubkey(), 1_000_000_000),
-        "airdrop swig authority",
-    );
-
-    let id = rand::random::<[u8; 32]>();
-    let (swig, _) = must(
-        create_swig_ed25519(&mut context, &swig_authority, id),
-        "create swig ed25519",
-    );
-    let (swig_wallet_address, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
-    let role_id = must(
-        role_id_for_authority(&context, &swig, &swig_authority.pubkey()),
-        "lookup role id for swig authority",
-    );
-
-    let malformed_challenge = b"example.com wants you to sign in with your Solana account:\n3KMf9P7w2nQx5R8tUvYcBdEghJkMNpQrS\n\nNonce: abcdef12\nVersion: 1";
-
-    let args = swig_interface::swig::actions::is_valid_signature::IsValidSignatureArgs::new(
-        role_id,
-        malformed_challenge.len() as u16,
-    );
-    let arg_bytes = must(args.into_bytes(), "serialize args");
-
-    let validate_ix = Instruction {
-        program_id: program_id(),
-        accounts: vec![
-            AccountMeta::new(swig, false),
-            AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new_readonly(swig_authority.pubkey(), true),
-        ],
-        data: [arg_bytes, malformed_challenge, &[2]].concat(),
+    let signing_fn = |message_hash: &[u8]| -> [u8; 65] {
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&message_hash[..32]);
+        wallet.sign_hash_sync(&B256::from(hash)).unwrap().as_bytes()
     };
 
+    let mut validate_ix = must(
+        IsValidSignatureInstruction::new_with_secp256k1_authority(
+            swig,
+            swig_wallet_address,
+            signing_fn,
+            current_slot,
+            current_counter + 1,
+            role_id,
+            &payload,
+        ),
+        "build is_valid_signature secp256k1 instruction",
+    );
+    let args_len = core::mem::size_of::<
+        swig_interface::swig::actions::is_valid_signature::IsValidSignatureArgs,
+    >();
+    validate_ix.data[args_len] ^= 0x01;
+
     let message = must(
         v0::Message::try_compile(
             &context.default_payer.pubkey(),
@@ -938,26 +475,11 @@ fn test_is_valid_signature_rejects_malformed_abnf_challenge() {
     let tx = must(
         VersionedTransaction::try_new(
             VersionedMessage::V0(message),
-            &[
-                context.default_payer.insecure_clone(),
-                swig_authority.insecure_clone(),
-            ],
+            &[context.default_payer.insecure_clone()],
         ),
         "build transaction",
     );
 
     let result = context.svm.send_transaction(tx);
-    assert!(
-        result.is_err(),
-        "is_valid_signature should reject malformed ABNF challenge"
-    );
-    match result {
-        Ok(_) => panic!("expected malformed challenge failure"),
-        Err(error) => {
-            assert_eq!(
-                error.err,
-                TransactionError::InstructionError(0, InstructionError::InvalidInstructionData)
-            );
-        },
-    }
+    assert!(result.is_err(), "tampered payload should be rejected");
 }
