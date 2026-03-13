@@ -94,15 +94,15 @@ fn should_sign_v2_transfer_between_swig_accounts() {
     other_litesvm
         .airdrop(&other_auth.pubkey(), 10_000_000_000)
         .unwrap();
-    let mut recipient_wallet = SwigWallet::new(
-        [1; 32],
-        Box::new(Ed25519ClientRole::new(other_auth.pubkey())),
-        &other_auth,
-        "http://localhost:8899".to_string(),
-        Some(&other_auth),
-        other_litesvm,
-    )
-    .unwrap();
+    let mut recipient_wallet = SwigWallet::builder()
+        .with_swig_id([1; 32])
+        .with_client_role(Box::new(Ed25519ClientRole::new(other_auth.pubkey())))
+        .with_fee_payer(&other_auth)
+        .with_rpc_url("http://localhost:8899".to_string())
+        .with_authority_keypair(Some(&other_auth))
+        .with_litesvm(other_litesvm)
+        .create()
+        .unwrap();
 
     let sender_wallet_address = sender_wallet.get_swig_wallet_address().unwrap();
     sender_wallet
@@ -110,7 +110,7 @@ fn should_sign_v2_transfer_between_swig_accounts() {
         .airdrop(&sender_wallet_address, 5_000_000_000)
         .unwrap();
 
-    let recipient_swig = recipient_wallet.get_swig_account().unwrap();
+    let recipient_swig = recipient_wallet.get_swig_config_address().unwrap();
     let transfer_ix =
         system_instruction::transfer(&sender_wallet_address, &recipient_swig, 1_000_000_000);
 

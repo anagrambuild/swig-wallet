@@ -31,7 +31,7 @@ fn test_create_swig_account_with_ed25519_authority() {
         role_id,
     );
 
-    let ix = builder.build_swig_account().unwrap();
+    let ix = builder.create_swig_account_instruction().unwrap();
 
     let msg = v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
         .unwrap();
@@ -81,7 +81,7 @@ fn test_create_swig_account_with_secp256k1_authority() {
         role_id,
     );
 
-    let ix = builder.build_swig_account().unwrap();
+    let ix = builder.create_swig_account_instruction().unwrap();
     let msg = v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())
         .unwrap();
 

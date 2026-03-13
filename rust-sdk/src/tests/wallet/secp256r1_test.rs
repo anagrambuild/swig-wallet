@@ -42,7 +42,7 @@ fn get_secp256r1_counter(
 ) -> Result<u32, SwigError> {
     let role_id = swig_wallet.get_role_id(authority_pubkey)?;
 
-    let swig_account = swig_wallet.get_swig_account()?;
+    let swig_account = swig_wallet.get_swig_config_address()?;
     let account_data = swig_wallet
         .litesvm()
         .get_account(&swig_account)
@@ -76,7 +76,7 @@ fn get_secp256r1_session_counter(
 ) -> Result<u32, SwigError> {
     let role_id = swig_wallet.get_role_id(authority_pubkey)?;
 
-    let swig_account = swig_wallet.get_swig_account()?;
+    let swig_account = swig_wallet.get_swig_config_address()?;
     let account_data = swig_wallet
         .litesvm()
         .get_account(&swig_account)
@@ -291,15 +291,15 @@ fn test_secp256r1_replay_protection() {
     replay_client_role.update_odometer(1).unwrap();
 
     // Create a new wallet instance with the replay client role
-    let mut replay_wallet = SwigWallet::new(
-        swig_wallet.get_swig_id().clone(),
-        Box::new(replay_client_role),
-        &main_authority,
-        "http://localhost:8899".to_string(),
-        None,
-        swig_wallet.litesvm().clone(),
-    )
-    .unwrap();
+    let mut replay_wallet = SwigWallet::builder()
+        .with_swig_id(swig_wallet.get_swig_id().clone())
+        .with_client_role(Box::new(replay_client_role))
+        .with_fee_payer(&main_authority)
+        .with_rpc_url("http://localhost:8899".to_string())
+        .with_authority_keypair(None)
+        .with_litesvm(swig_wallet.litesvm().clone())
+        .load()
+        .unwrap();
 
     let result2 = replay_wallet.sign_v2(vec![transfer_ix], None);
 

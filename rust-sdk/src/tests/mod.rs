@@ -4,4 +4,5 @@ pub mod common;
 // pub mod wallet_tests;
 
 pub mod ix_builder;
+pub mod multi_wallet_manager;
 pub mod wallet;

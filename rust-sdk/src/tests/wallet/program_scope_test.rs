@@ -60,7 +60,7 @@ fn should_token_transfer_with_program_scope() {
         )
         .unwrap();
 
-    let swig_pubkey = swig_wallet.get_swig_account().unwrap();
+    let swig_pubkey = swig_wallet.get_swig_config_address().unwrap();
     let swig_data = swig_wallet.litesvm().get_account(&swig_pubkey).unwrap();
     let swig_with_roles = SwigWithRoles::from_bytes(&swig_data.data).unwrap();
 
@@ -156,7 +156,7 @@ fn should_token_transfer_with_recurring_limit_program_scope() {
         )
         .unwrap();
 
-    let swig_pubkey = swig_wallet.get_swig_account().unwrap();
+    let swig_pubkey = swig_wallet.get_swig_config_address().unwrap();
     let swig_data = swig_wallet.litesvm().get_account(&swig_pubkey).unwrap();
     let swig_with_roles = SwigWithRoles::from_bytes(&swig_data.data).unwrap();
 

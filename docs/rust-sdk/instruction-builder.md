@@ -51,7 +51,7 @@ Creates a new instance of the instruction builder with the specified parameters.
 ### Building a Swig Account
 
 ```rust
-pub fn build_swig_account(&self) -> Result<Instruction, SwigError>
+pub fn create_swig_account_instruction(&self) -> Result<Instruction, SwigError>
 ```
 
 Creates an instruction to initialize a new Swig account on-chain.
@@ -87,7 +87,7 @@ Creates an instruction to add a new authority with specified permissions.
 ### Removing Authorities
 
 ```rust
-pub fn remove_authority(
+pub fn remove_authority_instruction(
     &mut self,
     authority_to_remove_id: u32,
     current_slot: Option<u64>,
@@ -131,7 +131,7 @@ Creates an instruction to create a new session for temporary authority delegatio
 ### Getting the Swig Account
 
 ```rust
-pub fn get_swig_account(&self) -> Result<Pubkey, SwigError>
+pub fn get_swig_config_address(&self) -> Result<Pubkey, SwigError>
 ```
 
 Returns the public key of the Swig account.
@@ -164,7 +164,7 @@ let instruction_builder = SwigInstructionBuilder::new(
     0
 );
 
-let create_ix = instruction_builder.build_swig_account()?;
+let create_ix = instruction_builder.create_swig_account_instruction()?;
 ```
 
 ### Adding a New Authority
