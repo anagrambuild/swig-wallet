@@ -7,6 +7,7 @@ mod common;
 use common::*;
 use solana_sdk::{
     clock::Clock,
+    hash::hash,
     instruction::InstructionError,
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
@@ -53,6 +54,96 @@ fn create_test_secp256r1_keypair() -> (openssl::ec::EcKey<openssl::pkey::Private
 fn create_test_secp256r1_authority() -> [u8; 33] {
     let (_, pubkey) = create_test_secp256r1_keypair();
     pubkey
+}
+
+fn base64url_encode_no_pad(data: &[u8]) -> String {
+    const BASE64URL_CHARS: &[u8] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+    let mut result = String::new();
+    let mut i = 0;
+
+    while i + 2 < data.len() {
+        let b1 = data[i];
+        let b2 = data[i + 1];
+        let b3 = data[i + 2];
+
+        result.push(BASE64URL_CHARS[(b1 >> 2) as usize] as char);
+        result.push(BASE64URL_CHARS[(((b1 & 0x03) << 4) | (b2 >> 4)) as usize] as char);
+        result.push(BASE64URL_CHARS[(((b2 & 0x0f) << 2) | (b3 >> 6)) as usize] as char);
+        result.push(BASE64URL_CHARS[(b3 & 0x3f) as usize] as char);
+
+        i += 3;
+    }
+
+    if i < data.len() {
+        let b1 = data[i];
+        result.push(BASE64URL_CHARS[(b1 >> 2) as usize] as char);
+
+        if i + 1 < data.len() {
+            let b2 = data[i + 1];
+            result.push(BASE64URL_CHARS[(((b1 & 0x03) << 4) | (b2 >> 4)) as usize] as char);
+            result.push(BASE64URL_CHARS[((b2 & 0x0f) << 2) as usize] as char);
+        } else {
+            result.push(BASE64URL_CHARS[((b1 & 0x03) << 4) as usize] as char);
+        }
+    }
+
+    result
+}
+
+fn build_raw_webauthn_payload(auth_data: &[u8], client_data_json: &str) -> Vec<u8> {
+    const RAW_CLIENT_DATA_JSON_AUTH_KIND: u16 = 2;
+
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&RAW_CLIENT_DATA_JSON_AUTH_KIND.to_le_bytes());
+    payload.extend_from_slice(&(auth_data.len() as u16).to_le_bytes());
+    payload.extend_from_slice(auth_data);
+    payload.extend_from_slice(&(client_data_json.len() as u16).to_le_bytes());
+    payload.extend_from_slice(client_data_json.as_bytes());
+    payload
+}
+
+fn build_legacy_webauthn_payload_for_test(auth_data: &[u8]) -> Vec<u8> {
+    const LEGACY_WEBAUTHN_AUTH_KIND: u16 = 1;
+
+    // Minimal valid legacy payload that decodes origin to "" and satisfies
+    // current field-order checks.
+    let field_order = [1u8, 2u8, 0u8, 0u8];
+    let origin_len = 0u16;
+    let huffman_tree = [0u8, 0u8, 0u8];
+    let huffman_encoded_origin: [u8; 0] = [];
+
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&LEGACY_WEBAUTHN_AUTH_KIND.to_le_bytes());
+    payload.extend_from_slice(&(auth_data.len() as u16).to_le_bytes());
+    payload.extend_from_slice(auth_data);
+    payload.extend_from_slice(&field_order);
+    payload.extend_from_slice(&origin_len.to_le_bytes());
+    payload.extend_from_slice(&(huffman_tree.len() as u16).to_le_bytes());
+    payload.extend_from_slice(&(huffman_encoded_origin.len() as u16).to_le_bytes());
+    payload.extend_from_slice(&huffman_tree);
+    payload.extend_from_slice(&huffman_encoded_origin);
+    payload
+}
+
+fn sign_webauthn_raw_message(
+    signing_key: &openssl::ec::EcKey<openssl::pkey::Private>,
+    auth_data: &[u8],
+    client_data_json: &str,
+) -> [u8; 64] {
+    use solana_secp256r1_program::sign_message;
+
+    let mut webauthn_message = Vec::with_capacity(auth_data.len() + 32);
+    let client_data_hash = hash(client_data_json.as_bytes()).to_bytes();
+    webauthn_message.extend_from_slice(auth_data);
+    webauthn_message.extend_from_slice(&client_data_hash);
+
+    sign_message(
+        &webauthn_message,
+        &signing_key.private_key_to_der().unwrap(),
+    )
+    .unwrap()
 }
 
 /// Helper function to get the current signature counter for a secp256r1
@@ -199,6 +290,314 @@ fn test_secp256r1_basic_signing_v2() {
     );
 
     println!("✓ Secp256r1 signing test passed with real cryptography");
+}
+
+#[test_log::test]
+fn test_secp256r1_raw_client_data_json_signing_v2() {
+    let mut context = setup_test_context().unwrap();
+
+    let (signing_key, public_key) = create_test_secp256r1_keypair();
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
+
+    let recipient = Keypair::new();
+    context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
+    let transfer_amount = 2_000_000;
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    let current_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();
+    let next_counter = current_counter + 1;
+
+    let mut computed_hash = [0u8; 32];
+    let mut authority_fn = |message_hash: &[u8]| -> [u8; 64] {
+        computed_hash.copy_from_slice(message_hash);
+        use solana_secp256r1_program::sign_message;
+        sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap()
+    };
+
+    let mut instructions = swig_interface::SignV2Instruction::new_secp256r1(
+        swig_key,
+        swig_wallet_address,
+        &mut authority_fn,
+        current_slot,
+        next_counter,
+        transfer_ix,
+        0,
+        &public_key,
+    )
+    .unwrap();
+
+    let challenge = base64url_encode_no_pad(&computed_hash);
+    let client_data_json = format!(
+        r#"{{"type":"webauthn.get","challenge":"{}","origin":"https://swig.xyz","topOrigin":"https://swig.xyz","androidPackageName":"xyz.swig.wallet"}}"#,
+        challenge
+    );
+    let auth_data = [0x5Au8; 37];
+
+    let raw_payload = build_raw_webauthn_payload(&auth_data, &client_data_json);
+    let signature = sign_webauthn_raw_message(&signing_key, &auth_data, &client_data_json);
+    instructions[0] = solana_secp256r1_program::new_secp256r1_instruction_with_signature(
+        &[
+            auth_data.as_slice(),
+            &hash(client_data_json.as_bytes()).to_bytes(),
+        ]
+        .concat(),
+        &signature,
+        &public_key,
+    );
+    instructions[1].data.extend_from_slice(&raw_payload);
+
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &instructions,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
+    let result = context.svm.send_transaction(tx);
+
+    assert!(
+        result.is_ok(),
+        "Raw clientDataJSON secp256r1 transaction should succeed: {:?}",
+        result.err()
+    );
+
+    let recipient_balance = context
+        .svm
+        .get_account(&recipient.pubkey())
+        .unwrap()
+        .lamports;
+    assert_eq!(recipient_balance, 1_000_000 + transfer_amount);
+
+    let updated_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();
+    assert_eq!(updated_counter, next_counter);
+}
+
+#[test_log::test]
+fn test_secp256r1_issue_143_legacy_webauthn_rejects_android_style_client_data_v2() {
+    let mut context = setup_test_context().unwrap();
+
+    let (signing_key, public_key) = create_test_secp256r1_keypair();
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
+
+    let recipient = Keypair::new();
+    context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
+    let transfer_amount = 2_000_000;
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    let current_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();
+    let next_counter = current_counter + 1;
+
+    let mut computed_hash = [0u8; 32];
+    let mut authority_fn = |message_hash: &[u8]| -> [u8; 64] {
+        computed_hash.copy_from_slice(message_hash);
+        use solana_secp256r1_program::sign_message;
+        sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap()
+    };
+
+    let mut instructions = swig_interface::SignV2Instruction::new_secp256r1(
+        swig_key,
+        swig_wallet_address,
+        &mut authority_fn,
+        current_slot,
+        next_counter,
+        transfer_ix,
+        0,
+        &public_key,
+    )
+    .unwrap();
+
+    let challenge = base64url_encode_no_pad(&computed_hash);
+    let android_client_data_json = format!(
+        r#"{{"type":"webauthn.get","challenge":"{}","origin":"https://swig.xyz","androidPackageName":"xyz.swig.wallet","topOrigin":"https://swig.xyz"}}"#,
+        challenge
+    );
+
+    let auth_data = [0x5Au8; 37];
+    let legacy_payload = build_legacy_webauthn_payload_for_test(&auth_data);
+    let signature = sign_webauthn_raw_message(&signing_key, &auth_data, &android_client_data_json);
+
+    instructions[0] = solana_secp256r1_program::new_secp256r1_instruction_with_signature(
+        &[
+            auth_data.as_slice(),
+            &hash(android_client_data_json.as_bytes()).to_bytes(),
+        ]
+        .concat(),
+        &signature,
+        &public_key,
+    );
+    instructions[1].data.extend_from_slice(&legacy_payload);
+
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &instructions,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
+    let result = context.svm.send_transaction(tx);
+
+    assert!(
+        result.is_err(),
+        "Legacy WebAuthn payload should reject Android-style clientDataJSON"
+    );
+
+    match result.unwrap_err().err {
+        TransactionError::InstructionError(_, InstructionError::Custom(_)) => {},
+        err => panic!("Expected a custom program error, got {:?}", err),
+    }
+
+    let recipient_balance = context
+        .svm
+        .get_account(&recipient.pubkey())
+        .unwrap()
+        .lamports;
+    assert_eq!(
+        recipient_balance, 1_000_000,
+        "Recipient balance should be unchanged when legacy payload mismatches"
+    );
+
+    let final_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();
+    assert_eq!(
+        final_counter, current_counter,
+        "Counter should not increment after failed legacy WebAuthn verification"
+    );
+}
+
+#[test_log::test]
+fn test_secp256r1_raw_client_data_json_rejects_wrong_challenge_v2() {
+    let mut context = setup_test_context().unwrap();
+
+    let (signing_key, public_key) = create_test_secp256r1_keypair();
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_secp256r1(&mut context, &public_key, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
+
+    let recipient = Keypair::new();
+    context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
+    let transfer_amount = 2_000_000;
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    let current_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();
+    let next_counter = current_counter + 1;
+
+    let mut computed_hash = [0u8; 32];
+    let mut authority_fn = |message_hash: &[u8]| -> [u8; 64] {
+        computed_hash.copy_from_slice(message_hash);
+        use solana_secp256r1_program::sign_message;
+        sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap()
+    };
+
+    let mut instructions = swig_interface::SignV2Instruction::new_secp256r1(
+        swig_key,
+        swig_wallet_address,
+        &mut authority_fn,
+        current_slot,
+        next_counter,
+        transfer_ix,
+        0,
+        &public_key,
+    )
+    .unwrap();
+
+    let wrong_challenge = base64url_encode_no_pad(&[0xAB; 32]);
+    assert_ne!(
+        wrong_challenge.as_bytes(),
+        base64url_encode_no_pad(&computed_hash).as_bytes()
+    );
+
+    let client_data_json = format!(
+        r#"{{"type":"webauthn.get","challenge":"{}","origin":"https://swig.xyz"}}"#,
+        wrong_challenge
+    );
+    let auth_data = [0x5Au8; 37];
+
+    let raw_payload = build_raw_webauthn_payload(&auth_data, &client_data_json);
+    let signature = sign_webauthn_raw_message(&signing_key, &auth_data, &client_data_json);
+    instructions[0] = solana_secp256r1_program::new_secp256r1_instruction_with_signature(
+        &[
+            auth_data.as_slice(),
+            &hash(client_data_json.as_bytes()).to_bytes(),
+        ]
+        .concat(),
+        &signature,
+        &public_key,
+    );
+    instructions[1].data.extend_from_slice(&raw_payload);
+
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &instructions,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
+    let result = context.svm.send_transaction(tx);
+
+    assert!(
+        result.is_err(),
+        "Raw clientDataJSON with wrong challenge should fail"
+    );
+
+    match result.unwrap_err().err {
+        TransactionError::InstructionError(_, InstructionError::Custom(_)) => {},
+        err => panic!("Expected a custom program error, got {:?}", err),
+    }
+
+    let recipient_balance = context
+        .svm
+        .get_account(&recipient.pubkey())
+        .unwrap()
+        .lamports;
+    assert_eq!(
+        recipient_balance, 1_000_000,
+        "Recipient balance should be unchanged when challenge is invalid"
+    );
+
+    let final_counter = get_secp256r1_counter(&context, &swig_key, &public_key).unwrap();
+    assert_eq!(
+        final_counter, current_counter,
+        "Counter should not increment after failed authentication"
+    );
 }
 
 #[test_log::test]
