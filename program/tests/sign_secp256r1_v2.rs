@@ -16,6 +16,7 @@ use solana_sdk::{
     system_instruction,
     transaction::{TransactionError, VersionedTransaction},
 };
+use solana_secp256r1_program::sign_message;
 use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state::{
     action::all::All,
@@ -132,8 +133,6 @@ fn sign_webauthn_raw_message(
     auth_data: &[u8],
     client_data_json: &str,
 ) -> [u8; 64] {
-    use solana_secp256r1_program::sign_message;
-
     let mut webauthn_message = Vec::with_capacity(auth_data.len() + 32);
     let client_data_hash = hash(client_data_json.as_bytes()).to_bytes();
     webauthn_message.extend_from_slice(auth_data);
