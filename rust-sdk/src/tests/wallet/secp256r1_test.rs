@@ -1,6 +1,5 @@
 use solana_sdk::{
     signature::{Keypair, Signer},
-    system_instruction,
     sysvar::clock::Clock,
 };
 use swig_state::{
@@ -150,7 +149,7 @@ fn test_secp256r1_basic_signing() {
         .unwrap();
     let transfer_amount = 5_000_000;
     let transfer_ix =
-        system_instruction::transfer(&swig_pubkey, &recipient.pubkey(), transfer_amount);
+        solana_system_interface::instruction::transfer(&swig_pubkey, &recipient.pubkey(), transfer_amount);
 
     // Sign and send the transaction
     let result = swig_wallet.sign_v2(vec![transfer_ix], None);
@@ -261,7 +260,7 @@ fn test_secp256r1_replay_protection() {
         .unwrap();
     let transfer_amount = 1_000_000;
     let transfer_ix =
-        system_instruction::transfer(&swig_pubkey, &recipient.pubkey(), transfer_amount);
+        solana_system_interface::instruction::transfer(&swig_pubkey, &recipient.pubkey(), transfer_amount);
 
     // First transaction - should succeed
     let result1 = swig_wallet.sign_v2(vec![transfer_ix.clone()], None);
@@ -530,7 +529,7 @@ fn test_secp256r1_invalid_signature_error() {
     let recipient = Keypair::new();
     let transfer_amount = 1_000_000;
     let transfer_ix =
-        system_instruction::transfer(&swig_pubkey, &recipient.pubkey(), transfer_amount);
+        solana_system_interface::instruction::transfer(&swig_pubkey, &recipient.pubkey(), transfer_amount);
 
     // Try to execute transaction with invalid signature
     let result = swig_wallet.sign_v2(vec![transfer_ix], None);
@@ -586,7 +585,7 @@ fn test_secp256r1_odometer_wrapping() {
     let recipient = Keypair::new();
     let transfer_amount = 1_000_000;
     let transfer_ix =
-        system_instruction::transfer(&swig_pubkey, &recipient.pubkey(), transfer_amount);
+        solana_system_interface::instruction::transfer(&swig_pubkey, &recipient.pubkey(), transfer_amount);
 
     // Execute multiple transactions to test odometer wrapping
     for i in 0..5 {

@@ -229,7 +229,7 @@ fn test_sol_transfer_performance_comparison_v2() {
         .unwrap();
     let transfer_amount = 1_000_000;
 
-    let regular_transfer_ix = solana_sdk::system_instruction::transfer(
+    let regular_transfer_ix = solana_system_interface::instruction::transfer(
         &regular_sender.pubkey(),
         &recipient.pubkey(),
         transfer_amount,
@@ -258,7 +258,7 @@ fn test_sol_transfer_performance_comparison_v2() {
     println!("Regular SOL transfer accounts: {}", regular_tx_accounts);
 
     // Measure swig SOL transfer performance using SignV2
-    let swig_transfer_ix = solana_sdk::system_instruction::transfer(
+    let swig_transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
         &recipient.pubkey(),
         transfer_amount,

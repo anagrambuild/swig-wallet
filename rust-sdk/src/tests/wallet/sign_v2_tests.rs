@@ -1,7 +1,7 @@
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
-use solana_program::{pubkey::Pubkey, system_instruction, system_program};
+use solana_program::{pubkey::Pubkey};
 use solana_sdk::signature::{Keypair, Signer};
 
 use super::*;
@@ -22,7 +22,7 @@ fn should_sign_v2_transfer_with_ed25519_within_limits() {
     // Prepare a transfer from wallet PDA to recipient
     let recipient = Keypair::new();
     let transfer_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), 100_000_000);
+        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), 100_000_000);
 
     let sig = swig_wallet.sign_v2(vec![transfer_ix], None).unwrap();
     assert!(sig != solana_sdk::signature::Signature::default());
@@ -46,7 +46,7 @@ fn should_sign_v2_fail_transfer_beyond_limits() {
             &secondary_authority.pubkey().to_bytes(),
             vec![
                 Permission::Program {
-                    program_id: system_program::ID,
+                    program_id: solana_system_interface::program::ID,
                 },
                 Permission::Sol {
                     amount: 1_000_000_000,
@@ -75,7 +75,7 @@ fn should_sign_v2_fail_transfer_beyond_limits() {
     // Attempt transfer beyond limits (2_000_000_000 > 1_000_000_000)
     let recipient = Keypair::new();
     let transfer_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), 2_000_000_000);
+        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), 2_000_000_000);
 
     assert!(swig_wallet.sign_v2(vec![transfer_ix], None).is_err());
 }
@@ -112,7 +112,7 @@ fn should_sign_v2_transfer_between_swig_accounts() {
 
     let recipient_swig = recipient_wallet.get_swig_account().unwrap();
     let transfer_ix =
-        system_instruction::transfer(&sender_wallet_address, &recipient_swig, 1_000_000_000);
+        solana_system_interface::instruction::transfer(&sender_wallet_address, &recipient_swig, 1_000_000_000);
 
     let res = sender_wallet.sign_v2(vec![transfer_ix], None);
     assert!(res.is_ok());
@@ -139,7 +139,7 @@ fn should_sign_v2_with_different_payer_and_authority() {
 
     let recipient = Keypair::new();
     let transfer_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), 100_000);
+        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), 100_000);
     let res = swig_wallet.sign_v2(vec![transfer_ix], None);
     assert!(res.is_ok());
 }
@@ -163,7 +163,7 @@ fn should_sign_v2_with_secp256k1_authority_transfers_sol() {
             &secp_pubkey.as_ref()[1..],
             vec![
                 Permission::Program {
-                    program_id: system_program::ID,
+                    program_id: solana_system_interface::program::ID,
                 },
                 Permission::Sol {
                     amount: 1_000_000_000,
@@ -198,7 +198,7 @@ fn should_sign_v2_with_secp256k1_authority_transfers_sol() {
 
     let recipient = Keypair::new();
     let transfer_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), 222_222);
+        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), 222_222);
     let res = swig_wallet.sign_v2(vec![transfer_ix], None);
     assert!(res.is_ok());
 }
@@ -224,7 +224,7 @@ fn should_sign_v2_secp256r1_transfer() {
             &public_key,
             vec![
                 Permission::Program {
-                    program_id: system_program::ID,
+                    program_id: solana_system_interface::program::ID,
                 },
                 Permission::Sol {
                     amount: 1_000_000_000,
@@ -251,7 +251,7 @@ fn should_sign_v2_secp256r1_transfer() {
 
     let recipient = Keypair::new();
     let transfer_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), 111_111);
+        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), 111_111);
     let res = swig_wallet.sign_v2(vec![transfer_ix], None);
     assert!(res.is_ok());
 }

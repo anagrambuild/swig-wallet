@@ -4,14 +4,13 @@ use alloy_signer_local::LocalSigner;
 use common::*;
 use litesvm::{types::TransactionMetadata, LiteSVM};
 use litesvm_token::spl_token;
-use solana_program::{pubkey::Pubkey, system_program};
+use solana_program::{pubkey::Pubkey};
 use solana_sdk::{
     account::ReadableAccount,
     clock::Clock,
     message::{v0, VersionedMessage},
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     transaction::VersionedTransaction,
 };
 use swig_interface::{

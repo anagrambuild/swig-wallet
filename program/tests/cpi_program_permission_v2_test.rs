@@ -9,7 +9,6 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{AuthorityConfig, ClientAction};
@@ -52,7 +51,7 @@ fn test_cpi_signing_requires_program_permission_v2() {
 
     // Create Program action for system program and SolLimit for transfers
     let system_program_action = Program {
-        program_id: solana_sdk::system_program::ID.to_bytes(),
+        program_id: solana_system_interface::program::ID.to_bytes(),
     };
 
     let _txn = add_authority_with_ed25519_root(
@@ -86,7 +85,7 @@ fn test_cpi_signing_requires_program_permission_v2() {
     // Test 1: CPI signing with correct Program permission should succeed (SignV2)
     let transfer_amount = 1_000_000;
     let transfer_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,
@@ -149,7 +148,7 @@ fn test_cpi_signing_requires_program_permission_v2() {
 
     // Test 3: CPI signing with wrong Program permission should fail (SignV2)
     let transfer_ix2 =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let sign_ix2 = swig_interface::SignV2Instruction::new_ed25519(
         swig,
@@ -250,7 +249,7 @@ fn test_cpi_signing_without_program_permission_fails_v2() {
     // Test: CPI signing without Program permission should fail (SignV2)
     let transfer_amount = 1_000_000;
     let transfer_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,
@@ -354,7 +353,7 @@ fn test_cpi_signing_with_program_all_permission_v2() {
     // (SignV2)
     let transfer_amount = 1_000_000;
     let transfer_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,
@@ -455,7 +454,7 @@ fn test_cpi_signing_with_program_curated_permission_v2() {
     // program (curated) (SignV2)
     let transfer_amount = 1_000_000;
     let transfer_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let sign_ix = swig_interface::SignV2Instruction::new_ed25519(
         swig,

@@ -6,11 +6,9 @@
 mod common;
 
 use common::*;
+use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
     account::ReadableAccount,
-    address_lookup_table::{state::AddressLookupTable, AddressLookupTableAccount},
-    commitment_config::CommitmentConfig,
-    compute_budget::ComputeBudgetInstruction,
     instruction::{AccountMeta, Instruction},
     keccak::hash,
     message::{v0, VersionedMessage},
@@ -18,7 +16,6 @@ use solana_sdk::{
     rent::Rent,
     signature::{read_keypair_file, Keypair, Signature},
     signer::{Signer, SignerError},
-    system_instruction,
     transaction::VersionedTransaction,
 };
 use swig_interface::{
@@ -134,7 +131,7 @@ fn test_multiple_actions_with_transfer_and_manage_authority() {
             }),
             ClientAction::ManageAuthority(ManageAuthority {}),
             ClientAction::Program(Program {
-                program_id: solana_sdk::system_program::ID.to_bytes(),
+                program_id: solana_system_interface::program::ID.to_bytes(),
             }),
         ],
     )
@@ -153,7 +150,11 @@ fn test_multiple_actions_with_transfer_and_manage_authority() {
     assert!(swig_create_txn.is_ok());
 
     let amount = 5_000_000_000; // 5 SOL
-    let ixd = system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), amount);
+    let ixd = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        amount,
+    );
     let sign_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,

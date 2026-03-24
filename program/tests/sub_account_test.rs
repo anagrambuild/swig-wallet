@@ -13,7 +13,6 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::{Keypair, Signature},
     signer::Signer,
-    system_instruction,
     sysvar::rent::Rent,
     transaction::VersionedTransaction,
 };
@@ -127,7 +126,7 @@ fn test_create_sub_account() {
     // Verify the sub-account was created as a system program owned account (not
     // program owned)
     let sub_account_data = context.svm.get_account(&sub_account).unwrap();
-    assert_eq!(sub_account_data.owner, solana_sdk::system_program::id());
+    assert_eq!(sub_account_data.owner, solana_system_interface::program::id());
 
     // Verify the sub-account data is now stored in the SubAccount action instead of
     // the account
@@ -164,7 +163,7 @@ fn test_create_sub_account() {
     // 1. Verify sub-account is system program owned
     assert_eq!(
         sub_account_data.owner,
-        solana_sdk::system_program::id(),
+        solana_system_interface::program::id(),
         "Sub-account should be owned by system program"
     );
 
@@ -286,7 +285,7 @@ fn test_sub_account_sign() {
     // Create a transfer instruction that will be executed by the sub-account
     let transfer_amount = 1_000_000;
     let transfer_ix =
-        system_instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
+        solana_system_interface::instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
 
     // Sign and execute with the sub-account using the sub-account authority
     let sign_result = sub_account_sign(
@@ -386,7 +385,7 @@ fn test_toggle_sub_account() {
     // Try to use the disabled sub-account - this should fail
     let transfer_amount = 1_000_000;
     let transfer_ix =
-        system_instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
+        solana_system_interface::instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
 
     let sign_result = sub_account_sign(
         &mut context,
@@ -448,7 +447,7 @@ fn test_toggle_sub_account() {
     // Now the transaction should succeed with the enabled sub-account
     let transfer_amount = 1_000_000;
     let transfer_ix =
-        system_instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
+        solana_system_interface::instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
 
     let sign_result = sub_account_sign(
         &mut context,
@@ -585,7 +584,7 @@ fn test_toggle_sub_account_with_auth_role_id() {
     // Try to use the disabled sub-account - this should fail
     let transfer_amount = 1_000_000;
     let transfer_ix =
-        system_instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
+        solana_system_interface::instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
 
     let sign_result = sub_account_sign(
         &mut context,
@@ -663,7 +662,7 @@ fn test_toggle_sub_account_with_auth_role_id() {
     // Now the transaction should succeed with the enabled sub-account
     let transfer_amount = 1_000_000;
     let transfer_ix =
-        system_instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
+        solana_system_interface::instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
 
     let sign_result = sub_account_sign(
         &mut context,
@@ -1109,7 +1108,7 @@ fn test_all_and_sub_account_permission_can_create_sub_account() {
     // Verify the sub-account was created as a system program owned account (not
     // program owned)
     let sub_account_data = context.svm.get_account(&sub_account).unwrap();
-    assert_eq!(sub_account_data.owner, solana_sdk::system_program::id());
+    assert_eq!(sub_account_data.owner, solana_system_interface::program::id());
 
     // Verify the sub-account data is now stored in the SubAccount action
     let swig_account_data = context.svm.get_account(&swig_key).unwrap();
@@ -1148,7 +1147,7 @@ fn test_all_and_sub_account_permission_can_create_sub_account() {
     // 1. Verify sub-account is system program owned
     assert_eq!(
         sub_account_data.owner,
-        solana_sdk::system_program::id(),
+        solana_system_interface::program::id(),
         "Sub-account should be owned by system program"
     );
 

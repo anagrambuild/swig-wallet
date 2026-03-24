@@ -3,7 +3,6 @@ use solana_sdk::{
     instruction::{AccountMeta, Instruction},
     keccak,
     pubkey::Pubkey,
-    system_program,
 };
 use solana_secp256r1_program::new_secp256r1_instruction_with_signature;
 pub use swig;
@@ -255,7 +254,7 @@ impl CreateInstruction {
                 AccountMeta::new(swig_account, false),
                 AccountMeta::new(payer, true),
                 AccountMeta::new(swig_wallet_address, false),
-                AccountMeta::new(system_program::ID, false),
+                AccountMeta::new(solana_system_interface::program::ID, false),
             ],
             data: write,
         })
@@ -275,7 +274,7 @@ impl AddAuthorityInstruction {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
 
@@ -322,7 +321,7 @@ impl AddAuthorityInstruction {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
         let mut action_bytes = Vec::new();
         let num_actions = actions.len() as u8;
@@ -395,7 +394,7 @@ impl AddAuthorityInstruction {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
 
@@ -490,7 +489,7 @@ impl AddAuthorityInstruction {
         let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         // Add instructions sysvar at a stable index
@@ -550,7 +549,7 @@ impl AddAuthorityInstruction {
         let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let instruction_sysvar_index = accounts.len() as u8;
@@ -772,7 +771,7 @@ impl SignV2Instruction {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
         let (mut accounts, ixs) =
             compact_instructions(swig_account, accounts, vec![inner_instruction]);
@@ -866,7 +865,7 @@ impl SignV2Instruction {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
         let (mut accounts, ixs) =
@@ -949,7 +948,7 @@ impl RemoveAuthorityInstruction {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
 
@@ -979,7 +978,7 @@ impl RemoveAuthorityInstruction {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
         let args = RemoveAuthorityV1Args::new(acting_role_id, authority_to_remove_id, 65);
         let arg_bytes = args
@@ -1033,7 +1032,7 @@ impl RemoveAuthorityInstruction {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
         let args = RemoveAuthorityV1Args::new(acting_role_id, authority_to_remove_id, 17); // 17 bytes for secp256r1 authority payload
@@ -1105,7 +1104,7 @@ impl RemoveAuthorityInstruction {
         let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         // Add instructions sysvar at a stable index
@@ -1143,7 +1142,7 @@ impl RemoveAuthorityInstruction {
         let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let instruction_sysvar_index = accounts.len() as u8;
@@ -1243,7 +1242,7 @@ impl UpdateAuthorityInstruction {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
 
@@ -1316,7 +1315,7 @@ impl UpdateAuthorityInstruction {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         // Encode operation type in the first byte of the data
@@ -1411,7 +1410,7 @@ impl UpdateAuthorityInstruction {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
 
@@ -1496,7 +1495,7 @@ impl UpdateAuthorityInstruction {
         let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         // Add instructions sysvar at a stable index
@@ -1547,7 +1546,7 @@ impl UpdateAuthorityInstruction {
         let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let instruction_sysvar_index = accounts.len() as u8;
@@ -1626,7 +1625,7 @@ impl CreateSessionInstruction {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
         let create_session_args =
             CreateSessionV1Args::new(role_id, session_duration, session_key.to_bytes());
@@ -1682,7 +1681,7 @@ impl CreateSessionInstruction {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
         let create_session_args =
@@ -1756,7 +1755,7 @@ impl CreateSessionInstruction {
         let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         // Add instructions sysvar at a stable index
@@ -1796,7 +1795,7 @@ impl CreateSessionInstruction {
         let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let instruction_sysvar_index = accounts.len() as u8;
@@ -1837,7 +1836,7 @@ impl CreateSubAccountInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
             AccountMeta::new(sub_account, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
 
@@ -1869,7 +1868,7 @@ impl CreateSubAccountInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
             AccountMeta::new(sub_account, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let args = CreateSubAccountV1Args::new(role_id, sub_account_bump);
@@ -1922,7 +1921,7 @@ impl CreateSubAccountInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
             AccountMeta::new(sub_account, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
 
@@ -1995,7 +1994,7 @@ impl CreateSubAccountInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
             AccountMeta::new(sub_account, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         // Add instructions sysvar at a stable index
@@ -2035,7 +2034,7 @@ impl CreateSubAccountInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),
             AccountMeta::new(sub_account, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let instruction_sysvar_index = accounts.len() as u8;
@@ -2077,7 +2076,7 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(sub_account, false),
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
@@ -2109,9 +2108,9 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
@@ -2164,7 +2163,7 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(sub_account, false),
             AccountMeta::new_readonly(authority, true),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new(sub_account_token, false),
             AccountMeta::new(swig_token, false),
             AccountMeta::new_readonly(token_program, false),
@@ -2202,9 +2201,9 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new(sub_account_token, false),
             AccountMeta::new(swig_token, false),
             AccountMeta::new_readonly(token_program, false),
@@ -2263,7 +2262,7 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(sub_account, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
@@ -2347,7 +2346,7 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(sub_account, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new(sub_account_token, false),
             AccountMeta::new(swig_token, false),
             AccountMeta::new_readonly(token_program, false),
@@ -2424,7 +2423,7 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         // Add instructions sysvar at a stable index
@@ -2470,7 +2469,7 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(sub_account_token, false),
             AccountMeta::new(swig_token, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(token_program, false),
         ];
 
@@ -2513,7 +2512,7 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let instruction_sysvar_index = accounts.len() as u8;
@@ -2558,7 +2557,7 @@ impl WithdrawFromSubAccountInstruction {
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(sub_account_token, false),
             AccountMeta::new(swig_token, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(token_program, false),
         ];
 
@@ -2596,7 +2595,7 @@ impl SubAccountSignInstruction {
         let accounts = vec![
             AccountMeta::new_readonly(swig_account, false),
             AccountMeta::new(sub_account, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
         let (accounts, ixs) =
@@ -2627,7 +2626,7 @@ impl SubAccountSignInstruction {
         let accounts = vec![
             AccountMeta::new_readonly(swig_account, false),
             AccountMeta::new(sub_account, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let (accounts, ixs) =
@@ -2679,7 +2678,7 @@ impl SubAccountSignInstruction {
         let accounts = vec![
             AccountMeta::new_readonly(swig_account, false),
             AccountMeta::new(sub_account, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
 
@@ -2755,7 +2754,7 @@ impl SubAccountSignInstruction {
             AccountMeta::new_readonly(swig_account, false),
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         // Add instructions sysvar at a stable index
@@ -2798,7 +2797,7 @@ impl SubAccountSignInstruction {
             AccountMeta::new_readonly(swig_account, false),
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let instruction_sysvar_index = accounts.len() as u8;
@@ -2933,7 +2932,7 @@ impl ToggleSubAccountInstruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new_readonly(payer, true),
             AccountMeta::new(sub_account, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
 
@@ -3084,7 +3083,7 @@ impl TransferAssetsV1Instruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
 
@@ -3115,7 +3114,7 @@ impl TransferAssetsV1Instruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let args = TransferAssetsV1Args::new(role_id);
@@ -3173,7 +3172,7 @@ impl TransferAssetsV1Instruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
 
@@ -3246,7 +3245,7 @@ impl TransferAssetsV1Instruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         // Add instructions sysvar at a stable index
@@ -3285,7 +3284,7 @@ impl TransferAssetsV1Instruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let instruction_sysvar_index = accounts.len() as u8;
@@ -3532,7 +3531,7 @@ impl CloseSwigV1Instruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(destination, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
 
@@ -3565,7 +3564,7 @@ impl CloseSwigV1Instruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(destination, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let args = CloseSwigV1Args::new(role_id);
@@ -3620,7 +3619,7 @@ impl CloseSwigV1Instruction {
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(destination, false),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
 
