@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+default-members = ["program", "test-program-authority"]
 members = [
   "program",
   "interface",

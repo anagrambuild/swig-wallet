@@ -28,7 +28,7 @@ no-padding = { path = "../no-padding" }
 solana-security-txt = "=1.1.1"
 default-env = "=0.1.1"
 
-[dev-dependencies]
+[target.'cfg(not(target_arch = "bpf"))'.dev-dependencies]
 solana-sdk = "3.0.0"
 rand = "0.9.0"
 swig-interface = { path = "../interface" }
