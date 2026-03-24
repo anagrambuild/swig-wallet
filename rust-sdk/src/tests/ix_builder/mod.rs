@@ -105,7 +105,8 @@ pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), S
                         let mut hasher = solana_sdk::keccak::Hasher::default();
                         hasher.hash(authority_hex.as_bytes());
                         let hash = hasher.result();
-                        let address = format!("0x{}", hex::encode(&hash.0[12..32]));
+                        let hash_bytes = hash.to_bytes();
+                        let address = format!("0x{}", hex::encode(&hash_bytes[12..32]));
                         format!(
                             "{} \n║ │  ├─ odometer: {:?}",
                             address,
