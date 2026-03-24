@@ -121,7 +121,11 @@ fn test_sub_account_sol_operations() {
     println!("Initial recipient balance: {:?}", initial_recipient_balance);
 
     // Test transfer
-    let transfer_ix = solana_system_interface::instruction::transfer(&sub_account, &recipient.pubkey(), 1_000_000);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &sub_account,
+        &recipient.pubkey(),
+        1_000_000,
+    );
     let signature = swig_wallet
         .sign_with_sub_account(vec![transfer_ix], None)
         .unwrap();
@@ -343,7 +347,11 @@ fn test_secondary_authority_operations() {
 
     // Test secondary authority operations
     let recipient = Keypair::new();
-    let transfer_ix = solana_system_interface::instruction::transfer(&sub_account, &recipient.pubkey(), 1_000_000);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &sub_account,
+        &recipient.pubkey(),
+        1_000_000,
+    );
 
     // Fund sub-account
     swig_wallet

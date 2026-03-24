@@ -96,7 +96,11 @@ fn test_all_but_manage_authority_can_transfer_sol() {
         .unwrap();
 
     let amount = 5_000_000_000; // 5 SOL
-    let ixd = solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), amount);
+    let ixd = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        amount,
+    );
 
     // Create SignV2 instruction using the interface
     let sign_ix = SignV2Instruction::new_ed25519(
@@ -383,8 +387,11 @@ fn test_all_but_manage_authority_can_do_cpi_calls() {
 
     // Create multiple instructions to test CPI capabilities - both use
     // swig_wallet_address
-    let sol_ix =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), sol_amount);
+    let sol_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        sol_amount,
+    );
     let token_ix = Instruction {
         program_id: spl_token::id(),
         accounts: vec![
@@ -1084,8 +1091,11 @@ fn test_all_but_manage_authority_cannot_sign_with_sub_account() {
 
     // Create a transfer instruction that would be executed by the sub-account
     let transfer_amount = 1_000_000;
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &sub_account,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
 
     // Now attempt to sign with the sub-account using the restricted authority
     // (AllButManageAuthority) This should FAIL because AllButManageAuthority

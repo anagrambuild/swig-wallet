@@ -4,7 +4,7 @@ use alloy_signer_local::LocalSigner;
 use common::*;
 use litesvm::{types::TransactionMetadata, LiteSVM};
 use litesvm_token::spl_token;
-use solana_program::{pubkey::Pubkey};
+use solana_program::pubkey::Pubkey;
 use solana_sdk::{
     account::ReadableAccount,
     clock::Clock,

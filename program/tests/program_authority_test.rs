@@ -367,7 +367,11 @@ fn test_program_exec_successful_execution() {
 
     // Create a dummy inner instruction - swig will sign this transfer as a PDA
     // Transfer FROM swig wallet TO authority (swig wallet can sign as PDA)
-    let inner_ix = solana_system_interface::instruction::transfer(&swig_wallet, &swig_authority.pubkey(), 1000);
+    let inner_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet,
+        &swig_authority.pubkey(),
+        1000,
+    );
 
     // Use the ergonomic interface to create both the preceding and sign
     // instructions
@@ -469,7 +473,11 @@ fn test_program_exec_fails_with_state_set_to_fail() {
 
     // Create a dummy inner instruction - swig wallet will sign this transfer as a
     // PDA Transfer FROM swig wallet TO authority
-    let inner_ix = solana_system_interface::instruction::transfer(&swig_wallet, &swig_authority.pubkey(), 1000);
+    let inner_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet,
+        &swig_authority.pubkey(),
+        1000,
+    );
 
     // Use the ergonomic interface to create both instructions
     let instructions = build_program_exec_sign_instructions(
@@ -563,7 +571,8 @@ fn test_program_exec_wrong_program_fails() {
         data: VALID_DISCRIMINATOR.to_vec(),
     };
 
-    let transfer_ix = solana_system_interface::instruction::transfer(&swig_wallet, &recipient.pubkey(), 1000);
+    let transfer_ix =
+        solana_system_interface::instruction::transfer(&swig_wallet, &recipient.pubkey(), 1000);
 
     // Use the ergonomic interface
     let instructions = build_program_exec_sign_instructions(
@@ -1081,7 +1090,11 @@ fn test_program_exec_explicit_ix_index_success() {
     };
 
     // Inner instruction to be signed by swig
-    let inner_ix = solana_system_interface::instruction::transfer(&swig_wallet, &swig_authority.pubkey(), 1000);
+    let inner_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet,
+        &swig_authority.pubkey(),
+        1000,
+    );
 
     // Build with explicit target_ix_index = 0
     let mut instructions = build_program_exec_sign_instructions_with_ix_index(
@@ -1099,8 +1112,11 @@ fn test_program_exec_explicit_ix_index_success() {
     // This makes: [auth_ix(0), dummy(1), sign_ix(2)]
     // Without the explicit index, the sign_ix at index 2 would look at index 1
     // (the dummy) and fail. With target_ix_index=0 it looks at the correct one.
-    let dummy_ix =
-        solana_system_interface::instruction::transfer(&swig_authority.pubkey(), &swig_authority.pubkey(), 0);
+    let dummy_ix = solana_system_interface::instruction::transfer(
+        &swig_authority.pubkey(),
+        &swig_authority.pubkey(),
+        0,
+    );
     instructions.insert(1, dummy_ix);
 
     let message = v0::Message::try_compile(
@@ -1187,7 +1203,11 @@ fn test_program_exec_explicit_ix_index_not_preceding_fails() {
         data: VALID_DISCRIMINATOR.to_vec(),
     };
 
-    let inner_ix = solana_system_interface::instruction::transfer(&swig_wallet, &swig_authority.pubkey(), 1000);
+    let inner_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet,
+        &swig_authority.pubkey(),
+        1000,
+    );
 
     // target_ix_index=1 but the sign instruction IS at index 1, so idx >= current_index
     let instructions = build_program_exec_sign_instructions_with_ix_index(
@@ -1291,7 +1311,11 @@ fn test_program_exec_explicit_ix_index_wrong_program_fails() {
         data: VALID_DISCRIMINATOR.to_vec(),
     };
 
-    let inner_ix = solana_system_interface::instruction::transfer(&swig_wallet, &swig_authority.pubkey(), 1000);
+    let inner_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet,
+        &swig_authority.pubkey(),
+        1000,
+    );
 
     // Build the sign instruction using the valid_program_ix as the "preceding"
     // instruction (it gets placed at index 1), but we target index 0 which has

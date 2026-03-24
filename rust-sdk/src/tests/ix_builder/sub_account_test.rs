@@ -297,8 +297,11 @@ fn test_sub_account_functionality() {
 
     // Verify the sub-account is disabled by attempting another transfer (should
     // fail)
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &sub_account,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
     let sub_account_sign_ix = sub_account_builder
         .sign_instruction_with_sub_account(vec![transfer_ix], None)
         .unwrap();
