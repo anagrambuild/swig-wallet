@@ -79,8 +79,11 @@ fn test_sign_v2_transfer_sol() {
 
     // Create a simple transfer instruction from swig_wallet_address
     let transfer_amount = 100_000_000; // 0.1 SOL
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
 
     // Create SignV2 instruction with the swig_wallet_address
     let sign_v2_ix = SignV2Instruction::new_ed25519(
@@ -230,8 +233,11 @@ fn test_sign_v2_transfer_sol_with_additional_authority() {
     .unwrap();
 
     // Test transfer with second authority
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), amount / 2);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        amount / 2,
+    );
     let sign_v2_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
@@ -347,8 +353,11 @@ fn test_sign_v2_transfer_sol_all_with_authority() {
 
     // Test large transfer with All permission
     let amount = 5_000_000_000; // 5 SOL
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        amount,
+    );
     let sign_v2_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
@@ -459,8 +468,11 @@ fn test_sign_v2_fail_transfer_sol_with_insufficient_limit() {
 
     // Attempt transfer exceeding limit
     let amount = 1001; // Exceeds the 1000 limit
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        amount,
+    );
     let sign_v2_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
@@ -563,8 +575,11 @@ fn test_sign_v2_fail_not_correct_authority() {
         .unwrap();
 
     let amount = 1001;
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        amount,
+    );
     let sign_v2_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
@@ -671,8 +686,11 @@ fn test_sign_v2_transfer_sol_with_recurring_limit() {
 
     // First transfer within limit should succeed
     let amount = 500;
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        amount,
+    );
     let sign_v2_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
@@ -699,8 +717,11 @@ fn test_sign_v2_transfer_sol_with_recurring_limit() {
 
     // Second transfer exceeding limit should fail
     let amount2 = 500;
-    let transfer_ix2 =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), amount2);
+    let transfer_ix2 = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        amount2,
+    );
     let sign_v2_ix2 = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
@@ -742,8 +763,11 @@ fn test_sign_v2_transfer_sol_with_recurring_limit() {
 
     // Third transfer should succeed after window reset
     let amount3 = 500;
-    let transfer_ix3 =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), amount3);
+    let transfer_ix3 = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        amount3,
+    );
     let sign_v2_ix3 = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
@@ -1202,8 +1226,11 @@ fn test_sign_v2_transfer_with_different_payer_and_authority() {
 
     // Create a simple transfer instruction from swig_wallet_address
     let transfer_amount = 100_000_000; // 0.1 SOL
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
 
     // Create SignV2 instruction signed by the swig authority
     let sign_v2_ix = SignV2Instruction::new_ed25519(
@@ -1327,8 +1354,11 @@ fn test_sign_v2_secp256k1_transfer() {
 
     // Create a simple transfer instruction from swig_wallet_address
     let transfer_amount = 100_000_000; // 0.1 SOL
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
 
     // Create signing function for secp256k1
     let signing_fn = |payload: &[u8]| -> [u8; 65] {
@@ -1585,14 +1615,17 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
             AccountMeta::new_readonly(recipient.pubkey(), false), // owner
             AccountMeta::new_readonly(mint_pubkey, false), // mint
             AccountMeta::new_readonly(solana_system_interface::program::ID, false), // system program
-            AccountMeta::new_readonly(spl_token::id(), false), // token program
+            AccountMeta::new_readonly(spl_token::id(), false),                      // token program
         ],
         data: vec![], // create_associated_token_account has no instruction data
     };
 
     // 2. SOL transfer instruction
-    let sol_transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), sol_amount);
+    let sol_transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        sol_amount,
+    );
 
     // 3. Token transfer instruction
     let token_transfer_ix = Instruction {
@@ -2010,8 +2043,11 @@ fn test_sign_v2_secp256r1_transfer() {
 
     // Create a simple transfer instruction from swig_wallet_address
     let transfer_amount = 100_000_000; // 0.1 SOL
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
 
     // Get current slot and counter
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
@@ -2306,8 +2342,11 @@ fn test_sign_v2_minimum_rent_check() {
     // Failure case - transfer amount is greater than the swig wallet balance and
     // the rent exempt minimum
     let transfer_amount = 1_000_000_000 + 1; // swig wallet balance + 1
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
 
     // Create SignV2 instruction signed by the swig authority
     let sign_v2_ix = SignV2Instruction::new_ed25519(
@@ -2353,8 +2392,11 @@ fn test_sign_v2_minimum_rent_check() {
     // Success case - transfer amount is less than the swig wallet balance and the
     // rent exempt minimum
     let transfer_amount = 1_000_000_000; // swig wallet balance
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
 
     // Create SignV2 instruction signed by the swig authority
     let sign_v2_ix = SignV2Instruction::new_ed25519(

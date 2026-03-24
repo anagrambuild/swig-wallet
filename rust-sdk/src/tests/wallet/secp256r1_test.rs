@@ -148,8 +148,11 @@ fn test_secp256r1_basic_signing() {
         .airdrop(&recipient.pubkey(), 1_000_000)
         .unwrap();
     let transfer_amount = 5_000_000;
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_pubkey, &recipient.pubkey(), transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_pubkey,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
 
     // Sign and send the transaction
     let result = swig_wallet.sign_v2(vec![transfer_ix], None);
@@ -259,8 +262,11 @@ fn test_secp256r1_replay_protection() {
         .airdrop(&recipient.pubkey(), 1_000_000)
         .unwrap();
     let transfer_amount = 1_000_000;
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_pubkey, &recipient.pubkey(), transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_pubkey,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
 
     // First transaction - should succeed
     let result1 = swig_wallet.sign_v2(vec![transfer_ix.clone()], None);
@@ -528,8 +534,11 @@ fn test_secp256r1_invalid_signature_error() {
     // Set up transfer instruction
     let recipient = Keypair::new();
     let transfer_amount = 1_000_000;
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_pubkey, &recipient.pubkey(), transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_pubkey,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
 
     // Try to execute transaction with invalid signature
     let result = swig_wallet.sign_v2(vec![transfer_ix], None);
@@ -584,8 +593,11 @@ fn test_secp256r1_odometer_wrapping() {
     // Set up transfer instruction
     let recipient = Keypair::new();
     let transfer_amount = 1_000_000;
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_pubkey, &recipient.pubkey(), transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_pubkey,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
 
     // Execute multiple transactions to test odometer wrapping
     for i in 0..5 {

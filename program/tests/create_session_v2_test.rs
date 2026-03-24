@@ -524,8 +524,11 @@ fn test_transfer_sol_with_session_v2() {
 
     // Create a SOL transfer instruction from swig_wallet_address to receiver
     // (SignV2)
-    let transfer_ix =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &receiver.pubkey(), transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &receiver.pubkey(),
+        transfer_amount,
+    );
 
     // Create a sign instruction using the session key (SignV2)
     let sign_ix = SignV2Instruction::new_ed25519(
@@ -970,7 +973,11 @@ fn test_session_extension_before_expiration_v2() {
     context.svm.warp_to_slot(initial_slot + 15); // Past original expiration
 
     let receiver = Keypair::new();
-    let dummy_ix = solana_system_interface::instruction::transfer(&swig_wallet_address, &receiver.pubkey(), 1000000);
+    let dummy_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &receiver.pubkey(),
+        1000000,
+    );
 
     let sign_ix = SignV2Instruction::new_ed25519(
         swig_key,
@@ -1085,7 +1092,11 @@ fn test_multiple_session_refreshes_v2() {
 
     // Verify the session is still functional after all refreshes
     let receiver = Keypair::new();
-    let dummy_ix = solana_system_interface::instruction::transfer(&swig_wallet_address, &receiver.pubkey(), 1000000);
+    let dummy_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &receiver.pubkey(),
+        1000000,
+    );
 
     let sign_ix = SignV2Instruction::new_ed25519(
         swig_key,
