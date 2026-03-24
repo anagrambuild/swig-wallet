@@ -9,9 +9,9 @@ mod common;
 
 use common::*;
 use litesvm_token::spl_token;
+use solana_compute_budget_interface::ComputeBudgetInstruction;
 
 use solana_sdk::{
-    compute_budget::ComputeBudgetInstruction,
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,

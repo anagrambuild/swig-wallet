@@ -47,7 +47,7 @@ fn test_sign_v2_with_ed25519_authority_transfers_sol() {
     // Prepare a transfer from wallet address PDA to recipient
     let recipient = Keypair::new();
     let transfer_amount = 123_456;
-    let transfer_ix = solana_program::system_instruction::transfer(
+    let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
         &recipient.pubkey(),
         transfer_amount,
@@ -128,7 +128,7 @@ fn test_sign_v2_with_secp256k1_authority_transfers_sol() {
 
     let recipient = Keypair::new();
     let transfer_amount = 222_222;
-    let transfer_ix = solana_program::system_instruction::transfer(
+    let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
         &recipient.pubkey(),
         transfer_amount,
@@ -223,7 +223,7 @@ fn test_sign_v2_with_additional_authority_and_sol_limit() {
         vec![
             ClientAction::SolLimit(SolLimit { amount: 100_000 }),
             ClientAction::Program(Program {
-                program_id: solana_sdk::system_program::ID.to_bytes(),
+                program_id: solana_system_interface::program::ID.to_bytes(),
             }),
         ],
     )
@@ -232,7 +232,7 @@ fn test_sign_v2_with_additional_authority_and_sol_limit() {
     // Use second authority to transfer within limit
     let recipient = Keypair::new();
     let amount = 50_000u64;
-    let transfer_ix = solana_program::system_instruction::transfer(
+    let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
         &recipient.pubkey(),
         amount,
@@ -305,7 +305,7 @@ fn test_sign_v2_fail_with_insufficient_sol_limit() {
         vec![
             ClientAction::SolLimit(SolLimit { amount: 1_000 }),
             ClientAction::Program(Program {
-                program_id: solana_sdk::system_program::ID.to_bytes(),
+                program_id: solana_system_interface::program::ID.to_bytes(),
             }),
         ],
     )
@@ -313,7 +313,7 @@ fn test_sign_v2_fail_with_insufficient_sol_limit() {
 
     let recipient = Keypair::new();
     let amount = 1_001u64;
-    let transfer_ix = solana_program::system_instruction::transfer(
+    let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
         &recipient.pubkey(),
         amount,
@@ -387,7 +387,7 @@ fn test_sign_v2_transfer_between_swig_accounts() {
     }
     let recipient_swig = recipient_builder.get_swig_account().unwrap();
 
-    let transfer_ix = solana_program::system_instruction::transfer(
+    let transfer_ix = solana_system_interface::instruction::transfer(
         &sender_wallet,
         &recipient_swig,
         1_000_000_000,
@@ -451,7 +451,7 @@ fn test_sign_v2_different_payer_and_authority() {
 
     let recipient = Keypair::new();
     let amount = 100_000u64;
-    let transfer_ix = solana_program::system_instruction::transfer(
+    let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
         &recipient.pubkey(),
         amount,
@@ -533,7 +533,7 @@ fn test_sign_v2_secp256r1_transfer() {
 
     let recipient = Keypair::new();
     let amount = 111_111u64;
-    let transfer_ix = solana_program::system_instruction::transfer(
+    let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
         &recipient.pubkey(),
         amount,
