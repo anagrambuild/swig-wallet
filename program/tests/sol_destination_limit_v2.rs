@@ -10,7 +10,6 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig::actions::sign_v2::SignV2Args;
@@ -93,8 +92,11 @@ fn test_sol_destination_limit_basic_v2() {
         .unwrap()
         .lamports;
 
-    let inner_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let inner_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
     let sol_transfer_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
@@ -210,8 +212,11 @@ fn test_general_sol_limit_hit_before_destination_limit_v2() {
     // limit
     let transfer_amount = 500_000_000u64; // 0.5 SOL - exceeds general limit (0.3) but within destination limit (0.8)
 
-    let inner_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let inner_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
     let sol_transfer_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
@@ -313,8 +318,11 @@ fn test_destination_limit_hit_before_general_sol_limit_v2() {
     // limit
     let transfer_amount = 500_000_000u64; // 0.5 SOL - exceeds destination limit (0.3) but within general limit (0.8)
 
-    let inner_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let inner_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
     let sol_transfer_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
@@ -422,8 +430,11 @@ fn test_multiple_destination_limits_v2() {
     // Test transfer to recipient1 within limit
     let transfer_amount1 = 200_000_000u64; // 0.2 SOL - within recipient1's limit
 
-    let inner_ix1 =
-        system_instruction::transfer(&swig_wallet_address, &recipient1.pubkey(), transfer_amount1);
+    let inner_ix1 = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient1.pubkey(),
+        transfer_amount1,
+    );
     let sol_transfer_ix1 = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
@@ -436,8 +447,11 @@ fn test_multiple_destination_limits_v2() {
     // Test transfer to recipient2 within limit (in the same transaction)
     let transfer_amount2 = 400_000_000u64; // 0.4 SOL - within recipient2's limit
 
-    let inner_ix2 =
-        system_instruction::transfer(&swig_wallet_address, &recipient2.pubkey(), transfer_amount2);
+    let inner_ix2 = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient2.pubkey(),
+        transfer_amount2,
+    );
     let sol_transfer_ix2 = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
@@ -546,8 +560,11 @@ fn test_sol_destination_limit_exceeds_limit_v2() {
     // Try to transfer more than the limit
     let transfer_amount = 500_000_000u64; // 0.5 SOL - exceeds limit
 
-    let inner_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let inner_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
     let sol_transfer_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
@@ -647,8 +664,11 @@ fn test_sol_destination_limit_with_general_limit_v2() {
     // Test transfer within both limits
     let transfer_amount = 400_000_000u64; // 0.4 SOL - within both limits
 
-    let inner_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let inner_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
     let sol_transfer_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
@@ -740,7 +760,7 @@ fn test_sol_destination_limit_cpi_enforcement_v2() {
                 amount: LAMPORTS_PER_SOL,
             }),
             ClientAction::Program(Program {
-                program_id: solana_sdk::system_program::ID.to_bytes(),
+                program_id: solana_system_interface::program::ID.to_bytes(),
             }),
         ],
     )
@@ -754,7 +774,7 @@ fn test_sol_destination_limit_cpi_enforcement_v2() {
     let transfer_amount: u64 = 2 * LAMPORTS_PER_SOL; // 2 SOL (exceeds the 1 SOL limit)
 
     // Instruction 1: Transfer funds TO the Swig wallet address
-    let fund_swig_ix = system_instruction::transfer(
+    let fund_swig_ix = solana_system_interface::instruction::transfer(
         &funding_account.pubkey(),
         &swig_wallet_address,
         transfer_amount,
@@ -762,7 +782,7 @@ fn test_sol_destination_limit_cpi_enforcement_v2() {
 
     // Instruction 2: Transfer funds FROM Swig wallet address to the authority's
     // wallet
-    let withdraw_ix = system_instruction::transfer(
+    let withdraw_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
         &second_authority.pubkey(),
         transfer_amount,

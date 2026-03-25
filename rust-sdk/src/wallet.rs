@@ -4,20 +4,19 @@ use litesvm::LiteSVM;
 #[cfg(all(feature = "rust_sdk_test", test))]
 use litesvm_token::CreateAssociatedTokenAccount;
 use solana_account_decoder_client_types::{ParsedAccount, UiAccountData};
+use solana_address_lookup_table_interface::state::AddressLookupTable;
 use solana_client::{
     rpc_client::RpcClient, rpc_request::TokenAccountsFilter, rpc_response::RpcKeyedAccount,
 };
+use solana_commitment_config::CommitmentConfig;
 use solana_program::{hash::Hash, instruction::Instruction, pubkey::Pubkey};
 use solana_sdk::{
     account::ReadableAccount,
-    address_lookup_table::{state::AddressLookupTable, AddressLookupTableAccount},
     clock::Clock,
-    commitment_config::CommitmentConfig,
-    message::{v0, VersionedMessage},
+    message::{v0, AddressLookupTableAccount, VersionedMessage},
     pubkey,
     rent::Rent,
     signature::{Keypair, Signature, Signer},
-    system_instruction::{self, SystemInstruction},
     transaction::{Transaction, VersionedTransaction},
 };
 use spl_associated_token_account::{
@@ -820,7 +819,8 @@ impl<'c> SwigWallet<'c> {
                             let mut hasher = solana_sdk::keccak::Hasher::default();
                             hasher.hash(authority_hex.as_bytes());
                             let hash = hasher.result();
-                            let address = format!("0x{}", hex::encode(&hash.0[12..32]));
+                            let hash_bytes = hash.to_bytes();
+                            let address = format!("0x{}", hex::encode(&hash_bytes[12..32]));
                             address
                         },
                         AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
@@ -1732,7 +1732,8 @@ impl<'c> SwigWallet<'c> {
                 let mut hasher = solana_sdk::keccak::Hasher::default();
                 hasher.hash(authority_hex.as_bytes());
                 let hash = hasher.result();
-                let address = format!("0x{}", hex::encode(&hash.0[12..32]));
+                let hash_bytes = hash.to_bytes();
+                let address = format!("0x{}", hex::encode(&hash_bytes[12..32]));
                 Ok(address)
             },
             AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {

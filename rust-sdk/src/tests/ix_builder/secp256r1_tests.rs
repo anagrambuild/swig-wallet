@@ -4,7 +4,6 @@ use solana_sdk::{
     message::{v0, VersionedMessage},
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{AuthorityConfig, ClientAction};
@@ -83,8 +82,11 @@ fn test_secp256r1_basic_signing() {
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 5_000_000;
-    let transfer_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
 
     // Get current slot for signing
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
@@ -254,8 +256,11 @@ fn test_secp256r1_replay_protection() {
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 1_000_000;
-    let transfer_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
 
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
 

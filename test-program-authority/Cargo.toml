@@ -1,6 +1,6 @@
 [package]
 name = "test-program-authority"
-version = "1.2.0"
+version.workspace = true
 edition = "2021"
 license = "Apache-2.0"
 publish = false
@@ -15,7 +15,7 @@ test-sbf = []
 program_scope_test = []
 
 [dependencies]
-solana-program = "2.2.1"
+solana-program = "3.0.0"
 
 [dev-dependencies]
-solana-program-test = "2.2.1"
+solana-program-test = "3.1.11"

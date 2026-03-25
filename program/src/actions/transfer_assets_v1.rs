@@ -209,7 +209,7 @@ pub fn transfer_assets_v1(
 
     // Transfer SPL tokens
     // We need to iterate through the remaining accounts to find token accounts
-    let base_account_count = 4; // swig, swig_wallet_address, payer, system_program
+    let base_account_count = 4; // swig, swig_wallet_address, payer
 
     if accounts.len() > base_account_count {
         for i in (base_account_count..accounts.len()).step_by(3) {

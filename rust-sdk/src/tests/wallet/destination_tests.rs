@@ -1,4 +1,3 @@
-use solana_program::{system_instruction, system_program};
 use solana_sdk::signature::{Keypair, Signer};
 
 use super::*;
@@ -27,7 +26,7 @@ fn should_add_sol_destination_limit() {
             &secondary_authority.pubkey().to_bytes(),
             vec![
                 Permission::Program {
-                    program_id: system_program::ID,
+                    program_id: solana_system_interface::program::ID,
                 },
                 Permission::SolDestination {
                     destination,
@@ -68,7 +67,7 @@ fn should_add_sol_recurring_destination_limit() {
             &secondary_authority.pubkey().to_bytes(),
             vec![
                 Permission::Program {
-                    program_id: system_program::ID,
+                    program_id: solana_system_interface::program::ID,
                 },
                 Permission::SolDestination {
                     destination,
@@ -109,7 +108,7 @@ fn should_add_token_destination_limit() {
             &secondary_authority.pubkey().to_bytes(),
             vec![
                 Permission::Program {
-                    program_id: system_program::ID,
+                    program_id: solana_system_interface::program::ID,
                 },
                 Permission::TokenDestination {
                     mint: token_mint,
@@ -152,7 +151,7 @@ fn should_add_token_recurring_destination_limit() {
             &secondary_authority.pubkey().to_bytes(),
             vec![
                 Permission::Program {
-                    program_id: system_program::ID,
+                    program_id: solana_system_interface::program::ID,
                 },
                 Permission::TokenDestination {
                     mint: token_mint,
@@ -195,7 +194,7 @@ fn should_add_multiple_destination_limits() {
             &secondary_authority.pubkey().to_bytes(),
             vec![
                 Permission::Program {
-                    program_id: system_program::ID,
+                    program_id: solana_system_interface::program::ID,
                 },
                 Permission::SolDestination {
                     destination: destination1,
@@ -246,7 +245,7 @@ fn should_transfer_sol_within_destination_limit() {
             &secondary_authority.pubkey().to_bytes(),
             vec![
                 Permission::Program {
-                    program_id: system_program::ID,
+                    program_id: solana_system_interface::program::ID,
                 },
                 Permission::SolDestination {
                     destination,
@@ -275,7 +274,11 @@ fn should_transfer_sol_within_destination_limit() {
 
     // Transfer within destination limit
     let transfer_amount = 100_000; // 0.0001 SOL (within limit)
-    let transfer_ix = system_instruction::transfer(&swig_account, &destination, transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_account,
+        &destination,
+        transfer_amount,
+    );
 
     let signature = swig_wallet.sign_v2(vec![transfer_ix], None).unwrap();
     println!("signature: {:?}", signature);
@@ -305,7 +308,7 @@ fn should_fail_transfer_sol_beyond_destination_limit() {
             &secondary_authority.pubkey().to_bytes(),
             vec![
                 Permission::Program {
-                    program_id: system_program::ID,
+                    program_id: solana_system_interface::program::ID,
                 },
                 Permission::SolDestination {
                     destination,
@@ -334,7 +337,11 @@ fn should_fail_transfer_sol_beyond_destination_limit() {
 
     // Attempt transfer beyond destination limit
     let transfer_amount = 1_000_000; // 0.001 SOL (beyond limit)
-    let transfer_ix = system_instruction::transfer(&swig_account, &destination, transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_account,
+        &destination,
+        transfer_amount,
+    );
 
     // This should fail due to destination limit
     assert!(swig_wallet.sign_v2(vec![transfer_ix], None).is_err());
@@ -361,7 +368,7 @@ fn should_transfer_sol_to_different_destination_without_limit() {
             &secondary_authority.pubkey().to_bytes(),
             vec![
                 Permission::Program {
-                    program_id: system_program::ID,
+                    program_id: solana_system_interface::program::ID,
                 },
                 Permission::SolDestination {
                     destination,
@@ -390,8 +397,11 @@ fn should_transfer_sol_to_different_destination_without_limit() {
 
     // Transfer to different destination (should not be limited)
     let transfer_amount = 1_000_000; // 0.001 SOL
-    let transfer_ix =
-        system_instruction::transfer(&swig_account, &different_destination, transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_account,
+        &different_destination,
+        transfer_amount,
+    );
 
     // This should fail because there's no general SOL permission, only
     // destination-specific
@@ -420,7 +430,7 @@ fn should_combine_destination_and_general_limits() {
             &secondary_authority.pubkey().to_bytes(),
             vec![
                 Permission::Program {
-                    program_id: system_program::ID,
+                    program_id: solana_system_interface::program::ID,
                 },
                 Permission::Sol {
                     amount: general_limit,
@@ -453,7 +463,11 @@ fn should_combine_destination_and_general_limits() {
 
     // Transfer to the specific destination (should be limited by destination limit)
     let transfer_amount = 100_000; // 0.0001 SOL (within destination limit)
-    let transfer_ix = system_instruction::transfer(&swig_account, &destination, transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_account,
+        &destination,
+        transfer_amount,
+    );
 
     let signature = swig_wallet.sign_v2(vec![transfer_ix], None).unwrap();
     println!("signature: {:?}", signature);
@@ -465,8 +479,11 @@ fn should_combine_destination_and_general_limits() {
     // Transfer to different destination should fail because destination limits
     // exist but no specific limit for this destination
     let transfer_amount = 1_500_000; // 0.0015 SOL
-    let transfer_ix =
-        system_instruction::transfer(&swig_account, &different_destination, transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_account,
+        &different_destination,
+        transfer_amount,
+    );
 
     // This should fail because when destination limits exist, you can only transfer
     // to destinations with specific limits

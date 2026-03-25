@@ -1,4 +1,3 @@
-use solana_program::{system_instruction, system_program};
 use solana_sdk::signature::{Keypair, Signer};
 use swig_state::authority::AuthorityType;
 
@@ -134,7 +133,7 @@ fn should_allow_cpi_calls_with_program_all_permission() {
         .unwrap();
 
     // Create a transfer instruction (this will be a CPI call)
-    let transfer_ix = system_instruction::transfer(
+    let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_account,
         &recipient.pubkey(),
         500_000, // 0.0005 SOL
