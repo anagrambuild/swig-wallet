@@ -42,6 +42,7 @@ pub const MESSAGE_DATA_SIZE: usize = 32;
 
 /// Constants from the secp256r1 program
 const WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE: usize = 196;
+const WEBAUTHN_CLIENT_DATA_JSON_MAX_SIZE: usize = 1024;
 
 /// Secp256r1 signature offsets structure (matches solana-secp256r1-program)
 #[derive(Debug, Copy, Clone)]
@@ -324,6 +325,10 @@ impl AuthorityInfo for Secp256r1SessionAuthority {
     ) -> Result<(), ProgramError> {
         use super::ed25519::ed25519_authenticate;
 
+        if authority_payload.is_empty() {
+            return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
+        }
+
         if slot > self.current_session_expiration {
             return Err(SwigAuthenticateError::PermissionDeniedSessionExpired.into());
         }
@@ -430,8 +435,8 @@ fn secp256r1_session_authority_authenticate(
     current_slot: u64,
     account_infos: &[AccountInfo],
 ) -> Result<(), ProgramError> {
-    if authority_payload.len() < 13 {
-        // 8 + 4 + 1 = slot + counter + instruction_index
+    if authority_payload.len() < 17 {
+        // 8 + 4 + 1 + 4 = slot + counter + instruction_index + reserved bytes
         return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
     }
 
@@ -499,11 +504,20 @@ fn secp256r1_authenticate(
     let message = if additional_paylaod.is_empty() {
         &computed_hash
     } else {
+        if additional_paylaod.len() < 2 {
+            return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+        }
+
         let r1_auth_kind = u16::from_le_bytes(additional_paylaod[..2].try_into().unwrap());
 
         match r1_auth_kind.try_into()? {
             R1AuthenticationKind::WebAuthn => {
                 webauthn_message(additional_paylaod, computed_hash, unsafe {
+                    &mut *message_buf.as_mut_ptr()
+                })?
+            },
+            R1AuthenticationKind::WebAuthnRawClientDataJson => {
+                webauthn_raw_client_data_json_message(additional_paylaod, computed_hash, unsafe {
                     &mut *message_buf.as_mut_ptr()
                 })?
             },
@@ -549,6 +563,10 @@ fn compute_message_hash(
     counter: u32,
 ) -> Result<[u8; 32], ProgramError> {
     use super::secp256k1::AccountsPayload;
+
+    if account_infos.len() > 64 {
+        return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
+    }
 
     let mut accounts_payload = [0u8; 64 * AccountsPayload::LEN];
     let mut cursor = 0;
@@ -696,6 +714,7 @@ impl TryFrom<u8> for WebAuthnField {
 #[repr(u16)]
 pub enum R1AuthenticationKind {
     WebAuthn = 1,
+    WebAuthnRawClientDataJson = 2,
 }
 
 impl TryFrom<u16> for R1AuthenticationKind {
@@ -704,6 +723,7 @@ impl TryFrom<u16> for R1AuthenticationKind {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             1 => Ok(Self::WebAuthn),
+            2 => Ok(Self::WebAuthnRawClientDataJson),
             _ => Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidAuthenticationKind),
         }
     }
@@ -742,8 +762,13 @@ fn webauthn_message<'a>(
     let mut offset = 4 + auth_len;
 
     let field_order = &auth_payload[offset..offset + 4];
+    validate_webauthn_field_order(field_order)?;
 
     offset += 4;
+
+    if auth_payload.len() < offset + 2 {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
 
     let origin_len =
         u16::from_le_bytes(auth_payload[offset..offset + 2].try_into().unwrap()) as usize;
@@ -809,6 +834,212 @@ fn webauthn_message<'a>(
     message_buf[auth_len..auth_len + 32].copy_from_slice(&client_data_hash);
 
     Ok(&message_buf[..auth_len + 32])
+}
+
+fn validate_webauthn_field_order(field_order: &[u8]) -> Result<(), ProgramError> {
+    let mut challenge_count = 0usize;
+    let mut type_count = 0usize;
+
+    for key in field_order {
+        match WebAuthnField::try_from(*key)? {
+            WebAuthnField::Challenge => challenge_count += 1,
+            WebAuthnField::Type => type_count += 1,
+            _ => {},
+        }
+    }
+
+    if challenge_count != 1 || type_count != 1 {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    Ok(())
+}
+
+fn webauthn_raw_client_data_json_message<'a>(
+    auth_payload: &[u8],
+    computed_hash: [u8; 32],
+    message_buf: &'a mut [u8],
+) -> Result<&'a [u8], ProgramError> {
+    if auth_payload.len() < 6 {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    let auth_len = u16::from_le_bytes(auth_payload[2..4].try_into().unwrap()) as usize;
+    if auth_len >= WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    if auth_payload.len() < 4 + auth_len + 2 {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    let auth_data = &auth_payload[4..4 + auth_len];
+    let mut offset = 4 + auth_len;
+
+    let client_data_json_len =
+        u16::from_le_bytes(auth_payload[offset..offset + 2].try_into().unwrap()) as usize;
+    offset += 2;
+
+    if client_data_json_len == 0 || client_data_json_len > WEBAUTHN_CLIENT_DATA_JSON_MAX_SIZE {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    if auth_payload.len() != offset + client_data_json_len {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    let client_data_json = &auth_payload[offset..offset + client_data_json_len];
+
+    let challenge = extract_top_level_string_field(client_data_json, b"challenge")?;
+    let expected_challenge = base64url_encode_no_pad(&computed_hash);
+    if challenge != expected_challenge.as_bytes() {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessageHash.into());
+    }
+
+    let auth_type = extract_top_level_string_field(client_data_json, b"type")?;
+    if auth_type != b"webauthn.get" {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    let mut client_data_hash = [0u8; 32];
+    unsafe {
+        #[cfg(target_os = "solana")]
+        let res = pinocchio::syscalls::sol_sha256(
+            [client_data_json].as_ptr() as *const u8,
+            1,
+            client_data_hash.as_mut_ptr(),
+        );
+        #[cfg(not(target_os = "solana"))]
+        let res = 0;
+        if res != 0 {
+            return Err(SwigAuthenticateError::PermissionDeniedSecp256k1InvalidHash.into());
+        }
+    }
+
+    message_buf[0..auth_len].copy_from_slice(auth_data);
+    message_buf[auth_len..auth_len + 32].copy_from_slice(&client_data_hash);
+
+    Ok(&message_buf[..auth_len + 32])
+}
+
+fn extract_top_level_string_field<'a>(
+    client_data_json: &'a [u8],
+    field_name: &[u8],
+) -> Result<&'a [u8], ProgramError> {
+    let mut i = 0;
+    while i < client_data_json.len() && client_data_json[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= client_data_json.len() || client_data_json[i] != b'{' {
+        return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+    }
+
+    let mut depth = 0usize;
+    let mut cursor = i;
+    while cursor < client_data_json.len() {
+        let byte = client_data_json[cursor];
+
+        if byte == b'{' {
+            depth += 1;
+            cursor += 1;
+            continue;
+        }
+        if byte == b'}' {
+            if depth == 0 {
+                return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+            }
+            depth -= 1;
+            cursor += 1;
+            continue;
+        }
+
+        if depth == 1 && byte == b'"' {
+            let key_start = cursor + 1;
+            let mut key_end = key_start;
+            while key_end < client_data_json.len() {
+                let b = client_data_json[key_end];
+                if b == b'"' {
+                    break;
+                }
+                if b == b'\\' {
+                    return Err(
+                        SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into(),
+                    );
+                }
+                key_end += 1;
+            }
+            if key_end >= client_data_json.len() {
+                return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+            }
+
+            cursor = key_end + 1;
+            while cursor < client_data_json.len() && client_data_json[cursor].is_ascii_whitespace()
+            {
+                cursor += 1;
+            }
+            if cursor >= client_data_json.len() || client_data_json[cursor] != b':' {
+                return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+            }
+
+            cursor += 1;
+            while cursor < client_data_json.len() && client_data_json[cursor].is_ascii_whitespace()
+            {
+                cursor += 1;
+            }
+            if cursor >= client_data_json.len() {
+                return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+            }
+
+            if &client_data_json[key_start..key_end] == field_name {
+                if client_data_json[cursor] != b'"' {
+                    return Err(
+                        SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into(),
+                    );
+                }
+
+                let value_start = cursor + 1;
+                let mut value_end = value_start;
+                while value_end < client_data_json.len() {
+                    let b = client_data_json[value_end];
+                    if b == b'"' {
+                        return Ok(&client_data_json[value_start..value_end]);
+                    }
+                    if b == b'\\' {
+                        return Err(
+                            SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into(),
+                        );
+                    }
+                    value_end += 1;
+                }
+
+                return Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into());
+            }
+
+            if client_data_json[cursor] == b'"' {
+                cursor += 1;
+                while cursor < client_data_json.len() {
+                    let b = client_data_json[cursor];
+                    if b == b'"' {
+                        cursor += 1;
+                        break;
+                    }
+                    if b == b'\\' {
+                        return Err(
+                            SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into(),
+                        );
+                    }
+                    cursor += 1;
+                }
+                continue;
+            }
+
+            continue;
+        }
+
+        cursor += 1;
+    }
+
+    Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into())
 }
 
 /// Decode huffman-encoded origin URL
@@ -1190,6 +1421,183 @@ mod tests {
         assert_eq!(
             result.unwrap_err(),
             SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into()
+        );
+    }
+
+    #[test]
+    fn test_webauthn_raw_client_data_json_message_success() {
+        let computed_hash = [0x11; 32];
+        let expected_challenge = base64url_encode_no_pad(&computed_hash);
+        let client_data_json = format!(
+            r#"{{"type":"webauthn.get","challenge":"{}","origin":"https://example.com","androidPackageName":"com.example.app","topOrigin":"https://example.com"}}"#,
+            expected_challenge
+        );
+
+        let auth_data = [0xAA; 37];
+        let mut payload = Vec::new();
+        payload.extend_from_slice(
+            &(R1AuthenticationKind::WebAuthnRawClientDataJson as u16).to_le_bytes(),
+        );
+        payload.extend_from_slice(&(auth_data.len() as u16).to_le_bytes());
+        payload.extend_from_slice(&auth_data);
+        payload.extend_from_slice(&(client_data_json.len() as u16).to_le_bytes());
+        payload.extend_from_slice(client_data_json.as_bytes());
+
+        let mut message_buf = [0u8; WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE + 32];
+        let message =
+            webauthn_raw_client_data_json_message(&payload, computed_hash, &mut message_buf)
+                .unwrap();
+
+        assert_eq!(&message[..auth_data.len()], auth_data.as_slice());
+        assert_eq!(message.len(), auth_data.len() + 32);
+    }
+
+    #[test]
+    fn test_webauthn_raw_client_data_json_message_rejects_wrong_challenge() {
+        let computed_hash = [0x11; 32];
+        let wrong_challenge = base64url_encode_no_pad(&[0x22; 32]);
+        let client_data_json = format!(
+            r#"{{"type":"webauthn.get","challenge":"{}","origin":"https://example.com","androidPackageName":"com.example.app"}}"#,
+            wrong_challenge
+        );
+
+        let auth_data = [0xAA; 37];
+        let mut payload = Vec::new();
+        payload.extend_from_slice(
+            &(R1AuthenticationKind::WebAuthnRawClientDataJson as u16).to_le_bytes(),
+        );
+        payload.extend_from_slice(&(auth_data.len() as u16).to_le_bytes());
+        payload.extend_from_slice(&auth_data);
+        payload.extend_from_slice(&(client_data_json.len() as u16).to_le_bytes());
+        payload.extend_from_slice(client_data_json.as_bytes());
+
+        let mut message_buf = [0u8; WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE + 32];
+        let error =
+            webauthn_raw_client_data_json_message(&payload, computed_hash, &mut message_buf)
+                .unwrap_err();
+
+        assert_eq!(
+            error,
+            SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessageHash.into()
+        );
+    }
+
+    #[test]
+    fn test_webauthn_raw_client_data_json_message_rejects_missing_top_level_challenge() {
+        let computed_hash = [0x11; 32];
+        let expected_challenge = base64url_encode_no_pad(&computed_hash);
+        let client_data_json = format!(
+            r#"{{"type":"webauthn.get","nested":{{"challenge":"{}"}},"origin":"https://example.com"}}"#,
+            expected_challenge
+        );
+
+        let auth_data = [0xAA; 37];
+        let mut payload = Vec::new();
+        payload.extend_from_slice(
+            &(R1AuthenticationKind::WebAuthnRawClientDataJson as u16).to_le_bytes(),
+        );
+        payload.extend_from_slice(&(auth_data.len() as u16).to_le_bytes());
+        payload.extend_from_slice(&auth_data);
+        payload.extend_from_slice(&(client_data_json.len() as u16).to_le_bytes());
+        payload.extend_from_slice(client_data_json.as_bytes());
+
+        let mut message_buf = [0u8; WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE + 32];
+        let error =
+            webauthn_raw_client_data_json_message(&payload, computed_hash, &mut message_buf)
+                .unwrap_err();
+
+        assert_eq!(
+            error,
+            SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into()
+        );
+    }
+
+    #[test]
+    fn test_webauthn_raw_client_data_json_message_rejects_invalid_type() {
+        let computed_hash = [0x11; 32];
+        let expected_challenge = base64url_encode_no_pad(&computed_hash);
+        let client_data_json = format!(
+            r#"{{"type":"webauthn.create","challenge":"{}","origin":"https://example.com"}}"#,
+            expected_challenge
+        );
+
+        let auth_data = [0xAA; 37];
+        let mut payload = Vec::new();
+        payload.extend_from_slice(
+            &(R1AuthenticationKind::WebAuthnRawClientDataJson as u16).to_le_bytes(),
+        );
+        payload.extend_from_slice(&(auth_data.len() as u16).to_le_bytes());
+        payload.extend_from_slice(&auth_data);
+        payload.extend_from_slice(&(client_data_json.len() as u16).to_le_bytes());
+        payload.extend_from_slice(client_data_json.as_bytes());
+
+        let mut message_buf = [0u8; WEBAUTHN_AUTHENTICATOR_DATA_MAX_SIZE + 32];
+        let error =
+            webauthn_raw_client_data_json_message(&payload, computed_hash, &mut message_buf)
+                .unwrap_err();
+
+        assert_eq!(
+            error,
+            SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into()
+        );
+    }
+
+    #[test]
+    fn test_secp256r1_authenticate_rejects_short_additional_payload() {
+        let expected_key = [0x02; 33];
+        let result = secp256r1_authenticate(&expected_key, b"data", 1, 1, &[], 0, 1, &[1]);
+
+        assert_eq!(
+            result.unwrap_err(),
+            SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessage.into()
+        );
+    }
+
+    #[test]
+    fn test_secp256r1_session_authority_rejects_short_header() {
+        let mut authority = Secp256r1SessionAuthority {
+            public_key: [0x02; 33],
+            _padding: [0u8; 3],
+            signature_odometer: 0,
+            session_key: [0u8; 32],
+            max_session_age: 100,
+            current_session_expiration: 0,
+        };
+
+        let payload = [0u8; 13];
+        let result =
+            secp256r1_session_authority_authenticate(&mut authority, &payload, b"data", 1, &[]);
+
+        assert_eq!(
+            result.unwrap_err(),
+            SwigAuthenticateError::InvalidAuthorityPayload.into()
+        );
+    }
+
+    #[test]
+    fn test_validate_webauthn_field_order_requires_challenge_and_type_once() {
+        assert!(validate_webauthn_field_order(&[1, 2, 3, 4]).is_ok());
+        assert!(validate_webauthn_field_order(&[1, 3, 4, 0]).is_err());
+        assert!(validate_webauthn_field_order(&[2, 3, 4, 0]).is_err());
+        assert!(validate_webauthn_field_order(&[1, 1, 2, 3]).is_err());
+        assert!(validate_webauthn_field_order(&[1, 2, 2, 3]).is_err());
+    }
+
+    #[test]
+    fn test_session_authenticate_session_rejects_empty_payload() {
+        let mut authority = Secp256r1SessionAuthority {
+            public_key: [0x02; 33],
+            _padding: [0u8; 3],
+            signature_odometer: 0,
+            session_key: [0u8; 32],
+            max_session_age: 100,
+            current_session_expiration: 100,
+        };
+
+        let result = authority.authenticate_session(&[], &[], b"", 1);
+        assert_eq!(
+            result.unwrap_err(),
+            SwigAuthenticateError::InvalidAuthorityPayload.into()
         );
     }
 }
