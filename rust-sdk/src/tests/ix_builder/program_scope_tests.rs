@@ -3,7 +3,7 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
 use litesvm::{types::TransactionMetadata, LiteSVM};
 use litesvm_token::spl_token;
-use solana_program::pubkey::Pubkey;
+use solana_program::{pubkey::Pubkey, system_program};
 use solana_sdk::{
     account::ReadableAccount,
     clock::Clock,

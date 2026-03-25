@@ -13,6 +13,7 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
+    system_instruction,
     transaction::{TransactionError, VersionedTransaction},
 };
 use solana_secp256r1_program::sign_message;
@@ -209,11 +210,8 @@ fn test_secp256r1_basic_signing_v2() {
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 5_000_000;
-    let transfer_ix = solana_system_interface::instruction::transfer(
-        &swig_wallet_address,
-        &recipient.pubkey(),
-        transfer_amount,
-    );
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     // Get current slot and counter
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
@@ -651,11 +649,8 @@ fn test_secp256r1_replay_protection_v2() {
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 1_000_000;
-    let transfer_ix = solana_system_interface::instruction::transfer(
-        &swig_wallet_address,
-        &recipient.pubkey(),
-        transfer_amount,
-    );
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
 
@@ -1080,11 +1075,8 @@ fn test_secp256r1_signature_offsets_bypass_allows_unauthorized_transfer_v2() {
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 3_000_000;
-    let transfer_ix = solana_system_interface::instruction::transfer(
-        &swig_wallet_address,
-        &recipient.pubkey(),
-        transfer_amount,
-    );
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let current_slot = context.svm.get_sysvar::<Clock>().slot;
     let current_counter = get_secp256r1_counter(&context, &swig_key, &primary_pubkey).unwrap();

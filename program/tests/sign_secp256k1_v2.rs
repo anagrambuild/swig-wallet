@@ -15,6 +15,7 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
+    system_instruction,
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{AuthorityConfig, ClientAction, CreateSessionInstruction};
@@ -105,11 +106,8 @@ fn test_secp256k1_basic_signing_v2() {
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 5_000_000;
-    let transfer_ix = solana_system_interface::instruction::transfer(
-        &swig_wallet_address,
-        &recipient.pubkey(),
-        transfer_amount,
-    );
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     // Sign the transaction
     let current_slot = 0; // Using 0 since LiteSVM doesn't expose get_slot
@@ -188,11 +186,8 @@ fn test_secp256k1_direct_signature_reuse_v2() {
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 5_000_000;
-    let transfer_ix = solana_system_interface::instruction::transfer(
-        &swig_wallet_address,
-        &recipient.pubkey(),
-        transfer_amount,
-    );
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
     let mut sig = [0u8; 65];
 
     // For first transaction, we'll use a standard signing function
@@ -249,11 +244,8 @@ fn test_secp256k1_direct_signature_reuse_v2() {
     let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
     assert_eq!(recipient_account.lamports, 1_000_000 + transfer_amount);
 
-    let transfer_ix2 = solana_system_interface::instruction::transfer(
-        &swig_wallet_address,
-        &recipient.pubkey(),
-        transfer_amount,
-    );
+    let transfer_ix2 =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let reuse_signature_fn = move |_: &[u8]| -> [u8; 65] { sig };
 
@@ -302,11 +294,8 @@ fn test_secp256k1_direct_signature_reuse_v2() {
     // Use current slot value (slot 2 after warping)
     let current_slot_value = 2;
 
-    let transfer_ix3 = solana_system_interface::instruction::transfer(
-        &swig_wallet_address,
-        &recipient.pubkey(),
-        transfer_amount,
-    );
+    let transfer_ix3 =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     // Get current counter after the failed transaction and calculate next
     let updated_counter = get_secp256k1_counter(&context, &swig_key, &wallet).unwrap();
@@ -375,11 +364,8 @@ fn test_secp256k1_old_signature_v2() {
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 1_000_000;
-    let transfer_ix = solana_system_interface::instruction::transfer(
-        &swig_wallet_address,
-        &recipient.pubkey(),
-        transfer_amount,
-    );
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     // Create a signature for a very old slot
     let old_slot = 0;
@@ -469,7 +455,7 @@ fn test_secp256k1_add_authority_v2() {
     assert_eq!(roles_before, 1);
 
     // Test initial Ed25519 signing using SignV2
-    let transfer_ix = solana_system_interface::instruction::transfer(
+    let transfer_ix = system_instruction::transfer(
         &swig_wallet_address,
         &context.default_payer.pubkey(),
         1_000_000,
@@ -553,7 +539,7 @@ fn test_secp256k1_add_authority_v2() {
     assert_eq!(swig_state.state.roles, 2);
 
     // Test signing with the new Secp256k1 authority using SignV2
-    let transfer_ix = solana_system_interface::instruction::transfer(
+    let transfer_ix = system_instruction::transfer(
         &swig_wallet_address,
         &context.default_payer.pubkey(),
         500_000,
@@ -677,7 +663,7 @@ fn test_secp256k1_add_ed25519_authority_v2() {
     assert_eq!(swig_state.state.roles, 2);
 
     // Test signing with the new ed25519 authority using SignV2
-    let transfer_ix = solana_system_interface::instruction::transfer(
+    let transfer_ix = system_instruction::transfer(
         &swig_wallet_address,
         &context.default_payer.pubkey(),
         500_000,
@@ -744,11 +730,8 @@ fn test_secp256k1_replay_scenario_1_v2() {
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 5_000_000;
-    let transfer_ix = solana_system_interface::instruction::transfer(
-        &swig_wallet_address,
-        &recipient.pubkey(),
-        transfer_amount,
-    );
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let signing_fn = |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
@@ -819,7 +802,7 @@ fn test_secp256k1_replay_scenario_1_v2() {
         &[
             sign_ix, // Reusing the same instruction with the old counter value (should fail)
             solana_sdk::instruction::Instruction {
-                program_id: solana_sdk::pubkey::Pubkey::new_from_array(spl_memo::id().to_bytes()),
+                program_id: spl_memo::ID,
                 accounts: vec![solana_sdk::instruction::AccountMeta::new(
                     context.default_payer.pubkey(),
                     true,
@@ -855,11 +838,8 @@ fn test_secp256k1_replay_scenario_1_v2() {
 
     // TRANSACTION 3: Fresh transaction with correct counter (should succeed) using
     // SignV2
-    let transfer_ix3 = solana_system_interface::instruction::transfer(
-        &swig_wallet_address,
-        &recipient.pubkey(),
-        transfer_amount,
-    );
+    let transfer_ix3 =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let fresh_signing_fn = |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
@@ -954,11 +934,8 @@ fn test_secp256k1_replay_scenario_2_v2() {
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 5_000_000;
-    let transfer_ix = solana_system_interface::instruction::transfer(
-        &swig_wallet_address,
-        &recipient.pubkey(),
-        transfer_amount,
-    );
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     let signing_fn = |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
@@ -1017,7 +994,7 @@ fn test_secp256k1_replay_scenario_2_v2() {
         &[
             sign_ix, // sending the same instruction again
             solana_sdk::instruction::Instruction {
-                program_id: solana_sdk::pubkey::Pubkey::new_from_array(spl_memo::id().to_bytes()),
+                program_id: spl_memo::ID,
                 accounts: vec![solana_sdk::instruction::AccountMeta::new(
                     context.default_payer.pubkey(),
                     true,
@@ -1169,11 +1146,8 @@ fn test_secp256k1_compressed_key_full_signing_flow_v2() {
     let recipient = Keypair::new();
     context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
     let transfer_amount = 5_000_000;
-    let transfer_ix = solana_system_interface::instruction::transfer(
-        &swig_wallet_address,
-        &recipient.pubkey(),
-        transfer_amount,
-    );
+    let transfer_ix =
+        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
 
     // Create signing function for compressed key
     let signing_fn = |payload: &[u8]| -> [u8; 65] {

@@ -3,6 +3,7 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::{LocalSigner, PrivateKeySigner};
 use solana_sdk::{
     signature::{Keypair, Signer},
+    system_instruction, system_program,
     sysvar::clock::Clock,
 };
 use swig_state::authority::AuthorityType;
@@ -66,7 +67,7 @@ fn test_secp256k1_signature_reuse_error() {
             &secp_pubkey,
             vec![
                 Permission::Program {
-                    program_id: solana_system_interface::program::ID,
+                    program_id: system_program::ID,
                 },
                 Permission::Sol {
                     amount: 10_000_000_000,
@@ -108,7 +109,7 @@ fn test_secp256k1_signature_reuse_error() {
     let transfer_amount = 1_000_000;
 
     // First transaction should succeed
-    let transfer_ix = solana_system_interface::instruction::transfer(
+    let transfer_ix = system_instruction::transfer(
         &swig_wallet.get_swig_wallet_address().unwrap(),
         &recipient.pubkey(),
         transfer_amount,
@@ -121,7 +122,7 @@ fn test_secp256k1_signature_reuse_error() {
     assert_eq!(counter_after_first, 1);
 
     // Try to reuse the same signature (this should fail)
-    let transfer_ix2 = solana_system_interface::instruction::transfer(
+    let transfer_ix2 = system_instruction::transfer(
         &swig_wallet.get_swig_wallet_address().unwrap(),
         &recipient.pubkey(),
         transfer_amount,
@@ -148,7 +149,7 @@ fn test_secp256k1_invalid_signature_age_error() {
             &secp_pubkey,
             vec![
                 Permission::Program {
-                    program_id: solana_system_interface::program::ID,
+                    program_id: system_program::ID,
                 },
                 Permission::Sol {
                     amount: 10_000_000_000,
@@ -184,7 +185,7 @@ fn test_secp256k1_invalid_signature_age_error() {
     swig_wallet.litesvm().warp_to_slot(100);
 
     // Try to execute transaction with old signature
-    let transfer_ix = solana_system_interface::instruction::transfer(
+    let transfer_ix = system_instruction::transfer(
         &swig_wallet.get_swig_wallet_address().unwrap(),
         &recipient.pubkey(),
         transfer_amount,
@@ -216,7 +217,7 @@ fn test_secp256k1_invalid_signature_error() {
             &secp_pubkey,
             vec![
                 Permission::Program {
-                    program_id: solana_system_interface::program::ID,
+                    program_id: system_program::ID,
                 },
                 Permission::Sol {
                     amount: 10_000_000_000,
@@ -250,7 +251,7 @@ fn test_secp256k1_invalid_signature_error() {
     let transfer_amount = 1_000_000;
 
     // Try to execute transaction with invalid signature
-    let transfer_ix = solana_system_interface::instruction::transfer(
+    let transfer_ix = system_instruction::transfer(
         &swig_wallet.get_swig_wallet_address().unwrap(),
         &recipient.pubkey(),
         transfer_amount,
@@ -280,7 +281,7 @@ fn test_secp256k1_invalid_hash_error() {
             &secp_pubkey,
             vec![
                 Permission::Program {
-                    program_id: solana_system_interface::program::ID,
+                    program_id: system_program::ID,
                 },
                 Permission::Sol {
                     amount: 10_000_000_000,
@@ -313,7 +314,7 @@ fn test_secp256k1_invalid_hash_error() {
     let transfer_amount = 1_000_000;
 
     // Try to execute transaction with potentially corrupted data
-    let transfer_ix = solana_system_interface::instruction::transfer(
+    let transfer_ix = system_instruction::transfer(
         &swig_wallet.get_swig_wallet_address().unwrap(),
         &recipient.pubkey(),
         transfer_amount,
@@ -343,7 +344,7 @@ fn test_secp256k1_counter_increment() {
             &secp_pubkey,
             vec![
                 Permission::Program {
-                    program_id: solana_system_interface::program::ID,
+                    program_id: system_program::ID,
                 },
                 Permission::Sol {
                     amount: 10_000_000_000,
@@ -386,11 +387,8 @@ fn test_secp256k1_counter_increment() {
         .unwrap();
 
     for i in 1..=5 {
-        let transfer_ix = solana_system_interface::instruction::transfer(
-            &swig_pubkey,
-            &recipient.pubkey(),
-            transfer_amount,
-        );
+        let transfer_ix =
+            system_instruction::transfer(&swig_pubkey, &recipient.pubkey(), transfer_amount);
         let result = swig_wallet.sign_v2(vec![transfer_ix], None);
         assert!(result.is_ok(), "Transaction {} should succeed", i);
 
@@ -446,7 +444,7 @@ fn test_secp256k1_authority_odometer() {
             &secp_pubkey,
             vec![
                 Permission::Program {
-                    program_id: solana_system_interface::program::ID,
+                    program_id: system_program::ID,
                 },
                 Permission::Sol {
                     amount: 10_000_000_000,
@@ -489,7 +487,7 @@ fn test_secp256k1_authority_odometer() {
     let transfer_amount = 1_000_000;
 
     for i in 1..=3 {
-        let transfer_ix = solana_system_interface::instruction::transfer(
+        let transfer_ix = system_instruction::transfer(
             &swig_wallet.get_swig_wallet_address().unwrap(),
             &recipient.pubkey(),
             transfer_amount,
@@ -519,7 +517,7 @@ fn test_secp256k1_odometer_wrapping() {
             &secp_pubkey,
             vec![
                 Permission::Program {
-                    program_id: solana_system_interface::program::ID,
+                    program_id: system_program::ID,
                 },
                 Permission::Sol {
                     amount: 10_000_000_000,
@@ -559,7 +557,7 @@ fn test_secp256k1_odometer_wrapping() {
 
     // Execute transactions to test odometer behavior
     for i in 1..=10 {
-        let transfer_ix = solana_system_interface::instruction::transfer(
+        let transfer_ix = system_instruction::transfer(
             &swig_wallet.get_swig_wallet_address().unwrap(),
             &recipient.pubkey(),
             transfer_amount,

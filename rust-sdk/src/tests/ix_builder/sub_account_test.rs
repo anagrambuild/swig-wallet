@@ -6,6 +6,7 @@ use solana_program::pubkey::Pubkey;
 use solana_sdk::{
     message::{v0, VersionedMessage},
     signature::{Keypair, Signer},
+    system_instruction,
     transaction::VersionedTransaction,
 };
 use swig_interface::program_id;
@@ -131,7 +132,7 @@ fn test_sub_account_functionality() {
 
     // Create a transfer instruction to be executed by the sub-account
     let transfer_amount = 1_000_000;
-    let transfer_ix = solana_system_interface::instruction::transfer(
+    let transfer_ix = system_instruction::transfer(
         &sub_account,
         &recipient.pubkey(),
         1_000_000, // 0.001 SOL
@@ -297,11 +298,8 @@ fn test_sub_account_functionality() {
 
     // Verify the sub-account is disabled by attempting another transfer (should
     // fail)
-    let transfer_ix = solana_system_interface::instruction::transfer(
-        &sub_account,
-        &recipient.pubkey(),
-        transfer_amount,
-    );
+    let transfer_ix =
+        system_instruction::transfer(&sub_account, &recipient.pubkey(), transfer_amount);
     let sub_account_sign_ix = sub_account_builder
         .sign_instruction_with_sub_account(vec![transfer_ix], None)
         .unwrap();
