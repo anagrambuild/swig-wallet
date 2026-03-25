@@ -14,9 +14,9 @@ use once_cell::sync::Lazy;
 use solana_client::{
     rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig, rpc_response::RpcVoteAccountInfo,
 };
-use solana_compute_budget_interface::ComputeBudgetInstruction;
-use solana_program::pubkey::Pubkey as SolanaPubkey;
+use solana_program::{pubkey::Pubkey as SolanaPubkey, system_instruction};
 use solana_sdk::{
+    compute_budget::ComputeBudgetInstruction,
     instruction::{AccountMeta, Instruction},
     message::{v0, Message, VersionedMessage},
     signature::{Keypair, Signature, Signer},
@@ -258,7 +258,7 @@ fn test_stake_with_unlimited_permission_v2() {
         .get_minimum_balance_for_rent_exemption(200)
         .unwrap();
     let create_tx = Transaction::new_signed_with_payer(
-        &[solana_system_interface::instruction::create_account(
+        &[system_instruction::create_account(
             &context.payer.pubkey(),
             &stake_account.pubkey(),
             rent,
@@ -361,7 +361,7 @@ fn test_stake_with_fixed_limit_v2() {
         .get_minimum_balance_for_rent_exemption(200)
         .unwrap();
     let create_tx = Transaction::new_signed_with_payer(
-        &[solana_system_interface::instruction::create_account(
+        &[system_instruction::create_account(
             &context.payer.pubkey(),
             &stake_account.pubkey(),
             rent,
@@ -466,7 +466,7 @@ fn test_stake_with_recurring_limit_v2() {
         .get_minimum_balance_for_rent_exemption(200)
         .unwrap();
     let create_tx = Transaction::new_signed_with_payer(
-        &[solana_system_interface::instruction::create_account(
+        &[system_instruction::create_account(
             &context.payer.pubkey(),
             &stake_account.pubkey(),
             rent,
@@ -592,7 +592,7 @@ fn test_both_stake_and_unstake_affect_limit_v2() {
         .get_minimum_balance_for_rent_exemption(200)
         .unwrap();
     let create_tx = Transaction::new_signed_with_payer(
-        &[solana_system_interface::instruction::create_account(
+        &[system_instruction::create_account(
             &context.payer.pubkey(),
             &stake_account.pubkey(),
             rent,

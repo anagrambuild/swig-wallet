@@ -2,8 +2,8 @@ use alloy_signer_local::{LocalSigner, PrivateKeySigner};
 use anyhow::Result;
 use litesvm::{types::TransactionMetadata, LiteSVM};
 use litesvm_token::{spl_token, CreateAssociatedTokenAccount, CreateMint, MintTo};
-use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
+    compute_budget::ComputeBudgetInstruction,
     instruction::Instruction,
     message::{v0, VersionedMessage},
     pubkey::Pubkey,

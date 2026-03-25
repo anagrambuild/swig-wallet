@@ -11,9 +11,13 @@ use openssl::{
     ec::{EcGroup, EcKey, EcPoint, PointConversionForm},
     nid::Nid,
 };
-use solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::Signer};
+use solana_sdk::{
+    pubkey::Pubkey,
+    signature::Keypair,
+    signer::Signer,
+    system_instruction::{self, transfer},
+};
 use solana_secp256r1_program;
-use solana_system_interface::instruction::{self, transfer};
 use swig_sdk::{
     authority::{
         ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
@@ -1145,8 +1149,7 @@ fn transfer_from_sub_account_interactive(ctx: &mut SwigCliContext) -> Result<()>
         .interact_text()?;
     let sub_account = ctx.wallet.as_mut().unwrap().get_sub_account()?;
     if let Some(sub_account) = sub_account {
-        let transfer_ix =
-            solana_system_interface::instruction::transfer(&sub_account, &recipient, amount);
+        let transfer_ix = system_instruction::transfer(&sub_account, &recipient, amount);
 
         let signature = ctx
             .wallet

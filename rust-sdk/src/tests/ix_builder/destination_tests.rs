@@ -1,7 +1,7 @@
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
-use solana_program::pubkey::Pubkey;
+use solana_program::{pubkey::Pubkey, system_instruction};
 use solana_sdk::{
     message::{v0, VersionedMessage},
     signature::{Keypair, Signer},
