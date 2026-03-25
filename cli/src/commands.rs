@@ -16,7 +16,6 @@ use serde_json::Value;
 use solana_sdk::{
     pubkey::Pubkey,
     signature::{Keypair, Signer},
-    system_instruction,
 };
 use solana_secp256r1_program;
 use swig_sdk::{
@@ -496,7 +495,11 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
             let sub_account = ctx.wallet.as_ref().unwrap().get_sub_account()?;
             if let Some(sub_account) = sub_account {
                 let recipient = Pubkey::from_str(&recipient)?;
-                let transfer_ix = system_instruction::transfer(&sub_account, &recipient, amount);
+                let transfer_ix = solana_system_interface::instruction::transfer(
+                    &sub_account,
+                    &recipient,
+                    amount,
+                );
                 let signature = ctx
                     .wallet
                     .as_mut()

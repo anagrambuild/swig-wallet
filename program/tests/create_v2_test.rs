@@ -17,7 +17,6 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    system_instruction,
     sysvar::{clock::Clock, rent::Rent},
     transaction::VersionedTransaction,
 };
@@ -201,8 +200,11 @@ fn test_create_and_sign_secp256k1_v2() {
     let transfer_amount = 5_000_000_000; // 5 SOL
 
     // Create SOL transfer instruction from swig_wallet_address to recipient
-    let transfer_ix =
-        system_instruction::transfer(&swig_wallet_address, &recipient.pubkey(), transfer_amount);
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
 
     // Create the signing function that will use our Ethereum wallet
     let signing_fn = |payload: &[u8]| -> [u8; 65] {
