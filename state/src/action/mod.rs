@@ -13,6 +13,7 @@ pub mod program;
 pub mod program_all;
 pub mod program_curated;
 pub mod program_scope;
+pub mod rent_destination;
 pub mod sol_destination_limit;
 pub mod sol_limit;
 pub mod sol_recurring_destination_limit;
@@ -35,6 +36,7 @@ use program::Program;
 use program_all::ProgramAll;
 use program_curated::ProgramCurated;
 use program_scope::ProgramScope;
+use rent_destination::RentDestination;
 use sol_destination_limit::SolDestinationLimit;
 use sol_limit::SolLimit;
 use sol_recurring_destination_limit::SolRecurringDestinationLimit;
@@ -167,6 +169,8 @@ pub enum Permission {
     TokenRecurringDestinationLimit = 19,
     /// Permission to close token accounts and the swig account
     CloseSwigAuthority = 20,
+    /// Marks an authority as a valid rent destination for close instructions
+    RentDestination = 21,
 }
 
 impl TryFrom<u16> for Permission {
@@ -176,7 +180,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=20 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=21 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -241,6 +245,7 @@ impl ActionLoader {
             Permission::ProgramCurated => ProgramCurated::valid_layout(data),
             Permission::AllButManageAuthority => AllButManageAuthority::valid_layout(data),
             Permission::CloseSwigAuthority => CloseSwigAuthority::valid_layout(data),
+            Permission::RentDestination => RentDestination::valid_layout(data),
             Permission::TokenDestinationLimit => TokenDestinationLimit::valid_layout(data),
             Permission::TokenRecurringDestinationLimit => {
                 TokenRecurringDestinationLimit::valid_layout(data)
@@ -265,5 +270,18 @@ impl ActionLoader {
             cursor = action.boundary() as usize;
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rent_destination_permission_roundtrip() {
+        let action = Action::new(Permission::RentDestination, 0, Action::LEN as u32);
+        let bytes = action.into_bytes().unwrap();
+        let loaded = unsafe { Action::load_unchecked(bytes) }.unwrap();
+        assert_eq!(loaded.permission().unwrap(), Permission::RentDestination);
     }
 }

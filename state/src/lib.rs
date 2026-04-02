@@ -191,6 +191,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedProgramExecInvalidWalletAccount,
     /// Program execution cannot be the Swig program
     PermissionDeniedProgramExecCannotBeSwig,
+    /// Destination must match an authority configured as rent destination
+    PermissionDeniedInvalidRentDestination,
 }
 
 impl From<SwigStateError> for ProgramError {

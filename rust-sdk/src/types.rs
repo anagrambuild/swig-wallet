@@ -9,6 +9,7 @@ use swig_state::{
         program_all::ProgramAll,
         program_curated::ProgramCurated,
         program_scope::{NumericType, ProgramScope, ProgramScopeType},
+        rent_destination::RentDestination,
         sol_destination_limit::SolDestinationLimit,
         sol_limit::SolLimit,
         sol_recurring_destination_limit::SolRecurringDestinationLimit,
@@ -164,6 +165,10 @@ pub enum Permission {
     /// This grants access to all wallet operations but excludes the ability
     /// to add, remove, or modify authorities/subaccounts.
     AllButManageAuthority,
+
+    /// Permission that marks this authority as a valid rent destination for
+    /// close instructions.
+    RentDestination,
 }
 
 impl Permission {
@@ -332,6 +337,9 @@ impl Permission {
                     actions.push(ClientAction::AllButManageAuthority(
                         AllButManageAuthority {},
                     ));
+                },
+                Permission::RentDestination => {
+                    actions.push(ClientAction::RentDestination(RentDestination {}));
                 },
             }
         }
@@ -573,6 +581,13 @@ impl Permission {
             permissions.push(Permission::AllButManageAuthority);
         }
 
+        if swig_state::role::Role::get_action::<RentDestination>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .is_some()
+        {
+            permissions.push(Permission::RentDestination);
+        }
+
         Ok(permissions)
     }
 
@@ -649,6 +664,7 @@ impl Permission {
             },
             Permission::StakeAll => 12,
             Permission::AllButManageAuthority => 15,
+            Permission::RentDestination => 21,
         }
     }
 }

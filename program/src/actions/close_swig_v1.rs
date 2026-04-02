@@ -27,6 +27,7 @@ use crate::{
         accounts::{CloseSwigV1Accounts, Context},
         SwigInstruction,
     },
+    util::validate_rent_destination_for_close,
 };
 
 /// Arguments for closing a Swig account.
@@ -97,60 +98,65 @@ pub fn close_swig_v1(
 
     let close_ix = CloseSwigV1::from_instruction_bytes(data)?;
 
-    // Load swig account
-    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+    // Authenticate and validate permissions first.
+    let wallet_bump = {
+        let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
 
-    if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
-        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
-    }
+        if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
+            return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+        }
 
-    let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
-    let swig = unsafe { Swig::load_unchecked(swig_header)? };
+        let (swig_header, swig_roles) =
+            unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+        let swig = unsafe { Swig::load_unchecked(swig_header)? };
 
-    // Verify swig_wallet_address is the correct PDA
-    let (expected_wallet_address, _wallet_bump) = pinocchio::pubkey::find_program_address(
-        &swig_wallet_address_seeds(ctx.accounts.swig.key().as_ref()),
-        &crate::ID,
-    );
-    if ctx.accounts.swig_wallet_address.key() != &expected_wallet_address {
-        return Err(SwigError::InvalidSeedSwigAccount.into());
-    }
+        // Verify swig_wallet_address is the correct PDA
+        let (expected_wallet_address, _wallet_bump) = pinocchio::pubkey::find_program_address(
+            &swig_wallet_address_seeds(ctx.accounts.swig.key().as_ref()),
+            &crate::ID,
+        );
+        if ctx.accounts.swig_wallet_address.key() != &expected_wallet_address {
+            return Err(SwigError::InvalidSeedSwigAccount.into());
+        }
 
-    // Get and authenticate role
-    let role_opt = Swig::get_mut_role(close_ix.args.role_id, swig_roles)?;
-    if role_opt.is_none() {
-        return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-    }
-    let role = role_opt.unwrap();
+        let role_opt = Swig::get_mut_role(close_ix.args.role_id, swig_roles)?;
+        if role_opt.is_none() {
+            return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+        }
+        let role = role_opt.unwrap();
 
-    // Authenticate
-    let current_slot = Clock::get()?.slot;
-    if role.authority.session_based() {
-        role.authority.authenticate_session(
-            accounts,
-            close_ix.authority_payload,
-            close_ix.args.into_bytes()?,
-            current_slot,
-        )?;
-    } else {
-        role.authority.authenticate(
-            accounts,
-            close_ix.authority_payload,
-            close_ix.args.into_bytes()?,
-            current_slot,
-        )?;
-    }
+        let current_slot = Clock::get()?.slot;
+        if role.authority.session_based() {
+            role.authority.authenticate_session(
+                accounts,
+                close_ix.authority_payload,
+                close_ix.args.into_bytes()?,
+                current_slot,
+            )?;
+        } else {
+            role.authority.authenticate(
+                accounts,
+                close_ix.authority_payload,
+                close_ix.args.into_bytes()?,
+                current_slot,
+            )?;
+        }
 
-    // Check permissions: must have All, ManageAuthority, or CloseSwigAuthority
-    let has_all = role.get_action::<All>(&[])?.is_some();
-    let has_manage = role.get_action::<ManageAuthority>(&[])?.is_some();
-    let has_close = role.get_action::<CloseSwigAuthority>(&[])?.is_some();
-    if !has_all && !has_manage && !has_close {
-        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
-    }
+        let has_all = role.get_action::<All>(&[])?.is_some();
+        let has_manage = role.get_action::<ManageAuthority>(&[])?.is_some();
+        let has_close = role.get_action::<CloseSwigAuthority>(&[])?.is_some();
+        if !has_all && !has_manage && !has_close {
+            return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+        }
 
-    // Store swig values before dropping borrow
-    let wallet_bump = swig.wallet_bump;
+        swig.wallet_bump
+    };
+
+    let swig_account_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
+
+    // Enforce rent destination restriction, if configured by any authority.
+    validate_rent_destination_for_close(&swig_account_data, ctx.accounts.destination.key())?;
+
     let swig_data_len = swig_account_data.len();
 
     // Check that swig account only has rent-exempt minimum (no excess SOL balance)

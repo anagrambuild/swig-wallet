@@ -21,6 +21,7 @@ use pinocchio::{
 use swig_state::{
     action::{
         program_scope::{NumericType, ProgramScope},
+        rent_destination::RentDestination,
         Action, Permission,
     },
     authority::AuthorityType,
@@ -28,7 +29,7 @@ use swig_state::{
     read_numeric_field,
     role::RoleMut,
     swig::{Swig, SwigWithRoles},
-    Transmutable,
+    SwigAuthenticateError, Transmutable,
 };
 
 use crate::error::SwigError;
@@ -160,6 +161,40 @@ impl ProgramScopeCache {
                 (*role_id, program_scope)
             })
     }
+}
+
+/// Validates destination restrictions for close instructions.
+///
+/// If at least one authority has the `RentDestination` action, the destination
+/// account must match an authority that has that action. If no authority has
+/// `RentDestination`, any destination is allowed.
+pub(crate) fn validate_rent_destination_for_close(
+    swig_data: &[u8],
+    destination: &Pubkey,
+) -> ProgramResult {
+    let swig_with_roles = SwigWithRoles::from_bytes(swig_data)?;
+    let mut has_restricted_destinations = false;
+    let mut destination_allowed = false;
+
+    for role_id in 0..swig_with_roles.state.role_counter {
+        let Some(role) = swig_with_roles.get_role(role_id)? else {
+            continue;
+        };
+
+        if role.get_action::<RentDestination>(&[])?.is_some() {
+            has_restricted_destinations = true;
+            if role.authority.match_data(destination.as_ref()) {
+                destination_allowed = true;
+                break;
+            }
+        }
+    }
+
+    if has_restricted_destinations && !destination_allowed {
+        return Err(SwigAuthenticateError::PermissionDeniedInvalidRentDestination.into());
+    }
+
+    Ok(())
 }
 
 /// Reads a numeric balance from an account's data based on a `ProgramScope`
