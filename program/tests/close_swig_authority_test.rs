@@ -962,16 +962,34 @@ fn test_close_swig_denied_with_program_all() {
 #[test_log::test]
 fn test_close_token_account_fails_with_non_rent_destination() {
     let mut context = setup_test_context().unwrap();
-    let authority = Keypair::new();
+    let root_authority = Keypair::new();
+    let close_authority = Keypair::new();
     let rent_destination_authority = Keypair::new();
     let id = rand::random::<[u8; 32]>();
 
-    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
+    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
 
     let (swig_wallet_address, _) = Pubkey::find_program_address(
         &swig_wallet_address_seeds(&swig_pubkey.to_bytes()),
         &program_id(),
     );
+
+    context
+        .svm
+        .airdrop(&close_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_pubkey,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: close_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::CloseSwigAuthority(CloseSwigAuthority)],
+    )
+    .unwrap();
 
     context
         .svm
@@ -981,7 +999,7 @@ fn test_close_token_account_fails_with_non_rent_destination() {
     add_authority_with_ed25519_root(
         &mut context,
         &swig_pubkey,
-        &authority,
+        &root_authority,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
             authority: rent_destination_authority.pubkey().as_ref(),
@@ -999,17 +1017,14 @@ fn test_close_token_account_fails_with_non_rent_destination() {
     )
     .unwrap();
 
-    let destination = Keypair::new();
-    context.svm.airdrop(&destination.pubkey(), 0).unwrap();
-
     let close_ix = CloseTokenAccountV1Instruction::new_with_ed25519_authority(
         swig_pubkey,
         swig_wallet_address,
-        authority.pubkey(),
-        destination.pubkey(),
+        close_authority.pubkey(),
+        close_authority.pubkey(),
         spl_token::ID,
         vec![swig_token_ata],
-        0,
+        1,
     )
     .unwrap();
 
@@ -1026,28 +1041,47 @@ fn test_close_token_account_fails_with_non_rent_destination() {
         .unwrap(),
     );
 
-    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &close_authority])
+        .unwrap();
 
     let result = context.svm.send_transaction(tx);
     assert!(
         result.is_err(),
-        "Close token account should fail when destination is not a rent destination authority"
+        "Close token account should fail when destination only has close permission"
     );
 }
 
 #[test_log::test]
 fn test_close_token_account_succeeds_with_rent_destination_authority() {
     let mut context = setup_test_context().unwrap();
-    let authority = Keypair::new();
+    let root_authority = Keypair::new();
+    let close_authority = Keypair::new();
     let rent_destination_authority = Keypair::new();
     let id = rand::random::<[u8; 32]>();
 
-    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
+    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
 
     let (swig_wallet_address, _) = Pubkey::find_program_address(
         &swig_wallet_address_seeds(&swig_pubkey.to_bytes()),
         &program_id(),
     );
+
+    context
+        .svm
+        .airdrop(&close_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_pubkey,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: close_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::CloseSwigAuthority(CloseSwigAuthority)],
+    )
+    .unwrap();
 
     context
         .svm
@@ -1057,7 +1091,7 @@ fn test_close_token_account_succeeds_with_rent_destination_authority() {
     add_authority_with_ed25519_root(
         &mut context,
         &swig_pubkey,
-        &authority,
+        &root_authority,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
             authority: rent_destination_authority.pubkey().as_ref(),
@@ -1085,11 +1119,11 @@ fn test_close_token_account_succeeds_with_rent_destination_authority() {
     let close_ix = CloseTokenAccountV1Instruction::new_with_ed25519_authority(
         swig_pubkey,
         swig_wallet_address,
-        authority.pubkey(),
+        close_authority.pubkey(),
         rent_destination_authority.pubkey(),
         spl_token::ID,
         vec![swig_token_ata],
-        0,
+        1,
     )
     .unwrap();
 
@@ -1106,7 +1140,8 @@ fn test_close_token_account_succeeds_with_rent_destination_authority() {
         .unwrap(),
     );
 
-    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &close_authority])
+        .unwrap();
 
     let result = context.svm.send_transaction(tx);
     assert!(
@@ -1130,16 +1165,34 @@ fn test_close_token_account_succeeds_with_rent_destination_authority() {
 #[test_log::test]
 fn test_close_swig_fails_with_non_rent_destination() {
     let mut context = setup_test_context().unwrap();
-    let authority = Keypair::new();
+    let root_authority = Keypair::new();
+    let close_authority = Keypair::new();
     let rent_destination_authority = Keypair::new();
     let id = rand::random::<[u8; 32]>();
 
-    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
+    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
 
     let (swig_wallet_address, _) = Pubkey::find_program_address(
         &swig_wallet_address_seeds(&swig_pubkey.to_bytes()),
         &program_id(),
     );
+
+    context
+        .svm
+        .airdrop(&close_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_pubkey,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: close_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::CloseSwigAuthority(CloseSwigAuthority)],
+    )
+    .unwrap();
 
     context
         .svm
@@ -1149,7 +1202,7 @@ fn test_close_swig_fails_with_non_rent_destination() {
     add_authority_with_ed25519_root(
         &mut context,
         &swig_pubkey,
-        &authority,
+        &root_authority,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
             authority: rent_destination_authority.pubkey().as_ref(),
@@ -1158,15 +1211,12 @@ fn test_close_swig_fails_with_non_rent_destination() {
     )
     .unwrap();
 
-    let destination = Keypair::new();
-    context.svm.airdrop(&destination.pubkey(), 0).unwrap();
-
     let close_ix = CloseSwigV1Instruction::new_with_ed25519_authority(
         swig_pubkey,
         swig_wallet_address,
-        authority.pubkey(),
-        destination.pubkey(),
-        0,
+        close_authority.pubkey(),
+        close_authority.pubkey(),
+        1,
     )
     .unwrap();
 
@@ -1183,28 +1233,47 @@ fn test_close_swig_fails_with_non_rent_destination() {
         .unwrap(),
     );
 
-    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &close_authority])
+        .unwrap();
 
     let result = context.svm.send_transaction(tx);
     assert!(
         result.is_err(),
-        "Close swig should fail when destination is not a rent destination authority"
+        "Close swig should fail when destination only has close permission"
     );
 }
 
 #[test_log::test]
 fn test_close_swig_succeeds_with_rent_destination_authority() {
     let mut context = setup_test_context().unwrap();
-    let authority = Keypair::new();
+    let root_authority = Keypair::new();
+    let close_authority = Keypair::new();
     let rent_destination_authority = Keypair::new();
     let id = rand::random::<[u8; 32]>();
 
-    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
+    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
 
     let (swig_wallet_address, _) = Pubkey::find_program_address(
         &swig_wallet_address_seeds(&swig_pubkey.to_bytes()),
         &program_id(),
     );
+
+    context
+        .svm
+        .airdrop(&close_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_pubkey,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: close_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::CloseSwigAuthority(CloseSwigAuthority)],
+    )
+    .unwrap();
 
     context
         .svm
@@ -1214,7 +1283,7 @@ fn test_close_swig_succeeds_with_rent_destination_authority() {
     add_authority_with_ed25519_root(
         &mut context,
         &swig_pubkey,
-        &authority,
+        &root_authority,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
             authority: rent_destination_authority.pubkey().as_ref(),
@@ -1241,9 +1310,9 @@ fn test_close_swig_succeeds_with_rent_destination_authority() {
     let close_ix = CloseSwigV1Instruction::new_with_ed25519_authority(
         swig_pubkey,
         swig_wallet_address,
-        authority.pubkey(),
+        close_authority.pubkey(),
         rent_destination_authority.pubkey(),
-        0,
+        1,
     )
     .unwrap();
 
@@ -1260,7 +1329,8 @@ fn test_close_swig_succeeds_with_rent_destination_authority() {
         .unwrap(),
     );
 
-    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &close_authority])
+        .unwrap();
 
     let result = context.svm.send_transaction(tx);
     assert!(
