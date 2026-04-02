@@ -716,3 +716,35 @@ impl UpdateAuthorityData {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rent_destination_converts_to_client_action() {
+        let actions = Permission::to_client_actions(vec![Permission::RentDestination]);
+
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(&actions[0], ClientAction::RentDestination(_)));
+    }
+
+    #[test]
+    fn rent_destination_action_type_matches_program_discriminator() {
+        assert_eq!(Permission::RentDestination.to_action_type(), 21);
+    }
+
+    #[test]
+    fn remove_actions_by_type_uses_rent_destination_action_type() {
+        let update_data =
+            UpdateAuthorityData::RemoveActionsByType(vec![Permission::RentDestination]);
+
+        let interface_data = update_data.to_interface_data();
+        match interface_data {
+            InterfaceUpdateAuthorityData::RemoveActionsByType(action_types) => {
+                assert_eq!(action_types, vec![21]);
+            },
+            _ => panic!("expected RemoveActionsByType update payload"),
+        }
+    }
+}
