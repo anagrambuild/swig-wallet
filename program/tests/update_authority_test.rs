@@ -6,18 +6,25 @@
 mod common;
 
 use common::*;
-use solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::Signer};
+use solana_sdk::{
+    instruction::{AccountMeta, Instruction},
+    pubkey::Pubkey,
+    signature::Keypair,
+    signer::Signer,
+};
+use swig::actions::update_authority_v1::{AuthorityUpdateOperation, UpdateAuthorityV1Args};
 use swig_interface::{
     AuthorityConfig, ClientAction, UpdateAuthorityData, UpdateAuthorityInstruction,
 };
 use swig_state::{
     action::{
-        all::All, manage_authority::ManageAuthority, sol_limit::SolLimit, token_limit::TokenLimit,
+        all::All, manage_authority::ManageAuthority, program_curated::ProgramCurated,
+        sol_limit::SolLimit, token_limit::TokenLimit, Action, Permission,
     },
     authority::AuthorityType,
     role::Position,
     swig::{Swig, SwigWithRoles},
-    Transmutable,
+    IntoBytes, Transmutable,
 };
 
 /// Helper function to update authority with Ed25519 root authority
@@ -70,6 +77,367 @@ pub fn update_authority_with_ed25519_root(
         .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
 
     Ok(result)
+}
+
+fn build_malformed_program_curated_update_instruction(
+    swig_account: Pubkey,
+    payer: Pubkey,
+    authority: Pubkey,
+    acting_role_id: u32,
+    authority_to_update_id: u32,
+    operation: AuthorityUpdateOperation,
+) -> anyhow::Result<Instruction> {
+    let malformed_action = Action::new(Permission::ProgramCurated, 0, Action::LEN as u32);
+    let mut encoded_data = vec![operation as u8];
+    encoded_data.extend_from_slice(
+        malformed_action
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize malformed action: {:?}", e))?,
+    );
+
+    let args = UpdateAuthorityV1Args::new(
+        acting_role_id,
+        authority_to_update_id,
+        encoded_data.len() as u16,
+        0,
+    );
+
+    let mut data = Vec::new();
+    data.extend_from_slice(
+        args.into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize update args: {:?}", e))?,
+    );
+    data.extend_from_slice(&encoded_data);
+    data.push(3); // Ed25519 authority account index
+
+    Ok(Instruction {
+        program_id: Pubkey::from(swig_interface::swig::ID),
+        accounts: vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            AccountMeta::new_readonly(authority, true),
+        ],
+        data,
+    })
+}
+
+fn corrupt_program_curated_action_to_zero_length(
+    context: &mut SwigTestContext,
+    swig_pubkey: &Pubkey,
+    role_id: u32,
+) -> anyhow::Result<()> {
+    let mut account = context
+        .svm
+        .get_account(swig_pubkey)
+        .ok_or(anyhow::anyhow!("Swig account not found"))?;
+
+    let roles_start = Swig::LEN;
+    let mut cursor = 0usize;
+
+    while roles_start + cursor + Position::LEN <= account.data.len() {
+        let (position_id, authority_length, boundary) = unsafe {
+            let position = Position::load_unchecked(
+                &account.data[roles_start + cursor..roles_start + cursor + Position::LEN],
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to parse position: {:?}", e))?;
+            (
+                position.id(),
+                position.authority_length() as usize,
+                position.boundary() as usize,
+            )
+        };
+
+        if position_id == role_id {
+            let actions_offset = cursor + Position::LEN + authority_length;
+            let role_actions_end = boundary;
+            let mut action_cursor = actions_offset;
+
+            while action_cursor + Action::LEN <= role_actions_end {
+                let action_header = unsafe {
+                    Action::load_unchecked(
+                        &account.data[roles_start + action_cursor
+                            ..roles_start + action_cursor + Action::LEN],
+                    )
+                    .map_err(|e| anyhow::anyhow!("Failed to parse action header: {:?}", e))?
+                };
+
+                if action_header.permission().map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to parse action permission while corrupting: {:?}",
+                        e
+                    )
+                })? == Permission::ProgramCurated
+                {
+                    let original_len = action_header.length() as usize;
+                    let action_header_start = roles_start + action_cursor;
+
+                    account.data[action_header_start + 2..action_header_start + 4]
+                        .copy_from_slice(&0u16.to_le_bytes());
+                    let new_action_boundary = (action_cursor - actions_offset + Action::LEN) as u32;
+                    account.data[action_header_start + 4..action_header_start + 8]
+                        .copy_from_slice(&new_action_boundary.to_le_bytes());
+
+                    let new_boundary =
+                        boundary.checked_sub(original_len).ok_or(anyhow::anyhow!(
+                            "Invalid role boundary while corrupting ProgramCurated action"
+                        ))?;
+                    let position_start = roles_start + cursor;
+                    account.data[position_start + 12..position_start + 16]
+                        .copy_from_slice(&(new_boundary as u32).to_le_bytes());
+
+                    let payload_start = action_header_start + Action::LEN;
+                    let payload_end = payload_start + original_len;
+                    account.data.drain(payload_start..payload_end);
+
+                    context
+                        .svm
+                        .set_account(*swig_pubkey, account)
+                        .map_err(|e| anyhow::anyhow!("Failed to set corrupted account: {:?}", e))?;
+                    return Ok(());
+                }
+
+                action_cursor += Action::LEN + action_header.length() as usize;
+            }
+
+            return Err(anyhow::anyhow!(
+                "ProgramCurated action not found in role {}",
+                role_id
+            ));
+        }
+
+        cursor = boundary;
+    }
+
+    Err(anyhow::anyhow!("Role {} not found", role_id))
+}
+
+#[test]
+fn test_update_authority_rejects_malformed_program_curated_add_actions() -> anyhow::Result<()> {
+    let mut context = setup_test_context()?;
+
+    let root_authority = Keypair::new();
+    let id = [21u8; 32];
+    let (swig, _) = create_swig_ed25519(&mut context, &root_authority, id)?;
+
+    let second_authority = Keypair::new();
+    let second_authority_pubkey = second_authority.pubkey();
+    let authority_config = AuthorityConfig {
+        authority_type: AuthorityType::Ed25519,
+        authority: second_authority_pubkey.as_ref(),
+    };
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root_authority,
+        authority_config,
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    )?;
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig: {:?}", e))?;
+    let root_role_id = swig_data
+        .lookup_role_id(root_authority.pubkey().as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to lookup root role id: {:?}", e))?
+        .ok_or(anyhow::anyhow!("Root role not found"))?;
+    let second_role_id = swig_data
+        .lookup_role_id(second_authority.pubkey().as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to lookup second role id: {:?}", e))?
+        .ok_or(anyhow::anyhow!("Second role not found"))?;
+
+    let malformed_ix = build_malformed_program_curated_update_instruction(
+        swig,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        root_role_id,
+        second_role_id,
+        AuthorityUpdateOperation::AddActions,
+    )?;
+
+    let msg = solana_sdk::message::v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[malformed_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+
+    let tx = solana_sdk::transaction::VersionedTransaction::try_new(
+        solana_sdk::message::VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )?;
+
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_err(),
+        "AddActions should fail when ProgramCurated payload length is zero"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_update_authority_rejects_malformed_program_curated_replace_all() -> anyhow::Result<()> {
+    let mut context = setup_test_context()?;
+
+    let root_authority = Keypair::new();
+    let id = [22u8; 32];
+    let (swig, _) = create_swig_ed25519(&mut context, &root_authority, id)?;
+
+    let second_authority = Keypair::new();
+    let second_authority_pubkey = second_authority.pubkey();
+    let authority_config = AuthorityConfig {
+        authority_type: AuthorityType::Ed25519,
+        authority: second_authority_pubkey.as_ref(),
+    };
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root_authority,
+        authority_config,
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    )?;
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig: {:?}", e))?;
+    let root_role_id = swig_data
+        .lookup_role_id(root_authority.pubkey().as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to lookup root role id: {:?}", e))?
+        .ok_or(anyhow::anyhow!("Root role not found"))?;
+    let second_role_id = swig_data
+        .lookup_role_id(second_authority.pubkey().as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to lookup second role id: {:?}", e))?
+        .ok_or(anyhow::anyhow!("Second role not found"))?;
+
+    let malformed_ix = build_malformed_program_curated_update_instruction(
+        swig,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        root_role_id,
+        second_role_id,
+        AuthorityUpdateOperation::ReplaceAll,
+    )?;
+
+    let msg = solana_sdk::message::v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[malformed_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+
+    let tx = solana_sdk::transaction::VersionedTransaction::try_new(
+        solana_sdk::message::VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )?;
+
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_err(),
+        "ReplaceAll should fail when ProgramCurated payload length is zero"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_update_authority_allows_remove_of_malformed_program_curated_action() -> anyhow::Result<()> {
+    let mut context = setup_test_context()?;
+
+    let root_authority = Keypair::new();
+    let id = [23u8; 32];
+    let (swig, _) = create_swig_ed25519(&mut context, &root_authority, id)?;
+
+    let second_authority = Keypair::new();
+    let second_authority_pubkey = second_authority.pubkey();
+    let authority_config = AuthorityConfig {
+        authority_type: AuthorityType::Ed25519,
+        authority: second_authority_pubkey.as_ref(),
+    };
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root_authority,
+        authority_config,
+        vec![
+            ClientAction::ManageAuthority(ManageAuthority {}),
+            ClientAction::ProgramCurated(ProgramCurated::new()),
+        ],
+    )?;
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig: {:?}", e))?;
+    let root_role_id = swig_data
+        .lookup_role_id(root_authority.pubkey().as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to lookup root role id: {:?}", e))?
+        .ok_or(anyhow::anyhow!("Root role not found"))?;
+    let second_role_id = swig_data
+        .lookup_role_id(second_authority.pubkey().as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to lookup second role id: {:?}", e))?
+        .ok_or(anyhow::anyhow!("Second role not found"))?;
+
+    corrupt_program_curated_action_to_zero_length(&mut context, &swig, second_role_id)?;
+
+    let remove_ix = UpdateAuthorityInstruction::new_with_ed25519_authority(
+        swig,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        root_role_id,
+        second_role_id,
+        UpdateAuthorityData::RemoveActionsByIndex(vec![1u16]),
+    )?;
+
+    let msg = solana_sdk::message::v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[remove_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+
+    let tx = solana_sdk::transaction::VersionedTransaction::try_new(
+        solana_sdk::message::VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )?;
+
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_ok(),
+        "RemoveActionsByIndex should allow removing malformed ProgramCurated actions: {:?}",
+        result.err()
+    );
+
+    let swig_account_after = context.svm.get_account(&swig).unwrap();
+    let swig_data_after = SwigWithRoles::from_bytes(&swig_account_after.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig after cleanup: {:?}", e))?;
+    let role_after = swig_data_after
+        .get_role(second_role_id)
+        .map_err(|e| anyhow::anyhow!("Failed to get role after cleanup: {:?}", e))?
+        .ok_or(anyhow::anyhow!("Role disappeared after cleanup"))?;
+
+    assert_eq!(
+        role_after.position.num_actions(),
+        1,
+        "Role should have one action after removing malformed ProgramCurated"
+    );
+
+    let remaining_actions = role_after
+        .get_all_actions()
+        .map_err(|e| anyhow::anyhow!("Failed to load remaining actions: {:?}", e))?;
+    assert_eq!(
+        remaining_actions.len(),
+        1,
+        "Expected exactly one action after malformed action removal"
+    );
+    assert_eq!(
+        remaining_actions[0]
+            .permission()
+            .map_err(|e| anyhow::anyhow!("Failed to read action permission: {:?}", e))?,
+        Permission::ManageAuthority,
+        "Remaining action should be ManageAuthority"
+    );
+
+    Ok(())
 }
 
 #[test]
