@@ -2045,6 +2045,8 @@ where
     pub instruction_prefix: Vec<u8>,
     /// Function that provides the preceding instruction for authentication
     pub preceding_instruction_fn: F,
+    /// Signature counter for replay protection
+    pub odometer: u32,
 }
 
 impl<F> ProgramExecClientRole<F>
@@ -2069,6 +2071,22 @@ where
             program_id,
             instruction_prefix,
             preceding_instruction_fn,
+            odometer: 0,
+        }
+    }
+
+    /// Creates a new ProgramExecClientRole with an initial odometer value.
+    pub fn new_with_odometer(
+        program_id: Pubkey,
+        instruction_prefix: Vec<u8>,
+        preceding_instruction_fn: F,
+        odometer: u32,
+    ) -> Self {
+        Self {
+            program_id,
+            instruction_prefix,
+            preceding_instruction_fn,
+            odometer,
         }
     }
 
@@ -2400,21 +2418,17 @@ where
     }
 
     fn odometer(&self) -> Result<u32, SwigError> {
-        Err(SwigError::InterfaceError(
-            "ProgramExec authority does not use odometer".to_string(),
-        ))
+        Ok(self.odometer)
     }
 
     fn increment_odometer(&mut self) -> Result<(), SwigError> {
-        Err(SwigError::InterfaceError(
-            "ProgramExec authority does not use odometer".to_string(),
-        ))
+        self.odometer = self.odometer.wrapping_add(1);
+        Ok(())
     }
 
-    fn update_odometer(&mut self, _odometer: u32) -> Result<(), SwigError> {
-        Err(SwigError::InterfaceError(
-            "ProgramExec authority does not use odometer".to_string(),
-        ))
+    fn update_odometer(&mut self, odometer: u32) -> Result<(), SwigError> {
+        self.odometer = odometer;
+        Ok(())
     }
 
     fn sign_v2_instruction(

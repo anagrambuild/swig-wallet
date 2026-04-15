@@ -177,10 +177,23 @@ pub fn swig_wallet_address(config_address: &Pubkey) -> Pubkey {
 fn build_program_exec_authority_payload(
     instruction_sysvar_index: u8,
     target_ix_index: Option<u8>,
+    odometer_start_index: Option<u16>,
 ) -> Vec<u8> {
-    match target_ix_index {
-        Some(idx) => vec![instruction_sysvar_index, idx],
-        None => vec![instruction_sysvar_index],
+    match odometer_start_index {
+        Some(idx) => {
+            let target_ix_idx = target_ix_index.unwrap_or(255);
+            let odo_bytes = idx.to_le_bytes();
+            vec![
+                instruction_sysvar_index,
+                target_ix_idx,
+                odo_bytes[0],
+                odo_bytes[1],
+            ]
+        },
+        None => match target_ix_index {
+            Some(idx) => vec![instruction_sysvar_index, idx],
+            None => vec![instruction_sysvar_index],
+        },
     }
 }
 
@@ -517,7 +530,7 @@ impl AddAuthorityInstruction {
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, None);
+            build_program_exec_authority_payload(instruction_sysvar_index, None, None);
 
         let main_ix = Instruction {
             program_id: Pubkey::from(swig::ID),
@@ -575,8 +588,11 @@ impl AddAuthorityInstruction {
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
-        let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, Some(target_ix_index));
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            None,
+        );
 
         let main_ix = Instruction {
             program_id: Pubkey::from(swig::ID),
@@ -678,7 +694,7 @@ impl SignV2Instruction {
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, None);
+            build_program_exec_authority_payload(instruction_sysvar_index, None, None);
 
         let sign_ix = Instruction {
             program_id: Pubkey::from(swig::ID),
@@ -719,8 +735,56 @@ impl SignV2Instruction {
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
-        let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, Some(target_ix_index));
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            None,
+        );
+
+        let sign_ix = Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [arg_bytes, &ix_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![preceding_instruction, sign_ix])
+    }
+
+    pub fn new_program_exec_with_odometer(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        inner_instruction: Instruction,
+        role_id: u32,
+        target_ix_index: u8,
+        odometer_start_index: u16,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
+
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new(payer, true),
+        ];
+
+        let (mut accounts, ixs) =
+            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+
+        let instruction_sysvar_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+
+        let ix_bytes = ixs.into_bytes();
+        let args = swig::actions::sign_v2::SignV2Args::new(role_id, ix_bytes.len() as u16);
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            Some(odometer_start_index),
+        );
 
         let sign_ix = Instruction {
             program_id: Pubkey::from(swig::ID),
@@ -1117,7 +1181,7 @@ impl RemoveAuthorityInstruction {
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, None);
+            build_program_exec_authority_payload(instruction_sysvar_index, None, None);
 
         let main_ix = Instruction {
             program_id: Pubkey::from(swig::ID),
@@ -1153,8 +1217,11 @@ impl RemoveAuthorityInstruction {
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
-        let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, Some(target_ix_index));
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            None,
+        );
 
         let main_ix = Instruction {
             program_id: Pubkey::from(swig::ID),
@@ -1520,7 +1587,7 @@ impl UpdateAuthorityInstruction {
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, None);
+            build_program_exec_authority_payload(instruction_sysvar_index, None, None);
 
         let main_ix = Instruction {
             program_id: Pubkey::from(swig::ID),
@@ -1568,8 +1635,11 @@ impl UpdateAuthorityInstruction {
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
-        let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, Some(target_ix_index));
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            None,
+        );
 
         let main_ix = Instruction {
             program_id: Pubkey::from(swig::ID),
@@ -1769,7 +1839,7 @@ impl CreateSessionInstruction {
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, None);
+            build_program_exec_authority_payload(instruction_sysvar_index, None, None);
 
         let main_ix = Instruction {
             program_id: Pubkey::from(swig::ID),
@@ -1807,8 +1877,11 @@ impl CreateSessionInstruction {
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
-        let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, Some(target_ix_index));
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            None,
+        );
 
         let main_ix = Instruction {
             program_id: Pubkey::from(swig::ID),
@@ -2007,7 +2080,7 @@ impl CreateSubAccountInstruction {
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, None);
+            build_program_exec_authority_payload(instruction_sysvar_index, None, None);
 
         let main_ix = Instruction {
             program_id: program_id(),
@@ -2045,8 +2118,11 @@ impl CreateSubAccountInstruction {
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
-        let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, Some(target_ix_index));
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            None,
+        );
 
         let main_ix = Instruction {
             program_id: program_id(),
@@ -2436,7 +2512,7 @@ impl WithdrawFromSubAccountInstruction {
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, None);
+            build_program_exec_authority_payload(instruction_sysvar_index, None, None);
 
         let main_ix = Instruction {
             program_id: program_id(),
@@ -2483,7 +2559,7 @@ impl WithdrawFromSubAccountInstruction {
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, None);
+            build_program_exec_authority_payload(instruction_sysvar_index, None, None);
 
         let main_ix = Instruction {
             program_id: program_id(),
@@ -2523,8 +2599,11 @@ impl WithdrawFromSubAccountInstruction {
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
-        let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, Some(target_ix_index));
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            None,
+        );
 
         let main_ix = Instruction {
             program_id: program_id(),
@@ -2569,8 +2648,11 @@ impl WithdrawFromSubAccountInstruction {
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
-        let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, Some(target_ix_index));
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            None,
+        );
 
         let main_ix = Instruction {
             program_id: program_id(),
@@ -2770,7 +2852,7 @@ impl SubAccountSignInstruction {
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, None);
+            build_program_exec_authority_payload(instruction_sysvar_index, None, None);
 
         let main_ix = Instruction {
             program_id: program_id(),
@@ -2811,8 +2893,11 @@ impl SubAccountSignInstruction {
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
-        let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, Some(target_ix_index));
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            None,
+        );
 
         let main_ix = Instruction {
             program_id: program_id(),
@@ -3018,7 +3103,7 @@ impl ToggleSubAccountInstruction {
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, None);
+            build_program_exec_authority_payload(instruction_sysvar_index, None, None);
 
         let main_ix = Instruction {
             program_id: program_id(),
@@ -3056,8 +3141,11 @@ impl ToggleSubAccountInstruction {
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
-        let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, Some(target_ix_index));
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            None,
+        );
 
         let main_ix = Instruction {
             program_id: program_id(),
@@ -3258,7 +3346,7 @@ impl TransferAssetsV1Instruction {
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, None);
+            build_program_exec_authority_payload(instruction_sysvar_index, None, None);
 
         let main_ix = Instruction {
             program_id: program_id(),
@@ -3295,8 +3383,11 @@ impl TransferAssetsV1Instruction {
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
-        let authority_payload =
-            build_program_exec_authority_payload(instruction_sysvar_index, Some(target_ix_index));
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            None,
+        );
 
         let main_ix = Instruction {
             program_id: program_id(),

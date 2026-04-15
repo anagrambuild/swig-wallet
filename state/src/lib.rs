@@ -191,6 +191,8 @@ pub enum SwigAuthenticateError {
     PermissionDeniedProgramExecInvalidWalletAccount,
     /// Program execution cannot be the Swig program
     PermissionDeniedProgramExecCannotBeSwig,
+    /// Program execution signature has been reused (odometer mismatch)
+    PermissionDeniedProgramExecSignatureReused,
 }
 
 impl From<SwigStateError> for ProgramError {

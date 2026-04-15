@@ -22,7 +22,9 @@ pub struct CreateProgramExecSessionAuthority {
     /// Length of the instruction prefix to match (0-32)
     pub instruction_prefix_len: u8,
     /// Padding for alignment
-    _padding: [u8; 7],
+    _padding: [u8; 3],
+    /// Signature counter for replay protection
+    pub signature_odometer: u32,
     /// The instruction data prefix that must match
     pub instruction_prefix: [u8; MAX_INSTRUCTION_PREFIX_LEN],
     /// The session key for temporary authentication
@@ -51,7 +53,8 @@ impl CreateProgramExecSessionAuthority {
             program_id,
             instruction_prefix,
             instruction_prefix_len,
-            _padding: [0; 7],
+            _padding: [0; 3],
+            signature_odometer: 0,
             session_key,
             max_session_length,
         }
@@ -83,7 +86,9 @@ pub struct ProgramExecSessionAuthority {
     /// Length of the instruction prefix to match (0-32)
     pub instruction_prefix_len: u8,
     /// Padding for alignment
-    _padding: [u8; 7],
+    _padding: [u8; 3],
+    /// Signature counter for replay protection
+    pub signature_odometer: u32,
     /// The instruction data prefix that must match
     pub instruction_prefix: [u8; MAX_INSTRUCTION_PREFIX_LEN],
 
@@ -114,7 +119,8 @@ impl ProgramExecSessionAuthority {
         Self {
             program_id,
             instruction_prefix_len,
-            _padding: [0; 7],
+            _padding: [0; 3],
+            signature_odometer: 0,
             instruction_prefix,
             session_key,
             max_session_length,
@@ -158,6 +164,7 @@ impl Authority for ProgramExecSessionAuthority {
         authority.program_id = create.program_id;
         authority.instruction_prefix = create.instruction_prefix;
         authority.instruction_prefix_len = create.instruction_prefix_len;
+        authority.signature_odometer = 0;
         authority.session_key = create.session_key;
         authority.max_session_length = create.max_session_length;
         authority.current_session_expiration = 0;
@@ -184,7 +191,7 @@ impl AuthorityInfo for ProgramExecSessionAuthority {
     }
 
     fn signature_odometer(&self) -> Option<u32> {
-        None
+        Some(self.signature_odometer)
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -254,20 +261,70 @@ impl AuthorityInfo for ProgramExecSessionAuthority {
         _slot: u64,
     ) -> Result<(), ProgramError> {
         // authority_payload format:
-        //   1 byte:  [instruction_sysvar_index] -- authenticate against current_index - 1
-        //   2 bytes: [instruction_sysvar_index, target_ix_index] -- authenticate against target_ix_index
-        if authority_payload.is_empty() || authority_payload.len() > 2 {
-            return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
-        }
+        //   1 byte:  [instruction_sysvar_index] -- legacy, no odometer
+        //   2 bytes: [instruction_sysvar_index, target_ix_index] -- legacy, no odometer
+        //   4 bytes: [instruction_sysvar_index, target_ix_index, odometer_start_index(u16 LE)]
+        //            target_ix_index == 255 means ignore (use current_index - 1)
+        //            odometer_start_index == 0xFFFF means ignore odometer check
+        let (instruction_sysvar_index, target_ix_index, odometer_start_index) =
+            match authority_payload.len() {
+                1 => {
+                    if self.signature_odometer > 0 {
+                        return Err(
+                            SwigAuthenticateError::PermissionDeniedProgramExecSignatureReused
+                                .into(),
+                        );
+                    }
+                    (authority_payload[0] as usize, None, None)
+                },
+                2 => {
+                    if self.signature_odometer > 0 {
+                        return Err(
+                            SwigAuthenticateError::PermissionDeniedProgramExecSignatureReused
+                                .into(),
+                        );
+                    }
+                    (
+                        authority_payload[0] as usize,
+                        Some(authority_payload[1]),
+                        None,
+                    )
+                },
+                4 => {
+                    let sysvar_idx = authority_payload[0] as usize;
+                    let target_ix = if authority_payload[1] == 0xFF {
+                        None
+                    } else {
+                        Some(authority_payload[1])
+                    };
+                    let odo_start =
+                        u16::from_le_bytes([authority_payload[2], authority_payload[3]]);
+                    if odo_start == 0xFFFF {
+                        if self.signature_odometer > 0 {
+                            return Err(
+                                SwigAuthenticateError::PermissionDeniedProgramExecSignatureReused
+                                    .into(),
+                            );
+                        }
+                        (sysvar_idx, target_ix, None)
+                    } else {
+                        if (odo_start as usize) < self.instruction_prefix_len as usize {
+                            return Err(
+                                SwigAuthenticateError::PermissionDeniedProgramExecInvalidInstructionData
+                                    .into(),
+                            );
+                        }
+                        (sysvar_idx, target_ix, Some(odo_start))
+                    }
+                },
+                _ => return Err(SwigAuthenticateError::InvalidAuthorityPayload.into()),
+            };
 
-        let instruction_sysvar_index = authority_payload[0] as usize;
-        let target_ix_index = if authority_payload.len() == 2 {
-            Some(authority_payload[1])
-        } else {
-            None
-        };
         let config_account_index = 0;
         let wallet_account_index = 1;
+
+        let odometer_config =
+            odometer_start_index.map(|start| (start, self.signature_odometer.wrapping_add(1)));
 
         program_exec_authenticate(
             account_infos,
@@ -278,6 +335,11 @@ impl AuthorityInfo for ProgramExecSessionAuthority {
             &self.instruction_prefix,
             self.instruction_prefix_len as usize,
             target_ix_index,
-        )
+            odometer_config,
+        )?;
+
+        odometer_config.map(|(_, counter)| self.signature_odometer = counter);
+
+        Ok(())
     }
 }

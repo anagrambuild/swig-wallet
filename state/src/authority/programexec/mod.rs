@@ -20,7 +20,7 @@ use super::{Authority, AuthorityInfo, AuthorityType};
 use crate::{IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut};
 
 const MAX_INSTRUCTION_PREFIX_LEN: usize = 40;
-const IX_PREFIX_OFFSET: usize = 32 + 1 + 7; // program_id + instruction_prefix_len + padding
+const IX_PREFIX_OFFSET: usize = 32 + 1 + 3 + 4; // program_id + instruction_prefix_len + padding + signature_odometer
 
 /// Standard Program Execution authority implementation.
 ///
@@ -35,7 +35,9 @@ pub struct ProgramExecAuthority {
     /// Length of the instruction prefix to match (0-40)
     pub instruction_prefix_len: u8,
     /// Padding for alignment
-    _padding: [u8; 7],
+    _padding: [u8; 3],
+    /// Signature counter for replay protection
+    pub signature_odometer: u32,
     pub instruction_prefix: [u8; MAX_INSTRUCTION_PREFIX_LEN],
 }
 
@@ -49,7 +51,8 @@ impl ProgramExecAuthority {
         Self {
             program_id,
             instruction_prefix_len,
-            _padding: [0; 7],
+            _padding: [0; 3],
+            signature_odometer: 0,
             instruction_prefix: [0; MAX_INSTRUCTION_PREFIX_LEN],
         }
     }
@@ -116,6 +119,7 @@ impl Authority for ProgramExecAuthority {
         assert_program_exec_cant_be_swig(create_data_program_id)?;
         authority.program_id.copy_from_slice(create_data_program_id);
         authority.instruction_prefix_len = prefix_len as u8;
+        authority.signature_odometer = 0;
         authority.instruction_prefix[..prefix_len]
             .copy_from_slice(&create_data[IX_PREFIX_OFFSET..IX_PREFIX_OFFSET + prefix_len]);
         Ok(())
@@ -164,7 +168,7 @@ impl AuthorityInfo for ProgramExecAuthority {
     }
 
     fn signature_odometer(&self) -> Option<u32> {
-        None
+        Some(self.signature_odometer)
     }
 
     fn authenticate(
@@ -175,20 +179,70 @@ impl AuthorityInfo for ProgramExecAuthority {
         _slot: u64,
     ) -> Result<(), ProgramError> {
         // authority_payload format:
-        //   1 byte:  [instruction_sysvar_index] -- authenticate against current_index - 1
-        //   2 bytes: [instruction_sysvar_index, target_ix_index] -- authenticate against target_ix_index
-        if authority_payload.is_empty() || authority_payload.len() > 2 {
-            return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
-        }
+        //   1 byte:  [instruction_sysvar_index] -- legacy, no odometer
+        //   2 bytes: [instruction_sysvar_index, target_ix_index] -- legacy, no odometer
+        //   4 bytes: [instruction_sysvar_index, target_ix_index, odometer_start_index(u16 LE)]
+        //            target_ix_index == 255 means ignore (use current_index - 1)
+        //            odometer_start_index == 0xFFFF means ignore odometer check
+        let (instruction_sysvar_index, target_ix_index, odometer_start_index) =
+            match authority_payload.len() {
+                1 => {
+                    if self.signature_odometer > 0 {
+                        return Err(
+                            SwigAuthenticateError::PermissionDeniedProgramExecSignatureReused
+                                .into(),
+                        );
+                    }
+                    (authority_payload[0] as usize, None, None)
+                },
+                2 => {
+                    if self.signature_odometer > 0 {
+                        return Err(
+                            SwigAuthenticateError::PermissionDeniedProgramExecSignatureReused
+                                .into(),
+                        );
+                    }
+                    (
+                        authority_payload[0] as usize,
+                        Some(authority_payload[1]),
+                        None,
+                    )
+                },
+                4 => {
+                    let sysvar_idx = authority_payload[0] as usize;
+                    let target_ix = if authority_payload[1] == 255 {
+                        None
+                    } else {
+                        Some(authority_payload[1])
+                    };
+                    let odo_start =
+                        u16::from_le_bytes([authority_payload[2], authority_payload[3]]);
+                    if odo_start == 0xFFFF {
+                        if self.signature_odometer > 0 {
+                            return Err(
+                                SwigAuthenticateError::PermissionDeniedProgramExecSignatureReused
+                                    .into(),
+                            );
+                        }
+                        (sysvar_idx, target_ix, None)
+                    } else {
+                        if (odo_start as usize) < self.instruction_prefix_len as usize {
+                            return Err(
+                                SwigAuthenticateError::PermissionDeniedProgramExecInvalidInstructionData
+                                    .into(),
+                            );
+                        }
+                        (sysvar_idx, target_ix, Some(odo_start))
+                    }
+                },
+                _ => return Err(SwigAuthenticateError::InvalidAuthorityPayload.into()),
+            };
 
-        let instruction_sysvar_index = authority_payload[0] as usize;
-        let target_ix_index = if authority_payload.len() == 2 {
-            Some(authority_payload[1])
-        } else {
-            None
-        };
         let config_account_index = 0; // Config is always the first account (swig account)
         let wallet_account_index = 1; // Wallet is the second account (swig wallet address)
+
+        let odometer_config =
+            odometer_start_index.map(|start| (start, self.signature_odometer.wrapping_add(1)));
 
         program_exec_authenticate(
             account_infos,
@@ -199,7 +253,12 @@ impl AuthorityInfo for ProgramExecAuthority {
             &self.instruction_prefix,
             self.instruction_prefix_len as usize,
             target_ix_index,
-        )
+            odometer_config,
+        )?;
+
+        odometer_config.map(|(_, counter)| self.signature_odometer = counter);
+
+        Ok(())
     }
 }
 
@@ -225,6 +284,8 @@ fn assert_program_exec_cant_be_swig(program_id: &[u8]) -> Result<(), ProgramErro
 /// - Has instruction data matching the expected prefix
 /// - Passed the config and wallet accounts as its first two accounts
 /// - Executed successfully (implied by the transaction being valid)
+/// - Optionally validates an odometer counter read from the target instruction
+///   data
 ///
 /// # Arguments
 /// * `account_infos` - List of accounts involved in the transaction
@@ -236,6 +297,10 @@ fn assert_program_exec_cant_be_swig(program_id: &[u8]) -> Result<(), ProgramErro
 /// * `prefix_len` - Length of the prefix to match
 /// * `target_ix_index` - Optional explicit transaction instruction index to
 ///   authenticate against. When `None`, defaults to `current_index - 1`.
+/// * `odometer_config` - Optional `(start_index, expected_counter)`. When
+///   `Some`, reads a u32 from the target instruction data at `start_index` and
+///   validates it equals `expected_counter`. Returns the read counter on
+///   success.
 pub fn program_exec_authenticate(
     account_infos: &[AccountInfo],
     instruction_sysvar_index: usize,
@@ -245,6 +310,7 @@ pub fn program_exec_authenticate(
     expected_instruction_prefix: &[u8; MAX_INSTRUCTION_PREFIX_LEN],
     prefix_len: usize,
     target_ix_index: Option<u8>,
+    odometer_config: Option<(u16, u32)>,
 ) -> Result<(), ProgramError> {
     // Get the sysvar instructions account
     let sysvar_instructions = account_infos
@@ -338,8 +404,22 @@ pub fn program_exec_authenticate(
         return Err(SwigAuthenticateError::PermissionDeniedProgramExecInvalidWalletAccount.into());
     }
 
-    // If we get here, all checks passed - the instruction executed successfully
-    // (implied by the transaction being valid) with the correct program, data, and
-    // accounts
+    // Validate odometer if configured
+    if let Some((odo_start, expected_counter)) = odometer_config {
+        let odo_start = odo_start as usize;
+        let instruction_data = preceding_ix.get_instruction_data();
+        if instruction_data.len() < odo_start + 4 {
+            return Err(
+                SwigAuthenticateError::PermissionDeniedProgramExecInvalidInstructionData.into(),
+            );
+        }
+        let counter = u32::from_le_bytes(unsafe {
+            *(instruction_data.as_ptr().add(odo_start) as *const [u8; 4])
+        });
+        if counter != expected_counter {
+            return Err(SwigAuthenticateError::PermissionDeniedProgramExecSignatureReused.into());
+        }
+    }
+
     Ok(())
 }

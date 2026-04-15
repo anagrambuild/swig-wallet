@@ -1357,3 +1357,421 @@ fn test_program_exec_explicit_ix_index_wrong_program_fails() {
         println!("Got expected error: {:?}", err.err);
     }
 }
+
+// ============================================================================
+// Odometer tests
+// ============================================================================
+
+/// Helper to build program exec sign instructions with odometer support.
+///
+/// authority_payload format: [instruction_sysvar_index, target_ix_index,
+/// odometer_start_index(u16 LE)]
+fn build_program_exec_sign_instructions_with_odometer(
+    swig_account: Pubkey,
+    swig_wallet_address: Pubkey,
+    payer: Pubkey,
+    preceding_instruction: Instruction,
+    inner_instruction: Instruction,
+    role_id: u32,
+    target_ix_index: u8,
+    odometer_start_index: u16,
+) -> anyhow::Result<Vec<Instruction>> {
+    swig_interface::SignV2Instruction::new_program_exec_with_odometer(
+        swig_account,
+        swig_wallet_address,
+        payer,
+        preceding_instruction,
+        inner_instruction,
+        role_id,
+        target_ix_index,
+        odometer_start_index,
+    )
+}
+
+/// Shared setup for odometer tests: creates context, deploys test program,
+/// creates swig with Ed25519 root + ProgramExec authority, airdrops funds.
+fn setup_odometer_test() -> (SwigTestContext, Pubkey, Pubkey, Keypair, Keypair) {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    let state_account = Keypair::new();
+
+    deploy_test_program(&mut context).expect("Failed to deploy test program");
+
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let swig_wallet =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
+
+    create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    context.svm.airdrop(&swig, 100_000_000).unwrap();
+    context.svm.airdrop(&swig_wallet, 100_000_000).unwrap();
+
+    let program_exec_data =
+        create_program_exec_authority_data(TEST_PROGRAM_ID, &VALID_DISCRIMINATOR);
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::ProgramExec,
+            authority: &program_exec_data,
+        },
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
+
+    set_test_program_state(&mut context, &state_account.pubkey(), false).unwrap();
+    context.svm.warp_to_slot(100);
+
+    (context, swig, swig_wallet, swig_authority, state_account)
+}
+
+/// Build a test program instruction with a u32 counter embedded after the
+/// discriminator.
+fn build_test_program_ix_with_counter(
+    swig: Pubkey,
+    swig_wallet: Pubkey,
+    state_account: Pubkey,
+    counter: u32,
+) -> Instruction {
+    let mut data = VALID_DISCRIMINATOR.to_vec();
+    data.extend_from_slice(&counter.to_le_bytes());
+    Instruction {
+        program_id: TEST_PROGRAM_ID,
+        accounts: vec![
+            AccountMeta::new_readonly(swig, false),
+            AccountMeta::new_readonly(swig_wallet, false),
+            AccountMeta::new_readonly(state_account, false),
+            AccountMeta::new_readonly(program_id(), false),
+        ],
+        data,
+    }
+}
+
+/// Helper to read the ProgramExec authority's signature_odometer from on-chain
+/// swig state.
+fn read_odometer(context: &SwigTestContext, swig: &Pubkey, role_id: u32) -> u32 {
+    let swig_account = context.svm.get_account(swig).unwrap();
+    let swig_data = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let role = swig_data.get_role(role_id).unwrap().unwrap();
+    role.authority.signature_odometer().unwrap()
+}
+
+/// Execute a program exec sign with odometer and return the result.
+fn execute_odometer_tx(
+    context: &mut SwigTestContext,
+    swig: Pubkey,
+    swig_wallet: Pubkey,
+    swig_authority: &Keypair,
+    state_account: Pubkey,
+    counter: u32,
+    target_ix_index: u8,
+    odometer_start_index: u16,
+) -> Result<litesvm::types::TransactionMetadata, litesvm::types::FailedTransactionMetadata> {
+    context.svm.expire_blockhash();
+    let test_program_ix =
+        build_test_program_ix_with_counter(swig, swig_wallet, state_account, counter);
+    let inner_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet,
+        &swig_authority.pubkey(),
+        1000,
+    );
+    let instructions = build_program_exec_sign_instructions_with_odometer(
+        swig,
+        swig_wallet,
+        swig_authority.pubkey(),
+        test_program_ix,
+        inner_ix,
+        1, // role_id for ProgramExec authority
+        target_ix_index,
+        odometer_start_index,
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &swig_authority.pubkey(),
+        &instructions,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&swig_authority]).unwrap();
+    context.svm.send_transaction(tx)
+}
+
+/// Test: 4-byte payload with correct counter succeeds and advances odometer.
+#[test_log::test]
+fn test_program_exec_odometer_success() {
+    let (mut context, swig, swig_wallet, swig_authority, state_account) = setup_odometer_test();
+
+    assert_eq!(
+        read_odometer(&context, &swig, 1),
+        0,
+        "Initial odometer should be 0"
+    );
+
+    // target_ix_index=255 means ignore (use current_index - 1)
+    // odometer_start_index=8 (counter is right after the 8-byte discriminator)
+    let res = execute_odometer_tx(
+        &mut context,
+        swig,
+        swig_wallet,
+        &swig_authority,
+        state_account.pubkey(),
+        1, // counter: expected = 0.wrapping_add(1) = 1
+        255,
+        8,
+    );
+
+    if res.is_err() {
+        if let Some(logs) = res.as_ref().err().map(|e| &e.meta.logs) {
+            for log in logs {
+                println!("{}", log);
+            }
+        }
+    }
+
+    assert!(
+        res.is_ok(),
+        "Odometer tx with correct counter should succeed"
+    );
+    assert_eq!(
+        read_odometer(&context, &swig, 1),
+        1,
+        "Odometer should advance to 1"
+    );
+}
+
+/// Test: 4-byte payload with wrong counter fails.
+#[test_log::test]
+fn test_program_exec_odometer_wrong_counter_fails() {
+    let (mut context, swig, swig_wallet, swig_authority, state_account) = setup_odometer_test();
+
+    let res = execute_odometer_tx(
+        &mut context,
+        swig,
+        swig_wallet,
+        &swig_authority,
+        state_account.pubkey(),
+        5, // wrong counter: expected 1, got 5
+        255,
+        8,
+    );
+
+    assert!(res.is_err(), "Odometer tx with wrong counter should fail");
+    assert_eq!(
+        read_odometer(&context, &swig, 1),
+        0,
+        "Odometer should remain 0"
+    );
+}
+
+/// Test: sequential counter increments across multiple transactions.
+#[test_log::test]
+fn test_program_exec_odometer_sequential() {
+    let (mut context, swig, swig_wallet, swig_authority, state_account) = setup_odometer_test();
+
+    for expected_counter in 1u32..=3 {
+        let res = execute_odometer_tx(
+            &mut context,
+            swig,
+            swig_wallet,
+            &swig_authority,
+            state_account.pubkey(),
+            expected_counter,
+            255,
+            8,
+        );
+
+        if res.is_err() {
+            if let Some(logs) = res.as_ref().err().map(|e| &e.meta.logs) {
+                for log in logs {
+                    println!("{}", log);
+                }
+            }
+        }
+
+        assert!(
+            res.is_ok(),
+            "Sequential odometer tx #{} should succeed",
+            expected_counter
+        );
+        assert_eq!(
+            read_odometer(&context, &swig, 1),
+            expected_counter,
+            "Odometer should be {} after tx #{}",
+            expected_counter,
+            expected_counter
+        );
+    }
+}
+
+/// Test: legacy 1-byte payload fails after odometer has been incremented.
+#[test_log::test]
+fn test_program_exec_odometer_required_if_active() {
+    let (mut context, swig, swig_wallet, swig_authority, state_account) = setup_odometer_test();
+
+    // First, advance odometer to 1 using the new 4-byte payload
+    let res = execute_odometer_tx(
+        &mut context,
+        swig,
+        swig_wallet,
+        &swig_authority,
+        state_account.pubkey(),
+        1,
+        255,
+        8,
+    );
+    assert!(res.is_ok(), "First odometer tx should succeed");
+    assert_eq!(read_odometer(&context, &swig, 1), 1);
+
+    // Now try 1-byte payload — should fail because odometer > 0
+    context.svm.expire_blockhash();
+    let test_program_ix = Instruction {
+        program_id: TEST_PROGRAM_ID,
+        accounts: vec![
+            AccountMeta::new_readonly(swig, false),
+            AccountMeta::new_readonly(swig_wallet, false),
+            AccountMeta::new_readonly(state_account.pubkey(), false),
+            AccountMeta::new_readonly(program_id(), false),
+        ],
+        data: VALID_DISCRIMINATOR.to_vec(),
+    };
+    let inner_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet,
+        &swig_authority.pubkey(),
+        1000,
+    );
+    let instructions = build_program_exec_sign_instructions(
+        swig,
+        swig_wallet,
+        swig_authority.pubkey(),
+        test_program_ix,
+        inner_ix,
+        1,
+    )
+    .unwrap();
+
+    let message = v0::Message::try_compile(
+        &swig_authority.pubkey(),
+        &instructions,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&swig_authority]).unwrap();
+    let res = context.svm.send_transaction(tx);
+
+    assert!(
+        res.is_err(),
+        "1-byte payload should fail when odometer > 0"
+    );
+}
+
+/// Test: 4-byte payload with odometer_start_index=0xFFFF (ignore) works when
+/// odometer == 0.
+#[test_log::test]
+fn test_program_exec_odometer_ignore_when_zero() {
+    let (mut context, swig, swig_wallet, swig_authority, state_account) = setup_odometer_test();
+
+    let res = execute_odometer_tx(
+        &mut context,
+        swig,
+        swig_wallet,
+        &swig_authority,
+        state_account.pubkey(),
+        0, // counter value doesn't matter since odometer is ignored
+        255,
+        0xFFFF, // ignore odometer
+    );
+
+    if res.is_err() {
+        if let Some(logs) = res.as_ref().err().map(|e| &e.meta.logs) {
+            for log in logs {
+                println!("{}", log);
+            }
+        }
+    }
+
+    assert!(
+        res.is_ok(),
+        "4-byte payload with 0xFFFF should succeed when odometer == 0"
+    );
+    assert_eq!(
+        read_odometer(&context, &swig, 1),
+        0,
+        "Odometer should remain 0 when ignored"
+    );
+}
+
+/// Test: 4-byte payload with odometer_start_index=0xFFFF fails when odometer >
+/// 0.
+#[test_log::test]
+fn test_program_exec_odometer_ignore_when_active_fails() {
+    let (mut context, swig, swig_wallet, swig_authority, state_account) = setup_odometer_test();
+
+    // Advance odometer to 1
+    let res = execute_odometer_tx(
+        &mut context,
+        swig,
+        swig_wallet,
+        &swig_authority,
+        state_account.pubkey(),
+        1,
+        255,
+        8,
+    );
+    assert!(res.is_ok(), "First odometer tx should succeed");
+    assert_eq!(read_odometer(&context, &swig, 1), 1);
+
+    // Now try with 0xFFFF — should fail because odometer > 0
+    let res = execute_odometer_tx(
+        &mut context,
+        swig,
+        swig_wallet,
+        &swig_authority,
+        state_account.pubkey(),
+        0,
+        255,
+        0xFFFF,
+    );
+
+    assert!(
+        res.is_err(),
+        "4-byte payload with 0xFFFF should fail when odometer > 0"
+    );
+}
+
+/// Test: 4-byte payload with odometer_start_index < prefix_len fails.
+#[test_log::test]
+fn test_program_exec_odometer_start_before_prefix_fails() {
+    let (mut context, swig, swig_wallet, swig_authority, state_account) = setup_odometer_test();
+
+    // VALID_DISCRIMINATOR is 8 bytes, so prefix_len = 8.
+    // odometer_start_index = 4 which is < 8 — should fail.
+    let res = execute_odometer_tx(
+        &mut context,
+        swig,
+        swig_wallet,
+        &swig_authority,
+        state_account.pubkey(),
+        1,
+        255,
+        4, // overlaps with prefix
+    );
+
+    assert!(
+        res.is_err(),
+        "Odometer start index < prefix_len should fail"
+    );
+}
