@@ -608,6 +608,68 @@ impl AddAuthorityInstruction {
 
         Ok(vec![preceding_instruction, main_ix])
     }
+
+    pub fn new_with_program_exec_odometer(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        acting_role_id: u32,
+        new_authority_config: AuthorityConfig,
+        actions: Vec<ClientAction>,
+        target_ix_index: u8,
+        odometer_start_index: u16,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
+
+        let mut accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+        ];
+
+        let instruction_sysvar_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+
+        let mut action_bytes = Vec::new();
+        let num_actions = actions.len() as u8;
+        for action in actions {
+            action
+                .write(&mut action_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize action {:?}", e))?;
+        }
+
+        let args = AddAuthorityV1Args::new(
+            acting_role_id,
+            new_authority_config.authority_type,
+            new_authority_config.authority.len() as u16,
+            action_bytes.len() as u16,
+            num_actions,
+        );
+
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            Some(odometer_start_index),
+        );
+
+        let main_ix = Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [
+                arg_bytes,
+                new_authority_config.authority,
+                &action_bytes,
+                &authority_payload,
+            ]
+            .concat(),
+        };
+
+        Ok(vec![preceding_instruction, main_ix])
+    }
 }
 
 pub struct SignV2Instruction;
@@ -1231,6 +1293,46 @@ impl RemoveAuthorityInstruction {
 
         Ok(vec![preceding_instruction, main_ix])
     }
+
+    pub fn new_with_program_exec_odometer(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        acting_role_id: u32,
+        authority_to_remove_id: u32,
+        target_ix_index: u8,
+        odometer_start_index: u16,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
+
+        let mut accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+        ];
+
+        let instruction_sysvar_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+
+        let args = RemoveAuthorityV1Args::new(acting_role_id, authority_to_remove_id, 1);
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            Some(odometer_start_index),
+        );
+
+        let main_ix = Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [arg_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![preceding_instruction, main_ix])
+    }
 }
 pub enum UpdateAuthorityData {
     ReplaceAll(Vec<ClientAction>),
@@ -1649,6 +1751,58 @@ impl UpdateAuthorityInstruction {
 
         Ok(vec![preceding_instruction, main_ix])
     }
+
+    pub fn new_with_program_exec_odometer(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        acting_role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+        target_ix_index: u8,
+        odometer_start_index: u16,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
+
+        let mut accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+        ];
+
+        let instruction_sysvar_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+
+        let (operation, operation_data) = update_data.to_operation_and_data()?;
+
+        let mut encoded_data = Vec::new();
+        encoded_data.push(operation as u8);
+        encoded_data.extend_from_slice(&operation_data);
+
+        let args = UpdateAuthorityV1Args::new(
+            acting_role_id,
+            authority_to_update_id,
+            encoded_data.len() as u16,
+            0,
+        );
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            Some(odometer_start_index),
+        );
+
+        let main_ix = Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [arg_bytes, &encoded_data, &authority_payload].concat(),
+        };
+
+        Ok(vec![preceding_instruction, main_ix])
+    }
 }
 
 pub struct CreateSessionInstruction;
@@ -1891,6 +2045,48 @@ impl CreateSessionInstruction {
 
         Ok(vec![preceding_instruction, main_ix])
     }
+
+    pub fn new_with_program_exec_odometer(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        role_id: u32,
+        session_duration: u64,
+        session_key: Pubkey,
+        target_ix_index: u8,
+        odometer_start_index: u16,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
+
+        let mut accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+        ];
+
+        let instruction_sysvar_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+
+        let create_session_args =
+            CreateSessionV1Args::new(role_id, session_duration, session_key.to_bytes());
+        let args_bytes = create_session_args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            Some(odometer_start_index),
+        );
+
+        let main_ix = Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![preceding_instruction, main_ix])
+    }
 }
 
 // Sub-account instruction structures
@@ -2122,6 +2318,48 @@ impl CreateSubAccountInstruction {
             instruction_sysvar_index,
             Some(target_ix_index),
             None,
+        );
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![preceding_instruction, main_ix])
+    }
+
+    pub fn new_with_program_exec_odometer(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        sub_account: Pubkey,
+        role_id: u32,
+        sub_account_bump: u8,
+        target_ix_index: u8,
+        odometer_start_index: u16,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
+
+        let mut accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+        ];
+
+        let instruction_sysvar_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+
+        let args = CreateSubAccountV1Args::new(role_id, sub_account_bump);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            Some(odometer_start_index),
         );
 
         let main_ix = Instruction {
@@ -2614,6 +2852,50 @@ impl WithdrawFromSubAccountInstruction {
         Ok(vec![preceding_instruction, main_ix])
     }
 
+    pub fn new_with_program_exec_odometer(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        sub_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        role_id: u32,
+        amount: u64,
+        target_ix_index: u8,
+        odometer_start_index: u16,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
+
+        let mut accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+        ];
+
+        let instruction_sysvar_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+
+        let args = WithdrawFromSubAccountV1Args::new(role_id, amount);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            Some(odometer_start_index),
+        );
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![preceding_instruction, main_ix])
+    }
+
     pub fn new_token_with_program_exec_ix_index(
         swig_account: Pubkey,
         payer: Pubkey,
@@ -2907,6 +3189,51 @@ impl SubAccountSignInstruction {
 
         Ok(vec![preceding_instruction, main_ix])
     }
+
+    pub fn new_with_program_exec_odometer(
+        swig_account: Pubkey,
+        sub_account: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        role_id: u32,
+        instructions: Vec<Instruction>,
+        target_ix_index: u8,
+        odometer_start_index: u16,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
+
+        let mut accounts = vec![
+            AccountMeta::new_readonly(swig_account, false),
+            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+        ];
+
+        let instruction_sysvar_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+
+        let (accounts, ixs) =
+            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions);
+        let ix_bytes = ixs.into_bytes();
+        let args = SubAccountSignV1Args::new(role_id, ix_bytes.len() as u16);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            Some(odometer_start_index),
+        );
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &ix_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![preceding_instruction, main_ix])
+    }
 }
 
 pub struct ToggleSubAccountInstruction;
@@ -3155,6 +3482,48 @@ impl ToggleSubAccountInstruction {
 
         Ok(vec![preceding_instruction, main_ix])
     }
+
+    pub fn new_with_program_exec_odometer(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        sub_account: Pubkey,
+        role_id: u32,
+        auth_role_id: u32,
+        enabled: bool,
+        target_ix_index: u8,
+        odometer_start_index: u16,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
+
+        let mut accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(sub_account, false),
+        ];
+
+        let instruction_sysvar_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+
+        let args = ToggleSubAccountV1Args::new(role_id, auth_role_id, enabled);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            Some(odometer_start_index),
+        );
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![preceding_instruction, main_ix])
+    }
 }
 
 pub struct TransferAssetsV1Instruction;
@@ -3387,6 +3756,47 @@ impl TransferAssetsV1Instruction {
             instruction_sysvar_index,
             Some(target_ix_index),
             None,
+        );
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![preceding_instruction, main_ix])
+    }
+
+    pub fn new_with_program_exec_odometer(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        role_id: u32,
+        target_ix_index: u8,
+        odometer_start_index: u16,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
+
+        let mut accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+        ];
+
+        let instruction_sysvar_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+
+        let args = TransferAssetsV1Args::new(role_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authority_payload = build_program_exec_authority_payload(
+            instruction_sysvar_index,
+            Some(target_ix_index),
+            Some(odometer_start_index),
         );
 
         let main_ix = Instruction {

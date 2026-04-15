@@ -1672,10 +1672,7 @@ fn test_program_exec_odometer_required_if_active() {
         VersionedTransaction::try_new(VersionedMessage::V0(message), &[&swig_authority]).unwrap();
     let res = context.svm.send_transaction(tx);
 
-    assert!(
-        res.is_err(),
-        "1-byte payload should fail when odometer > 0"
-    );
+    assert!(res.is_err(), "1-byte payload should fail when odometer > 0");
 }
 
 /// Test: 4-byte payload with odometer_start_index=0xFFFF (ignore) works when
