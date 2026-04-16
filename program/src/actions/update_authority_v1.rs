@@ -12,7 +12,7 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, Action},
+    action::{all::All, manage_authority::ManageAuthority, Action, ActionLoader},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::{Swig, SwigBuilder},
@@ -44,7 +44,7 @@ fn calculate_num_actions(actions_data: &[u8]) -> Result<u8, ProgramError> {
 
     while cursor < actions_data.len() {
         if cursor + Action::LEN > actions_data.len() {
-            break;
+            return Err(ProgramError::InvalidInstructionData);
         }
 
         let action_header =
@@ -56,13 +56,15 @@ fn calculate_num_actions(actions_data: &[u8]) -> Result<u8, ProgramError> {
             return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
         }
 
-        cursor += action_len;
-        count += 1;
-
-        // Prevent overflow
-        if count == u8::MAX {
+        let action_data = &actions_data[cursor..cursor + action_len];
+        if !ActionLoader::validate_layout(action_header.permission()?, action_data)? {
             return Err(ProgramError::InvalidInstructionData);
         }
+
+        cursor += action_len;
+        count = count
+            .checked_add(1)
+            .ok_or(ProgramError::InvalidInstructionData)?;
     }
 
     if count == 0 {
@@ -348,7 +350,7 @@ fn perform_replace_all_operation(
 
     while action_cursor < new_actions.len() {
         if action_cursor + Action::LEN > new_actions.len() {
-            break;
+            return Err(ProgramError::InvalidInstructionData);
         }
 
         let action_header = unsafe {
@@ -359,6 +361,13 @@ fn perform_replace_all_operation(
 
         if action_cursor + total_action_size > new_actions.len() {
             return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
+        }
+
+        let permission = action_header.permission()?;
+        let action_data =
+            &new_actions[action_cursor + Action::LEN..action_cursor + total_action_size];
+        if !ActionLoader::validate_layout(permission, action_data)? {
+            return Err(ProgramError::InvalidInstructionData);
         }
 
         // Copy action header and update boundary
@@ -428,7 +437,7 @@ fn perform_remove_by_type_operation(
     // Parse existing actions and filter out the ones to remove
     while cursor < current_actions.len() {
         if cursor + Action::LEN > current_actions.len() {
-            break;
+            return Err(ProgramError::InvalidInstructionData);
         }
 
         let action_header =
@@ -487,7 +496,7 @@ fn perform_remove_by_index_operation(
     // Parse existing actions and filter out the ones to remove
     while cursor < current_actions.len() {
         if cursor + Action::LEN > current_actions.len() {
-            break;
+            return Err(ProgramError::InvalidInstructionData);
         }
 
         let action_header =

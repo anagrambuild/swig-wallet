@@ -238,7 +238,7 @@ impl<'a> SwigBuilder<'a> {
 
         while cursor < actions_data.len() {
             if cursor + Action::LEN > actions_data.len() {
-                break;
+                return Err(ProgramError::InvalidInstructionData);
             }
 
             let action_header =
@@ -250,13 +250,15 @@ impl<'a> SwigBuilder<'a> {
                 return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
             }
 
-            cursor += action_len;
-            count += 1;
-
-            // Prevent overflow
-            if count == u8::MAX {
+            let action_data = &actions_data[cursor..cursor + action_len];
+            if !ActionLoader::validate_layout(action_header.permission()?, action_data)? {
                 return Err(ProgramError::InvalidInstructionData);
             }
+
+            cursor += action_len;
+            count = count
+                .checked_add(1)
+                .ok_or(ProgramError::InvalidInstructionData)?;
         }
 
         if count == 0 {
