@@ -333,7 +333,7 @@ Four signature schemes, each with a session-key variant (8 authority types total
 
 ---
 
-## Permission System (21 types)
+## Permission System (22 types)
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
@@ -350,6 +350,7 @@ Four signature schemes, each with a session-key variant (8 authority types total
 │  │  8  ManageAuthority      Add/remove/update roles                 │ │
 │  │  9  SubAccount           Create/manage sub-accounts              │ │
 │  │ 20  CloseSwigAuthority   Close token accounts and swig account   │ │
+│  │ 21  RentDestination      Valid recipient for close rent refunds  │ │
 │  ├──────────────────────────────────────────────────────────────────┤ │
 │  │ SOL Permissions                                                  │ │
 │  │                                                                  │ │
@@ -381,6 +382,11 @@ Four signature schemes, each with a session-key variant (8 authority types total
 │  └──────────────────────────────────────────────────────────────────┘ │
 └───────────────────────────────────────────────────────────────────────┘
 ```
+
+When at least one authority has `RentDestination`, close-instruction rent refunds
+(`CloseSwigV1`, `CloseTokenAccountV1`) must go to a `RentDestination` authority.
+If no authority has `RentDestination`, close instructions can still refund rent to
+any wallet (legacy behavior).
 
 ### Permission Enforcement Model
 

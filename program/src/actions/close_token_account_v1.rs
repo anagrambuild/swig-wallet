@@ -28,7 +28,7 @@ use crate::{
         SwigInstruction,
     },
     is_swig_v2,
-    util::TokenClose,
+    util::{validate_rent_destination_for_close, TokenClose},
     SPL_TOKEN_2022_ID, SPL_TOKEN_ID,
 };
 
@@ -115,43 +115,48 @@ pub fn close_token_account_v1(
     }
 
     // Get and authenticate role
-    let swig_roles = &swig_account_data[Swig::LEN..];
-    let role_opt = unsafe {
-        let roles_ptr = swig_roles.as_ptr() as *mut u8;
-        let roles_mut = core::slice::from_raw_parts_mut(roles_ptr, swig_roles.len());
-        Swig::get_mut_role(close_ix.args.role_id, roles_mut)?
-    };
+    {
+        let swig_roles = &swig_account_data[Swig::LEN..];
+        let role_opt = unsafe {
+            let roles_ptr = swig_roles.as_ptr() as *mut u8;
+            let roles_mut = core::slice::from_raw_parts_mut(roles_ptr, swig_roles.len());
+            Swig::get_mut_role(close_ix.args.role_id, roles_mut)?
+        };
 
-    if role_opt.is_none() {
-        return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-    }
-    let role = role_opt.unwrap();
+        if role_opt.is_none() {
+            return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+        }
+        let role = role_opt.unwrap();
 
-    // Authenticate
-    let current_slot = Clock::get()?.slot;
-    if role.authority.session_based() {
-        role.authority.authenticate_session(
-            accounts,
-            close_ix.authority_payload,
-            close_ix.args.into_bytes()?,
-            current_slot,
-        )?;
-    } else {
-        role.authority.authenticate(
-            accounts,
-            close_ix.authority_payload,
-            close_ix.args.into_bytes()?,
-            current_slot,
-        )?;
+        // Authenticate
+        let current_slot = Clock::get()?.slot;
+        if role.authority.session_based() {
+            role.authority.authenticate_session(
+                accounts,
+                close_ix.authority_payload,
+                close_ix.args.into_bytes()?,
+                current_slot,
+            )?;
+        } else {
+            role.authority.authenticate(
+                accounts,
+                close_ix.authority_payload,
+                close_ix.args.into_bytes()?,
+                current_slot,
+            )?;
+        }
+
+        // Check permissions: must have All, ManageAuthority, or CloseSwigAuthority
+        let has_all = role.get_action::<All>(&[])?.is_some();
+        let has_manage = role.get_action::<ManageAuthority>(&[])?.is_some();
+        let has_close = role.get_action::<CloseSwigAuthority>(&[])?.is_some();
+        if !has_all && !has_manage && !has_close {
+            return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+        }
     }
 
-    // Check permissions: must have All, ManageAuthority, or CloseSwigAuthority
-    let has_all = role.get_action::<All>(&[])?.is_some();
-    let has_manage = role.get_action::<ManageAuthority>(&[])?.is_some();
-    let has_close = role.get_action::<CloseSwigAuthority>(&[])?.is_some();
-    if !has_all && !has_manage && !has_close {
-        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
-    }
+    // Enforce rent destination restriction, if configured by any authority.
+    validate_rent_destination_for_close(swig_account_data, ctx.accounts.destination.key())?;
 
     // Use is_swig_v2 to determine expected authority
     let is_v2 = unsafe { is_swig_v2(swig_account_data) };

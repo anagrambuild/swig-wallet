@@ -9,6 +9,7 @@ use swig_state::{
         program_all::ProgramAll,
         program_curated::ProgramCurated,
         program_scope::{NumericType, ProgramScope, ProgramScopeType},
+        rent_destination::RentDestination,
         sol_destination_limit::SolDestinationLimit,
         sol_limit::SolLimit,
         sol_recurring_destination_limit::SolRecurringDestinationLimit,
@@ -164,6 +165,10 @@ pub enum Permission {
     /// This grants access to all wallet operations but excludes the ability
     /// to add, remove, or modify authorities/subaccounts.
     AllButManageAuthority,
+
+    /// Permission that marks this authority as a valid rent destination for
+    /// close instructions.
+    RentDestination,
 }
 
 impl Permission {
@@ -332,6 +337,9 @@ impl Permission {
                     actions.push(ClientAction::AllButManageAuthority(
                         AllButManageAuthority {},
                     ));
+                },
+                Permission::RentDestination => {
+                    actions.push(ClientAction::RentDestination(RentDestination {}));
                 },
             }
         }
@@ -573,6 +581,13 @@ impl Permission {
             permissions.push(Permission::AllButManageAuthority);
         }
 
+        if swig_state::role::Role::get_action::<RentDestination>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .is_some()
+        {
+            permissions.push(Permission::RentDestination);
+        }
+
         Ok(permissions)
     }
 
@@ -649,6 +664,7 @@ impl Permission {
             },
             Permission::StakeAll => 12,
             Permission::AllButManageAuthority => 15,
+            Permission::RentDestination => 21,
         }
     }
 }
@@ -697,6 +713,38 @@ impl UpdateAuthorityData {
             UpdateAuthorityData::RemoveActionsByIndex(indices) => {
                 InterfaceUpdateAuthorityData::RemoveActionsByIndex(indices.clone())
             },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rent_destination_converts_to_client_action() {
+        let actions = Permission::to_client_actions(vec![Permission::RentDestination]);
+
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(&actions[0], ClientAction::RentDestination(_)));
+    }
+
+    #[test]
+    fn rent_destination_action_type_matches_program_discriminator() {
+        assert_eq!(Permission::RentDestination.to_action_type(), 21);
+    }
+
+    #[test]
+    fn remove_actions_by_type_uses_rent_destination_action_type() {
+        let update_data =
+            UpdateAuthorityData::RemoveActionsByType(vec![Permission::RentDestination]);
+
+        let interface_data = update_data.to_interface_data();
+        match interface_data {
+            InterfaceUpdateAuthorityData::RemoveActionsByType(action_types) => {
+                assert_eq!(action_types, vec![21]);
+            },
+            _ => panic!("expected RemoveActionsByType update payload"),
         }
     }
 }

@@ -635,64 +635,24 @@ impl<'c> SwigWallet<'c> {
         let swig_pubkey = self.get_swig_account()?;
 
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        let swig_account = self.rpc_client.get_account(&swig_pubkey)?;
-        #[cfg(all(feature = "rust_sdk_test", test))]
-        let swig_account = self.litesvm.get_account(&swig_pubkey).unwrap();
-
-        #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
         #[cfg(all(feature = "rust_sdk_test", test))]
         let swig_data = self.litesvm.get_account(&swig_pubkey).unwrap().data;
         let swig_with_roles =
-            SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
+            SwigWithRoles::from_bytes(&swig_data).map_err(|_| SwigError::InvalidSwigData)?;
 
-        let mut permissions: Vec<Permission> = Vec::new();
-        for i in 0..swig_with_roles.state.role_counter {
-            let role = swig_with_roles.get_role(i).unwrap();
-            if let Some(role) = role {
-                if role
-                    .authority
-                    .match_data(self.instruction_builder.get_current_authority()?.as_ref())
-                {
-                    if (Role::get_action::<All>(&role, &[])
-                        .map_err(|_| SwigError::AuthorityNotFound)?)
-                    .is_some()
-                    {
-                        permissions.push(Permission::All);
-                    }
-                    // Sol Limit
-                    if let Some(action) = Role::get_action::<SolLimit>(&role, &[])
-                        .map_err(|_| SwigError::AuthorityNotFound)?
-                    {
-                        permissions.push(Permission::Sol {
-                            amount: action.amount,
-                            recurring: None,
-                        });
-                    }
-                    // Sol Recurring
-                    if let Some(action) = Role::get_action::<SolRecurringLimit>(&role, &[])
-                        .map_err(|_| SwigError::AuthorityNotFound)?
-                    {
-                        permissions.push(Permission::Sol {
-                            amount: action.recurring_amount,
-                            recurring: Some(RecurringConfig {
-                                window: action.window,
-                                last_reset: action.last_reset,
-                                current_amount: action.current_amount,
-                            }),
-                        });
-                    }
-                    // Manage Authority
-                    if (Role::get_action::<ManageAuthority>(&role, &[])
-                        .map_err(|_| SwigError::AuthorityNotFound)?)
-                    .is_some()
-                    {
-                        println!("\t\tManage Authority permission exists");
-                    }
-                }
-            }
-        }
-        Ok(permissions)
+        let current_authority = self.instruction_builder.get_current_authority()?;
+        let role_id = swig_with_roles
+            .lookup_role_id(current_authority.as_ref())
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .ok_or(SwigError::AuthorityNotFound)?;
+
+        let role = swig_with_roles
+            .get_role(role_id)
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .ok_or(SwigError::AuthorityNotFound)?;
+
+        Permission::from_role(&role)
     }
 
     /// Displays detailed information about the Swig wallet

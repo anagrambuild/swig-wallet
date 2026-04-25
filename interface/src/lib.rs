@@ -26,8 +26,9 @@ use swig_state::{
         all::All, all_but_manage_authority::AllButManageAuthority,
         close_swig_authority::CloseSwigAuthority, manage_authority::ManageAuthority,
         program::Program, program_all::ProgramAll, program_curated::ProgramCurated,
-        program_scope::ProgramScope, sol_destination_limit::SolDestinationLimit,
-        sol_limit::SolLimit, sol_recurring_destination_limit::SolRecurringDestinationLimit,
+        program_scope::ProgramScope, rent_destination::RentDestination,
+        sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
+        sol_recurring_destination_limit::SolRecurringDestinationLimit,
         sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll, stake_limit::StakeLimit,
         stake_recurring_limit::StakeRecurringLimit, sub_account::SubAccount,
         token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
@@ -59,6 +60,7 @@ pub enum ClientAction {
     AllButManageAuthority(AllButManageAuthority),
     ManageAuthority(ManageAuthority),
     CloseSwigAuthority(CloseSwigAuthority),
+    RentDestination(RentDestination),
     SubAccount(SubAccount),
     StakeLimit(StakeLimit),
     StakeRecurringLimit(StakeRecurringLimit),
@@ -104,6 +106,7 @@ impl ClientAction {
             ClientAction::CloseSwigAuthority(_) => {
                 (Permission::CloseSwigAuthority, CloseSwigAuthority::LEN)
             },
+            ClientAction::RentDestination(_) => (Permission::RentDestination, RentDestination::LEN),
             ClientAction::SubAccount(_) => (Permission::SubAccount, SubAccount::LEN),
             ClientAction::StakeLimit(_) => (Permission::StakeLimit, StakeLimit::LEN),
             ClientAction::StakeRecurringLimit(_) => {
@@ -138,6 +141,7 @@ impl ClientAction {
             ClientAction::AllButManageAuthority(action) => action.into_bytes(),
             ClientAction::ManageAuthority(action) => action.into_bytes(),
             ClientAction::CloseSwigAuthority(action) => action.into_bytes(),
+            ClientAction::RentDestination(action) => action.into_bytes(),
             ClientAction::SubAccount(action) => action.into_bytes(),
             ClientAction::StakeLimit(action) => action.into_bytes(),
             ClientAction::StakeRecurringLimit(action) => action.into_bytes(),

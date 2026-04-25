@@ -29,6 +29,32 @@ fn should_get_current_authority_permissions() {
 }
 
 #[test_log::test]
+fn should_get_current_authority_permissions_with_rent_destination() {
+    let (mut litesvm, main_authority) = setup_test_environment();
+    let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+    let rent_destination_authority = Keypair::new();
+
+    swig_wallet
+        .add_authority(
+            AuthorityType::Ed25519,
+            &rent_destination_authority.pubkey().to_bytes(),
+            vec![Permission::RentDestination],
+        )
+        .unwrap();
+
+    swig_wallet
+        .switch_authority(
+            1,
+            Box::new(Ed25519ClientRole::new(rent_destination_authority.pubkey())),
+            Some(&rent_destination_authority),
+        )
+        .unwrap();
+
+    let permissions = swig_wallet.get_current_authority_permissions().unwrap();
+    assert_eq!(permissions, vec![Permission::RentDestination]);
+}
+
+#[test_log::test]
 fn should_get_role_id_for_authority() {
     let (mut litesvm, main_authority) = setup_test_environment();
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
