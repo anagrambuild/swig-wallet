@@ -227,4 +227,22 @@ pub enum SwigInstruction {
     #[account(2, writable, name="destination", desc="destination for SOL and rent")]
     #[account(3, name="system_program", desc="the system program")]
     CloseSwigV1 = 15,
+
+    /// Validates a raw payload signature for a Swig role.
+    ///
+    /// This instruction is designed for off-chain transaction simulation.
+    /// It authenticates the role authority against an arbitrary payload and
+    /// verifies that the provided wallet accounts match the target Swig.
+    ///
+    /// Required accounts:
+    /// 1. Swig wallet account
+    /// 2. Swig wallet address PDA
+    /// 3. Authority context:
+    ///    - Ed25519: authority signer account
+    ///    - Secp256r1: instructions sysvar passed via authority payload index
+    ///    - Secp256k1 / ProgramExec: placeholder or sysvar per authority payload
+    #[account(0, name="swig", desc="the swig smart wallet")]
+    #[account(1, name="swig_wallet_address", desc="the swig wallet address PDA")]
+    #[account(2, name="authority_context", desc="authority context account or placeholder")]
+    IsValidSignature = 16,
 }
