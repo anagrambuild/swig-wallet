@@ -7,6 +7,12 @@
 /// - Cross-program invocation (CPI)
 /// - Restricted key handling
 /// - Memory-efficient instruction processing
+///
+/// # Important: p-token #138 Compatibility
+///
+/// Clients using the compact instruction format must ensure `SyncNative`
+/// instructions comply with p-token #138 account validation. See
+/// `docs/PTOKEN_SYNC_NATIVE_MIGRATION.md` for details.
 mod compact_instructions;
 use core::{marker::PhantomData, mem::MaybeUninit};
 

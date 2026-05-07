@@ -4,6 +4,16 @@
 /// instructions and a compact format optimized for the Swig wallet. The compact
 /// format reduces instruction size by deduplicating account references and
 /// using indexes instead of full public keys.
+///
+/// # p-token #138 Compatibility Note
+///
+/// p-token PR #138 added account validation to the SPL Token `SyncNative`
+/// instruction. If a second account is present, it **must** be the Rent Sysvar.
+/// Clients constructing `SyncNative` instructions (program ID
+/// `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`, data `[17]`) must ensure
+/// they do not append extra accounts that are not the Rent Sysvar.
+///
+/// See `docs/PTOKEN_SYNC_NATIVE_MIGRATION.md` for full migration details.
 
 #[cfg(feature = "client")]
 mod inner {
