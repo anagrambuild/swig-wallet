@@ -422,9 +422,8 @@ fn test_sub_account_error_cases() {
         SwigError::TransactionFailedWithLogs { .. }
     ));
 
-    // Test Case 4: Create valid sub-account with main authority
-    // First, ensure main authority has sub-account permission
-    // Add sub-account permission to main authority
+    // Test Case 4: Create valid sub-account with a dedicated sub-account authority
+    // First, switch back to main authority (role 0) to perform the add
     swig_wallet
         .switch_authority(
             0,
@@ -433,10 +432,15 @@ fn test_sub_account_error_cases() {
         )
         .unwrap();
 
+    let sub_account_authority = Keypair::new();
+    swig_wallet
+        .litesvm()
+        .airdrop(&sub_account_authority.pubkey(), 100_000_000)
+        .unwrap();
     swig_wallet
         .add_authority(
             AuthorityType::Ed25519,
-            &main_authority.pubkey().to_bytes(),
+            &sub_account_authority.pubkey().to_bytes(),
             vec![Permission::SubAccount {
                 sub_account: [0; 32],
             }],
@@ -446,8 +450,8 @@ fn test_sub_account_error_cases() {
     swig_wallet
         .switch_authority(
             2,
-            Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
-            Some(&main_authority),
+            Box::new(Ed25519ClientRole::new(sub_account_authority.pubkey())),
+            Some(&sub_account_authority),
         )
         .unwrap();
 
