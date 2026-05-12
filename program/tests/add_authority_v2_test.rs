@@ -263,7 +263,10 @@ fn test_recurring_action_layout_validation() {
 
     // Should succeed - current equals limit and last_reset is 0
     let authority = Keypair::new();
-    context.svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
@@ -283,7 +286,10 @@ fn test_recurring_action_layout_validation() {
 
     // Should fail - current doesn't equal limit
     let authority = Keypair::new();
-    context.svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
@@ -306,7 +312,10 @@ fn test_recurring_action_layout_validation() {
 
     // Should fail - last_reset is not 0
     let authority = Keypair::new();
-    context.svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
@@ -333,7 +342,10 @@ fn test_recurring_action_layout_validation() {
 
     // Should succeed - current equals limit and last_reset is 0
     let authority = Keypair::new();
-    context.svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
@@ -354,7 +366,10 @@ fn test_recurring_action_layout_validation() {
 
     // Should fail - current doesn't equal limit
     let authority = Keypair::new();
-    context.svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
@@ -378,7 +393,10 @@ fn test_recurring_action_layout_validation() {
 
     // Should fail - last_reset is not 0
     let authority = Keypair::new();
-    context.svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
@@ -405,7 +423,10 @@ fn test_recurring_action_layout_validation() {
 
     // Should succeed - current equals limit and last_reset is 0
     let authority = Keypair::new();
-    context.svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
@@ -425,7 +446,10 @@ fn test_recurring_action_layout_validation() {
 
     // Should fail - current doesn't equal limit
     let authority = Keypair::new();
-    context.svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
@@ -448,7 +472,10 @@ fn test_recurring_action_layout_validation() {
 
     // Should fail - last_reset is not 0
     let authority = Keypair::new();
-    context.svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,

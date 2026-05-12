@@ -182,10 +182,23 @@ pub fn add_authority_v1(
         {
             let mut role_cursor = 0;
             for _i in 0..swig.roles as usize {
-                let position = unsafe { Position::load_unchecked(swig_roles.get_unchecked(role_cursor..role_cursor + Position::LEN))? };
+                let position = unsafe {
+                    Position::load_unchecked(
+                        swig_roles.get_unchecked(role_cursor..role_cursor + Position::LEN),
+                    )?
+                };
                 let authority_length = position.authority_length() as usize;
-                let (authority, actions) = unsafe { swig_roles.get_unchecked(role_cursor + Position::LEN..role_cursor + Position::LEN + authority_length).split_at(authority_length) };
-                if authority == add_authority_v1.authority_data && position.authority_type()? == new_authority_type {
+                let (authority, actions) = unsafe {
+                    swig_roles
+                        .get_unchecked(
+                            role_cursor + Position::LEN
+                                ..role_cursor + Position::LEN + authority_length,
+                        )
+                        .split_at(authority_length)
+                };
+                if authority == add_authority_v1.authority_data
+                    && position.authority_type()? == new_authority_type
+                {
                     return Err(SwigError::DuplicateAuthority.into());
                 }
                 role_cursor = position.boundary() as usize;
