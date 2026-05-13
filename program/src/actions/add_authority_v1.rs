@@ -179,32 +179,6 @@ pub fn add_authority_v1(
             unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
         let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
 
-        {
-            let mut role_cursor = 0;
-            for _i in 0..swig.roles as usize {
-                let position = unsafe {
-                    Position::load_unchecked(
-                        swig_roles.get_unchecked(role_cursor..role_cursor + Position::LEN),
-                    )?
-                };
-                let authority_length = position.authority_length() as usize;
-                let (authority, actions) = unsafe {
-                    swig_roles
-                        .get_unchecked(
-                            role_cursor + Position::LEN
-                                ..role_cursor + Position::LEN + authority_length,
-                        )
-                        .split_at(authority_length)
-                };
-                if authority == add_authority_v1.authority_data
-                    && position.authority_type()? == new_authority_type
-                {
-                    return Err(SwigError::DuplicateAuthority.into());
-                }
-                role_cursor = position.boundary() as usize;
-            }
-        }
-
         let acting_role = Swig::get_mut_role(add_authority_v1.args.acting_role_id, swig_roles)?;
         if acting_role.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
@@ -236,6 +210,30 @@ pub fn add_authority_v1(
         if all.is_none() && manage_authority.is_none() {
             return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
         }
+
+        {
+            let mut role_cursor = 0;
+            for _i in 0..swig.roles as usize {
+                let position = unsafe {
+                    Position::load_unchecked(
+                        swig_roles.get_unchecked(role_cursor..role_cursor + Position::LEN),
+                    )?
+                };
+                let authority_length = position.authority_length() as usize;
+                let authority = unsafe {
+                    swig_roles.get_unchecked(
+                        role_cursor + Position::LEN..role_cursor + Position::LEN + authority_length,
+                    )
+                };
+                if authority == add_authority_v1.authority_data
+                    && position.authority_type()? == new_authority_type
+                {
+                    return Err(SwigError::DuplicateAuthority.into());
+                }
+                role_cursor = position.boundary() as usize;
+            }
+        }
+
         let new_authority_length = authority_type_to_length(&new_authority_type)?;
         let role_size = Position::LEN + new_authority_length + add_authority_v1.actions.len();
 
