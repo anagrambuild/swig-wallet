@@ -575,6 +575,40 @@
         "type": "u8",
         "value": 15
       }
+    },
+    {
+      "name": "RecoverAuthorityV1",
+      "accounts": [
+        {
+          "name": "swig",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig smart wallet"
+          ]
+        },
+        {
+          "name": "swigWalletAddress",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the swig wallet address account"
+          ]
+        },
+        {
+          "name": "instructions",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the instructions sysvar account"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 16
+      }
     }
   ],
   "metadata": {
