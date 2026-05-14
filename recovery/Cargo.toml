@@ -1,0 +1,21 @@
+[package]
+name = "swig-recovery"
+version.workspace = true
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "swig_recovery"
+
+[features]
+no-entrypoint = []
+test-sbf = []
+
+[dependencies]
+solana-program = "3.0.0"
+solana-system-interface = { version = "3.1.0", features = ["bincode"] }
+
+[dev-dependencies]
+solana-program-test = "3.1.11"

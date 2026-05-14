@@ -9524,6 +9524,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "swig-recovery"
+version = "3.0.0"
+dependencies = [
+ "solana-program",
+ "solana-program-test",
+ "solana-system-interface 3.1.0",
+]
+
+[[package]]
 name = "swig-sdk"
 version = "3.0.0"
 dependencies = [
