@@ -1615,7 +1615,7 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
             AccountMeta::new_readonly(recipient.pubkey(), false), // owner
             AccountMeta::new_readonly(mint_pubkey, false), // mint
             AccountMeta::new_readonly(solana_system_interface::program::ID, false), /* system program */
-            AccountMeta::new_readonly(spl_token::id(), false), // token program
+            AccountMeta::new_readonly(spl_token::id(), false),                      // token program
         ],
         data: vec![], // create_associated_token_account has no instruction data
     };
