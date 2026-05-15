@@ -234,8 +234,10 @@ pub enum SwigInstruction {
     /// 1. `[writable]` Swig wallet account
     /// 2. Swig wallet address account
     /// 3. Instructions sysvar account
+    /// 4. Recovery pending state account
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
     #[account(1, name="swig_wallet_address", desc="the swig wallet address account")]
     #[account(2, name="instructions", desc="the instructions sysvar account")]
+    #[account(3, name="pending_recovery", desc="the recovery pending state account")]
     RecoverAuthorityV1 = 16,
 }

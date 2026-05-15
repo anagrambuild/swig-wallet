@@ -1147,9 +1147,10 @@ fn test_program_exec_explicit_ix_index_success() {
     );
 }
 
-/// Test that specifying a target_ix_index >= current swig instruction index fails.
-/// The swig sign instruction is at index 1, and we pass target_ix_index=1
-/// (which equals the current index), so it should be rejected.
+/// Test that specifying a target_ix_index >= current swig instruction index
+/// fails. The swig sign instruction is at index 1, and we pass
+/// target_ix_index=1 (which equals the current index), so it should be
+/// rejected.
 #[test_log::test]
 fn test_program_exec_explicit_ix_index_not_preceding_fails() {
     let mut context = setup_test_context().unwrap();
@@ -1209,7 +1210,8 @@ fn test_program_exec_explicit_ix_index_not_preceding_fails() {
         1000,
     );
 
-    // target_ix_index=1 but the sign instruction IS at index 1, so idx >= current_index
+    // target_ix_index=1 but the sign instruction IS at index 1, so idx >=
+    // current_index
     let instructions = build_program_exec_sign_instructions_with_ix_index(
         swig,
         swig_wallet,
@@ -1288,7 +1290,8 @@ fn test_program_exec_explicit_ix_index_wrong_program_fails() {
 
     context.svm.warp_to_slot(100);
 
-    // Index 0: a wrong-program instruction (system program instead of TEST_PROGRAM_ID)
+    // Index 0: a wrong-program instruction (system program instead of
+    // TEST_PROGRAM_ID)
     let wrong_program_ix = Instruction {
         program_id: solana_system_interface::program::ID,
         accounts: vec![

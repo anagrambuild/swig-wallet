@@ -177,8 +177,8 @@ pub fn swig_wallet_address(config_address: &Pubkey) -> Pubkey {
 
 /// Builds the authority payload for ProgramExec instructions.
 ///
-/// When `target_ix_index` is `None`, produces a 1-byte payload (legacy behavior:
-/// authenticate against `current_index - 1`).
+/// When `target_ix_index` is `None`, produces a 1-byte payload (legacy
+/// behavior: authenticate against `current_index - 1`).
 /// When `Some(idx)`, produces a 2-byte payload that explicitly specifies which
 /// transaction instruction index to authenticate against.
 fn build_program_exec_authority_payload(
@@ -1597,25 +1597,22 @@ impl RecoverAuthorityInstruction {
         swig_wallet_address: Pubkey,
         preceding_instruction: Instruction,
         acting_role_id: u32,
-        target_role_id: u32,
-        old_authority: [u8; 33],
-        new_authority: [u8; 33],
     ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
 
+        let pending_recovery = preceding_instruction
+            .accounts
+            .get(2)
+            .ok_or_else(|| anyhow::anyhow!("recovery execute instruction missing pending account"))?
+            .pubkey;
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new_readonly(swig_wallet_address, false),
             AccountMeta::new_readonly(INSTRUCTIONS_ID, false),
+            AccountMeta::new_readonly(pending_recovery, false),
         ];
         let authority_payload = build_program_exec_authority_payload(2, None);
-        let args = RecoverAuthorityV1Args::new(
-            acting_role_id,
-            target_role_id,
-            old_authority,
-            new_authority,
-            authority_payload.len() as u16,
-        );
+        let args = RecoverAuthorityV1Args::new(acting_role_id, authority_payload.len() as u16);
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -3356,7 +3353,8 @@ impl TransferAssetsV1Instruction {
     }
 }
 
-/// Instruction builder for closing a single token account owned by the swig wallet.
+/// Instruction builder for closing a single token account owned by the swig
+/// wallet.
 pub struct CloseTokenAccountV1Instruction;
 
 impl CloseTokenAccountV1Instruction {

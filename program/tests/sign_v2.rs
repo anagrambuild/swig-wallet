@@ -1614,8 +1614,8 @@ fn test_sign_v2_combined_sol_and_token_transfer() {
             AccountMeta::new(recipient_ata, false), // associated token account
             AccountMeta::new_readonly(recipient.pubkey(), false), // owner
             AccountMeta::new_readonly(mint_pubkey, false), // mint
-            AccountMeta::new_readonly(solana_system_interface::program::ID, false), // system program
-            AccountMeta::new_readonly(spl_token::id(), false),                      // token program
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false), /* system program */
+            AccountMeta::new_readonly(spl_token::id(), false), // token program
         ],
         data: vec![], // create_associated_token_account has no instruction data
     };
@@ -2536,8 +2536,8 @@ fn test_sol_limit_cpi_enforcement_v2() {
 
     let transfer_amount: u64 = 2 * LAMPORTS_PER_SOL; // 2 SOL (exceeds the 1 SOL limit)
 
-    // Create a transfer instruction FROM swig_wallet_address to second_authority's wallet
-    // This should fail because it exceeds the spending limit
+    // Create a transfer instruction FROM swig_wallet_address to second_authority's
+    // wallet This should fail because it exceeds the spending limit
     let withdraw_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
         &second_authority.pubkey(),
@@ -2621,8 +2621,8 @@ fn test_sol_limit_cpi_enforcement_v2() {
         final_authority_balance / LAMPORTS_PER_SOL
     );
 
-    // Authority balance may decrease due to transaction fees (paid even for failed transactions)
-    // But should NOT decrease by the transfer amount
+    // Authority balance may decrease due to transaction fees (paid even for failed
+    // transactions) But should NOT decrease by the transfer amount
     assert!(
         final_authority_balance >= initial_authority_balance - 10_000, // Allow for tx fees
         "Authority balance should only decrease by tx fees, not by transfer amount"
@@ -2632,8 +2632,8 @@ fn test_sol_limit_cpi_enforcement_v2() {
         "Authority should not have received the transfer"
     );
 
-    // SWIG wallet balance should be unchanged (no net transfer occurred due to failed
-    // transaction)
+    // SWIG wallet balance should be unchanged (no net transfer occurred due to
+    // failed transaction)
     assert_eq!(final_swig_wallet_balance, initial_swig_wallet_balance);
 
     println!("✅ Balances verified: No funds were transferred due to spending limit enforcement");

@@ -602,6 +602,14 @@
           "docs": [
             "the instructions sysvar account"
           ]
+        },
+        {
+          "name": "pendingRecovery",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the recovery pending state account"
+          ]
         }
       ],
       "args": [],

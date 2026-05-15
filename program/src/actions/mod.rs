@@ -73,7 +73,10 @@ pub fn process_action(
     match ix {
         SwigInstruction::CreateV1 => process_create_v1(accounts, data),
         SwigInstruction::DeprecatedSignV1 => {
-            msg!("DEPRECATED. Use SignV2 instead. https://build.onswig.com/examples/v2_features for more details");
+            msg!(
+                "DEPRECATED. Use SignV2 instead. https://build.onswig.com/examples/v2_features \
+                 for more details"
+            );
             Err(ProgramError::InvalidInstructionData)
         },
         SwigInstruction::SignV2 => process_sign_v2(accounts, account_classification, data),
@@ -157,6 +160,7 @@ fn process_update_authority_v1(accounts: &[AccountInfo], data: &[u8]) -> Program
     update_authority_v1(account_ctx, data, accounts)
 }
 
+#[inline(never)]
 fn process_recover_authority_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = RecoverAuthorityV1Accounts::context(accounts)?;
     recover_authority_v1(account_ctx, data, accounts)

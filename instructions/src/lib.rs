@@ -8,7 +8,7 @@
 /// - Restricted key handling
 /// - Memory-efficient instruction processing
 mod compact_instructions;
-use core::{marker::PhantomData, mem::MaybeUninit};
+use core::marker::PhantomData;
 
 pub use compact_instructions::*;
 use pinocchio::{
@@ -49,8 +49,8 @@ impl From<InstructionError> for ProgramError {
 pub struct InstructionHolder<'a> {
     pub program_id: &'a Pubkey,
     pub cpi_accounts: Vec<Account<'a>>,
-    pub indexes: &'a [usize],
-    pub accounts: &'a [AccountMeta<'a>],
+    pub indexes: Vec<usize>,
+    pub accounts: Vec<AccountMeta<'a>>,
     pub data: &'a [u8],
 }
 
@@ -149,7 +149,7 @@ impl<'a> InstructionHolder<'a> {
     pub fn borrow(&'a self) -> Instruction<'a, 'a, 'a, 'a> {
         Instruction {
             program_id: self.program_id,
-            accounts: self.accounts,
+            accounts: self.accounts.as_slice(),
             data: self.data,
         }
     }
@@ -282,18 +282,16 @@ where
         let (num_accounts, cursor) = self.read_u8()?;
         self.cursor = cursor;
         let num_accounts = num_accounts as usize;
-        const AM_UNINIT: MaybeUninit<AccountMeta> = MaybeUninit::uninit();
-        let mut accounts = [AM_UNINIT; MAX_ACCOUNTS];
+        let mut accounts = Vec::with_capacity(num_accounts);
         let mut infos = Vec::with_capacity(num_accounts);
-        const INDEX_UNINIT: MaybeUninit<usize> = MaybeUninit::uninit();
-        let mut indexes = [INDEX_UNINIT; MAX_ACCOUNTS];
-        for i in 0..num_accounts {
+        let mut indexes = Vec::with_capacity(num_accounts);
+        for _ in 0..num_accounts {
             let (pubkey_index, cursor) = self.read_u8()?;
             self.cursor = cursor;
             let account = self.accounts.get_account(pubkey_index as usize)?;
-            indexes[i].write(pubkey_index as usize);
+            indexes.push(pubkey_index as usize);
             let pubkey = account.pubkey();
-            accounts[i].write(AccountMeta {
+            accounts.push(AccountMeta {
                 pubkey,
                 is_signer: (pubkey == self.signer || account.signer())
                     && !self.restricted_keys.is_restricted(pubkey),
@@ -311,8 +309,8 @@ where
         Ok(InstructionHolder {
             program_id,
             cpi_accounts: infos,
-            accounts: unsafe { core::slice::from_raw_parts(accounts.as_ptr() as _, num_accounts) },
-            indexes: unsafe { core::slice::from_raw_parts(indexes.as_ptr() as _, num_accounts) },
+            accounts,
+            indexes,
             data,
         })
     }

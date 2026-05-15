@@ -266,7 +266,8 @@ fn test_close_token_account_non_zero_balance_fails() {
     );
 }
 
-/// Error: Trying to close token account with wrong authority (not owned by swig)
+/// Error: Trying to close token account with wrong authority (not owned by
+/// swig)
 #[test_log::test]
 fn test_close_token_account_wrong_authority_fails() {
     let mut context = setup_test_context().unwrap();
@@ -345,7 +346,8 @@ fn test_close_token_account_permission_denied() {
         &program_id(),
     );
 
-    // Add a second authority with only SolLimit permission (not All or ManageAuthority)
+    // Add a second authority with only SolLimit permission (not All or
+    // ManageAuthority)
     context
         .svm
         .airdrop(&limited_authority.pubkey(), 10_000_000_000)
@@ -509,7 +511,8 @@ fn test_close_token_account_with_manage_authority() {
     assert_eq!(destination_balance, token_account_rent);
 }
 
-/// Helper function to get the current signature counter for a secp256k1 authority
+/// Helper function to get the current signature counter for a secp256k1
+/// authority
 fn get_secp256k1_counter(
     context: &SwigTestContext,
     swig_key: &Pubkey,

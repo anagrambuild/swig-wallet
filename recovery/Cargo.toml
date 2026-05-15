@@ -15,6 +15,7 @@ test-sbf = []
 
 [dependencies]
 solana-program = "3.0.0"
+solana-sdk-ids = "3.1.0"
 solana-system-interface = { version = "3.1.0", features = ["bincode"] }
 
 [dev-dependencies]

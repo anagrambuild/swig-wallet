@@ -15,6 +15,9 @@ pub enum RecoveryError {
     TimelockNotElapsed,
     OldAuthorityMismatch,
     NewAuthorityMismatch,
+    AdminMismatch,
+    OperatorMismatch,
+    InvalidProgramData,
 }
 
 impl From<RecoveryError> for ProgramError {

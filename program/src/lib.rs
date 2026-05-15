@@ -85,12 +85,13 @@ security_txt! {
 /// # Returns
 /// * `ProgramResult` - The result of processing the instruction
 pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
-    const AI: MaybeUninit<AccountInfo> = MaybeUninit::<AccountInfo>::uninit();
-    const AC: MaybeUninit<AccountClassification> = MaybeUninit::<AccountClassification>::uninit();
-    let mut accounts = [AI; MAX_ACCOUNTS];
-    let mut classifiers = [AC; MAX_ACCOUNTS];
+    let mut accounts =
+        unsafe { Box::<[MaybeUninit<AccountInfo>; MAX_ACCOUNTS]>::new_uninit().assume_init() };
+    let mut classifiers = unsafe {
+        Box::<[MaybeUninit<AccountClassification>; MAX_ACCOUNTS]>::new_uninit().assume_init()
+    };
     unsafe {
-        execute(&mut ctx, &mut accounts, &mut classifiers)?;
+        execute(&mut ctx, accounts.as_mut(), classifiers.as_mut())?;
     }
     Ok(())
 }
@@ -170,7 +171,7 @@ pub(crate) unsafe fn is_swig_v2(data: &[u8]) -> bool {
 ///
 /// # Returns
 /// * `Result<(), ProgramError>` - Success or error status
-#[inline(always)]
+#[inline(never)]
 unsafe fn execute(
     ctx: &mut InstructionContext,
     accounts: &mut [MaybeUninit<AccountInfo>],

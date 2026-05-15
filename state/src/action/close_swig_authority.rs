@@ -1,7 +1,8 @@
 //! Close swig authority permission action type.
 //!
-//! This module defines the CloseSwigAuthority action type which grants permission
-//! to close token accounts and the swig account itself within the Swig wallet system.
+//! This module defines the CloseSwigAuthority action type which grants
+//! permission to close token accounts and the swig account itself within the
+//! Swig wallet system.
 
 use pinocchio::program_error::ProgramError;
 

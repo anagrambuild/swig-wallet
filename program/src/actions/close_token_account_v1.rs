@@ -84,8 +84,9 @@ impl<'a> CloseTokenAccountV1<'a> {
 
 /// Closes one or more token accounts owned by the Swig wallet.
 ///
-/// All token accounts must belong to the same token program (SPL Token or Token-2022).
-/// Token accounts are passed as remaining accounts starting at `token_account_offset`.
+/// All token accounts must belong to the same token program (SPL Token or
+/// Token-2022). Token accounts are passed as remaining accounts starting at
+/// `token_account_offset`.
 pub fn close_token_account_v1(
     ctx: Context<CloseTokenAccountV1Accounts>,
     accounts: &[AccountInfo],
@@ -215,7 +216,8 @@ pub fn close_token_account_v1(
         // First check the expected authority
         let use_expected =
             unsafe { sol_memcmp(token_authority, expected_authority.as_ref(), 32) == 0 };
-        // Only check fallback if expected didn't match (handles unmigrated token accounts)
+        // Only check fallback if expected didn't match (handles unmigrated token
+        // accounts)
         let use_fallback = !use_expected
             && unsafe { sol_memcmp(token_authority, fallback_authority.as_ref(), 32) == 0 };
 
