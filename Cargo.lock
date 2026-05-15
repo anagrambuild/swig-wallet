@@ -9456,6 +9456,7 @@ dependencies = [
  "swig-assertions",
  "swig-compact-instructions",
  "swig-interface",
+ "swig-recovery",
  "swig-state",
  "test-log",
 ]

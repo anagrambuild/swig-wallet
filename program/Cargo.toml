@@ -32,6 +32,7 @@ default-env = "=0.1.1"
 solana-sdk = "3.0.0"
 rand = "0.9.0"
 swig-interface = { path = "../interface" }
+swig-recovery = { path = "../recovery", features = ["no-entrypoint"] }
 litesvm-token = { version = "0.10.0" }
 litesvm = { version = "0.10.0", features = ["precompiles"] }
 test-log = "0.2.16"
