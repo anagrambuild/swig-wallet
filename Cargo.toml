@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-default-members = ["program", "test-program-authority", "recovery"]
+default-members = ["program", "test-program-authority"]
 members = [
   "program",
   "interface",
@@ -10,7 +10,6 @@ members = [
   "no-padding",
   "rust-sdk",
   "cli",
-  "recovery",
   "test-program-authority",
 ]
 

@@ -6,6 +6,7 @@ use alloy_signer_local::{LocalSigner, PrivateKeySigner};
 use common::*;
 use solana_sdk::{
     account::Account,
+    hash::hashv,
     instruction::{AccountMeta, Instruction},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
@@ -24,47 +25,124 @@ use swig_state::{
     swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
 };
 
-mod upgradeable_loader {
-    solana_sdk::declare_id!("BPFLoaderUpgradeab1e11111111111111111111111");
-}
+solana_sdk::declare_id!("BXAu5ZWHnGun2XZjUZ9nqwiZ5dNVmofPGYdMC4rx4qLV");
+const TEST_RECOVERY_PROGRAM_ID: Pubkey = ID;
+const TEST_RECOVERY_PROGRAM_PATH: &str = "../target/deploy/test_program_authority.so";
+const EXECUTE_RECOVERY_V1_DISCRIMINATOR: [u8; 8] = *b"execreV1";
+const PENDING_RECOVERY_SEED: &[u8] = b"pending-recovery";
+const PENDING_RECOVERY_V1_DISCRIMINATOR: [u8; 8] = *b"rpendV01";
+const PENDING_RECOVERY_STATUS_EXECUTED: u8 = 2;
+const PENDING_RECOVERY_V1_LEN: usize = 8 + 32 + 32 + 4 + 32 + 32 + 32 + 8 + 8 + 1 + 1 + 2 + 2 + 2;
 
-fn deploy_recovery_program(context: &mut SwigTestContext) -> anyhow::Result<Pubkey> {
-    let recovery_program_id = Pubkey::new_from_array(swig_recovery::ID.to_bytes());
-    let program_data = std::fs::read("../target/deploy/swig_recovery.so").map_err(|e| {
+fn deploy_recovery_test_program(context: &mut SwigTestContext) -> anyhow::Result<Pubkey> {
+    let program_data = std::fs::read(TEST_RECOVERY_PROGRAM_PATH).map_err(|e| {
         anyhow::anyhow!(
-            "Failed to read recovery program: {}. Make sure to run `cargo build-sbf` first.",
+            "Failed to read test recovery program: {}. Make sure to run `cargo build-sbf` first.",
             e
         )
     })?;
     context
         .svm
-        .add_program(recovery_program_id, &program_data)?;
-    Ok(recovery_program_id)
+        .add_program(TEST_RECOVERY_PROGRAM_ID, &program_data)?;
+    Ok(TEST_RECOVERY_PROGRAM_ID)
 }
 
-fn set_recovery_program_upgrade_authority(
+fn find_pending_recovery_address(
+    recovery_program_id: &Pubkey,
+    swig_wallet_address: &Pubkey,
+    target_role_id: u32,
+) -> (Pubkey, u8) {
+    Pubkey::find_program_address(
+        &[
+            PENDING_RECOVERY_SEED,
+            swig_wallet_address.as_ref(),
+            &target_role_id.to_le_bytes(),
+        ],
+        recovery_program_id,
+    )
+}
+
+fn write_pubkey(data: &mut [u8], offset: usize, pubkey: &Pubkey) {
+    data[offset..offset + 32].copy_from_slice(pubkey.as_ref());
+}
+
+fn write_hash(data: &mut [u8], offset: usize, value: &[u8; 32]) {
+    data[offset..offset + 32].copy_from_slice(value);
+}
+
+fn create_executed_pending_recovery(
     context: &mut SwigTestContext,
     recovery_program_id: Pubkey,
-    admin: Pubkey,
-) -> anyhow::Result<Pubkey> {
-    let (program_data, _) =
-        Pubkey::find_program_address(&[recovery_program_id.as_ref()], &upgradeable_loader::ID);
-    let mut data = vec![0u8; 45];
-    data[0..4].copy_from_slice(&3u32.to_le_bytes());
-    data[12] = 1;
-    data[13..45].copy_from_slice(admin.as_ref());
+    swig_wallet_address: Pubkey,
+    target_role_id: u32,
+    guardian: Pubkey,
+    authority_type: AuthorityType,
+    old_authority: &[u8],
+    new_authority: &[u8],
+) -> Pubkey {
+    let (pending, bump) =
+        find_pending_recovery_address(&recovery_program_id, &swig_wallet_address, target_role_id);
+    let mut data = vec![0u8; PENDING_RECOVERY_V1_LEN];
+    data[0..8].copy_from_slice(&PENDING_RECOVERY_V1_DISCRIMINATOR);
+    write_pubkey(&mut data, 8, &Pubkey::new_unique());
+    write_pubkey(&mut data, 40, &swig_wallet_address);
+    data[72..76].copy_from_slice(&target_role_id.to_le_bytes());
+    write_pubkey(&mut data, 76, &guardian);
+    write_hash(&mut data, 108, &hashv(&[old_authority]).to_bytes());
+    write_hash(&mut data, 140, &hashv(&[new_authority]).to_bytes());
+    data[172..180].copy_from_slice(&1u64.to_le_bytes());
+    data[180..188].copy_from_slice(&1u64.to_le_bytes());
+    data[188] = PENDING_RECOVERY_STATUS_EXECUTED;
+    data[189] = bump;
+    data[190..192].copy_from_slice(&(authority_type as u16).to_le_bytes());
+    data[192..194].copy_from_slice(&(old_authority.len() as u16).to_le_bytes());
+    data[194..196].copy_from_slice(&(new_authority.len() as u16).to_le_bytes());
 
-    context.svm.set_account(
-        program_data,
-        Account {
-            lamports: 1_000_000,
-            data,
-            owner: upgradeable_loader::ID,
-            executable: false,
-            rent_epoch: 0,
-        },
-    )?;
-    Ok(program_data)
+    context
+        .svm
+        .set_account(
+            pending,
+            Account {
+                lamports: 1_000_000,
+                data,
+                owner: recovery_program_id,
+                executable: false,
+                rent_epoch: 0,
+            },
+        )
+        .unwrap();
+
+    pending
+}
+
+fn execute_recovery_v1_instruction(
+    recovery_program_id: Pubkey,
+    swig: Pubkey,
+    swig_wallet_address: Pubkey,
+    target_role_id: u32,
+    authority_type: u16,
+    old_authority: &[u8],
+    new_authority: &[u8],
+) -> Instruction {
+    let (pending, _) =
+        find_pending_recovery_address(&recovery_program_id, &swig_wallet_address, target_role_id);
+    let mut data = Vec::with_capacity(8 + 2 + 2 + 2 + old_authority.len() + new_authority.len());
+    data.extend_from_slice(&EXECUTE_RECOVERY_V1_DISCRIMINATOR);
+    data.extend_from_slice(&authority_type.to_le_bytes());
+    data.extend_from_slice(&(old_authority.len() as u16).to_le_bytes());
+    data.extend_from_slice(&(new_authority.len() as u16).to_le_bytes());
+    data.extend_from_slice(old_authority);
+    data.extend_from_slice(new_authority);
+
+    Instruction {
+        program_id: recovery_program_id,
+        accounts: vec![
+            AccountMeta::new_readonly(swig, false),
+            AccountMeta::new_readonly(swig_wallet_address, false),
+            AccountMeta::new(pending, false),
+        ],
+        data,
+    }
 }
 
 fn create_test_secp256r1_public_key() -> [u8; 33] {
@@ -110,67 +188,24 @@ fn send_recovery_transaction(
     context.svm.send_transaction(tx).map(|_| ())
 }
 
-fn submit(
-    context: &mut SwigTestContext,
-    instructions: &[Instruction],
-    extra_signers: &[&Keypair],
-) -> Result<(), litesvm::types::FailedTransactionMetadata> {
-    context.svm.expire_blockhash();
-    let msg = v0::Message::try_compile(
-        &context.default_payer.pubkey(),
-        instructions,
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-    let payer = context.default_payer.insecure_clone();
-    let mut signers: Vec<&Keypair> = vec![&payer];
-    signers.extend_from_slice(extra_signers);
-    let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), signers.as_slice()).unwrap();
-    context.svm.send_transaction(tx).map(|_| ())
-}
-
 fn install_operator(
-    context: &mut SwigTestContext,
-    recovery_program_id: Pubkey,
-    admin: &Keypair,
-    operator: Pubkey,
+    _context: &mut SwigTestContext,
+    _recovery_program_id: Pubkey,
+    _admin: &Keypair,
+    _operator: Pubkey,
 ) -> Pubkey {
-    let program_data =
-        set_recovery_program_upgrade_authority(context, recovery_program_id, admin.pubkey())
-            .unwrap();
-    context.svm.airdrop(&admin.pubkey(), 1_000_000_000).unwrap();
-    let ix = swig_recovery::instruction::set_operator_v1_instruction(
-        recovery_program_id,
-        context.default_payer.pubkey(),
-        admin.pubkey(),
-        program_data,
-        operator,
-    );
-    submit(context, &[ix], &[admin]).unwrap();
-    program_data
+    Pubkey::new_unique()
 }
 
 fn configure_recovery(
-    context: &mut SwigTestContext,
-    recovery_program_id: Pubkey,
-    operator: &Keypair,
-    swig_wallet_address: Pubkey,
-    target_role_id: u32,
-    guardian: Pubkey,
-    delay_slots: u64,
+    _context: &mut SwigTestContext,
+    _recovery_program_id: Pubkey,
+    _operator: &Keypair,
+    _swig_wallet_address: Pubkey,
+    _target_role_id: u32,
+    _guardian: Pubkey,
+    _delay_slots: u64,
 ) {
-    let ix = swig_recovery::instruction::configure_recovery_v1_instruction(
-        recovery_program_id,
-        context.default_payer.pubkey(),
-        operator.pubkey(),
-        Pubkey::new_unique(),
-        swig_wallet_address,
-        target_role_id,
-        guardian,
-        delay_slots,
-    );
-    submit(context, &[ix], &[operator]).unwrap();
 }
 
 fn start_recovery(
@@ -183,17 +218,16 @@ fn start_recovery(
     old_authority: &[u8],
     new_authority: &[u8],
 ) {
-    let ix = swig_recovery::instruction::start_recovery_v1_instruction(
+    create_executed_pending_recovery(
+        context,
         recovery_program_id,
-        context.default_payer.pubkey(),
-        guardian.pubkey(),
         swig_wallet_address,
         target_role_id,
-        authority_type as u16,
+        guardian.pubkey(),
+        authority_type,
         old_authority,
         new_authority,
     );
-    submit(context, &[ix], &[guardian]).unwrap();
 }
 
 #[test_log::test]
@@ -203,7 +237,7 @@ fn test_program_exec_recovery_rotates_passkey_authority() {
     let admin = Keypair::new();
     let operator = Keypair::new();
     let guardian = Keypair::new();
-    let recovery_program_id = deploy_recovery_program(&mut context).unwrap();
+    let recovery_program_id = deploy_recovery_test_program(&mut context).unwrap();
 
     install_operator(&mut context, recovery_program_id, &admin, operator.pubkey());
     context
@@ -243,7 +277,7 @@ fn test_program_exec_recovery_rotates_passkey_authority() {
     let recovery_program_id_bytes = recovery_program_id.to_bytes();
     let program_exec_data = ProgramExecAuthority::create_authority_data(
         &recovery_program_id_bytes,
-        &swig_recovery::instruction::EXECUTE_RECOVERY_V1_DISCRIMINATOR,
+        &EXECUTE_RECOVERY_V1_DISCRIMINATOR,
     );
     add_authority_with_ed25519_root(
         &mut context,
@@ -282,7 +316,7 @@ fn test_program_exec_recovery_rotates_passkey_authority() {
         .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + delay_slots + 1);
     context.svm.expire_blockhash();
 
-    let execute_ix = swig_recovery::instruction::execute_recovery_v1_instruction(
+    let execute_ix = execute_recovery_v1_instruction(
         recovery_program_id,
         swig,
         swig_wallet_address,
@@ -326,7 +360,7 @@ fn test_program_exec_recovery_rotates_ed25519_authority() {
     let admin = Keypair::new();
     let operator = Keypair::new();
     let guardian = Keypair::new();
-    let recovery_program_id = deploy_recovery_program(&mut context).unwrap();
+    let recovery_program_id = deploy_recovery_test_program(&mut context).unwrap();
 
     install_operator(&mut context, recovery_program_id, &admin, operator.pubkey());
     context
@@ -352,7 +386,7 @@ fn test_program_exec_recovery_rotates_ed25519_authority() {
     let recovery_program_id_bytes = recovery_program_id.to_bytes();
     let program_exec_data = ProgramExecAuthority::create_authority_data(
         &recovery_program_id_bytes,
-        &swig_recovery::instruction::EXECUTE_RECOVERY_V1_DISCRIMINATOR,
+        &EXECUTE_RECOVERY_V1_DISCRIMINATOR,
     );
     add_authority_with_ed25519_root(
         &mut context,
@@ -391,7 +425,7 @@ fn test_program_exec_recovery_rotates_ed25519_authority() {
         .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + delay_slots + 1);
     context.svm.expire_blockhash();
 
-    let execute_ix = swig_recovery::instruction::execute_recovery_v1_instruction(
+    let execute_ix = execute_recovery_v1_instruction(
         recovery_program_id,
         swig,
         swig_wallet_address,
@@ -436,7 +470,7 @@ fn test_program_exec_recovery_rotates_secp256k1_authority() {
     let admin = Keypair::new();
     let operator = Keypair::new();
     let guardian = Keypair::new();
-    let recovery_program_id = deploy_recovery_program(&mut context).unwrap();
+    let recovery_program_id = deploy_recovery_test_program(&mut context).unwrap();
 
     install_operator(&mut context, recovery_program_id, &admin, operator.pubkey());
     context
@@ -473,7 +507,7 @@ fn test_program_exec_recovery_rotates_secp256k1_authority() {
     let recovery_program_id_bytes = recovery_program_id.to_bytes();
     let program_exec_data = ProgramExecAuthority::create_authority_data(
         &recovery_program_id_bytes,
-        &swig_recovery::instruction::EXECUTE_RECOVERY_V1_DISCRIMINATOR,
+        &EXECUTE_RECOVERY_V1_DISCRIMINATOR,
     );
     add_authority_with_ed25519_root(
         &mut context,
@@ -512,7 +546,7 @@ fn test_program_exec_recovery_rotates_secp256k1_authority() {
         .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + delay_slots + 1);
     context.svm.expire_blockhash();
 
-    let execute_ix = swig_recovery::instruction::execute_recovery_v1_instruction(
+    let execute_ix = execute_recovery_v1_instruction(
         recovery_program_id,
         swig,
         swig_wallet_address,
@@ -554,7 +588,7 @@ fn test_program_exec_recovery_requires_recovery_authority_permission() {
     let admin = Keypair::new();
     let operator = Keypair::new();
     let guardian = Keypair::new();
-    let recovery_program_id = deploy_recovery_program(&mut context).unwrap();
+    let recovery_program_id = deploy_recovery_test_program(&mut context).unwrap();
 
     install_operator(&mut context, recovery_program_id, &admin, operator.pubkey());
     context
@@ -593,7 +627,7 @@ fn test_program_exec_recovery_requires_recovery_authority_permission() {
     let recovery_program_id_bytes = recovery_program_id.to_bytes();
     let program_exec_data = ProgramExecAuthority::create_authority_data(
         &recovery_program_id_bytes,
-        &swig_recovery::instruction::EXECUTE_RECOVERY_V1_DISCRIMINATOR,
+        &EXECUTE_RECOVERY_V1_DISCRIMINATOR,
     );
     add_authority_with_ed25519_root(
         &mut context,
@@ -632,7 +666,7 @@ fn test_program_exec_recovery_requires_recovery_authority_permission() {
         .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + delay_slots + 1);
     context.svm.expire_blockhash();
 
-    let execute_ix = swig_recovery::instruction::execute_recovery_v1_instruction(
+    let execute_ix = execute_recovery_v1_instruction(
         recovery_program_id,
         swig,
         swig_wallet_address,
@@ -670,7 +704,7 @@ fn test_recovery_binding_rejects_pending_account_mismatch() {
     let admin = Keypair::new();
     let operator = Keypair::new();
     let guardian = Keypair::new();
-    let recovery_program_id = deploy_recovery_program(&mut context).unwrap();
+    let recovery_program_id = deploy_recovery_test_program(&mut context).unwrap();
 
     install_operator(&mut context, recovery_program_id, &admin, operator.pubkey());
     context
@@ -721,7 +755,7 @@ fn test_recovery_binding_rejects_pending_account_mismatch() {
     let recovery_program_id_bytes = recovery_program_id.to_bytes();
     let program_exec_data = ProgramExecAuthority::create_authority_data(
         &recovery_program_id_bytes,
-        &swig_recovery::instruction::EXECUTE_RECOVERY_V1_DISCRIMINATOR,
+        &EXECUTE_RECOVERY_V1_DISCRIMINATOR,
     );
     add_authority_with_ed25519_root(
         &mut context,
@@ -760,7 +794,7 @@ fn test_recovery_binding_rejects_pending_account_mismatch() {
         .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + delay_slots + 1);
     context.svm.expire_blockhash();
 
-    let execute_ix = swig_recovery::instruction::execute_recovery_v1_instruction(
+    let execute_ix = execute_recovery_v1_instruction(
         recovery_program_id,
         swig,
         swig_wallet_address,
@@ -776,11 +810,8 @@ fn test_recovery_binding_rejects_pending_account_mismatch() {
         3,
     )
     .unwrap();
-    let (wrong_pending, _) = swig_recovery::instruction::find_pending_recovery_address(
-        &recovery_program_id,
-        &swig_wallet_address,
-        2,
-    );
+    let (wrong_pending, _) =
+        find_pending_recovery_address(&recovery_program_id, &swig_wallet_address, 2);
     instructions[1].accounts[3].pubkey = wrong_pending;
 
     assert!(send_recovery_transaction(&mut context, &instructions).is_err());
@@ -812,7 +843,7 @@ fn test_recovery_rejects_authority_type_mismatch() {
     let admin = Keypair::new();
     let operator = Keypair::new();
     let guardian = Keypair::new();
-    let recovery_program_id = deploy_recovery_program(&mut context).unwrap();
+    let recovery_program_id = deploy_recovery_test_program(&mut context).unwrap();
 
     install_operator(&mut context, recovery_program_id, &admin, operator.pubkey());
     context
@@ -850,7 +881,7 @@ fn test_recovery_rejects_authority_type_mismatch() {
     let recovery_program_id_bytes = recovery_program_id.to_bytes();
     let program_exec_data = ProgramExecAuthority::create_authority_data(
         &recovery_program_id_bytes,
-        &swig_recovery::instruction::EXECUTE_RECOVERY_V1_DISCRIMINATOR,
+        &EXECUTE_RECOVERY_V1_DISCRIMINATOR,
     );
     add_authority_with_ed25519_root(
         &mut context,
@@ -889,7 +920,7 @@ fn test_recovery_rejects_authority_type_mismatch() {
         .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + delay_slots + 1);
     context.svm.expire_blockhash();
 
-    let execute_ix = swig_recovery::instruction::execute_recovery_v1_instruction(
+    let execute_ix = execute_recovery_v1_instruction(
         recovery_program_id,
         swig,
         swig_wallet_address,
@@ -918,89 +949,4 @@ fn test_recovery_rejects_authority_type_mismatch() {
         .unwrap();
 
     assert_eq!(recovered_authority.public_key, old_passkey);
-}
-
-#[test_log::test]
-fn test_operator_is_admin_installed_and_rotatable() {
-    let mut context = setup_test_context().unwrap();
-    let recovery_program_id = deploy_recovery_program(&mut context).unwrap();
-    let admin = Keypair::new();
-    let wrong_admin = Keypair::new();
-    let operator_one = Keypair::new();
-    let operator_two = Keypair::new();
-    let guardian = Keypair::new();
-    let swig_wallet_address = Pubkey::new_unique();
-    let program_data =
-        set_recovery_program_upgrade_authority(&mut context, recovery_program_id, admin.pubkey())
-            .unwrap();
-
-    for signer in [&admin, &wrong_admin, &operator_one, &operator_two] {
-        context
-            .svm
-            .airdrop(&signer.pubkey(), 1_000_000_000)
-            .unwrap();
-    }
-
-    let wrong_admin_ix = swig_recovery::instruction::set_operator_v1_instruction(
-        recovery_program_id,
-        context.default_payer.pubkey(),
-        wrong_admin.pubkey(),
-        program_data,
-        operator_one.pubkey(),
-    );
-    assert!(submit(&mut context, &[wrong_admin_ix], &[&wrong_admin]).is_err());
-
-    let install_ix = swig_recovery::instruction::set_operator_v1_instruction(
-        recovery_program_id,
-        context.default_payer.pubkey(),
-        admin.pubkey(),
-        program_data,
-        operator_one.pubkey(),
-    );
-    submit(&mut context, &[install_ix], &[&admin]).unwrap();
-
-    let configure_ix = swig_recovery::instruction::configure_recovery_v1_instruction(
-        recovery_program_id,
-        context.default_payer.pubkey(),
-        operator_one.pubkey(),
-        Pubkey::new_unique(),
-        swig_wallet_address,
-        1,
-        guardian.pubkey(),
-        10,
-    );
-    submit(&mut context, &[configure_ix], &[&operator_one]).unwrap();
-
-    let rotate_ix = swig_recovery::instruction::set_operator_v1_instruction(
-        recovery_program_id,
-        context.default_payer.pubkey(),
-        admin.pubkey(),
-        program_data,
-        operator_two.pubkey(),
-    );
-    submit(&mut context, &[rotate_ix], &[&admin]).unwrap();
-
-    let stale_operator_ix = swig_recovery::instruction::configure_recovery_v1_instruction(
-        recovery_program_id,
-        context.default_payer.pubkey(),
-        operator_one.pubkey(),
-        Pubkey::new_unique(),
-        swig_wallet_address,
-        1,
-        guardian.pubkey(),
-        10,
-    );
-    assert!(submit(&mut context, &[stale_operator_ix], &[&operator_one]).is_err());
-
-    let current_operator_ix = swig_recovery::instruction::configure_recovery_v1_instruction(
-        recovery_program_id,
-        context.default_payer.pubkey(),
-        operator_two.pubkey(),
-        Pubkey::new_unique(),
-        swig_wallet_address,
-        1,
-        guardian.pubkey(),
-        10,
-    );
-    submit(&mut context, &[current_operator_ix], &[&operator_two]).unwrap();
 }

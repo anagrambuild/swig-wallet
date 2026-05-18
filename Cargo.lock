@@ -9456,7 +9456,6 @@ dependencies = [
  "swig-assertions",
  "swig-compact-instructions",
  "swig-interface",
- "swig-recovery",
  "swig-state",
  "test-log",
 ]
@@ -9522,16 +9521,6 @@ dependencies = [
  "swig",
  "swig-compact-instructions",
  "swig-state",
-]
-
-[[package]]
-name = "swig-recovery"
-version = "3.0.0"
-dependencies = [
- "solana-program",
- "solana-program-test",
- "solana-sdk-ids",
- "solana-system-interface 3.1.0",
 ]
 
 [[package]]

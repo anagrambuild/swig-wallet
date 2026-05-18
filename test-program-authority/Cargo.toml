@@ -10,6 +10,8 @@ crate-type = ["cdylib", "lib"]
 name = "test_program_authority"
 
 [features]
+custom-heap = []
+custom-panic = []
 no-entrypoint = []
 test-sbf = []
 program_scope_test = []
