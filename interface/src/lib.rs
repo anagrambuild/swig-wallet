@@ -13,6 +13,7 @@ use swig::actions::{
     create_session_v1::CreateSessionV1Args,
     create_sub_account_v1::CreateSubAccountV1Args,
     create_v1::CreateV1Args,
+    recover_authority_v1::RecoverAuthorityV1Args,
     remove_authority_v1::RemoveAuthorityV1Args,
     sub_account_sign_v1::SubAccountSignV1Args,
     toggle_sub_account_v1::ToggleSubAccountV1Args,
@@ -26,8 +27,9 @@ use swig_state::{
         all::All, all_but_manage_authority::AllButManageAuthority,
         close_swig_authority::CloseSwigAuthority, manage_authority::ManageAuthority,
         program::Program, program_all::ProgramAll, program_curated::ProgramCurated,
-        program_scope::ProgramScope, sol_destination_limit::SolDestinationLimit,
-        sol_limit::SolLimit, sol_recurring_destination_limit::SolRecurringDestinationLimit,
+        program_scope::ProgramScope, recovery_authority::RecoveryAuthority,
+        sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
+        sol_recurring_destination_limit::SolRecurringDestinationLimit,
         sol_recurring_limit::SolRecurringLimit, stake_all::StakeAll, stake_limit::StakeLimit,
         stake_recurring_limit::StakeRecurringLimit, sub_account::SubAccount,
         token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
@@ -58,6 +60,7 @@ pub enum ClientAction {
     All(All),
     AllButManageAuthority(AllButManageAuthority),
     ManageAuthority(ManageAuthority),
+    RecoveryAuthority(RecoveryAuthority),
     CloseSwigAuthority(CloseSwigAuthority),
     SubAccount(SubAccount),
     StakeLimit(StakeLimit),
@@ -101,6 +104,9 @@ impl ClientAction {
                 AllButManageAuthority::LEN,
             ),
             ClientAction::ManageAuthority(_) => (Permission::ManageAuthority, ManageAuthority::LEN),
+            ClientAction::RecoveryAuthority(_) => {
+                (Permission::RecoveryAuthority, RecoveryAuthority::LEN)
+            },
             ClientAction::CloseSwigAuthority(_) => {
                 (Permission::CloseSwigAuthority, CloseSwigAuthority::LEN)
             },
@@ -137,6 +143,7 @@ impl ClientAction {
             ClientAction::All(action) => action.into_bytes(),
             ClientAction::AllButManageAuthority(action) => action.into_bytes(),
             ClientAction::ManageAuthority(action) => action.into_bytes(),
+            ClientAction::RecoveryAuthority(action) => action.into_bytes(),
             ClientAction::CloseSwigAuthority(action) => action.into_bytes(),
             ClientAction::SubAccount(action) => action.into_bytes(),
             ClientAction::StakeLimit(action) => action.into_bytes(),
@@ -170,8 +177,8 @@ pub fn swig_wallet_address(config_address: &Pubkey) -> Pubkey {
 
 /// Builds the authority payload for ProgramExec instructions.
 ///
-/// When `target_ix_index` is `None`, produces a 1-byte payload (legacy behavior:
-/// authenticate against `current_index - 1`).
+/// When `target_ix_index` is `None`, produces a 1-byte payload (legacy
+/// behavior: authenticate against `current_index - 1`).
 /// When `Some(idx)`, produces a 2-byte payload that explicitly specifies which
 /// transaction instruction index to authenticate against.
 fn build_program_exec_authority_payload(
@@ -1582,6 +1589,44 @@ impl UpdateAuthorityInstruction {
 }
 
 pub struct CreateSessionInstruction;
+pub struct RecoverAuthorityInstruction;
+
+impl RecoverAuthorityInstruction {
+    pub fn new_with_program_exec(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        preceding_instruction: Instruction,
+        acting_role_id: u32,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
+
+        let pending_recovery = preceding_instruction
+            .accounts
+            .get(2)
+            .ok_or_else(|| anyhow::anyhow!("recovery execute instruction missing pending account"))?
+            .pubkey;
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new_readonly(swig_wallet_address, false),
+            AccountMeta::new_readonly(INSTRUCTIONS_ID, false),
+            AccountMeta::new_readonly(pending_recovery, false),
+        ];
+        let authority_payload = build_program_exec_authority_payload(2, None);
+        let args = RecoverAuthorityV1Args::new(acting_role_id, authority_payload.len() as u16);
+        let arg_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let main_ix = Instruction {
+            program_id: Pubkey::from(swig::ID),
+            accounts,
+            data: [arg_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![preceding_instruction, main_ix])
+    }
+}
+
 impl CreateSessionInstruction {
     pub fn new_with_ed25519_authority(
         swig_account: Pubkey,
@@ -3308,7 +3353,8 @@ impl TransferAssetsV1Instruction {
     }
 }
 
-/// Instruction builder for closing a single token account owned by the swig wallet.
+/// Instruction builder for closing a single token account owned by the swig
+/// wallet.
 pub struct CloseTokenAccountV1Instruction;
 
 impl CloseTokenAccountV1Instruction {

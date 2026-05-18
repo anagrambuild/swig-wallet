@@ -122,6 +122,22 @@ pub enum SwigError {
     TokenAccountNotEmpty,
     /// Wallet has excess SOL balance (beyond rent-exempt minimum)
     WalletNotEmpty,
+    /// Recover authority instruction data is too short
+    InvalidSwigRecoverAuthorityInstructionDataTooShort,
+    /// Recovery authority scheme is not supported for this rotation path
+    OnlyPasskeyRecoverySupported,
+    /// Existing authority does not match the recovery request
+    RecoveryOldAuthorityMismatch,
+    /// Recovery instruction and pending state are not bound to the same request
+    RecoveryInstructionMismatch,
+    /// Recovery pending state has not been executed
+    RecoveryPendingNotExecuted,
+    /// Recovery authority scheme does not match the target role authority
+    RecoveryAuthorityTypeMismatch,
+    /// Recovery authority payload length is invalid for the target role
+    RecoveryInvalidAuthorityLength,
+    /// Recovery does not support this authority scheme
+    UnsupportedRecoveryAuthorityScheme,
 }
 
 /// Implements conversion from SwigError to ProgramError.

@@ -10,7 +10,6 @@ mod common;
 use common::*;
 use litesvm_token::spl_token;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
-
 use solana_sdk::{
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
@@ -132,7 +131,8 @@ fn test_close_token_account_with_close_swig_authority() {
     assert_eq!(destination_balance, token_account_rent);
 }
 
-/// CloseSwigAuthority + ManageAuthority together should allow closing token accounts
+/// CloseSwigAuthority + ManageAuthority together should allow closing token
+/// accounts
 #[test_log::test]
 fn test_close_token_account_with_close_and_manage_authority() {
     let mut context = setup_test_context().unwrap();
@@ -226,7 +226,8 @@ fn test_close_token_account_with_close_and_manage_authority() {
     assert_eq!(destination_balance, token_account_rent);
 }
 
-/// All + ManageAuthority + CloseSwigAuthority together should allow closing token accounts
+/// All + ManageAuthority + CloseSwigAuthority together should allow closing
+/// token accounts
 #[test_log::test]
 fn test_close_token_account_with_all_manage_and_close_authority() {
     let mut context = setup_test_context().unwrap();
@@ -664,7 +665,8 @@ fn test_close_swig_with_close_and_manage_authority() {
     assert_eq!(destination_balance, total_lamports);
 }
 
-/// All + ManageAuthority + CloseSwigAuthority together should allow closing swig
+/// All + ManageAuthority + CloseSwigAuthority together should allow closing
+/// swig
 #[test_log::test]
 fn test_close_swig_with_all_manage_and_close_authority() {
     let mut context = setup_test_context().unwrap();

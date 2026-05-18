@@ -254,8 +254,9 @@ impl AuthorityInfo for ProgramExecSessionAuthority {
         _slot: u64,
     ) -> Result<(), ProgramError> {
         // authority_payload format:
-        //   1 byte:  [instruction_sysvar_index] -- authenticate against current_index - 1
-        //   2 bytes: [instruction_sysvar_index, target_ix_index] -- authenticate against target_ix_index
+        // - 1 byte: [instruction_sysvar_index], authenticates against current_index - 1
+        // - 2 bytes: [instruction_sysvar_index, target_ix_index], authenticates against
+        //   target_ix_index
         if authority_payload.is_empty() || authority_payload.len() > 2 {
             return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
         }

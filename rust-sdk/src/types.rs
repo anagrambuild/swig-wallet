@@ -9,6 +9,7 @@ use swig_state::{
         program_all::ProgramAll,
         program_curated::ProgramCurated,
         program_scope::{NumericType, ProgramScope, ProgramScopeType},
+        recovery_authority::RecoveryAuthority,
         sol_destination_limit::SolDestinationLimit,
         sol_limit::SolLimit,
         sol_recurring_destination_limit::SolRecurringDestinationLimit,
@@ -59,6 +60,9 @@ pub enum Permission {
     /// Permission to manage authorities. This allows adding or removing
     /// authorities from the wallet and modifying their permissions.
     ManageAuthority,
+
+    /// Permission to rotate passkey authority through the recovery path.
+    RecoveryAuthority,
 
     /// Permission to interact with specific tokens. Can be configured with
     /// either a fixed limit or a recurring limit that resets after a
@@ -181,6 +185,9 @@ impl Permission {
                 },
                 Permission::ManageAuthority => {
                     actions.push(ClientAction::ManageAuthority(ManageAuthority {}));
+                },
+                Permission::RecoveryAuthority => {
+                    actions.push(ClientAction::RecoveryAuthority(RecoveryAuthority {}));
                 },
                 Permission::Token {
                     mint,
@@ -364,6 +371,13 @@ impl Permission {
             .is_some()
         {
             permissions.push(Permission::ManageAuthority);
+        }
+
+        if swig_state::role::Role::get_action::<RecoveryAuthority>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .is_some()
+        {
+            permissions.push(Permission::RecoveryAuthority);
         }
 
         // Check for SolLimit permission
@@ -580,6 +594,7 @@ impl Permission {
         match self {
             Permission::All => 7,
             Permission::ManageAuthority => 8,
+            Permission::RecoveryAuthority => 21,
             Permission::Sol {
                 amount: _,
                 recurring,

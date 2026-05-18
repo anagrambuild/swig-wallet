@@ -679,15 +679,17 @@ pub fn sign_v2(
                 } => {
                     let account_info = unsafe { all_accounts.get_unchecked(index) };
 
-                    // Get the role with the ProgramScope action using the account key (target_account)
+                    // Get the role with the ProgramScope action using the account key
+                    // (target_account)
                     let account_key = unsafe { all_accounts.get_unchecked(index).key() };
                     let program_scope =
                         RoleMut::get_action_mut::<ProgramScope>(actions, account_key.as_ref())?;
 
                     match program_scope {
                         Some(program_scope) => {
-                            // The target_account verification is now implicit in the match_data check
-                            // that happens in get_action_mut, so we don't need to check again
+                            // The target_account verification is now implicit in the match_data
+                            // check that happens in get_action_mut, so
+                            // we don't need to check again
 
                             // Get the current balance by using the program_scope's
                             // read_account_balance method

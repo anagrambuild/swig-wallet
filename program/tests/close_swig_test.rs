@@ -11,7 +11,6 @@ use alloy_signer_local::{LocalSigner, PrivateKeySigner};
 use common::*;
 use litesvm_token::spl_token;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
-
 use solana_sdk::{
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
@@ -180,7 +179,8 @@ fn test_close_swig_with_manage_authority() {
         context.svm.minimum_balance_for_rent_exemption(1)
     );
 
-    // Verify destination received lamports (total minus rent kept for closed account)
+    // Verify destination received lamports (total minus rent kept for closed
+    // account)
     let destination_balance = context
         .svm
         .get_account(&destination.pubkey())

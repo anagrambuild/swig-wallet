@@ -114,7 +114,7 @@ pub trait AuthorityInfo {
 }
 
 /// Represents different types of authorities supported by the system.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 #[repr(u16)]
 pub enum AuthorityType {
     /// No authority (invalid state)

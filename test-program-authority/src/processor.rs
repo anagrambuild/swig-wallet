@@ -14,6 +14,9 @@ pub mod instructions {
 
     /// Invalid discriminator for testing failures
     pub const INVALID_DISCRIMINATOR: [u8; 8] = [9, 9, 9, 9, 9, 9, 9, 9];
+
+    /// Recovery execute discriminator used by recovery-authority tests.
+    pub const RECOVERY_EXECUTE: [u8; 8] = *b"execreV1";
 }
 
 /// State account data format:
@@ -36,6 +39,7 @@ pub fn process_instruction(
 
     match discriminator {
         instructions::TEST_TOKEN_TRANSFER => process_test_token_transfer(accounts, remaining_data),
+        instructions::RECOVERY_EXECUTE => process_recovery_execute(accounts, remaining_data),
         instructions::INVALID_DISCRIMINATOR => {
             process_invalid_instruction(accounts, remaining_data)
         },
@@ -81,6 +85,15 @@ fn process_test_token_transfer(accounts: &[AccountInfo], _data: &[u8]) -> Progra
         msg!("State account indicates failure");
         Err(ProgramError::Custom(999))
     }
+}
+
+fn process_recovery_execute(accounts: &[AccountInfo], _data: &[u8]) -> ProgramResult {
+    if accounts.len() < 3 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    msg!("Test program: accepted recovery execute instruction");
+    Ok(())
 }
 
 /// Process invalid instruction - for testing failure cases

@@ -80,7 +80,6 @@ impl<'a> CloseSwigV1<'a> {
 }
 
 /// Closes the Swig account and returns all lamports to destination.
-///
 pub fn close_swig_v1(
     ctx: Context<CloseSwigV1Accounts>,
     accounts: &[AccountInfo],
@@ -161,8 +160,9 @@ pub fn close_swig_v1(
         return Err(SwigError::WalletNotEmpty.into());
     }
 
-    // Check that swig_wallet_address only has rent-exempt minimum (no excess SOL balance)
-    // swig_wallet_address is a 0-size system account, so rent exempt is for 0 bytes
+    // Check that swig_wallet_address only has rent-exempt minimum (no excess SOL
+    // balance) swig_wallet_address is a 0-size system account, so rent exempt
+    // is for 0 bytes
     let wallet_rent_exempt = rent.minimum_balance(0);
     let wallet_lamports = ctx.accounts.swig_wallet_address.lamports();
     if wallet_lamports > wallet_rent_exempt {
