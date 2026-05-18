@@ -228,7 +228,7 @@ pub enum SwigInstruction {
     #[account(3, name="system_program", desc="the system program")]
     CloseSwigV1 = 15,
 
-    /// Rotates a Secp256r1 authority through the constrained recovery path.
+    /// Rotates a signer authority through the constrained recovery path.
     ///
     /// Required accounts:
     /// 1. `[writable]` Swig wallet account

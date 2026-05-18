@@ -27,7 +27,7 @@ use swig_state::{
         AuthorityType,
     },
     role::Position,
-    swig::Swig,
+    swig::{swig_wallet_address_seeds, Swig},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -350,6 +350,12 @@ fn load_verified_recovery_binding(
     all_accounts: &[AccountInfo],
     authority_payload: &[u8],
 ) -> Result<RecoveryBinding, ProgramError> {
+    let (expected_swig_wallet_address, _) =
+        find_program_address(&swig_wallet_address_seeds(swig.key().as_ref()), &crate::ID);
+    if !sol_assert_bytes_eq(swig_wallet_address.key(), &expected_swig_wallet_address, 32) {
+        return Err(SwigError::InvalidSeedSwigAccount.into());
+    }
+
     let execute_ix =
         load_recovery_execute_ix(swig, swig_wallet_address, all_accounts, authority_payload)?;
 

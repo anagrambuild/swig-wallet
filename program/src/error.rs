@@ -124,7 +124,7 @@ pub enum SwigError {
     WalletNotEmpty,
     /// Recover authority instruction data is too short
     InvalidSwigRecoverAuthorityInstructionDataTooShort,
-    /// Recovery only supports Secp256r1 passkey authority rotation
+    /// Recovery authority scheme is not supported for this rotation path
     OnlyPasskeyRecoverySupported,
     /// Existing authority does not match the recovery request
     RecoveryOldAuthorityMismatch,

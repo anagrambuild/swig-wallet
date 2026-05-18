@@ -30,6 +30,8 @@ pub enum InstructionError {
     MissingAccountInfo,
     /// Instruction data is incomplete or invalid
     MissingData,
+    /// Instruction account count exceeds the supported compact account limit
+    TooManyAccounts,
 }
 
 impl From<InstructionError> for ProgramError {
@@ -282,6 +284,9 @@ where
         let (num_accounts, cursor) = self.read_u8()?;
         self.cursor = cursor;
         let num_accounts = num_accounts as usize;
+        if num_accounts > MAX_ACCOUNTS || num_accounts > self.accounts.size() {
+            return Err(InstructionError::TooManyAccounts);
+        }
         let mut accounts = Vec::with_capacity(num_accounts);
         let mut infos = Vec::with_capacity(num_accounts);
         let mut indexes = Vec::with_capacity(num_accounts);
