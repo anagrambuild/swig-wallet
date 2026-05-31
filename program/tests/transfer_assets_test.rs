@@ -516,3 +516,239 @@ fn test_transfer_assets_spl_token_invalid_destination() {
 
     println!("✅ Test passed: SPL token transfer with invalid destination was properly rejected");
 }
+
+// Happy-path SPL migration using the kit's `new_with_ed25519_authority` helper.
+// Currently FAILS because the helper appends a 5th base account (the authority)
+// while the program's `base_account_count = 4` doesn't account for it — the loop
+// iterating SPL triples starts at index 4 (the authority pubkey) instead of the
+// source ATA. Documents a kit/program contract mismatch; tracked separately
+// from the line-191 seed bug.
+#[ignore]
+#[test_log::test]
+fn test_transfer_assets_spl_happy_path() {
+    let mut context = setup_test_context().unwrap();
+    let authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let swig_created = create_swig_ed25519(&mut context, &authority, id);
+    assert!(swig_created.is_ok(), "Failed to create swig: {:?}", swig_created.err());
+    let (swig_pubkey, _bench) = swig_created.unwrap();
+
+    let (swig_wallet_address_pubkey, _) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(&swig_pubkey.to_bytes()),
+        &program_id(),
+    );
+
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+
+    // Source ATA: owned by the state PDA (the bug condition — pre-migration funds)
+    let source_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig_pubkey,
+        &context.default_payer,
+    )
+    .unwrap();
+
+    // Destination ATA: owned by the wallet PDA (where assets should live in v2)
+    let dest_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig_wallet_address_pubkey,
+        &context.default_payer,
+    )
+    .unwrap();
+
+    let initial_amount = 1_000u64;
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &source_ata,
+        initial_amount,
+    )
+    .unwrap();
+
+    let source_before = context.svm.get_account(&source_ata).unwrap().data;
+    let source_before_unpacked = spl_token::state::Account::unpack(&source_before).unwrap();
+    assert_eq!(source_before_unpacked.amount, initial_amount);
+
+    let helper_ix = TransferAssetsV1Instruction::new_with_ed25519_authority(
+        swig_pubkey,
+        swig_wallet_address_pubkey,
+        context.default_payer.pubkey(),
+        authority.pubkey(),
+        0,
+    )
+    .unwrap();
+
+    let mut accounts = helper_ix.accounts;
+    accounts.push(AccountMeta::new(source_ata, false));
+    accounts.push(AccountMeta::new(dest_ata, false));
+    accounts.push(AccountMeta::new_readonly(spl_token::ID, false));
+
+    let transfer_ix = Instruction {
+        program_id: program_id(),
+        accounts,
+        data: helper_ix.data,
+    };
+
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                transfer_ix,
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+    let result = context.svm.send_transaction(tx);
+
+    assert!(
+        result.is_ok(),
+        "Happy-path SPL transfer should succeed but failed: {:?}",
+        result.err()
+    );
+
+    let source_after = context.svm.get_account(&source_ata).unwrap().data;
+    let source_after_unpacked = spl_token::state::Account::unpack(&source_after).unwrap();
+    let dest_after = context.svm.get_account(&dest_ata).unwrap().data;
+    let dest_after_unpacked = spl_token::state::Account::unpack(&dest_after).unwrap();
+
+    assert_eq!(
+        source_after_unpacked.amount, 0,
+        "Source ATA should be drained after transferAssetsV1"
+    );
+    assert_eq!(
+        dest_after_unpacked.amount, initial_amount,
+        "Destination ATA should have received all tokens"
+    );
+
+    println!("✅ SPL happy path: tokens moved from state PDA to wallet PDA");
+}
+
+// Reproduces the seed-derivation bug at transfer_assets_v1.rs:191.
+// Uses a 4-account base layout (matching `base_account_count = 4`) where the
+// payer doubles as the authority. This forces the program to reach the inner
+// SPL Transfer CPI at line 290, where it invokes invoke_signed with a wrong
+// signer derived from the state PDA's pubkey instead of swig.id. Solana
+// rejects the CPI with "signer privilege escalated".
+//
+// Under the unmodified source this test FAILS with that runtime error.
+// After patching line 191 to use `&swig.id` it should PASS and move tokens.
+#[test_log::test]
+fn test_transfer_assets_spl_signer_privilege_repro() {
+    let mut context = setup_test_context().unwrap();
+    let authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let swig_created = create_swig_ed25519(&mut context, &authority, id);
+    assert!(swig_created.is_ok(), "Failed to create swig: {:?}", swig_created.err());
+    let (swig_pubkey, _bench) = swig_created.unwrap();
+
+    let (swig_wallet_address_pubkey, _) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(&swig_pubkey.to_bytes()),
+        &program_id(),
+    );
+
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let source_ata = setup_ata(&mut context.svm, &mint_pubkey, &swig_pubkey, &context.default_payer).unwrap();
+    let dest_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig_wallet_address_pubkey,
+        &context.default_payer,
+    )
+    .unwrap();
+
+    let initial_amount = 1_000u64;
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &source_ata,
+        initial_amount,
+    )
+    .unwrap();
+
+    // role_id = 0, authority_payload = [2] (authority is at account index 2)
+    let args = swig_state::IntoBytes::into_bytes(
+        &swig::actions::transfer_assets_v1::TransferAssetsV1Args::new(0),
+    )
+    .unwrap()
+    .to_vec();
+    let mut data = args;
+    data.push(2u8);
+
+    let transfer_ix = Instruction {
+        program_id: program_id(),
+        accounts: vec![
+            AccountMeta::new(swig_pubkey, false),
+            AccountMeta::new(swig_wallet_address_pubkey, false),
+            AccountMeta::new(authority.pubkey(), true),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            AccountMeta::new(source_ata, false),
+            AccountMeta::new(dest_ata, false),
+            AccountMeta::new_readonly(spl_token::ID, false),
+        ],
+        data,
+    };
+
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &authority.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                transfer_ix,
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+
+    let tx = VersionedTransaction::try_new(message, &[&authority]).unwrap();
+    let result = context.svm.send_transaction(tx);
+
+    // Either: succeed and move tokens (fix is in place)
+    //     or: fail with PrivilegeEscalation (bug is present)
+    match result {
+        Ok(_) => {
+            let source_after = context.svm.get_account(&source_ata).unwrap().data;
+            let source_after_unpacked = spl_token::state::Account::unpack(&source_after).unwrap();
+            let dest_after = context.svm.get_account(&dest_ata).unwrap().data;
+            let dest_after_unpacked = spl_token::state::Account::unpack(&dest_after).unwrap();
+            assert_eq!(source_after_unpacked.amount, 0, "FIXED: source should be drained");
+            assert_eq!(dest_after_unpacked.amount, initial_amount, "FIXED: dest should hold all tokens");
+            println!("✅ Bug fixed: transferAssetsV1 successfully migrated SPL tokens");
+        }
+        Err(e) => {
+            let logs = format!("{:?}", e);
+            let is_bug_signature = logs.contains("privilege escalated")
+                || logs.contains("PrivilegeEscalation")
+                || logs.contains("Provided seeds do not result in a valid address");
+            assert!(
+                is_bug_signature,
+                "Expected bug signature (privilege escalation or invalid signer seeds); got: {}",
+                logs
+            );
+            println!("❌ Bug present in transfer_assets_v1.rs:191\n   logs: {}", logs);
+            panic!("BUG REPRODUCED: line 191 uses ctx.accounts.swig.key().as_ref() instead of &swig.id");
+        }
+    }
+}
