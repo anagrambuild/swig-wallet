@@ -536,7 +536,11 @@ fn test_transfer_assets_spl_happy_path() {
         .unwrap();
 
     let swig_created = create_swig_ed25519(&mut context, &authority, id);
-    assert!(swig_created.is_ok(), "Failed to create swig: {:?}", swig_created.err());
+    assert!(
+        swig_created.is_ok(),
+        "Failed to create swig: {:?}",
+        swig_created.err()
+    );
     let (swig_pubkey, _bench) = swig_created.unwrap();
 
     let (swig_wallet_address_pubkey, _) = Pubkey::find_program_address(
@@ -658,7 +662,11 @@ fn test_transfer_assets_spl_signer_privilege_repro() {
         .unwrap();
 
     let swig_created = create_swig_ed25519(&mut context, &authority, id);
-    assert!(swig_created.is_ok(), "Failed to create swig: {:?}", swig_created.err());
+    assert!(
+        swig_created.is_ok(),
+        "Failed to create swig: {:?}",
+        swig_created.err()
+    );
     let (swig_pubkey, _bench) = swig_created.unwrap();
 
     let (swig_wallet_address_pubkey, _) = Pubkey::find_program_address(
@@ -667,7 +675,13 @@ fn test_transfer_assets_spl_signer_privilege_repro() {
     );
 
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
-    let source_ata = setup_ata(&mut context.svm, &mint_pubkey, &swig_pubkey, &context.default_payer).unwrap();
+    let source_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig_pubkey,
+        &context.default_payer,
+    )
+    .unwrap();
     let dest_ata = setup_ata(
         &mut context.svm,
         &mint_pubkey,
@@ -733,10 +747,16 @@ fn test_transfer_assets_spl_signer_privilege_repro() {
             let source_after_unpacked = spl_token::state::Account::unpack(&source_after).unwrap();
             let dest_after = context.svm.get_account(&dest_ata).unwrap().data;
             let dest_after_unpacked = spl_token::state::Account::unpack(&dest_after).unwrap();
-            assert_eq!(source_after_unpacked.amount, 0, "FIXED: source should be drained");
-            assert_eq!(dest_after_unpacked.amount, initial_amount, "FIXED: dest should hold all tokens");
+            assert_eq!(
+                source_after_unpacked.amount, 0,
+                "FIXED: source should be drained"
+            );
+            assert_eq!(
+                dest_after_unpacked.amount, initial_amount,
+                "FIXED: dest should hold all tokens"
+            );
             println!("✅ Bug fixed: transferAssetsV1 successfully migrated SPL tokens");
-        }
+        },
         Err(e) => {
             let logs = format!("{:?}", e);
             let is_bug_signature = logs.contains("privilege escalated")
@@ -747,8 +767,11 @@ fn test_transfer_assets_spl_signer_privilege_repro() {
                 "Expected bug signature (privilege escalation or invalid signer seeds); got: {}",
                 logs
             );
-            println!("❌ Bug present in transfer_assets_v1.rs:191\n   logs: {}", logs);
+            println!(
+                "❌ Bug present in transfer_assets_v1.rs:191\n   logs: {}",
+                logs
+            );
             panic!("BUG REPRODUCED: line 191 uses ctx.accounts.swig.key().as_ref() instead of &swig.id");
-        }
+        },
     }
 }
