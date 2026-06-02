@@ -15,10 +15,7 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::*;
 use swig_state::{
-    action::{
-        all::All, manage_authority::ManageAuthority, sub_account::SubAccount, ActionLoader,
-        Actionable,
-    },
+    action::{sub_account::SubAccount, ActionLoader},
     authority::AuthorityType,
     role::RoleMut,
     swig::{
@@ -183,22 +180,6 @@ pub fn create_sub_account_v1(
             slot,
         )?;
     }
-    // Check if the role has the required permissions (All or SubAccount)
-    let has_all_permission = {
-        let all_action = RoleMut::get_action_mut::<All>(role.actions, &[])?;
-        all_action.is_some()
-    };
-
-    let has_sub_account_permission = {
-        let sub_account_action = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?;
-        sub_account_action.is_some()
-    };
-
-    // Even if role has `All` action, it must have a `SubAccount` action before it
-    // can create a `SubAccount`
-    if !has_sub_account_permission {
-        return Err(SwigError::AuthorityCannotCreateSubAccount.into());
-    }
     // Derive the sub-account address using the authority index as seed (keeping PDA
     // for deterministic addressing)
     let role_id_bytes = create_sub_account.args.role_id.to_le_bytes();
@@ -210,6 +191,17 @@ pub fn create_sub_account_v1(
         ctx.accounts.sub_account.key(),
         SwigError::InvalidSeedSwigAccount,
     )?;
+
+    if RoleMut::get_action_mut::<SubAccount>(role.actions, ctx.accounts.sub_account.key().as_ref())?
+        .is_some()
+    {
+        return Err(SwigError::SubAccountAlreadyExists.into());
+    }
+
+    let Some(sub_account_action_mut) = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?
+    else {
+        return Err(SwigError::AuthorityCannotCreateSubAccount.into());
+    };
 
     // Transfer lamports to the sub_account to make it system-owned and rent-exempt
     // This follows the same pattern as swig_wallet_address creation in create_v1.rs
@@ -238,16 +230,13 @@ pub fn create_sub_account_v1(
     }
 
     // Update the SubAccount action to store all sub-account metadata
-    if let Some(sub_account_action_mut) = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?
-    {
-        sub_account_action_mut
-            .sub_account
-            .copy_from_slice(ctx.accounts.sub_account.key().as_ref());
-        sub_account_action_mut.bump = create_sub_account.args.sub_account_bump;
-        sub_account_action_mut.enabled = true; // Default to enabled
-        sub_account_action_mut.role_id = create_sub_account.args.role_id;
-        sub_account_action_mut.swig_id = swig.id;
-    }
+    sub_account_action_mut
+        .sub_account
+        .copy_from_slice(ctx.accounts.sub_account.key().as_ref());
+    sub_account_action_mut.bump = create_sub_account.args.sub_account_bump;
+    sub_account_action_mut.enabled = true; // Default to enabled
+    sub_account_action_mut.role_id = create_sub_account.args.role_id;
+    sub_account_action_mut.swig_id = swig.id;
 
     Ok(())
 }
