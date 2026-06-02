@@ -8,7 +8,7 @@
 /// - Restricted key handling
 /// - Memory-efficient instruction processing
 mod compact_instructions;
-use core::{marker::PhantomData, mem::MaybeUninit};
+use core::marker::PhantomData;
 
 pub use compact_instructions::*;
 use pinocchio::{
@@ -49,8 +49,8 @@ impl From<InstructionError> for ProgramError {
 pub struct InstructionHolder<'a> {
     pub program_id: &'a Pubkey,
     pub cpi_accounts: Vec<Account<'a>>,
-    pub indexes: &'a [usize],
-    pub accounts: &'a [AccountMeta<'a>],
+    pub indexes: Vec<usize>,
+    pub accounts: Vec<AccountMeta<'a>>,
     pub data: &'a [u8],
 }
 
@@ -149,7 +149,7 @@ impl<'a> InstructionHolder<'a> {
     pub fn borrow(&'a self) -> Instruction<'a, 'a, 'a, 'a> {
         Instruction {
             program_id: self.program_id,
-            accounts: self.accounts,
+            accounts: self.accounts.as_slice(),
             data: self.data,
         }
     }
@@ -282,18 +282,16 @@ where
         let (num_accounts, cursor) = self.read_u8()?;
         self.cursor = cursor;
         let num_accounts = num_accounts as usize;
-        const AM_UNINIT: MaybeUninit<AccountMeta> = MaybeUninit::uninit();
-        let mut accounts = [AM_UNINIT; MAX_ACCOUNTS];
+        let mut accounts = Vec::with_capacity(num_accounts);
         let mut infos = Vec::with_capacity(num_accounts);
-        const INDEX_UNINIT: MaybeUninit<usize> = MaybeUninit::uninit();
-        let mut indexes = [INDEX_UNINIT; MAX_ACCOUNTS];
-        for i in 0..num_accounts {
+        let mut indexes = Vec::with_capacity(num_accounts);
+        for _ in 0..num_accounts {
             let (pubkey_index, cursor) = self.read_u8()?;
             self.cursor = cursor;
             let account = self.accounts.get_account(pubkey_index as usize)?;
-            indexes[i].write(pubkey_index as usize);
+            indexes.push(pubkey_index as usize);
             let pubkey = account.pubkey();
-            accounts[i].write(AccountMeta {
+            accounts.push(AccountMeta {
                 pubkey,
                 is_signer: (pubkey == self.signer || account.signer())
                     && !self.restricted_keys.is_restricted(pubkey),
@@ -311,8 +309,8 @@ where
         Ok(InstructionHolder {
             program_id,
             cpi_accounts: infos,
-            accounts: unsafe { core::slice::from_raw_parts(accounts.as_ptr() as _, num_accounts) },
-            indexes: unsafe { core::slice::from_raw_parts(indexes.as_ptr() as _, num_accounts) },
+            accounts,
+            indexes,
             data,
         })
     }
@@ -364,5 +362,38 @@ where
 
         let slice = unsafe { self.data.get_unchecked(self.cursor..end) };
         Ok((slice, end))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn instruction_holder_borrows_owned_account_metadata() {
+        let program_id: Pubkey = [1; 32];
+        let account_key: Pubkey = [2; 32];
+        let data = [3, 4, 5];
+        let holder = InstructionHolder {
+            program_id: &program_id,
+            cpi_accounts: Vec::new(),
+            indexes: vec![7],
+            accounts: vec![AccountMeta {
+                pubkey: &account_key,
+                is_writable: true,
+                is_signer: false,
+            }],
+            data: &data,
+        };
+
+        let instruction = holder.borrow();
+
+        assert_eq!(instruction.program_id, &program_id);
+        assert_eq!(instruction.data, data.as_slice());
+        assert_eq!(instruction.accounts.len(), 1);
+        assert_eq!(instruction.accounts[0].pubkey, &account_key);
+        assert!(instruction.accounts[0].is_writable);
+        assert!(!instruction.accounts[0].is_signer);
+        assert_eq!(holder.indexes.as_slice(), &[7]);
     }
 }
