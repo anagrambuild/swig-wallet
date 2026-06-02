@@ -38,7 +38,52 @@ impl From<InstructionError> for ProgramError {
     }
 }
 
-/// Holds parsed instruction data and associated accounts.
+#[inline(always)]
+fn uninit_array<T>() -> [MaybeUninit<T>; MAX_ACCOUNTS] {
+    unsafe { MaybeUninit::<[MaybeUninit<T>; MAX_ACCOUNTS]>::uninit().assume_init() }
+}
+
+/// Reusable fixed storage for one parsed compact instruction.
+pub struct InstructionScratch<'a> {
+    account_metas: [MaybeUninit<AccountMeta<'a>>; MAX_ACCOUNTS],
+    indexes: [MaybeUninit<usize>; MAX_ACCOUNTS],
+    cpi_accounts: [MaybeUninit<Account<'a>>; MAX_ACCOUNTS],
+}
+
+impl<'a> InstructionScratch<'a> {
+    #[inline(always)]
+    pub fn new() -> Self {
+        Self {
+            account_metas: uninit_array(),
+            indexes: uninit_array(),
+            cpi_accounts: uninit_array(),
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn account_metas(&self, len: usize) -> &[AccountMeta<'a>] {
+        core::slice::from_raw_parts(self.account_metas.as_ptr() as *const AccountMeta<'a>, len)
+    }
+
+    #[inline(always)]
+    unsafe fn indexes(&self, len: usize) -> &[usize] {
+        core::slice::from_raw_parts(self.indexes.as_ptr() as *const usize, len)
+    }
+
+    #[inline(always)]
+    unsafe fn cpi_accounts(&self, len: usize) -> &[Account<'a>] {
+        core::slice::from_raw_parts(self.cpi_accounts.as_ptr() as *const Account<'a>, len)
+    }
+}
+
+impl<'a> Default for InstructionScratch<'a> {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Holds a borrowed view over parsed instruction data and associated accounts.
 ///
 /// # Fields
 /// * `program_id` - The program that will execute this instruction
@@ -46,23 +91,27 @@ impl From<InstructionError> for ProgramError {
 /// * `indexes` - Original indexes of accounts in the instruction
 /// * `accounts` - Account metadata for the instruction
 /// * `data` - Raw instruction data
-pub struct InstructionHolder<'a> {
+pub struct InstructionHolder<'scratch, 'a> {
     pub program_id: &'a Pubkey,
-    pub cpi_accounts: Vec<Account<'a>>,
-    pub indexes: &'a [usize],
-    pub accounts: &'a [AccountMeta<'a>],
+    pub cpi_accounts: &'scratch [Account<'a>],
+    pub indexes: &'scratch [usize],
+    pub accounts: &'scratch [AccountMeta<'a>],
     pub data: &'a [u8],
     pub uses_swig_signer: bool,
 }
 
-impl<'a> InstructionHolder<'a> {
+impl<'scratch, 'a> InstructionHolder<'scratch, 'a>
+where
+    'a: 'scratch,
+{
     pub fn execute(
-        &'a self,
+        &self,
         all_accounts: &'a [AccountInfo],
         swig_key: &'a Pubkey,
         swig_signer: &[Signer],
     ) -> ProgramResult {
         if self.program_id == &pinocchio_system::ID
+            && self.accounts.len() >= 2
             && self.data.len() >= 12
             && unsafe { self.data.get_unchecked(0..4) == [2, 0, 0, 0] }
             && unsafe { self.accounts.get_unchecked(0).pubkey == swig_key }
@@ -74,13 +123,7 @@ impl<'a> InstructionHolder<'a> {
             if from_account.owner() == &pinocchio_system::ID {
                 // For system-owned PDAs (new swig_wallet_address accounts),
                 // use proper CPI with signer seeds
-                unsafe {
-                    invoke_signed_unchecked(
-                        &self.borrow(),
-                        self.cpi_accounts.as_slice(),
-                        swig_signer,
-                    )
-                }
+                unsafe { invoke_signed_unchecked(&self.borrow(), self.cpi_accounts, swig_signer) }
             } else {
                 // For program-owned accounts (old swig accounts),
                 // use direct lamport manipulation for backwards compatibility
@@ -100,9 +143,7 @@ impl<'a> InstructionHolder<'a> {
                 }
             }
         } else {
-            unsafe {
-                invoke_signed_unchecked(&self.borrow(), self.cpi_accounts.as_slice(), swig_signer)
-            }
+            unsafe { invoke_signed_unchecked(&self.borrow(), self.cpi_accounts, swig_signer) }
         }
         Ok(())
     }
@@ -146,8 +187,11 @@ pub trait RestrictedKeys {
     fn is_restricted(&self, pubkey: &Pubkey) -> bool;
 }
 
-impl<'a> InstructionHolder<'a> {
-    pub fn borrow(&'a self) -> Instruction<'a, 'a, 'a, 'a> {
+impl<'scratch, 'a> InstructionHolder<'scratch, 'a>
+where
+    'a: 'scratch,
+{
+    pub fn borrow(&self) -> Instruction<'a, 'scratch, 'a, 'a> {
         Instruction {
             program_id: self.program_id,
             accounts: self.accounts,
@@ -239,28 +283,31 @@ impl<'a> InstructionIterator<'a, &'a [AccountInfo], &'a [&'a Pubkey], &'a Accoun
     }
 }
 
-impl<'a, AL, RK, P> Iterator for InstructionIterator<'a, AL, RK, P>
-where
-    AL: AccountLookup<'a, P>,
-    RK: RestrictedKeys,
-    P: AccountProxy<'a>,
-{
-    type Item = Result<InstructionHolder<'a>, InstructionError>;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.remaining == 0 {
-            return None;
-        }
-        self.remaining -= 1;
-        Some(self.parse_next_instruction())
-    }
-}
-
 impl<'a, AL, RK, P> InstructionIterator<'a, AL, RK, P>
 where
     AL: AccountLookup<'a, P>,
     RK: RestrictedKeys,
     P: AccountProxy<'a>,
 {
+    /// Parses the next compact instruction into fixed scratch storage and calls
+    /// `handler` while the parsed slices are still valid.
+    #[inline(always)]
+    pub fn process_next<'scratch, E, F>(
+        &mut self,
+        scratch: &'scratch mut InstructionScratch<'a>,
+        handler: F,
+    ) -> Result<Option<Result<(), E>>, InstructionError>
+    where
+        'a: 'scratch,
+        F: FnOnce(InstructionHolder<'scratch, 'a>) -> Result<(), E>,
+    {
+        if self.remaining == 0 {
+            return Ok(None);
+        }
+        self.remaining -= 1;
+        self.parse_next_instruction(scratch, handler).map(Some)
+    }
+
     /// Parses the next instruction from the compact format.
     ///
     /// This method handles the parsing of:
@@ -269,9 +316,16 @@ where
     /// 3. Instruction data
     ///
     /// # Returns
-    /// * `Result<InstructionHolder<'a>, InstructionError>` - Parsed instruction
-    ///   or error
-    fn parse_next_instruction(&mut self) -> Result<InstructionHolder<'a>, InstructionError> {
+    /// * `Result<(), E>` - Callback success or parser/callback error
+    fn parse_next_instruction<'scratch, E, F>(
+        &mut self,
+        scratch: &'scratch mut InstructionScratch<'a>,
+        handler: F,
+    ) -> Result<Result<(), E>, InstructionError>
+    where
+        'a: 'scratch,
+        F: FnOnce(InstructionHolder<'scratch, 'a>) -> Result<(), E>,
+    {
         // Parse program_id
         let (program_id_index, cursor) = self.read_u8()?;
         self.cursor = cursor;
@@ -283,29 +337,28 @@ where
         let (num_accounts, cursor) = self.read_u8()?;
         self.cursor = cursor;
         let num_accounts = num_accounts as usize;
-        const AM_UNINIT: MaybeUninit<AccountMeta> = MaybeUninit::uninit();
-        let mut accounts = [AM_UNINIT; MAX_ACCOUNTS];
-        let mut infos = Vec::with_capacity(num_accounts);
-        const INDEX_UNINIT: MaybeUninit<usize> = MaybeUninit::uninit();
-        let mut indexes = [INDEX_UNINIT; MAX_ACCOUNTS];
+        if num_accounts > MAX_ACCOUNTS {
+            return Err(InstructionError::MissingAccountInfo);
+        }
+
         let mut uses_swig_signer = false;
         for i in 0..num_accounts {
             let (pubkey_index, cursor) = self.read_u8()?;
             self.cursor = cursor;
             let account = self.accounts.get_account(pubkey_index as usize)?;
-            indexes[i].write(pubkey_index as usize);
+            scratch.indexes[i].write(pubkey_index as usize);
             let pubkey = account.pubkey();
             let is_signer = (pubkey == self.signer || account.signer())
                 && !self.restricted_keys.is_restricted(pubkey);
             if is_signer && pubkey == self.signer {
                 uses_swig_signer = true;
             }
-            accounts[i].write(AccountMeta {
+            scratch.account_metas[i].write(AccountMeta {
                 pubkey,
                 is_signer,
                 is_writable: account.writable(),
             });
-            infos.push(account.into_account());
+            scratch.cpi_accounts[i].write(account.into_account());
         }
 
         // Parse data
@@ -314,14 +367,16 @@ where
         let (data, cursor) = self.read_slice(data_len as usize)?;
         self.cursor = cursor;
 
-        Ok(InstructionHolder {
+        let instruction = InstructionHolder {
             program_id,
-            cpi_accounts: infos,
-            accounts: unsafe { core::slice::from_raw_parts(accounts.as_ptr() as _, num_accounts) },
-            indexes: unsafe { core::slice::from_raw_parts(indexes.as_ptr() as _, num_accounts) },
+            cpi_accounts: unsafe { scratch.cpi_accounts(num_accounts) },
+            accounts: unsafe { scratch.account_metas(num_accounts) },
+            indexes: unsafe { scratch.indexes(num_accounts) },
             data,
             uses_swig_signer,
-        })
+        };
+
+        Ok(handler(instruction))
     }
 
     /// Reads a u8 value from the current cursor position.
@@ -371,5 +426,41 @@ where
 
         let slice = unsafe { self.data.get_unchecked(self.cursor..end) };
         Ok((slice, end))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn instruction_holder_borrows_scratch_account_metadata() {
+        let program_id: Pubkey = [1; 32];
+        let account_key: Pubkey = [2; 32];
+        let data = [3, 4, 5];
+        let account_metas = [AccountMeta {
+            pubkey: &account_key,
+            is_writable: true,
+            is_signer: false,
+        }];
+        let indexes = [7usize];
+        let holder = InstructionHolder {
+            program_id: &program_id,
+            cpi_accounts: &[],
+            indexes: &indexes,
+            accounts: &account_metas,
+            data: &data,
+            uses_swig_signer: false,
+        };
+
+        let instruction = holder.borrow();
+
+        assert_eq!(instruction.program_id, &program_id);
+        assert_eq!(instruction.data, data.as_slice());
+        assert_eq!(instruction.accounts.len(), 1);
+        assert_eq!(instruction.accounts[0].pubkey, &account_key);
+        assert!(instruction.accounts[0].is_writable);
+        assert!(!instruction.accounts[0].is_signer);
+        assert_eq!(holder.indexes, &[7]);
     }
 }
