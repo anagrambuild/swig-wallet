@@ -124,6 +124,7 @@ impl IntoBytes for SignV2Args {
 pub struct SignV2<'a> {
     pub args: &'a SignV2Args,
     authority_payload: &'a [u8],
+    authentication_payload: &'a [u8],
     instruction_payload: &'a [u8],
 }
 
@@ -139,15 +140,20 @@ impl<'a> SignV2<'a> {
         if data.len() < SignV2Args::LEN {
             return Err(SwigError::InvalidSwigSignInstructionDataTooShort.into());
         }
-        let (inst, rest) = unsafe { data.split_at_unchecked(SignV2Args::LEN) };
+        let (inst, rest) = data.split_at(SignV2Args::LEN);
         let args = unsafe { SignV2Args::load_unchecked(inst)? };
+        let instruction_payload_len = args.instruction_payload_len as usize;
+        if rest.len() < instruction_payload_len {
+            return Err(SwigError::InvalidSwigSignInstructionDataTooShort.into());
+        }
 
-        let (instruction_payload, authority_payload) =
-            unsafe { rest.split_at_unchecked(args.instruction_payload_len as usize) };
+        let (instruction_payload, authority_payload) = rest.split_at(instruction_payload_len);
+        let authentication_payload = &data[..SignV2Args::LEN + instruction_payload_len];
 
         Ok(Self {
             args,
             authority_payload,
+            authentication_payload,
             instruction_payload,
         })
     }
@@ -210,14 +216,14 @@ pub fn sign_v2(
         role.authority.authenticate_session(
             all_accounts,
             sign_v2.authority_payload,
-            sign_v2.instruction_payload,
+            sign_v2.authentication_payload,
             slot,
         )?;
     } else {
         role.authority.authenticate(
             all_accounts,
             sign_v2.authority_payload,
-            sign_v2.instruction_payload,
+            sign_v2.authentication_payload,
             slot,
         )?;
     }

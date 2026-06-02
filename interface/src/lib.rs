@@ -806,8 +806,7 @@ impl SignV2Instruction {
             );
         }
 
-        let mut signature_bytes = Vec::new();
-        signature_bytes.extend_from_slice(&ix_bytes);
+        let signature_bytes = [arg_bytes, &ix_bytes].concat();
 
         let nonced_payload = prepare_secp256k1_payload(
             current_slot,
@@ -902,12 +901,14 @@ impl SignV2Instruction {
             );
         }
 
+        let signature_bytes = [arg_bytes, &ix_bytes].concat();
+
         // Compute message hash (keccak for secp256r1 compatibility)
         let slot_bytes = current_slot.to_le_bytes();
         let counter_bytes = counter.to_le_bytes();
         let message_hash = keccak::hash(
             &[
-                &ix_bytes,
+                &signature_bytes,
                 &account_payload_bytes,
                 &slot_bytes[..],
                 &counter_bytes[..],

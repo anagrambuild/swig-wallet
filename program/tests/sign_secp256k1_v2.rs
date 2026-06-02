@@ -17,14 +17,16 @@ use solana_sdk::{
     signer::Signer,
     transaction::{TransactionError, VersionedTransaction},
 };
+use swig::actions::sign_v2::SignV2Args;
 use swig_interface::{AuthorityConfig, ClientAction, CreateSessionInstruction};
 use swig_state::{
-    action::all::All,
+    action::{all::All, sol_limit::SolLimit},
     authority::{
         secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority},
         AuthorityType,
     },
     swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
+    IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
 /// Helper function to get the current signature counter for a secp256k1
@@ -161,6 +163,117 @@ fn test_secp256k1_basic_signing_v2() {
     // Verify transfer was successful
     let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
     assert_eq!(recipient_account.lamports, 1_000_000 + transfer_amount);
+}
+
+#[test_log::test]
+fn test_secp256k1_rejects_same_key_role_id_substitution_v2() {
+    let mut context = setup_test_context().unwrap();
+
+    let root_authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
+
+    let shared_wallet = LocalSigner::random();
+    let public_key = shared_wallet
+        .credential()
+        .verifying_key()
+        .to_encoded_point(false)
+        .to_bytes();
+    let authority_bytes = &public_key.as_ref()[1..];
+    let signed_role_id = 1;
+    let substituted_role_id = 2;
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256k1,
+            authority: authority_bytes,
+        },
+        vec![ClientAction::SolLimit(SolLimit { amount: 1 })],
+    )
+    .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256k1,
+            authority: authority_bytes,
+        },
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
+
+    let recipient = Keypair::new();
+    context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
+    let transfer_amount = 5_000_000;
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
+
+    let signing_fn = |payload: &[u8]| -> [u8; 65] {
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&payload[..32]);
+        let hash = B256::from(hash);
+        shared_wallet.sign_hash_sync(&hash).unwrap().as_bytes()
+    };
+
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    let mut sign_ix = swig_interface::SignV2Instruction::new_secp256k1_with_signers(
+        swig_key,
+        swig_wallet_address,
+        signing_fn,
+        current_slot,
+        1,
+        transfer_ix,
+        signed_role_id,
+        &[context.default_payer.pubkey()],
+    )
+    .unwrap();
+
+    let signed_args =
+        unsafe { SignV2Args::load_unchecked(&sign_ix.data[..SignV2Args::LEN]) }.unwrap();
+    let substituted_args =
+        SignV2Args::new(substituted_role_id, signed_args.instruction_payload_len);
+    sign_ix.data[..SignV2Args::LEN].copy_from_slice(substituted_args.into_bytes().unwrap());
+
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_err(),
+        "role_id substitution should invalidate the signature"
+    );
+    match result.unwrap_err().err {
+        TransactionError::InstructionError(_, InstructionError::Custom(code)) => {
+            assert_eq!(code, SwigAuthenticateError::PermissionDenied as u32);
+        },
+        err => panic!("Expected secp256k1 authentication error, got {:?}", err),
+    }
+
+    let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
+    assert_eq!(recipient_account.lamports, 1_000_000);
 }
 
 #[test_log::test]

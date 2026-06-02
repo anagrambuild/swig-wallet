@@ -16,9 +16,10 @@ use solana_sdk::{
     transaction::{TransactionError, VersionedTransaction},
 };
 use solana_secp256r1_program::sign_message;
+use swig::actions::sign_v2::SignV2Args;
 use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state::{
-    action::all::All,
+    action::{all::All, sol_limit::SolLimit},
     authority::{
         secp256r1::{
             Secp256r1Authority, Secp256r1SessionAuthority, COMPRESSED_PUBKEY_SERIALIZED_SIZE,
@@ -27,6 +28,7 @@ use swig_state::{
         AuthorityType,
     },
     swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
+    IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
 /// Helper to generate a real secp256r1 key pair for testing
@@ -291,6 +293,115 @@ fn test_secp256r1_basic_signing_v2() {
     );
 
     println!("✓ Secp256r1 signing test passed with real cryptography");
+}
+
+#[test_log::test]
+fn test_secp256r1_rejects_same_key_role_id_substitution_v2() {
+    let mut context = setup_test_context().unwrap();
+
+    let root_authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000_000)
+        .unwrap();
+
+    let (signing_key, public_key) = create_test_secp256r1_keypair();
+    let signed_role_id = 1;
+    let substituted_role_id = 2;
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256r1,
+            authority: &public_key,
+        },
+        vec![ClientAction::SolLimit(SolLimit { amount: 1 })],
+    )
+    .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256r1,
+            authority: &public_key,
+        },
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
+
+    let recipient = Keypair::new();
+    context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
+    let transfer_amount = 5_000_000;
+    let transfer_ix = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &recipient.pubkey(),
+        transfer_amount,
+    );
+
+    let authority_fn = |message_hash: &[u8]| -> [u8; 64] {
+        sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap()
+    };
+
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    let mut instructions = swig_interface::SignV2Instruction::new_secp256r1(
+        swig_key,
+        swig_wallet_address,
+        authority_fn,
+        current_slot,
+        1,
+        transfer_ix,
+        signed_role_id,
+        &public_key,
+    )
+    .unwrap();
+
+    let sign_ix = instructions.last_mut().unwrap();
+    let signed_args =
+        unsafe { SignV2Args::load_unchecked(&sign_ix.data[..SignV2Args::LEN]) }.unwrap();
+    let substituted_args =
+        SignV2Args::new(substituted_role_id, signed_args.instruction_payload_len);
+    sign_ix.data[..SignV2Args::LEN].copy_from_slice(substituted_args.into_bytes().unwrap());
+
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &instructions,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
+
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_err(),
+        "role_id substitution should invalidate the secp256r1 message hash"
+    );
+    match result.unwrap_err().err {
+        TransactionError::InstructionError(_, InstructionError::Custom(code)) => {
+            assert_eq!(
+                code,
+                SwigAuthenticateError::PermissionDeniedSecp256r1InvalidMessageHash as u32
+            );
+        },
+        err => panic!(
+            "Expected invalid secp256r1 message hash error, got {:?}",
+            err
+        ),
+    }
+
+    let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
+    assert_eq!(recipient_account.lamports, 1_000_000);
 }
 
 #[test_log::test]
