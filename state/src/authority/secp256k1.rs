@@ -20,6 +20,7 @@ use crate::{IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, Tran
 
 /// Maximum age (in slots) for a Secp256k1 signature to be considered valid
 const MAX_SIGNATURE_AGE_IN_SLOTS: u64 = 60;
+const MAX_AUTHENTICATED_ACCOUNTS: usize = 64;
 
 /// Creation parameters for a session-based Secp256k1 authority.
 #[derive(Debug, no_padding::NoPadding)]
@@ -451,6 +452,7 @@ fn secp256k1_authenticate(
     if current_slot < authority_slot || current_slot - authority_slot > MAX_SIGNATURE_AGE_IN_SLOTS {
         return Err(SwigAuthenticateError::PermissionDeniedSecp256k1InvalidSignature.into());
     }
+    validate_account_count(account_infos.len())?;
 
     let signature = libsecp256k1::Signature::parse_standard_slice(&authority_payload[..64])
         .map_err(|_| SwigAuthenticateError::PermissionDeniedSecp256k1InvalidSignature)?;
@@ -548,6 +550,13 @@ fn secp256k1_authenticate(
     Ok(())
 }
 
+fn validate_account_count(account_count: usize) -> Result<(), ProgramError> {
+    if account_count > MAX_AUTHENTICATED_ACCOUNTS {
+        return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
+    }
+    Ok(())
+}
+
 /// Compresses a 64-byte uncompressed public key to a 33-byte compressed format.
 ///
 /// The compressed format uses:
@@ -621,5 +630,16 @@ pub fn hex_encode(input: &[u8], output: &mut [u8]) {
     for (i, &byte) in input.iter().enumerate() {
         output[i * 2] = HEX_CHARS[(byte >> 4) as usize];
         output[i * 2 + 1] = HEX_CHARS[(byte & 0x0F) as usize];
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_account_count_rejects_more_than_64_accounts() {
+        assert!(validate_account_count(MAX_AUTHENTICATED_ACCOUNTS).is_ok());
+        assert!(validate_account_count(MAX_AUTHENTICATED_ACCOUNTS + 1).is_err());
     }
 }
