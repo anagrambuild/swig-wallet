@@ -16,7 +16,7 @@ env:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest-m
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
 
