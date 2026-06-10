@@ -7,10 +7,11 @@ mod common;
 
 use common::*;
 use solana_sdk::{
-    instruction::{AccountMeta, Instruction},
+    instruction::{AccountMeta, Instruction, InstructionError},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
+    transaction::TransactionError,
 };
 use swig::actions::update_authority_v1::{AuthorityUpdateOperation, UpdateAuthorityV1Args};
 use swig_interface::{
@@ -24,7 +25,7 @@ use swig_state::{
     authority::AuthorityType,
     role::Position,
     swig::{Swig, SwigWithRoles},
-    IntoBytes, Transmutable,
+    IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
 /// Helper function to update authority with Ed25519 root authority
@@ -435,6 +436,80 @@ fn test_update_authority_allows_remove_of_malformed_program_curated_action() -> 
             .map_err(|e| anyhow::anyhow!("Failed to read action permission: {:?}", e))?,
         Permission::ManageAuthority,
         "Remaining action should be ManageAuthority"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_update_authority_rejects_root_authority_update() -> anyhow::Result<()> {
+    let mut context = setup_test_context()?;
+
+    let root_authority = Keypair::new();
+    let id = [24u8; 32];
+    let (swig, _) = create_swig_ed25519(&mut context, &root_authority, id)?;
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig: {:?}", e))?;
+    let root_role_id = swig_data
+        .lookup_role_id(root_authority.pubkey().as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to lookup root role id: {:?}", e))?
+        .ok_or(anyhow::anyhow!("Root role not found"))?;
+
+    assert_eq!(root_role_id, 0, "Root authority should be role 0");
+
+    let update_root_ix = UpdateAuthorityInstruction::new_with_ed25519_authority(
+        swig,
+        context.default_payer.pubkey(),
+        root_authority.pubkey(),
+        root_role_id,
+        root_role_id,
+        UpdateAuthorityData::ReplaceAll(vec![ClientAction::SolLimit(SolLimit { amount: 1 })]),
+    )?;
+
+    let msg = solana_sdk::message::v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[update_root_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+
+    let tx = solana_sdk::transaction::VersionedTransaction::try_new(
+        solana_sdk::message::VersionedMessage::V0(msg),
+        &[&context.default_payer, &root_authority],
+    )?;
+
+    let result = context.svm.send_transaction(tx);
+    assert!(result.is_err(), "Updating root authority should fail");
+    assert_eq!(
+        result.unwrap_err().err,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(
+                SwigAuthenticateError::PermissionDeniedCannotUpdateRootAuthority as u32,
+            ),
+        )
+    );
+
+    let swig_account_after = context.svm.get_account(&swig).unwrap();
+    let swig_data_after = SwigWithRoles::from_bytes(&swig_account_after.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig after update: {:?}", e))?;
+    let root_role_after = swig_data_after
+        .get_role(root_role_id)
+        .map_err(|e| anyhow::anyhow!("Failed to get root role after update: {:?}", e))?
+        .ok_or(anyhow::anyhow!("Root role disappeared"))?;
+    let root_actions = root_role_after
+        .get_all_actions()
+        .map_err(|e| anyhow::anyhow!("Failed to get root actions: {:?}", e))?;
+
+    assert_eq!(root_actions.len(), 1, "Root actions should be unchanged");
+    assert_eq!(
+        root_actions[0]
+            .permission()
+            .map_err(|e| anyhow::anyhow!("Failed to read root action permission: {:?}", e))?,
+        Permission::All,
+        "Root authority should keep its original All permission"
     );
 
     Ok(())
