@@ -25,6 +25,7 @@ use swig_state::{
     },
     authority::AuthorityType,
     swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
+    IntoBytes, SwigAuthenticateError,
 };
 
 /// Test basic token destination limit functionality with SignV2
@@ -195,6 +196,213 @@ fn test_token_destination_limit_basic_v2() {
         dest_limit.amount,
         destination_limit_amount - transfer_amount
     );
+}
+
+/// Destination limits must validate every token transfer in one SignV2 payload.
+#[test_log::test]
+fn test_token_destination_limit_rejects_second_unmatched_transfer_v2() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    let allowed_recipient = Keypair::new();
+    let blocked_recipient = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&allowed_recipient.pubkey(), 1_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&blocked_recipient.pubkey(), 1_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 1_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
+    let allowed_recipient_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &allowed_recipient.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+    let blocked_recipient_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &blocked_recipient.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &swig_ata,
+        1000,
+    )
+    .unwrap();
+
+    create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 1_000_000_000)
+        .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ProgramAll(ProgramAll {}),
+            ClientAction::TokenDestinationLimit(TokenDestinationLimit {
+                token_mint: mint_pubkey.to_bytes(),
+                destination: allowed_recipient_ata.to_bytes(),
+                amount: 1000,
+            }),
+        ],
+    )
+    .unwrap();
+
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
+
+    let allowed_transfer_amount = 100u64;
+    let blocked_transfer_amount = 200u64;
+    let allowed_transfer_ix = spl_token::instruction::transfer(
+        &spl_token::ID,
+        &swig_ata,
+        &allowed_recipient_ata,
+        &swig_wallet_address,
+        &[],
+        allowed_transfer_amount,
+    )
+    .unwrap();
+    let blocked_transfer_ix = spl_token::instruction::transfer(
+        &spl_token::ID,
+        &swig_ata,
+        &blocked_recipient_ata,
+        &swig_wallet_address,
+        &[],
+        blocked_transfer_amount,
+    )
+    .unwrap();
+
+    let initial_accounts = vec![
+        AccountMeta::new(swig, false),
+        AccountMeta::new(swig_wallet_address, false),
+        AccountMeta::new_readonly(second_authority.pubkey(), true),
+    ];
+    let (final_accounts, compact_ixs) = compact_instructions(
+        swig,
+        initial_accounts,
+        vec![allowed_transfer_ix, blocked_transfer_ix],
+    );
+    let instruction_payload = compact_ixs.into_bytes();
+    let sign_args = SignV2Args::new(1, instruction_payload.len() as u16);
+    let mut sign_ix_data = Vec::new();
+    sign_ix_data.extend_from_slice(sign_args.into_bytes().unwrap());
+    sign_ix_data.extend_from_slice(&instruction_payload);
+    sign_ix_data.push(2);
+
+    let sign_ix = Instruction {
+        program_id: swig::ID.into(),
+        accounts: final_accounts,
+        data: sign_ix_data,
+    };
+
+    let allowed_initial_balance = u64::from_le_bytes(
+        context
+            .svm
+            .get_account(&allowed_recipient_ata)
+            .unwrap()
+            .data
+            .get(64..72)
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
+    let blocked_initial_balance = u64::from_le_bytes(
+        context
+            .svm
+            .get_account(&blocked_recipient_ata)
+            .unwrap()
+            .data
+            .get(64..72)
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
+
+    let message = v0::Message::try_compile(
+        &second_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&second_authority]).unwrap();
+
+    let result = context.svm.send_transaction(tx);
+
+    assert!(result.is_err());
+    assert_eq!(
+        result.unwrap_err().err,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(
+                SwigAuthenticateError::PermissionDeniedMissingPermission as u32
+            ),
+        )
+    );
+
+    let allowed_final_balance = u64::from_le_bytes(
+        context
+            .svm
+            .get_account(&allowed_recipient_ata)
+            .unwrap()
+            .data
+            .get(64..72)
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
+    let blocked_final_balance = u64::from_le_bytes(
+        context
+            .svm
+            .get_account(&blocked_recipient_ata)
+            .unwrap()
+            .data
+            .get(64..72)
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    );
+
+    assert_eq!(allowed_final_balance, allowed_initial_balance);
+    assert_eq!(blocked_final_balance, blocked_initial_balance);
 }
 
 /// Test token destination limit exceeded with SignV2

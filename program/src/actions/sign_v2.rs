@@ -492,8 +492,7 @@ pub fn sign_v2(
                                     )? {
                                         dest_action.run(amount, slot)?;
                                         destination_limit_applied = true;
-                                        return Ok(false); // Stop processing
-                                                          // after first match
+                                        return Ok(true);
                                     }
 
                                     // Then check non-recurring destination limits
@@ -504,11 +503,11 @@ pub fn sign_v2(
                                     )? {
                                         dest_action.run(amount)?;
                                         destination_limit_applied = true;
-                                        return Ok(false); // Stop processing
-                                                          // after first match
+                                        return Ok(true);
                                     }
 
-                                    Ok(true) // Continue processing
+                                    Err(SwigAuthenticateError::PermissionDeniedMissingPermission
+                                        .into())
                                 },
                             )?;
 
@@ -574,52 +573,54 @@ pub fn sign_v2(
                     }
 
                     if total_token_spent > 0 {
-                        // Check token destination limits for outgoing transfers using zero-copy
-                        // approach
                         let source_account_key = unsafe { all_accounts.get_unchecked(index) }.key();
-                        let mut destination_limit_applied = false;
+                        if has_token_destination_limits(actions, mint)? {
+                            let mut destination_limit_applied = false;
 
-                        process_token_destinations(
-                            sign_v2.instruction_payload,
-                            source_account_key,
-                            all_accounts,
-                            ctx.accounts.swig_wallet_address.key(),
-                            |destination| -> Result<bool, ProgramError> {
-                                // Create the combined key [mint + destination] for matching
-                                let mut combined_key = [0u8; 64];
-                                combined_key[..32].copy_from_slice(mint);
-                                combined_key[32..].copy_from_slice(destination.as_ref());
+                            process_token_destinations(
+                                sign_v2.instruction_payload,
+                                source_account_key,
+                                all_accounts,
+                                ctx.accounts.swig_wallet_address.key(),
+                                |destination, amount| -> Result<bool, ProgramError> {
+                                    // Create the combined key [mint + destination] for matching
+                                    let mut combined_key = [0u8; 64];
+                                    combined_key[..32].copy_from_slice(mint);
+                                    combined_key[32..].copy_from_slice(destination.as_ref());
 
-                                // First check recurring destination limits
-                                if let Some(action) = RoleMut::get_action_mut::<
-                                    TokenRecurringDestinationLimit,
-                                >(
-                                    actions, &combined_key
-                                )? {
-                                    action.run(total_token_spent, slot)?;
-                                    destination_limit_applied = true;
-                                    return Ok(false); // Stop processing after
-                                                      // first match
-                                }
+                                    // First check recurring destination limits
+                                    if let Some(action) = RoleMut::get_action_mut::<
+                                        TokenRecurringDestinationLimit,
+                                    >(
+                                        actions, &combined_key
+                                    )? {
+                                        action.run(amount, slot)?;
+                                        destination_limit_applied = true;
+                                        return Ok(true);
+                                    }
 
-                                // Then check non-recurring destination limits
-                                if let Some(action) = RoleMut::get_action_mut::<
-                                    TokenDestinationLimit,
-                                >(
-                                    actions, &combined_key
-                                )? {
-                                    action.run(total_token_spent)?;
-                                    destination_limit_applied = true;
-                                    return Ok(false); // Stop processing after
-                                                      // first match
-                                }
+                                    // Then check non-recurring destination limits
+                                    if let Some(action) = RoleMut::get_action_mut::<
+                                        TokenDestinationLimit,
+                                    >(
+                                        actions, &combined_key
+                                    )? {
+                                        action.run(amount)?;
+                                        destination_limit_applied = true;
+                                        return Ok(true);
+                                    }
 
-                                Ok(true) // Continue processing
-                            },
-                        )?;
+                                    Err(SwigAuthenticateError::PermissionDeniedMissingPermission
+                                        .into())
+                                },
+                            )?;
 
-                        // If a destination limit was applied, continue to next account
-                        if destination_limit_applied {
+                            if !destination_limit_applied {
+                                return Err(
+                                    SwigAuthenticateError::PermissionDeniedMissingPermission.into(),
+                                );
+                            }
+
                             continue 'account_loop;
                         }
 
@@ -779,6 +780,38 @@ fn has_sol_destination_limits(actions_data: &[u8]) -> Result<bool, ProgramError>
     Ok(false)
 }
 
+/// Checks if the role has token destination limits configured for a mint.
+fn has_token_destination_limits(
+    actions_data: &[u8],
+    token_mint: &[u8],
+) -> Result<bool, ProgramError> {
+    let mut cursor = 0;
+    while cursor < actions_data.len() {
+        if cursor + Action::LEN > actions_data.len() {
+            break;
+        }
+
+        let action =
+            unsafe { Action::load_unchecked(&actions_data[cursor..cursor + Action::LEN])? };
+        let permission = action.permission()?;
+        let action_start = cursor + Action::LEN;
+        let boundary = action.boundary() as usize;
+
+        if (permission == Permission::TokenDestinationLimit
+            || permission == Permission::TokenRecurringDestinationLimit)
+            && boundary >= action_start + 32
+            && actions_data.len() >= action_start + 32
+            && token_mint == &actions_data[action_start..action_start + 32]
+        {
+            return Ok(true);
+        }
+
+        cursor = boundary;
+    }
+
+    Ok(false)
+}
+
 /// Processes SOL transfer destinations and amounts from instruction payload
 /// using a callback. This zero-copy approach avoids allocations by calling the
 /// provided function for each transfer.
@@ -800,8 +833,8 @@ fn process_sol_transfers<F>(
     mut callback: F,
 ) -> Result<(), ProgramError>
 where
-    F: FnMut(&Pubkey, u64) -> Result<bool, ProgramError>, /* Returns true to continue, false to
-                                                           * stop */
+    // Returns true to continue, false to stop.
+    F: FnMut(&Pubkey, u64) -> Result<bool, ProgramError>,
 {
     // Parse the instruction payload using the instruction iterator
     let restricted_keys: &[&Pubkey] = &[]; // No restricted keys for this use case
@@ -878,7 +911,8 @@ fn process_token_destinations<F>(
     mut callback: F,
 ) -> Result<(), ProgramError>
 where
-    F: FnMut(&Pubkey) -> Result<bool, ProgramError>, // Returns true to continue, false to stop
+    F: FnMut(&Pubkey, u64) -> Result<bool, ProgramError>, /* Returns true to continue, false to
+                                                           * stop */
 {
     // Parse the instruction payload using the instruction iterator
     let restricted_keys: &[&Pubkey] = &[]; // No restricted keys for this use case
@@ -893,7 +927,7 @@ where
             || *instruction.program_id == crate::SPL_TOKEN_2022_ID
         {
             // Check if this is a Transfer instruction (discriminator = 3)
-            if !instruction.data.is_empty() && instruction.data[0] == 3 {
+            if instruction.data.len() >= 9 && instruction.data[0] == 3 {
                 // SPL Token Transfer instruction layout:
                 // - accounts[0]: source token account
                 // - accounts[1]: destination token account
@@ -905,8 +939,19 @@ where
                     if *source_pubkey == source_account.as_ref() {
                         let destination_pubkey = instruction.accounts[1].pubkey;
 
-                        // Call the callback with the destination
-                        if !callback(destination_pubkey)? {
+                        let amount = u64::from_le_bytes([
+                            instruction.data[1],
+                            instruction.data[2],
+                            instruction.data[3],
+                            instruction.data[4],
+                            instruction.data[5],
+                            instruction.data[6],
+                            instruction.data[7],
+                            instruction.data[8],
+                        ]);
+
+                        // Call the callback with the destination and transfer amount.
+                        if !callback(destination_pubkey, amount)? {
                             return Ok(()); // Early exit if callback returns
                                            // false
                         }
