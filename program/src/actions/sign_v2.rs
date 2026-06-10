@@ -139,11 +139,14 @@ impl<'a> SignV2<'a> {
         if data.len() < SignV2Args::LEN {
             return Err(SwigError::InvalidSwigSignInstructionDataTooShort.into());
         }
-        let (inst, rest) = unsafe { data.split_at_unchecked(SignV2Args::LEN) };
+        let (inst, rest) = data.split_at(SignV2Args::LEN);
         let args = unsafe { SignV2Args::load_unchecked(inst)? };
+        let instruction_payload_len = args.instruction_payload_len as usize;
+        if rest.len() < instruction_payload_len {
+            return Err(SwigError::InvalidSwigSignInstructionDataTooShort.into());
+        }
 
-        let (instruction_payload, authority_payload) =
-            unsafe { rest.split_at_unchecked(args.instruction_payload_len as usize) };
+        let (instruction_payload, authority_payload) = rest.split_at(instruction_payload_len);
 
         Ok(Self {
             args,
@@ -962,4 +965,47 @@ where
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sign_v2_data(role_id: u32, instruction_payload: &[u8], authority_payload: &[u8]) -> Vec<u8> {
+        let args = SignV2Args::new(role_id, instruction_payload.len() as u16);
+        let mut data = Vec::new();
+        data.extend_from_slice(args.into_bytes().unwrap());
+        data.extend_from_slice(instruction_payload);
+        data.extend_from_slice(authority_payload);
+        data
+    }
+
+    #[test]
+    fn from_instruction_bytes_splits_instruction_and_authority_payload() {
+        let instruction_payload = [1, 2, 3, 4];
+        let authority_payload = [9, 8, 7];
+        let data = sign_v2_data(7, &instruction_payload, &authority_payload);
+
+        let parsed = SignV2::from_instruction_bytes(&data).unwrap();
+
+        assert_eq!(parsed.args.role_id, 7);
+        assert_eq!(parsed.instruction_payload, &instruction_payload);
+        assert_eq!(parsed.authority_payload, &authority_payload);
+    }
+
+    #[test]
+    fn from_instruction_bytes_rejects_truncated_instruction_payload() {
+        let args = SignV2Args::new(7, 4);
+        let mut data = Vec::new();
+        data.extend_from_slice(args.into_bytes().unwrap());
+        data.extend_from_slice(&[1, 2, 3]);
+
+        let result = SignV2::from_instruction_bytes(&data);
+
+        assert!(matches!(
+            result,
+            Err(ProgramError::Custom(code))
+                if code == SwigError::InvalidSwigSignInstructionDataTooShort as u32
+        ));
+    }
 }
