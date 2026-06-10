@@ -192,6 +192,84 @@ fn test_create_sub_account() {
     );
 }
 
+#[test_log::test]
+fn test_create_sub_account_cannot_recreate_bound_sub_account() {
+    let mut context = setup_test_context().unwrap();
+    let recipient = Keypair::new();
+    context.svm.warp_to_slot(1);
+
+    let root_authority = Keypair::new();
+    let sub_account_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&sub_account_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: sub_account_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::SubAccount(SubAccount::new_for_creation()),
+            ClientAction::SubAccount(SubAccount::new_for_creation()),
+        ],
+    )
+    .unwrap();
+
+    let role_id = 1;
+    let root_role_id = 0;
+    let sub_account =
+        create_sub_account(&mut context, &swig_key, &sub_account_authority, role_id, id).unwrap();
+
+    context.svm.airdrop(&sub_account, 5_000_000_000).unwrap();
+
+    toggle_sub_account(
+        &mut context,
+        &swig_key,
+        &sub_account,
+        &root_authority,
+        role_id,
+        root_role_id,
+        false,
+    )
+    .unwrap();
+
+    let recreate_result =
+        create_sub_account(&mut context, &swig_key, &sub_account_authority, role_id, id);
+    assert!(
+        recreate_result.is_err(),
+        "create_sub_account should be one-shot once a sub-account is bound"
+    );
+
+    let transfer_ix =
+        solana_system_interface::instruction::transfer(&sub_account, &recipient.pubkey(), 1_000);
+    let sign_result = sub_account_sign(
+        &mut context,
+        &swig_key,
+        &sub_account,
+        &sub_account_authority,
+        role_id,
+        vec![transfer_ix],
+    );
+    assert!(
+        sign_result.is_err(),
+        "create_sub_account replay should not re-enable a disabled sub-account"
+    );
+}
+
 // Test the withdrawal from a sub-account back to the main swig account
 #[test_log::test]
 fn test_withdraw_sol_from_sub_account() {
