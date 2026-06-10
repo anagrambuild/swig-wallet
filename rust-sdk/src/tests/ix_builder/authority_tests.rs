@@ -201,7 +201,7 @@ fn test_remove_authority_with_ed25519_root() {
     let add_auth_ix = builder
         .add_authority_instruction(
             AuthorityType::Ed25519,
-            &authority_pubkey.to_bytes(),
+            &new_authority.pubkey().to_bytes(),
             permissions,
             None,
         )

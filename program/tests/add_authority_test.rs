@@ -248,23 +248,26 @@ fn test_recurring_action_layout_validation() {
 
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
-    let second_authority = Keypair::new();
-    context
-        .svm
-        .airdrop(&second_authority.pubkey(), 10_000_000_000)
-        .unwrap();
+
+    // Each add_authority call uses a fresh keypair to keep each case independent
+    // from the program's duplicate-authority check.
 
     // Test SOL recurring limit validation
     use swig_state::action::sol_recurring_limit::SolRecurringLimit;
 
     // Should succeed - current equals limit and last_reset is 0
+    let authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
         &swig_authority,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
-            authority: second_authority.pubkey().as_ref(),
+            authority: authority.pubkey().as_ref(),
         },
         vec![ClientAction::SolRecurringLimit(SolRecurringLimit {
             recurring_amount: 500,
@@ -276,13 +279,18 @@ fn test_recurring_action_layout_validation() {
     assert!(result.is_ok(), "Valid SOL recurring limit should succeed");
 
     // Should fail - current doesn't equal limit
+    let authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
         &swig_authority,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
-            authority: second_authority.pubkey().as_ref(),
+            authority: authority.pubkey().as_ref(),
         },
         vec![ClientAction::SolRecurringLimit(SolRecurringLimit {
             recurring_amount: 500,
@@ -297,13 +305,18 @@ fn test_recurring_action_layout_validation() {
     );
 
     // Should fail - last_reset is not 0
+    let authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
         &swig_authority,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
-            authority: second_authority.pubkey().as_ref(),
+            authority: authority.pubkey().as_ref(),
         },
         vec![ClientAction::SolRecurringLimit(SolRecurringLimit {
             recurring_amount: 500,
@@ -322,13 +335,18 @@ fn test_recurring_action_layout_validation() {
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
 
     // Should succeed - current equals limit and last_reset is 0
+    let authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
         &swig_authority,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
-            authority: second_authority.pubkey().as_ref(),
+            authority: authority.pubkey().as_ref(),
         },
         vec![ClientAction::TokenRecurringLimit(TokenRecurringLimit {
             token_mint: mint_pubkey.to_bytes().try_into().unwrap(),
@@ -341,13 +359,18 @@ fn test_recurring_action_layout_validation() {
     assert!(result.is_ok(), "Valid token recurring limit should succeed");
 
     // Should fail - current doesn't equal limit
+    let authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
         &swig_authority,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
-            authority: second_authority.pubkey().as_ref(),
+            authority: authority.pubkey().as_ref(),
         },
         vec![ClientAction::TokenRecurringLimit(TokenRecurringLimit {
             token_mint: mint_pubkey.to_bytes().try_into().unwrap(),
@@ -363,13 +386,18 @@ fn test_recurring_action_layout_validation() {
     );
 
     // Should fail - last_reset is not 0
+    let authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
         &swig_authority,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
-            authority: second_authority.pubkey().as_ref(),
+            authority: authority.pubkey().as_ref(),
         },
         vec![ClientAction::TokenRecurringLimit(TokenRecurringLimit {
             token_mint: mint_pubkey.to_bytes().try_into().unwrap(),
@@ -388,13 +416,18 @@ fn test_recurring_action_layout_validation() {
     use swig_state::action::stake_recurring_limit::StakeRecurringLimit;
 
     // Should succeed - current equals limit and last_reset is 0
+    let authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
         &swig_authority,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
-            authority: second_authority.pubkey().as_ref(),
+            authority: authority.pubkey().as_ref(),
         },
         vec![ClientAction::StakeRecurringLimit(StakeRecurringLimit {
             recurring_amount: 500,
@@ -406,13 +439,18 @@ fn test_recurring_action_layout_validation() {
     assert!(result.is_ok(), "Valid stake recurring limit should succeed");
 
     // Should fail - current doesn't equal limit
+    let authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
         &swig_authority,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
-            authority: second_authority.pubkey().as_ref(),
+            authority: authority.pubkey().as_ref(),
         },
         vec![ClientAction::StakeRecurringLimit(StakeRecurringLimit {
             recurring_amount: 500,
@@ -427,13 +465,18 @@ fn test_recurring_action_layout_validation() {
     );
 
     // Should fail - last_reset is not 0
+    let authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
     let result = add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
         &swig_authority,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
-            authority: second_authority.pubkey().as_ref(),
+            authority: authority.pubkey().as_ref(),
         },
         vec![ClientAction::StakeRecurringLimit(StakeRecurringLimit {
             recurring_amount: 500,
@@ -445,5 +488,173 @@ fn test_recurring_action_layout_validation() {
     assert!(
         result.is_err(),
         "Stake recurring limit with non-zero last_reset should fail"
+    );
+}
+
+#[test_log::test]
+fn test_cannot_add_duplicate_authority() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    )
+    .unwrap();
+
+    context.svm.warp_to_slot(10);
+
+    let result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    );
+
+    assert!(result.is_err(), "Re-adding the same authority should fail");
+    if let Err(err) = result {
+        let error_string = format!("{:?}", err);
+        assert!(
+            error_string.contains("DuplicateAuthority") || error_string.contains("Custom"),
+            "Expected duplicate authority error, got: {:?}",
+            err
+        );
+    }
+
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(
+        swig.state.roles, 2,
+        "Duplicate attempt should not add a role"
+    );
+    assert_eq!(
+        swig.state.role_counter, 2,
+        "Duplicate attempt should not burn a role id"
+    );
+}
+
+#[test_log::test]
+fn test_cannot_add_duplicate_of_last_role_among_multiple() {
+    use swig_state::action::{all::All, sol_limit::SolLimit};
+
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    // Three distinct authorities, each with a different action set.
+    let authority1 = Keypair::new();
+    let authority2 = Keypair::new();
+    let authority3 = Keypair::new();
+    for kp in [&authority1, &authority2, &authority3] {
+        context.svm.airdrop(&kp.pubkey(), 10_000_000_000).unwrap();
+    }
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: authority1.pubkey().as_ref(),
+        },
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    )
+    .unwrap();
+    context.svm.warp_to_slot(10);
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: authority2.pubkey().as_ref(),
+        },
+        vec![ClientAction::SolLimit(SolLimit { amount: 1_000_000 })],
+    )
+    .unwrap();
+    context.svm.warp_to_slot(12);
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: authority3.pubkey().as_ref(),
+        },
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
+    context.svm.warp_to_slot(14);
+
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 4, "Setup should have root + 3 roles");
+
+    // Re-add authority3 (the last role) — must fail.
+    let result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: authority3.pubkey().as_ref(),
+        },
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    );
+
+    assert!(
+        result.is_err(),
+        "Re-adding the last existing authority should fail"
+    );
+    if let Err(err) = result {
+        let error_string = format!("{:?}", err);
+        assert!(
+            error_string.contains("DuplicateAuthority") || error_string.contains("Custom"),
+            "Expected duplicate authority error, got: {:?}",
+            err
+        );
+    }
+
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(
+        swig.state.roles, 4,
+        "Duplicate attempt should not add a role"
+    );
+    assert_eq!(
+        swig.state.role_counter, 4,
+        "Duplicate attempt should not burn a role id"
     );
 }
