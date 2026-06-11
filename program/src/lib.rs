@@ -85,6 +85,8 @@ security_txt! {
 /// # Returns
 /// * `ProgramResult` - The result of processing the instruction
 pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
+    validate_entry_account_count(ctx.remaining())?;
+
     let mut accounts =
         unsafe { Box::<[MaybeUninit<AccountInfo>; MAX_ACCOUNTS]>::new_uninit().assume_init() };
     let mut classifiers = unsafe {
@@ -94,6 +96,41 @@ pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
         execute(&mut ctx, accounts.as_mut(), classifiers.as_mut())?;
     }
     Ok(())
+}
+
+#[inline(always)]
+fn validate_entry_account_count(account_count: u64) -> ProgramResult {
+    if account_count > MAX_ACCOUNTS as u64 {
+        return Err(SwigError::InvalidAccountsLength.into());
+    }
+
+    Ok(())
+}
+
+#[inline(always)]
+fn validate_account_slot(
+    index: usize,
+    accounts_len: usize,
+    account_classification_len: usize,
+) -> ProgramResult {
+    if index >= accounts_len || index >= account_classification_len {
+        return Err(SwigError::InvalidAccountsLength.into());
+    }
+
+    Ok(())
+}
+
+#[inline(always)]
+fn validated_duplicate_account_index(
+    account_index: u8,
+    current_index: usize,
+) -> Result<usize, ProgramError> {
+    let account_index = account_index as usize;
+    if account_index >= current_index {
+        return Err(SwigError::InvalidAccountsLength.into());
+    }
+
+    Ok(account_index)
 }
 
 /// Determines if a Swig account is v2 format by checking the last 7 bytes.
@@ -181,6 +218,7 @@ unsafe fn execute(
 
     // First account must be processed to get SwigWithRoles
     if let Ok(acc) = ctx.next_account() {
+        validate_account_slot(index, accounts.len(), account_classification.len())?;
         match acc {
             MaybeAccount::Account(account) => {
                 let classification =
@@ -189,7 +227,8 @@ unsafe fn execute(
                 accounts[0].write(account);
             },
             MaybeAccount::Duplicated(account_index) => {
-                accounts[0].write(accounts[account_index as usize].assume_init_ref().clone());
+                let account_index = validated_duplicate_account_index(account_index, index)?;
+                accounts[0].write(accounts[account_index].assume_init_ref().clone());
             },
         }
         index = 1;
@@ -216,32 +255,33 @@ unsafe fn execute(
 
     // Process remaining accounts using the cache
     while let Ok(acc) = ctx.next_account() {
-        let classification = match &acc {
-            MaybeAccount::Account(account) => classify_account(
-                index,
-                account,
-                accounts,
-                account_classification,
-                program_scope_cache.as_ref(),
-            )?,
-            MaybeAccount::Duplicated(account_index) => {
-                let account = accounts[*account_index as usize].assume_init_ref().clone();
-                classify_account(
+        validate_account_slot(index, accounts.len(), account_classification.len())?;
+        let (account, classification) = match acc {
+            MaybeAccount::Account(account) => {
+                let classification = classify_account(
                     index,
                     &account,
                     accounts,
                     account_classification,
                     program_scope_cache.as_ref(),
-                )?
+                )?;
+                (account, classification)
+            },
+            MaybeAccount::Duplicated(account_index) => {
+                let account_index = validated_duplicate_account_index(account_index, index)?;
+                let account = accounts[account_index].assume_init_ref().clone();
+                let classification = classify_account(
+                    index,
+                    &account,
+                    accounts,
+                    account_classification,
+                    program_scope_cache.as_ref(),
+                )?;
+                (account, classification)
             },
         };
         account_classification[index].write(classification);
-        accounts[index].write(match acc {
-            MaybeAccount::Account(account) => account,
-            MaybeAccount::Duplicated(account_index) => {
-                accounts[account_index as usize].assume_init_ref().clone()
-            },
-        });
+        accounts[index].write(account);
         index += 1;
     }
 
@@ -443,5 +483,46 @@ unsafe fn classify_account(
             }
             Ok(AccountClassification::None)
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_invalid_accounts_length(result: Result<(), ProgramError>) {
+        assert!(matches!(
+            result,
+            Err(ProgramError::Custom(code)) if code == SwigError::InvalidAccountsLength as u32
+        ));
+    }
+
+    #[test]
+    fn validate_entry_account_count_accepts_max_accounts() {
+        assert!(validate_entry_account_count(MAX_ACCOUNTS as u64).is_ok());
+    }
+
+    #[test]
+    fn validate_entry_account_count_rejects_more_than_max_accounts() {
+        assert_invalid_accounts_length(validate_entry_account_count(MAX_ACCOUNTS as u64 + 1));
+    }
+
+    #[test]
+    fn validate_account_slot_rejects_array_capacity_overflow() {
+        assert_invalid_accounts_length(validate_account_slot(3, 3, 4));
+        assert_invalid_accounts_length(validate_account_slot(3, 4, 3));
+    }
+
+    #[test]
+    fn validated_duplicate_account_index_requires_prior_account() {
+        assert_eq!(validated_duplicate_account_index(0, 1).unwrap(), 0);
+        assert!(matches!(
+            validated_duplicate_account_index(1, 1),
+            Err(ProgramError::Custom(code)) if code == SwigError::InvalidAccountsLength as u32
+        ));
+        assert!(matches!(
+            validated_duplicate_account_index(2, 1),
+            Err(ProgramError::Custom(code)) if code == SwigError::InvalidAccountsLength as u32
+        ));
     }
 }
