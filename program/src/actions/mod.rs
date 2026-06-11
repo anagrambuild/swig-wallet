@@ -207,7 +207,7 @@ fn process_toggle_sub_account_v1(accounts: &[AccountInfo], data: &[u8]) -> Progr
 /// Migrates a Swig account to support wallet address feature.
 fn process_migrate_to_wallet_address_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = MigrateToWalletAddressV1Accounts::context(accounts)?;
-    migrate_to_wallet_address_v1(account_ctx, data)
+    migrate_to_wallet_address_v1(account_ctx, data, accounts)
 }
 
 /// Processes a TransferAssetsV1 instruction.

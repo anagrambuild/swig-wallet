@@ -6,19 +6,17 @@
 /// migrated Swig account.
 use no_padding::NoPadding;
 use pinocchio::{
+    account_info::AccountInfo,
     msg,
     program_error::ProgramError,
-    sysvars::{rent::Rent, Sysvar},
+    sysvars::{clock::Clock, rent::Rent, Sysvar},
     ProgramResult,
 };
 use swig_assertions::{check_self_pda, check_system_owner, check_zero_data};
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
-    swig::{
-        swig_account_seeds_with_bump, swig_account_signer, swig_wallet_address_seeds_with_bump,
-        swig_wallet_address_signer, Swig, SwigWithRoles,
-    },
-    Discriminator, IntoBytes, SwigStateError, Transmutable,
+    swig::{swig_wallet_address_seeds_with_bump, Swig},
+    Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable,
 };
 
 use crate::{
@@ -34,12 +32,14 @@ use crate::{
 /// # Fields
 /// * `discriminator` - The instruction type identifier
 /// * `wallet_address_bump` - Bump seed for the wallet address PDA
+/// * `role_id` - ID of the role authorizing the migration
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct MigrateToWalletAddressV1Args {
     discriminator: SwigInstruction,
     pub wallet_address_bump: u8,
-    pub _padding: [u8; 5], // Explicit padding to align to 8 bytes
+    pub _padding: u8,
+    pub role_id: u32,
 }
 
 impl MigrateToWalletAddressV1Args {
@@ -47,11 +47,13 @@ impl MigrateToWalletAddressV1Args {
     ///
     /// # Arguments
     /// * `wallet_address_bump` - Bump seed for wallet address PDA derivation
-    pub fn new(wallet_address_bump: u8) -> Self {
+    /// * `role_id` - ID of the role authorizing the migration
+    pub fn new(wallet_address_bump: u8, role_id: u32) -> Self {
         Self {
             discriminator: SwigInstruction::MigrateToWalletAddressV1,
             wallet_address_bump,
-            _padding: [0; 5],
+            _padding: 0,
+            role_id,
         }
     }
 }
@@ -69,6 +71,8 @@ impl IntoBytes for MigrateToWalletAddressV1Args {
 /// Struct representing the complete migrate instruction data.
 pub struct MigrateToWalletAddressV1<'a> {
     pub args: &'a MigrateToWalletAddressV1Args,
+    pub authority_payload: &'a [u8],
+    pub data_payload: &'a [u8],
 }
 
 impl<'a> MigrateToWalletAddressV1<'a> {
@@ -84,8 +88,13 @@ impl<'a> MigrateToWalletAddressV1<'a> {
         if bytes.len() < MigrateToWalletAddressV1Args::LEN {
             return Err(SwigError::InvalidSwigCreateInstructionDataTooShort.into());
         }
-        let args = unsafe { MigrateToWalletAddressV1Args::load_unchecked(bytes)? };
-        Ok(Self { args })
+        let (args_data, authority_payload) = bytes.split_at(MigrateToWalletAddressV1Args::LEN);
+        let args = unsafe { MigrateToWalletAddressV1Args::load_unchecked(args_data)? };
+        Ok(Self {
+            args,
+            authority_payload,
+            data_payload: args_data,
+        })
     }
 }
 
@@ -124,6 +133,7 @@ impl Transmutable for OldSwig {
 /// # Arguments
 /// * `ctx` - The account context for the migration
 /// * `migrate_data` - Raw migration instruction data
+/// * `all_accounts` - All accounts passed to the instruction for authority auth
 ///
 /// # Returns
 /// * `ProgramResult` - Success or error status
@@ -131,55 +141,72 @@ impl Transmutable for OldSwig {
 pub fn migrate_to_wallet_address_v1(
     ctx: Context<MigrateToWalletAddressV1Accounts>,
     migrate_data: &[u8],
+    all_accounts: &[AccountInfo],
 ) -> ProgramResult {
     let migrate = MigrateToWalletAddressV1::from_instruction_bytes(migrate_data)?;
 
-    // Validate that the swig account has the correct discriminator
-    let swig_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
-    if swig_data.len() < OldSwig::LEN {
-        return Err(SwigError::StateError.into());
-    }
+    let (old_swig_id, old_swig_bump, old_swig_roles, old_swig_role_counter) = {
+        // Validate that the swig account has the correct discriminator
+        let swig_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
+        if swig_data.len() < OldSwig::LEN {
+            return Err(SwigError::StateError.into());
+        }
 
-    let discriminator = swig_data[0];
-    if discriminator != Discriminator::SwigConfigAccount as u8 {
-        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
-    }
+        let discriminator = swig_data[0];
+        if discriminator != Discriminator::SwigConfigAccount as u8 {
+            return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+        }
 
-    // Check if this account is already migrated (has wallet_bump field)
-    // We can detect this by checking if reserved_lamports field is 0 and if the
-    // 41st byte (wallet_bump position) is non-zero
-    let old_swig = unsafe { OldSwig::load_unchecked(&swig_data[..OldSwig::LEN])? };
-    let potential_wallet_bump = swig_data[40]; // Position where wallet_bump would be
+        // Check if this account is already migrated (has wallet_bump field)
+        // We can detect this by checking if reserved_lamports field is 0 and if the
+        // 41st byte (wallet_bump position) is non-zero
+        let old_swig = unsafe { OldSwig::load_unchecked(&swig_data[..OldSwig::LEN])? };
+        let potential_wallet_bump = swig_data[40]; // Position where wallet_bump would be
 
-    if old_swig.reserved_lamports == 0 && potential_wallet_bump != 0 {
-        msg!("Account appears to already be migrated");
-        return Err(SwigError::StateError.into());
-    }
+        if old_swig.reserved_lamports == 0 && potential_wallet_bump != 0 {
+            msg!("Account appears to already be migrated");
+            return Err(SwigError::StateError.into());
+        }
 
-    // Validate authority has All or ManageAuthority permission
-    let authority_pubkey = ctx.accounts.authority.key();
+        (
+            old_swig.id,
+            old_swig.bump,
+            old_swig.roles,
+            old_swig.role_counter,
+        )
+    };
 
-    // Check if authority has All or ManageAuthority permission
-    let swig_with_roles = SwigWithRoles::from_bytes(&swig_data)?;
-    let role_id = swig_with_roles.lookup_role_id(authority_pubkey.as_ref())?;
+    // Authenticate and validate authority has All or ManageAuthority permission
+    {
+        let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        let (_swig_header, swig_roles) =
+            unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+        let role = Swig::get_mut_role(migrate.args.role_id, swig_roles)?
+            .ok_or(SwigStateError::RoleNotFound)?;
 
-    match role_id {
-        Some(id) => {
-            let role = swig_with_roles
-                .get_role(id)?
-                .ok_or(SwigStateError::RoleNotFound)?;
+        let slot = Clock::get()?.slot;
+        if role.authority.session_based() {
+            role.authority.authenticate_session(
+                all_accounts,
+                migrate.authority_payload,
+                migrate.data_payload,
+                slot,
+            )?;
+        } else {
+            role.authority.authenticate(
+                all_accounts,
+                migrate.authority_payload,
+                migrate.data_payload,
+                slot,
+            )?;
+        }
 
-            let has_all_permission = role.get_action::<All>(&[])?.is_some();
-            let has_manage_authority = role.get_action::<ManageAuthority>(&[])?.is_some();
-            if !has_all_permission && !has_manage_authority {
-                msg!("Authority lacks All or ManageAuthority permission");
-                return Err(SwigError::InvalidAuthorityType.into());
-            }
-        },
-        None => {
-            msg!("Authority not found in wallet roles");
-            return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-        },
+        let has_all_permission = role.get_action::<All>(&[])?.is_some();
+        let has_manage_authority = role.get_action::<ManageAuthority>(&[])?.is_some();
+        if !has_all_permission && !has_manage_authority {
+            msg!("Authority lacks All or ManageAuthority permission");
+            return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
+        }
     }
 
     // Validate wallet address account
@@ -203,21 +230,21 @@ pub fn migrate_to_wallet_address_v1(
     )?;
 
     // Create the new Swig structure with wallet_bump
-    let new_swig = Swig::new(old_swig.id, old_swig.bump, wallet_address_bump);
+    let new_swig = Swig::new(old_swig_id, old_swig_bump, wallet_address_bump);
 
     // Ensure the role counter and roles count are preserved
     let mut new_swig_with_preserved_data = new_swig;
-    new_swig_with_preserved_data.roles = old_swig.roles;
-    new_swig_with_preserved_data.role_counter = old_swig.role_counter;
+    new_swig_with_preserved_data.roles = old_swig_roles;
+    new_swig_with_preserved_data.role_counter = old_swig_role_counter;
 
     // Update the Swig account data in-place
     // Only modify the first 48 bytes (Swig struct), leaving all role/action data
     // intact
-    drop(swig_data); // Release the borrow
-    let mut swig_data_mut = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    let new_swig_bytes = new_swig_with_preserved_data.into_bytes()?;
-    swig_data_mut[..Swig::LEN].copy_from_slice(new_swig_bytes);
-    drop(swig_data_mut); // Release the borrow
+    {
+        let mut swig_data_mut = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        let new_swig_bytes = new_swig_with_preserved_data.into_bytes()?;
+        swig_data_mut[..Swig::LEN].copy_from_slice(new_swig_bytes);
+    }
 
     // Create the wallet address account by transferring rent-exempt lamports
     let wallet_address_rent_exemption = Rent::get()?.minimum_balance(0); // 0 space for system account
