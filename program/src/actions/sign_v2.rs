@@ -72,6 +72,9 @@ const STAKE_BALANCE_RANGE: core::ops::Range<usize> = 184..192;
 
 /// Account state constants
 const TOKEN_ACCOUNT_INITIALIZED_STATE: u8 = 1;
+const SYSTEM_TRANSFER_DISCRIMINATOR: u32 = 2;
+const TOKEN_TRANSFER_DISCRIMINATOR: u8 = 3;
+const TOKEN_TRANSFER_CHECKED_DISCRIMINATOR: u8 = 12;
 
 /// Empty exclude ranges for hash_except when no exclusions are needed
 const NO_EXCLUDE_RANGES: &[core::ops::Range<usize>] = &[];
@@ -475,6 +478,7 @@ pub fn sign_v2(
                         // Only check destination limits if they exist
                         if has_sol_destination_limits(actions)? {
                             let mut destination_limit_applied = false;
+                            let mut parsed_sol_spent = 0u64;
                             // Process SOL transfers using zero-copy callback approach
                             process_sol_transfers(
                                 sign_v2.instruction_payload,
@@ -482,6 +486,12 @@ pub fn sign_v2(
                                 all_accounts,
                                 ctx.accounts.swig_wallet_address.key(),
                                 |destination_pubkey, amount| -> Result<bool, ProgramError> {
+                                    let missing_permission =
+                                        SwigAuthenticateError::PermissionDeniedMissingPermission;
+                                    let next_parsed_sol_spent = parsed_sol_spent
+                                        .checked_add(amount)
+                                        .ok_or(missing_permission)?;
+                                    parsed_sol_spent = next_parsed_sol_spent;
                                     let dest_pubkey = destination_pubkey.as_ref();
 
                                     // First check recurring destination limits (higher precedence)
@@ -511,8 +521,10 @@ pub fn sign_v2(
                                 },
                             )?;
 
-                            // If destination limits exist but none matched, that's an error
-                            if !destination_limit_applied {
+                            // If destination limits exist, every actual debit must be parsed
+                            // and charged to a matching destination limit.
+                            let parsed_all_sol_spend = parsed_sol_spent == total_sol_spent;
+                            if !destination_limit_applied || !parsed_all_sol_spend {
                                 return Err(
                                     SwigAuthenticateError::PermissionDeniedMissingPermission.into(),
                                 );
@@ -576,6 +588,7 @@ pub fn sign_v2(
                         let source_account_key = unsafe { all_accounts.get_unchecked(index) }.key();
                         if has_token_destination_limits(actions, mint)? {
                             let mut destination_limit_applied = false;
+                            let mut parsed_token_spent = 0u64;
 
                             process_token_destinations(
                                 sign_v2.instruction_payload,
@@ -583,6 +596,12 @@ pub fn sign_v2(
                                 all_accounts,
                                 ctx.accounts.swig_wallet_address.key(),
                                 |destination, amount| -> Result<bool, ProgramError> {
+                                    let missing_permission =
+                                        SwigAuthenticateError::PermissionDeniedMissingPermission;
+                                    let next_parsed_token_spent = parsed_token_spent
+                                        .checked_add(amount)
+                                        .ok_or(missing_permission)?;
+                                    parsed_token_spent = next_parsed_token_spent;
                                     // Create the combined key [mint + destination] for matching
                                     let mut combined_key = [0u8; 64];
                                     combined_key[..32].copy_from_slice(mint);
@@ -615,7 +634,8 @@ pub fn sign_v2(
                                 },
                             )?;
 
-                            if !destination_limit_applied {
+                            let parsed_all_token_spend = parsed_token_spent == total_token_spent;
+                            if !destination_limit_applied || !parsed_all_token_spend {
                                 return Err(
                                     SwigAuthenticateError::PermissionDeniedMissingPermission.into(),
                                 );
@@ -846,14 +866,14 @@ where
 
         // Check if this is a System Program instruction
         if *instruction.program_id == crate::SYSTEM_PROGRAM_ID {
-            // Check if this is a Transfer instruction (discriminator = 2)
+            // Check if this is a Transfer instruction.
             if instruction.data.len() >= 12
                 && u32::from_le_bytes([
                     instruction.data[0],
                     instruction.data[1],
                     instruction.data[2],
                     instruction.data[3],
-                ]) == 2
+                ]) == SYSTEM_TRANSFER_DISCRIMINATOR
             {
                 // System Program Transfer instruction layout:
                 // - accounts[0]: source account (funding account)
@@ -926,35 +946,42 @@ where
         if *instruction.program_id == crate::SPL_TOKEN_ID
             || *instruction.program_id == crate::SPL_TOKEN_2022_ID
         {
-            // Check if this is a Transfer instruction (discriminator = 3)
-            if instruction.data.len() >= 9 && instruction.data[0] == 3 {
-                // SPL Token Transfer instruction layout:
-                // - accounts[0]: source token account
-                // - accounts[1]: destination token account
-                // - accounts[2]: authority
-                if instruction.accounts.len() >= 2 {
-                    let source_pubkey = &instruction.accounts[0].pubkey;
+            let destination_index = if instruction.data.len() >= 9
+                && instruction.accounts.len() >= 2
+                && instruction.data[0] == TOKEN_TRANSFER_DISCRIMINATOR
+            {
+                Some(1)
+            } else if instruction.data.len() >= 10
+                && instruction.accounts.len() >= 3
+                && instruction.data[0] == TOKEN_TRANSFER_CHECKED_DISCRIMINATOR
+            {
+                Some(2)
+            } else {
+                None
+            };
 
-                    // Check if this transfer is from our source account
-                    if *source_pubkey == source_account.as_ref() {
-                        let destination_pubkey = instruction.accounts[1].pubkey;
+            if let Some(destination_index) = destination_index {
+                let source_pubkey = &instruction.accounts[0].pubkey;
 
-                        let amount = u64::from_le_bytes([
-                            instruction.data[1],
-                            instruction.data[2],
-                            instruction.data[3],
-                            instruction.data[4],
-                            instruction.data[5],
-                            instruction.data[6],
-                            instruction.data[7],
-                            instruction.data[8],
-                        ]);
+                // Check if this transfer is from our source account
+                if *source_pubkey == source_account.as_ref() {
+                    let destination_pubkey = instruction.accounts[destination_index].pubkey;
 
-                        // Call the callback with the destination and transfer amount.
-                        if !callback(destination_pubkey, amount)? {
-                            return Ok(()); // Early exit if callback returns
-                                           // false
-                        }
+                    let amount = u64::from_le_bytes([
+                        instruction.data[1],
+                        instruction.data[2],
+                        instruction.data[3],
+                        instruction.data[4],
+                        instruction.data[5],
+                        instruction.data[6],
+                        instruction.data[7],
+                        instruction.data[8],
+                    ]);
+
+                    // Call the callback with the destination and transfer amount.
+                    if !callback(destination_pubkey, amount)? {
+                        return Ok(()); // Early exit if callback returns
+                                       // false
                     }
                 }
             }
