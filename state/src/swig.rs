@@ -427,6 +427,20 @@ pub struct Swig {
     pub _padding: [u8; 7],
 }
 
+/// Immutable split view of a Swig account buffer.
+pub struct SwigParts<'a> {
+    pub state: &'a Swig,
+    pub roles: &'a [u8],
+    pub tail: &'a [u8],
+}
+
+/// Mutable split view of a Swig account buffer.
+pub struct SwigPartsMut<'a> {
+    pub state: &'a mut Swig,
+    pub roles: &'a mut [u8],
+    pub tail: &'a mut [u8],
+}
+
 impl Swig {
     /// Creates a new Swig account.
     pub fn new(id: [u8; 32], bump: u8, wallet_bump: u8) -> Self {
@@ -441,15 +455,81 @@ impl Swig {
         }
     }
 
+    /// Returns the absolute end offset of the roles region in the full account buffer.
+    ///
+    /// Layout:
+    /// `[Swig::LEN header][roles bytes][optional tail bytes]`
+    pub fn roles_end_offset(account_data: &[u8]) -> Result<usize, ProgramError> {
+        if account_data.len() < Swig::LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+
+        let state = unsafe { Swig::load_unchecked(&account_data[..Swig::LEN])? };
+        let roles_and_tail = &account_data[Swig::LEN..];
+        let mut cursor = 0usize;
+
+        for _ in 0..state.roles {
+            if cursor + Position::LEN > roles_and_tail.len() {
+                return Err(ProgramError::InvalidAccountData);
+            }
+
+            let position = unsafe {
+                Position::load_unchecked(&roles_and_tail[cursor..cursor + Position::LEN])?
+            };
+            let boundary = position.boundary() as usize;
+            if boundary < cursor + Position::LEN || boundary > roles_and_tail.len() {
+                return Err(ProgramError::InvalidAccountData);
+            }
+            cursor = boundary;
+        }
+
+        Ok(Swig::LEN + cursor)
+    }
+
+    /// Splits a full account buffer into `[roles, tail]` slices.
+    pub fn split_roles_and_tail<'a>(
+        account_data: &'a [u8],
+    ) -> Result<(&'a [u8], &'a [u8]), ProgramError> {
+        let parts = Self::split_parts(account_data)?;
+        Ok((parts.roles, parts.tail))
+    }
+
+    /// Mutable variant of [`Self::split_roles_and_tail`].
+    pub fn split_roles_and_tail_mut<'a>(
+        account_data: &'a mut [u8],
+    ) -> Result<(&'a mut [u8], &'a mut [u8]), ProgramError> {
+        let parts = Self::split_parts_mut(account_data)?;
+        Ok((parts.roles, parts.tail))
+    }
+
+    /// Splits a full account buffer into typed header state + roles + tail.
+    pub fn split_parts<'a>(account_data: &'a [u8]) -> Result<SwigParts<'a>, ProgramError> {
+        let roles_end = Self::roles_end_offset(account_data)?;
+        let state = unsafe { Swig::load_unchecked(&account_data[..Swig::LEN])? };
+        let roles = &account_data[Swig::LEN..roles_end];
+        let tail = &account_data[roles_end..];
+        Ok(SwigParts { state, roles, tail })
+    }
+
+    /// Mutable variant of [`Self::split_parts`].
+    pub fn split_parts_mut<'a>(account_data: &'a mut [u8]) -> Result<SwigPartsMut<'a>, ProgramError> {
+        let roles_end = Self::roles_end_offset(account_data)?;
+        let roles_len = roles_end - Swig::LEN;
+        let (swig_header, roles_and_tail) = account_data.split_at_mut(Swig::LEN);
+        let (roles, tail) = roles_and_tail.split_at_mut(roles_len);
+        let state = unsafe { Swig::load_mut_unchecked(swig_header)? };
+        Ok(SwigPartsMut { state, roles, tail })
+    }
+
     /// Gets a mutable reference to a role by ID.
     pub fn get_mut_role(id: u32, roles: &mut [u8]) -> Result<Option<RoleMut<'_>>, ProgramError> {
         let mut cursor = 0;
         let mut found_offset = None;
         let roles_len = roles.len();
-        if roles_len < Swig::LEN {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        for _i in 0..roles_len {
+        while cursor < roles_len {
+            if cursor + Position::LEN > roles_len {
+                return Err(ProgramError::InvalidAccountData);
+            }
             let offset = cursor + Position::LEN;
             let position =
                 unsafe { Position::load_unchecked(roles.get_unchecked(cursor..offset))? };
@@ -457,7 +537,11 @@ impl Swig {
                 found_offset = Some(cursor);
                 break;
             }
-            cursor = position.boundary() as usize;
+            let boundary = position.boundary() as usize;
+            if boundary < offset || boundary > roles_len {
+                return Err(ProgramError::InvalidAccountData);
+            }
+            cursor = boundary;
         }
         if let Some(offset) = found_offset {
             let (position, remaning) =
@@ -539,8 +623,9 @@ impl<'a> SwigWithRoles<'a> {
             return Err(ProgramError::InvalidAccountData);
         }
 
+        let roles_end = Swig::roles_end_offset(bytes)?;
         let state = unsafe { Swig::load_unchecked(&bytes[..Swig::LEN])? };
-        let roles = &bytes[Swig::LEN..];
+        let roles = &bytes[Swig::LEN..roles_end];
 
         Ok(SwigWithRoles { state, roles })
     }
@@ -746,6 +831,7 @@ mod tests {
     use crate::{
         action::{all::All, manage_authority::ManageAuthority, sol_limit::SolLimit, Actionable},
         authority::ed25519::ED25519Authority,
+        tail::{rent_claimer, SavedTail},
         Transmutable,
     };
 
@@ -2009,6 +2095,121 @@ mod tests {
             "Second role should not exist after removal"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_add_role_with_tail_preserves_tail_bytes() -> Result<(), ProgramError> {
+        let (mut account_buffer, id, bump) = setup_precise_test_buffer(2, Action::LEN + 8);
+        let swig = Swig::new(id, bump, 0);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig)?;
+
+        let authority1 = ED25519Authority {
+            public_key: [8; 32],
+        };
+        let action_data = All {}.into_bytes()?;
+        let action = Action::new(
+            All::TYPE,
+            action_data.len() as u16,
+            Action::LEN as u32 + action_data.len() as u32,
+        );
+        let actions_data = [action.into_bytes()?, action_data].concat();
+        builder.add_role(AuthorityType::Ed25519, authority1.into_bytes()?, &actions_data)?;
+        drop(builder);
+
+        let roles_end = Swig::roles_end_offset(&account_buffer)?;
+        account_buffer.truncate(roles_end);
+        let tail = rent_claimer::entry(&[42u8; 32]);
+        account_buffer.extend_from_slice(&tail);
+        let expected_tail = tail.to_vec();
+
+        let saved_tail = {
+            let (_, tail_slice) = Swig::split_roles_and_tail_mut(&mut account_buffer)?;
+            SavedTail::take(tail_slice)?
+        };
+
+        let role_size = Position::LEN + ED25519Authority::LEN + actions_data.len();
+        let old_len = account_buffer.len();
+        let new_len = old_len + role_size;
+        account_buffer.resize(new_len, 0);
+        saved_tail.restore(&mut account_buffer);
+
+        {
+            let (swig_header, roles_and_tail) = account_buffer.split_at_mut(Swig::LEN);
+            let roles_capacity_len = roles_and_tail.len() - saved_tail.len();
+            let (roles_capacity, _) = roles_and_tail.split_at_mut(roles_capacity_len);
+            let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+            let mut builder = SwigBuilder {
+                role_buffer: roles_capacity,
+                swig,
+            };
+            let authority2 = ED25519Authority {
+                public_key: [9; 32],
+            };
+            builder.add_role(AuthorityType::Ed25519, authority2.into_bytes()?, &actions_data)?;
+        }
+        saved_tail.restore(&mut account_buffer);
+
+        let (_, tail_after) = Swig::split_roles_and_tail(&account_buffer)?;
+        assert_eq!(tail_after, expected_tail.as_slice());
+        assert_eq!(SwigWithRoles::from_bytes(&account_buffer)?.state.roles, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_remove_role_with_tail_preserves_tail_bytes() -> Result<(), ProgramError> {
+        let (mut account_buffer, id, bump) = setup_precise_test_buffer(3, Action::LEN + 8);
+        let swig = Swig::new(id, bump, 0);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig)?;
+
+        let action_data = All {}.into_bytes()?;
+        let action = Action::new(
+            All::TYPE,
+            action_data.len() as u16,
+            Action::LEN as u32 + action_data.len() as u32,
+        );
+        let actions_data = [action.into_bytes()?, action_data].concat();
+        let authority1 = ED25519Authority {
+            public_key: [10; 32],
+        };
+        let authority2 = ED25519Authority {
+            public_key: [11; 32],
+        };
+        builder.add_role(AuthorityType::Ed25519, authority1.into_bytes()?, &actions_data)?;
+        builder.add_role(AuthorityType::Ed25519, authority2.into_bytes()?, &actions_data)?;
+        drop(builder);
+
+        let roles_end = Swig::roles_end_offset(&account_buffer)?;
+        account_buffer.truncate(roles_end);
+        let tail = rent_claimer::entry(&[24u8; 32]);
+        account_buffer.extend_from_slice(&tail);
+        let expected_tail = tail.to_vec();
+
+        let saved_tail = {
+            let (_, tail_slice) = Swig::split_roles_and_tail_mut(&mut account_buffer)?;
+            SavedTail::take(tail_slice)?
+        };
+
+        let removed = {
+            let (swig_header, roles_and_tail) = account_buffer.split_at_mut(Swig::LEN);
+            let roles_len = roles_and_tail.len() - saved_tail.len();
+            let (roles, _) = roles_and_tail.split_at_mut(roles_len);
+            let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+            let mut builder = SwigBuilder {
+                role_buffer: roles,
+                swig,
+            };
+            builder.remove_role(1)?
+        };
+
+        let old_len = account_buffer.len();
+        let new_len = old_len - removed.1;
+        account_buffer.resize(new_len, 0);
+        saved_tail.restore(&mut account_buffer);
+
+        let (_, tail_after) = Swig::split_roles_and_tail(&account_buffer)?;
+        assert_eq!(tail_after, expected_tail.as_slice());
+        assert_eq!(SwigWithRoles::from_bytes(&account_buffer)?.state.roles, 1);
         Ok(())
     }
 }

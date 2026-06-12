@@ -15,6 +15,7 @@ use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, Action, ActionLoader},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
+    tail::SavedTail,
     swig::Swig,
     Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut,
 };
@@ -282,7 +283,7 @@ impl<'a> UpdateAuthorityV1<'a> {
 /// Performs a replace-all operation on an authority's actions.
 fn perform_replace_all_operation(
     swig_roles: &mut [u8],
-    swig_data_len: usize,
+    current_roles_len: usize,
     authority_offset: usize,
     actions_offset: usize,
     current_actions_size: usize,
@@ -295,8 +296,7 @@ fn perform_replace_all_operation(
     if size_diff != 0 {
         // Need to shift data if size changed
         let role_end = actions_offset + current_actions_size;
-        let original_data_len = (swig_data_len as i64 - Swig::LEN as i64) as usize;
-        let remaining_data_len = original_data_len - role_end;
+        let remaining_data_len = current_roles_len - role_end;
 
         if size_diff > 0 {
             // Growing: shift data to the right
@@ -318,8 +318,9 @@ fn perform_replace_all_operation(
 
         // Update boundaries of all roles after this one
         let mut cursor = 0;
-        while cursor < (swig_roles.len() + size_diff as usize) {
-            if cursor + Position::LEN > swig_roles.len() {
+        let new_roles_len = (current_roles_len as i64 + size_diff) as usize;
+        while cursor < new_roles_len {
+            if cursor + Position::LEN > new_roles_len {
                 break;
             }
             let position = unsafe {
@@ -348,7 +349,8 @@ fn perform_replace_all_operation(
         position.num_actions = calculate_num_actions(new_actions)? as u16;
     }
 
-    if actions_offset + new_actions_size > swig_roles.len() {
+    let final_roles_len = (current_roles_len as i64 + size_diff) as usize;
+    if actions_offset + new_actions_size > final_roles_len {
         return Err(SwigError::StateError.into());
     }
 
@@ -399,7 +401,7 @@ fn perform_replace_all_operation(
 /// Performs an add-actions operation on an authority.
 fn perform_add_actions_operation(
     swig_roles: &mut [u8],
-    swig_data_len: usize,
+    current_roles_len: usize,
     authority_offset: usize,
     actions_offset: usize,
     current_actions_size: usize,
@@ -419,7 +421,7 @@ fn perform_add_actions_operation(
     // Use replace_all logic with combined actions
     perform_replace_all_operation(
         swig_roles,
-        swig_data_len,
+        current_roles_len,
         authority_offset,
         actions_offset,
         current_actions_size,
@@ -431,7 +433,7 @@ fn perform_add_actions_operation(
 /// Performs a remove-actions-by-type operation on an authority.
 fn perform_remove_by_type_operation(
     swig_roles: &mut [u8],
-    swig_data_len: usize,
+    current_roles_len: usize,
     authority_offset: usize,
     actions_offset: usize,
     current_actions_size: usize,
@@ -477,7 +479,7 @@ fn perform_remove_by_type_operation(
     // Use replace_all logic with filtered actions
     perform_replace_all_operation(
         swig_roles,
-        swig_data_len,
+        current_roles_len,
         authority_offset,
         actions_offset,
         current_actions_size,
@@ -489,7 +491,7 @@ fn perform_remove_by_type_operation(
 /// Performs a remove-actions-by-index operation on an authority.
 fn perform_remove_by_index_operation(
     swig_roles: &mut [u8],
-    swig_data_len: usize,
+    current_roles_len: usize,
     authority_offset: usize,
     actions_offset: usize,
     current_actions_size: usize,
@@ -535,7 +537,7 @@ fn perform_remove_by_index_operation(
     // Use replace_all logic with filtered actions
     perform_replace_all_operation(
         swig_roles,
-        swig_data_len,
+        current_roles_len,
         authority_offset,
         actions_offset,
         current_actions_size,
@@ -578,83 +580,97 @@ pub fn update_authority_v1(
         ProgramError::InvalidInstructionData
     })?;
 
-    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    let swig_data_len = swig_account_data.len();
-
-    if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
-        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
-    }
-
-    let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
-    let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
-
-    // Get and validate acting role
-    let acting_role = Swig::get_mut_role(update_authority_v1.args.acting_role_id, swig_roles)?;
-    if acting_role.is_none() {
-        return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-    }
-    let acting_role = acting_role.unwrap();
-
-    // Authenticate the caller
-    let clock = Clock::get()?;
-    let slot = clock.slot;
-
-    if acting_role.authority.session_based() {
-        acting_role.authority.authenticate_session(
-            all_accounts,
-            update_authority_v1.authority_payload,
-            update_authority_v1.data_payload,
-            slot,
-        )?;
-    } else {
-        acting_role.authority.authenticate(
-            all_accounts,
-            update_authority_v1.authority_payload,
-            update_authority_v1.data_payload,
-            slot,
-        )?;
-    }
-
-    // Check permissions - same as add/remove authority
-    let all = acting_role.get_action::<All>(&[])?;
-    let manage_authority = acting_role.get_action::<ManageAuthority>(&[])?;
-
-    if all.is_none() && manage_authority.is_none() {
-        return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
-    }
-
-    // Verify the authority to update exists and calculate size difference
-    let (current_actions_size, authority_offset, actions_offset) = {
-        let mut cursor = 0;
-        let mut found = false;
-        let mut auth_offset = 0;
-        let mut act_offset = 0;
-        let mut current_size = 0;
-
-        for _i in 0..swig.roles {
-            let position =
-                unsafe { Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])? };
-
-            if position.id() == update_authority_v1.args.authority_to_update_id {
-                found = true;
-                auth_offset = cursor;
-                act_offset = cursor + Position::LEN + position.authority_length() as usize;
-                current_size = position.boundary() as usize - act_offset;
-                break;
-            }
-            cursor = position.boundary() as usize;
+    let operation = update_authority_v1.get_operation()?;
+    let mut account_len: usize;
+    let (
+        saved_tail,
+        current_roles_len,
+        current_actions_size,
+        authority_offset,
+        actions_offset,
+        prealloc_size_diff,
+    ) = {
+        let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        account_len = swig_account_data.len();
+        if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
+            return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
 
-        if !found {
+        let parts = Swig::split_parts_mut(swig_account_data)?;
+        let saved_tail = SavedTail::take(parts.tail)?;
+        let swig = parts.state;
+        let swig_roles = parts.roles;
+        let roles_len = swig_roles.len();
+
+        // Get and validate acting role.
+        let acting_role = Swig::get_mut_role(update_authority_v1.args.acting_role_id, swig_roles)?;
+        if acting_role.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
+        let acting_role = acting_role.unwrap();
 
-        (current_size, auth_offset, act_offset)
-    };
+        // Authenticate the caller.
+        let clock = Clock::get()?;
+        let slot = clock.slot;
+        if acting_role.authority.session_based() {
+            acting_role.authority.authenticate_session(
+                all_accounts,
+                update_authority_v1.authority_payload,
+                update_authority_v1.data_payload,
+                slot,
+            )?;
+        } else {
+            acting_role.authority.authenticate(
+                all_accounts,
+                update_authority_v1.authority_payload,
+                update_authority_v1.data_payload,
+                slot,
+            )?;
+        }
 
-    // Calculate size difference first
-    let operation = update_authority_v1.get_operation()?;
-    let size_diff = match operation {
+        // Check permissions - same as add/remove authority.
+        let all = acting_role.get_action::<All>(&[])?;
+        let manage_authority = acting_role.get_action::<ManageAuthority>(&[])?;
+        if all.is_none() && manage_authority.is_none() {
+            return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
+        }
+
+        // Verify the authority to update exists and calculate offsets.
+        let (current_actions_size, authority_offset, actions_offset) = {
+            let mut cursor = 0usize;
+            let mut found = false;
+            let mut auth_offset = 0usize;
+            let mut act_offset = 0usize;
+            let mut current_size = 0usize;
+
+            for _ in 0..swig.roles {
+                if cursor + Position::LEN > roles_len {
+                    return Err(ProgramError::InvalidAccountData);
+                }
+                let position =
+                    unsafe { Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])? };
+                let boundary = position.boundary() as usize;
+                if boundary < cursor + Position::LEN || boundary > roles_len {
+                    return Err(ProgramError::InvalidAccountData);
+                }
+
+                if position.id() == update_authority_v1.args.authority_to_update_id {
+                    found = true;
+                    auth_offset = cursor;
+                    act_offset = cursor + Position::LEN + position.authority_length() as usize;
+                    current_size = boundary - act_offset;
+                    break;
+                }
+                cursor = boundary;
+            }
+
+            if !found {
+                return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+            }
+            (current_size, auth_offset, act_offset)
+        };
+
+        let prealloc_size_diff = match operation {
         AuthorityUpdateOperation::ReplaceAll => {
             let new_actions = update_authority_v1.get_actions_data()?;
             new_actions.len() as i64 - current_actions_size as i64
@@ -673,11 +689,21 @@ pub fn update_authority_v1(
             // This is complex, so for now we'll calculate it in the operation function
             0 // Will be calculated in the operation
         },
+        };
+
+        (
+            saved_tail,
+            roles_len,
+            current_actions_size,
+            authority_offset,
+            actions_offset,
+            prealloc_size_diff,
+        )
     };
 
     // Handle account reallocation if size changed (before operations)
-    let new_reserved_lamports = if size_diff != 0 {
-        let new_size = (swig_data_len as i64 + size_diff) as usize;
+    if prealloc_size_diff > 0 {
+        let new_size = (account_len as i64 + prealloc_size_diff) as usize;
         let aligned_size =
             core::alloc::Layout::from_size_align(new_size, core::mem::size_of::<u64>())
                 .map_err(|_| SwigError::InvalidAlignment)?
@@ -685,6 +711,7 @@ pub fn update_authority_v1(
                 .size();
 
         ctx.accounts.swig.realloc(aligned_size, false)?;
+        account_len = aligned_size;
 
         let cost = Rent::get()?.minimum_balance(aligned_size);
         let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
@@ -699,73 +726,73 @@ pub fn update_authority_v1(
             }
             .invoke()?;
         }
-
-        cost
-    } else {
-        // No size change, so no need to transfer additional funds
-        0
-    };
+    }
 
     // Get fresh references to the swig account data after reallocation
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
-    let _swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+    saved_tail.restore(swig_account_data);
+    let (_, swig_roles_and_tail) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+    let roles_capacity_len = swig_roles_and_tail
+        .len()
+        .checked_sub(saved_tail.len())
+        .ok_or(ProgramError::InvalidAccountData)?;
+    let (swig_roles, _) =
+        unsafe { swig_roles_and_tail.split_at_mut_unchecked(roles_capacity_len) };
 
-    let mut size_diff = 0;
     // Now perform the operation with the reallocated account
-    match operation {
+    let size_diff = match operation {
         AuthorityUpdateOperation::ReplaceAll => {
             let new_actions = update_authority_v1.get_actions_data()?;
             perform_replace_all_operation(
                 swig_roles,
-                swig_data_len,
+                current_roles_len,
                 authority_offset,
                 actions_offset,
                 current_actions_size,
                 new_actions,
                 update_authority_v1.args.authority_to_update_id,
-            )?;
+            )?
         },
         AuthorityUpdateOperation::AddActions => {
             let new_actions = update_authority_v1.get_actions_data()?;
             perform_add_actions_operation(
                 swig_roles,
-                swig_data_len,
+                current_roles_len,
                 authority_offset,
                 actions_offset,
                 current_actions_size,
                 new_actions,
                 update_authority_v1.args.authority_to_update_id,
-            )?;
+            )?
         },
         AuthorityUpdateOperation::RemoveActionsByType => {
             let remove_types = update_authority_v1.get_remove_types()?;
-            size_diff = perform_remove_by_type_operation(
+            perform_remove_by_type_operation(
                 swig_roles,
-                swig_data_len,
+                current_roles_len,
                 authority_offset,
                 actions_offset,
                 current_actions_size,
                 remove_types,
                 update_authority_v1.args.authority_to_update_id,
-            )?;
+            )?
         },
         AuthorityUpdateOperation::RemoveActionsByIndex => {
             let remove_indices = update_authority_v1.get_remove_indices()?;
-            size_diff = perform_remove_by_index_operation(
+            perform_remove_by_index_operation(
                 swig_roles,
-                swig_data_len,
+                current_roles_len,
                 authority_offset,
                 actions_offset,
                 current_actions_size,
                 &remove_indices,
                 update_authority_v1.args.authority_to_update_id,
-            )?;
+            )?
         },
-    }
+    };
 
     if size_diff < 0 {
-        let new_size = (swig_data_len as i64 + size_diff) as usize;
+        let new_size = (account_len as i64 + size_diff) as usize;
         let aligned_size =
             core::alloc::Layout::from_size_align(new_size, core::mem::size_of::<u64>())
                 .map_err(|_| SwigError::InvalidAlignment)?
@@ -787,6 +814,10 @@ pub fn update_authority_v1(
                     ctx.accounts.payer.lamports() + additional_cost;
             };
         }
+        let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        saved_tail.restore(swig_account_data);
+    } else {
+        saved_tail.restore(swig_account_data);
     }
 
     Ok(())
@@ -795,6 +826,13 @@ pub fn update_authority_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use swig_state::{
+        action::{all::All, manage_authority::ManageAuthority, Action, Actionable},
+        authority::{ed25519::ED25519Authority, AuthorityType},
+        swig::{Swig, SwigBuilder},
+        tail::{rent_claimer, SavedTail},
+        IntoBytes, TransmutableMut,
+    };
 
     #[test]
     fn from_instruction_bytes_rejects_short_actions_payload() {
@@ -807,5 +845,79 @@ mod tests {
             Err(ProgramError::Custom(code))
                 if code == SwigError::InvalidSwigUpdateAuthorityInstructionDataTooShort as u32
         ));
+    }
+
+    #[test]
+    fn perform_replace_all_growth_preserves_tail_region() -> Result<(), ProgramError> {
+        let mut account_buffer = vec![0u8; Swig::LEN + 256];
+        let swig = Swig::new([1u8; 32], 255, 0);
+        let mut builder = SwigBuilder::create(&mut account_buffer, swig)?;
+
+        let authority = ED25519Authority {
+            public_key: [2u8; 32],
+        };
+        let all_data = All {}.into_bytes()?;
+        let all_header = Action::new(
+            All::TYPE,
+            all_data.len() as u16,
+            Action::LEN as u32 + all_data.len() as u32,
+        );
+        let all_actions = [all_header.into_bytes()?, all_data].concat();
+        builder.add_role(AuthorityType::Ed25519, authority.into_bytes()?, &all_actions)?;
+        drop(builder);
+
+        let roles_end = Swig::roles_end_offset(&account_buffer)?;
+        account_buffer.truncate(roles_end);
+        let tail = rent_claimer::entry(&[77u8; 32]);
+        account_buffer.extend_from_slice(&tail);
+        let expected_tail = tail.to_vec();
+
+        let saved_tail = {
+            let (_, tail_slice) = Swig::split_roles_and_tail_mut(&mut account_buffer)?;
+            SavedTail::take(tail_slice)?
+        };
+
+        let ma_data = ManageAuthority {}.into_bytes()?;
+        let ma_header = Action::new(
+            ManageAuthority::TYPE,
+            ma_data.len() as u16,
+            Action::LEN as u32 + ma_data.len() as u32,
+        );
+        let grown_actions = [all_actions.as_slice(), ma_header.into_bytes()?, ma_data].concat();
+        let expected_diff = grown_actions.len() as i64 - all_actions.len() as i64;
+
+        account_buffer.resize((account_buffer.len() as i64 + expected_diff) as usize, 0);
+        saved_tail.restore(&mut account_buffer);
+
+        let (roles_len, authority_offset, actions_offset, current_actions_size) = {
+            let (roles, _) = Swig::split_roles_and_tail(&account_buffer)?;
+            let position = unsafe { Position::load_unchecked(&roles[..Position::LEN])? };
+            let authority_offset = 0usize;
+            let actions_offset = Position::LEN + position.authority_length() as usize;
+            let current_actions_size = position.boundary() as usize - actions_offset;
+            (roles.len(), authority_offset, actions_offset, current_actions_size)
+        };
+
+        {
+            let (swig_header, roles_and_tail) = account_buffer.split_at_mut(Swig::LEN);
+            let _swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+            let roles_capacity_len = roles_and_tail.len() - saved_tail.len();
+            let (roles_capacity, _) = roles_and_tail.split_at_mut(roles_capacity_len);
+            let applied = perform_replace_all_operation(
+                roles_capacity,
+                roles_len,
+                authority_offset,
+                actions_offset,
+                current_actions_size,
+                &grown_actions,
+                0,
+            )?;
+            assert_eq!(applied, expected_diff);
+        }
+
+        saved_tail.restore(&mut account_buffer);
+        let (_, tail_after) = Swig::split_roles_and_tail(&account_buffer)?;
+        assert_eq!(tail_after, expected_tail.as_slice());
+        Ok(())
     }
 }

@@ -116,7 +116,7 @@ pub fn close_token_account_v1(
     }
 
     // Get and authenticate role
-    let swig_roles = &swig_account_data[Swig::LEN..];
+    let swig_roles = Swig::split_parts(swig_account_data)?.roles;
     let role_opt = unsafe {
         let roles_ptr = swig_roles.as_ptr() as *mut u8;
         let roles_mut = core::slice::from_raw_parts_mut(roles_ptr, swig_roles.len());

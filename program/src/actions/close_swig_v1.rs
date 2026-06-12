@@ -103,8 +103,9 @@ pub fn close_swig_v1(
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 
-    let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
-    let swig = unsafe { Swig::load_unchecked(swig_header)? };
+    let parts = Swig::split_parts_mut(swig_account_data)?;
+    let swig = parts.state;
+    let swig_roles = parts.roles;
 
     // Verify swig_wallet_address is the correct PDA
     let (expected_wallet_address, _wallet_bump) = pinocchio::pubkey::find_program_address(

@@ -12,8 +12,9 @@ use pinocchio::{
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
+    tail::SavedTail,
     swig::{Swig, SwigBuilder},
-    Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
+    Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
 use crate::{
@@ -153,14 +154,18 @@ pub fn remove_authority_v1(
         return Err(SwigAuthenticateError::PermissionDeniedCannotRemoveRootAuthority.into());
     }
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+    let data_len = swig_account_data.len();
+    let swig_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
     // All validation and processing as a closure to avoid borrowing
     // swig_account_data for too long
-    {
+    let (saved_tail, removed) = {
         if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
-        let (_swig_header, swig_roles) =
-            unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+        let parts = Swig::split_parts_mut(swig_account_data)?;
+        let saved_tail = SavedTail::take(parts.tail)?;
+        let swig = parts.state;
+        let swig_roles = parts.roles;
         {
             let acting_role =
                 Swig::get_mut_role(remove_authority_v1.args.acting_role_id, swig_roles)?;
@@ -205,14 +210,14 @@ pub fn remove_authority_v1(
         if role_to_remove.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
-    }
-
-    // Calculate the new size and remove the role
-    let data_len = swig_account_data.len();
-    let swig_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
-    let mut swig_builder = SwigBuilder::new_from_bytes(swig_account_data)?;
-    // Remove the role
-    let removed = swig_builder.remove_role(remove_authority_v1.args.authority_to_remove_id)?;
+        let mut swig_builder = SwigBuilder {
+            role_buffer: swig_roles,
+            swig,
+        };
+        // Remove the role.
+        let removed = swig_builder.remove_role(remove_authority_v1.args.authority_to_remove_id)?;
+        (saved_tail, removed)
+    };
     // realloc the account
 
     let new_size = data_len - removed.1;
@@ -225,6 +230,8 @@ pub fn remove_authority_v1(
         *ctx.accounts.payer.borrow_mut_lamports_unchecked() = ctx.accounts.payer.lamports() + diff;
     };
     ctx.accounts.swig.realloc(new_size, false)?;
+    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+    saved_tail.restore(swig_account_data);
 
     Ok(())
 }
