@@ -265,6 +265,21 @@ impl SwigInstructionBuilder {
         )
     }
 
+    /// Creates instruction(s) to set the immutable rent claimer on the wallet.
+    pub fn set_rent_claimer(
+        &self,
+        rent_claimer: Pubkey,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.client_role.set_rent_claimer_instruction(
+            self.swig_account,
+            self.payer,
+            self.role_id,
+            rent_claimer,
+            current_slot,
+        )
+    }
+
     /// Returns the public key of the Swig account
     ///
     /// # Returns

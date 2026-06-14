@@ -18,6 +18,7 @@ use swig_state::{
         all::All, close_swig_authority::CloseSwigAuthority, manage_authority::ManageAuthority,
     },
     swig::{swig_account_signer, swig_wallet_address_seeds, swig_wallet_address_signer, Swig},
+    tail::rent_claimer,
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
@@ -152,6 +153,11 @@ pub fn close_token_account_v1(
     let has_close = role.get_action::<CloseSwigAuthority>(&[])?.is_some();
     if !has_all && !has_manage && !has_close {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+    }
+    if let Some(claimer) = rent_claimer::read_strict(Swig::split_parts(swig_account_data)?.tail)? {
+        if ctx.accounts.destination.key().as_ref() != claimer.as_ref() {
+            return Err(SwigError::InvalidRentClaimerDestination.into());
+        }
     }
 
     // Use is_swig_v2 to determine expected authority

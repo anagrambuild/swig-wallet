@@ -18,6 +18,7 @@ use swig_state::{
         all::All, close_swig_authority::CloseSwigAuthority, manage_authority::ManageAuthority,
     },
     swig::{swig_wallet_address_seeds, swig_wallet_address_signer, Swig},
+    tail::rent_claimer,
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
@@ -106,6 +107,7 @@ pub fn close_swig_v1(
     let parts = Swig::split_parts_mut(swig_account_data)?;
     let swig = parts.state;
     let swig_roles = parts.roles;
+    let configured_rent_claimer = rent_claimer::read_strict(parts.tail)?;
 
     // Verify swig_wallet_address is the correct PDA
     let (expected_wallet_address, _wallet_bump) = pinocchio::pubkey::find_program_address(
@@ -147,6 +149,11 @@ pub fn close_swig_v1(
     let has_close = role.get_action::<CloseSwigAuthority>(&[])?.is_some();
     if !has_all && !has_manage && !has_close {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+    }
+    if let Some(claimer) = configured_rent_claimer {
+        if ctx.accounts.destination.key().as_ref() != claimer.as_ref() {
+            return Err(SwigError::InvalidRentClaimerDestination.into());
+        }
     }
 
     // Store swig values before dropping borrow
