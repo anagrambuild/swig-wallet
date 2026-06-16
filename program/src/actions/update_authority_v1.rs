@@ -703,9 +703,8 @@ pub fn update_authority_v1(
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let _swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
 
-    let mut size_diff = 0;
     // Now perform the operation with the reallocated account
-    match operation {
+    let size_diff = match operation {
         AuthorityUpdateOperation::ReplaceAll => {
             let new_actions = update_authority_v1.get_actions_data()?;
             perform_replace_all_operation(
@@ -716,7 +715,7 @@ pub fn update_authority_v1(
                 current_actions_size,
                 new_actions,
                 update_authority_v1.args.authority_to_update_id,
-            )?;
+            )?
         },
         AuthorityUpdateOperation::AddActions => {
             let new_actions = update_authority_v1.get_actions_data()?;
@@ -728,11 +727,11 @@ pub fn update_authority_v1(
                 current_actions_size,
                 new_actions,
                 update_authority_v1.args.authority_to_update_id,
-            )?;
+            )?
         },
         AuthorityUpdateOperation::RemoveActionsByType => {
             let remove_types = update_authority_v1.get_remove_types()?;
-            size_diff = perform_remove_by_type_operation(
+            perform_remove_by_type_operation(
                 swig_roles,
                 swig_data_len,
                 authority_offset,
@@ -740,11 +739,11 @@ pub fn update_authority_v1(
                 current_actions_size,
                 remove_types,
                 update_authority_v1.args.authority_to_update_id,
-            )?;
+            )?
         },
         AuthorityUpdateOperation::RemoveActionsByIndex => {
             let remove_indices = update_authority_v1.get_remove_indices()?;
-            size_diff = perform_remove_by_index_operation(
+            perform_remove_by_index_operation(
                 swig_roles,
                 swig_data_len,
                 authority_offset,
@@ -752,9 +751,9 @@ pub fn update_authority_v1(
                 current_actions_size,
                 &remove_indices,
                 update_authority_v1.args.authority_to_update_id,
-            )?;
+            )?
         },
-    }
+    };
 
     if size_diff < 0 {
         let new_size = (swig_data_len as i64 + size_diff) as usize;
