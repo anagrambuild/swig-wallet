@@ -87,6 +87,8 @@ security_txt! {
 pub fn process_instruction(mut ctx: InstructionContext) -> ProgramResult {
     validate_entry_account_count(ctx.remaining())?;
 
+    // These are capacity buffers. `execute` initializes only the consumed
+    // `0..index` prefix before passing slices to the action handlers.
     let mut accounts =
         unsafe { Box::<[MaybeUninit<AccountInfo>; MAX_ACCOUNTS]>::new_uninit().assume_init() };
     let mut classifiers = unsafe {
@@ -108,12 +110,12 @@ fn validate_entry_account_count(account_count: u64) -> ProgramResult {
 }
 
 #[inline(always)]
-fn validate_account_slot(
-    index: usize,
+fn validate_account_capacity(
+    end: usize,
     accounts_len: usize,
     account_classification_len: usize,
 ) -> ProgramResult {
-    if index >= accounts_len || index >= account_classification_len {
+    if end > accounts_len || end > account_classification_len {
         return Err(SwigError::InvalidAccountsLength.into());
     }
 
@@ -131,6 +133,16 @@ fn validated_duplicate_account_index(
     }
 
     Ok(account_index)
+}
+
+#[inline(always)]
+unsafe fn is_swig_config_account(account: &AccountInfo) -> bool {
+    if account.owner() != &crate::ID {
+        return false;
+    }
+
+    let data = account.borrow_data_unchecked();
+    data.len() >= Swig::LEN && *data.get_unchecked(0) == Discriminator::SwigConfigAccount as u8
 }
 
 /// Determines if a Swig account is v2 format by checking the last 7 bytes.
@@ -214,48 +226,43 @@ unsafe fn execute(
     accounts: &mut [MaybeUninit<AccountInfo>],
     account_classification: &mut [MaybeUninit<AccountClassification>],
 ) -> Result<(), ProgramError> {
-    let mut index: usize = 0;
+    let acc = ctx
+        .next_account()
+        .map_err(|_| SwigError::InvalidAccountsLength)?;
 
-    // First account must be processed to get SwigWithRoles
-    if let Ok(acc) = ctx.next_account() {
-        validate_account_slot(index, accounts.len(), account_classification.len())?;
-        match acc {
-            MaybeAccount::Account(account) => {
-                let classification =
-                    classify_account(0, &account, accounts, account_classification, None)?;
-                account_classification[0].write(classification);
-                accounts[0].write(account);
-            },
-            MaybeAccount::Duplicated(account_index) => {
-                let account_index = validated_duplicate_account_index(account_index, index)?;
-                accounts[0].write(accounts[account_index].assume_init_ref().clone());
-            },
-        }
-        index = 1;
+    match acc {
+        MaybeAccount::Account(account) => {
+            let classification =
+                classify_account(0, &account, accounts, account_classification, None)?;
+            account_classification[0].write(classification);
+            accounts[0].write(account);
+        },
+        MaybeAccount::Duplicated(_) => return Err(SwigError::InvalidAccountsLength.into()),
     }
+    let mut index: usize = 1;
 
-    // Create program scope cache if first account is a valid Swig account
-    let program_scope_cache = if index > 0 {
-        let first_account = accounts[0].assume_init_ref();
-        if first_account.owner() == &crate::ID {
-            let data = first_account.borrow_data_unchecked();
-            if data.len() >= Swig::LEN
-                && *data.get_unchecked(0) == Discriminator::SwigConfigAccount as u8
-            {
-                ProgramScopeCache::load_from_swig(data)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+    let first_account = accounts[0].assume_init_ref();
+    // Non-Swig first accounts are valid for instructions that do not use the
+    // SignV2 account layout, so absence of a cache is not an error here.
+    let program_scope_cache = if is_swig_config_account(first_account) {
+        let data = first_account.borrow_data_unchecked();
+        ProgramScopeCache::load_from_swig(data)
     } else {
         None
     };
 
-    // Process remaining accounts using the cache
-    while let Ok(acc) = ctx.next_account() {
-        validate_account_slot(index, accounts.len(), account_classification.len())?;
+    let remaining_accounts =
+        usize::try_from(ctx.remaining()).map_err(|_| SwigError::InvalidAccountsLength)?;
+    let end = index
+        .checked_add(remaining_accounts)
+        .ok_or(SwigError::InvalidAccountsLength)?;
+    validate_account_capacity(end, accounts.len(), account_classification.len())?;
+
+    // Process the remaining known account count using the program-scope cache.
+    for _ in 0..remaining_accounts {
+        let acc = ctx
+            .next_account()
+            .map_err(|_| SwigError::InvalidAccountsLength)?;
         let (account, classification) = match acc {
             MaybeAccount::Account(account) => {
                 let classification = classify_account(
@@ -285,6 +292,7 @@ unsafe fn execute(
         index += 1;
     }
 
+    // Only the consumed prefix of the scratch buffers has been initialized.
     process_action(
         core::slice::from_raw_parts(accounts.as_ptr() as _, index),
         core::slice::from_raw_parts_mut(account_classification.as_mut_ptr() as _, index),
@@ -327,102 +335,85 @@ unsafe fn classify_account(
     account_classifications: &[MaybeUninit<AccountClassification>],
     program_scope_cache: Option<&ProgramScopeCache>,
 ) -> Result<AccountClassification, ProgramError> {
-    let mut target_index: usize = 0;
     match account.owner() {
         &crate::ID => {
-            let data = account.borrow_data_unchecked();
-            let first_byte = *data.get_unchecked(0);
-            match first_byte {
-                disc if disc == Discriminator::SwigConfigAccount as u8 && index == 0 => {
-                    Ok(AccountClassification::ThisSwigV2 {
-                        lamports: account.lamports(),
-                    })
-                },
-                disc if disc == Discriminator::SwigConfigAccount as u8 && index != 0 => {
-                    let first_account = accounts.get_unchecked(0).assume_init_ref();
-                    let first_data = first_account.borrow_data_unchecked();
+            if !is_swig_config_account(account) {
+                return Ok(AccountClassification::None);
+            }
 
-                    if first_account.owner() == &crate::ID
-                        && first_data.len() >= 8
-                        && *first_data.get_unchecked(0) == Discriminator::SwigConfigAccount as u8
-                    {
-                        Ok(AccountClassification::None)
-                    } else {
-                        Err(SwigError::InvalidAccountsSwigMustBeFirst.into())
-                    }
-                },
-                _ => Ok(AccountClassification::None),
+            if index == 0 {
+                return Ok(AccountClassification::ThisSwigV2 {
+                    lamports: account.lamports(),
+                });
+            }
+
+            let first_account = accounts.get_unchecked(0).assume_init_ref();
+            if is_swig_config_account(first_account) {
+                Ok(AccountClassification::None)
+            } else {
+                Err(SwigError::InvalidAccountsSwigMustBeFirst.into())
             }
         },
         &SYSTEM_PROGRAM_ID if index == 1 => {
             let first_account = accounts.get_unchecked(0).assume_init_ref();
-            let first_data = first_account.borrow_data_unchecked();
 
             // When the account is a Swig account, it's safe to assume the
             // account directly after will be the SwigWalletAddress. This is validated
             // further down in instructions relevant to the account structure via signer
             // seeds.
-            if first_account.owner() == &crate::ID
-                && first_data.len() >= Swig::LEN
-                && *first_data.get_unchecked(0) == Discriminator::SwigConfigAccount as u8
-            {
+            if is_swig_config_account(first_account) {
                 return Ok(AccountClassification::SwigWalletAddress);
             }
             Ok(AccountClassification::None)
         },
         &STAKING_ID => {
-            let data = account.borrow_data_unchecked();
-            // Check if this is a stake account by checking the data
-            if data.len() >= 200 && index > 0 {
-                // Verify if this stake account belongs to the swig
-                // First get the authorized withdrawer from the stake account data
-                // In stake account data, the authorized withdrawer is at offset 44 (36 + 8) for
-                // 32 bytes
-                let authorized_withdrawer = unsafe { data.get_unchecked(44..76) };
-
-                // Check if the withdrawer is the swig account
-                if sol_memcmp(
-                    accounts.get_unchecked(0).assume_init_ref().key(),
-                    authorized_withdrawer,
-                    32,
-                ) == 0
-                {
-                    // Extract the stake state from the account
-                    // The state enum is at offset 196 (36 + 8 + 32 + 32 + 8 + 8 + 32 + 4 + 8 + 16 +
-                    // 8 + 4) for 4 bytes
-                    let state_value = u32::from_le_bytes(
-                        data.get_unchecked(196..200)
-                            .try_into()
-                            .map_err(|_| ProgramError::InvalidAccountData)?,
-                    );
-
-                    let state = match state_value {
-                        0 => swig_state::StakeAccountState::Uninitialized,
-                        1 => swig_state::StakeAccountState::Initialized,
-                        2 => swig_state::StakeAccountState::Stake,
-                        3 => swig_state::StakeAccountState::RewardsPool,
-                        _ => return Err(ProgramError::InvalidAccountData),
-                    };
-                    // Extract the stake amount from the account
-                    // The delegated stake amount is at offset 184 (36 + 8 + 32 + 32 + 8 + 8 + 32 +
-                    // 4 + 8 + 16) for 8 bytes
-                    let stake_amount = u64::from_le_bytes(
-                        data.get_unchecked(184..192)
-                            .try_into()
-                            .map_err(|_| ProgramError::InvalidAccountData)?,
-                    );
-
-                    return Ok(AccountClassification::SwigStakeAccount {
-                        state,
-                        balance: stake_amount,
-                        spent: 0,
-                    });
-                }
+            if index == 0 {
+                return Ok(AccountClassification::None);
             }
-            Ok(AccountClassification::None)
+
+            let data = account.borrow_data_unchecked();
+            if data.len() < 200 {
+                return Ok(AccountClassification::None);
+            }
+
+            // Stake account authorized withdrawer is at offset 44 for 32 bytes.
+            let authorized_withdrawer = data.get_unchecked(44..76);
+            if sol_memcmp(
+                accounts.get_unchecked(0).assume_init_ref().key(),
+                authorized_withdrawer,
+                32,
+            ) != 0
+            {
+                return Ok(AccountClassification::None);
+            }
+
+            // Stake state is at offset 196; delegated stake amount is at 184.
+            let state_value = u32::from_le_bytes(
+                data.get_unchecked(196..200)
+                    .try_into()
+                    .map_err(|_| ProgramError::InvalidAccountData)?,
+            );
+            let state = match state_value {
+                0 => StakeAccountState::Uninitialized,
+                1 => StakeAccountState::Initialized,
+                2 => StakeAccountState::Stake,
+                3 => StakeAccountState::RewardsPool,
+                _ => return Err(ProgramError::InvalidAccountData),
+            };
+            let stake_amount = u64::from_le_bytes(
+                data.get_unchecked(184..192)
+                    .try_into()
+                    .map_err(|_| ProgramError::InvalidAccountData)?,
+            );
+
+            Ok(AccountClassification::SwigStakeAccount {
+                state,
+                balance: stake_amount,
+                spent: 0,
+            })
         },
         #[cfg(not(feature = "program_scope_test"))]
-        &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if account.data_len() >= 165 && index > 0 => unsafe {
+        &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if index > 0 && account.data_len() >= 165 => {
             let data = account.borrow_data_unchecked();
             let token_authority = data.get_unchecked(32..64);
 
@@ -432,56 +423,50 @@ unsafe fn classify_account(
                 32,
             ) == 0;
 
-            let matches_swig_wallet_address = if index > 1 {
-                // Only check wallet address if account[1] is actually classified as
-                // SwigWalletAddress
-                if matches!(
+            let matches_swig_wallet_address = index > 1
+                && matches!(
                     account_classifications.get_unchecked(1).assume_init_ref(),
                     AccountClassification::SwigWalletAddress
-                ) {
-                    sol_memcmp(
-                        accounts.get_unchecked(1).assume_init_ref().key(),
-                        token_authority,
-                        32,
-                    ) == 0
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
+                )
+                && sol_memcmp(
+                    accounts.get_unchecked(1).assume_init_ref().key(),
+                    token_authority,
+                    32,
+                ) == 0;
 
-            if matches_swig_account || matches_swig_wallet_address {
-                Ok(AccountClassification::SwigTokenAccount {
-                    balance: u64::from_le_bytes(
-                        data.get_unchecked(64..72)
-                            .try_into()
-                            .map_err(|_| ProgramError::InvalidAccountData)?,
-                    ),
-                    spent: 0,
-                })
-            } else {
-                Ok(AccountClassification::None)
+            if !matches_swig_account && !matches_swig_wallet_address {
+                return Ok(AccountClassification::None);
             }
+
+            Ok(AccountClassification::SwigTokenAccount {
+                balance: u64::from_le_bytes(
+                    data.get_unchecked(64..72)
+                        .try_into()
+                        .map_err(|_| ProgramError::InvalidAccountData)?,
+                ),
+                spent: 0,
+            })
         },
         _ => {
-            if index > 0 {
-                // Use the program scope cache if available
-                if let Some(cache) = program_scope_cache {
-                    if let Some((role_id, program_scope)) =
-                        cache.find_program_scope(account.key().as_ref())
-                    {
-                        let data = account.borrow_data_unchecked();
-                        let balance = read_program_scope_account_balance(data, &program_scope)?;
-                        return Ok(AccountClassification::ProgramScope {
-                            role_index: role_id,
-                            balance,
-                            spent: 0,
-                        });
-                    }
-                }
+            if index == 0 {
+                return Ok(AccountClassification::None);
             }
-            Ok(AccountClassification::None)
+
+            let Some(cache) = program_scope_cache else {
+                return Ok(AccountClassification::None);
+            };
+            let Some((role_id, program_scope)) = cache.find_program_scope(account.key().as_ref())
+            else {
+                return Ok(AccountClassification::None);
+            };
+
+            let data = account.borrow_data_unchecked();
+            let balance = read_program_scope_account_balance(data, &program_scope)?;
+            Ok(AccountClassification::ProgramScope {
+                role_index: role_id,
+                balance,
+                spent: 0,
+            })
         },
     }
 }
@@ -508,9 +493,9 @@ mod tests {
     }
 
     #[test]
-    fn validate_account_slot_rejects_array_capacity_overflow() {
-        assert_invalid_accounts_length(validate_account_slot(3, 3, 4));
-        assert_invalid_accounts_length(validate_account_slot(3, 4, 3));
+    fn validate_account_capacity_rejects_array_capacity_overflow() {
+        assert_invalid_accounts_length(validate_account_capacity(4, 3, 4));
+        assert_invalid_accounts_length(validate_account_capacity(4, 4, 3));
     }
 
     #[test]

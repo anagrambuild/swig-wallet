@@ -9,7 +9,12 @@ use common::*;
 use solana_sdk::{signature::Keypair, signer::Signer};
 use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state::{
-    action::manage_authority::ManageAuthority, authority::AuthorityType, swig::SwigWithRoles,
+    action::{
+        manage_authority::ManageAuthority, sol_limit::SolLimit,
+        sol_recurring_limit::SolRecurringLimit,
+    },
+    authority::AuthorityType,
+    swig::SwigWithRoles,
 };
 
 #[test_log::test]
@@ -114,6 +119,53 @@ fn test_cannot_add_authority_with_zero_actions() {
         swig.state.roles, 1,
         "Should still have only the root authority"
     );
+}
+
+#[test_log::test]
+fn test_cannot_add_authority_with_duplicate_limit_family() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::SolLimit(SolLimit { amount: 100 }),
+            ClientAction::SolRecurringLimit(SolRecurringLimit {
+                recurring_amount: 100,
+                window: 100,
+                last_reset: 0,
+                current_amount: 100,
+            }),
+        ],
+    );
+
+    assert!(
+        result.is_err(),
+        "Adding fixed and recurring SOL limits for one role should fail"
+    );
+
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 1);
 }
 
 #[test_log::test]

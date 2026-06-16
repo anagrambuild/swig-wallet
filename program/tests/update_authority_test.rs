@@ -19,7 +19,8 @@ use swig_interface::{
 use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, program_curated::ProgramCurated,
-        sol_limit::SolLimit, token_limit::TokenLimit, Action, Permission,
+        sol_limit::SolLimit, sol_recurring_limit::SolRecurringLimit, token_limit::TokenLimit,
+        Action, Permission,
     },
     authority::AuthorityType,
     role::Position,
@@ -272,6 +273,68 @@ fn test_update_authority_rejects_malformed_program_curated_add_actions() -> anyh
         result.is_err(),
         "AddActions should fail when ProgramCurated payload length is zero"
     );
+
+    Ok(())
+}
+
+#[test_log::test]
+fn test_update_authority_rejects_duplicate_limit_family() -> anyhow::Result<()> {
+    let mut context = setup_test_context()?;
+
+    let root_authority = Keypair::new();
+    let id = [72u8; 32];
+    let (swig, _) = create_swig_ed25519(&mut context, &root_authority, id)?;
+
+    let second_authority = Keypair::new();
+    let second_authority_pubkey = second_authority.pubkey();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority_pubkey.as_ref(),
+        },
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    )?;
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig: {:?}", e))?;
+    let second_role_id = swig_data
+        .lookup_role_id(second_authority_pubkey.as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to lookup second role id: {:?}", e))?
+        .ok_or(anyhow::anyhow!("Second role not found"))?;
+
+    let result = update_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root_authority,
+        second_role_id,
+        vec![
+            ClientAction::SolLimit(SolLimit { amount: 100 }),
+            ClientAction::SolRecurringLimit(SolRecurringLimit {
+                recurring_amount: 100,
+                window: 100,
+                last_reset: 0,
+                current_amount: 100,
+            }),
+        ],
+    );
+
+    assert!(
+        result.is_err(),
+        "Replacing actions with duplicate SOL limit family should fail"
+    );
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_data = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig: {:?}", e))?;
+    let second_role = swig_data
+        .get_role(second_role_id)
+        .map_err(|e| anyhow::anyhow!("Failed to get second role: {:?}", e))?
+        .unwrap();
+    assert_eq!(second_role.position.num_actions(), 1);
 
     Ok(())
 }

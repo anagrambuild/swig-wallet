@@ -97,8 +97,12 @@ impl<'a> SubAccountSignV1<'a> {
         }
         let (inst, rest) = unsafe { data.split_at_unchecked(SubAccountSignV1Args::LEN) };
         let args = unsafe { SubAccountSignV1Args::load_unchecked(inst)? };
+        let instruction_payload_len = args.instruction_payload_len as usize;
+        if instruction_payload_len > rest.len() {
+            return Err(SwigError::InvalidSwigSignInstructionDataTooShort.into());
+        }
         let (instruction_payload, authority_payload) =
-            unsafe { rest.split_at_unchecked(args.instruction_payload_len as usize) };
+            unsafe { rest.split_at_unchecked(instruction_payload_len) };
         Ok(Self {
             args,
             authority_payload,
@@ -232,4 +236,23 @@ pub fn sub_account_sign_v1(
         return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use swig_state::IntoBytes;
+
+    #[test]
+    fn from_instruction_bytes_rejects_short_instruction_payload() {
+        let args = SubAccountSignV1Args::new(0, 4);
+        let mut data = args.into_bytes().unwrap().to_vec();
+        data.extend_from_slice(&[1, 2]);
+
+        assert!(matches!(
+            SubAccountSignV1::from_instruction_bytes(&data),
+            Err(ProgramError::Custom(code))
+                if code == SwigError::InvalidSwigSignInstructionDataTooShort as u32
+        ));
+    }
 }

@@ -112,8 +112,11 @@ impl<'a> CreateV1<'a> {
         }
         let (args, rest) = unsafe { bytes.split_at_unchecked(CreateV1Args::LEN) };
         let args = unsafe { CreateV1Args::load_unchecked(args)? };
-        let (authority_data, actions) =
-            unsafe { rest.split_at_unchecked(args.authority_data_len as usize) };
+        let authority_data_len = args.authority_data_len as usize;
+        if authority_data_len > rest.len() {
+            return Err(SwigError::InvalidSwigCreateInstructionDataTooShort.into());
+        }
+        let (authority_data, actions) = unsafe { rest.split_at_unchecked(authority_data_len) };
         Ok(Self {
             args,
             authority_data,
@@ -251,4 +254,22 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
 
     swig_builder.add_role(authority_type, create_v1.authority_data, create_v1.actions)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_instruction_bytes_rejects_short_authority_payload() {
+        let args = CreateV1Args::new([0; 32], 1, AuthorityType::Ed25519, 32, 1);
+        let mut data = args.into_bytes().unwrap().to_vec();
+        data.extend_from_slice(&[1, 2]);
+
+        assert!(matches!(
+            CreateV1::from_instruction_bytes(&data),
+            Err(ProgramError::Custom(code))
+                if code == SwigError::InvalidSwigCreateInstructionDataTooShort as u32
+        ));
+    }
 }

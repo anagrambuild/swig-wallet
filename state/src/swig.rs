@@ -11,7 +11,7 @@ use no_padding::NoPadding;
 use pinocchio::{instruction::Seed, program_error::ProgramError};
 
 use crate::{
-    action::{program_scope::ProgramScope, Action, ActionLoader, Actionable},
+    action::{program_scope::ProgramScope, Action, ActionLoader, Actionable, Permission},
     authority::{
         ed25519::{ED25519Authority, Ed25519SessionAuthority},
         programexec::{session::ProgramExecSessionAuthority, ProgramExecAuthority},
@@ -96,6 +96,115 @@ pub fn sub_account_signer<'a>(
         role_id.into(),
         bump.as_ref().into(),
     ]
+}
+
+struct RoleActionKey<'a> {
+    kind: u16,
+    data: &'a [u8],
+}
+
+impl<'a> RoleActionKey<'a> {
+    #[inline(always)]
+    fn matches(&self, other: &Self) -> bool {
+        self.kind == other.kind && self.data == other.data
+    }
+}
+
+#[inline(always)]
+fn role_action_key<'a>(
+    permission: Permission,
+    action_data: &'a [u8],
+) -> Result<RoleActionKey<'a>, ProgramError> {
+    const PUBKEY_LEN: usize = 32;
+    const PROGRAM_SCOPE_TARGET_OFFSET: usize = 80;
+
+    let (kind, start, len) = match permission {
+        Permission::SolLimit | Permission::SolRecurringLimit => (1, 0, 0),
+        Permission::SolDestinationLimit | Permission::SolRecurringDestinationLimit => {
+            (2, 0, PUBKEY_LEN)
+        },
+        Permission::TokenLimit | Permission::TokenRecurringLimit => (3, 0, PUBKEY_LEN),
+        Permission::TokenDestinationLimit | Permission::TokenRecurringDestinationLimit => {
+            (4, 0, PUBKEY_LEN * 2)
+        },
+        Permission::StakeLimit | Permission::StakeRecurringLimit => (5, 0, 0),
+        Permission::Program => (Permission::Program as u16, 0, PUBKEY_LEN),
+        Permission::ProgramScope => (
+            Permission::ProgramScope as u16,
+            PROGRAM_SCOPE_TARGET_OFFSET,
+            PUBKEY_LEN,
+        ),
+        Permission::SubAccount => (Permission::SubAccount as u16, 0, PUBKEY_LEN),
+        _ => (permission as u16, 0, 0),
+    };
+
+    let end = start
+        .checked_add(len)
+        .ok_or(ProgramError::InvalidInstructionData)?;
+    if end > action_data.len() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    Ok(RoleActionKey {
+        kind,
+        data: &action_data[start..end],
+    })
+}
+
+#[inline(always)]
+fn read_role_action<'a>(
+    actions_data: &'a [u8],
+    cursor: usize,
+) -> Result<(usize, Permission, &'a [u8]), ProgramError> {
+    let header_end = cursor
+        .checked_add(Action::LEN)
+        .ok_or(ProgramError::InvalidInstructionData)?;
+    if header_end > actions_data.len() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let action = unsafe { Action::load_unchecked(&actions_data[cursor..header_end])? };
+    let action_end = header_end
+        .checked_add(action.length() as usize)
+        .ok_or(ProgramError::InvalidInstructionData)?;
+    if action_end > actions_data.len() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    Ok((
+        action_end,
+        action.permission()?,
+        &actions_data[header_end..action_end],
+    ))
+}
+
+/// Rejects duplicate role actions that would race for the same enforcement
+/// slot. Fixed and recurring limit variants share a key because the runtime
+/// charges only the first matching general or destination limit.
+pub fn validate_unique_role_actions(actions_data: &[u8]) -> Result<(), ProgramError> {
+    let mut cursor = 0;
+
+    while cursor < actions_data.len() {
+        let (next_cursor, permission, action_data) = read_role_action(actions_data, cursor)?;
+        let key = role_action_key(permission, action_data)?;
+
+        let mut compare_cursor = 0;
+        while compare_cursor < cursor {
+            let (next_compare_cursor, compare_permission, compare_action_data) =
+                read_role_action(actions_data, compare_cursor)?;
+            let compare_key = role_action_key(compare_permission, compare_action_data)?;
+
+            if key.matches(&compare_key) {
+                return Err(SwigStateError::DuplicateAction.into());
+            }
+
+            compare_cursor = next_compare_cursor;
+        }
+
+        cursor = next_cursor;
+    }
+
+    Ok(())
 }
 
 /// Builder for constructing and modifying Swig accounts.
@@ -264,6 +373,8 @@ impl<'a> SwigBuilder<'a> {
         if count == 0 {
             return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
         }
+
+        validate_unique_role_actions(actions_data)?;
 
         Ok(count)
     }
@@ -744,7 +855,13 @@ impl<'a> SwigWithRoles<'a> {
 mod tests {
     use super::*;
     use crate::{
-        action::{all::All, manage_authority::ManageAuthority, sol_limit::SolLimit, Actionable},
+        action::{
+            all::All, manage_authority::ManageAuthority,
+            sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
+            sol_recurring_destination_limit::SolRecurringDestinationLimit,
+            sol_recurring_limit::SolRecurringLimit, token_limit::TokenLimit,
+            token_recurring_limit::TokenRecurringLimit, Actionable,
+        },
         authority::ed25519::ED25519Authority,
         Transmutable,
     };
@@ -796,6 +913,104 @@ mod tests {
         let id = [1; 32];
         let bump = 255;
         (account_buffer, id, bump)
+    }
+
+    fn encoded_action(permission: Permission, action_data: &[u8]) -> Vec<u8> {
+        let header = Action::new(
+            permission,
+            action_data.len() as u16,
+            Action::LEN as u32 + action_data.len() as u32,
+        );
+        [header.into_bytes().unwrap(), action_data].concat()
+    }
+
+    fn assert_duplicate_action(result: Result<(), ProgramError>) {
+        assert!(matches!(
+            result,
+            Err(ProgramError::Custom(code)) if code == SwigStateError::DuplicateAction as u32
+        ));
+    }
+
+    #[test]
+    fn validate_unique_role_actions_rejects_duplicate_general_limit_family() {
+        let sol_limit = SolLimit { amount: 10 };
+        let sol_recurring_limit = SolRecurringLimit {
+            recurring_amount: 20,
+            window: 100,
+            last_reset: 0,
+            current_amount: 20,
+        };
+        let mut actions = encoded_action(SolLimit::TYPE, sol_limit.into_bytes().unwrap());
+        actions.extend_from_slice(&encoded_action(
+            SolRecurringLimit::TYPE,
+            sol_recurring_limit.into_bytes().unwrap(),
+        ));
+
+        assert_duplicate_action(validate_unique_role_actions(&actions));
+    }
+
+    #[test]
+    fn validate_unique_role_actions_rejects_duplicate_destination_limit_family() {
+        let sol_limit = SolDestinationLimit {
+            destination: [7; 32],
+            amount: 10,
+        };
+        let sol_recurring_limit = SolRecurringDestinationLimit {
+            destination: [7; 32],
+            recurring_amount: 20,
+            window: 100,
+            last_reset: 0,
+            current_amount: 20,
+        };
+        let mut actions =
+            encoded_action(SolDestinationLimit::TYPE, sol_limit.into_bytes().unwrap());
+        actions.extend_from_slice(&encoded_action(
+            SolRecurringDestinationLimit::TYPE,
+            sol_recurring_limit.into_bytes().unwrap(),
+        ));
+
+        assert_duplicate_action(validate_unique_role_actions(&actions));
+    }
+
+    #[test]
+    fn validate_unique_role_actions_allows_distinct_destination_limits() {
+        let first = SolDestinationLimit {
+            destination: [7; 32],
+            amount: 10,
+        };
+        let second = SolDestinationLimit {
+            destination: [8; 32],
+            amount: 10,
+        };
+        let mut actions = encoded_action(SolDestinationLimit::TYPE, first.into_bytes().unwrap());
+        actions.extend_from_slice(&encoded_action(
+            SolDestinationLimit::TYPE,
+            second.into_bytes().unwrap(),
+        ));
+
+        assert!(validate_unique_role_actions(&actions).is_ok());
+    }
+
+    #[test]
+    fn validate_unique_role_actions_rejects_duplicate_token_limit_family() {
+        let token_limit = TokenLimit {
+            token_mint: [3; 32],
+            current_amount: 10,
+        };
+        let token_recurring_limit = TokenRecurringLimit {
+            token_mint: [3; 32],
+            window: 100,
+            limit: 20,
+            current: 20,
+            last_reset: 0,
+        };
+        let mut actions = encoded_action(TokenLimit::TYPE, token_limit.into_bytes().unwrap());
+        actions.extend_from_slice(&encoded_action(
+            TokenRecurringLimit::TYPE,
+            token_recurring_limit.into_bytes().unwrap(),
+        ));
+
+        assert_duplicate_action(validate_unique_role_actions(&actions));
     }
 
     #[test]
