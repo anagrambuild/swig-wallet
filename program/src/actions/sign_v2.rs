@@ -72,12 +72,19 @@ const STAKE_BALANCE_RANGE: core::ops::Range<usize> = 184..192;
 
 /// Account state constants
 const TOKEN_ACCOUNT_INITIALIZED_STATE: u8 = 1;
-const SYSTEM_TRANSFER_DISCRIMINATOR: u32 = 2;
-const TOKEN_TRANSFER_DISCRIMINATOR: u8 = 3;
-const TOKEN_TRANSFER_CHECKED_DISCRIMINATOR: u8 = 12;
 
 /// Empty exclude ranges for hash_except when no exclusions are needed
 const NO_EXCLUDE_RANGES: &[core::ops::Range<usize>] = &[];
+
+/// Maximum number of accounts that can have pre-CPI snapshot hashes.
+const MAX_ACCOUNT_SNAPSHOTS: usize = 100;
+
+const SYSTEM_TRANSFER_DISCRIMINATOR: u32 = 2;
+const SYSTEM_TRANSFER_DATA_LEN: usize = 12;
+const TOKEN_TRANSFER_DISCRIMINATOR: u8 = 3;
+const TOKEN_TRANSFER_CHECKED_DISCRIMINATOR: u8 = 12;
+const TOKEN_TRANSFER_DATA_LEN: usize = 9;
+const TOKEN_TRANSFER_CHECKED_DATA_LEN: usize = 10;
 
 /// Arguments for signing a transaction with a Swig wallet.
 ///
@@ -144,9 +151,14 @@ impl<'a> SignV2<'a> {
         }
         let (inst, rest) = unsafe { data.split_at_unchecked(SignV2Args::LEN) };
         let args = unsafe { SignV2Args::load_unchecked(inst)? };
+        let instruction_payload_len = args.instruction_payload_len as usize;
+
+        if instruction_payload_len > rest.len() {
+            return Err(SwigError::InvalidSwigSignInstructionDataTooShort.into());
+        }
 
         let (instruction_payload, authority_payload) =
-            unsafe { rest.split_at_unchecked(args.instruction_payload_len as usize) };
+            unsafe { rest.split_at_unchecked(instruction_payload_len) };
 
         Ok(Self {
             args,
@@ -202,11 +214,11 @@ pub fn sign_v2(
     }
     let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
-    let role = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)?;
-    if role.is_none() {
+    // The generic account classifier already identified account 0 as Swig config.
+    // Keep this hot-path discriminator check as a local unsafe-read precondition.
+    let Some(role) = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)? else {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-    }
-    let role = role.unwrap();
+    };
     let clock = Clock::get()?;
     let slot = clock.slot;
     if role.authority.session_based() {
@@ -224,6 +236,8 @@ pub fn sign_v2(
             slot,
         )?;
     }
+    // Intentionally no restricted keys: SignV2 forwards existing outer signer
+    // bits in compact CPI metas in addition to the Swig wallet PDA signer.
     let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,
@@ -235,14 +249,34 @@ pub fn sign_v2(
     let seeds = swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &b);
     let signer = seeds.as_slice();
 
-    // Check if we have All or AllButManageAuthority permission to skip CPI
-    // validation
-    let has_all_permission = RoleMut::get_action_mut::<All>(role.actions, &[])?.is_some()
+    let has_unrestricted_sign_permission = RoleMut::get_action_mut::<All>(role.actions, &[])?
+        .is_some()
         || RoleMut::get_action_mut::<AllButManageAuthority>(role.actions, &[])?.is_some();
 
-    // Capture account snapshots before instruction execution
+    if has_unrestricted_sign_permission {
+        for ix in ix_iter {
+            let instruction = ix.map_err(|_| SwigError::InstructionExecutionError)?;
+            instruction.execute(
+                all_accounts,
+                ctx.accounts.swig_wallet_address.key(),
+                &[signer.into()],
+            )?;
+        }
+
+        return Ok(());
+    }
+
+    let has_program_all_permission =
+        RoleMut::get_action_mut::<ProgramAll>(role.actions, &[])?.is_some();
+    let has_program_curated_permission = !has_program_all_permission
+        && RoleMut::get_action_mut::<ProgramCurated>(role.actions, &[])?.is_some();
+
+    // Snapshot hashes are the pre-CPI integrity baseline for writable accounts.
+    // SignV2 permits specific balance fields to change, then verifies the rest
+    // of each protected account is unchanged after CPI execution.
     const UNINIT_HASH: MaybeUninit<[u8; 32]> = MaybeUninit::uninit();
-    let mut account_snapshots: [MaybeUninit<[u8; 32]>; 100] = [UNINIT_HASH; 100];
+    let mut account_snapshots: [MaybeUninit<[u8; 32]>; MAX_ACCOUNT_SNAPSHOTS] =
+        [UNINIT_HASH; MAX_ACCOUNT_SNAPSHOTS];
 
     let mut total_sol_spent: u64 = 0;
 
@@ -303,40 +337,28 @@ pub fn sign_v2(
             _ => None,
         };
 
-        if hash != None && index < 100 {
-            account_snapshots[index].write(hash.unwrap());
+        if let Some(hash) = hash {
+            if index >= MAX_ACCOUNT_SNAPSHOTS {
+                return Err(SwigError::InvalidAccountsLength.into());
+            }
+
+            account_snapshots[index].write(hash);
         }
     }
 
     for ix in ix_iter {
         if let Ok(instruction) = ix {
-            // Check CPI signing permissions if not All permission
-            if !has_all_permission {
-                // Check if swig_wallet_address account is being used as a signer for this
-                // instruction
-                let swig_wallet_address_is_signer =
-                    instruction.accounts.iter().any(|account_meta| {
-                        account_meta.pubkey == ctx.accounts.swig_wallet_address.key()
-                            && account_meta.is_signer
-                    });
+            if !has_program_all_permission && instruction.uses_swig_signer {
+                let program_id_bytes = instruction.program_id.as_ref();
+                let has_permission = (has_program_curated_permission
+                    && ProgramCurated::is_curated_program(
+                        &program_id_bytes.try_into().unwrap_or([0; 32]),
+                    ))
+                    || RoleMut::get_action_mut::<Program>(role.actions, program_id_bytes)?
+                        .is_some();
 
-                if swig_wallet_address_is_signer {
-                    // This is a CPI call where swig_wallet_address is signing - check Program
-                    // permissions
-                    let program_id_bytes = instruction.program_id.as_ref();
-
-                    // Check if we have any program permission that allows this program
-                    let has_permission =
-                        // Check for ProgramAll permission (allows any program)
-                        RoleMut::get_action_mut::<ProgramAll>(role.actions, &[])?.is_some() ||
-                        // Check for ProgramCurated permission (allows curated programs)
-                        (RoleMut::get_action_mut::<ProgramCurated>(role.actions, &[])?.is_some() && ProgramCurated::is_curated_program(&program_id_bytes.try_into().unwrap_or([0; 32]))) ||
-                        // Check for specific Program permission
-                        RoleMut::get_action_mut::<Program>(role.actions, program_id_bytes)?.is_some();
-
-                    if !has_permission {
-                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
-                    }
+                if !has_permission {
+                    return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                 }
             }
 
@@ -357,26 +379,30 @@ pub fn sign_v2(
             // After execution, scan writable accounts once and update spent in-place
             for (account_index, classifier) in account_classifiers.iter_mut().enumerate() {
                 let account = unsafe { all_accounts.get_unchecked(account_index) };
+
                 if !account.is_writable() {
                     continue;
                 }
+
                 match classifier {
                     AccountClassification::SwigTokenAccount { balance, spent } => {
                         let data = unsafe { account.borrow_data_unchecked() };
-                        if data.len() >= 72 {
-                            let current = u64::from_le_bytes(unsafe {
-                                data.get_unchecked(TOKEN_BALANCE_RANGE)
-                                    .try_into()
-                                    .unwrap_or([0; 8])
-                            });
-                            if current < *balance {
-                                let delta = (*balance).saturating_sub(current);
-                                *spent = spent.saturating_add(delta);
-                                *balance = current;
-                            } else if current > *balance {
-                                *balance = current;
-                            }
+
+                        if data.len() < TOKEN_BALANCE_RANGE.end {
+                            continue;
                         }
+
+                        let current = u64::from_le_bytes(unsafe {
+                            data.get_unchecked(TOKEN_BALANCE_RANGE)
+                                .try_into()
+                                .unwrap_or([0; 8])
+                        });
+
+                        if current < *balance {
+                            *spent = spent.saturating_add(*balance - current);
+                        }
+
+                        *balance = current;
                     },
                     AccountClassification::SwigStakeAccount {
                         state: _,
@@ -384,42 +410,47 @@ pub fn sign_v2(
                         spent,
                     } => {
                         let data = unsafe { account.borrow_data_unchecked() };
-                        if data.len() >= 192 {
-                            let current = u64::from_le_bytes(unsafe {
-                                data.get_unchecked(STAKE_BALANCE_RANGE)
-                                    .try_into()
-                                    .unwrap_or([0; 8])
-                            });
-                            if current < *balance {
-                                let delta = (*balance).saturating_sub(current);
-                                *spent = spent.saturating_add(delta);
-                                *balance = current;
-                            } else if current > *balance {
-                                *balance = current;
-                            }
+
+                        if data.len() < STAKE_BALANCE_RANGE.end {
+                            continue;
                         }
+
+                        let current = u64::from_le_bytes(unsafe {
+                            data.get_unchecked(STAKE_BALANCE_RANGE)
+                                .try_into()
+                                .unwrap_or([0; 8])
+                        });
+
+                        if current < *balance {
+                            *spent = spent.saturating_add(*balance - current);
+                        }
+
+                        *balance = current;
                     },
                     AccountClassification::ProgramScope {
                         role_index: _,
                         balance,
                         spent,
                     } => {
-                        let account_key = unsafe { account.key() };
-                        if let Some(program_scope) = RoleMut::get_action_mut::<ProgramScope>(
+                        let account_key = account.key();
+                        let Some(program_scope) = RoleMut::get_action_mut::<ProgramScope>(
                             role.actions,
                             account_key.as_ref(),
-                        )? {
-                            let data = unsafe { account.borrow_data_unchecked() };
-                            if let Ok(current) = program_scope.read_account_balance(data) {
-                                if current < *balance {
-                                    let delta = (*balance).saturating_sub(current);
-                                    *spent = spent.saturating_add(delta);
-                                    *balance = current;
-                                } else if current > *balance {
-                                    *balance = current;
-                                }
-                            }
+                        )?
+                        else {
+                            continue;
+                        };
+
+                        let data = unsafe { account.borrow_data_unchecked() };
+                        let Ok(current) = program_scope.read_account_balance(data) else {
+                            continue;
+                        };
+
+                        if current < *balance {
+                            *spent = spent.saturating_add(*balance - current);
                         }
+
+                        *balance = current;
                     },
                     _ => {},
                 }
@@ -430,340 +461,277 @@ pub fn sign_v2(
     }
 
     let actions = role.actions;
-    if has_all_permission {
-        return Ok(());
-    } else {
-        'account_loop: for (index, account) in account_classifiers.iter_mut().enumerate() {
-            match account {
-                AccountClassification::ThisSwigV2 { lamports } => {
-                    let account_info = unsafe { all_accounts.get_unchecked(index) };
+    for (index, account) in account_classifiers.iter_mut().enumerate() {
+        match account {
+            AccountClassification::ThisSwigV2 { .. } => {
+                // SOL spend enforcement for the Swig config account:
+                // 1. Verify writable Swig account data/owner did not change unexpectedly.
+                // 2. Verify the Swig wallet PDA remains rent-exempt after CPIs.
+                // 3. If SOL was spent, charge a general SOL limit when present.
+                // 4. If any SOL destination limits exist, every actual debit must be
+                //    parsed and charged to a matching destination limit.
+                // 5. If SOL was spent but neither a general nor destination limit applies,
+                //    reject the instruction.
+                let account_info = unsafe { all_accounts.get_unchecked(index) };
 
-                    if account_info.is_writable() {
-                        let data = unsafe { &account_info.borrow_data_unchecked() };
-                        let current_hash =
-                            hash_except(&data, account_info.owner(), NO_EXCLUDE_RANGES);
-                        let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
-                        if *snapshot_hash != current_hash {
-                            return Err(SwigError::AccountDataModifiedUnexpectedly.into());
-                        }
-                    }
-
-                    let current_lamports = account_info.lamports();
-                    let mut matched = false;
-
-                    // Make sure that the swig wallet address has sufficient balance
-                    let swig_wallet_balance = ctx.accounts.swig_wallet_address.lamports();
-                    let swig_wallet_rent_exempt_minimum = pinocchio::sysvars::rent::Rent::get()?
-                        .minimum_balance(ctx.accounts.swig_wallet_address.data_len());
-                    if swig_wallet_balance < swig_wallet_rent_exempt_minimum {
-                        return Err(
-                            SwigAuthenticateError::PermissionDeniedInsufficientBalance.into()
-                        );
-                    }
-
-                    if total_sol_spent > 0 {
-                        // First check general SOL limits
-                        let mut general_limit_applied = false;
-
-                        if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])? {
-                            action.run(total_sol_spent)?;
-                            general_limit_applied = true;
-                        } else if let Some(action) =
-                            RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])?
-                        {
-                            action.run(total_sol_spent, slot)?;
-                            general_limit_applied = true;
-                        }
-
-                        // Only check destination limits if they exist
-                        if has_sol_destination_limits(actions)? {
-                            let mut destination_limit_applied = false;
-                            let mut parsed_sol_spent = 0u64;
-                            // Process SOL transfers using zero-copy callback approach
-                            process_sol_transfers(
-                                sign_v2.instruction_payload,
-                                ctx.accounts.swig_wallet_address.key(),
-                                all_accounts,
-                                ctx.accounts.swig_wallet_address.key(),
-                                |destination_pubkey, amount| -> Result<bool, ProgramError> {
-                                    let missing_permission =
-                                        SwigAuthenticateError::PermissionDeniedMissingPermission;
-                                    let next_parsed_sol_spent = parsed_sol_spent
-                                        .checked_add(amount)
-                                        .ok_or(missing_permission)?;
-                                    parsed_sol_spent = next_parsed_sol_spent;
-                                    let dest_pubkey = destination_pubkey.as_ref();
-
-                                    // First check recurring destination limits (higher precedence)
-                                    if let Some(dest_action) = RoleMut::get_action_mut::<
-                                        SolRecurringDestinationLimit,
-                                    >(
-                                        actions, dest_pubkey
-                                    )? {
-                                        dest_action.run(amount, slot)?;
-                                        destination_limit_applied = true;
-                                        return Ok(true);
-                                    }
-
-                                    // Then check non-recurring destination limits
-                                    if let Some(dest_action) = RoleMut::get_action_mut::<
-                                        SolDestinationLimit,
-                                    >(
-                                        actions, dest_pubkey
-                                    )? {
-                                        dest_action.run(amount)?;
-                                        destination_limit_applied = true;
-                                        return Ok(true);
-                                    }
-
-                                    Err(SwigAuthenticateError::PermissionDeniedMissingPermission
-                                        .into())
-                                },
-                            )?;
-
-                            // If destination limits exist, every actual debit must be parsed
-                            // and charged to a matching destination limit.
-                            let parsed_all_sol_spend = parsed_sol_spent == total_sol_spent;
-                            if !destination_limit_applied || !parsed_all_sol_spend {
-                                return Err(
-                                    SwigAuthenticateError::PermissionDeniedMissingPermission.into(),
-                                );
-                            }
-                        }
-
-                        // If we have general limits OR destination limits exist, continue
-                        if general_limit_applied || has_sol_destination_limits(actions)? {
-                            continue;
-                        }
-
-                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
-                    }
-                },
-                AccountClassification::SwigTokenAccount { balance, .. } => {
-                    let account_info = unsafe { all_accounts.get_unchecked(index) };
-
-                    // Only validate snapshots for writable accounts
-                    if account_info.is_writable() {
-                        let data = unsafe { &account_info.borrow_data_unchecked() };
-                        let exclude_ranges = [TOKEN_BALANCE_EXCLUDE_RANGE];
-                        let current_hash =
-                            hash_except(&data, account_info.owner(), &exclude_ranges);
-                        let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
-                        if *snapshot_hash != current_hash {
-                            return Err(SwigError::AccountDataModifiedUnexpectedly.into());
-                        }
-                    }
-
+                if account_info.is_writable() {
                     let data = unsafe { &account_info.borrow_data_unchecked() };
-                    let mint = unsafe { data.get_unchecked(TOKEN_MINT_RANGE) };
-                    let state = unsafe { *data.get_unchecked(TOKEN_STATE_INDEX) };
-
-                    let authority = unsafe { data.get_unchecked(TOKEN_AUTHORITY_RANGE) };
-                    let current_token_balance = u64::from_le_bytes(unsafe {
-                        data.get_unchecked(TOKEN_BALANCE_RANGE)
-                            .try_into()
-                            .map_err(|_| ProgramError::InvalidAccountData)?
-                    });
-
-                    if authority != ctx.accounts.swig_wallet_address.key() {
-                        return Err(
-                            SwigAuthenticateError::PermissionDeniedTokenAccountAuthorityNotSwig
-                                .into(),
-                        );
+                    let current_hash = hash_except(&data, account_info.owner(), NO_EXCLUDE_RANGES);
+                    let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
+                    if *snapshot_hash != current_hash {
+                        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
                     }
-                    if state != TOKEN_ACCOUNT_INITIALIZED_STATE {
-                        return Err(
-                            SwigAuthenticateError::PermissionDeniedTokenAccountNotInitialized
-                                .into(),
-                        );
-                    }
+                }
 
-                    // Find the cumulative amount spent for this token account
-                    let mut total_token_spent: u64 = 0;
-                    if let AccountClassification::SwigTokenAccount { balance: _, spent } = account {
-                        total_token_spent = *spent;
-                    }
+                let swig_wallet_balance = ctx.accounts.swig_wallet_address.lamports();
+                let swig_wallet_rent_exempt_minimum = pinocchio::sysvars::rent::Rent::get()?
+                    .minimum_balance(ctx.accounts.swig_wallet_address.data_len());
+                if swig_wallet_balance < swig_wallet_rent_exempt_minimum {
+                    return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
+                }
 
-                    if total_token_spent > 0 {
-                        let source_account_key = unsafe { all_accounts.get_unchecked(index) }.key();
-                        if has_token_destination_limits(actions, mint)? {
-                            let mut destination_limit_applied = false;
-                            let mut parsed_token_spent = 0u64;
+                if total_sol_spent == 0 {
+                    continue;
+                }
 
-                            process_token_destinations(
-                                sign_v2.instruction_payload,
-                                source_account_key,
-                                all_accounts,
-                                ctx.accounts.swig_wallet_address.key(),
-                                |destination, amount| -> Result<bool, ProgramError> {
-                                    let missing_permission =
-                                        SwigAuthenticateError::PermissionDeniedMissingPermission;
-                                    let next_parsed_token_spent = parsed_token_spent
-                                        .checked_add(amount)
-                                        .ok_or(missing_permission)?;
-                                    parsed_token_spent = next_parsed_token_spent;
-                                    // Create the combined key [mint + destination] for matching
-                                    let mut combined_key = [0u8; 64];
-                                    combined_key[..32].copy_from_slice(mint);
-                                    combined_key[32..].copy_from_slice(destination.as_ref());
+                let general_sol_limit_applied =
+                    if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])? {
+                        action.run(total_sol_spent)?;
+                        true
+                    } else if let Some(action) =
+                        RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])?
+                    {
+                        action.run(total_sol_spent, slot)?;
+                        true
+                    } else {
+                        false
+                    };
 
-                                    // First check recurring destination limits
-                                    if let Some(action) = RoleMut::get_action_mut::<
-                                        TokenRecurringDestinationLimit,
-                                    >(
-                                        actions, &combined_key
-                                    )? {
-                                        action.run(amount, slot)?;
-                                        destination_limit_applied = true;
-                                        return Ok(true);
-                                    }
+                let has_destination_sol_limits = has_sol_destination_limits(actions)?;
+                let destination_sol_limit_applied = if has_destination_sol_limits {
+                    let mut matched_any_destination_limit = false;
+                    let mut parsed_sol_spent = 0u64;
 
-                                    // Then check non-recurring destination limits
-                                    if let Some(action) = RoleMut::get_action_mut::<
-                                        TokenDestinationLimit,
-                                    >(
-                                        actions, &combined_key
-                                    )? {
-                                        action.run(amount)?;
-                                        destination_limit_applied = true;
-                                        return Ok(true);
-                                    }
+                    process_sol_transfers(
+                        sign_v2.instruction_payload,
+                        ctx.accounts.swig_wallet_address.key(),
+                        all_accounts,
+                        ctx.accounts.swig_wallet_address.key(),
+                        |destination_pubkey, amount| -> Result<(), ProgramError> {
+                            parsed_sol_spent = parsed_sol_spent
+                                .checked_add(amount)
+                                .ok_or(SwigAuthenticateError::PermissionDeniedMissingPermission)?;
 
-                                    Err(SwigAuthenticateError::PermissionDeniedMissingPermission
-                                        .into())
-                                },
-                            )?;
+                            let dest_pubkey = destination_pubkey.as_ref();
 
-                            let parsed_all_token_spend = parsed_token_spent == total_token_spent;
-                            if !destination_limit_applied || !parsed_all_token_spend {
-                                return Err(
-                                    SwigAuthenticateError::PermissionDeniedMissingPermission.into(),
-                                );
+                            if let Some(action) = RoleMut::get_action_mut::<
+                                SolRecurringDestinationLimit,
+                            >(
+                                actions, dest_pubkey
+                            )? {
+                                action.run(amount, slot)?;
+                                matched_any_destination_limit = true;
+                                return Ok(());
                             }
 
-                            continue 'account_loop;
-                        }
+                            if let Some(action) = RoleMut::get_action_mut::<SolDestinationLimit>(
+                                actions,
+                                dest_pubkey,
+                            )? {
+                                action.run(amount)?;
+                                matched_any_destination_limit = true;
+                                return Ok(());
+                            }
 
-                        // Check regular token limits for outgoing transfers
-                        if let Some(action) = RoleMut::get_action_mut::<TokenLimit>(actions, mint)?
-                        {
-                            action.run(total_token_spent)?;
-                            continue;
-                        } else if let Some(action) =
-                            RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?
-                        {
-                            action.run(total_token_spent, slot)?;
-                            continue;
-                        }
-                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
-                    }
-                },
-                AccountClassification::SwigStakeAccount {
-                    state: _,
-                    balance,
-                    spent,
-                } => {
-                    let account_info = unsafe { all_accounts.get_unchecked(index) };
+                            Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into())
+                        },
+                    )?;
 
-                    // Only validate snapshots for writable accounts
-                    if account_info.is_writable() {
-                        let data = unsafe { &account_info.borrow_data_unchecked() };
-                        let exclude_ranges = [STAKE_BALANCE_EXCLUDE_RANGE];
-                        let current_hash =
-                            hash_except(&data, account_info.owner(), &exclude_ranges);
-                        let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
-                        if *snapshot_hash != current_hash {
-                            return Err(SwigError::AccountDataModifiedUnexpectedly.into());
-                        }
-                    }
-
-                    // Validate stake spending permissions if any stake was spent
-                    if *spent > 0 {
-                        if let Some(action) = RoleMut::get_action_mut::<StakeLimit>(actions, &[])? {
-                            action.run(*spent)?;
-                            continue;
-                        } else if let Some(action) =
-                            RoleMut::get_action_mut::<StakeRecurringLimit>(actions, &[])?
-                        {
-                            action.run(*spent, slot)?;
-                            continue;
-                        }
+                    if !matched_any_destination_limit || parsed_sol_spent != total_sol_spent {
                         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                     }
 
+                    true
+                } else {
+                    false
+                };
+
+                if !general_sol_limit_applied && !destination_sol_limit_applied {
+                    return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+                }
+
+                continue;
+            },
+            AccountClassification::SwigTokenAccount { spent, .. } => {
+                let account_info = unsafe { all_accounts.get_unchecked(index) };
+
+                if account_info.is_writable() {
+                    let data = unsafe { &account_info.borrow_data_unchecked() };
+                    let exclude_ranges = [TOKEN_BALANCE_EXCLUDE_RANGE];
+                    let current_hash = hash_except(&data, account_info.owner(), &exclude_ranges);
+                    let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
+                    if *snapshot_hash != current_hash {
+                        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+                    }
+                }
+
+                let data = unsafe { &account_info.borrow_data_unchecked() };
+                let mint = unsafe { data.get_unchecked(TOKEN_MINT_RANGE) };
+                let state = unsafe { *data.get_unchecked(TOKEN_STATE_INDEX) };
+                let authority = unsafe { data.get_unchecked(TOKEN_AUTHORITY_RANGE) };
+
+                if authority != ctx.accounts.swig_wallet_address.key() {
+                    return Err(
+                        SwigAuthenticateError::PermissionDeniedTokenAccountAuthorityNotSwig.into(),
+                    );
+                }
+                if state != TOKEN_ACCOUNT_INITIALIZED_STATE {
+                    return Err(
+                        SwigAuthenticateError::PermissionDeniedTokenAccountNotInitialized.into(),
+                    );
+                }
+
+                let total_token_spent = *spent;
+                if total_token_spent == 0 {
                     continue;
-                },
-                AccountClassification::ProgramScope {
-                    role_index,
-                    balance,
-                    ..
-                } => {
-                    let account_info = unsafe { all_accounts.get_unchecked(index) };
+                }
 
-                    // Get the role with the ProgramScope action using the account key
-                    // (target_account)
-                    let account_key = unsafe { all_accounts.get_unchecked(index).key() };
-                    let program_scope =
-                        RoleMut::get_action_mut::<ProgramScope>(actions, account_key.as_ref())?;
+                let general_token_limit_applied =
+                    if let Some(action) = RoleMut::get_action_mut::<TokenLimit>(actions, mint)? {
+                        action.run(total_token_spent)?;
+                        true
+                    } else if let Some(action) =
+                        RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)?
+                    {
+                        action.run(total_token_spent, slot)?;
+                        true
+                    } else {
+                        false
+                    };
 
-                    match program_scope {
-                        Some(program_scope) => {
-                            // The target_account verification is now implicit in the match_data
-                            // check that happens in get_action_mut, so
-                            // we don't need to check again
+                let has_destination_token_limits = has_token_destination_limits(actions, mint)?;
+                let destination_token_limit_applied = if has_destination_token_limits {
+                    let source_account_key = account_info.key();
+                    let mut matched_any_destination_limit = false;
+                    let mut parsed_token_spent = 0u64;
 
-                            // Get the current balance by using the program_scope's
-                            // read_account_balance method
-                            let data = unsafe { account_info.borrow_data_unchecked() };
+                    process_token_destinations(
+                        sign_v2.instruction_payload,
+                        source_account_key,
+                        all_accounts,
+                        ctx.accounts.swig_wallet_address.key(),
+                        |destination, amount| -> Result<(), ProgramError> {
+                            parsed_token_spent = parsed_token_spent
+                                .checked_add(amount)
+                                .ok_or(SwigAuthenticateError::PermissionDeniedMissingPermission)?;
 
-                            // Check if balance field range is valid
-                            if program_scope.balance_field_end - program_scope.balance_field_start
-                                > 0
-                                && program_scope.balance_field_end as usize <= data.len()
-                            {
-                                // Only validate snapshots for writable accounts
-                                if account_info.is_writable() {
-                                    // Hash the data excluding the balance field but including owner
-                                    let exclude_ranges =
-                                        [program_scope.balance_field_start as usize
-                                            ..program_scope.balance_field_end as usize];
-                                    let current_hash =
-                                        hash_except(&data, account_info.owner(), &exclude_ranges);
-                                    let snapshot_hash =
-                                        unsafe { account_snapshots[index].assume_init_ref() };
-                                    if *snapshot_hash != current_hash {
-                                        return Err(
-                                            SwigError::AccountDataModifiedUnexpectedly.into()
-                                        );
-                                    }
-                                }
+                            let mut combined_key = [0u8; 64];
+                            combined_key[..32].copy_from_slice(mint);
+                            combined_key[32..].copy_from_slice(destination.as_ref());
 
-                                let mut total_program_scope_spent: u128 = 0;
-                                if let AccountClassification::ProgramScope {
-                                    role_index: _,
-                                    balance: _,
-                                    spent,
-                                } = account
-                                {
-                                    total_program_scope_spent = *spent;
-                                }
-
-                                program_scope.run(total_program_scope_spent, Some(slot))?;
-                            } else {
-                                return Err(SwigError::InvalidProgramScopeBalanceFields.into());
+                            if let Some(action) = RoleMut::get_action_mut::<
+                                TokenRecurringDestinationLimit,
+                            >(
+                                actions, &combined_key
+                            )? {
+                                action.run(amount, slot)?;
+                                matched_any_destination_limit = true;
+                                return Ok(());
                             }
+
+                            if let Some(action) = RoleMut::get_action_mut::<TokenDestinationLimit>(
+                                actions,
+                                &combined_key,
+                            )? {
+                                action.run(amount)?;
+                                matched_any_destination_limit = true;
+                                return Ok(());
+                            }
+
+                            Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into())
                         },
-                        None => {
-                            return Err(
-                                SwigAuthenticateError::PermissionDeniedMissingPermission.into()
-                            );
-                        },
+                    )?;
+
+                    if !matched_any_destination_limit || parsed_token_spent != total_token_spent {
+                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                     }
 
+                    true
+                } else {
+                    false
+                };
+
+                if !general_token_limit_applied && !destination_token_limit_applied {
+                    return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+                }
+
+                continue;
+            },
+            AccountClassification::SwigStakeAccount { spent, .. } => {
+                let account_info = unsafe { all_accounts.get_unchecked(index) };
+
+                if account_info.is_writable() {
+                    let data = unsafe { &account_info.borrow_data_unchecked() };
+                    let exclude_ranges = [STAKE_BALANCE_EXCLUDE_RANGE];
+                    let current_hash = hash_except(&data, account_info.owner(), &exclude_ranges);
+                    let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
+                    if *snapshot_hash != current_hash {
+                        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+                    }
+                }
+
+                let total_stake_spent = *spent;
+                if total_stake_spent == 0 {
                     continue;
-                },
-                _ => {},
-            }
+                }
+
+                if let Some(action) = RoleMut::get_action_mut::<StakeLimit>(actions, &[])? {
+                    action.run(total_stake_spent)?;
+                    continue;
+                }
+
+                if let Some(action) = RoleMut::get_action_mut::<StakeRecurringLimit>(actions, &[])?
+                {
+                    action.run(total_stake_spent, slot)?;
+                    continue;
+                }
+
+                return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+            },
+            AccountClassification::ProgramScope { spent, .. } => {
+                let account_info = unsafe { all_accounts.get_unchecked(index) };
+                let Some(program_scope) =
+                    RoleMut::get_action_mut::<ProgramScope>(actions, account_info.key().as_ref())?
+                else {
+                    return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+                };
+
+                let data = unsafe { account_info.borrow_data_unchecked() };
+                let balance_field_start = program_scope.balance_field_start as usize;
+                let balance_field_end = program_scope.balance_field_end as usize;
+
+                if balance_field_start >= balance_field_end || balance_field_end > data.len() {
+                    return Err(SwigError::InvalidProgramScopeBalanceFields.into());
+                }
+
+                if account_info.is_writable() {
+                    let exclude_ranges = [balance_field_start..balance_field_end];
+                    let current_hash = hash_except(&data, account_info.owner(), &exclude_ranges);
+                    let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
+                    if *snapshot_hash != current_hash {
+                        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+                    }
+                }
+
+                let total_program_scope_spent = *spent;
+                if total_program_scope_spent == 0 {
+                    continue;
+                }
+
+                program_scope.run(total_program_scope_spent, Some(slot))?;
+                continue;
+            },
+            _ => {},
         }
     }
 
@@ -853,58 +821,56 @@ fn process_sol_transfers<F>(
     mut callback: F,
 ) -> Result<(), ProgramError>
 where
-    // Returns true to continue, false to stop.
-    F: FnMut(&Pubkey, u64) -> Result<bool, ProgramError>,
+    F: FnMut(&Pubkey, u64) -> Result<(), ProgramError>,
 {
-    // Parse the instruction payload using the instruction iterator
-    let restricted_keys: &[&Pubkey] = &[]; // No restricted keys for this use case
+    let source_account_bytes = source_account.as_ref();
+    let restricted_keys: &[&Pubkey] = &[];
     let mut instruction_iter =
         InstructionIterator::new(all_accounts, instruction_payload, signer, restricted_keys)?;
 
     while let Some(instruction) = instruction_iter.next() {
         let instruction = instruction?;
 
-        // Check if this is a System Program instruction
-        if *instruction.program_id == crate::SYSTEM_PROGRAM_ID {
-            // Check if this is a Transfer instruction.
-            if instruction.data.len() >= 12
-                && u32::from_le_bytes([
-                    instruction.data[0],
-                    instruction.data[1],
-                    instruction.data[2],
-                    instruction.data[3],
-                ]) == SYSTEM_TRANSFER_DISCRIMINATOR
-            {
-                // System Program Transfer instruction layout:
-                // - accounts[0]: source account (funding account)
-                // - accounts[1]: destination account (recipient)
-                // - data[4..12]: amount (u64 little-endian)
-                if instruction.accounts.len() >= 2 {
-                    let source_pubkey = &instruction.accounts[0].pubkey;
-
-                    // Check if this transfer is from our source account
-                    if *source_pubkey == source_account.as_ref() {
-                        let destination_pubkey = instruction.accounts[1].pubkey;
-                        let amount = u64::from_le_bytes([
-                            instruction.data[4],
-                            instruction.data[5],
-                            instruction.data[6],
-                            instruction.data[7],
-                            instruction.data[8],
-                            instruction.data[9],
-                            instruction.data[10],
-                            instruction.data[11],
-                        ]);
-
-                        // Call the callback with the transfer data
-                        if !callback(destination_pubkey, amount)? {
-                            return Ok(()); // Early exit if callback returns
-                                           // false
-                        }
-                    }
-                }
-            }
+        if *instruction.program_id != crate::SYSTEM_PROGRAM_ID {
+            continue;
         }
+
+        if instruction.data.len() < SYSTEM_TRANSFER_DATA_LEN {
+            continue;
+        }
+
+        let discriminator = u32::from_le_bytes([
+            instruction.data[0],
+            instruction.data[1],
+            instruction.data[2],
+            instruction.data[3],
+        ]);
+
+        if discriminator != SYSTEM_TRANSFER_DISCRIMINATOR {
+            continue;
+        }
+
+        if instruction.accounts.len() < 2 {
+            continue;
+        }
+
+        if instruction.accounts[0].pubkey != source_account_bytes {
+            continue;
+        }
+
+        let destination_pubkey = instruction.accounts[1].pubkey;
+        let amount = u64::from_le_bytes([
+            instruction.data[4],
+            instruction.data[5],
+            instruction.data[6],
+            instruction.data[7],
+            instruction.data[8],
+            instruction.data[9],
+            instruction.data[10],
+            instruction.data[11],
+        ]);
+
+        callback(destination_pubkey, amount)?;
     }
 
     Ok(())
@@ -931,61 +897,51 @@ fn process_token_destinations<F>(
     mut callback: F,
 ) -> Result<(), ProgramError>
 where
-    F: FnMut(&Pubkey, u64) -> Result<bool, ProgramError>, /* Returns true to continue, false to
-                                                           * stop */
+    F: FnMut(&Pubkey, u64) -> Result<(), ProgramError>,
 {
-    // Parse the instruction payload using the instruction iterator
-    let restricted_keys: &[&Pubkey] = &[]; // No restricted keys for this use case
+    let source_account_bytes = source_account.as_ref();
+    let restricted_keys: &[&Pubkey] = &[];
     let mut instruction_iter =
         InstructionIterator::new(all_accounts, instruction_payload, signer, restricted_keys)?;
 
     while let Some(instruction) = instruction_iter.next() {
         let instruction = instruction?;
 
-        // Check if this is a token program instruction
-        if *instruction.program_id == crate::SPL_TOKEN_ID
-            || *instruction.program_id == crate::SPL_TOKEN_2022_ID
-        {
-            let destination_index = if instruction.data.len() >= 9
-                && instruction.accounts.len() >= 2
-                && instruction.data[0] == TOKEN_TRANSFER_DISCRIMINATOR
-            {
-                Some(1)
-            } else if instruction.data.len() >= 10
-                && instruction.accounts.len() >= 3
-                && instruction.data[0] == TOKEN_TRANSFER_CHECKED_DISCRIMINATOR
-            {
-                Some(2)
-            } else {
-                None
-            };
+        let is_token_program = *instruction.program_id == crate::SPL_TOKEN_ID
+            || *instruction.program_id == crate::SPL_TOKEN_2022_ID;
 
-            if let Some(destination_index) = destination_index {
-                let source_pubkey = &instruction.accounts[0].pubkey;
-
-                // Check if this transfer is from our source account
-                if *source_pubkey == source_account.as_ref() {
-                    let destination_pubkey = instruction.accounts[destination_index].pubkey;
-
-                    let amount = u64::from_le_bytes([
-                        instruction.data[1],
-                        instruction.data[2],
-                        instruction.data[3],
-                        instruction.data[4],
-                        instruction.data[5],
-                        instruction.data[6],
-                        instruction.data[7],
-                        instruction.data[8],
-                    ]);
-
-                    // Call the callback with the destination and transfer amount.
-                    if !callback(destination_pubkey, amount)? {
-                        return Ok(()); // Early exit if callback returns
-                                       // false
-                    }
-                }
-            }
+        if !is_token_program || instruction.data.is_empty() {
+            continue;
         }
+
+        let (min_data_len, destination_index) = match instruction.data[0] {
+            TOKEN_TRANSFER_DISCRIMINATOR => (TOKEN_TRANSFER_DATA_LEN, 1),
+            TOKEN_TRANSFER_CHECKED_DISCRIMINATOR => (TOKEN_TRANSFER_CHECKED_DATA_LEN, 2),
+            _ => continue,
+        };
+
+        if instruction.data.len() < min_data_len || instruction.accounts.len() <= destination_index
+        {
+            continue;
+        }
+
+        if instruction.accounts[0].pubkey != source_account_bytes {
+            continue;
+        }
+
+        let destination_pubkey = instruction.accounts[destination_index].pubkey;
+        let amount = u64::from_le_bytes([
+            instruction.data[1],
+            instruction.data[2],
+            instruction.data[3],
+            instruction.data[4],
+            instruction.data[5],
+            instruction.data[6],
+            instruction.data[7],
+            instruction.data[8],
+        ]);
+
+        callback(destination_pubkey, amount)?;
     }
 
     Ok(())
