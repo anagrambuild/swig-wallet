@@ -118,17 +118,28 @@ impl<'a> AddAuthorityV1<'a> {
 
         let (inst, rest) = data.split_at(AddAuthorityV1Args::LEN);
         let args = unsafe { AddAuthorityV1Args::load_unchecked(inst)? };
-        let (authority_data, rest) = rest.split_at(args.new_authority_data_len as usize);
-        let (actions_payload, authority_payload) = rest.split_at(args.actions_data_len as usize);
+        let authority_data_len = args.new_authority_data_len as usize;
+        let actions_data_len = args.actions_data_len as usize;
+        let data_payload_len = AddAuthorityV1Args::LEN
+            .checked_add(authority_data_len)
+            .and_then(|len| len.checked_add(actions_data_len))
+            .ok_or(SwigError::InvalidSwigAddAuthorityInstructionDataTooShort)?;
+        if authority_data_len > rest.len() || data_payload_len > data.len() {
+            return Err(SwigError::InvalidSwigAddAuthorityInstructionDataTooShort.into());
+        }
+
+        let (authority_data, rest) = rest.split_at(authority_data_len);
+        if actions_data_len > rest.len() {
+            return Err(SwigError::InvalidSwigAddAuthorityInstructionDataTooShort.into());
+        }
+        let (actions_payload, authority_payload) = rest.split_at(actions_data_len);
 
         Ok(Self {
             args,
             authority_data,
             authority_payload,
             actions: actions_payload,
-            data_payload: &data[..AddAuthorityV1Args::LEN
-                + args.new_authority_data_len as usize
-                + args.actions_data_len as usize],
+            data_payload: &data[..data_payload_len],
         })
     }
 }
@@ -245,4 +256,35 @@ pub fn add_authority_v1(
         add_authority_v1.actions,
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_instruction_bytes_rejects_short_authority_payload() {
+        let args = AddAuthorityV1Args::new(0, AuthorityType::Ed25519, 32, 8, 1);
+        let mut data = args.into_bytes().unwrap().to_vec();
+        data.extend_from_slice(&[1, 2]);
+
+        assert!(matches!(
+            AddAuthorityV1::from_instruction_bytes(&data),
+            Err(ProgramError::Custom(code))
+                if code == SwigError::InvalidSwigAddAuthorityInstructionDataTooShort as u32
+        ));
+    }
+
+    #[test]
+    fn from_instruction_bytes_rejects_short_actions_payload() {
+        let args = AddAuthorityV1Args::new(0, AuthorityType::Ed25519, 2, 8, 1);
+        let mut data = args.into_bytes().unwrap().to_vec();
+        data.extend_from_slice(&[1, 2, 3]);
+
+        assert!(matches!(
+            AddAuthorityV1::from_instruction_bytes(&data),
+            Err(ProgramError::Custom(code))
+                if code == SwigError::InvalidSwigAddAuthorityInstructionDataTooShort as u32
+        ));
+    }
 }

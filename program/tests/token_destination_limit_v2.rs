@@ -198,6 +198,134 @@ fn test_token_destination_limit_basic_v2() {
     );
 }
 
+/// TokenDestinationLimit must handle SPL Token TransferChecked instructions.
+#[test_log::test]
+fn test_token_destination_limit_transfer_checked_v2() {
+    let mut context = setup_test_context().unwrap();
+    let swig_authority = Keypair::new();
+    let recipient = Keypair::new();
+
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), 1_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&swig_authority.pubkey(), 1_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let swig_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
+    let recipient_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &recipient.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &swig_ata,
+        1000,
+    )
+    .unwrap();
+
+    create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
+
+    let second_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&second_authority.pubkey(), 1_000_000_000)
+        .unwrap();
+
+    let destination_limit_amount = 500u64;
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ProgramAll(ProgramAll {}),
+            ClientAction::TokenDestinationLimit(TokenDestinationLimit {
+                token_mint: mint_pubkey.to_bytes(),
+                destination: recipient_ata.to_bytes(),
+                amount: destination_limit_amount,
+            }),
+        ],
+    )
+    .unwrap();
+
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
+
+    let transfer_amount = 300u64;
+    let transfer_ix = spl_token::instruction::transfer_checked(
+        &spl_token::ID,
+        &swig_ata,
+        &mint_pubkey,
+        &recipient_ata,
+        &swig_wallet_address,
+        &[],
+        transfer_amount,
+        9,
+    )
+    .unwrap();
+
+    let sign_ix = SignV2Instruction::new_ed25519(
+        swig,
+        swig_wallet_address,
+        second_authority.pubkey(),
+        transfer_ix,
+        1,
+    )
+    .unwrap();
+    let transfer_message = v0::Message::try_compile(
+        &second_authority.pubkey(),
+        &[sign_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let transfer_tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(transfer_message), &[&second_authority])
+            .unwrap();
+
+    let result = context.svm.send_transaction(transfer_tx);
+    assert!(result.is_ok());
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let role = swig_state.get_role(1).unwrap().unwrap();
+    let combined_key = [mint_pubkey.to_bytes(), recipient_ata.to_bytes()].concat();
+    let dest_limit = role
+        .get_action::<TokenDestinationLimit>(&combined_key)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        dest_limit.amount,
+        destination_limit_amount - transfer_amount
+    );
+}
+
 /// Destination limits must validate every token transfer in one SignV2 payload.
 #[test_log::test]
 fn test_token_destination_limit_rejects_second_unmatched_transfer_v2() {

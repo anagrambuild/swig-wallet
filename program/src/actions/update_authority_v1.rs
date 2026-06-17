@@ -15,7 +15,7 @@ use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, Action, ActionLoader},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
-    swig::{Swig, SwigBuilder},
+    swig::Swig,
     Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut,
 };
 
@@ -186,13 +186,21 @@ impl<'a> UpdateAuthorityV1<'a> {
 
         let (inst, rest) = data.split_at(UpdateAuthorityV1Args::LEN);
         let args = unsafe { UpdateAuthorityV1Args::load_unchecked(inst)? };
-        let (actions_payload, authority_payload) = rest.split_at(args.actions_data_len as usize);
+        let actions_data_len = args.actions_data_len as usize;
+        let data_payload_len = UpdateAuthorityV1Args::LEN
+            .checked_add(actions_data_len)
+            .ok_or(SwigError::InvalidSwigUpdateAuthorityInstructionDataTooShort)?;
+        if actions_data_len > rest.len() {
+            return Err(SwigError::InvalidSwigUpdateAuthorityInstructionDataTooShort.into());
+        }
+
+        let (actions_payload, authority_payload) = rest.split_at(actions_data_len);
 
         Ok(Self {
             args,
             operation_data: actions_payload,
             authority_payload,
-            data_payload: &data[..UpdateAuthorityV1Args::LEN + args.actions_data_len as usize],
+            data_payload: &data[..data_payload_len],
         })
     }
 
@@ -782,4 +790,22 @@ pub fn update_authority_v1(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_instruction_bytes_rejects_short_actions_payload() {
+        let args = UpdateAuthorityV1Args::new(0, 1, 8, 0);
+        let mut data = args.into_bytes().unwrap().to_vec();
+        data.extend_from_slice(&[1, 2]);
+
+        assert!(matches!(
+            UpdateAuthorityV1::from_instruction_bytes(&data),
+            Err(ProgramError::Custom(code))
+                if code == SwigError::InvalidSwigUpdateAuthorityInstructionDataTooShort as u32
+        ));
+    }
 }

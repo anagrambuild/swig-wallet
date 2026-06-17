@@ -52,6 +52,7 @@ pub struct InstructionHolder<'a> {
     pub indexes: &'a [usize],
     pub accounts: &'a [AccountMeta<'a>],
     pub data: &'a [u8],
+    pub uses_swig_signer: bool,
 }
 
 impl<'a> InstructionHolder<'a> {
@@ -287,16 +288,21 @@ where
         let mut infos = Vec::with_capacity(num_accounts);
         const INDEX_UNINIT: MaybeUninit<usize> = MaybeUninit::uninit();
         let mut indexes = [INDEX_UNINIT; MAX_ACCOUNTS];
+        let mut uses_swig_signer = false;
         for i in 0..num_accounts {
             let (pubkey_index, cursor) = self.read_u8()?;
             self.cursor = cursor;
             let account = self.accounts.get_account(pubkey_index as usize)?;
             indexes[i].write(pubkey_index as usize);
             let pubkey = account.pubkey();
+            let is_signer = (pubkey == self.signer || account.signer())
+                && !self.restricted_keys.is_restricted(pubkey);
+            if is_signer && pubkey == self.signer {
+                uses_swig_signer = true;
+            }
             accounts[i].write(AccountMeta {
                 pubkey,
-                is_signer: (pubkey == self.signer || account.signer())
-                    && !self.restricted_keys.is_restricted(pubkey),
+                is_signer,
                 is_writable: account.writable(),
             });
             infos.push(account.into_account());
@@ -314,6 +320,7 @@ where
             accounts: unsafe { core::slice::from_raw_parts(accounts.as_ptr() as _, num_accounts) },
             indexes: unsafe { core::slice::from_raw_parts(indexes.as_ptr() as _, num_accounts) },
             data,
+            uses_swig_signer,
         })
     }
 
