@@ -107,8 +107,6 @@ pub enum SwigStateError {
     PermissionLoadError,
     /// Adding an authority requires at least one action
     InvalidAuthorityMustHaveAtLeastOneAction,
-    /// Role action set contains duplicate enforcement entries
-    DuplicateAction,
 }
 
 /// Error types related to authentication operations.

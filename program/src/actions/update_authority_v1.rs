@@ -15,7 +15,7 @@ use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, Action, ActionLoader},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
-    swig::{validate_unique_role_actions, Swig},
+    swig::Swig,
     Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut,
 };
 
@@ -70,8 +70,6 @@ fn calculate_num_actions(actions_data: &[u8]) -> Result<u8, ProgramError> {
     if count == 0 {
         return Err(SwigStateError::InvalidAuthorityMustHaveAtLeastOneAction.into());
     }
-
-    validate_unique_role_actions(actions_data)?;
 
     Ok(count)
 }
