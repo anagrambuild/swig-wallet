@@ -11,7 +11,7 @@ use pinocchio::{
     ProgramResult,
 };
 use swig_assertions::*;
-use swig_compact_instructions::InstructionIterator;
+use swig_compact_instructions::{InstructionIterator, InstructionScratch};
 use swig_state::{
     action::{all::All, sub_account::SubAccount, ActionLoader, Actionable},
     role::RoleMut,
@@ -201,18 +201,19 @@ pub fn sub_account_sign_v1(
     let sub_account_role_id = sub_account.role_id;
     let sub_account_swig_id = sub_account.swig_id;
     let rkeys: &[&Pubkey] = &[];
-    let ix_iter = InstructionIterator::new(
+    let mut ix_iter = InstructionIterator::new(
         all_accounts,
         sign_v1.instruction_payload,
         ctx.accounts.sub_account.key(),
         rkeys,
     )?;
+    let mut instruction_scratch = InstructionScratch::new();
     let role_id_bytes = sub_account_role_id.to_le_bytes();
     let bump_byte = [sub_account_bump];
     let seeds = sub_account_signer(&sub_account_swig_id, &role_id_bytes, &bump_byte);
     let signer = seeds.as_slice();
-    for ix in ix_iter {
-        if let Ok(instruction) = ix {
+    while let Some(result) = ix_iter
+        .process_next(&mut instruction_scratch, |instruction| -> ProgramResult {
             instruction.execute(
                 all_accounts,
                 ctx.accounts.sub_account.key(),
@@ -221,9 +222,11 @@ pub fn sub_account_sign_v1(
 
             // Check after each instruction that we haven't dropped below
             // reserved lamports
-        } else {
-            return Err(SwigError::InstructionExecutionError.into());
-        }
+            Ok(())
+        })
+        .map_err(|_| SwigError::InstructionExecutionError)?
+    {
+        result?;
     }
 
     // Check that the sub-account maintains sufficient lamports for rent exemption

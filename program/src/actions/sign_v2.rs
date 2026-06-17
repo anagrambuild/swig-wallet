@@ -14,7 +14,7 @@ use pinocchio::{
 };
 use pinocchio_pubkey::from_str;
 use swig_assertions::*;
-use swig_compact_instructions::InstructionIterator;
+use swig_compact_instructions::{InstructionIterator, InstructionScratch};
 use swig_state::{
     action::{
         all::All,
@@ -239,12 +239,13 @@ pub fn sign_v2(
     // Intentionally no restricted keys: SignV2 forwards existing outer signer
     // bits in compact CPI metas in addition to the Swig wallet PDA signer.
     let rkeys: &[&Pubkey] = &[];
-    let ix_iter = InstructionIterator::new(
+    let mut ix_iter = InstructionIterator::new(
         all_accounts,
         sign_v2.instruction_payload,
         ctx.accounts.swig_wallet_address.key(),
         rkeys,
     )?;
+    let mut instruction_scratch = InstructionScratch::new();
     let b = [swig.wallet_bump];
     let seeds = swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &b);
     let signer = seeds.as_slice();
@@ -254,13 +255,18 @@ pub fn sign_v2(
         || RoleMut::get_action_mut::<AllButManageAuthority>(role.actions, &[])?.is_some();
 
     if has_unrestricted_sign_permission {
-        for ix in ix_iter {
-            let instruction = ix.map_err(|_| SwigError::InstructionExecutionError)?;
-            instruction.execute(
-                all_accounts,
-                ctx.accounts.swig_wallet_address.key(),
-                &[signer.into()],
-            )?;
+        while let Some(result) = ix_iter
+            .process_next(&mut instruction_scratch, |instruction| -> ProgramResult {
+                instruction.execute(
+                    all_accounts,
+                    ctx.accounts.swig_wallet_address.key(),
+                    &[signer.into()],
+                )?;
+                Ok(())
+            })
+            .map_err(|_| SwigError::InstructionExecutionError)?
+        {
+            result?;
         }
 
         return Ok(());
@@ -346,8 +352,8 @@ pub fn sign_v2(
         }
     }
 
-    for ix in ix_iter {
-        if let Ok(instruction) = ix {
+    while let Some(result) = ix_iter
+        .process_next(&mut instruction_scratch, |instruction| -> ProgramResult {
             if !has_program_all_permission && instruction.uses_swig_signer {
                 let program_id_bytes = instruction.program_id.as_ref();
                 let has_permission = (has_program_curated_permission
@@ -455,9 +461,12 @@ pub fn sign_v2(
                     _ => {},
                 }
             }
-        } else {
-            return Err(SwigError::InstructionExecutionError.into());
-        }
+
+            Ok(())
+        })
+        .map_err(|_| SwigError::InstructionExecutionError)?
+    {
+        result?;
     }
 
     let actions = role.actions;
@@ -827,50 +836,54 @@ where
     let restricted_keys: &[&Pubkey] = &[];
     let mut instruction_iter =
         InstructionIterator::new(all_accounts, instruction_payload, signer, restricted_keys)?;
+    let mut instruction_scratch = InstructionScratch::new();
 
-    while let Some(instruction) = instruction_iter.next() {
-        let instruction = instruction?;
+    while let Some(result) =
+        instruction_iter.process_next(&mut instruction_scratch, |instruction| -> ProgramResult {
+            if *instruction.program_id != crate::SYSTEM_PROGRAM_ID {
+                return Ok(());
+            }
 
-        if *instruction.program_id != crate::SYSTEM_PROGRAM_ID {
-            continue;
-        }
+            if instruction.data.len() < SYSTEM_TRANSFER_DATA_LEN {
+                return Ok(());
+            }
 
-        if instruction.data.len() < SYSTEM_TRANSFER_DATA_LEN {
-            continue;
-        }
+            let discriminator = u32::from_le_bytes([
+                instruction.data[0],
+                instruction.data[1],
+                instruction.data[2],
+                instruction.data[3],
+            ]);
 
-        let discriminator = u32::from_le_bytes([
-            instruction.data[0],
-            instruction.data[1],
-            instruction.data[2],
-            instruction.data[3],
-        ]);
+            if discriminator != SYSTEM_TRANSFER_DISCRIMINATOR {
+                return Ok(());
+            }
 
-        if discriminator != SYSTEM_TRANSFER_DISCRIMINATOR {
-            continue;
-        }
+            if instruction.accounts.len() < 2 {
+                return Ok(());
+            }
 
-        if instruction.accounts.len() < 2 {
-            continue;
-        }
+            if instruction.accounts[0].pubkey != source_account_bytes {
+                return Ok(());
+            }
 
-        if instruction.accounts[0].pubkey != source_account_bytes {
-            continue;
-        }
+            let destination_pubkey = instruction.accounts[1].pubkey;
+            let amount = u64::from_le_bytes([
+                instruction.data[4],
+                instruction.data[5],
+                instruction.data[6],
+                instruction.data[7],
+                instruction.data[8],
+                instruction.data[9],
+                instruction.data[10],
+                instruction.data[11],
+            ]);
 
-        let destination_pubkey = instruction.accounts[1].pubkey;
-        let amount = u64::from_le_bytes([
-            instruction.data[4],
-            instruction.data[5],
-            instruction.data[6],
-            instruction.data[7],
-            instruction.data[8],
-            instruction.data[9],
-            instruction.data[10],
-            instruction.data[11],
-        ]);
-
-        callback(destination_pubkey, amount)?;
+            callback(destination_pubkey, amount)?;
+            Ok(())
+        })?
+    {
+        result?;
     }
 
     Ok(())
@@ -903,45 +916,50 @@ where
     let restricted_keys: &[&Pubkey] = &[];
     let mut instruction_iter =
         InstructionIterator::new(all_accounts, instruction_payload, signer, restricted_keys)?;
+    let mut instruction_scratch = InstructionScratch::new();
 
-    while let Some(instruction) = instruction_iter.next() {
-        let instruction = instruction?;
+    while let Some(result) =
+        instruction_iter.process_next(&mut instruction_scratch, |instruction| -> ProgramResult {
+            let is_token_program = *instruction.program_id == crate::SPL_TOKEN_ID
+                || *instruction.program_id == crate::SPL_TOKEN_2022_ID;
 
-        let is_token_program = *instruction.program_id == crate::SPL_TOKEN_ID
-            || *instruction.program_id == crate::SPL_TOKEN_2022_ID;
+            if !is_token_program || instruction.data.is_empty() {
+                return Ok(());
+            }
 
-        if !is_token_program || instruction.data.is_empty() {
-            continue;
-        }
+            let (min_data_len, destination_index) = match instruction.data[0] {
+                TOKEN_TRANSFER_DISCRIMINATOR => (TOKEN_TRANSFER_DATA_LEN, 1),
+                TOKEN_TRANSFER_CHECKED_DISCRIMINATOR => (TOKEN_TRANSFER_CHECKED_DATA_LEN, 2),
+                _ => return Ok(()),
+            };
 
-        let (min_data_len, destination_index) = match instruction.data[0] {
-            TOKEN_TRANSFER_DISCRIMINATOR => (TOKEN_TRANSFER_DATA_LEN, 1),
-            TOKEN_TRANSFER_CHECKED_DISCRIMINATOR => (TOKEN_TRANSFER_CHECKED_DATA_LEN, 2),
-            _ => continue,
-        };
+            if instruction.data.len() < min_data_len
+                || instruction.accounts.len() <= destination_index
+            {
+                return Ok(());
+            }
 
-        if instruction.data.len() < min_data_len || instruction.accounts.len() <= destination_index
-        {
-            continue;
-        }
+            if instruction.accounts[0].pubkey != source_account_bytes {
+                return Ok(());
+            }
 
-        if instruction.accounts[0].pubkey != source_account_bytes {
-            continue;
-        }
+            let destination_pubkey = instruction.accounts[destination_index].pubkey;
+            let amount = u64::from_le_bytes([
+                instruction.data[1],
+                instruction.data[2],
+                instruction.data[3],
+                instruction.data[4],
+                instruction.data[5],
+                instruction.data[6],
+                instruction.data[7],
+                instruction.data[8],
+            ]);
 
-        let destination_pubkey = instruction.accounts[destination_index].pubkey;
-        let amount = u64::from_le_bytes([
-            instruction.data[1],
-            instruction.data[2],
-            instruction.data[3],
-            instruction.data[4],
-            instruction.data[5],
-            instruction.data[6],
-            instruction.data[7],
-            instruction.data[8],
-        ]);
-
-        callback(destination_pubkey, amount)?;
+            callback(destination_pubkey, amount)?;
+            Ok(())
+        })?
+    {
+        result?;
     }
 
     Ok(())
