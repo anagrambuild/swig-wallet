@@ -146,9 +146,10 @@ pub fn toggle_sub_account_v1(
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 
-    // Split the swig account data to get the header and roles
-    let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
-    let swig = unsafe { Swig::load_unchecked(swig_header)? };
+    // Split the swig account data to get the header and roles.
+    let parts = Swig::split_parts_mut(swig_account_data)?;
+    let swig = parts.state;
+    let swig_roles = parts.roles;
 
     msg!(
         "toggle_sub_account_v1: auth_role_id: {}",

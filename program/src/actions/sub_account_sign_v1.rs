@@ -143,8 +143,9 @@ pub fn sub_account_sign_v1(
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
-    let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
-    let swig = unsafe { Swig::load_unchecked(swig_header)? };
+    let parts = Swig::split_parts_mut(swig_account_data)?;
+    let swig = parts.state;
+    let swig_roles = parts.roles;
 
     let role_opt = Swig::get_mut_role(sign_v1.args.role_id, swig_roles)?;
     if role_opt.is_none() {
