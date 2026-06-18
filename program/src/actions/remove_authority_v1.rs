@@ -231,7 +231,9 @@ pub fn remove_authority_v1(
     };
     ctx.accounts.swig.realloc(new_size, false)?;
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    saved_tail.restore(swig_account_data);
+    let roles_end = Swig::roles_end_offset(swig_account_data)?;
+    swig_account_data[roles_end..].fill(0);
+    saved_tail.restore_at(swig_account_data, roles_end)?;
 
     Ok(())
 }

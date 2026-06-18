@@ -742,7 +742,7 @@ impl SignV2Instruction {
     pub fn new_secp256k1<F>(
         swig_account: Pubkey,
         swig_wallet_address: Pubkey,
-        authority_payload_fn: F,
+        mut authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
         inner_instruction: Instruction,
@@ -833,7 +833,7 @@ impl SignV2Instruction {
     pub fn new_secp256r1<F>(
         swig_account: Pubkey,
         swig_wallet_address: Pubkey,
-        authority_payload_fn: F,
+        mut authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
         inner_instruction: Instruction,

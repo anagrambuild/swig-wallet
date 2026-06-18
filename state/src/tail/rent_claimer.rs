@@ -51,25 +51,29 @@ pub fn read(tail_data: &[u8]) -> Result<Option<&[u8; 32]>, ProgramError> {
 ///
 /// Accepted layouts:
 /// - empty tail (unset): `[]`
-/// - exactly one rent-claimer entry (`ENTRY_LEN` bytes)
+/// - all-zero tail bytes (unset)
+/// - one rent-claimer entry (`ENTRY_LEN` bytes), optionally followed by zero padding
 ///
 /// Any other shape or malformed header is rejected.
 pub fn read_strict(tail_data: &[u8]) -> Result<Option<&[u8; 32]>, ProgramError> {
-    if tail_data.is_empty() {
+    if tail_data.is_empty() || tail_data.iter().all(|byte| *byte == 0) {
         return Ok(None);
     }
-    if tail_data.len() != ENTRY_LEN {
+    if tail_data.len() < ENTRY_LEN {
         return Err(SwigStateError::InvalidRentClaimerLayout.into());
     }
 
-    let (entry, consumed) = RentClaimerEntry::read(tail_data)?;
-    if consumed != tail_data.len() {
+    let (entry, consumed) = RentClaimerEntry::read(&tail_data[..ENTRY_LEN])?;
+    if consumed != ENTRY_LEN {
         return Err(SwigStateError::InvalidRentClaimerLayout.into());
     }
     if entry.header.version != VERSION {
         return Err(SwigStateError::InvalidRentClaimerLayout.into());
     }
     if entry.header.payload != [0u8; 4] {
+        return Err(SwigStateError::InvalidRentClaimerLayout.into());
+    }
+    if tail_data[ENTRY_LEN..].iter().any(|byte| *byte != 0) {
         return Err(SwigStateError::InvalidRentClaimerLayout.into());
     }
 
@@ -257,18 +261,31 @@ mod tests {
     }
 
     #[test]
-    fn read_strict_rejects_any_length_other_than_zero_or_entry_len() {
-        // Every non-empty, non-ENTRY_LEN trailing region is corruption.
-        for len in [1usize, 7, 8, 16, 32, 39, 41, 48, 72, 80, 120] {
-            let mut tail = vec![0u8; len];
-            // Give it a plausible-looking header so the rejection is purely about size.
-            if len >= TAIL_HEADER_LEN {
-                tail[0] = TailKind::RentClaimer.as_u8();
-                tail[1] = VERSION;
-                tail[2..4].copy_from_slice(&(VALUE_LEN as u16).to_le_bytes());
-            }
-            assert_invalid_layout(&tail);
+    fn read_strict_accepts_entry_with_trailing_zero_padding() {
+        let claimer = [101u8; VALUE_LEN];
+        for pad in 1usize..=7 {
+            let mut tail = entry(&claimer).to_vec();
+            tail.extend_from_slice(&vec![0u8; pad]);
+            let parsed = read_strict(&tail).expect("entry + zero padding should parse");
+            assert_eq!(parsed, Some(&claimer));
         }
+    }
+
+    #[test]
+    fn read_strict_accepts_non_empty_all_zero_tail_as_unset() {
+        for len in [1usize, 7, 8, 16, 32, 39, 41, 48, 72, 80, 120] {
+            let tail = vec![0u8; len];
+            let parsed = read_strict(&tail).expect("all-zero tail should parse as unset");
+            assert_eq!(parsed, None);
+        }
+    }
+
+    #[test]
+    fn read_strict_rejects_entry_with_non_zero_trailing_bytes() {
+        let claimer = [102u8; VALUE_LEN];
+        let mut tail = entry(&claimer).to_vec();
+        tail.extend_from_slice(&[0, 0, 7, 0]);
+        assert_invalid_layout(&tail);
     }
 
     #[test]

@@ -253,7 +253,6 @@ pub fn add_authority_v1(
         }
     }
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    saved_tail.restore(swig_account_data);
     let (swig_header, roles_and_tail) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let roles_capacity_len = roles_and_tail
         .len()
@@ -271,7 +270,9 @@ pub fn add_authority_v1(
         add_authority_v1.authority_data,
         add_authority_v1.actions,
     )?;
-    saved_tail.restore(swig_account_data);
+    let roles_end = Swig::roles_end_offset(swig_account_data)?;
+    swig_account_data[roles_end..].fill(0);
+    saved_tail.restore_at(swig_account_data, roles_end)?;
     Ok(())
 }
 

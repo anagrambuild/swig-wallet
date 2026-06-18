@@ -730,7 +730,7 @@ pub fn update_authority_v1(
 
     // Get fresh references to the swig account data after reallocation
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    saved_tail.restore(swig_account_data);
+    saved_tail.restore(swig_account_data)?;
     let (_, swig_roles_and_tail) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let roles_capacity_len = swig_roles_and_tail
         .len()
@@ -814,11 +814,11 @@ pub fn update_authority_v1(
                     ctx.accounts.payer.lamports() + additional_cost;
             };
         }
-        let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-        saved_tail.restore(swig_account_data);
-    } else {
-        saved_tail.restore(swig_account_data);
     }
+    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+    let roles_end = Swig::roles_end_offset(swig_account_data)?;
+    swig_account_data[roles_end..].fill(0);
+    saved_tail.restore_at(swig_account_data, roles_end)?;
 
     Ok(())
 }
@@ -887,7 +887,7 @@ mod tests {
         let expected_diff = grown_actions.len() as i64 - all_actions.len() as i64;
 
         account_buffer.resize((account_buffer.len() as i64 + expected_diff) as usize, 0);
-        saved_tail.restore(&mut account_buffer);
+        saved_tail.restore(&mut account_buffer)?;
 
         let (roles_len, authority_offset, actions_offset, current_actions_size) = {
             let (roles, _) = Swig::split_roles_and_tail(&account_buffer)?;
@@ -915,7 +915,7 @@ mod tests {
             assert_eq!(applied, expected_diff);
         }
 
-        saved_tail.restore(&mut account_buffer);
+        saved_tail.restore(&mut account_buffer)?;
         let (_, tail_after) = Swig::split_roles_and_tail(&account_buffer)?;
         assert_eq!(tail_after, expected_tail.as_slice());
         Ok(())

@@ -244,12 +244,27 @@ impl SavedTail {
         self.len == 0
     }
 
-    /// Writes the saved tail back at the very end of the (already-resized) account buffer.
-    pub fn restore(&self, account_data: &mut [u8]) {
+    /// Writes the saved tail at `offset`.
+    pub fn restore_at(&self, account_data: &mut [u8], offset: usize) -> Result<(), ProgramError> {
         if self.len == 0 {
-            return;    // no-op when there was no tail
+            return Ok(());    // no-op when there was no tail
         }
-        let end = account_data.len();
-        account_data[end - self.len..end].copy_from_slice(&self.bytes[..self.len]); // write the tail back
+        let end = offset
+            .checked_add(self.len)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        if end > account_data.len() {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        account_data[offset..end].copy_from_slice(&self.bytes[..self.len]); // write the tail back
+        Ok(())
+    }
+
+    /// Writes the saved tail back at the very end of the (already-resized) account buffer.
+    pub fn restore(&self, account_data: &mut [u8]) -> Result<(), ProgramError> {
+        let offset = account_data
+            .len()
+            .checked_sub(self.len)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        self.restore_at(account_data, offset)
     }
 }

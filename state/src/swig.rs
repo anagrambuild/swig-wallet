@@ -2132,7 +2132,7 @@ mod tests {
         let old_len = account_buffer.len();
         let new_len = old_len + role_size;
         account_buffer.resize(new_len, 0);
-        saved_tail.restore(&mut account_buffer);
+        saved_tail.restore(&mut account_buffer)?;
 
         {
             let (swig_header, roles_and_tail) = account_buffer.split_at_mut(Swig::LEN);
@@ -2148,11 +2148,72 @@ mod tests {
             };
             builder.add_role(AuthorityType::Ed25519, authority2.into_bytes()?, &actions_data)?;
         }
-        saved_tail.restore(&mut account_buffer);
+        saved_tail.restore(&mut account_buffer)?;
 
         let (_, tail_after) = Swig::split_roles_and_tail(&account_buffer)?;
         assert_eq!(tail_after, expected_tail.as_slice());
         assert_eq!(SwigWithRoles::from_bytes(&account_buffer)?.state.roles, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_tail_restore_at_roles_end_with_alignment_padding_gap() -> Result<(), ProgramError> {
+        // Build a swig account with one role whose boundary is intentionally
+        // non-8-aligned to simulate future non-8-aligned role layouts.
+        let mut account_buffer = vec![0u8; Swig::LEN + 128];
+        let mut swig = Swig::new([3u8; 32], 255, 0);
+        swig.roles = 1;
+        swig.role_counter = 1;
+        account_buffer[..Swig::LEN].copy_from_slice(swig.into_bytes()?);
+
+        let role_boundary = Position::LEN + 9;
+        {
+            let position = unsafe {
+                Position::load_mut_unchecked(
+                    &mut account_buffer[Swig::LEN..Swig::LEN + Position::LEN],
+                )?
+            };
+            position.authority_type = AuthorityType::Ed25519 as u16;
+            position.authority_length = 1;
+            position.num_actions = 1;
+            position.boundary = role_boundary as u32;
+            position.id = 0;
+        }
+
+        let roles_end = Swig::roles_end_offset(&account_buffer)?;
+        account_buffer.truncate(roles_end);
+        let claimer = [66u8; 32];
+        let tail = rent_claimer::entry(&claimer);
+        account_buffer.extend_from_slice(&tail);
+
+        let saved_tail = {
+            let (_, tail_slice) = Swig::split_roles_and_tail_mut(&mut account_buffer)?;
+            SavedTail::take(tail_slice)?
+        };
+
+        // Simulate a growth realloc that rounds up to alignment and leaves stale bytes.
+        let grown_size = account_buffer
+            .len()
+            .checked_add(3)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        let padded_size = core::alloc::Layout::from_size_align(grown_size, core::mem::size_of::<u64>())
+            .map_err(|_| ProgramError::InvalidAccountData)?
+            .pad_to_align()
+            .size();
+        account_buffer.resize(padded_size, 0xAB);
+
+        // New handler flow: zero from roles_end onward, then restore tail flush at roles_end.
+        let roles_end = Swig::roles_end_offset(&account_buffer)?;
+        account_buffer[roles_end..].fill(0);
+        saved_tail.restore_at(&mut account_buffer, roles_end)?;
+
+        let parts = Swig::split_parts(&account_buffer)?;
+        let parsed = rent_claimer::read_strict(parts.tail)?;
+        assert_eq!(parsed, Some(&claimer));
+        assert!(roles_end + rent_claimer::ENTRY_LEN <= account_buffer.len());
+        assert!(parts.tail[rent_claimer::ENTRY_LEN..]
+            .iter()
+            .all(|byte| *byte == 0));
         Ok(())
     }
 
@@ -2205,7 +2266,7 @@ mod tests {
         let old_len = account_buffer.len();
         let new_len = old_len - removed.1;
         account_buffer.resize(new_len, 0);
-        saved_tail.restore(&mut account_buffer);
+        saved_tail.restore(&mut account_buffer)?;
 
         let (_, tail_after) = Swig::split_roles_and_tail(&account_buffer)?;
         assert_eq!(tail_after, expected_tail.as_slice());
