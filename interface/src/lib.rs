@@ -15,6 +15,7 @@ use swig::actions::{
     create_v1::CreateV1Args,
     recover_authority_v1::RecoverAuthorityV1Args,
     remove_authority_v1::RemoveAuthorityV1Args,
+    set_rent_claimer_v1::SetRentClaimerV1Args,
     sub_account_sign_v1::SubAccountSignV1Args,
     toggle_sub_account_v1::ToggleSubAccountV1Args,
     transfer_assets_v1::TransferAssetsV1Args,
@@ -3350,6 +3351,147 @@ impl TransferAssetsV1Instruction {
         };
 
         Ok(vec![preceding_instruction, main_ix])
+    }
+}
+
+/// Instruction builder for setting an immutable rent claimer on a swig wallet.
+pub struct SetRentClaimerV1Instruction;
+
+impl SetRentClaimerV1Instruction {
+    /// Create a set rent-claimer instruction with Ed25519 authority.
+    pub fn new_with_ed25519_authority(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority: Pubkey,
+        role_id: u32,
+        rent_claimer: [u8; 32],
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            AccountMeta::new_readonly(authority, true),
+        ];
+
+        let args = SetRentClaimerV1Args::new(role_id, rent_claimer);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &[3]].concat(),
+        })
+    }
+
+    /// Create a set rent-claimer instruction with Secp256k1 authority.
+    pub fn new_with_secp256k1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        role_id: u32,
+        rent_claimer: [u8; 32],
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+        ];
+
+        let args = SetRentClaimerV1Args::new(role_id, rent_claimer);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let nonced_payload =
+            prepare_secp256k1_payload(current_slot, counter, args_bytes, &account_payload_bytes, &[]);
+        let signature = authority_payload_fn(&nonced_payload);
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&counter.to_le_bytes());
+        authority_payload.extend_from_slice(&signature);
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        })
+    }
+
+    /// Create a set rent-claimer instruction with Secp256r1 authority.
+    pub fn new_with_secp256r1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        role_id: u32,
+        rent_claimer: [u8; 32],
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+
+        let args = SetRentClaimerV1Args::new(role_id, rent_claimer);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let mut account_payload_bytes = Vec::new();
+        for account in &accounts {
+            account_payload_bytes.extend_from_slice(
+                accounts_payload_from_meta(account)
+                    .into_bytes()
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize account meta {:?}", e))?,
+            );
+        }
+
+        let slot_bytes = current_slot.to_le_bytes();
+        let counter_bytes = counter.to_le_bytes();
+        let message_hash = keccak::hash(
+            &[args_bytes, &account_payload_bytes, &slot_bytes[..], &counter_bytes[..]].concat(),
+        )
+        .to_bytes();
+
+        let signature = authority_payload_fn(&message_hash);
+        let secp256r1_verify_ix =
+            new_secp256r1_instruction_with_signature(&message_hash, &signature, public_key);
+
+        let mut authority_payload = Vec::new();
+        authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&counter.to_le_bytes());
+        authority_payload.push(3); // instruction sysvar index
+        authority_payload.extend_from_slice(&[0u8; 4]);
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        };
+
+        Ok(vec![secp256r1_verify_ix, main_ix])
     }
 }
 
