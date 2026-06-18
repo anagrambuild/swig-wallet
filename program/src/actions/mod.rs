@@ -14,6 +14,7 @@ pub mod create_v1;
 pub mod migrate_to_wallet_address_v1;
 pub mod recover_authority_v1;
 pub mod remove_authority_v1;
+pub mod set_rent_claimer_v1;
 pub mod sign_v2;
 pub mod sub_account_sign_v1;
 pub mod toggle_sub_account_v1;
@@ -27,7 +28,8 @@ use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, Pro
 use self::{
     add_authority_v1::*, close_swig_v1::*, close_token_account_v1::*, create_session_v1::*,
     create_sub_account_v1::*, create_v1::*, migrate_to_wallet_address_v1::*,
-    recover_authority_v1::*, remove_authority_v1::*, sign_v2::*, sub_account_sign_v1::*,
+    recover_authority_v1::*, remove_authority_v1::*, set_rent_claimer_v1::*, sign_v2::*,
+    sub_account_sign_v1::*,
     toggle_sub_account_v1::*, transfer_assets_v1::*, update_authority_v1::*,
     withdraw_from_sub_account_v1::*,
 };
@@ -37,7 +39,7 @@ use crate::{
             AddAuthorityV1Accounts, CloseSwigV1Accounts, CloseTokenAccountV1Accounts,
             CreateSessionV1Accounts, CreateSubAccountV1Accounts, CreateV1Accounts,
             MigrateToWalletAddressV1Accounts, RecoverAuthorityV1Accounts,
-            RemoveAuthorityV1Accounts, SignV2Accounts, SubAccountSignV1Accounts,
+            RemoveAuthorityV1Accounts, SetRentClaimerV1Accounts, SignV2Accounts, SubAccountSignV1Accounts,
             ToggleSubAccountV1Accounts, TransferAssetsV1Accounts, UpdateAuthorityV1Accounts,
             WithdrawFromSubAccountV1Accounts,
         },
@@ -101,6 +103,7 @@ pub fn process_action(
         SwigInstruction::CloseTokenAccountV1 => process_close_token_account_v1(accounts, data),
         SwigInstruction::CloseSwigV1 => process_close_swig_v1(accounts, data),
         SwigInstruction::RecoverAuthorityV1 => process_recover_authority_v1(accounts, data),
+        SwigInstruction::SetRentClaimerV1 => process_set_rent_claimer_v1(accounts, data),
     }
 }
 
@@ -236,4 +239,10 @@ fn process_close_token_account_v1(accounts: &[AccountInfo], data: &[u8]) -> Prog
 fn process_close_swig_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = CloseSwigV1Accounts::context(accounts)?;
     close_swig_v1(account_ctx, accounts, data)
+}
+
+/// Processes a SetRentClaimerV1 instruction.
+fn process_set_rent_claimer_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = SetRentClaimerV1Accounts::context(accounts)?;
+    set_rent_claimer_v1(account_ctx, data, accounts)
 }

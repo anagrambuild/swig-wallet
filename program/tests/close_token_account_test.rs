@@ -107,6 +107,123 @@ fn test_close_token_account_ed25519() {
     );
 }
 
+#[test_log::test]
+fn test_close_token_account_with_configured_rent_claimer_destination_mismatch_fails() {
+    let mut context = setup_test_context().unwrap();
+    let authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
+    let (swig_wallet_address, _) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(&swig_pubkey.to_bytes()),
+        &program_id(),
+    );
+
+    let claimer = Keypair::new();
+    set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &authority, 0, claimer.pubkey())
+        .unwrap();
+
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let swig_token_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
+
+    let wrong_destination = Keypair::new();
+    let close_ix = CloseTokenAccountV1Instruction::new_with_ed25519_authority(
+        swig_pubkey,
+        swig_wallet_address,
+        authority.pubkey(),
+        wrong_destination.pubkey(),
+        spl_token::ID,
+        vec![swig_token_ata],
+        0,
+    )
+    .unwrap();
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), close_ix],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_err(),
+        "close token should fail when destination != configured rent claimer"
+    );
+}
+
+#[test_log::test]
+fn test_close_token_account_with_configured_rent_claimer_destination_match_succeeds() {
+    let mut context = setup_test_context().unwrap();
+    let authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
+    let (swig_wallet_address, _) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(&swig_pubkey.to_bytes()),
+        &program_id(),
+    );
+
+    let claimer = Keypair::new();
+    set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &authority, 0, claimer.pubkey())
+        .unwrap();
+
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let swig_token_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
+    let token_account_rent = context.svm.get_account(&swig_token_ata).unwrap().lamports;
+    let claimer_before = context
+        .svm
+        .get_account(&claimer.pubkey())
+        .map(|a| a.lamports)
+        .unwrap_or(0);
+
+    let close_ix = CloseTokenAccountV1Instruction::new_with_ed25519_authority(
+        swig_pubkey,
+        swig_wallet_address,
+        authority.pubkey(),
+        claimer.pubkey(),
+        spl_token::ID,
+        vec![swig_token_ata],
+        0,
+    )
+    .unwrap();
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), close_ix],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+    let result = context.svm.send_transaction(tx);
+    assert!(result.is_ok(), "close token should succeed with pinned destination");
+
+    let claimer_after = context
+        .svm
+        .get_account(&claimer.pubkey())
+        .map(|a| a.lamports)
+        .unwrap_or(0);
+    assert_eq!(
+        claimer_after.saturating_sub(claimer_before),
+        token_account_rent,
+        "configured rent claimer should receive token account rent"
+    );
+}
+
 /// Test closing token account owned by swig (V1 style - fallback path)
 #[test_log::test]
 fn test_close_token_account_v1_style_authority() {

@@ -179,8 +179,7 @@ pub fn migrate_to_wallet_address_v1(
     // Authenticate and validate authority has All or ManageAuthority permission
     {
         let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-        let (_swig_header, swig_roles) =
-            unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+        let swig_roles = Swig::split_parts_mut(swig_account_data)?.roles;
         let role = Swig::get_mut_role(migrate.args.role_id, swig_roles)?
             .ok_or(SwigStateError::RoleNotFound)?;
 
