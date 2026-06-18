@@ -318,7 +318,15 @@ fn perform_replace_all_operation(
 
         // Update boundaries of all roles after this one
         let mut cursor = 0;
-        while cursor < (swig_roles.len() + size_diff as usize) {
+        let updated_data_len = (original_data_len as i64)
+            .checked_add(size_diff)
+            .ok_or(SwigError::StateError)?;
+        if updated_data_len < 0 || updated_data_len as usize > swig_roles.len() {
+            return Err(SwigError::StateError.into());
+        }
+        let updated_data_len = updated_data_len as usize;
+
+        while cursor < updated_data_len {
             if cursor + Position::LEN > swig_roles.len() {
                 break;
             }
