@@ -48,6 +48,7 @@ pub mod destination_tests;
 pub mod program_all_tests;
 pub mod program_exec_tests;
 pub mod program_scope_tests;
+pub mod rent_claimer_tests;
 pub mod secp256r1_tests;
 pub mod session_tests;
 pub mod sign_v2_tests;
