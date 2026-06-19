@@ -41,6 +41,7 @@ fn test_token_transfer_with_program_scope_v2() {
 
     // Setup payers and recipients
     let swig_authority = Keypair::new();
+    let program_scope_authority = Keypair::new();
     let regular_sender = Keypair::new();
     let recipient = Keypair::new();
 
@@ -48,6 +49,10 @@ fn test_token_transfer_with_program_scope_v2() {
     context
         .svm
         .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&program_scope_authority.pubkey(), 10_000_000_000)
         .unwrap();
     context
         .svm
@@ -99,7 +104,7 @@ fn test_token_transfer_with_program_scope_v2() {
         &swig_authority,
         AuthorityConfig {
             authority_type: swig_state::authority::AuthorityType::Ed25519,
-            authority: swig_authority.pubkey().as_ref(),
+            authority: program_scope_authority.pubkey().as_ref(),
         },
         vec![
             ClientAction::Program(Program {
@@ -203,14 +208,14 @@ fn test_token_transfer_with_program_scope_v2() {
     let sign_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        swig_authority.pubkey(),
+        program_scope_authority.pubkey(),
         swig_transfer_ix,
         1, // authority role id
     )
     .unwrap();
 
     let swig_transfer_message = v0::Message::try_compile(
-        &swig_authority.pubkey(),
+        &program_scope_authority.pubkey(),
         &[sign_ix],
         &[],
         context.svm.latest_blockhash(),
@@ -221,7 +226,7 @@ fn test_token_transfer_with_program_scope_v2() {
 
     let swig_transfer_tx = VersionedTransaction::try_new(
         VersionedMessage::V0(swig_transfer_message),
-        &[swig_authority],
+        &[program_scope_authority],
     )
     .unwrap();
 
@@ -414,8 +419,16 @@ fn read_program_scope_state_v2(
             const PROGRAM_SCOPE_LEN: usize = 144; // Fixed: was incorrectly 128
 
             if action_data.len() == PROGRAM_SCOPE_LEN {
+                // ProgramScope contains u128 fields, so the host requires 16-byte
+                // alignment when reborrowing from a byte slice. role.actions points
+                // into a Vec<u8> that may only be 8-aligned, so copy into an aligned
+                // local buffer first.
+                #[repr(C, align(16))]
+                struct AlignedProgramScopeBytes([u8; PROGRAM_SCOPE_LEN]);
+                let mut aligned = AlignedProgramScopeBytes([0u8; PROGRAM_SCOPE_LEN]);
+                aligned.0.copy_from_slice(action_data);
                 let program_scope = unsafe {
-                    swig_state::action::program_scope::ProgramScope::load_unchecked(action_data)
+                    swig_state::action::program_scope::ProgramScope::load_unchecked(&aligned.0)
                 }
                 .ok()?;
 
@@ -473,12 +486,17 @@ fn test_recurring_limit_program_scope_v2() {
 
     // Setup payers and recipients
     let swig_authority = Keypair::new();
+    let program_scope_authority = Keypair::new();
     let recipient = Keypair::new();
 
     // Airdrop to participants
     context
         .svm
         .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&program_scope_authority.pubkey(), 10_000_000_000)
         .unwrap();
     context
         .svm
@@ -551,7 +569,7 @@ fn test_recurring_limit_program_scope_v2() {
         &swig_authority,
         AuthorityConfig {
             authority_type: swig_state::authority::AuthorityType::Ed25519,
-            authority: swig_authority.pubkey().as_ref(),
+            authority: program_scope_authority.pubkey().as_ref(),
         },
         vec![
             ClientAction::Program(Program {
@@ -588,8 +606,12 @@ fn test_recurring_limit_program_scope_v2() {
     let transfer_batch = 100;
 
     // Check initial program scope state
-    let initial_amount =
-        read_program_scope_state_v2(&mut context, &swig, &swig_authority, &swig_wallet_ata);
+    let initial_amount = read_program_scope_state_v2(
+        &mut context,
+        &swig,
+        &program_scope_authority,
+        &swig_wallet_ata,
+    );
     println!("Initial program scope current_amount: {:?}", initial_amount);
 
     // Transfer in batches of 100 tokens up to limit (should succeed)
@@ -598,7 +620,7 @@ fn test_recurring_limit_program_scope_v2() {
             &mut context,
             swig,
             swig_wallet_address,
-            &swig_authority,
+            &program_scope_authority,
             swig_wallet_ata,
             recipient_ata,
             transfer_batch,
@@ -608,8 +630,12 @@ fn test_recurring_limit_program_scope_v2() {
         println!("Total transferred: {}/{}", transferred, transfer_limit);
 
         // Check program scope state after each transfer
-        let current_amount =
-            read_program_scope_state_v2(&mut context, &swig, &swig_authority, &swig_wallet_ata);
+        let current_amount = read_program_scope_state_v2(
+            &mut context,
+            &swig,
+            &program_scope_authority,
+            &swig_wallet_ata,
+        );
         println!(
             "After transfer, program scope current_amount: {:?}",
             current_amount
@@ -630,7 +656,7 @@ fn test_recurring_limit_program_scope_v2() {
         &mut context,
         swig,
         swig_wallet_address,
-        &swig_authority,
+        &program_scope_authority,
         swig_wallet_ata,
         recipient_ata,
         transfer_batch,
@@ -638,8 +664,12 @@ fn test_recurring_limit_program_scope_v2() {
     );
 
     // Check program scope state after failed transfer
-    let current_amount =
-        read_program_scope_state_v2(&mut context, &swig, &swig_authority, &swig_wallet_ata);
+    let current_amount = read_program_scope_state_v2(
+        &mut context,
+        &swig,
+        &program_scope_authority,
+        &swig_wallet_ata,
+    );
     println!(
         "After failed transfer, program scope current_amount: {:?}",
         current_amount
@@ -672,8 +702,12 @@ fn test_recurring_limit_program_scope_v2() {
     );
 
     // Check program scope state after slot advancement
-    let current_amount =
-        read_program_scope_state_v2(&mut context, &swig, &swig_authority, &swig_wallet_ata);
+    let current_amount = read_program_scope_state_v2(
+        &mut context,
+        &swig,
+        &program_scope_authority,
+        &swig_wallet_ata,
+    );
     println!(
         "After slot advancement, program scope current_amount: {:?}",
         current_amount
@@ -689,7 +723,7 @@ fn test_recurring_limit_program_scope_v2() {
             &mut context,
             swig,
             swig_wallet_address,
-            &swig_authority,
+            &program_scope_authority,
             swig_wallet_ata,
             recipient_ata,
             transfer_batch,
@@ -702,8 +736,12 @@ fn test_recurring_limit_program_scope_v2() {
         );
 
         // Check program scope state after each transfer in second batch
-        let current_amount =
-            read_program_scope_state_v2(&mut context, &swig, &swig_authority, &swig_wallet_ata);
+        let current_amount = read_program_scope_state_v2(
+            &mut context,
+            &swig,
+            &program_scope_authority,
+            &swig_wallet_ata,
+        );
         println!(
             "After transfer (post-reset), program scope current_amount: {:?}",
             current_amount
@@ -731,7 +769,7 @@ fn test_recurring_limit_program_scope_v2() {
         &mut context,
         swig,
         swig_wallet_address,
-        &swig_authority,
+        &program_scope_authority,
         swig_wallet_ata,
         recipient_ata,
         transfer_batch,
@@ -749,7 +787,7 @@ fn test_recurring_limit_program_scope_v2() {
         &mut context,
         swig,
         swig_wallet_address,
-        &swig_authority,
+        &program_scope_authority,
         swig_wallet_ata,
         recipient_ata,
         transfer_batch,
@@ -768,7 +806,7 @@ fn test_recurring_limit_program_scope_v2() {
         &mut context,
         swig,
         swig_wallet_address,
-        &swig_authority,
+        &program_scope_authority,
         swig_wallet_ata,
         recipient_ata,
         transfer_batch,
@@ -1036,12 +1074,17 @@ fn test_program_scope_token_limit_cpi_enforcement_v2() {
 fn test_program_scope_balance_underflow_check_v2() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
+    let program_scope_authority = Keypair::new();
     let external_funding_account = Keypair::new(); // External account that funds the swig wallet
 
     // Airdrops
     context
         .svm
         .airdrop(&swig_authority.pubkey(), 10 * LAMPORTS_PER_SOL)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&program_scope_authority.pubkey(), 10 * LAMPORTS_PER_SOL)
         .unwrap();
     context
         .svm
@@ -1106,7 +1149,7 @@ fn test_program_scope_balance_underflow_check_v2() {
         &swig_authority,
         AuthorityConfig {
             authority_type: swig_state::authority::AuthorityType::Ed25519,
-            authority: swig_authority.pubkey().as_ref(),
+            authority: program_scope_authority.pubkey().as_ref(),
         },
         vec![
             ClientAction::Program(swig_state::action::program::Program {
@@ -1146,7 +1189,7 @@ fn test_program_scope_balance_underflow_check_v2() {
     let initial_accounts = vec![
         AccountMeta::new(swig, false),
         AccountMeta::new(swig_wallet_address, false),
-        AccountMeta::new_readonly(swig_authority.pubkey(), true),
+        AccountMeta::new_readonly(program_scope_authority.pubkey(), true),
         AccountMeta::new(external_funding_ata, false),
         AccountMeta::new(swig_wallet_ata, false),
         AccountMeta::new_readonly(external_funding_account.pubkey(), true),
@@ -1181,7 +1224,7 @@ fn test_program_scope_balance_underflow_check_v2() {
         VersionedMessage::V0(message),
         &[
             &context.default_payer,
-            &swig_authority,
+            &program_scope_authority,
             &external_funding_account,
         ],
     )
@@ -1702,9 +1745,14 @@ fn test_program_scope_multiple_targets_v2() {
     let mut context = setup_test_context().unwrap();
 
     let swig_authority = Keypair::new();
+    let program_scope_authority = Keypair::new();
     context
         .svm
         .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&program_scope_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
     // Setup two different token mints
@@ -1811,7 +1859,7 @@ fn test_program_scope_multiple_targets_v2() {
         &swig_authority,
         AuthorityConfig {
             authority_type: swig_state::authority::AuthorityType::Ed25519,
-            authority: swig_authority.pubkey().as_ref(),
+            authority: program_scope_authority.pubkey().as_ref(),
         },
         vec![
             ClientAction::Program(Program {
@@ -1846,14 +1894,14 @@ fn test_program_scope_multiple_targets_v2() {
     let sign_ix1 = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        swig_authority.pubkey(),
+        program_scope_authority.pubkey(),
         transfer1_ix,
         1,
     )
     .unwrap();
 
     let message = v0::Message::try_compile(
-        &swig_authority.pubkey(),
+        &program_scope_authority.pubkey(),
         &[sign_ix1],
         &[],
         context.svm.latest_blockhash(),
@@ -1861,7 +1909,8 @@ fn test_program_scope_multiple_targets_v2() {
     .unwrap();
 
     let tx =
-        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&swig_authority]).unwrap();
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&program_scope_authority])
+            .unwrap();
 
     let result = context.svm.send_transaction(tx);
     assert!(
@@ -1892,14 +1941,14 @@ fn test_program_scope_multiple_targets_v2() {
     let sign_ix2 = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        swig_authority.pubkey(),
+        program_scope_authority.pubkey(),
         transfer2_ix,
         1,
     )
     .unwrap();
 
     let message = v0::Message::try_compile(
-        &swig_authority.pubkey(),
+        &program_scope_authority.pubkey(),
         &[sign_ix2],
         &[],
         context.svm.latest_blockhash(),
@@ -1907,7 +1956,8 @@ fn test_program_scope_multiple_targets_v2() {
     .unwrap();
 
     let tx =
-        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&swig_authority]).unwrap();
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&program_scope_authority])
+            .unwrap();
 
     let result = context.svm.send_transaction(tx);
     assert!(
@@ -1949,14 +1999,14 @@ fn test_program_scope_multiple_targets_v2() {
     let sign_ix_over = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        swig_authority.pubkey(),
+        program_scope_authority.pubkey(),
         over_limit_ix,
         1,
     )
     .unwrap();
 
     let message = v0::Message::try_compile(
-        &swig_authority.pubkey(),
+        &program_scope_authority.pubkey(),
         &[sign_ix_over],
         &[],
         context.svm.latest_blockhash(),
@@ -1964,7 +2014,8 @@ fn test_program_scope_multiple_targets_v2() {
     .unwrap();
 
     let tx =
-        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&swig_authority]).unwrap();
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&program_scope_authority])
+            .unwrap();
 
     let result = context.svm.send_transaction(tx);
     assert!(
@@ -1983,9 +2034,14 @@ fn test_program_scope_invalid_balance_field_indices_v2() {
     let mut context = setup_test_context().unwrap();
 
     let swig_authority = Keypair::new();
+    let program_scope_authority = Keypair::new();
     context
         .svm
         .airdrop(&swig_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&program_scope_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
     let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
@@ -2051,7 +2107,7 @@ fn test_program_scope_invalid_balance_field_indices_v2() {
         &swig_authority,
         AuthorityConfig {
             authority_type: swig_state::authority::AuthorityType::Ed25519,
-            authority: swig_authority.pubkey().as_ref(),
+            authority: program_scope_authority.pubkey().as_ref(),
         },
         vec![
             ClientAction::Program(Program {
@@ -2085,14 +2141,14 @@ fn test_program_scope_invalid_balance_field_indices_v2() {
     let sign_ix = SignV2Instruction::new_ed25519(
         swig,
         swig_wallet_address,
-        swig_authority.pubkey(),
+        program_scope_authority.pubkey(),
         transfer_ix,
         1,
     )
     .unwrap();
 
     let message = v0::Message::try_compile(
-        &swig_authority.pubkey(),
+        &program_scope_authority.pubkey(),
         &[sign_ix],
         &[],
         context.svm.latest_blockhash(),
@@ -2100,7 +2156,8 @@ fn test_program_scope_invalid_balance_field_indices_v2() {
     .unwrap();
 
     let tx =
-        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&swig_authority]).unwrap();
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&program_scope_authority])
+            .unwrap();
 
     let result = context.svm.send_transaction(tx);
 
