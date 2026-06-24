@@ -1,7 +1,8 @@
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
     AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateSessionInstruction,
-    CreateSubAccountInstruction, RemoveAuthorityInstruction, SignV2Instruction,
+    CreateSubAccountInstruction, RemoveAuthorityInstruction, SetRentClaimerV1Instruction,
+    SignV2Instruction,
     SubAccountSignInstruction, ToggleSubAccountInstruction, UpdateAuthorityData,
     UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
 };
@@ -117,6 +118,16 @@ pub trait ClientRole {
         role_id: u32,
         auth_role_id: u32,
         enabled: bool,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError>;
+
+    /// Creates a set rent claimer instruction.
+    fn set_rent_claimer_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        rent_claimer: Pubkey,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError>;
 
@@ -364,6 +375,25 @@ impl ClientRole for Ed25519ClientRole {
                 role_id,
                 auth_role_id,
                 enabled,
+            )?,
+        ])
+    }
+
+    fn set_rent_claimer_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        rent_claimer: Pubkey,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Ok(vec![
+            SetRentClaimerV1Instruction::new_with_ed25519_authority(
+                swig_account,
+                payer,
+                self.authority,
+                role_id,
+                rent_claimer.to_bytes(),
             )?,
         ])
     }
@@ -684,6 +714,29 @@ impl ClientRole for Secp256k1ClientRole {
                 role_id,
                 auth_role_id,
                 enabled,
+            )?,
+        ])
+    }
+
+    fn set_rent_claimer_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        rent_claimer: Pubkey,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+        Ok(vec![
+            SetRentClaimerV1Instruction::new_with_secp256k1_authority(
+                swig_account,
+                payer,
+                &self.signing_fn,
+                current_slot,
+                new_odometer,
+                role_id,
+                rent_claimer.to_bytes(),
             )?,
         ])
     }
@@ -1045,6 +1098,28 @@ impl ClientRole for Secp256r1ClientRole {
         Ok(instructions)
     }
 
+    fn set_rent_claimer_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        rent_claimer: Pubkey,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+        Ok(SetRentClaimerV1Instruction::new_with_secp256r1_authority(
+            swig_account,
+            payer,
+            &self.signing_fn,
+            current_slot,
+            new_odometer,
+            role_id,
+            rent_claimer.to_bytes(),
+            &self.authority,
+        )?)
+    }
+
     fn authority_type(&self) -> AuthorityType {
         AuthorityType::Secp256r1
     }
@@ -1332,6 +1407,26 @@ impl ClientRole for Ed25519SessionClientRole {
                 role_id,
                 auth_role_id,
                 enabled,
+            )?,
+        ])
+    }
+
+    fn set_rent_claimer_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        rent_claimer: Pubkey,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        Ok(vec![
+            SetRentClaimerV1Instruction::new_with_ed25519_authority(
+                swig_account,
+                payer,
+                session_key,
+                role_id,
+                rent_claimer.to_bytes(),
             )?,
         ])
     }
@@ -1650,6 +1745,26 @@ impl ClientRole for Secp256k1SessionClientRole {
                 role_id,
                 auth_role_id,
                 enabled,
+            )?,
+        ])
+    }
+
+    fn set_rent_claimer_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        rent_claimer: Pubkey,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        Ok(vec![
+            SetRentClaimerV1Instruction::new_with_ed25519_authority(
+                swig_account,
+                payer,
+                session_key,
+                role_id,
+                rent_claimer.to_bytes(),
             )?,
         ])
     }
@@ -1973,6 +2088,26 @@ impl ClientRole for Secp256r1SessionClientRole {
                 role_id,
                 auth_role_id,
                 enabled,
+            )?,
+        ])
+    }
+
+    fn set_rent_claimer_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        rent_claimer: Pubkey,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        Ok(vec![
+            SetRentClaimerV1Instruction::new_with_ed25519_authority(
+                swig_account,
+                payer,
+                session_key,
+                role_id,
+                rent_claimer.to_bytes(),
             )?,
         ])
     }
@@ -2389,6 +2524,19 @@ where
             enabled,
         )
         .map_err(|e| SwigError::InterfaceError(e.to_string()))
+    }
+
+    fn set_rent_claimer_instruction(
+        &self,
+        _swig_account: Pubkey,
+        _payer: Pubkey,
+        _role_id: u32,
+        _rent_claimer: Pubkey,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "ProgramExec does not support SetRentClaimerV1".to_string(),
+        ))
     }
 
     fn authority_type(&self) -> AuthorityType {
