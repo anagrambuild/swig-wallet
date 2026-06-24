@@ -92,6 +92,228 @@ fn test_close_swig_ed25519() {
     );
 }
 
+#[test_log::test]
+fn test_close_swig_with_configured_rent_claimer_destination_mismatch_fails() {
+    let mut context = setup_test_context().unwrap();
+    let authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
+    let (swig_wallet_address, _) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(&swig_pubkey.to_bytes()),
+        &program_id(),
+    );
+
+    let claimer = Keypair::new();
+    set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &authority, 0, claimer.pubkey())
+        .unwrap();
+
+    let wrong_destination = Keypair::new();
+    context.svm.airdrop(&wrong_destination.pubkey(), 0).unwrap();
+    let close_ix = CloseSwigV1Instruction::new_with_ed25519_authority(
+        swig_pubkey,
+        swig_wallet_address,
+        authority.pubkey(),
+        wrong_destination.pubkey(),
+        0,
+    )
+    .unwrap();
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), close_ix],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+    let result = context.svm.send_transaction(tx);
+    assert!(
+        result.is_err(),
+        "close must fail when destination != configured rent claimer"
+    );
+}
+
+#[test_log::test]
+fn test_close_swig_with_configured_rent_claimer_destination_match_succeeds() {
+    let mut context = setup_test_context().unwrap();
+    let authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
+    let (swig_wallet_address, _) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(&swig_pubkey.to_bytes()),
+        &program_id(),
+    );
+
+    let claimer = Keypair::new();
+    set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &authority, 0, claimer.pubkey())
+        .unwrap();
+    let swig_lamports_before = context.svm.get_account(&swig_pubkey).unwrap().lamports;
+    let wallet_lamports_before = context
+        .svm
+        .get_account(&swig_wallet_address)
+        .map(|a| a.lamports)
+        .unwrap_or(0);
+    let claimer_lamports_before = context
+        .svm
+        .get_account(&claimer.pubkey())
+        .map(|a| a.lamports)
+        .unwrap_or(0);
+
+    let close_ix = CloseSwigV1Instruction::new_with_ed25519_authority(
+        swig_pubkey,
+        swig_wallet_address,
+        authority.pubkey(),
+        claimer.pubkey(),
+        0,
+    )
+    .unwrap();
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), close_ix],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+    let result = context.svm.send_transaction(tx);
+    assert!(result.is_ok(), "close should succeed with pinned destination");
+
+    let claimer_lamports_after = context
+        .svm
+        .get_account(&claimer.pubkey())
+        .map(|a| a.lamports)
+        .unwrap_or(0);
+    let expected_closed_account_rent = context.svm.minimum_balance_for_rent_exemption(1);
+    let expected_reclaimed = wallet_lamports_before
+        + swig_lamports_before.saturating_sub(expected_closed_account_rent);
+
+    let swig_lamports_after = context.svm.get_account(&swig_pubkey).unwrap().lamports;
+    let wallet_lamports_after = context
+        .svm
+        .get_account(&swig_wallet_address)
+        .map(|a| a.lamports)
+        .unwrap_or(0);
+    println!("claimer_lamports_before: {} after: {}", claimer_lamports_before, claimer_lamports_after);
+    println!("swig_wallet_lamports_before: {} after: {}", wallet_lamports_before, wallet_lamports_after);
+    println!("swig_lamports_before: {} after: {}", swig_lamports_before, swig_lamports_after);
+    println!("expected_closed_account_rent: {}", expected_closed_account_rent);
+    println!("expected_reclaimed: {}", expected_reclaimed);
+    assert_eq!(
+        claimer_lamports_after.saturating_sub(claimer_lamports_before),
+        expected_reclaimed,
+        "configured rent claimer should receive swig + wallet reclaimed rent"
+    );
+}
+
+#[test_log::test]
+fn test_rent_claimer_receives_rent_from_close_token_then_close_swig() {
+    let mut context = setup_test_context().unwrap();
+    let authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
+    let (swig_wallet_address, _) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(&swig_pubkey.to_bytes()),
+        &program_id(),
+    );
+
+    let claimer = Keypair::new();
+    set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &authority, 0, claimer.pubkey())
+        .unwrap();
+
+    let mint_pubkey = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let swig_token_ata = setup_ata(
+        &mut context.svm,
+        &mint_pubkey,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
+    let token_account_rent = context.svm.get_account(&swig_token_ata).unwrap().lamports;
+    let swig_lamports_before = context.svm.get_account(&swig_pubkey).unwrap().lamports;
+    let wallet_lamports_before = context
+        .svm
+        .get_account(&swig_wallet_address)
+        .map(|a| a.lamports)
+        .unwrap_or(0);
+    let claimer_lamports_before = context
+        .svm
+        .get_account(&claimer.pubkey())
+        .map(|a| a.lamports)
+        .unwrap_or(0);
+
+    let close_token_ix = CloseTokenAccountV1Instruction::new_with_ed25519_authority(
+        swig_pubkey,
+        swig_wallet_address,
+        authority.pubkey(),
+        claimer.pubkey(),
+        spl_token::ID,
+        vec![swig_token_ata],
+        0,
+    )
+    .unwrap();
+    let close_token_msg = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), close_token_ix],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let close_token_tx =
+        VersionedTransaction::try_new(close_token_msg, &[&context.default_payer, &authority])
+            .unwrap();
+    let close_token_result = context.svm.send_transaction(close_token_tx);
+    assert!(
+        close_token_result.is_ok(),
+        "token close should succeed with configured rent claimer"
+    );
+
+    let close_swig_ix = CloseSwigV1Instruction::new_with_ed25519_authority(
+        swig_pubkey,
+        swig_wallet_address,
+        authority.pubkey(),
+        claimer.pubkey(),
+        0,
+    )
+    .unwrap();
+    let close_swig_msg = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), close_swig_ix],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let close_swig_tx =
+        VersionedTransaction::try_new(close_swig_msg, &[&context.default_payer, &authority])
+            .unwrap();
+    let close_swig_result = context.svm.send_transaction(close_swig_tx);
+    assert!(
+        close_swig_result.is_ok(),
+        "swig close should succeed with configured rent claimer"
+    );
+
+    let claimer_lamports_after = context
+        .svm
+        .get_account(&claimer.pubkey())
+        .map(|a| a.lamports)
+        .unwrap_or(0);
+    let expected_closed_account_rent = context.svm.minimum_balance_for_rent_exemption(1);
+    let expected_total_reclaimed = token_account_rent
+        + wallet_lamports_before
+        + swig_lamports_before.saturating_sub(expected_closed_account_rent);
+    assert_eq!(
+        claimer_lamports_after.saturating_sub(claimer_lamports_before),
+        expected_total_reclaimed,
+        "claimer should receive rent from token close and swig close"
+    );
+}
+
 /// Test closing swig with ManageAuthority permission
 #[test_log::test]
 fn test_close_swig_with_manage_authority() {

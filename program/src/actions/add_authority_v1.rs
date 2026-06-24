@@ -15,6 +15,7 @@ use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
+    tail::SavedTail,
     swig::{Swig, SwigBuilder},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
@@ -182,13 +183,14 @@ pub fn add_authority_v1(
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let swig_data_len = swig_account_data.len();
     let new_authority_type = AuthorityType::try_from(add_authority_v1.args.new_authority_type)?;
-    {
+    let (saved_tail, account_size) = {
         if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
-        let (swig_header, swig_roles) =
-            unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
-        let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+        let parts = Swig::split_parts_mut(swig_account_data)?;
+        let saved_tail = SavedTail::take(parts.tail)?;
+        let swig = parts.state;
+        let swig_roles = parts.roles;
         let acting_role = Swig::get_mut_role(add_authority_v1.args.acting_role_id, swig_roles)?;
         if acting_role.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
@@ -230,8 +232,10 @@ pub fn add_authority_v1(
         .map_err(|_| SwigError::InvalidAlignment)?
         .pad_to_align()
         .size();
-        ctx.accounts.swig.realloc(account_size, false)?;
-
+        (saved_tail, account_size)
+    };
+    ctx.accounts.swig.realloc(account_size, false)?;
+    {
         // Get current account lamports after reallocation
         let current_lamports = ctx.accounts.swig.lamports();
         let required_lamports = Rent::get()?.minimum_balance(account_size);
@@ -247,14 +251,28 @@ pub fn add_authority_v1(
             }
             .invoke()?;
         }
-    };
+    }
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    let mut swig_builder = SwigBuilder::new_from_bytes(swig_account_data)?;
+    let (swig_header, roles_and_tail) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+    let roles_capacity_len = roles_and_tail
+        .len()
+        .checked_sub(saved_tail.len())
+        .ok_or(ProgramError::InvalidAccountData)?;
+    let (swig_roles_capacity, _) =
+        unsafe { roles_and_tail.split_at_mut_unchecked(roles_capacity_len) };
+    let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+    let mut swig_builder = SwigBuilder {
+        role_buffer: swig_roles_capacity,
+        swig,
+    };
     swig_builder.add_role(
         new_authority_type,
         add_authority_v1.authority_data,
         add_authority_v1.actions,
     )?;
+    let roles_end = Swig::roles_end_offset(swig_account_data)?;
+    swig_account_data[roles_end..].fill(0);
+    saved_tail.restore_at(swig_account_data, roles_end)?;
     Ok(())
 }
 

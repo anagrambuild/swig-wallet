@@ -240,4 +240,15 @@ pub enum SwigInstruction {
     #[account(2, name="instructions", desc="the instructions sysvar account")]
     #[account(3, name="pending_recovery", desc="the recovery pending state account")]
     RecoverAuthorityV1 = 16,
+
+    /// Sets an immutable rent claimer for this swig wallet.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. System program account
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, name="system_program", desc="the system program")]
+    SetRentClaimerV1 = 17,
 }
