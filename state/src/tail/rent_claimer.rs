@@ -63,9 +63,7 @@ pub fn read_strict(tail_data: &[u8]) -> Result<Option<&[u8; 32]>, ProgramError> 
     }
 
     let (entry, consumed) = RentClaimerEntry::read(tail_data)?;
-    if consumed != ENTRY_LEN
-        || entry.header.version != VERSION
-        || entry.header.payload != [0u8; 4]
+    if consumed != ENTRY_LEN || entry.header.version != VERSION || entry.header.payload != [0u8; 4]
     {
         return Err(SwigStateError::InvalidRentClaimerLayout.into());
     }
