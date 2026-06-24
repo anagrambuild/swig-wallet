@@ -220,10 +220,11 @@ pub struct SavedTail {
 impl SavedTail {
     /// Copies the tail (the bytes after `roles_end`) onto the stack.
     pub fn take(tail_data: &[u8]) -> Result<Self, ProgramError> {
+        // Enforce the v1 tail contract before carrying bytes across a realloc:
+        // empty, or exactly one well-formed rent-claimer entry. This guarantees
+        // `len <= MAX_TAIL_LEN`, so the copy below stays in bounds.
+        rent_claimer::read_strict(tail_data)?;
         let len = tail_data.len();
-        if len > MAX_TAIL_LEN {
-            return Err(ProgramError::InvalidAccountData);
-        }
         let mut bytes = [0u8; MAX_TAIL_LEN];
         bytes[..len].copy_from_slice(tail_data);
         Ok(Self { bytes, len })
@@ -261,5 +262,84 @@ impl SavedTail {
             .checked_sub(self.len)
             .ok_or(ProgramError::InvalidAccountData)?;
         self.restore_at(account_data, offset)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tail::rent_claimer::{self, ENTRY_LEN};
+
+    fn assert_invalid_layout(tail: &[u8]) {
+        match SavedTail::take(tail) {
+            Ok(_) => panic!("malformed tail must be rejected"),
+            Err(err) => assert_eq!(
+                err,
+                ProgramError::Custom(SwigStateError::InvalidRentClaimerLayout as u32)
+            ),
+        }
+    }
+
+    #[test]
+    fn take_accepts_empty_tail() {
+        let saved = SavedTail::take(&[]).expect("empty tail is valid");
+        assert_eq!(saved.len(), 0);
+        assert!(saved.is_empty());
+
+        // Restoring a no-tail save is a no-op and leaves the buffer untouched.
+        let mut account = vec![7u8; 16];
+        saved.restore(&mut account).expect("restore no-op");
+        assert_eq!(account, vec![7u8; 16]);
+    }
+
+    #[test]
+    fn take_accepts_single_entry_and_round_trips() {
+        let claimer = [123u8; 32];
+        let tail = rent_claimer::entry(&claimer);
+
+        let saved = SavedTail::take(&tail).expect("single entry is valid");
+        assert_eq!(saved.len(), ENTRY_LEN);
+        assert!(!saved.is_empty());
+
+        // restore_at writes the saved bytes back byte-for-byte.
+        let mut account = vec![0u8; 4 + ENTRY_LEN];
+        saved.restore_at(&mut account, 4).expect("restore_at");
+        assert_eq!(&account[4..], tail.as_slice());
+
+        // restore places the tail at the very end of the buffer.
+        let mut account = vec![0u8; 8 + ENTRY_LEN];
+        saved.restore(&mut account).expect("restore");
+        assert_eq!(&account[8..], tail.as_slice());
+    }
+
+    #[test]
+    fn take_rejects_non_empty_all_zero_tail() {
+        for len in [1usize, 8, 39, 40] {
+            assert_invalid_layout(&vec![0u8; len]);
+        }
+    }
+
+    #[test]
+    fn take_rejects_entry_with_trailing_padding() {
+        let tail = rent_claimer::entry(&[9u8; 32]);
+        for pad in 1usize..=4 {
+            let mut padded = tail.to_vec();
+            padded.extend_from_slice(&vec![0u8; pad]);
+            assert_invalid_layout(&padded);
+        }
+    }
+
+    #[test]
+    fn take_rejects_truncated_entry() {
+        let mut tail = rent_claimer::entry(&[5u8; 32]).to_vec();
+        tail.pop();
+        assert_invalid_layout(&tail);
+    }
+
+    #[test]
+    fn take_rejects_two_entries() {
+        let mut tail = rent_claimer::entry(&[1u8; 32]).to_vec();
+        tail.extend_from_slice(&rent_claimer::entry(&[2u8; 32]));
+        assert_invalid_layout(&tail);
     }
 }

@@ -2167,9 +2167,11 @@ mod tests {
     }
 
     #[test]
-    fn test_tail_restore_at_roles_end_with_alignment_padding_gap() -> Result<(), ProgramError> {
+    fn test_strict_parser_rejects_alignment_padding_gap() -> Result<(), ProgramError> {
         // Build a swig account with one role whose boundary is intentionally
-        // non-8-aligned to simulate future non-8-aligned role layouts.
+        // non-8-aligned, so a realloc that rounds the account size up to 8-byte
+        // alignment leaves a zero-padding gap after the tail. Under the strict v1
+        // contract that padded tail is an invalid layout and must be rejected.
         let mut account_buffer = vec![0u8; Swig::LEN + 128];
         let mut swig = Swig::new([3u8; 32], 255, 0);
         swig.roles = 1;
@@ -2219,12 +2221,16 @@ mod tests {
         saved_tail.restore_at(&mut account_buffer, roles_end)?;
 
         let parts = Swig::split_parts(&account_buffer)?;
-        let parsed = rent_claimer::read_strict(parts.tail)?;
-        assert_eq!(parsed, Some(&claimer));
-        assert!(roles_end + rent_claimer::ENTRY_LEN <= account_buffer.len());
-        assert!(parts.tail[rent_claimer::ENTRY_LEN..]
-            .iter()
-            .all(|byte| *byte == 0));
+        // The tail region is one entry plus alignment padding, i.e. longer than a
+        // single entry, so the strict parser must fail closed rather than accept it.
+        assert!(parts.tail.len() > rent_claimer::ENTRY_LEN);
+        match rent_claimer::read_strict(parts.tail) {
+            Ok(_) => panic!("strict parser must reject a padded tail"),
+            Err(err) => assert_eq!(
+                err,
+                ProgramError::Custom(SwigStateError::InvalidRentClaimerLayout as u32)
+            ),
+        }
         Ok(())
     }
 
