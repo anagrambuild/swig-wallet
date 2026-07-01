@@ -1598,6 +1598,38 @@ impl RecoverAuthorityInstruction {
         preceding_instruction: Instruction,
         acting_role_id: u32,
     ) -> anyhow::Result<Vec<Instruction>> {
+        Self::new_with_program_exec_inner(
+            swig_account,
+            swig_wallet_address,
+            preceding_instruction,
+            acting_role_id,
+            None,
+        )
+    }
+
+    pub fn new_with_program_exec_and_payer(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        preceding_instruction: Instruction,
+        acting_role_id: u32,
+        payer: Pubkey,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        Self::new_with_program_exec_inner(
+            swig_account,
+            swig_wallet_address,
+            preceding_instruction,
+            acting_role_id,
+            Some(payer),
+        )
+    }
+
+    fn new_with_program_exec_inner(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        preceding_instruction: Instruction,
+        acting_role_id: u32,
+        payer: Option<Pubkey>,
+    ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
 
         let pending_recovery = preceding_instruction
@@ -1605,12 +1637,19 @@ impl RecoverAuthorityInstruction {
             .get(2)
             .ok_or_else(|| anyhow::anyhow!("recovery execute instruction missing pending account"))?
             .pubkey;
-        let accounts = vec![
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new_readonly(swig_wallet_address, false),
             AccountMeta::new_readonly(INSTRUCTIONS_ID, false),
             AccountMeta::new_readonly(pending_recovery, false),
         ];
+        if let Some(payer) = payer {
+            accounts.push(AccountMeta::new(payer, true));
+            accounts.push(AccountMeta::new_readonly(
+                solana_system_interface::program::ID,
+                false,
+            ));
+        }
         let authority_payload = build_program_exec_authority_payload(2, None);
         let args = RecoverAuthorityV1Args::new(acting_role_id, authority_payload.len() as u16);
         let arg_bytes = args
