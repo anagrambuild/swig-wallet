@@ -13,18 +13,21 @@ use pinocchio::{
     sysvars::{
         clock::Clock,
         instructions::{Instructions, INSTRUCTIONS_ID},
+        rent::Rent,
         Sysvar,
     },
     ProgramResult,
 };
-use swig_assertions::{check_self_owned, sol_assert_bytes_eq};
+use pinocchio_system::instructions::Transfer;
+use swig_assertions::{check_bytes_match, check_self_owned, sol_assert_bytes_eq};
 use swig_state::{
     action::recovery_authority::RecoveryAuthority,
     authority::{
+        authority_type_to_length,
         ed25519::{ED25519Authority, Ed25519SessionAuthority},
         secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority},
         secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority},
-        AuthorityType,
+        Authority, AuthorityType,
     },
     role::Position,
     swig::{swig_wallet_address_seeds, Swig},
@@ -43,16 +46,18 @@ const EXECUTE_RECOVERY_V1_DISCRIMINATOR: [u8; 8] = *b"execreV1";
 const PENDING_RECOVERY_SEED: &[u8] = b"pending-recovery";
 const PENDING_RECOVERY_V1_DISCRIMINATOR: [u8; 8] = *b"rpendV01";
 const PENDING_RECOVERY_STATUS_EXECUTED: u8 = 2;
-const PENDING_RECOVERY_V1_LEN: usize = 8 + 32 + 32 + 4 + 32 + 32 + 32 + 8 + 8 + 1 + 1 + 2 + 2 + 2;
+const PENDING_RECOVERY_V1_LEN: usize =
+    8 + 32 + 32 + 4 + 32 + 32 + 32 + 8 + 8 + 1 + 1 + 2 + 2 + 2 + 2;
 const PENDING_SWIG_WALLET_OFFSET: usize = 40;
 const PENDING_TARGET_ROLE_OFFSET: usize = 72;
 const PENDING_OLD_AUTHORITY_HASH_OFFSET: usize = 108;
 const PENDING_NEW_AUTHORITY_HASH_OFFSET: usize = 140;
 const PENDING_STATUS_OFFSET: usize = 188;
-const PENDING_AUTHORITY_TYPE_OFFSET: usize = 190;
-const PENDING_OLD_AUTHORITY_LEN_OFFSET: usize = 192;
-const PENDING_NEW_AUTHORITY_LEN_OFFSET: usize = 194;
-const RECOVERY_AUTHORITY_DATA_HEADER_LEN: usize = 2 + 2 + 2;
+const PENDING_OLD_AUTHORITY_TYPE_OFFSET: usize = 190;
+const PENDING_NEW_AUTHORITY_TYPE_OFFSET: usize = 192;
+const PENDING_OLD_AUTHORITY_LEN_OFFSET: usize = 194;
+const PENDING_NEW_AUTHORITY_LEN_OFFSET: usize = 196;
+const RECOVERY_AUTHORITY_DATA_HEADER_LEN: usize = 2 + 2 + 2 + 2;
 const MAX_RECOVERY_AUTHORITY_LEN: usize = 64;
 
 #[repr(C, align(8))]
@@ -118,15 +123,15 @@ pub fn recover_authority_v1(
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
 
     let recover = RecoverAuthorityV1::from_instruction_bytes(data)?;
-    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
-        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
-    }
-
-    let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
-    let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
-
     {
+        let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
+            return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+        }
+
+        let (swig_header, swig_roles) =
+            unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+        let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
         let acting_role = Swig::get_mut_role(recover.args.acting_role_id, swig_roles)?
             .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
         let slot = Clock::get()?.slot;
@@ -159,12 +164,25 @@ pub fn recover_authority_v1(
         recover.authority_payload,
     )?;
 
+    let size_diff = recovery_authority_size_diff(ctx.accounts.swig, &binding)?;
+    if size_diff > 0 {
+        grow_swig_account_for_recovery(ctx.accounts.swig, all_accounts, size_diff)?;
+    }
+
+    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+    if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
+        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+    }
+    let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+    let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+
     rotate_target_authority(swig, swig_roles, binding)
 }
 
 struct RecoveryBinding {
     target_role_id: u32,
-    authority_type: u16,
+    old_authority_type: u16,
+    new_authority_type: u16,
     old_authority: [u8; MAX_RECOVERY_AUTHORITY_LEN],
     old_authority_len: usize,
     new_authority: [u8; MAX_RECOVERY_AUTHORITY_LEN],
@@ -187,137 +205,305 @@ fn rotate_target_authority(
     swig_roles: &mut [u8],
     binding: RecoveryBinding,
 ) -> ProgramResult {
+    let replacement = recovery_authority_replacement(swig, swig_roles, &binding)?;
+    verify_old_authority_matches(swig_roles, &replacement, &binding)?;
+
+    let shift_start = replacement.actions_start;
+    let used_roles_end = replacement.used_roles_end;
+    let new_shift_start = offset_by_diff(shift_start, replacement.size_diff)?;
+    let new_used_roles_end = offset_by_diff(used_roles_end, replacement.size_diff)?;
+    if used_roles_end > shift_start {
+        swig_roles.copy_within(shift_start..used_roles_end, new_shift_start);
+    }
+    if replacement.size_diff < 0 {
+        swig_roles[new_used_roles_end..used_roles_end].fill(0);
+    }
+
+    write_new_authority(
+        replacement.new_authority_type,
+        binding.new_authority(),
+        &mut swig_roles[replacement.authority_start
+            ..replacement.authority_start + replacement.new_authority_len],
+    )?;
+    update_recovery_role_boundaries(swig, swig_roles, &replacement)?;
+    Ok(())
+}
+
+fn recovery_authority_size_diff(
+    swig_account: &AccountInfo,
+    binding: &RecoveryBinding,
+) -> Result<i64, ProgramError> {
+    let swig_account_data = unsafe { swig_account.borrow_data_unchecked() };
+    if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
+        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+    }
+    let (swig_header, swig_roles) = swig_account_data.split_at(Swig::LEN);
+    let swig = unsafe { Swig::load_unchecked(swig_header)? };
+    Ok(recovery_authority_replacement(swig, swig_roles, binding)?.size_diff)
+}
+
+fn grow_swig_account_for_recovery(
+    swig_account: &AccountInfo,
+    all_accounts: &[AccountInfo],
+    size_diff: i64,
+) -> ProgramResult {
+    let payer = all_accounts.get(4).ok_or(SwigError::StateError)?;
+    let system_program = all_accounts.get(5).ok_or(SwigError::StateError)?;
+    check_bytes_match(
+        system_program.key(),
+        &pinocchio_system::ID,
+        32,
+        SwigError::InvalidSystemProgram,
+    )?;
+
+    let current_size = unsafe { swig_account.borrow_data_unchecked() }.len();
+    let new_size = offset_by_diff(current_size, size_diff)?;
+    let aligned_size = core::alloc::Layout::from_size_align(new_size, core::mem::size_of::<u64>())
+        .map_err(|_| SwigError::InvalidAlignment)?
+        .pad_to_align()
+        .size();
+    swig_account.realloc(aligned_size, false)?;
+
+    let required_lamports = Rent::get()?.minimum_balance(aligned_size);
+    let current_lamports = swig_account.lamports();
+    let additional_lamports = required_lamports.saturating_sub(current_lamports);
+    if additional_lamports > 0 {
+        Transfer {
+            from: payer,
+            to: swig_account,
+            lamports: additional_lamports,
+        }
+        .invoke()?;
+    }
+
+    Ok(())
+}
+
+struct RecoveryAuthorityReplacement {
+    role_offset: usize,
+    authority_start: usize,
+    actions_start: usize,
+    role_boundary: usize,
+    used_roles_end: usize,
+    size_diff: i64,
+    old_authority_type: u16,
+    new_authority_type: u16,
+    new_authority_len: usize,
+}
+
+fn recovery_authority_replacement(
+    swig: &Swig,
+    swig_roles: &[u8],
+    binding: &RecoveryBinding,
+) -> Result<RecoveryAuthorityReplacement, ProgramError> {
     let mut cursor = 0;
+    let mut target = None;
+    let mut used_roles_end = 0;
     for _ in 0..swig.roles {
         let position =
             unsafe { Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])? };
+        let boundary = position.boundary() as usize;
         if position.id() == binding.target_role_id {
-            let target_authority_type = position.authority_type()?;
-            if target_authority_type as u16 != binding.authority_type {
-                return Err(SwigError::RecoveryAuthorityTypeMismatch.into());
-            }
-
-            let authority_start = cursor + Position::LEN;
-            match target_authority_type {
-                AuthorityType::Ed25519 => {
-                    let (old_authority, new_authority) = fixed_authority_pair::<32>(&binding)?;
-                    let authority_end = authority_start + ED25519Authority::LEN;
-                    let authority = unsafe {
-                        ED25519Authority::load_mut_unchecked(
-                            &mut swig_roles[authority_start..authority_end],
-                        )?
-                    };
-                    if authority.public_key != old_authority {
-                        return Err(SwigError::RecoveryOldAuthorityMismatch.into());
-                    }
-                    authority.public_key = new_authority;
-                },
-                AuthorityType::Ed25519Session => {
-                    let (old_authority, new_authority) = fixed_authority_pair::<32>(&binding)?;
-                    let authority_end = authority_start + Ed25519SessionAuthority::LEN;
-                    let authority = unsafe {
-                        Ed25519SessionAuthority::load_mut_unchecked(
-                            &mut swig_roles[authority_start..authority_end],
-                        )?
-                    };
-                    if authority.public_key != old_authority {
-                        return Err(SwigError::RecoveryOldAuthorityMismatch.into());
-                    }
-                    authority.public_key = new_authority;
-                    authority.session_key = [0; 32];
-                    authority.current_session_expiration = 0;
-                },
-                AuthorityType::Secp256k1 => {
-                    let old_authority = normalize_secp256k1_authority(binding.old_authority())?;
-                    let new_authority = normalize_secp256k1_authority(binding.new_authority())?;
-                    let authority_end = authority_start + Secp256k1Authority::LEN;
-                    let authority = unsafe {
-                        Secp256k1Authority::load_mut_unchecked(
-                            &mut swig_roles[authority_start..authority_end],
-                        )?
-                    };
-                    if authority.public_key != old_authority {
-                        return Err(SwigError::RecoveryOldAuthorityMismatch.into());
-                    }
-                    authority.public_key = new_authority;
-                    authority.signature_odometer = 0;
-                },
-                AuthorityType::Secp256k1Session => {
-                    let old_authority = normalize_secp256k1_authority(binding.old_authority())?;
-                    let new_authority = normalize_secp256k1_authority(binding.new_authority())?;
-                    let authority_end = authority_start + Secp256k1SessionAuthority::LEN;
-                    let authority = unsafe {
-                        Secp256k1SessionAuthority::load_mut_unchecked(
-                            &mut swig_roles[authority_start..authority_end],
-                        )?
-                    };
-                    if authority.public_key != old_authority {
-                        return Err(SwigError::RecoveryOldAuthorityMismatch.into());
-                    }
-                    authority.public_key = new_authority;
-                    authority.signature_odometer = 0;
-                    authority.session_key = [0; 32];
-                    authority.current_session_expiration = 0;
-                },
-                AuthorityType::Secp256r1 => {
-                    let (old_authority, new_authority) = fixed_authority_pair::<33>(&binding)?;
-                    let authority_end = authority_start + Secp256r1Authority::LEN;
-                    let authority = unsafe {
-                        Secp256r1Authority::load_mut_unchecked(
-                            &mut swig_roles[authority_start..authority_end],
-                        )?
-                    };
-                    if authority.public_key != old_authority {
-                        return Err(SwigError::RecoveryOldAuthorityMismatch.into());
-                    }
-                    authority.public_key = new_authority;
-                    authority.signature_odometer = 0;
-                },
-                AuthorityType::Secp256r1Session => {
-                    let (old_authority, new_authority) = fixed_authority_pair::<33>(&binding)?;
-                    let authority_end = authority_start + Secp256r1SessionAuthority::LEN;
-                    let authority = unsafe {
-                        Secp256r1SessionAuthority::load_mut_unchecked(
-                            &mut swig_roles[authority_start..authority_end],
-                        )?
-                    };
-                    if authority.public_key != old_authority {
-                        return Err(SwigError::RecoveryOldAuthorityMismatch.into());
-                    }
-                    authority.public_key = new_authority;
-                    authority.signature_odometer = 0;
-                    authority.session_key = [0; 32];
-                    authority.current_session_expiration = 0;
-                },
-                _ => {
-                    return Err(SwigError::UnsupportedRecoveryAuthorityScheme.into());
-                },
-            }
-            return Ok(());
+            target = Some((
+                cursor,
+                boundary,
+                position.authority_type,
+                position.authority_length,
+            ));
         }
-
-        cursor = position.boundary() as usize;
+        used_roles_end = boundary;
+        cursor = boundary;
     }
 
-    Err(SwigError::InvalidAuthorityNotFoundByRoleId.into())
+    let Some((role_offset, role_boundary, old_authority_type_raw, old_authority_len_raw)) = target
+    else {
+        return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+    };
+    if old_authority_type_raw != binding.old_authority_type {
+        return Err(SwigError::RecoveryAuthorityTypeMismatch.into());
+    }
+    let old_authority_type = AuthorityType::try_from(old_authority_type_raw)?;
+    let new_authority_type = AuthorityType::try_from(binding.new_authority_type)?;
+    let expected_old_authority_len = authority_type_to_length(&old_authority_type)?;
+    if old_authority_len_raw as usize != expected_old_authority_len {
+        return Err(SwigError::RecoveryInvalidAuthorityLength.into());
+    }
+    let new_authority_len = replacement_authority_len(&new_authority_type)?;
+    let authority_start = role_offset + Position::LEN;
+    let actions_start = authority_start + expected_old_authority_len;
+    if role_boundary < actions_start || used_roles_end < role_boundary {
+        return Err(SwigError::StateError.into());
+    }
+
+    Ok(RecoveryAuthorityReplacement {
+        role_offset,
+        authority_start,
+        actions_start,
+        role_boundary,
+        used_roles_end,
+        size_diff: new_authority_len as i64 - expected_old_authority_len as i64,
+        old_authority_type: old_authority_type_raw,
+        new_authority_type: binding.new_authority_type,
+        new_authority_len,
+    })
 }
 
-fn fixed_authority_pair<const LEN: usize>(
+fn replacement_authority_len(authority_type: &AuthorityType) -> Result<usize, ProgramError> {
+    match authority_type {
+        AuthorityType::Ed25519 | AuthorityType::Secp256k1 | AuthorityType::Secp256r1 => {
+            authority_type_to_length(authority_type)
+        },
+        _ => Err(SwigError::UnsupportedRecoveryAuthorityScheme.into()),
+    }
+}
+
+fn verify_old_authority_matches(
+    swig_roles: &[u8],
+    replacement: &RecoveryAuthorityReplacement,
     binding: &RecoveryBinding,
-) -> Result<([u8; LEN], [u8; LEN]), ProgramError> {
-    if binding.old_authority_len != LEN || binding.new_authority_len != LEN {
+) -> Result<(), ProgramError> {
+    match AuthorityType::try_from(replacement.old_authority_type)? {
+        AuthorityType::Ed25519 => {
+            let old_authority = fixed_authority::<32>(binding.old_authority())?;
+            let authority_end = replacement.authority_start + ED25519Authority::LEN;
+            let authority = unsafe {
+                ED25519Authority::load_unchecked(
+                    &swig_roles[replacement.authority_start..authority_end],
+                )?
+            };
+            if authority.public_key != old_authority {
+                return Err(SwigError::RecoveryOldAuthorityMismatch.into());
+            }
+        },
+        AuthorityType::Ed25519Session => {
+            let old_authority = fixed_authority::<32>(binding.old_authority())?;
+            let authority_end = replacement.authority_start + Ed25519SessionAuthority::LEN;
+            let authority = unsafe {
+                Ed25519SessionAuthority::load_unchecked(
+                    &swig_roles[replacement.authority_start..authority_end],
+                )?
+            };
+            if authority.public_key != old_authority {
+                return Err(SwigError::RecoveryOldAuthorityMismatch.into());
+            }
+        },
+        AuthorityType::Secp256k1 => {
+            let old_authority = normalize_secp256k1_authority(binding.old_authority())?;
+            let authority_end = replacement.authority_start + Secp256k1Authority::LEN;
+            let authority = unsafe {
+                Secp256k1Authority::load_unchecked(
+                    &swig_roles[replacement.authority_start..authority_end],
+                )?
+            };
+            if authority.public_key != old_authority {
+                return Err(SwigError::RecoveryOldAuthorityMismatch.into());
+            }
+        },
+        AuthorityType::Secp256k1Session => {
+            let old_authority = normalize_secp256k1_authority(binding.old_authority())?;
+            let authority_end = replacement.authority_start + Secp256k1SessionAuthority::LEN;
+            let authority = unsafe {
+                Secp256k1SessionAuthority::load_unchecked(
+                    &swig_roles[replacement.authority_start..authority_end],
+                )?
+            };
+            if authority.public_key != old_authority {
+                return Err(SwigError::RecoveryOldAuthorityMismatch.into());
+            }
+        },
+        AuthorityType::Secp256r1 => {
+            let old_authority = fixed_authority::<33>(binding.old_authority())?;
+            let authority_end = replacement.authority_start + Secp256r1Authority::LEN;
+            let authority = unsafe {
+                Secp256r1Authority::load_unchecked(
+                    &swig_roles[replacement.authority_start..authority_end],
+                )?
+            };
+            if authority.public_key != old_authority {
+                return Err(SwigError::RecoveryOldAuthorityMismatch.into());
+            }
+        },
+        AuthorityType::Secp256r1Session => {
+            let old_authority = fixed_authority::<33>(binding.old_authority())?;
+            let authority_end = replacement.authority_start + Secp256r1SessionAuthority::LEN;
+            let authority = unsafe {
+                Secp256r1SessionAuthority::load_unchecked(
+                    &swig_roles[replacement.authority_start..authority_end],
+                )?
+            };
+            if authority.public_key != old_authority {
+                return Err(SwigError::RecoveryOldAuthorityMismatch.into());
+            }
+        },
+        _ => return Err(SwigError::UnsupportedRecoveryAuthorityScheme.into()),
+    }
+
+    Ok(())
+}
+
+fn write_new_authority(
+    authority_type: u16,
+    authority_data: &[u8],
+    target: &mut [u8],
+) -> Result<(), ProgramError> {
+    match AuthorityType::try_from(authority_type)? {
+        AuthorityType::Ed25519 => ED25519Authority::set_into_bytes(authority_data, target),
+        AuthorityType::Secp256k1 => Secp256k1Authority::set_into_bytes(authority_data, target),
+        AuthorityType::Secp256r1 => Secp256r1Authority::set_into_bytes(authority_data, target),
+        _ => Err(SwigError::UnsupportedRecoveryAuthorityScheme.into()),
+    }
+}
+
+fn update_recovery_role_boundaries(
+    swig: &Swig,
+    swig_roles: &mut [u8],
+    replacement: &RecoveryAuthorityReplacement,
+) -> Result<(), ProgramError> {
+    let new_boundary = offset_by_diff(replacement.role_boundary, replacement.size_diff)? as u32;
+    let mut cursor = 0;
+    for _ in 0..swig.roles {
+        let position = unsafe {
+            Position::load_mut_unchecked(&mut swig_roles[cursor..cursor + Position::LEN])?
+        };
+        let original_boundary = position.boundary() as usize;
+        if cursor == replacement.role_offset {
+            position.authority_type = replacement.new_authority_type;
+            position.authority_length = replacement.new_authority_len as u16;
+            position.boundary = new_boundary;
+            cursor = position.boundary() as usize;
+            continue;
+        }
+        if cursor > replacement.role_offset {
+            position.boundary =
+                offset_by_diff(position.boundary() as usize, replacement.size_diff)? as u32;
+            cursor = position.boundary() as usize;
+            continue;
+        }
+        cursor = original_boundary;
+    }
+    Ok(())
+}
+
+fn offset_by_diff(value: usize, diff: i64) -> Result<usize, ProgramError> {
+    if diff >= 0 {
+        value
+            .checked_add(diff as usize)
+            .ok_or(SwigError::StateError.into())
+    } else {
+        value
+            .checked_sub((-diff) as usize)
+            .ok_or(SwigError::StateError.into())
+    }
+}
+
+fn fixed_authority<const LEN: usize>(authority: &[u8]) -> Result<[u8; LEN], ProgramError> {
+    if authority.len() != LEN {
         return Err(SwigError::RecoveryInvalidAuthorityLength.into());
     }
 
-    let old_authority = binding
-        .old_authority()
+    authority
         .try_into()
-        .map_err(|_| SwigError::RecoveryInvalidAuthorityLength)?;
-    let new_authority = binding
-        .new_authority()
-        .try_into()
-        .map_err(|_| SwigError::RecoveryInvalidAuthorityLength)?;
-    Ok((old_authority, new_authority))
+        .map_err(|_| SwigError::RecoveryInvalidAuthorityLength.into())
 }
 
 fn normalize_secp256k1_authority(authority: &[u8]) -> Result<[u8; 33], ProgramError> {
@@ -404,8 +590,12 @@ fn load_verified_recovery_binding(
         return Err(SwigError::RecoveryPendingNotExecuted.into());
     }
 
-    let pending_authority_type = read_u16(pending_data, PENDING_AUTHORITY_TYPE_OFFSET)?;
-    if execute_ix.authority_type != pending_authority_type {
+    let pending_old_authority_type = read_u16(pending_data, PENDING_OLD_AUTHORITY_TYPE_OFFSET)?;
+    if execute_ix.old_authority_type != pending_old_authority_type {
+        return Err(SwigError::RecoveryInstructionMismatch.into());
+    }
+    let pending_new_authority_type = read_u16(pending_data, PENDING_NEW_AUTHORITY_TYPE_OFFSET)?;
+    if execute_ix.new_authority_type != pending_new_authority_type {
         return Err(SwigError::RecoveryInstructionMismatch.into());
     }
     let pending_old_authority_len = read_u16(pending_data, PENDING_OLD_AUTHORITY_LEN_OFFSET)?;
@@ -431,7 +621,8 @@ fn load_verified_recovery_binding(
 
     Ok(RecoveryBinding {
         target_role_id,
-        authority_type: execute_ix.authority_type,
+        old_authority_type: execute_ix.old_authority_type,
+        new_authority_type: execute_ix.new_authority_type,
         old_authority: execute_ix.old_authority,
         old_authority_len: execute_ix.old_authority_len,
         new_authority: execute_ix.new_authority,
@@ -442,7 +633,8 @@ fn load_verified_recovery_binding(
 struct RecoveryExecuteIx {
     program_id: [u8; 32],
     pending_recovery: [u8; 32],
-    authority_type: u16,
+    old_authority_type: u16,
+    new_authority_type: u16,
     old_authority: [u8; MAX_RECOVERY_AUTHORITY_LEN],
     old_authority_len: usize,
     new_authority: [u8; MAX_RECOVERY_AUTHORITY_LEN],
@@ -528,7 +720,8 @@ fn load_recovery_execute_ix(
     Ok(RecoveryExecuteIx {
         program_id: *recovery_ix.get_program_id(),
         pending_recovery: pending_meta.key,
-        authority_type: recovery_authorities.authority_type,
+        old_authority_type: recovery_authorities.old_authority_type,
+        new_authority_type: recovery_authorities.new_authority_type,
         old_authority: recovery_authorities.old_authority,
         old_authority_len: recovery_authorities.old_authority_len,
         new_authority: recovery_authorities.new_authority,
@@ -586,7 +779,8 @@ fn read_hash(data: &[u8], offset: usize) -> Result<[u8; 32], ProgramError> {
 }
 
 struct ParsedRecoveryAuthorityData {
-    authority_type: u16,
+    old_authority_type: u16,
+    new_authority_type: u16,
     old_authority: [u8; MAX_RECOVERY_AUTHORITY_LEN],
     old_authority_len: usize,
     new_authority: [u8; MAX_RECOVERY_AUTHORITY_LEN],
@@ -598,9 +792,10 @@ fn parse_recovery_authority_data(data: &[u8]) -> Result<ParsedRecoveryAuthorityD
         return Err(SwigError::RecoveryInstructionMismatch.into());
     }
 
-    let authority_type = read_u16(data, 0)?;
-    let old_authority_len = read_u16(data, 2)? as usize;
-    let new_authority_len = read_u16(data, 4)? as usize;
+    let old_authority_type = read_u16(data, 0)?;
+    let new_authority_type = read_u16(data, 2)?;
+    let old_authority_len = read_u16(data, 4)? as usize;
+    let new_authority_len = read_u16(data, 6)? as usize;
     if old_authority_len == 0
         || old_authority_len > MAX_RECOVERY_AUTHORITY_LEN
         || new_authority_len == 0
@@ -632,7 +827,8 @@ fn parse_recovery_authority_data(data: &[u8]) -> Result<ParsedRecoveryAuthorityD
     );
 
     Ok(ParsedRecoveryAuthorityData {
-        authority_type,
+        old_authority_type,
+        new_authority_type,
         old_authority,
         old_authority_len,
         new_authority,
