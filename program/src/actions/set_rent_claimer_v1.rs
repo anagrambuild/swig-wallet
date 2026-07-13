@@ -90,6 +90,9 @@ pub fn set_rent_claimer_v1(
     if set_ix.args.rent_claimer == [0u8; 32] {
         return Err(SwigError::InvalidRentClaimerValue.into());
     }
+    if &set_ix.args.rent_claimer == ctx.accounts.swig.key() {
+        return Err(SwigError::InvalidRentClaimerValue.into());
+    }
 
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
