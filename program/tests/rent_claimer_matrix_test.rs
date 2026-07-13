@@ -153,20 +153,19 @@ fn create_test_secp256r1_keypair() -> (openssl::ec::EcKey<openssl::pkey::Private
 // A. SetRentClaimerV1 — core set semantics
 // ===========================================================================
 
-/// A5: setting the claimer to the swig account's own pubkey is allowed (no
-/// special-casing) — first-write-wins still applies.
+/// A5: setting the claimer to the swig account's own pubkey is rejected —
+/// the swig cannot be its own rent claimer.
 #[test_log::test]
-fn a5_set_claimer_to_swig_itself_succeeds() {
+fn a5_set_claimer_to_swig_itself_fails() {
     let mut context = setup_test_context().unwrap();
     let authority = Keypair::new();
     let id = rand::random::<[u8; 32]>();
     let (swig_pubkey, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
 
-    set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &authority, 0, swig_pubkey).unwrap();
-    assert_eq!(
-        configured_claimer(&context, &swig_pubkey),
-        Some(swig_pubkey.to_bytes())
-    );
+    let result =
+        set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &authority, 0, swig_pubkey);
+    assert!(result.is_err(), "swig as its own rent claimer must fail");
+    assert_eq!(configured_claimer(&context, &swig_pubkey), None);
 }
 
 /// A6: setting the claimer to the acting authority's own pubkey is allowed.
