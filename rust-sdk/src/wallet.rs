@@ -1250,6 +1250,40 @@ impl<'c> SwigWallet<'c> {
         Ok(())
     }
 
+    /// Sets the immutable rent claimer on the wallet
+    ///
+    /// # Arguments
+    ///
+    /// * `rent_claimer` - The public key that will receive rent when the wallet
+    ///   or its token accounts are closed
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing the transaction signature or a `SwigError`
+    pub fn set_rent_claimer(&mut self, rent_claimer: Pubkey) -> Result<Signature, SwigError> {
+        let current_slot = self.get_current_slot()?;
+        let instructions = self
+            .instruction_builder
+            .set_rent_claimer(rent_claimer, Some(current_slot))?;
+
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &instructions,
+            &[],
+            self.get_current_blockhash()?,
+        )?;
+        let tx = VersionedTransaction::try_new(
+            VersionedMessage::V0(msg),
+            &[self.fee_payer.insecure_clone()],
+        )?;
+
+        let tx_result = self.send_and_confirm_transaction(tx);
+        if tx_result.is_ok() {
+            self.instruction_builder.increment_odometer()?;
+        }
+        tx_result
+    }
+
     /// Get the sub account if it exists
     ///
     /// # Returns
