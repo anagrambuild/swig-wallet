@@ -120,7 +120,10 @@ fn test_close_swig_with_configured_rent_claimer_destination_mismatch_fails() {
     let message = VersionedMessage::V0(
         v0::Message::try_compile(
             &context.default_payer.pubkey(),
-            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), close_ix],
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                close_ix,
+            ],
             &[],
             context.svm.latest_blockhash(),
         )
@@ -171,7 +174,10 @@ fn test_close_swig_with_configured_rent_claimer_destination_match_succeeds() {
     let message = VersionedMessage::V0(
         v0::Message::try_compile(
             &context.default_payer.pubkey(),
-            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), close_ix],
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                close_ix,
+            ],
             &[],
             context.svm.latest_blockhash(),
         )
@@ -179,7 +185,10 @@ fn test_close_swig_with_configured_rent_claimer_destination_match_succeeds() {
     );
     let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
     let result = context.svm.send_transaction(tx);
-    assert!(result.is_ok(), "close should succeed with pinned destination");
+    assert!(
+        result.is_ok(),
+        "close should succeed with pinned destination"
+    );
 
     let claimer_lamports_after = context
         .svm
@@ -187,8 +196,8 @@ fn test_close_swig_with_configured_rent_claimer_destination_match_succeeds() {
         .map(|a| a.lamports)
         .unwrap_or(0);
     let expected_closed_account_rent = context.svm.minimum_balance_for_rent_exemption(1);
-    let expected_reclaimed = wallet_lamports_before
-        + swig_lamports_before.saturating_sub(expected_closed_account_rent);
+    let expected_reclaimed =
+        wallet_lamports_before + swig_lamports_before.saturating_sub(expected_closed_account_rent);
 
     let swig_lamports_after = context.svm.get_account(&swig_pubkey).unwrap().lamports;
     let wallet_lamports_after = context
@@ -196,10 +205,22 @@ fn test_close_swig_with_configured_rent_claimer_destination_match_succeeds() {
         .get_account(&swig_wallet_address)
         .map(|a| a.lamports)
         .unwrap_or(0);
-    println!("claimer_lamports_before: {} after: {}", claimer_lamports_before, claimer_lamports_after);
-    println!("swig_wallet_lamports_before: {} after: {}", wallet_lamports_before, wallet_lamports_after);
-    println!("swig_lamports_before: {} after: {}", swig_lamports_before, swig_lamports_after);
-    println!("expected_closed_account_rent: {}", expected_closed_account_rent);
+    println!(
+        "claimer_lamports_before: {} after: {}",
+        claimer_lamports_before, claimer_lamports_after
+    );
+    println!(
+        "swig_wallet_lamports_before: {} after: {}",
+        wallet_lamports_before, wallet_lamports_after
+    );
+    println!(
+        "swig_lamports_before: {} after: {}",
+        swig_lamports_before, swig_lamports_after
+    );
+    println!(
+        "expected_closed_account_rent: {}",
+        expected_closed_account_rent
+    );
     println!("expected_reclaimed: {}", expected_reclaimed);
     assert_eq!(
         claimer_lamports_after.saturating_sub(claimer_lamports_before),
@@ -257,7 +278,10 @@ fn test_rent_claimer_receives_rent_from_close_token_then_close_swig() {
     let close_token_msg = VersionedMessage::V0(
         v0::Message::try_compile(
             &context.default_payer.pubkey(),
-            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), close_token_ix],
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                close_token_ix,
+            ],
             &[],
             context.svm.latest_blockhash(),
         )
@@ -283,7 +307,10 @@ fn test_rent_claimer_receives_rent_from_close_token_then_close_swig() {
     let close_swig_msg = VersionedMessage::V0(
         v0::Message::try_compile(
             &context.default_payer.pubkey(),
-            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), close_swig_ix],
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                close_swig_ix,
+            ],
             &[],
             context.svm.latest_blockhash(),
         )

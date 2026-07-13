@@ -121,7 +121,10 @@ pub fn set_rent_claimer_with_ed25519(
     )?;
     let msg = v0::Message::try_compile(
         &context.default_payer.pubkey(),
-        &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), set_ix],
+        &[
+            ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+            set_ix,
+        ],
         &[],
         context.svm.latest_blockhash(),
     )?;

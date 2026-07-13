@@ -145,7 +145,10 @@ fn test_close_token_account_with_configured_rent_claimer_destination_mismatch_fa
     let message = VersionedMessage::V0(
         v0::Message::try_compile(
             &context.default_payer.pubkey(),
-            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), close_ix],
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                close_ix,
+            ],
             &[],
             context.svm.latest_blockhash(),
         )
@@ -202,7 +205,10 @@ fn test_close_token_account_with_configured_rent_claimer_destination_match_succe
     let message = VersionedMessage::V0(
         v0::Message::try_compile(
             &context.default_payer.pubkey(),
-            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), close_ix],
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                close_ix,
+            ],
             &[],
             context.svm.latest_blockhash(),
         )
@@ -210,7 +216,10 @@ fn test_close_token_account_with_configured_rent_claimer_destination_match_succe
     );
     let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
     let result = context.svm.send_transaction(tx);
-    assert!(result.is_ok(), "close token should succeed with pinned destination");
+    assert!(
+        result.is_ok(),
+        "close token should succeed with pinned destination"
+    );
 
     let claimer_after = context
         .svm

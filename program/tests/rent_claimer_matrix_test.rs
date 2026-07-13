@@ -54,7 +54,10 @@ fn configured_claimer(context: &SwigTestContext, swig_pubkey: &Pubkey) -> Option
 /// Number of roles currently stored on the swig.
 fn role_count(context: &SwigTestContext, swig_pubkey: &Pubkey) -> u16 {
     let account = context.svm.get_account(swig_pubkey).unwrap();
-    SwigWithRoles::from_bytes(&account.data).unwrap().state.roles
+    SwigWithRoles::from_bytes(&account.data)
+        .unwrap()
+        .state
+        .roles
 }
 
 fn account_len(context: &SwigTestContext, swig_pubkey: &Pubkey) -> usize {
@@ -62,7 +65,11 @@ fn account_len(context: &SwigTestContext, swig_pubkey: &Pubkey) -> usize {
 }
 
 fn lamports_of(context: &SwigTestContext, key: &Pubkey) -> u64 {
-    context.svm.get_account(key).map(|a| a.lamports).unwrap_or(0)
+    context
+        .svm
+        .get_account(key)
+        .map(|a| a.lamports)
+        .unwrap_or(0)
 }
 
 fn wallet_address(swig_pubkey: &Pubkey) -> Pubkey {
@@ -156,7 +163,10 @@ fn a5_set_claimer_to_swig_itself_succeeds() {
     let (swig_pubkey, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
 
     set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &authority, 0, swig_pubkey).unwrap();
-    assert_eq!(configured_claimer(&context, &swig_pubkey), Some(swig_pubkey.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &swig_pubkey),
+        Some(swig_pubkey.to_bytes())
+    );
 }
 
 /// A6: setting the claimer to the acting authority's own pubkey is allowed.
@@ -168,8 +178,14 @@ fn a6_set_claimer_to_acting_authority_succeeds() {
     let id = rand::random::<[u8; 32]>();
     let (swig_pubkey, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
 
-    set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &authority, 0, authority.pubkey())
-        .unwrap();
+    set_rent_claimer_with_ed25519(
+        &mut context,
+        &swig_pubkey,
+        &authority,
+        0,
+        authority.pubkey(),
+    )
+    .unwrap();
     assert_eq!(
         configured_claimer(&context, &swig_pubkey),
         Some(authority.pubkey().to_bytes())
@@ -185,8 +201,13 @@ fn a8_set_with_unknown_role_id_fails() {
     let (swig_pubkey, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
 
     // Role 7 does not exist; signing key is the real root.
-    let result =
-        set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &authority, 7, Keypair::new().pubkey());
+    let result = set_rent_claimer_with_ed25519(
+        &mut context,
+        &swig_pubkey,
+        &authority,
+        7,
+        Keypair::new().pubkey(),
+    );
     assert!(result.is_err(), "unknown role_id must fail");
     assert_eq!(configured_claimer(&context, &swig_pubkey), None);
 }
@@ -218,7 +239,10 @@ fn b2_close_swig_authority_can_set() {
 
     let claimer = Keypair::new().pubkey();
     set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &closer, 1, claimer).unwrap();
-    assert_eq!(configured_claimer(&context, &swig_pubkey), Some(claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &swig_pubkey),
+        Some(claimer.to_bytes())
+    );
 }
 
 /// B3: `ManageAuthority` alone is explicitly insufficient to set.
@@ -242,9 +266,17 @@ fn b3_manage_authority_cannot_set() {
     )
     .unwrap();
 
-    let result =
-        set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &manager, 1, Keypair::new().pubkey());
-    assert!(result.is_err(), "ManageAuthority must not be able to set the rent claimer");
+    let result = set_rent_claimer_with_ed25519(
+        &mut context,
+        &swig_pubkey,
+        &manager,
+        1,
+        Keypair::new().pubkey(),
+    );
+    assert!(
+        result.is_err(),
+        "ManageAuthority must not be able to set the rent claimer"
+    );
     assert_eq!(configured_claimer(&context, &swig_pubkey), None);
 }
 
@@ -267,12 +299,19 @@ fn b4_all_but_manage_authority_cannot_set() {
             authority_type: AuthorityType::Ed25519,
             authority: broad.pubkey().as_ref(),
         },
-        vec![ClientAction::AllButManageAuthority(AllButManageAuthority {})],
+        vec![ClientAction::AllButManageAuthority(
+            AllButManageAuthority {},
+        )],
     )
     .unwrap();
 
-    let result =
-        set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &broad, 1, Keypair::new().pubkey());
+    let result = set_rent_claimer_with_ed25519(
+        &mut context,
+        &swig_pubkey,
+        &broad,
+        1,
+        Keypair::new().pubkey(),
+    );
     assert!(
         result.is_err(),
         "AllButManageAuthority is not one of the two authorized set permissions"
@@ -313,7 +352,10 @@ fn c3_secp256k1_authority_can_set() {
     let message = VersionedMessage::V0(
         v0::Message::try_compile(
             &context.default_payer.pubkey(),
-            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), set_ix],
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                set_ix,
+            ],
             &[],
             context.svm.latest_blockhash(),
         )
@@ -322,7 +364,10 @@ fn c3_secp256k1_authority_can_set() {
     let tx = VersionedTransaction::try_new(message, &[&context.default_payer]).unwrap();
     let result = context.svm.send_transaction(tx);
     assert!(result.is_ok(), "secp256k1 set failed: {:?}", result.err());
-    assert_eq!(configured_claimer(&context, &swig_pubkey), Some(claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &swig_pubkey),
+        Some(claimer.to_bytes())
+    );
 }
 
 /// C6: a Secp256r1 root authority can set the rent claimer.
@@ -366,7 +411,10 @@ fn c6_secp256r1_authority_can_set() {
     let tx = VersionedTransaction::try_new(message, &[&context.default_payer]).unwrap();
     let result = context.svm.send_transaction(tx);
     assert!(result.is_ok(), "secp256r1 set failed: {:?}", result.err());
-    assert_eq!(configured_claimer(&context, &swig_pubkey), Some(claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &swig_pubkey),
+        Some(claimer.to_bytes())
+    );
 }
 
 // ===========================================================================
@@ -397,9 +445,15 @@ fn d1_add_authority_preserves_tail() {
     )
     .unwrap();
 
-    assert_eq!(configured_claimer(&context, &swig_pubkey), Some(claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &swig_pubkey),
+        Some(claimer.to_bytes())
+    );
     assert_eq!(role_count(&context, &swig_pubkey), 2);
-    assert!(account_len(&context, &swig_pubkey) > len_before, "account should have grown");
+    assert!(
+        account_len(&context, &swig_pubkey) > len_before,
+        "account should have grown"
+    );
     // Tail must remain a clean single entry — read_strict would error otherwise.
 }
 
@@ -450,7 +504,10 @@ fn d3_add_mixed_authority_types_preserves_tail() {
         vec![ClientAction::ManageAuthority(ManageAuthority {})],
     )
     .unwrap();
-    assert_eq!(configured_claimer(&context, &swig_pubkey), Some(claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &swig_pubkey),
+        Some(claimer.to_bytes())
+    );
 
     // Secp256k1 authority (64-byte authority) — a different role size.
     let secp = LocalSigner::random();
@@ -471,7 +528,10 @@ fn d3_add_mixed_authority_types_preserves_tail() {
     )
     .unwrap();
 
-    assert_eq!(configured_claimer(&context, &swig_pubkey), Some(claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &swig_pubkey),
+        Some(claimer.to_bytes())
+    );
     assert_eq!(role_count(&context, &swig_pubkey), 3);
 }
 
@@ -589,7 +649,10 @@ fn d7_remove_middle_role_preserves_tail() {
         "tail corrupted by middle-role removal"
     );
     assert_eq!(role_count(&context, &swig_pubkey), 2);
-    assert!(account_len(&context, &swig_pubkey) < len_before, "account should have shrunk");
+    assert!(
+        account_len(&context, &swig_pubkey) < len_before,
+        "account should have shrunk"
+    );
 }
 
 /// D8: removing the last role preserves the tail.
@@ -616,7 +679,10 @@ fn d8_remove_last_role_preserves_tail() {
     set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &root, 0, claimer).unwrap();
     remove_authority_with_ed25519_root(&mut context, &swig_pubkey, &root, 1).unwrap();
 
-    assert_eq!(configured_claimer(&context, &swig_pubkey), Some(claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &swig_pubkey),
+        Some(claimer.to_bytes())
+    );
     assert_eq!(role_count(&context, &swig_pubkey), 1);
 }
 
@@ -688,7 +754,10 @@ fn d12_update_authority_grow_then_shrink_preserves_tail() {
         Some(claimer.to_bytes()),
         "tail corrupted by update-grow"
     );
-    assert!(account_len(&context, &swig_pubkey) > len_one_action, "update should have grown");
+    assert!(
+        account_len(&context, &swig_pubkey) > len_one_action,
+        "update should have grown"
+    );
 
     // Shrink: drop back to a single action.
     update_authority_replace_with_ed25519_root(
@@ -747,7 +816,10 @@ fn d18_claimer_survives_full_role_churn() {
     // shrink (remove)
     remove_authority_with_ed25519_root(&mut context, &swig_pubkey, &root, 1).unwrap();
 
-    assert_eq!(configured_claimer(&context, &swig_pubkey), Some(claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &swig_pubkey),
+        Some(claimer.to_bytes())
+    );
 
     // D19: still immutable after all the reallocs.
     let second = set_rent_claimer_with_ed25519(
@@ -757,7 +829,10 @@ fn d18_claimer_survives_full_role_churn() {
         0,
         Keypair::new().pubkey(),
     );
-    assert!(second.is_err(), "claimer must stay immutable through role churn");
+    assert!(
+        second.is_err(),
+        "claimer must stay immutable through role churn"
+    );
 }
 
 /// D17: setting the claimer AFTER growing the roles writes the tail at the
@@ -783,7 +858,10 @@ fn d17_add_then_set_writes_tail_at_correct_offset() {
 
     let claimer = Keypair::new().pubkey();
     set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &root, 0, claimer).unwrap();
-    assert_eq!(configured_claimer(&context, &swig_pubkey), Some(claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &swig_pubkey),
+        Some(claimer.to_bytes())
+    );
     assert_eq!(role_count(&context, &swig_pubkey), 2);
 }
 
@@ -801,7 +879,11 @@ fn f1_unset_close_allows_any_destination() {
 
     let destination = Keypair::new().pubkey();
     let result = close_swig_ed25519(&mut context, &swig_pubkey, &root, 0, &destination);
-    assert!(result.is_ok(), "unset wallet should close to any destination: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "unset wallet should close to any destination: {:?}",
+        result.err()
+    );
 }
 
 /// F4: a delegated `CloseSwigAuthority` role can wind the wallet down, but only
@@ -857,7 +939,13 @@ fn g3_unset_token_close_allows_any_destination() {
     let swig_wallet_address = wallet_address(&swig_pubkey);
 
     let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
-    let ata = setup_ata(&mut context.svm, &mint, &swig_wallet_address, &context.default_payer).unwrap();
+    let ata = setup_ata(
+        &mut context.svm,
+        &mint,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
 
     let destination = Keypair::new().pubkey();
     let close_ix = CloseTokenAccountV1Instruction::new_with_ed25519_authority(
@@ -873,14 +961,20 @@ fn g3_unset_token_close_allows_any_destination() {
     let message = VersionedMessage::V0(
         v0::Message::try_compile(
             &context.default_payer.pubkey(),
-            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), close_ix],
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                close_ix,
+            ],
             &[],
             context.svm.latest_blockhash(),
         )
         .unwrap(),
     );
     let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &root]).unwrap();
-    assert!(context.svm.send_transaction(tx).is_ok(), "unset token close to any dest should succeed");
+    assert!(
+        context.svm.send_transaction(tx).is_ok(),
+        "unset token close to any dest should succeed"
+    );
 }
 
 /// G4 + G5: closing multiple token accounts in one ix routes to the pinned
@@ -898,8 +992,20 @@ fn g4_g5_multiple_token_accounts_respect_pin() {
 
     let mint1 = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let mint2 = setup_mint(&mut context.svm, &context.default_payer).unwrap();
-    let ata1 = setup_ata(&mut context.svm, &mint1, &swig_wallet_address, &context.default_payer).unwrap();
-    let ata2 = setup_ata(&mut context.svm, &mint2, &swig_wallet_address, &context.default_payer).unwrap();
+    let ata1 = setup_ata(
+        &mut context.svm,
+        &mint1,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
+    let ata2 = setup_ata(
+        &mut context.svm,
+        &mint2,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
     let total_rent = lamports_of(&context, &ata1) + lamports_of(&context, &ata2);
 
     // G5: wrong destination rejects all.
@@ -917,16 +1023,29 @@ fn g4_g5_multiple_token_accounts_respect_pin() {
     let msg = VersionedMessage::V0(
         v0::Message::try_compile(
             &context.default_payer.pubkey(),
-            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), close_wrong],
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                close_wrong,
+            ],
             &[],
             context.svm.latest_blockhash(),
         )
         .unwrap(),
     );
     let tx = VersionedTransaction::try_new(msg, &[&context.default_payer, &root]).unwrap();
-    assert!(context.svm.send_transaction(tx).is_err(), "wrong dest must reject all token closes");
+    assert!(
+        context.svm.send_transaction(tx).is_err(),
+        "wrong dest must reject all token closes"
+    );
     // Nothing should have moved.
-    assert!(context.svm.get_account(&ata1).map(|a| a.lamports).unwrap_or(0) > 0);
+    assert!(
+        context
+            .svm
+            .get_account(&ata1)
+            .map(|a| a.lamports)
+            .unwrap_or(0)
+            > 0
+    );
 
     // G4: correct destination routes all rent to the claimer.
     let claimer_before = lamports_of(&context, &claimer.pubkey());
@@ -943,14 +1062,20 @@ fn g4_g5_multiple_token_accounts_respect_pin() {
     let msg = VersionedMessage::V0(
         v0::Message::try_compile(
             &context.default_payer.pubkey(),
-            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), close_ok],
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                close_ok,
+            ],
             &[],
             context.svm.latest_blockhash(),
         )
         .unwrap(),
     );
     let tx = VersionedTransaction::try_new(msg, &[&context.default_payer, &root]).unwrap();
-    assert!(context.svm.send_transaction(tx).is_ok(), "pinned dest should close all token accounts");
+    assert!(
+        context.svm.send_transaction(tx).is_ok(),
+        "pinned dest should close all token accounts"
+    );
     assert_eq!(
         lamports_of(&context, &claimer.pubkey()).saturating_sub(claimer_before),
         total_rent,
@@ -972,11 +1097,21 @@ fn h1_set_grows_by_entry_len_and_stays_rent_exempt() {
     let (swig_pubkey, _) = create_swig_ed25519(&mut context, &root, id).unwrap();
     let len_before = account_len(&context, &swig_pubkey);
 
-    set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &root, 0, Keypair::new().pubkey())
-        .unwrap();
+    set_rent_claimer_with_ed25519(
+        &mut context,
+        &swig_pubkey,
+        &root,
+        0,
+        Keypair::new().pubkey(),
+    )
+    .unwrap();
 
     let len_after = account_len(&context, &swig_pubkey);
-    assert_eq!(len_after - len_before, rent_claimer::ENTRY_LEN, "should grow by exactly 40 bytes");
+    assert_eq!(
+        len_after - len_before,
+        rent_claimer::ENTRY_LEN,
+        "should grow by exactly 40 bytes"
+    );
     assert_eq!(
         lamports_of(&context, &swig_pubkey),
         context.svm.minimum_balance_for_rent_exemption(len_after),
@@ -1008,14 +1143,20 @@ fn h2_insufficient_payer_fails_cleanly() {
     let message = VersionedMessage::V0(
         v0::Message::try_compile(
             &poor_payer.pubkey(),
-            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), set_ix],
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                set_ix,
+            ],
             &[],
             context.svm.latest_blockhash(),
         )
         .unwrap(),
     );
     let tx = VersionedTransaction::try_new(message, &[&poor_payer, &root]).unwrap();
-    assert!(context.svm.send_transaction(tx).is_err(), "underfunded payer must fail the set");
+    assert!(
+        context.svm.send_transaction(tx).is_err(),
+        "underfunded payer must fail the set"
+    );
     assert_eq!(configured_claimer(&context, &swig_pubkey), None);
 }
 
@@ -1097,9 +1238,12 @@ fn k1_bundled_create_and_set_is_atomic() {
     let id = rand::random::<[u8; 32]>();
     let payer = context.default_payer.pubkey();
 
-    let (swig_pubkey, swig_bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
-    let (swig_wallet_address, wallet_bump) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_pubkey.as_ref()), &program_id());
+    let (swig_pubkey, swig_bump) =
+        Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+    let (swig_wallet_address, wallet_bump) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(swig_pubkey.as_ref()),
+        &program_id(),
+    );
 
     let create_ix = CreateInstruction::new(
         swig_pubkey,
@@ -1141,8 +1285,15 @@ fn k1_bundled_create_and_set_is_atomic() {
     );
     let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
     let result = context.svm.send_transaction(tx);
-    assert!(result.is_ok(), "bundled create+set failed: {:?}", result.err());
-    assert_eq!(configured_claimer(&context, &swig_pubkey), Some(claimer.to_bytes()));
+    assert!(
+        result.is_ok(),
+        "bundled create+set failed: {:?}",
+        result.err()
+    );
+    assert_eq!(
+        configured_claimer(&context, &swig_pubkey),
+        Some(claimer.to_bytes())
+    );
 }
 
 /// K2: with `CreateV1` alone, a different authority can win the first-write
@@ -1171,13 +1322,27 @@ fn k2_first_write_wins() {
     // `other` wins the race.
     let other_claimer = Keypair::new().pubkey();
     set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &other, 1, other_claimer).unwrap();
-    assert_eq!(configured_claimer(&context, &swig_pubkey), Some(other_claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &swig_pubkey),
+        Some(other_claimer.to_bytes())
+    );
 
     // root loses — the value is immutable.
-    let root_attempt =
-        set_rent_claimer_with_ed25519(&mut context, &swig_pubkey, &root, 0, Keypair::new().pubkey());
-    assert!(root_attempt.is_err(), "first write wins; later set must fail");
-    assert_eq!(configured_claimer(&context, &swig_pubkey), Some(other_claimer.to_bytes()));
+    let root_attempt = set_rent_claimer_with_ed25519(
+        &mut context,
+        &swig_pubkey,
+        &root,
+        0,
+        Keypair::new().pubkey(),
+    );
+    assert!(
+        root_attempt.is_err(),
+        "first write wins; later set must fail"
+    );
+    assert_eq!(
+        configured_claimer(&context, &swig_pubkey),
+        Some(other_claimer.to_bytes())
+    );
 }
 
 /// K3: two `SetRentClaimerV1` in a single transaction — the second fails, so the
@@ -1221,6 +1386,9 @@ fn k3_two_sets_in_one_tx_fails() {
         .unwrap(),
     );
     let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &root]).unwrap();
-    assert!(context.svm.send_transaction(tx).is_err(), "two sets in one tx must fail");
+    assert!(
+        context.svm.send_transaction(tx).is_err(),
+        "two sets in one tx must fail"
+    );
     assert_eq!(configured_claimer(&context, &swig_pubkey), None);
 }

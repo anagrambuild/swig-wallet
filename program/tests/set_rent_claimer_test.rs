@@ -12,10 +12,7 @@ use solana_sdk::{
 };
 use swig_interface::{AuthorityConfig, ClientAction, SetRentClaimerV1Instruction};
 use swig_state::{
-    action::sol_limit::SolLimit,
-    authority::AuthorityType,
-    swig::Swig,
-    tail::rent_claimer,
+    action::sol_limit::SolLimit, authority::AuthorityType, swig::Swig, tail::rent_claimer,
 };
 
 #[test_log::test]
@@ -53,7 +50,10 @@ fn test_set_rent_claimer_rejects_zero_pubkey() {
     let message = VersionedMessage::V0(
         v0::Message::try_compile(
             &context.default_payer.pubkey(),
-            &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), set_ix],
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                set_ix,
+            ],
             &[],
             context.svm.latest_blockhash(),
         )
