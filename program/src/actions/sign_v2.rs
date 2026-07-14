@@ -19,6 +19,7 @@ use swig_state::{
     action::{
         all::All,
         all_but_manage_authority::AllButManageAuthority,
+        close_swig_authority::CloseSwigAuthority,
         program::Program,
         program_all::ProgramAll,
         program_curated::ProgramCurated,
@@ -564,9 +565,25 @@ pub fn sign_v2(
             },
             AccountClassification::SwigTokenAccount { spent, .. } => {
                 let account_info = unsafe { all_accounts.get_unchecked(index) };
+                let data = unsafe { &account_info.borrow_data_unchecked() };
+
+                // The on-chain token program resizes closed accounts to zero bytes,
+                // while its native test processor retains zeroed data. Both forms
+                // drain the account's lamports and assign it to the system program.
+                if data.is_empty() || account_info.lamports() == 0 {
+                    let has_close_permission =
+                        RoleMut::get_action_mut::<CloseSwigAuthority>(actions, &[])?.is_some();
+                    if !has_close_permission {
+                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+                    }
+                    if account_info.lamports() != 0 || account_info.owner() != &SYSTEM_PROGRAM_ID {
+                        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+                    }
+
+                    continue;
+                }
 
                 if account_info.is_writable() {
-                    let data = unsafe { &account_info.borrow_data_unchecked() };
                     let exclude_ranges = [TOKEN_BALANCE_EXCLUDE_RANGE];
                     let current_hash = hash_except(&data, account_info.owner(), &exclude_ranges);
                     let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
@@ -575,7 +592,6 @@ pub fn sign_v2(
                     }
                 }
 
-                let data = unsafe { &account_info.borrow_data_unchecked() };
                 let mint = unsafe { data.get_unchecked(TOKEN_MINT_RANGE) };
                 let state = unsafe { *data.get_unchecked(TOKEN_STATE_INDEX) };
                 let authority = unsafe { data.get_unchecked(TOKEN_AUTHORITY_RANGE) };
