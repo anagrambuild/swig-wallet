@@ -63,6 +63,7 @@ const TOKEN_BALANCE_EXCLUDE_RANGE: core::ops::Range<usize> = 64..72;
 const STAKE_BALANCE_EXCLUDE_RANGE: core::ops::Range<usize> = 184..192;
 
 /// Token account field ranges
+const TOKEN_ACCOUNT_BASE_DATA_LEN: usize = 165;
 const TOKEN_MINT_RANGE: core::ops::Range<usize> = 0..32;
 const TOKEN_AUTHORITY_RANGE: core::ops::Range<usize> = 32..64;
 const TOKEN_BALANCE_RANGE: core::ops::Range<usize> = 64..72;
@@ -581,6 +582,10 @@ pub fn sign_v2(
                     }
 
                     continue;
+                }
+
+                if data.len() < TOKEN_ACCOUNT_BASE_DATA_LEN {
+                    return Err(SwigError::AccountDataModifiedUnexpectedly.into());
                 }
 
                 if account_info.is_writable() {
