@@ -168,6 +168,29 @@ fn a5_set_claimer_to_swig_itself_fails() {
     assert_eq!(configured_claimer(&context, &swig_pubkey), None);
 }
 
+/// A5b: setting the claimer to the swig wallet address PDA is rejected —
+/// close proceeds must not be routed back into the wallet's own accounts.
+#[test_log::test]
+fn a5b_set_claimer_to_wallet_address_fails() {
+    let mut context = setup_test_context().unwrap();
+    let authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
+
+    let result = set_rent_claimer_with_ed25519(
+        &mut context,
+        &swig_pubkey,
+        &authority,
+        0,
+        wallet_address(&swig_pubkey),
+    );
+    assert!(
+        result.is_err(),
+        "swig wallet address as rent claimer must fail"
+    );
+    assert_eq!(configured_claimer(&context, &swig_pubkey), None);
+}
+
 /// A6: setting the claimer to the acting authority's own pubkey is allowed.
 /// (The §3 attack is only relevant to *mutation*, which v1 forbids.)
 #[test_log::test]
