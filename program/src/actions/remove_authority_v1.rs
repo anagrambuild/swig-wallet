@@ -12,8 +12,8 @@ use pinocchio::{
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
-    tail::SavedTail,
     swig::{Swig, SwigBuilder},
+    tail::SavedTail,
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 

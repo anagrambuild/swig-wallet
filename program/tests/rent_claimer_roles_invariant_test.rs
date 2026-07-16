@@ -101,7 +101,10 @@ fn roles_identical_after_add_regardless_of_tail() {
     let (plain, tailed) = create_pair(&mut context, &root, &claimer);
 
     // Baseline: role 0 only — already identical.
-    assert_eq!(roles_bytes(&context, &plain), roles_bytes(&context, &tailed));
+    assert_eq!(
+        roles_bytes(&context, &plain),
+        roles_bytes(&context, &tailed)
+    );
 
     // Same authority keypairs + same actions applied to BOTH wallets.
     // (`ClientAction` isn't `Clone`, so build a fresh vec per call.)
@@ -111,8 +114,14 @@ fn roles_identical_after_add_regardless_of_tail() {
         let mk = || vec![ClientAction::SolLimit(SolLimit { amount })];
         add_authority_with_ed25519_root(&mut context, &plain, &root, ed_config(&kp.pubkey()), mk())
             .unwrap();
-        add_authority_with_ed25519_root(&mut context, &tailed, &root, ed_config(&kp.pubkey()), mk())
-            .unwrap();
+        add_authority_with_ed25519_root(
+            &mut context,
+            &tailed,
+            &root,
+            ed_config(&kp.pubkey()),
+            mk(),
+        )
+        .unwrap();
 
         assert_eq!(
             roles_bytes(&context, &plain),
@@ -122,7 +131,10 @@ fn roles_identical_after_add_regardless_of_tail() {
     }
 
     // The tail is unaffected the whole time; the plain wallet never grew one.
-    assert_eq!(configured_claimer(&context, &tailed), Some(claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &tailed),
+        Some(claimer.to_bytes())
+    );
     assert_eq!(configured_claimer(&context, &plain), None);
 }
 
@@ -142,10 +154,19 @@ fn roles_identical_after_remove_middle_regardless_of_tail() {
         let mk = || vec![ClientAction::SolLimit(SolLimit { amount: 7 })];
         add_authority_with_ed25519_root(&mut context, &plain, &root, ed_config(&kp.pubkey()), mk())
             .unwrap();
-        add_authority_with_ed25519_root(&mut context, &tailed, &root, ed_config(&kp.pubkey()), mk())
-            .unwrap();
+        add_authority_with_ed25519_root(
+            &mut context,
+            &tailed,
+            &root,
+            ed_config(&kp.pubkey()),
+            mk(),
+        )
+        .unwrap();
     }
-    assert_eq!(roles_bytes(&context, &plain), roles_bytes(&context, &tailed));
+    assert_eq!(
+        roles_bytes(&context, &plain),
+        roles_bytes(&context, &tailed)
+    );
 
     // Remove the middle role (id 2 = `b`) on both.
     remove_authority_with_ed25519_root(&mut context, &plain, &root, 2).unwrap();
@@ -156,7 +177,10 @@ fn roles_identical_after_remove_middle_regardless_of_tail() {
         roles_bytes(&context, &tailed),
         "roles diverged after middle-role removal"
     );
-    assert_eq!(configured_claimer(&context, &tailed), Some(claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &tailed),
+        Some(claimer.to_bytes())
+    );
     // `b` is gone, `a` and `c` remain — on both wallets identically.
     assert!(!has_role_for(&context, &tailed, &b.pubkey()));
     assert!(has_role_for(&context, &tailed, &a.pubkey()));
@@ -174,10 +198,22 @@ fn roles_identical_after_update_regardless_of_tail() {
 
     let target = Keypair::new();
     let mk_init = || vec![ClientAction::ManageAuthority(ManageAuthority {})];
-    add_authority_with_ed25519_root(&mut context, &plain, &root, ed_config(&target.pubkey()), mk_init())
-        .unwrap();
-    add_authority_with_ed25519_root(&mut context, &tailed, &root, ed_config(&target.pubkey()), mk_init())
-        .unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &plain,
+        &root,
+        ed_config(&target.pubkey()),
+        mk_init(),
+    )
+    .unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &tailed,
+        &root,
+        ed_config(&target.pubkey()),
+        mk_init(),
+    )
+    .unwrap();
 
     // Grow.
     let mk_grown = || {
@@ -187,7 +223,8 @@ fn roles_identical_after_update_regardless_of_tail() {
         ]
     };
     update_authority_replace_with_ed25519_root(&mut context, &plain, &root, 1, mk_grown()).unwrap();
-    update_authority_replace_with_ed25519_root(&mut context, &tailed, &root, 1, mk_grown()).unwrap();
+    update_authority_replace_with_ed25519_root(&mut context, &tailed, &root, 1, mk_grown())
+        .unwrap();
     assert_eq!(
         roles_bytes(&context, &plain),
         roles_bytes(&context, &tailed),
@@ -196,14 +233,19 @@ fn roles_identical_after_update_regardless_of_tail() {
 
     // Shrink.
     let mk_shrunk = || vec![ClientAction::SolLimit(SolLimit { amount: 42 })];
-    update_authority_replace_with_ed25519_root(&mut context, &plain, &root, 1, mk_shrunk()).unwrap();
-    update_authority_replace_with_ed25519_root(&mut context, &tailed, &root, 1, mk_shrunk()).unwrap();
+    update_authority_replace_with_ed25519_root(&mut context, &plain, &root, 1, mk_shrunk())
+        .unwrap();
+    update_authority_replace_with_ed25519_root(&mut context, &tailed, &root, 1, mk_shrunk())
+        .unwrap();
     assert_eq!(
         roles_bytes(&context, &plain),
         roles_bytes(&context, &tailed),
         "roles diverged after update-shrink"
     );
-    assert_eq!(configured_claimer(&context, &tailed), Some(claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &tailed),
+        Some(claimer.to_bytes())
+    );
 }
 
 // ===========================================================================
@@ -246,7 +288,10 @@ fn added_role_is_functional_with_tail_present() {
 
     assert_eq!(role_count(&context, &swig), 3);
     assert!(has_role_for(&context, &swig, &downstream.pubkey()));
-    assert_eq!(configured_claimer(&context, &swig), Some(claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &swig),
+        Some(claimer.to_bytes())
+    );
 }
 
 /// After removing a middle role on a tailed wallet, the surviving roles keep
@@ -264,8 +309,22 @@ fn surviving_roles_functional_after_remove_with_tail() {
     set_rent_claimer_with_ed25519(&mut context, &swig, &root, 0, claimer).unwrap();
 
     // role 1 = mid (All), role 2 = survivor (All)
-    add_authority_with_ed25519_root(&mut context, &swig, &root, ed_config(&mid.pubkey()), vec![ClientAction::All(All {})]).unwrap();
-    add_authority_with_ed25519_root(&mut context, &swig, &root, ed_config(&survivor.pubkey()), vec![ClientAction::All(All {})]).unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        ed_config(&mid.pubkey()),
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        ed_config(&survivor.pubkey()),
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
 
     // Remove the middle role.
     remove_authority_with_ed25519_root(&mut context, &swig, &root, 1).unwrap();
@@ -283,7 +342,10 @@ fn surviving_roles_functional_after_remove_with_tail() {
     .unwrap();
 
     assert!(has_role_for(&context, &swig, &downstream.pubkey()));
-    assert_eq!(configured_claimer(&context, &swig), Some(claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &swig),
+        Some(claimer.to_bytes())
+    );
 }
 
 /// An `update` to a role's permissions takes real effect even with a tail set:
@@ -317,7 +379,10 @@ fn update_changes_effective_permissions_with_tail() {
         ed_config(&Keypair::new().pubkey()),
         vec![ClientAction::SolLimit(SolLimit { amount: 1 })],
     );
-    assert!(before.is_err(), "SolLimit-only role must not manage authorities");
+    assert!(
+        before.is_err(),
+        "SolLimit-only role must not manage authorities"
+    );
 
     // Grant ManageAuthority via update (root acting).
     update_authority_replace_with_ed25519_root(
@@ -343,7 +408,10 @@ fn update_changes_effective_permissions_with_tail() {
     )
     .unwrap();
     assert!(has_role_for(&context, &swig, &added.pubkey()));
-    assert_eq!(configured_claimer(&context, &swig), Some(claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &swig),
+        Some(claimer.to_bytes())
+    );
 }
 
 /// A role can actually SPEND from the wallet (SignV2 SOL transfer) with the tail
@@ -378,47 +446,81 @@ fn roles_can_sign_v2_spend_with_tail_present() {
         &swig_wallet_address,
         2_000_000_000,
     );
-    let fund_msg = v0::Message::try_compile(&root.pubkey(), &[fund_ix], &[], context.svm.latest_blockhash()).unwrap();
+    let fund_msg = v0::Message::try_compile(
+        &root.pubkey(),
+        &[fund_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
     context
         .svm
-        .send_transaction(VersionedTransaction::try_new(VersionedMessage::V0(fund_msg), &[&root]).unwrap())
+        .send_transaction(
+            VersionedTransaction::try_new(VersionedMessage::V0(fund_msg), &[&root]).unwrap(),
+        )
         .unwrap();
 
     // Helper closure: spend `amount` via SignV2 using `(authority, role_id)`.
-    let mut spend = |context: &mut SwigTestContext, authority: &Keypair, role_id: u32, amount: u64| {
-        let recipient = Keypair::new().pubkey();
-        let transfer_ix =
-            solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient, amount);
-        let sign_ix =
-            SignV2Instruction::new_ed25519(swig, swig_wallet_address, authority.pubkey(), transfer_ix, role_id)
-                .unwrap();
-        let msg = v0::Message::try_compile(
-            &context.default_payer.pubkey(),
-            &[sign_ix],
-            &[],
-            context.svm.latest_blockhash(),
-        )
-        .unwrap();
-        let tx = VersionedTransaction::try_new(
-            VersionedMessage::V0(msg),
-            &[&context.default_payer, authority],
-        )
-        .unwrap();
-        let result = context.svm.send_transaction(tx);
-        assert!(result.is_ok(), "SignV2 spend failed: {:?}", result.err());
-        (recipient, amount)
-    };
+    let mut spend =
+        |context: &mut SwigTestContext, authority: &Keypair, role_id: u32, amount: u64| {
+            let recipient = Keypair::new().pubkey();
+            let transfer_ix = solana_system_interface::instruction::transfer(
+                &swig_wallet_address,
+                &recipient,
+                amount,
+            );
+            let sign_ix = SignV2Instruction::new_ed25519(
+                swig,
+                swig_wallet_address,
+                authority.pubkey(),
+                transfer_ix,
+                role_id,
+            )
+            .unwrap();
+            let msg = v0::Message::try_compile(
+                &context.default_payer.pubkey(),
+                &[sign_ix],
+                &[],
+                context.svm.latest_blockhash(),
+            )
+            .unwrap();
+            let tx = VersionedTransaction::try_new(
+                VersionedMessage::V0(msg),
+                &[&context.default_payer, authority],
+            )
+            .unwrap();
+            let result = context.svm.send_transaction(tx);
+            assert!(result.is_ok(), "SignV2 spend failed: {:?}", result.err());
+            (recipient, amount)
+        };
 
     // Root (role 0) spends.
     let (r1, a1) = spend(&mut context, &root, 0, 100_000_000);
-    assert_eq!(context.svm.get_account(&r1).map(|a| a.lamports).unwrap_or(0), a1);
+    assert_eq!(
+        context
+            .svm
+            .get_account(&r1)
+            .map(|a| a.lamports)
+            .unwrap_or(0),
+        a1
+    );
 
     // Added authority (role 1) spends.
     let (r2, a2) = spend(&mut context, &spender, 1, 150_000_000);
-    assert_eq!(context.svm.get_account(&r2).map(|a| a.lamports).unwrap_or(0), a2);
+    assert_eq!(
+        context
+            .svm
+            .get_account(&r2)
+            .map(|a| a.lamports)
+            .unwrap_or(0),
+        a2
+    );
 
     // The tail survived all of the signing activity.
-    assert_eq!(configured_claimer(&context, &swig), Some(claimer.to_bytes()));
+    assert_eq!(
+        configured_claimer(&context, &swig),
+        Some(claimer.to_bytes())
+    );
 }
 
 // ===========================================================================

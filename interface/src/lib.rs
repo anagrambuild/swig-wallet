@@ -3418,8 +3418,13 @@ impl SetRentClaimerV1Instruction {
             );
         }
 
-        let nonced_payload =
-            prepare_secp256k1_payload(current_slot, counter, args_bytes, &account_payload_bytes, &[]);
+        let nonced_payload = prepare_secp256k1_payload(
+            current_slot,
+            counter,
+            args_bytes,
+            &account_payload_bytes,
+            &[],
+        );
         let signature = authority_payload_fn(&nonced_payload);
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
@@ -3471,7 +3476,13 @@ impl SetRentClaimerV1Instruction {
         let slot_bytes = current_slot.to_le_bytes();
         let counter_bytes = counter.to_le_bytes();
         let message_hash = keccak::hash(
-            &[args_bytes, &account_payload_bytes, &slot_bytes[..], &counter_bytes[..]].concat(),
+            &[
+                args_bytes,
+                &account_payload_bytes,
+                &slot_bytes[..],
+                &counter_bytes[..],
+            ]
+            .concat(),
         )
         .to_bytes();
 

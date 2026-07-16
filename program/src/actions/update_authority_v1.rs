@@ -15,8 +15,8 @@ use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, Action, ActionLoader},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
-    tail::SavedTail,
     swig::Swig,
+    tail::SavedTail,
     Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut,
 };
 
@@ -647,8 +647,9 @@ pub fn update_authority_v1(
                 if cursor + Position::LEN > roles_len {
                     return Err(ProgramError::InvalidAccountData);
                 }
-                let position =
-                    unsafe { Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])? };
+                let position = unsafe {
+                    Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])?
+                };
                 let boundary = position.boundary() as usize;
                 if boundary < cursor + Position::LEN || boundary > roles_len {
                     return Err(ProgramError::InvalidAccountData);
@@ -671,24 +672,24 @@ pub fn update_authority_v1(
         };
 
         let prealloc_size_diff = match operation {
-        AuthorityUpdateOperation::ReplaceAll => {
-            let new_actions = update_authority_v1.get_actions_data()?;
-            new_actions.len() as i64 - current_actions_size as i64
-        },
-        AuthorityUpdateOperation::AddActions => {
-            let new_actions = update_authority_v1.get_actions_data()?;
-            new_actions.len() as i64 // Adding to existing, so just the new size
-        },
-        AuthorityUpdateOperation::RemoveActionsByType => {
-            // For remove operations, we need to calculate how much will be removed
-            // This is complex, so for now we'll calculate it in the operation function
-            0 // Will be calculated in the operation
-        },
-        AuthorityUpdateOperation::RemoveActionsByIndex => {
-            // For remove operations, we need to calculate how much will be removed
-            // This is complex, so for now we'll calculate it in the operation function
-            0 // Will be calculated in the operation
-        },
+            AuthorityUpdateOperation::ReplaceAll => {
+                let new_actions = update_authority_v1.get_actions_data()?;
+                new_actions.len() as i64 - current_actions_size as i64
+            },
+            AuthorityUpdateOperation::AddActions => {
+                let new_actions = update_authority_v1.get_actions_data()?;
+                new_actions.len() as i64 // Adding to existing, so just the new size
+            },
+            AuthorityUpdateOperation::RemoveActionsByType => {
+                // For remove operations, we need to calculate how much will be removed
+                // This is complex, so for now we'll calculate it in the operation function
+                0 // Will be calculated in the operation
+            },
+            AuthorityUpdateOperation::RemoveActionsByIndex => {
+                // For remove operations, we need to calculate how much will be removed
+                // This is complex, so for now we'll calculate it in the operation function
+                0 // Will be calculated in the operation
+            },
         };
 
         (
@@ -736,8 +737,7 @@ pub fn update_authority_v1(
         .len()
         .checked_sub(saved_tail.len())
         .ok_or(ProgramError::InvalidAccountData)?;
-    let (swig_roles, _) =
-        unsafe { swig_roles_and_tail.split_at_mut_unchecked(roles_capacity_len) };
+    let (swig_roles, _) = unsafe { swig_roles_and_tail.split_at_mut_unchecked(roles_capacity_len) };
 
     // Now perform the operation with the reallocated account
     let size_diff = match operation {
@@ -863,7 +863,11 @@ mod tests {
             Action::LEN as u32 + all_data.len() as u32,
         );
         let all_actions = [all_header.into_bytes()?, all_data].concat();
-        builder.add_role(AuthorityType::Ed25519, authority.into_bytes()?, &all_actions)?;
+        builder.add_role(
+            AuthorityType::Ed25519,
+            authority.into_bytes()?,
+            &all_actions,
+        )?;
         drop(builder);
 
         let roles_end = Swig::roles_end_offset(&account_buffer)?;
@@ -895,7 +899,12 @@ mod tests {
             let authority_offset = 0usize;
             let actions_offset = Position::LEN + position.authority_length() as usize;
             let current_actions_size = position.boundary() as usize - actions_offset;
-            (roles.len(), authority_offset, actions_offset, current_actions_size)
+            (
+                roles.len(),
+                authority_offset,
+                actions_offset,
+                current_actions_size,
+            )
         };
 
         {

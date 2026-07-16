@@ -15,8 +15,8 @@ use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
-    tail::SavedTail,
     swig::{Swig, SwigBuilder},
+    tail::SavedTail,
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -253,7 +253,8 @@ pub fn add_authority_v1(
         }
     }
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    let (swig_header, roles_and_tail) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+    let (swig_header, roles_and_tail) =
+        unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
     let roles_capacity_len = roles_and_tail
         .len()
         .checked_sub(saved_tail.len())
