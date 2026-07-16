@@ -10,6 +10,7 @@ pub mod authority;
 pub mod constants;
 pub mod role;
 pub mod swig;
+pub mod tail;
 pub mod transmute;
 pub mod util;
 pub use transmute::{IntoBytes, Transmutable, TransmutableMut};
@@ -107,6 +108,9 @@ pub enum SwigStateError {
     PermissionLoadError,
     /// Adding an authority requires at least one action
     InvalidAuthorityMustHaveAtLeastOneAction,
+    /// Trailing region after the roles is neither empty nor a well-formed
+    /// rent-claimer tail entry.
+    InvalidRentClaimerLayout,
 }
 
 /// Error types related to authentication operations.
