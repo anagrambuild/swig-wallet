@@ -214,8 +214,9 @@ pub fn sign_v2(
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
-    let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
-    let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+    let parts = Swig::split_parts_mut(swig_account_data)?;
+    let swig = parts.state;
+    let swig_roles = parts.roles;
     // The generic account classifier already identified account 0 as Swig config.
     // Keep this hot-path discriminator check as a local unsafe-read precondition.
     let Some(role) = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)? else {

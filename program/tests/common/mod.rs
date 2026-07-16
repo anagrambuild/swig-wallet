@@ -13,8 +13,9 @@ use solana_sdk::{
 };
 use swig_interface::{
     swig, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
-    CreateSubAccountInstruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
-    WithdrawFromSubAccountInstruction,
+    CreateSubAccountInstruction, RemoveAuthorityInstruction, SetRentClaimerV1Instruction,
+    SubAccountSignInstruction, ToggleSubAccountInstruction, UpdateAuthorityData,
+    UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, sub_account::SubAccount},
@@ -100,6 +101,146 @@ pub fn add_authority_with_ed25519_root<'a>(
         .svm
         .send_transaction(tx)
         .map_err(|e| anyhow::anyhow!("Failed to send transaction {:?}", e))?;
+    Ok(bench)
+}
+
+pub fn set_rent_claimer_with_ed25519(
+    context: &mut SwigTestContext,
+    swig_pubkey: &Pubkey,
+    authority: &Keypair,
+    role_id: u32,
+    rent_claimer: Pubkey,
+) -> anyhow::Result<TransactionMetadata> {
+    context.svm.expire_blockhash();
+    let set_ix = SetRentClaimerV1Instruction::new_with_ed25519_authority(
+        *swig_pubkey,
+        context.default_payer.pubkey(),
+        authority.pubkey(),
+        role_id,
+        rent_claimer.to_bytes(),
+    )?;
+    let msg = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[ComputeBudgetInstruction::set_compute_unit_limit(400_000), set_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[
+            context.default_payer.insecure_clone(),
+            authority.insecure_clone(),
+        ],
+    )?;
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to set rent claimer {:?}", e))?;
+    Ok(bench)
+}
+
+/// Removes an authority using the Ed25519 root authority (role 0) as the acting
+/// authority. Drives the `remove_authority_v1` realloc (shrink) path.
+pub fn remove_authority_with_ed25519_root(
+    context: &mut SwigTestContext,
+    swig_pubkey: &Pubkey,
+    acting_authority: &Keypair,
+    authority_to_remove_id: u32,
+) -> anyhow::Result<TransactionMetadata> {
+    context.svm.expire_blockhash();
+    let payer_pubkey = context.default_payer.pubkey();
+    let swig_account = context
+        .svm
+        .get_account(swig_pubkey)
+        .ok_or(anyhow::anyhow!("Swig account not found"))?;
+    let swig = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
+    let acting_role_id = swig
+        .lookup_role_id(acting_authority.pubkey().as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to lookup role id {:?}", e))?
+        .unwrap();
+
+    let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
+        *swig_pubkey,
+        payer_pubkey,
+        acting_authority.pubkey(),
+        acting_role_id,
+        authority_to_remove_id,
+    )?;
+    let msg = v0::Message::try_compile(
+        &payer_pubkey,
+        &[
+            ComputeBudgetInstruction::set_compute_unit_limit(10_000_000),
+            remove_ix,
+        ],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[
+            context.default_payer.insecure_clone(),
+            acting_authority.insecure_clone(),
+        ],
+    )?;
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to remove authority {:?}", e))?;
+    Ok(bench)
+}
+
+/// Replaces an authority's actions using the Ed25519 root authority (role 0) as
+/// the acting authority. Drives the `update_authority_v1` realloc (grow/shrink)
+/// path depending on the relative action sizes.
+pub fn update_authority_replace_with_ed25519_root(
+    context: &mut SwigTestContext,
+    swig_pubkey: &Pubkey,
+    acting_authority: &Keypair,
+    authority_to_update_id: u32,
+    new_actions: Vec<ClientAction>,
+) -> anyhow::Result<TransactionMetadata> {
+    context.svm.expire_blockhash();
+    let payer_pubkey = context.default_payer.pubkey();
+    let swig_account = context
+        .svm
+        .get_account(swig_pubkey)
+        .ok_or(anyhow::anyhow!("Swig account not found"))?;
+    let swig = SwigWithRoles::from_bytes(&swig_account.data)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
+    let acting_role_id = swig
+        .lookup_role_id(acting_authority.pubkey().as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to lookup role id {:?}", e))?
+        .unwrap();
+
+    let update_ix = UpdateAuthorityInstruction::new_with_ed25519_authority(
+        *swig_pubkey,
+        payer_pubkey,
+        acting_authority.pubkey(),
+        acting_role_id,
+        authority_to_update_id,
+        UpdateAuthorityData::ReplaceAll(new_actions),
+    )?;
+    let msg = v0::Message::try_compile(
+        &payer_pubkey,
+        &[
+            ComputeBudgetInstruction::set_compute_unit_limit(10_000_000),
+            update_ix,
+        ],
+        &[],
+        context.svm.latest_blockhash(),
+    )?;
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(msg),
+        &[
+            context.default_payer.insecure_clone(),
+            acting_authority.insecure_clone(),
+        ],
+    )?;
+    let bench = context
+        .svm
+        .send_transaction(tx)
+        .map_err(|e| anyhow::anyhow!("Failed to update authority {:?}", e))?;
     Ok(bench)
 }
 

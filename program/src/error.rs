@@ -138,6 +138,14 @@ pub enum SwigError {
     RecoveryInvalidAuthorityLength,
     /// Recovery does not support this authority scheme
     UnsupportedRecoveryAuthorityScheme,
+    /// Set rent claimer instruction data is too short
+    InvalidSwigSetRentClaimerInstructionDataTooShort,
+    /// Rent claimer can only be set once
+    RentClaimerAlreadySet,
+    /// Rent claimer pubkey is invalid
+    InvalidRentClaimerValue,
+    /// Destination does not match configured rent claimer
+    InvalidRentClaimerDestination,
 }
 
 /// Implements conversion from SwigError to ProgramError.

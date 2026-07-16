@@ -120,8 +120,12 @@ pub fn withdraw_from_sub_account_v1(
     )?;
     let withdraw = WithdrawFromSubAccountV1::from_instruction_bytes(data)?;
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
-    let swig = unsafe { Swig::load_unchecked(&swig_header)? };
+    if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
+        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+    }
+    let parts = Swig::split_parts_mut(swig_account_data)?;
+    let swig = parts.state;
+    let swig_roles = parts.roles;
 
     let swig_wallet_address_seeds = swig_wallet_address_seeds(ctx.accounts.swig.key().as_ref());
     // Validate that the swig wallet address is the correct PDA derived from the
@@ -133,10 +137,6 @@ pub fn withdraw_from_sub_account_v1(
         return Err(SwigError::InvalidSwigSubAccountSwigIdMismatch.into());
     }
 
-    // Verify the swig account has the correct discriminator
-    if unsafe { *swig_header.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
-        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
-    }
     // We'll get sub-account metadata from the SubAccount action later after
     // authentication
     let role_opt = Swig::get_mut_role(withdraw.args.role_id, swig_roles)?;

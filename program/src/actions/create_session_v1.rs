@@ -137,7 +137,7 @@ pub fn create_session_v1(
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
-    let (_swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+    let swig_roles = Swig::split_parts_mut(swig_account_data)?.roles;
     let role = Swig::get_mut_role(create_session_v1.args.role_id, swig_roles)?;
     if role.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());

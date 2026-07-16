@@ -123,8 +123,9 @@ pub fn recover_authority_v1(
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 
-    let (swig_header, swig_roles) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
-    let swig = unsafe { Swig::load_mut_unchecked(swig_header)? };
+    let parts = Swig::split_parts_mut(swig_account_data)?;
+    let swig = parts.state;
+    let swig_roles = parts.roles;
 
     {
         let acting_role = Swig::get_mut_role(recover.args.acting_role_id, swig_roles)?
