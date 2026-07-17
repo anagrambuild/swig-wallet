@@ -9,6 +9,7 @@ pub mod action;
 pub mod authority;
 pub mod constants;
 pub mod role;
+pub mod sub_account_v2;
 pub mod swig;
 pub mod tail;
 pub mod transmute;
@@ -17,17 +18,22 @@ pub use transmute::{IntoBytes, Transmutable, TransmutableMut};
 
 /// Represents the type discriminator for different account types in the system.
 #[repr(u8)]
+#[derive(PartialEq, Debug, Copy, Clone)]
 pub enum Discriminator {
     SwigConfigAccount = 1,
+    SwigSubAccountV2 = 2,
     ClosedSwigAccount = 255,
 }
 
-impl From<u8> for Discriminator {
-    fn from(discriminator: u8) -> Self {
+impl TryFrom<u8> for Discriminator {
+    type Error = ProgramError;
+
+    fn try_from(discriminator: u8) -> Result<Self, Self::Error> {
         match discriminator {
-            1 => Discriminator::SwigConfigAccount,
-            255 => Discriminator::ClosedSwigAccount,
-            _ => panic!("Invalid discriminator"),
+            1 => Ok(Discriminator::SwigConfigAccount),
+            2 => Ok(Discriminator::SwigSubAccountV2),
+            255 => Ok(Discriminator::ClosedSwigAccount),
+            _ => Err(ProgramError::InvalidAccountData),
         }
     }
 }
@@ -115,6 +121,9 @@ pub enum SwigStateError {
     /// Trailing region after the roles is neither empty nor a well-formed
     /// rent-claimer tail entry.
     InvalidRentClaimerLayout,
+    /// A role may not hold two scoped V2 sub-account actions for the same
+    /// `(permission type, subacc_id)`, nor two create markers.
+    DuplicateV2SubAccountAction,
 }
 
 /// Error types related to authentication operations.

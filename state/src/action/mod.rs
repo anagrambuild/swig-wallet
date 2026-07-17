@@ -22,6 +22,7 @@ pub mod stake_all;
 pub mod stake_limit;
 pub mod stake_recurring_limit;
 pub mod sub_account;
+pub mod sub_account_v2;
 pub mod token_destination_limit;
 pub mod token_limit;
 pub mod token_recurring_destination_limit;
@@ -45,6 +46,9 @@ use stake_all::StakeAll;
 use stake_limit::StakeLimit;
 use stake_recurring_limit::StakeRecurringLimit;
 use sub_account::SubAccount;
+use sub_account_v2::{
+    SubAccountV2All, SubAccountV2Create, SubAccountV2Sign, SubAccountV2Toggle, SubAccountV2Withdraw,
+};
 use token_destination_limit::TokenDestinationLimit;
 use token_limit::TokenLimit;
 use token_recurring_destination_limit::TokenRecurringDestinationLimit;
@@ -171,6 +175,18 @@ pub enum Permission {
     CloseSwigAuthority = 20,
     /// Permission to rotate passkey authority through the recovery path
     RecoveryAuthority = 21,
+    /// Permission to create V2 sub-accounts (non-repeatable marker)
+    SubAccountV2Create = 22,
+    /// Scoped umbrella permission for V2 sub-account runtime operations
+    /// (sign/withdraw/toggle) on a single `subacc_id`
+    SubAccountV2All = 23,
+    /// Scoped permission to sign as a V2 sub-account for a single `subacc_id`
+    SubAccountV2Sign = 24,
+    /// Scoped permission to withdraw from a V2 sub-account for a single
+    /// `subacc_id`
+    SubAccountV2Withdraw = 25,
+    /// Scoped permission to toggle a V2 sub-account for a single `subacc_id`
+    SubAccountV2Toggle = 26,
 }
 
 impl TryFrom<u16> for Permission {
@@ -180,7 +196,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=21 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=26 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -218,6 +234,29 @@ pub trait Actionable<'a>: Transmutable + TransmutableMut {
     }
 }
 
+/// Returns a deduplication key for a V2 sub-account action, or `None` for any
+/// non-V2 permission (which is intentionally not deduplicated).
+///
+/// The scoped permissions key on `(type, subacc_id)`; the create marker keys on
+/// its type with a fixed id so a second marker collides.
+fn v2_dedup_key(permission: Permission, data: &[u8]) -> Option<(u16, u32)> {
+    match permission {
+        Permission::SubAccountV2Create => Some((permission as u16, 0)),
+        Permission::SubAccountV2All
+        | Permission::SubAccountV2Sign
+        | Permission::SubAccountV2Withdraw
+        | Permission::SubAccountV2Toggle => {
+            if data.len() >= 4 {
+                let id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+                Some((permission as u16, id))
+            } else {
+                None
+            }
+        },
+        _ => None,
+    }
+}
+
 /// Helper struct for loading and validating actions.
 pub struct ActionLoader;
 
@@ -250,8 +289,63 @@ impl ActionLoader {
             Permission::TokenRecurringDestinationLimit => {
                 TokenRecurringDestinationLimit::valid_layout(data)
             },
+            Permission::SubAccountV2Create => SubAccountV2Create::valid_layout(data),
+            Permission::SubAccountV2All => SubAccountV2All::valid_layout(data),
+            Permission::SubAccountV2Sign => SubAccountV2Sign::valid_layout(data),
+            Permission::SubAccountV2Withdraw => SubAccountV2Withdraw::valid_layout(data),
+            Permission::SubAccountV2Toggle => SubAccountV2Toggle::valid_layout(data),
             _ => Ok(false),
         }
+    }
+
+    /// Rejects duplicate V2 sub-account scoped actions within a role's full
+    /// action buffer.
+    ///
+    /// A role may hold at most one scoped V2 action per `(permission type,
+    /// subacc_id)` and at most one `SubAccountV2Create` marker. Only the five V2
+    /// permission types are deduplicated here; all other actions (including V1
+    /// `SubAccount` and repeatable destination limits) are left untouched to
+    /// preserve existing behavior.
+    ///
+    /// `actions_data` is walked sequentially by `[header][data]`, matching how
+    /// `calculate_num_actions` reads the same buffer.
+    pub fn reject_duplicate_v2_scoped(actions_data: &[u8]) -> Result<(), ProgramError> {
+        let mut cursor = 0;
+        while cursor + Action::LEN <= actions_data.len() {
+            let header =
+                unsafe { Action::load_unchecked(&actions_data[cursor..cursor + Action::LEN])? };
+            let data_start = cursor + Action::LEN;
+            let data_end = data_start
+                .checked_add(header.length() as usize)
+                .ok_or(ProgramError::InvalidInstructionData)?;
+            if data_end > actions_data.len() {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+
+            if let Some(key) =
+                v2_dedup_key(header.permission()?, &actions_data[data_start..data_end])
+            {
+                // Compare against every action before this one; a match means the
+                // key appears twice.
+                let mut prior = 0;
+                while prior < cursor {
+                    let ph = unsafe {
+                        Action::load_unchecked(&actions_data[prior..prior + Action::LEN])?
+                    };
+                    let pdata_start = prior + Action::LEN;
+                    let pdata_end = pdata_start + ph.length() as usize;
+                    if v2_dedup_key(ph.permission()?, &actions_data[pdata_start..pdata_end])
+                        == Some(key)
+                    {
+                        return Err(SwigStateError::DuplicateV2SubAccountAction.into());
+                    }
+                    prior = pdata_end;
+                }
+            }
+
+            cursor = data_end;
+        }
+        Ok(())
     }
 
     /// Finds an action of a specific type in the provided bytes.
