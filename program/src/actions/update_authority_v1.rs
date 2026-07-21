@@ -290,6 +290,12 @@ fn perform_replace_all_operation(
     new_actions: &[u8],
     authority_to_update_id: u32,
 ) -> Result<i64, ProgramError> {
+    // Reject duplicate V2 sub-account scoped actions on the resulting role.
+    // ReplaceAll receives the role's full new action list, and AddActions routes
+    // through here after concatenating existing + new actions, so both mutation
+    // paths are covered by this single check.
+    ActionLoader::reject_duplicate_v2_scoped(new_actions)?;
+
     let new_actions_size = new_actions.len();
     let size_diff = new_actions_size as i64 - current_actions_size as i64;
 
@@ -428,6 +434,122 @@ fn perform_add_actions_operation(
         &combined_actions,
         authority_to_update_id,
     )
+}
+
+/// Locates a role by id within the roles buffer, returning
+/// `(current_actions_size, authority_offset, actions_offset)`.
+fn find_role_action_offsets(
+    swig_roles: &[u8],
+    roles: u16,
+    roles_len: usize,
+    role_id: u32,
+) -> Result<(usize, usize, usize), ProgramError> {
+    let mut cursor = 0usize;
+    for _ in 0..roles {
+        if cursor + Position::LEN > roles_len {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let position =
+            unsafe { Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])? };
+        let boundary = position.boundary() as usize;
+        if boundary < cursor + Position::LEN || boundary > roles_len {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if position.id() == role_id {
+            let actions_offset = cursor + Position::LEN + position.authority_length() as usize;
+            let current_actions_size = boundary - actions_offset;
+            return Ok((current_actions_size, cursor, actions_offset));
+        }
+        cursor = boundary;
+    }
+    Err(SwigError::InvalidAuthorityNotFoundByRoleId.into())
+}
+
+/// Appends `new_actions` (`[header][data]` entries) to the role identified by
+/// `role_id`, growing the Swig account and preserving the rent-claimer tail.
+///
+/// This is the shared, tail-preserving realloc + append used both by
+/// UpdateAuthorityV1's AddActions path and by CreateSubAccountV2's auto-grant of
+/// the creator's `SubAccountV2All` action. Callers must have already
+/// authenticated and authorized the mutation; this function performs no
+/// permission checks.
+pub(crate) fn append_actions_to_role(
+    swig_account: &AccountInfo,
+    payer: &AccountInfo,
+    role_id: u32,
+    new_actions: &[u8],
+) -> Result<(), ProgramError> {
+    let mut account_len: usize;
+    let (saved_tail, current_roles_len, current_actions_size, authority_offset, actions_offset) = {
+        let swig_account_data = unsafe { swig_account.borrow_mut_data_unchecked() };
+        account_len = swig_account_data.len();
+        if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
+            return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+        }
+        let parts = Swig::split_parts_mut(swig_account_data)?;
+        let saved_tail = SavedTail::take(parts.tail)?;
+        let swig = parts.state;
+        let swig_roles = parts.roles;
+        let roles_len = swig_roles.len();
+        let (current_actions_size, authority_offset, actions_offset) =
+            find_role_action_offsets(swig_roles, swig.roles, roles_len, role_id)?;
+        (
+            saved_tail,
+            roles_len,
+            current_actions_size,
+            authority_offset,
+            actions_offset,
+        )
+    };
+
+    let size_diff = new_actions.len() as i64;
+
+    if size_diff > 0 {
+        let new_size = (account_len as i64 + size_diff) as usize;
+        let aligned_size =
+            core::alloc::Layout::from_size_align(new_size, core::mem::size_of::<u64>())
+                .map_err(|_| SwigError::InvalidAlignment)?
+                .pad_to_align()
+                .size();
+
+        swig_account.realloc(aligned_size, false)?;
+        account_len = aligned_size;
+
+        let cost = Rent::get()?.minimum_balance(aligned_size);
+        let current_lamports = unsafe { *swig_account.borrow_lamports_unchecked() };
+        let additional_cost = cost.saturating_sub(current_lamports);
+        if additional_cost > 0 {
+            Transfer {
+                from: payer,
+                to: swig_account,
+                lamports: additional_cost,
+            }
+            .invoke()?;
+        }
+    }
+    let _ = account_len;
+
+    // Re-borrow after realloc, restore the tail, and re-split the roles region.
+    let swig_account_data = unsafe { swig_account.borrow_mut_data_unchecked() };
+    saved_tail.restore(swig_account_data)?;
+    let (_, swig_roles_and_tail) = unsafe { swig_account_data.split_at_mut_unchecked(Swig::LEN) };
+    let roles_capacity_len = swig_roles_and_tail
+        .len()
+        .checked_sub(saved_tail.len())
+        .ok_or(ProgramError::InvalidAccountData)?;
+    let (swig_roles, _) = unsafe { swig_roles_and_tail.split_at_mut_unchecked(roles_capacity_len) };
+
+    perform_add_actions_operation(
+        swig_roles,
+        current_roles_len,
+        authority_offset,
+        actions_offset,
+        current_actions_size,
+        new_actions,
+        role_id,
+    )?;
+
+    Ok(())
 }
 
 /// Performs a remove-actions-by-type operation on an authority.

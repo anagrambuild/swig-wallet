@@ -146,6 +146,24 @@ pub enum SwigError {
     InvalidRentClaimerValue,
     /// Destination does not match configured rent claimer
     InvalidRentClaimerDestination,
+    /// V2 sub-account instruction data is too short
+    InvalidSwigCreateSubAccountV2InstructionDataTooShort,
+    /// Authority lacks the required V2 sub-account permission
+    AuthorityCannotCreateSubAccountV2,
+    /// Authority lacks a scoped V2 sub-account permission for this operation
+    PermissionDeniedMissingSubAccountV2Permission,
+    /// V2 sub-account state account has an invalid discriminator
+    InvalidSwigSubAccountV2Discriminator,
+    /// V2 sub-account state account owner mismatch
+    OwnerMismatchSubAccountV2State,
+    /// V2 sub-account Swig ID mismatch
+    InvalidSwigSubAccountV2SwigIdMismatch,
+    /// V2 sub-account id mismatch between state and instruction
+    InvalidSwigSubAccountV2IdMismatch,
+    /// V2 sub-account is disabled (kill-switch off)
+    InvalidSwigSubAccountV2Disabled,
+    /// Invalid seed used for V2 sub-account derivation
+    InvalidSeedSubAccountV2,
 }
 
 /// Implements conversion from SwigError to ProgramError.
