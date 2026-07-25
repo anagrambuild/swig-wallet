@@ -10,6 +10,7 @@ pub mod secp_tests;
 pub mod session_tests;
 pub mod sign_v2_tests;
 pub mod sub_accounts_test;
+pub mod sub_accounts_v2_test;
 
 use alloy_primitives::B256;
 use alloy_signer::SignerSync;
