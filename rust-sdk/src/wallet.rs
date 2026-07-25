@@ -36,7 +36,10 @@ use swig_state::{
     },
     authority::{self, secp256k1::Secp256k1Authority, AuthorityType},
     role::Role,
-    swig::{sub_account_seeds, Swig, SwigWithRoles},
+    swig::{
+        sub_account_seeds, sub_account_v2_asset_seeds, sub_account_v2_state_seeds, Swig,
+        SwigWithRoles,
+    },
 };
 const TOKEN_22_PROGRAM_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 
@@ -575,6 +578,163 @@ impl<'c> SwigWallet<'c> {
             self.instruction_builder.increment_odometer()?;
         }
         tx_result
+    }
+
+    /// Reads the on-chain V2 sub-account counter (the id the next
+    /// `create_sub_account_v2` will assign).
+    pub fn get_sub_account_v2_counter(&self) -> Result<u32, SwigError> {
+        let swig_pubkey = self.get_swig_account()?;
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let swig_data = self.litesvm.get_account(&swig_pubkey).unwrap().data;
+        let swig_with_roles =
+            SwigWithRoles::from_bytes(&swig_data).map_err(|_| SwigError::InvalidSwigData)?;
+        Ok(swig_with_roles.state.sub_account_counter)
+    }
+
+    /// Creates a V2 sub-account with the current authority. Returns the
+    /// transaction signature and the assigned sub-account id.
+    pub fn create_sub_account_v2(&mut self) -> Result<(Signature, u32), SwigError> {
+        let subacc_id = self.get_sub_account_v2_counter()?;
+        let swig_id = *self.instruction_builder.get_swig_id();
+        let id_le = subacc_id.to_le_bytes();
+        let (sub_account_state, state_bump) = Pubkey::find_program_address(
+            &sub_account_v2_state_seeds(&swig_id, &id_le),
+            &swig_interface::program_id(),
+        );
+        let (sub_account, asset_bump) = Pubkey::find_program_address(
+            &sub_account_v2_asset_seeds(&swig_id, &id_le),
+            &swig_interface::program_id(),
+        );
+        let current_slot = self.get_current_slot()?;
+        let instructions = self.instruction_builder.create_sub_account_v2(
+            sub_account_state,
+            sub_account,
+            state_bump,
+            asset_bump,
+            Some(current_slot),
+        )?;
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &instructions,
+            &[],
+            self.get_current_blockhash()?,
+        )?;
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+        match self.send_and_confirm_transaction(tx) {
+            Ok(sig) => {
+                self.refresh_permissions()?;
+                self.instruction_builder.increment_odometer()?;
+                Ok((sig, subacc_id))
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Signs and executes instructions as a V2 sub-account's asset PDA.
+    pub fn sign_with_sub_account_v2(
+        &mut self,
+        subacc_id: u32,
+        instructions: Vec<Instruction>,
+        alt: Option<&[AddressLookupTableAccount]>,
+    ) -> Result<Signature, SwigError> {
+        let current_slot = self.get_current_slot()?;
+        let sign_instructions = self
+            .instruction_builder
+            .sign_instruction_with_sub_account_v2(subacc_id, instructions, Some(current_slot))?;
+        let alt = alt.unwrap_or(&[]);
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &sign_instructions,
+            alt,
+            self.get_current_blockhash()?,
+        )?;
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+        let tx_result = self.send_and_confirm_transaction(tx);
+        if tx_result.is_ok() {
+            self.refresh_permissions()?;
+            self.instruction_builder.increment_odometer()?;
+        }
+        tx_result
+    }
+
+    /// Withdraws SOL from a V2 sub-account to the swig wallet address.
+    pub fn withdraw_from_sub_account_v2(
+        &mut self,
+        subacc_id: u32,
+        amount: u64,
+    ) -> Result<Signature, SwigError> {
+        let current_slot = self.get_current_slot()?;
+        let withdraw_instructions = self.instruction_builder.withdraw_from_sub_account_v2(
+            subacc_id,
+            amount,
+            Some(current_slot),
+        )?;
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &withdraw_instructions,
+            &[],
+            self.get_current_blockhash()?,
+        )?;
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+        let tx_result = self.send_and_confirm_transaction(tx);
+        if tx_result.is_ok() {
+            self.refresh_permissions()?;
+            self.instruction_builder.increment_odometer()?;
+        }
+        tx_result
+    }
+
+    /// Toggles a V2 sub-account's enabled kill-switch.
+    pub fn toggle_sub_account_v2(
+        &mut self,
+        subacc_id: u32,
+        enabled: bool,
+    ) -> Result<Signature, SwigError> {
+        let current_slot = self.get_current_slot()?;
+        let toggle_instructions = self.instruction_builder.toggle_sub_account_v2(
+            subacc_id,
+            enabled,
+            Some(current_slot),
+        )?;
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &toggle_instructions,
+            &[],
+            self.get_current_blockhash()?,
+        )?;
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+        let tx_result = self.send_and_confirm_transaction(tx);
+        if tx_result.is_ok() {
+            self.refresh_permissions()?;
+            self.instruction_builder.increment_odometer()?;
+        }
+        tx_result
+    }
+
+    /// Returns the V2 sub-account asset PDA for `subacc_id` if its state account
+    /// exists on-chain.
+    pub fn get_sub_account_v2(&self, subacc_id: u32) -> Result<Option<Pubkey>, SwigError> {
+        let swig_id = *self.instruction_builder.get_swig_id();
+        let id_le = subacc_id.to_le_bytes();
+        let (sub_account_state, _) = Pubkey::find_program_address(
+            &sub_account_v2_state_seeds(&swig_id, &id_le),
+            &swig_interface::program_id(),
+        );
+        let (asset, _) = Pubkey::find_program_address(
+            &sub_account_v2_asset_seeds(&swig_id, &id_le),
+            &swig_interface::program_id(),
+        );
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let exists = self.rpc_client.get_account(&sub_account_state).is_ok();
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let exists = self.litesvm.get_account(&sub_account_state).is_some();
+        if exists {
+            Ok(Some(asset))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Sends and confirms a transaction on the Solana network

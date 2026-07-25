@@ -1,9 +1,11 @@
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
     AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateSessionInstruction,
-    CreateSubAccountInstruction, RemoveAuthorityInstruction, SetRentClaimerV1Instruction,
-    SignV2Instruction, SubAccountSignInstruction, ToggleSubAccountInstruction, UpdateAuthorityData,
-    UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
+    CreateSubAccountInstruction, CreateSubAccountV2Instruction, RemoveAuthorityInstruction,
+    SetRentClaimerV1Instruction, SignV2Instruction, SubAccountSignInstruction,
+    SubAccountSignV2Instruction, ToggleSubAccountInstruction, ToggleSubAccountV2Instruction,
+    UpdateAuthorityData, UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
+    WithdrawFromSubAccountV2Instruction,
 };
 use swig_state::{
     authority::{
@@ -129,6 +131,77 @@ pub trait ClientRole {
         rent_claimer: Pubkey,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError>;
+
+    /// Creates a V2 create-sub-account instruction. `sub_account_state` and
+    /// `sub_account` are the (already derived) state and asset PDAs for the next
+    /// sub-account id.
+    ///
+    /// Defaults to unsupported; authority types that support V2 override this.
+    fn create_sub_account_v2_instruction(
+        &self,
+        _swig_account: Pubkey,
+        _payer: Pubkey,
+        _role_id: u32,
+        _sub_account_state: Pubkey,
+        _sub_account: Pubkey,
+        _state_bump: u8,
+        _asset_bump: u8,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "V2 sub-accounts not supported for this authority type".to_string(),
+        ))
+    }
+
+    /// Creates a V2 sub-account sign instruction.
+    fn sub_account_sign_v2_instruction(
+        &self,
+        _swig_account: Pubkey,
+        _sub_account_state: Pubkey,
+        _sub_account: Pubkey,
+        _role_id: u32,
+        _subacc_id: u32,
+        _instructions: Vec<Instruction>,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "V2 sub-accounts not supported for this authority type".to_string(),
+        ))
+    }
+
+    /// Creates a V2 withdraw-from-sub-account instruction (SOL, to the swig
+    /// wallet address).
+    fn withdraw_from_sub_account_v2_instruction(
+        &self,
+        _swig_account: Pubkey,
+        _payer: Pubkey,
+        _sub_account_state: Pubkey,
+        _sub_account: Pubkey,
+        _role_id: u32,
+        _subacc_id: u32,
+        _amount: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "V2 sub-accounts not supported for this authority type".to_string(),
+        ))
+    }
+
+    /// Creates a V2 toggle-sub-account instruction.
+    fn toggle_sub_account_v2_instruction(
+        &self,
+        _swig_account: Pubkey,
+        _payer: Pubkey,
+        _sub_account_state: Pubkey,
+        _auth_role_id: u32,
+        _subacc_id: u32,
+        _enabled: bool,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "V2 sub-accounts not supported for this authority type".to_string(),
+        ))
+    }
 
     /// Returns the authority type
     fn authority_type(&self) -> AuthorityType;
@@ -393,6 +466,107 @@ impl ClientRole for Ed25519ClientRole {
                 self.authority,
                 role_id,
                 rent_claimer.to_bytes(),
+            )?,
+        ])
+    }
+
+    fn create_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        state_bump: u8,
+        asset_bump: u8,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Ok(vec![
+            CreateSubAccountV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                self.authority,
+                payer,
+                sub_account_state,
+                sub_account,
+                role_id,
+                state_bump,
+                asset_bump,
+            )?,
+        ])
+    }
+
+    fn sub_account_sign_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        instructions: Vec<Instruction>,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Ok(vec![
+            SubAccountSignV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                sub_account_state,
+                sub_account,
+                self.authority,
+                role_id,
+                subacc_id,
+                instructions,
+            )?,
+        ])
+    }
+
+    fn withdraw_from_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        amount: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+        Ok(vec![
+            WithdrawFromSubAccountV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                self.authority,
+                payer,
+                sub_account_state,
+                sub_account,
+                swig_wallet_address,
+                role_id,
+                subacc_id,
+                amount,
+            )?,
+        ])
+    }
+
+    fn toggle_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        auth_role_id: u32,
+        subacc_id: u32,
+        enabled: bool,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Ok(vec![
+            ToggleSubAccountV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                self.authority,
+                payer,
+                sub_account_state,
+                auth_role_id,
+                subacc_id,
+                enabled,
             )?,
         ])
     }
@@ -736,6 +910,123 @@ impl ClientRole for Secp256k1ClientRole {
                 new_odometer,
                 role_id,
                 rent_claimer.to_bytes(),
+            )?,
+        ])
+    }
+
+    fn create_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        state_bump: u8,
+        asset_bump: u8,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+        Ok(vec![
+            CreateSubAccountV2Instruction::new_with_secp256k1_authority(
+                swig_account,
+                payer,
+                &self.signing_fn,
+                current_slot,
+                new_odometer,
+                sub_account_state,
+                sub_account,
+                role_id,
+                state_bump,
+                asset_bump,
+            )?,
+        ])
+    }
+
+    fn sub_account_sign_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        instructions: Vec<Instruction>,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+        Ok(vec![
+            SubAccountSignV2Instruction::new_with_secp256k1_authority(
+                swig_account,
+                sub_account_state,
+                sub_account,
+                &self.signing_fn,
+                current_slot,
+                new_odometer,
+                role_id,
+                subacc_id,
+                instructions,
+            )?,
+        ])
+    }
+
+    fn withdraw_from_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        amount: u64,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+        Ok(vec![
+            WithdrawFromSubAccountV2Instruction::new_with_secp256k1_authority(
+                swig_account,
+                payer,
+                &self.signing_fn,
+                current_slot,
+                new_odometer,
+                sub_account_state,
+                sub_account,
+                swig_wallet_address,
+                role_id,
+                subacc_id,
+                amount,
+            )?,
+        ])
+    }
+
+    fn toggle_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        auth_role_id: u32,
+        subacc_id: u32,
+        enabled: bool,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+        Ok(vec![
+            ToggleSubAccountV2Instruction::new_with_secp256k1_authority(
+                swig_account,
+                payer,
+                &self.signing_fn,
+                current_slot,
+                new_odometer,
+                sub_account_state,
+                auth_role_id,
+                subacc_id,
+                enabled,
             )?,
         ])
     }
@@ -1119,6 +1410,121 @@ impl ClientRole for Secp256r1ClientRole {
         )?)
     }
 
+    fn create_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        state_bump: u8,
+        asset_bump: u8,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+        Ok(CreateSubAccountV2Instruction::new_with_secp256r1_authority(
+            swig_account,
+            payer,
+            &self.signing_fn,
+            current_slot,
+            new_odometer,
+            sub_account_state,
+            sub_account,
+            role_id,
+            state_bump,
+            asset_bump,
+            &self.authority,
+        )?)
+    }
+
+    fn sub_account_sign_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        instructions: Vec<Instruction>,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+        Ok(SubAccountSignV2Instruction::new_with_secp256r1_authority(
+            swig_account,
+            sub_account_state,
+            sub_account,
+            &self.signing_fn,
+            current_slot,
+            new_odometer,
+            role_id,
+            subacc_id,
+            instructions,
+            &self.authority,
+        )?)
+    }
+
+    fn withdraw_from_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        amount: u64,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+        Ok(
+            WithdrawFromSubAccountV2Instruction::new_with_secp256r1_authority(
+                swig_account,
+                payer,
+                &self.signing_fn,
+                current_slot,
+                new_odometer,
+                sub_account_state,
+                sub_account,
+                swig_wallet_address,
+                role_id,
+                subacc_id,
+                amount,
+                &self.authority,
+            )?,
+        )
+    }
+
+    fn toggle_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        auth_role_id: u32,
+        subacc_id: u32,
+        enabled: bool,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+        Ok(ToggleSubAccountV2Instruction::new_with_secp256r1_authority(
+            swig_account,
+            payer,
+            &self.signing_fn,
+            current_slot,
+            new_odometer,
+            sub_account_state,
+            auth_role_id,
+            subacc_id,
+            enabled,
+            &self.authority,
+        )?)
+    }
+
     fn authority_type(&self) -> AuthorityType {
         AuthorityType::Secp256r1
     }
@@ -1426,6 +1832,111 @@ impl ClientRole for Ed25519SessionClientRole {
                 session_key,
                 role_id,
                 rent_claimer.to_bytes(),
+            )?,
+        ])
+    }
+
+    fn create_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        state_bump: u8,
+        asset_bump: u8,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        Ok(vec![
+            CreateSubAccountV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                session_key,
+                payer,
+                sub_account_state,
+                sub_account,
+                role_id,
+                state_bump,
+                asset_bump,
+            )?,
+        ])
+    }
+
+    fn sub_account_sign_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        instructions: Vec<Instruction>,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        Ok(vec![
+            SubAccountSignV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                sub_account_state,
+                sub_account,
+                session_key,
+                role_id,
+                subacc_id,
+                instructions,
+            )?,
+        ])
+    }
+
+    fn withdraw_from_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        amount: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+        Ok(vec![
+            WithdrawFromSubAccountV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                session_key,
+                payer,
+                sub_account_state,
+                sub_account,
+                swig_wallet_address,
+                role_id,
+                subacc_id,
+                amount,
+            )?,
+        ])
+    }
+
+    fn toggle_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        auth_role_id: u32,
+        subacc_id: u32,
+        enabled: bool,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        Ok(vec![
+            ToggleSubAccountV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                session_key,
+                payer,
+                sub_account_state,
+                auth_role_id,
+                subacc_id,
+                enabled,
             )?,
         ])
     }
@@ -1764,6 +2275,111 @@ impl ClientRole for Secp256k1SessionClientRole {
                 session_key,
                 role_id,
                 rent_claimer.to_bytes(),
+            )?,
+        ])
+    }
+
+    fn create_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        state_bump: u8,
+        asset_bump: u8,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        Ok(vec![
+            CreateSubAccountV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                session_key,
+                payer,
+                sub_account_state,
+                sub_account,
+                role_id,
+                state_bump,
+                asset_bump,
+            )?,
+        ])
+    }
+
+    fn sub_account_sign_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        instructions: Vec<Instruction>,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        Ok(vec![
+            SubAccountSignV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                sub_account_state,
+                sub_account,
+                session_key,
+                role_id,
+                subacc_id,
+                instructions,
+            )?,
+        ])
+    }
+
+    fn withdraw_from_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        amount: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+        Ok(vec![
+            WithdrawFromSubAccountV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                session_key,
+                payer,
+                sub_account_state,
+                sub_account,
+                swig_wallet_address,
+                role_id,
+                subacc_id,
+                amount,
+            )?,
+        ])
+    }
+
+    fn toggle_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        auth_role_id: u32,
+        subacc_id: u32,
+        enabled: bool,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        Ok(vec![
+            ToggleSubAccountV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                session_key,
+                payer,
+                sub_account_state,
+                auth_role_id,
+                subacc_id,
+                enabled,
             )?,
         ])
     }
@@ -2107,6 +2723,111 @@ impl ClientRole for Secp256r1SessionClientRole {
                 session_key,
                 role_id,
                 rent_claimer.to_bytes(),
+            )?,
+        ])
+    }
+
+    fn create_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        state_bump: u8,
+        asset_bump: u8,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        Ok(vec![
+            CreateSubAccountV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                session_key,
+                payer,
+                sub_account_state,
+                sub_account,
+                role_id,
+                state_bump,
+                asset_bump,
+            )?,
+        ])
+    }
+
+    fn sub_account_sign_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        instructions: Vec<Instruction>,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        Ok(vec![
+            SubAccountSignV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                sub_account_state,
+                sub_account,
+                session_key,
+                role_id,
+                subacc_id,
+                instructions,
+            )?,
+        ])
+    }
+
+    fn withdraw_from_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        amount: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+        Ok(vec![
+            WithdrawFromSubAccountV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                session_key,
+                payer,
+                sub_account_state,
+                sub_account,
+                swig_wallet_address,
+                role_id,
+                subacc_id,
+                amount,
+            )?,
+        ])
+    }
+
+    fn toggle_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        auth_role_id: u32,
+        subacc_id: u32,
+        enabled: bool,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        Ok(vec![
+            ToggleSubAccountV2Instruction::new_with_ed25519_authority(
+                swig_account,
+                session_key,
+                payer,
+                sub_account_state,
+                auth_role_id,
+                subacc_id,
+                enabled,
             )?,
         ])
     }
