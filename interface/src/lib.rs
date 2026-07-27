@@ -4264,9 +4264,7 @@ impl SubAccountSignV2Instruction {
 pub struct WithdrawFromSubAccountV2Instruction;
 
 impl WithdrawFromSubAccountV2Instruction {
-    /// Builds a SOL withdrawal. For token withdrawals, append
-    /// `[source_token, destination_token, token_program]` to the returned
-    /// instruction's account list.
+    /// Builds a SOL withdrawal.
     pub fn new_with_ed25519_authority(
         swig_account: Pubkey,
         authority: Pubkey,
@@ -4299,6 +4297,46 @@ impl WithdrawFromSubAccountV2Instruction {
         })
     }
 
+    /// Builds a token withdrawal with all token accounts included before the
+    /// instruction is signed.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_token_with_ed25519_authority(
+        swig_account: Pubkey,
+        authority: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        source_token: Pubkey,
+        destination_token: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        amount: u64,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(sub_account_state, false),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(authority, true),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            AccountMeta::new(source_token, false),
+            AccountMeta::new(destination_token, false),
+            AccountMeta::new_readonly(token_program, false),
+        ];
+        let args = WithdrawFromSubAccountV2Args::new(role_id, subacc_id, amount);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &[5]].concat(),
+        })
+    }
+
     pub fn new_with_secp256k1_authority<F>(
         swig_account: Pubkey,
         payer: Pubkey,
@@ -4317,13 +4355,66 @@ impl WithdrawFromSubAccountV2Instruction {
     {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
-            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(payer, true),
             AccountMeta::new_readonly(sub_account_state, false),
             AccountMeta::new(sub_account, false),
             AccountMeta::new(swig_wallet_address, false),
             // authority_context placeholder for Secp256k1
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+        ];
+        let args = WithdrawFromSubAccountV2Args::new(role_id, subacc_id, amount);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        let account_payload_bytes = secp_account_payload(&accounts)?;
+        let authority_payload = secp256k1_v2_authority_payload(
+            args_bytes,
+            &account_payload_bytes,
+            current_slot,
+            counter,
+            &mut authority_payload_fn,
+        );
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        })
+    }
+
+    /// Builds a Secp256k1 token withdrawal. Token accounts are part of the
+    /// authenticated account payload and cannot be appended after signing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_token_with_secp256k1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        source_token: Pubkey,
+        destination_token: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        amount: u64,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(sub_account_state, false),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            AccountMeta::new(source_token, false),
+            AccountMeta::new(destination_token, false),
+            AccountMeta::new_readonly(token_program, false),
         ];
         let args = WithdrawFromSubAccountV2Args::new(role_id, subacc_id, amount);
         let args_bytes = args
@@ -4363,13 +4454,64 @@ impl WithdrawFromSubAccountV2Instruction {
     {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
-            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(payer, true),
             AccountMeta::new_readonly(sub_account_state, false),
             AccountMeta::new(sub_account, false),
             AccountMeta::new(swig_wallet_address, false),
             // authority_context is the instructions sysvar for Secp256r1 (index 5)
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+        ];
+        let args = WithdrawFromSubAccountV2Args::new(role_id, subacc_id, amount);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        secp256r1_v2_instructions(
+            &accounts,
+            args_bytes,
+            args_bytes,
+            current_slot,
+            counter,
+            5,
+            &mut authority_payload_fn,
+            public_key,
+        )
+    }
+
+    /// Builds a Secp256r1 token withdrawal. Token accounts are part of the
+    /// authenticated account payload and cannot be appended after signing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_token_with_secp256r1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        source_token: Pubkey,
+        destination_token: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        amount: u64,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(sub_account_state, false),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            AccountMeta::new(source_token, false),
+            AccountMeta::new(destination_token, false),
+            AccountMeta::new_readonly(token_program, false),
         ];
         let args = WithdrawFromSubAccountV2Args::new(role_id, subacc_id, amount);
         let args_bytes = args

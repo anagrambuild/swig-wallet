@@ -34,7 +34,7 @@ use crate::{
 pub struct ToggleSubAccountV2Args {
     discriminator: SwigInstruction,
     /// Desired enabled state
-    pub enabled: bool,
+    pub enabled: u8,
     _padding: u8,
     /// Role performing the toggle
     pub auth_role_id: u32,
@@ -47,7 +47,7 @@ impl ToggleSubAccountV2Args {
     pub fn new(auth_role_id: u32, subacc_id: u32, enabled: bool) -> Self {
         Self {
             discriminator: SwigInstruction::ToggleSubAccountV2,
-            enabled,
+            enabled: u8::from(enabled),
             _padding: 0,
             auth_role_id,
             subacc_id,
@@ -80,6 +80,9 @@ impl<'a> ToggleSubAccountV2<'a> {
         }
         let (args_data, authority_payload) = data.split_at(ToggleSubAccountV2Args::LEN);
         let args = unsafe { ToggleSubAccountV2Args::load_unchecked(args_data)? };
+        if args.enabled > 1 {
+            return Err(ProgramError::InvalidInstructionData);
+        }
         Ok(Self {
             args,
             authority_payload,
@@ -164,6 +167,6 @@ pub fn toggle_sub_account_v2(
         SwigError::InvalidSeedSubAccountV2,
     )?;
 
-    state.enabled = toggle.args.enabled;
+    state.enabled = toggle.args.enabled == 1;
     Ok(())
 }

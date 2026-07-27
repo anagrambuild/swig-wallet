@@ -176,24 +176,12 @@ pub fn withdraw_from_sub_account_v2(
     let amount = withdraw.args.amount;
 
     // Token accounts (source, destination, token_program) follow the named
-    // accounts. Their presence selects a token withdrawal; otherwise SOL.
-    if all_accounts.len() >= NAMED_ACCOUNTS + 3 {
+    // accounts. Accept exactly the SOL or token layout so unrelated trailing
+    // accounts cannot silently change the operation type.
+    if all_accounts.len() == NAMED_ACCOUNTS + 3 {
         let token_account = &all_accounts[NAMED_ACCOUNTS];
         let swig_token_account = &all_accounts[NAMED_ACCOUNTS + 1];
-
-        // Destination token account must be owned by the swig wallet address.
-        let swig_token_account_data = unsafe { swig_token_account.borrow_data_unchecked() };
-        let swig_token_account_owner = unsafe { swig_token_account_data.get_unchecked(32..64) };
-        if unsafe {
-            sol_memcmp(
-                ctx.accounts.swig_wallet_address.key(),
-                swig_token_account_owner,
-                32,
-            )
-        } != 0
-        {
-            return Err(SwigError::InvalidSwigTokenAccountOwner.into());
-        }
+        let token_program = &all_accounts[NAMED_ACCOUNTS + 2];
 
         let token_account_program_owner = token_account.owner();
         let destination_program_owner = swig_token_account.owner();
@@ -205,16 +193,65 @@ pub fn withdraw_from_sub_account_v2(
         if destination_program_owner != token_account_program_owner {
             return Err(SwigError::InvalidOperation.into());
         }
+        if token_program.key() != token_account_program_owner {
+            return Err(SwigError::OwnerMismatchTokenAccount.into());
+        }
+
+        // Both Token and Token-2022 use the same 165-byte base account layout.
+        // Extensions may follow it, so validate the base before reading it.
+        const TOKEN_ACCOUNT_BASE_LEN: usize = 165;
+        if token_account.data_len() < TOKEN_ACCOUNT_BASE_LEN
+            || swig_token_account.data_len() < TOKEN_ACCOUNT_BASE_LEN
+        {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let token_account_data = unsafe { token_account.borrow_data_unchecked() };
+        let swig_token_account_data = unsafe { swig_token_account.borrow_data_unchecked() };
+
+        // Only initialized, transferable token accounts are accepted.
+        if token_account_data[108] != 1 || swig_token_account_data[108] != 1 {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if unsafe {
+            sol_memcmp(
+                &token_account_data[..32],
+                &swig_token_account_data[..32],
+                32,
+            )
+        } != 0
+        {
+            return Err(SwigError::InvalidOperation.into());
+        }
+        if unsafe {
+            sol_memcmp(
+                ctx.accounts.sub_account.key(),
+                &token_account_data[32..64],
+                32,
+            )
+        } != 0
+        {
+            return Err(SwigError::InvalidSwigTokenAccountOwner.into());
+        }
+        if unsafe {
+            sol_memcmp(
+                ctx.accounts.swig_wallet_address.key(),
+                &swig_token_account_data[32..64],
+                32,
+            )
+        } != 0
+        {
+            return Err(SwigError::InvalidSwigTokenAccountOwner.into());
+        }
 
         let token_transfer = TokenTransfer {
             from: token_account,
             to: swig_token_account,
             authority: ctx.accounts.sub_account,
             amount,
-            token_program: token_account_program_owner,
+            token_program: token_program.key(),
         };
         token_transfer.invoke_signed(&[signer.into()])?;
-    } else {
+    } else if all_accounts.len() == NAMED_ACCOUNTS {
         if amount > ctx.accounts.sub_account.lamports() {
             return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
         }
@@ -224,6 +261,8 @@ pub fn withdraw_from_sub_account_v2(
             lamports: amount,
         }
         .invoke_signed(&[signer.into()])?;
+    } else {
+        return Err(SwigError::InvalidAccountsLength.into());
     }
     Ok(())
 }

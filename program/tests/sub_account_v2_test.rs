@@ -5,16 +5,19 @@
 mod common;
 
 use common::*;
+use litesvm_token::spl_token;
 use solana_sdk::{
     message::{v0, VersionedMessage},
+    program_pack::Pack,
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
     transaction::VersionedTransaction,
 };
 use swig_interface::{
-    AuthorityConfig, ClientAction, CreateSubAccountV2Instruction, SubAccountSignV2Instruction,
-    ToggleSubAccountV2Instruction, WithdrawFromSubAccountV2Instruction,
+    AuthorityConfig, ClientAction, CloseSwigV1Instruction, CreateSubAccountV2Instruction,
+    SubAccountSignV2Instruction, ToggleSubAccountV2Instruction,
+    WithdrawFromSubAccountV2Instruction,
 };
 use swig_state::{
     action::{
@@ -31,8 +34,9 @@ use swig_state::{
 const CREATOR_ROLE_ID: u32 = 1;
 
 /// Creates a swig with a root authority plus a role (id 1) holding a
-/// `SubAccountV2Create` permission. Returns (swig_key, creator_keypair, id).
-fn setup_v2(context: &mut SwigTestContext) -> anyhow::Result<(Pubkey, Keypair, [u8; 32])> {
+/// `SubAccountV2Create` permission. Returns
+/// (swig_key, root_keypair, creator_keypair, id).
+fn setup_v2(context: &mut SwigTestContext) -> anyhow::Result<(Pubkey, Keypair, Keypair, [u8; 32])> {
     let root = Keypair::new();
     let creator = Keypair::new();
     context.svm.airdrop(&root.pubkey(), 10_000_000_000).unwrap();
@@ -54,7 +58,7 @@ fn setup_v2(context: &mut SwigTestContext) -> anyhow::Result<(Pubkey, Keypair, [
         },
         vec![ClientAction::SubAccountV2Create(SubAccountV2Create)],
     )?;
-    Ok((swig_key, creator, id))
+    Ok((swig_key, root, creator, id))
 }
 
 fn v2_state_pda(id: &[u8; 32], subacc_id: u32) -> (Pubkey, u8) {
@@ -147,7 +151,7 @@ fn role_has_all_scope(
 #[test]
 fn test_create_sub_account_v2_initializes_state_and_grants_creator() {
     let mut context = setup_test_context().unwrap();
-    let (swig_key, creator, id) = setup_v2(&mut context).unwrap();
+    let (swig_key, _root, creator, id) = setup_v2(&mut context).unwrap();
 
     assert_eq!(decode_counter(&context, &swig_key), 0);
 
@@ -176,9 +180,28 @@ fn test_create_sub_account_v2_initializes_state_and_grants_creator() {
 }
 
 #[test]
+fn test_create_sub_account_v2_accepts_prefunded_state_pda() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, _root, creator, id) = setup_v2(&mut context).unwrap();
+    let (state_pda, _) = v2_state_pda(&id, 0);
+
+    // A receiver does not sign a system transfer, so any account can pre-fund
+    // the predictable state PDA.
+    let prefund = solana_system_interface::instruction::transfer(&creator.pubkey(), &state_pda, 1);
+    send(&mut context, &creator, prefund).unwrap();
+
+    let (created_state, _asset) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+    assert_eq!(created_state, state_pda);
+    assert_eq!(decode_counter(&context, &swig_key), 1);
+    let state_account = context.svm.get_account(&state_pda).unwrap();
+    assert_eq!(state_account.owner, program_id());
+    assert_eq!(state_account.data.len(), SubAccountV2::LEN);
+}
+
+#[test]
 fn test_create_multiple_sub_accounts_from_one_role() {
     let mut context = setup_test_context().unwrap();
-    let (swig_key, creator, id) = setup_v2(&mut context).unwrap();
+    let (swig_key, _root, creator, id) = setup_v2(&mut context).unwrap();
 
     create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
     create_v2(&mut context, &swig_key, &creator, &id, 1).unwrap();
@@ -191,7 +214,7 @@ fn test_create_multiple_sub_accounts_from_one_role() {
 #[test]
 fn test_withdraw_sol_from_sub_account_v2() {
     let mut context = setup_test_context().unwrap();
-    let (swig_key, creator, id) = setup_v2(&mut context).unwrap();
+    let (swig_key, _root, creator, id) = setup_v2(&mut context).unwrap();
     let (_state_pda, asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
 
     let (swig_wallet_address, _) = Pubkey::find_program_address(
@@ -233,9 +256,71 @@ fn test_withdraw_sol_from_sub_account_v2() {
 }
 
 #[test]
+fn test_withdraw_token_from_sub_account_v2() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, _root, creator, id) = setup_v2(&mut context).unwrap();
+    let (state_pda, asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+    let (swig_wallet_address, _) = Pubkey::find_program_address(
+        &swig_state::swig::swig_wallet_address_seeds(swig_key.as_ref()),
+        &program_id(),
+    );
+
+    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let source_token =
+        setup_ata(&mut context.svm, &mint, &asset_pda, &context.default_payer).unwrap();
+    let destination_token = setup_ata(
+        &mut context.svm,
+        &mint,
+        &swig_wallet_address,
+        &context.default_payer,
+    )
+    .unwrap();
+    mint_to(
+        &mut context.svm,
+        &mint,
+        &context.default_payer,
+        &source_token,
+        10_000,
+    )
+    .unwrap();
+
+    let ix = WithdrawFromSubAccountV2Instruction::new_token_with_ed25519_authority(
+        swig_key,
+        creator.pubkey(),
+        creator.pubkey(),
+        state_pda,
+        asset_pda,
+        swig_wallet_address,
+        source_token,
+        destination_token,
+        spl_token::ID,
+        CREATOR_ROLE_ID,
+        0,
+        4_000,
+    )
+    .unwrap();
+    send(&mut context, &creator, ix).unwrap();
+
+    let source = context.svm.get_account(&source_token).unwrap();
+    let destination = context.svm.get_account(&destination_token).unwrap();
+    assert_eq!(
+        spl_token::state::Account::unpack(&source.data)
+            .unwrap()
+            .amount,
+        6_000
+    );
+    assert_eq!(
+        spl_token::state::Account::unpack(&destination.data)
+            .unwrap()
+            .amount,
+        4_000
+    );
+}
+
+#[test]
 fn test_toggle_disables_withdraw() {
     let mut context = setup_test_context().unwrap();
-    let (swig_key, creator, id) = setup_v2(&mut context).unwrap();
+    let (swig_key, _root, creator, id) = setup_v2(&mut context).unwrap();
     let (state_pda, asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
     context.svm.airdrop(&asset_pda, 1_000_000_000).unwrap();
 
@@ -277,6 +362,58 @@ fn test_toggle_disables_withdraw() {
     assert!(
         send(&mut context, &creator, ix).is_err(),
         "withdraw should fail while sub-account is disabled"
+    );
+}
+
+#[test]
+fn test_toggle_rejects_invalid_enabled_byte() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, _root, creator, id) = setup_v2(&mut context).unwrap();
+    let (state_pda, _asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+
+    let mut toggle = ToggleSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        creator.pubkey(),
+        creator.pubkey(),
+        state_pda,
+        CREATOR_ROLE_ID,
+        0,
+        false,
+    )
+    .unwrap();
+    // SwigInstruction is u16, followed by the enabled wire byte.
+    toggle.data[2] = 2;
+    assert!(send(&mut context, &creator, toggle).is_err());
+
+    let state = context.svm.get_account(&state_pda).unwrap();
+    let decoded = unsafe { SubAccountV2::load_unchecked(&state.data).unwrap() };
+    assert!(decoded.enabled);
+}
+
+#[test]
+fn test_close_swig_rejects_existing_sub_account_v2() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, creator, id) = setup_v2(&mut context).unwrap();
+    create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+    let (swig_wallet_address, _) = Pubkey::find_program_address(
+        &swig_state::swig::swig_wallet_address_seeds(swig_key.as_ref()),
+        &program_id(),
+    );
+    let destination = Keypair::new();
+    let close = CloseSwigV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        swig_wallet_address,
+        root.pubkey(),
+        destination.pubkey(),
+        0,
+    )
+    .unwrap();
+
+    assert!(send(&mut context, &root, close).is_err());
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    assert_eq!(
+        swig_account.data[0],
+        swig_state::Discriminator::SwigConfigAccount as u8
     );
 }
 
@@ -331,7 +468,7 @@ fn test_all_permission_cannot_create_sub_account_v2() {
 #[test]
 fn test_sign_transfers_from_asset_pda() {
     let mut context = setup_test_context().unwrap();
-    let (swig_key, creator, id) = setup_v2(&mut context).unwrap();
+    let (swig_key, _root, creator, id) = setup_v2(&mut context).unwrap();
     let (state_pda, asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
     context.svm.airdrop(&asset_pda, 1_000_000_000).unwrap();
 

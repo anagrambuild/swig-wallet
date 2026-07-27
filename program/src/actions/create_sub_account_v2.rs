@@ -16,7 +16,7 @@ use pinocchio::{
     sysvars::{clock::Clock, rent::Rent, Sysvar},
     ProgramResult,
 };
-use pinocchio_system::instructions::{CreateAccount, Transfer};
+use pinocchio_system::instructions::{Allocate, Assign, Transfer};
 use swig_assertions::*;
 use swig_state::{
     action::{sub_account_v2::SubAccountV2Create, Action, Permission},
@@ -124,6 +124,15 @@ pub fn create_sub_account_v2(
         SwigError::OwnerMismatchSubAccountV2State,
     )?;
     check_system_owner(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
+    check_bytes_match(
+        ctx.accounts.system_program.key(),
+        &pinocchio_system::ID,
+        32,
+        SwigError::InvalidSystemProgram,
+    )?;
+    if ctx.accounts.sub_account_state.data_len() != 0 {
+        return Err(ProgramError::InvalidAccountData);
+    }
 
     let create = CreateSubAccountV2::from_instruction_bytes(data)?;
 
@@ -191,21 +200,34 @@ pub fn create_sub_account_v2(
         SwigError::InvalidSeedSubAccountV2,
     )?;
 
-    // Create the program-owned state account.
+    // Initialize the program-owned state account. Anyone can transfer SOL to
+    // this predictable PDA before creation, and `CreateAccount` rejects such a
+    // pre-funded destination. Top up, allocate, and assign separately so that
+    // pre-funding cannot permanently pin the Swig's next counter value.
     let rent = Rent::get()?;
     let state_rent = rent.minimum_balance(SubAccountV2::LEN);
     let state_current = unsafe { *ctx.accounts.sub_account_state.borrow_lamports_unchecked() };
     let state_lamports = state_rent.saturating_sub(state_current);
-    CreateAccount {
-        from: ctx.accounts.payer,
-        to: ctx.accounts.sub_account_state,
-        lamports: state_lamports,
+    if state_lamports > 0 {
+        Transfer {
+            from: ctx.accounts.payer,
+            to: ctx.accounts.sub_account_state,
+            lamports: state_lamports,
+        }
+        .invoke()?;
+    }
+    let state_signer = sub_account_v2_state_signer(&swig_id, &id_le, &state_bump);
+    let state_signers = [state_signer.as_slice().into()];
+    Allocate {
+        account: ctx.accounts.sub_account_state,
         space: SubAccountV2::LEN as u64,
+    }
+    .invoke_signed(&state_signers)?;
+    Assign {
+        account: ctx.accounts.sub_account_state,
         owner: &crate::ID,
     }
-    .invoke_signed(&[sub_account_v2_state_signer(&swig_id, &id_le, &state_bump)
-        .as_slice()
-        .into()])?;
+    .invoke_signed(&state_signers)?;
 
     // Write the state.
     {
