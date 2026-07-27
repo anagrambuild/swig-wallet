@@ -627,6 +627,34 @@ impl SwigInstructionBuilder {
         )
     }
 
+    /// Creates instructions to withdraw tokens from a V2 sub-account to a
+    /// token account owned by the swig wallet address.
+    pub fn withdraw_token_from_sub_account_v2(
+        &self,
+        subacc_id: u32,
+        source_token: Pubkey,
+        destination_token: Pubkey,
+        token_program: Pubkey,
+        amount: u64,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let (sub_account_state, sub_account) = self.sub_account_v2_pdas(subacc_id);
+        self.client_role
+            .withdraw_token_from_sub_account_v2_instruction(
+                self.swig_account,
+                self.payer,
+                sub_account_state,
+                sub_account,
+                source_token,
+                destination_token,
+                token_program,
+                self.role_id,
+                subacc_id,
+                amount,
+                current_slot,
+            )
+    }
+
     /// Creates instructions to toggle a V2 sub-account's enabled kill-switch.
     pub fn toggle_sub_account_v2(
         &self,

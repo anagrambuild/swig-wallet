@@ -36,10 +36,12 @@ use swig_state::{
     },
     authority::{self, secp256k1::Secp256k1Authority, AuthorityType},
     role::Role,
+    sub_account_v2::SubAccountV2,
     swig::{
         sub_account_seeds, sub_account_v2_asset_seeds, sub_account_v2_state_seeds, Swig,
         SwigWithRoles,
     },
+    Transmutable,
 };
 const TOKEN_22_PROGRAM_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 
@@ -686,6 +688,42 @@ impl<'c> SwigWallet<'c> {
         tx_result
     }
 
+    /// Withdraws tokens from a V2 sub-account to a token account owned by the
+    /// swig wallet address.
+    pub fn withdraw_token_from_sub_account_v2(
+        &mut self,
+        subacc_id: u32,
+        source_token: Pubkey,
+        destination_token: Pubkey,
+        token_program: Pubkey,
+        amount: u64,
+    ) -> Result<Signature, SwigError> {
+        let current_slot = self.get_current_slot()?;
+        let withdraw_instructions = self
+            .instruction_builder
+            .withdraw_token_from_sub_account_v2(
+                subacc_id,
+                source_token,
+                destination_token,
+                token_program,
+                amount,
+                Some(current_slot),
+            )?;
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &withdraw_instructions,
+            &[],
+            self.get_current_blockhash()?,
+        )?;
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &self.get_keypairs()?)?;
+        let tx_result = self.send_and_confirm_transaction(tx);
+        if tx_result.is_ok() {
+            self.refresh_permissions()?;
+            self.instruction_builder.increment_odometer()?;
+        }
+        tx_result
+    }
+
     /// Toggles a V2 sub-account's enabled kill-switch.
     pub fn toggle_sub_account_v2(
         &mut self,
@@ -714,27 +752,52 @@ impl<'c> SwigWallet<'c> {
     }
 
     /// Returns the V2 sub-account asset PDA for `subacc_id` if its state account
-    /// exists on-chain.
+    /// is a valid, canonical program-owned V2 state account.
     pub fn get_sub_account_v2(&self, subacc_id: u32) -> Result<Option<Pubkey>, SwigError> {
         let swig_id = *self.instruction_builder.get_swig_id();
         let id_le = subacc_id.to_le_bytes();
-        let (sub_account_state, _) = Pubkey::find_program_address(
+        let (sub_account_state, state_bump) = Pubkey::find_program_address(
             &sub_account_v2_state_seeds(&swig_id, &id_le),
             &swig_interface::program_id(),
         );
-        let (asset, _) = Pubkey::find_program_address(
+        let (asset, asset_bump) = Pubkey::find_program_address(
             &sub_account_v2_asset_seeds(&swig_id, &id_le),
             &swig_interface::program_id(),
         );
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        let exists = self.rpc_client.get_account(&sub_account_state).is_ok();
+        let state_account = self
+            .rpc_client
+            .get_account_with_commitment(&sub_account_state, CommitmentConfig::confirmed())?
+            .value;
         #[cfg(all(feature = "rust_sdk_test", test))]
-        let exists = self.litesvm.get_account(&sub_account_state).is_some();
-        if exists {
-            Ok(Some(asset))
-        } else {
-            Ok(None)
+        let state_account = self.litesvm.get_account(&sub_account_state);
+        let Some(state_account) = state_account else {
+            return Ok(None);
+        };
+
+        if state_account.owner != swig_interface::program_id()
+            || state_account.data.len() != SubAccountV2::LEN
+            || state_account.data[3] > 1
+        {
+            return Err(SwigError::InvalidSwigData);
         }
+        let state = unsafe {
+            SubAccountV2::load_unchecked(&state_account.data)
+                .map_err(|_| SwigError::InvalidSwigData)?
+        };
+        state
+            .check_discriminator()
+            .map_err(|_| SwigError::InvalidSwigData)?;
+        if state.bump != state_bump
+            || state.asset_bump != asset_bump
+            || state.subacc_id != subacc_id
+            || state.swig_id != swig_id
+            || state.sub_account != asset.to_bytes()
+        {
+            return Err(SwigError::InvalidSwigData);
+        }
+
+        Ok(Some(asset))
     }
 
     /// Sends and confirms a transaction on the Solana network

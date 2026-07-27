@@ -187,6 +187,28 @@ pub trait ClientRole {
         ))
     }
 
+    /// Creates a V2 token withdrawal with the token accounts included in the
+    /// authenticated account list.
+    #[allow(clippy::too_many_arguments)]
+    fn withdraw_token_from_sub_account_v2_instruction(
+        &self,
+        _swig_account: Pubkey,
+        _payer: Pubkey,
+        _sub_account_state: Pubkey,
+        _sub_account: Pubkey,
+        _source_token: Pubkey,
+        _destination_token: Pubkey,
+        _token_program: Pubkey,
+        _role_id: u32,
+        _subacc_id: u32,
+        _amount: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "V2 sub-accounts not supported for this authority type".to_string(),
+        ))
+    }
+
     /// Creates a V2 toggle-sub-account instruction.
     fn toggle_sub_account_v2_instruction(
         &self,
@@ -541,6 +563,42 @@ impl ClientRole for Ed25519ClientRole {
                 sub_account_state,
                 sub_account,
                 swig_wallet_address,
+                role_id,
+                subacc_id,
+                amount,
+            )?,
+        ])
+    }
+
+    fn withdraw_token_from_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        source_token: Pubkey,
+        destination_token: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        amount: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+        Ok(vec![
+            WithdrawFromSubAccountV2Instruction::new_token_with_ed25519_authority(
+                swig_account,
+                self.authority,
+                payer,
+                sub_account_state,
+                sub_account,
+                swig_wallet_address,
+                source_token,
+                destination_token,
+                token_program,
                 role_id,
                 subacc_id,
                 amount,
@@ -997,6 +1055,46 @@ impl ClientRole for Secp256k1ClientRole {
                 sub_account_state,
                 sub_account,
                 swig_wallet_address,
+                role_id,
+                subacc_id,
+                amount,
+            )?,
+        ])
+    }
+
+    fn withdraw_token_from_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        source_token: Pubkey,
+        destination_token: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        amount: u64,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+        Ok(vec![
+            WithdrawFromSubAccountV2Instruction::new_token_with_secp256k1_authority(
+                swig_account,
+                payer,
+                &self.signing_fn,
+                current_slot,
+                new_odometer,
+                sub_account_state,
+                sub_account,
+                swig_wallet_address,
+                source_token,
+                destination_token,
+                token_program,
                 role_id,
                 subacc_id,
                 amount,
@@ -1491,6 +1589,47 @@ impl ClientRole for Secp256r1ClientRole {
                 sub_account_state,
                 sub_account,
                 swig_wallet_address,
+                role_id,
+                subacc_id,
+                amount,
+                &self.authority,
+            )?,
+        )
+    }
+
+    fn withdraw_token_from_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        source_token: Pubkey,
+        destination_token: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        amount: u64,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+        Ok(
+            WithdrawFromSubAccountV2Instruction::new_token_with_secp256r1_authority(
+                swig_account,
+                payer,
+                &self.signing_fn,
+                current_slot,
+                new_odometer,
+                sub_account_state,
+                sub_account,
+                swig_wallet_address,
+                source_token,
+                destination_token,
+                token_program,
                 role_id,
                 subacc_id,
                 amount,
