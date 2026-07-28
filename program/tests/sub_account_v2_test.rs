@@ -4,6 +4,7 @@
 //! that `All` alone cannot create.
 mod common;
 
+use common::stability::{scoped_v2_body, SwigSnapshot};
 use common::*;
 use litesvm_token::spl_token;
 use solana_sdk::{
@@ -22,7 +23,11 @@ use swig_interface::{
 use swig_state::{
     action::{
         all::All,
-        sub_account_v2::{SubAccountV2All, SubAccountV2Create},
+        manage_authority::ManageAuthority,
+        sub_account_v2::{
+            SubAccountV2All, SubAccountV2Create, SubAccountV2Sign, SubAccountV2Toggle,
+            SubAccountV2Withdraw,
+        },
         Action, Permission,
     },
     authority::AuthorityType,
@@ -496,4 +501,141 @@ fn test_sign_transfers_from_asset_pda() {
         .unwrap()
         .lamports;
     assert_eq!(recipient_balance, amount);
+}
+
+/// Creating a V2 sub-account appends `SubAccountV2All { id }` to the creator's
+/// role, which reallocs the swig account. When the creator is a *middle* role,
+/// this shifts every role after it in the buffer. This test proves that neither
+/// the shift nor the append corrupts any other role's authority or permissions.
+///
+/// Layout: role 0 = root (`All`), role 1 = creator (`SubAccountV2Create`),
+/// role 2 = two permissions, role 3 = four permissions.
+#[test]
+fn test_create_sub_account_v2_preserves_other_roles_and_permissions() {
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    context.svm.airdrop(&root.pubkey(), 10_000_000_000).unwrap();
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root, id).unwrap();
+
+    // Role 1: the creator (a middle role once 2 and 3 are added).
+    let creator = Keypair::new();
+    context
+        .svm
+        .airdrop(&creator.pubkey(), 10_000_000_000)
+        .unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: creator.pubkey().as_ref(),
+        },
+        vec![ClientAction::SubAccountV2Create(SubAccountV2Create)],
+    )
+    .unwrap();
+
+    // Role 2: two permissions (ManageAuthority + a scoped sign).
+    let role2 = Keypair::new();
+    context
+        .svm
+        .airdrop(&role2.pubkey(), 10_000_000_000)
+        .unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: role2.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ManageAuthority(ManageAuthority {}),
+            ClientAction::SubAccountV2Sign(SubAccountV2Sign::new(100)),
+        ],
+    )
+    .unwrap();
+
+    // Role 3: four permissions of varied types with distinct scoped ids.
+    let role3 = Keypair::new();
+    context
+        .svm
+        .airdrop(&role3.pubkey(), 10_000_000_000)
+        .unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: role3.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::SubAccountV2Create(SubAccountV2Create),
+            ClientAction::SubAccountV2All(SubAccountV2All::new(101)),
+            ClientAction::SubAccountV2Withdraw(SubAccountV2Withdraw::new(102)),
+            ClientAction::SubAccountV2Toggle(SubAccountV2Toggle::new(103)),
+        ],
+    )
+    .unwrap();
+
+    // Snapshot the whole wallet before any sub-account exists.
+    let id_creator = creator.pubkey().to_bytes();
+    let id_role3 = role3.pubkey().to_bytes();
+    let before = SwigSnapshot::capture(&context, &swig_key);
+    assert_eq!(before.roles.len(), 4);
+    assert_eq!(
+        before.actions_of(&root.pubkey().to_bytes()).len(),
+        1,
+        "root: All"
+    );
+    assert_eq!(before.actions_of(&id_creator).len(), 1, "creator: Create");
+    assert_eq!(
+        before.actions_of(&role2.pubkey().to_bytes()).len(),
+        2,
+        "role 2: 2 perms"
+    );
+    assert_eq!(before.actions_of(&id_role3).len(), 4, "role 3: 4 perms");
+
+    // Create sub-account 0 as the creator (a MIDDLE role): appends All{0} and
+    // reallocs, shifting roles 2 and 3. Only the creator's role may change.
+    create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+    let after = SwigSnapshot::capture(&context, &swig_key);
+    before.assert_others_stable(&after, &[id_creator]);
+    assert_eq!(after.counter, before.counter + 1);
+    let mut expected_creator = before.actions_of(&id_creator).clone();
+    expected_creator.push((Permission::SubAccountV2All, scoped_v2_body(0)));
+    assert_eq!(
+        after.actions_of(&id_creator),
+        &expected_creator,
+        "creator's auto-granted All{{0}} is wrong"
+    );
+
+    // Functional proof: role 3's authority + SubAccountV2Create survived the
+    // realloc and still work — it creates sub-account 1. Only role 3 changes.
+    let (state_pda, state_bump) = v2_state_pda(&id, 1);
+    let (asset_pda, asset_bump) = v2_asset_pda(&id, 1);
+    let ix = CreateSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        role3.pubkey(),
+        role3.pubkey(),
+        state_pda,
+        asset_pda,
+        3,
+        state_bump,
+        asset_bump,
+    )
+    .unwrap();
+    send(&mut context, &role3, ix).unwrap();
+    let after2 = SwigSnapshot::capture(&context, &swig_key);
+    after.assert_others_stable(&after2, &[id_role3]);
+    assert_eq!(after2.counter, 2);
+
+    // Repeat a MIDDLE-role realloc: the creator creates sub-account 2, shifting
+    // roles 2 and 3 again. Everything except the creator stays byte-identical.
+    create_v2(&mut context, &swig_key, &creator, &id, 2).unwrap();
+    let after3 = SwigSnapshot::capture(&context, &swig_key);
+    after2.assert_others_stable(&after3, &[id_creator]);
+    assert_eq!(after3.counter, 3);
 }
