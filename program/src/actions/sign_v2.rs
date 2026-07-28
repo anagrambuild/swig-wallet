@@ -59,8 +59,30 @@ pub const INSTRUCTION_SYSVAR_ACCOUNT: Pubkey =
 /// Exclude range for token account balance field (bytes 64-72)
 const TOKEN_BALANCE_EXCLUDE_RANGE: core::ops::Range<usize> = 64..72;
 
-/// Exclude range for stake account balance field (bytes 184-192)
-const STAKE_BALANCE_EXCLUDE_RANGE: core::ops::Range<usize> = 184..192;
+/// Exclude ranges for the mutable portion of a stake account.
+///
+/// A stake account is bincode `StakeStateV2` (200 bytes):
+///   0..4    state discriminant   (0 Uninitialized, 1 Initialized, 2 Stake,
+///                                 3 RewardsPool)
+///   4..12   rent_exempt_reserve
+///   12..44  authorized staker
+///   44..76  authorized withdrawer
+///   76..124 lockup (timestamp, epoch, custodian)
+///   124..156 voter_pubkey
+///   156..164 delegated stake
+///   164..172 activation_epoch
+///   172..180 deactivation_epoch
+///   180..188 warmup_cooldown_rate
+///   188..196 credits_observed
+///   196..200 padding
+///
+/// Legitimate stake operations (delegate, deactivate, withdraw) rewrite the
+/// discriminant and the whole delegation region, so those are excluded from the
+/// integrity hash. The Meta at 4..124 — crucially the authorized staker and
+/// withdrawer, and the lockup — stays covered, so a CPI cannot re-authorize the
+/// account away from the wallet without tripping the check.
+const STAKE_STATE_EXCLUDE_RANGE: core::ops::Range<usize> = 0..4;
+const STAKE_DELEGATION_EXCLUDE_RANGE: core::ops::Range<usize> = 124..200;
 
 /// Token account field ranges
 const TOKEN_ACCOUNT_BASE_DATA_LEN: usize = 165;
@@ -70,7 +92,7 @@ const TOKEN_BALANCE_RANGE: core::ops::Range<usize> = 64..72;
 const TOKEN_STATE_INDEX: usize = 108;
 
 /// Stake account field ranges
-const STAKE_BALANCE_RANGE: core::ops::Range<usize> = 184..192;
+const STAKE_BALANCE_RANGE: core::ops::Range<usize> = 156..164;
 
 /// Account state constants
 const TOKEN_ACCOUNT_INITIALIZED_STATE: u8 = 1;
@@ -312,7 +334,7 @@ pub fn sign_v2(
             AccountClassification::SwigStakeAccount { .. } => {
                 let data = unsafe { account.borrow_data_unchecked() };
                 // Exclude stake balance field (bytes 184-192) but include owner
-                let exclude_ranges = [STAKE_BALANCE_EXCLUDE_RANGE];
+                let exclude_ranges = [STAKE_STATE_EXCLUDE_RANGE, STAKE_DELEGATION_EXCLUDE_RANGE];
                 let hash = hash_except(&data, account.owner(), &exclude_ranges);
                 Some(hash)
             },
@@ -410,25 +432,46 @@ pub fn sign_v2(
                     AccountClassification::SwigStakeAccount {
                         state: _,
                         balance,
+                        lamports,
                         spent,
                     } => {
+                        // Lamports are checked independently of the delegated
+                        // stake amount: an undelegated stake account can be
+                        // drained by a withdrawal while the delegated amount at
+                        // STAKE_BALANCE_RANGE stays zero.
+                        let current_lamports = account.lamports();
+                        let lamports_spent = if current_lamports < *lamports {
+                            *lamports - current_lamports
+                        } else {
+                            0
+                        };
+                        *lamports = current_lamports;
+
                         let data = unsafe { account.borrow_data_unchecked() };
 
-                        if data.len() < STAKE_BALANCE_RANGE.end {
-                            continue;
-                        }
+                        let stake_spent = if data.len() < STAKE_BALANCE_RANGE.end {
+                            0
+                        } else {
+                            let current = u64::from_le_bytes(unsafe {
+                                data.get_unchecked(STAKE_BALANCE_RANGE)
+                                    .try_into()
+                                    .unwrap_or([0; 8])
+                            });
 
-                        let current = u64::from_le_bytes(unsafe {
-                            data.get_unchecked(STAKE_BALANCE_RANGE)
-                                .try_into()
-                                .unwrap_or([0; 8])
-                        });
+                            // Absolute difference: StakeLimit is documented to
+                            // apply to staking and unstaking alike, and its
+                            // `run` takes |new - old|. Counting only decreases
+                            // let a bounded role delegate without limit.
+                            let stake_spent = current.abs_diff(*balance);
 
-                        if current < *balance {
-                            *spent = spent.saturating_add(*balance - current);
-                        }
+                            *balance = current;
+                            stake_spent
+                        };
 
-                        *balance = current;
+                        // Take the larger of the two rather than the sum: a
+                        // withdrawal from a delegated account reduces both, and
+                        // summing would double-count it against the limit.
+                        *spent = spent.saturating_add(lamports_spent.max(stake_spent));
                     },
                     AccountClassification::ProgramScope {
                         role_index: _,
@@ -694,7 +737,8 @@ pub fn sign_v2(
 
                 if account_info.is_writable() {
                     let data = unsafe { &account_info.borrow_data_unchecked() };
-                    let exclude_ranges = [STAKE_BALANCE_EXCLUDE_RANGE];
+                    let exclude_ranges =
+                        [STAKE_STATE_EXCLUDE_RANGE, STAKE_DELEGATION_EXCLUDE_RANGE];
                     let current_hash = hash_except(&data, account_info.owner(), &exclude_ranges);
                     let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
                     if *snapshot_hash != current_hash {
@@ -704,6 +748,12 @@ pub fn sign_v2(
 
                 let total_stake_spent = *spent;
                 if total_stake_spent == 0 {
+                    continue;
+                }
+
+                // StakeAll grants uncapped stake authority, so it short-circuits
+                // the limit actions and needs no accounting.
+                if RoleMut::get_action_mut::<StakeAll>(actions, &[])?.is_some() {
                     continue;
                 }
 

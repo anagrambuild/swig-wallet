@@ -377,19 +377,37 @@ unsafe fn classify_account(
             }
 
             // Stake account authorized withdrawer is at offset 44 for 32 bytes.
+            // The withdrawer may be either the Swig config account (index 0) or
+            // the Swig wallet address (index 1), which is the CPI signer for
+            // SignV2. Both must classify so stake spending is accounted for.
             let authorized_withdrawer = data.get_unchecked(44..76);
-            if sol_memcmp(
+
+            let matches_swig_account = sol_memcmp(
                 accounts.get_unchecked(0).assume_init_ref().key(),
                 authorized_withdrawer,
                 32,
-            ) != 0
-            {
+            ) == 0;
+
+            let matches_swig_wallet_address = index > 1
+                && matches!(
+                    account_classifications.get_unchecked(1).assume_init_ref(),
+                    AccountClassification::SwigWalletAddress
+                )
+                && sol_memcmp(
+                    accounts.get_unchecked(1).assume_init_ref().key(),
+                    authorized_withdrawer,
+                    32,
+                ) == 0;
+
+            if !matches_swig_account && !matches_swig_wallet_address {
                 return Ok(AccountClassification::None);
             }
 
-            // Stake state is at offset 196; delegated stake amount is at 184.
+            // `StakeStateV2` is bincode: the state discriminant is the leading
+            // u32 and the delegated stake amount sits at 156..164, inside the
+            // Delegation struct.
             let state_value = u32::from_le_bytes(
-                data.get_unchecked(196..200)
+                data.get_unchecked(0..4)
                     .try_into()
                     .map_err(|_| ProgramError::InvalidAccountData)?,
             );
@@ -401,7 +419,7 @@ unsafe fn classify_account(
                 _ => return Err(ProgramError::InvalidAccountData),
             };
             let stake_amount = u64::from_le_bytes(
-                data.get_unchecked(184..192)
+                data.get_unchecked(156..164)
                     .try_into()
                     .map_err(|_| ProgramError::InvalidAccountData)?,
             );
@@ -409,6 +427,7 @@ unsafe fn classify_account(
             Ok(AccountClassification::SwigStakeAccount {
                 state,
                 balance: stake_amount,
+                lamports: account.lamports(),
                 spent: 0,
             })
         },
