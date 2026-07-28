@@ -170,7 +170,7 @@ fn test_create_sub_account_v2_initializes_state_and_grants_creator() {
     assert_eq!(state_acc.owner, program_id());
     assert_eq!(state_acc.data.len(), SubAccountV2::LEN);
     let state = unsafe { SubAccountV2::load_unchecked(&state_acc.data).unwrap() };
-    assert!(state.enabled);
+    assert!(state.is_enabled().unwrap());
     assert_eq!(state.subacc_id, 0);
     assert_eq!(state.swig_id, id);
     assert_eq!(state.sub_account, asset_pda.to_bytes());
@@ -349,7 +349,7 @@ fn test_toggle_disables_withdraw() {
 
     let state = context.svm.get_account(&state_pda).unwrap();
     let decoded = unsafe { SubAccountV2::load_unchecked(&state.data).unwrap() };
-    assert!(!decoded.enabled);
+    assert!(!decoded.is_enabled().unwrap());
 
     // Withdrawing from a disabled sub-account must fail.
     let ix = WithdrawFromSubAccountV2Instruction::new_with_ed25519_authority(
@@ -392,7 +392,52 @@ fn test_toggle_rejects_invalid_enabled_byte() {
 
     let state = context.svm.get_account(&state_pda).unwrap();
     let decoded = unsafe { SubAccountV2::load_unchecked(&state.data).unwrap() };
-    assert!(decoded.enabled);
+    assert!(decoded.is_enabled().unwrap());
+}
+
+#[test]
+fn test_invalid_stored_enabled_byte_is_rejected() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, _root, creator, id) = setup_v2(&mut context).unwrap();
+    let (state_pda, asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+    context.svm.airdrop(&asset_pda, 1_000_000_000).unwrap();
+
+    let mut state_account = context.svm.get_account(&state_pda).unwrap();
+    state_account.data[3] = 2;
+    context.svm.set_account(state_pda, state_account).unwrap();
+
+    let recipient = Keypair::new();
+    let inner =
+        solana_system_interface::instruction::transfer(&asset_pda, &recipient.pubkey(), 1_000);
+    let sign = SubAccountSignV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        state_pda,
+        asset_pda,
+        creator.pubkey(),
+        CREATOR_ROLE_ID,
+        0,
+        vec![inner],
+    )
+    .unwrap();
+    assert!(
+        send(&mut context, &creator, sign).is_err(),
+        "runtime use must reject a non-canonical enabled value"
+    );
+
+    let toggle = ToggleSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        creator.pubkey(),
+        creator.pubkey(),
+        state_pda,
+        CREATOR_ROLE_ID,
+        0,
+        false,
+    )
+    .unwrap();
+    assert!(
+        send(&mut context, &creator, toggle).is_err(),
+        "toggle must not silently canonicalize corrupt state"
+    );
 }
 
 #[test]

@@ -90,7 +90,7 @@ pub(crate) fn validate_v2_state(
     if state.subacc_id != subacc_id {
         return Err(SwigError::InvalidSwigSubAccountV2IdMismatch.into());
     }
-    if !state.enabled {
+    if !state.is_enabled()? {
         return Err(SwigError::InvalidSwigSubAccountV2Disabled.into());
     }
     // Bind the state account to its canonical PDA address.

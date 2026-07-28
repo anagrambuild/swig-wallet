@@ -151,6 +151,7 @@ pub fn toggle_sub_account_v2(
     let state_data = unsafe { ctx.accounts.sub_account_state.borrow_mut_data_unchecked() };
     let state = unsafe { SubAccountV2::load_mut_unchecked(state_data)? };
     state.check_discriminator()?;
+    state.is_enabled()?;
     if state.swig_id != swig_id {
         return Err(SwigError::InvalidSwigSubAccountV2SwigIdMismatch.into());
     }
@@ -167,6 +168,6 @@ pub fn toggle_sub_account_v2(
         SwigError::InvalidSeedSubAccountV2,
     )?;
 
-    state.enabled = toggle.args.enabled == 1;
+    state.set_enabled(toggle.args.enabled == 1);
     Ok(())
 }

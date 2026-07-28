@@ -9,7 +9,6 @@ use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
     memory::sol_memcmp,
-    msg,
     program_error::ProgramError,
     sysvars::{clock::Clock, Sysvar},
     ProgramResult,
@@ -17,7 +16,7 @@ use pinocchio::{
 use swig_assertions::*;
 use swig_state::{
     action::Permission,
-    swig::{sub_account_v2_asset_signer, swig_wallet_address_seeds, Swig},
+    swig::{sub_account_v2_asset_signer, swig_wallet_address_seeds_with_bump, Swig},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
@@ -124,11 +123,12 @@ pub fn withdraw_from_sub_account_v2(
         let swig_id = swig.id;
 
         // Validate the destination is the canonical swig wallet address PDA.
-        let wallet_seeds = swig_wallet_address_seeds(ctx.accounts.swig.key().as_ref());
-        let (expected_wallet_address, _bump) =
-            pinocchio::pubkey::find_program_address(&wallet_seeds, &crate::ID);
+        let wallet_bump = [swig.wallet_bump];
+        let wallet_seeds =
+            swig_wallet_address_seeds_with_bump(ctx.accounts.swig.key().as_ref(), &wallet_bump);
+        let expected_wallet_address =
+            pinocchio::pubkey::create_program_address(&wallet_seeds, &crate::ID)?;
         if expected_wallet_address != *ctx.accounts.swig_wallet_address.key() {
-            msg!("Invalid swig wallet address PDA for v2 sub account");
             return Err(SwigError::InvalidSwigSubAccountV2SwigIdMismatch.into());
         }
 
