@@ -458,11 +458,11 @@ pub fn sign_v2(
                                     .unwrap_or([0; 8])
                             });
 
-                            let stake_spent = if current < *balance {
-                                *balance - current
-                            } else {
-                                0
-                            };
+                            // Absolute difference: StakeLimit is documented to
+                            // apply to staking and unstaking alike, and its
+                            // `run` takes |new - old|. Counting only decreases
+                            // let a bounded role delegate without limit.
+                            let stake_spent = current.abs_diff(*balance);
 
                             *balance = current;
                             stake_spent
@@ -737,7 +737,8 @@ pub fn sign_v2(
 
                 if account_info.is_writable() {
                     let data = unsafe { &account_info.borrow_data_unchecked() };
-                    let exclude_ranges = [STAKE_STATE_EXCLUDE_RANGE, STAKE_DELEGATION_EXCLUDE_RANGE];
+                    let exclude_ranges =
+                        [STAKE_STATE_EXCLUDE_RANGE, STAKE_DELEGATION_EXCLUDE_RANGE];
                     let current_hash = hash_except(&data, account_info.owner(), &exclude_ranges);
                     let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
                     if *snapshot_hash != current_hash {

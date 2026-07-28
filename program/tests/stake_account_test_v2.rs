@@ -24,9 +24,9 @@ use solana_sdk::{
 };
 use solana_stake_interface::{
     instruction::{
-        deactivate_stake, delegate_stake, initialize as stake_initialize, withdraw,
+        authorize, deactivate_stake, delegate_stake, initialize as stake_initialize, withdraw,
     },
-    state::{Authorized, Lockup},
+    state::{Authorized, Lockup, StakeAuthorize},
 };
 use swig_interface::{AuthorityConfig, ClientAction, SignV2Instruction};
 use swig_state::{
@@ -304,6 +304,10 @@ fn wait_for_slots(context: &TestContext, slots: u64) {
 /// raises when exceeded.
 const SWIG_LIMIT_EXCEEDED_ERROR: &str = "0xbc3";
 
+/// Swig's `AccountDataModifiedUnexpectedly` (43), raised when a CPI changes a
+/// protected region of a classified account.
+const SWIG_ACCOUNT_DATA_MODIFIED_ERROR: &str = "0x2b";
+
 /// Stake program `EpochRewardsActive` (16). The local validator runs 64-slot
 /// epochs, so the rewards window is frequently active and briefly rejects stake
 /// operations. Transient — retry rather than fail.
@@ -416,7 +420,9 @@ fn create_initialized_stake_account(
         &[&context.payer],
         context.client.get_latest_blockhash()?,
     );
-    context.client.send_and_confirm_transaction(&initialize_tx)?;
+    context
+        .client
+        .send_and_confirm_transaction(&initialize_tx)?;
     Ok(())
 }
 
@@ -561,9 +567,7 @@ fn test_stake_with_fixed_limit_v2() {
             ClientAction::Program(Program {
                 program_id: STAKE_PROGRAM_ID.to_bytes(),
             }),
-            ClientAction::StakeLimit(StakeLimit {
-                amount: 50_000_000,
-            }),
+            ClientAction::StakeLimit(StakeLimit { amount: 50_000_000 }),
         ],
         id,
     )
@@ -776,12 +780,6 @@ fn test_stake_with_recurring_limit_v2() {
 }
 
 /// Successive withdrawals accumulate against a single `StakeLimit`.
-///
-/// NOTE: this replaces a test formerly named
-/// `test_both_stake_and_unstake_affect_limit_v2`. Delegation does NOT currently
-/// count against `StakeLimit`: spend is recorded only when a stake account's
-/// lamports or delegated amount *decrease*, and delegating changes neither. The
-/// old name asserted behavior the implementation has never had.
 #[test]
 fn test_cumulative_stake_withdrawals_accumulate_against_limit_v2() {
     let context = TestContext::new();
@@ -799,9 +797,7 @@ fn test_cumulative_stake_withdrawals_accumulate_against_limit_v2() {
             ClientAction::Program(Program {
                 program_id: STAKE_PROGRAM_ID.to_bytes(),
             }),
-            ClientAction::StakeLimit(StakeLimit {
-                amount: 50_000_000,
-            }),
+            ClientAction::StakeLimit(StakeLimit { amount: 50_000_000 }),
         ],
         id,
     )
@@ -887,6 +883,8 @@ fn test_stake_limit_enforced_for_delegated_and_deactivated_v2() {
         },
     };
 
+    // The limit must cover the delegation itself: delegating N lamports
+    // consumes N of the limit, same as unstaking N.
     let (swig_account, swig_wallet_address) = setup_bounded_role_wallet(
         &context,
         &root_authority,
@@ -896,7 +894,7 @@ fn test_stake_limit_enforced_for_delegated_and_deactivated_v2() {
                 program_id: STAKE_PROGRAM_ID.to_bytes(),
             }),
             ClientAction::StakeLimit(StakeLimit {
-                amount: 10_000_000,
+                amount: 3_100_000_000,
             }),
         ],
         id,
@@ -909,11 +907,7 @@ fn test_stake_limit_enforced_for_delegated_and_deactivated_v2() {
         .expect("Failed to create stake account");
 
     // Delegate: moves the account into the `Stake` state.
-    let delegate_ix = delegate_stake(
-        &stake_account.pubkey(),
-        &swig_wallet_address,
-        &vote_account,
-    );
+    let delegate_ix = delegate_stake(&stake_account.pubkey(), &swig_wallet_address, &vote_account);
     let delegate_result = retry_while_epoch_rewards_active(|| {
         sign_with_swig_v2_role(
             &context,
@@ -968,9 +962,13 @@ fn test_stake_limit_enforced_for_delegated_and_deactivated_v2() {
         "within-limit withdrawal from a deactivated stake account should succeed, got: {:?}",
         control_result.err()
     );
-    assert_eq!(control_delta, 5_000_000, "control withdrawal delta mismatch");
+    assert_eq!(
+        control_delta, 5_000_000,
+        "control withdrawal delta mismatch"
+    );
 
-    // Over-limit withdrawal from the same account must still be capped.
+    // ~95_000_000 of the limit remains after the delegation and the control
+    // withdrawal, so this must be refused.
     let (result, delta) = withdraw_through_swig(
         &context,
         &swig_account,
@@ -978,7 +976,7 @@ fn test_stake_limit_enforced_for_delegated_and_deactivated_v2() {
         &bounded_authority,
         &stake_account.pubkey(),
         &destination.pubkey(),
-        60_000_000,
+        200_000_000,
     );
     let err_text = format!("{:?}", result.as_ref().err());
     assert!(
@@ -1041,9 +1039,7 @@ fn test_stake_withdraw_above_limit_via_wallet_pda_is_rejected_v2() {
             ClientAction::Program(Program {
                 program_id: STAKE_PROGRAM_ID.to_bytes(),
             }),
-            ClientAction::StakeLimit(StakeLimit {
-                amount: 10_000_000,
-            }),
+            ClientAction::StakeLimit(StakeLimit { amount: 10_000_000 }),
         ],
     )
     .expect("Failed to add bounded second authority");
@@ -1141,7 +1137,10 @@ fn test_stake_withdraw_above_limit_via_wallet_pda_is_rejected_v2() {
         None,
     );
 
-    let dest_before = context.client.get_balance(&destination.pubkey()).unwrap_or(0);
+    let dest_before = context
+        .client
+        .get_balance(&destination.pubkey())
+        .unwrap_or(0);
     let result = sign_with_swig_v2_role(
         &context,
         &swig_account,
@@ -1150,7 +1149,10 @@ fn test_stake_withdraw_above_limit_via_wallet_pda_is_rejected_v2() {
         1, // role_id 1: the bounded second authority
         withdraw_ix,
     );
-    let dest_after = context.client.get_balance(&destination.pubkey()).unwrap_or(0);
+    let dest_after = context
+        .client
+        .get_balance(&destination.pubkey())
+        .unwrap_or(0);
     let delta = dest_after.saturating_sub(dest_before);
 
     println!("Over-limit withdraw result: {:?}", result);
@@ -1168,4 +1170,316 @@ fn test_stake_withdraw_above_limit_via_wallet_pda_is_rejected_v2() {
         withdraw_amount,
         delta
     );
+}
+
+/// A delegation larger than the remaining `StakeLimit` is rejected.
+///
+/// `StakeLimit` is documented to apply to staking and unstaking alike, so a
+/// bounded role must not be able to lock up the wallet's SOL by delegating
+/// past its cap.
+#[test]
+fn test_stake_delegation_above_limit_is_rejected_v2() {
+    let context = TestContext::new();
+    let stake_account = Keypair::new();
+    let root_authority = Keypair::new();
+    let bounded_authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+
+    let vote_account = local_vote_account(&context).expect("local vote account required");
+
+    let (swig_account, swig_wallet_address) = setup_bounded_role_wallet(
+        &context,
+        &root_authority,
+        &bounded_authority,
+        vec![
+            ClientAction::Program(Program {
+                program_id: STAKE_PROGRAM_ID.to_bytes(),
+            }),
+            ClientAction::StakeLimit(StakeLimit { amount: 10_000_000 }),
+        ],
+        id,
+    )
+    .expect("Failed to set up bounded role wallet");
+
+    // 3 SOL clears the minimum delegation and dwarfs the 10_000_000 cap.
+    create_initialized_stake_account(
+        &context,
+        &stake_account,
+        &swig_wallet_address,
+        3_000_000_000,
+    )
+    .expect("Failed to create stake account");
+
+    let delegate_ix = delegate_stake(&stake_account.pubkey(), &swig_wallet_address, &vote_account);
+    let result = retry_while_epoch_rewards_active(|| {
+        sign_with_swig_v2_role(
+            &context,
+            &swig_account,
+            &swig_wallet_address,
+            &bounded_authority,
+            1,
+            delegate_ix.clone(),
+        )
+    });
+
+    let err_text = format!("{:?}", result.as_ref().err());
+    assert!(
+        result.is_err(),
+        "delegating 3 SOL under a 10_000_000 StakeLimit must be rejected"
+    );
+    assert!(
+        err_text.contains(SWIG_LIMIT_EXCEEDED_ERROR),
+        "rejection must come from the StakeLimit ({}), not an unrelated stake error: {}",
+        SWIG_LIMIT_EXCEEDED_ERROR,
+        err_text
+    );
+}
+
+/// Staking and unstaking both draw down the same `StakeLimit`.
+///
+/// Delegating N consumes N of the cap, and a later withdrawal consumes more, so
+/// the two together can exhaust a limit that either alone would fit within.
+#[test]
+fn test_both_stake_and_unstake_affect_limit_v2() {
+    let context = TestContext::new();
+    let stake_account = Keypair::new();
+    let destination = Keypair::new();
+    let root_authority = Keypair::new();
+    let bounded_authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+
+    let vote_account = local_vote_account(&context).expect("local vote account required");
+
+    // Covers the 3 SOL delegation plus 50_000_000 of withdrawals.
+    let (swig_account, swig_wallet_address) = setup_bounded_role_wallet(
+        &context,
+        &root_authority,
+        &bounded_authority,
+        vec![
+            ClientAction::Program(Program {
+                program_id: STAKE_PROGRAM_ID.to_bytes(),
+            }),
+            ClientAction::StakeLimit(StakeLimit {
+                amount: 3_050_000_000,
+            }),
+        ],
+        id,
+    )
+    .expect("Failed to set up bounded role wallet");
+
+    create_initialized_stake_account(
+        &context,
+        &stake_account,
+        &swig_wallet_address,
+        3_000_000_000,
+    )
+    .expect("Failed to create stake account");
+
+    // Staking draws down the limit: 3_000_000_000 consumed, 50_000_000 left.
+    let delegate_ix = delegate_stake(&stake_account.pubkey(), &swig_wallet_address, &vote_account);
+    let delegate_result = retry_while_epoch_rewards_active(|| {
+        sign_with_swig_v2_role(
+            &context,
+            &swig_account,
+            &swig_wallet_address,
+            &bounded_authority,
+            1,
+            delegate_ix.clone(),
+        )
+    });
+    assert!(
+        delegate_result.is_ok(),
+        "delegation within the limit should succeed, got: {:?}",
+        delegate_result.err()
+    );
+
+    let deactivate_ix = deactivate_stake(&stake_account.pubkey(), &swig_wallet_address);
+    let deactivate_result = retry_while_epoch_rewards_active(|| {
+        sign_with_swig_v2_role(
+            &context,
+            &swig_account,
+            &swig_wallet_address,
+            &bounded_authority,
+            1,
+            deactivate_ix.clone(),
+        )
+    });
+    assert!(
+        deactivate_result.is_ok(),
+        "deactivation should succeed, got: {:?}",
+        deactivate_result.err()
+    );
+
+    wait_for_epoch_change(&context);
+
+    // Unstaking draws down the same limit: 30_000_000 of the 50_000_000 left.
+    let (first_result, first_delta) = withdraw_through_swig(
+        &context,
+        &swig_account,
+        &swig_wallet_address,
+        &bounded_authority,
+        &stake_account.pubkey(),
+        &destination.pubkey(),
+        30_000_000,
+    );
+    assert!(
+        first_result.is_ok(),
+        "withdrawal within the remaining limit should succeed, got: {:?}",
+        first_result.err()
+    );
+    assert_eq!(first_delta, 30_000_000, "first withdrawal delta mismatch");
+
+    // Only ~20_000_000 remains, so this exceeds the combined budget.
+    let (second_result, second_delta) = withdraw_through_swig(
+        &context,
+        &swig_account,
+        &swig_wallet_address,
+        &bounded_authority,
+        &stake_account.pubkey(),
+        &destination.pubkey(),
+        30_000_000,
+    );
+    let err_text = format!("{:?}", second_result.as_ref().err());
+    assert!(
+        second_result.is_err(),
+        "stake and unstake must share one budget; the combination should exceed it"
+    );
+    assert!(
+        err_text.contains(SWIG_LIMIT_EXCEEDED_ERROR),
+        "rejection must come from the StakeLimit ({}): {}",
+        SWIG_LIMIT_EXCEEDED_ERROR,
+        err_text
+    );
+    assert_eq!(second_delta, 0, "rejected withdrawal must move no lamports");
+}
+
+/// Swig's authority metadata (`12..44` staker, `44..76` withdrawer) must remain
+/// covered by the post-CPI integrity hash.
+///
+/// A bounded `Program(Stake)` role can submit a perfectly valid `Authorize`
+/// instruction — the Stake Program will happily reassign the staker or
+/// withdrawer, because the wallet PDA is the current authority and did sign.
+/// Nothing in the stake program stops it. SignV2 is the only thing standing
+/// between a delegated role and permanent takeover of the stake account, and it
+/// must detect the metadata change and roll the whole transaction back.
+///
+/// This is the test that pins the exclusion-range decision: the mutable
+/// delegation region (`0..4`, `124..200`) is excluded from the hash, but the
+/// Meta at `4..124` is not. If someone later widens the exclusion to silence a
+/// delegation failure, this test is what catches the regression.
+#[test]
+fn test_stake_authorize_change_is_rejected_and_rolled_back_v2() {
+    let context = TestContext::new();
+    let root_authority = Keypair::new();
+    let bounded_authority = Keypair::new();
+
+    // Reads the on-chain authorized staker (12..44) and withdrawer (44..76).
+    let read_authorities = |stake: &SolanaPubkey| -> (SolanaPubkey, SolanaPubkey) {
+        let data = context
+            .client
+            .get_account_data(stake)
+            .expect("failed to fetch stake account");
+        let staker = SolanaPubkey::try_from(&data[12..44]).expect("bad staker bytes");
+        let withdrawer = SolanaPubkey::try_from(&data[44..76]).expect("bad withdrawer bytes");
+        (staker, withdrawer)
+    };
+
+    for (label, authorize_kind) in [
+        ("staker (12..44)", StakeAuthorize::Staker),
+        ("withdrawer (44..76)", StakeAuthorize::Withdrawer),
+    ] {
+        let stake_account = Keypair::new();
+        let attacker = Keypair::new();
+        let id = rand::random::<[u8; 32]>();
+
+        let (swig_account, swig_wallet_address) = setup_bounded_role_wallet(
+            &context,
+            &root_authority,
+            &bounded_authority,
+            vec![
+                ClientAction::Program(Program {
+                    program_id: STAKE_PROGRAM_ID.to_bytes(),
+                }),
+                ClientAction::StakeLimit(StakeLimit { amount: 10_000_000 }),
+            ],
+            id,
+        )
+        .expect("Failed to set up bounded role wallet");
+
+        create_initialized_stake_account(
+            &context,
+            &stake_account,
+            &swig_wallet_address,
+            100_000_000,
+        )
+        .expect("Failed to create stake account");
+
+        let (staker_before, withdrawer_before) = read_authorities(&stake_account.pubkey());
+        assert_eq!(
+            staker_before, swig_wallet_address,
+            "precondition: staker should start as the wallet PDA"
+        );
+        assert_eq!(
+            withdrawer_before, swig_wallet_address,
+            "precondition: withdrawer should start as the wallet PDA"
+        );
+
+        // A valid Authorize the Stake Program itself would accept: the wallet
+        // PDA is the current authority and signs via SignV2.
+        let authorize_ix = authorize(
+            &stake_account.pubkey(),
+            &swig_wallet_address,
+            &attacker.pubkey(),
+            authorize_kind,
+            None,
+        );
+        let result = retry_while_epoch_rewards_active(|| {
+            sign_with_swig_v2_role(
+                &context,
+                &swig_account,
+                &swig_wallet_address,
+                &bounded_authority,
+                1,
+                authorize_ix.clone(),
+            )
+        });
+
+        let err_text = format!("{:?}", result.as_ref().err());
+        assert!(
+            result.is_err(),
+            "reassigning the {} via a bounded Program(Stake) role must be rejected",
+            label
+        );
+        assert!(
+            err_text.contains(SWIG_ACCOUNT_DATA_MODIFIED_ERROR),
+            "rejection must be AccountDataModifiedUnexpectedly ({}) for {}, got: {}",
+            SWIG_ACCOUNT_DATA_MODIFIED_ERROR,
+            label,
+            err_text
+        );
+
+        // The transaction rolled back: authority metadata is untouched and the
+        // attacker holds nothing.
+        let (staker_after, withdrawer_after) = read_authorities(&stake_account.pubkey());
+        assert_eq!(
+            staker_after, swig_wallet_address,
+            "staker must remain the Swig wallet PDA after the rejected {} change",
+            label
+        );
+        assert_eq!(
+            withdrawer_after, swig_wallet_address,
+            "withdrawer must remain the Swig wallet PDA after the rejected {} change",
+            label
+        );
+        assert_ne!(
+            withdrawer_after,
+            attacker.pubkey(),
+            "attacker must not hold the withdraw authority"
+        );
+        assert_ne!(
+            staker_after,
+            attacker.pubkey(),
+            "attacker must not hold the stake authority"
+        );
+    }
 }
