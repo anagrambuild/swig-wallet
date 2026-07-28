@@ -146,6 +146,7 @@ impl IntoBytes for SubAccountSignV2Args {
 pub struct SubAccountSignV2<'a> {
     pub args: &'a SubAccountSignV2Args,
     authority_payload: &'a [u8],
+    data_payload: &'a [u8],
     instruction_payload: &'a [u8],
 }
 
@@ -157,7 +158,10 @@ impl<'a> SubAccountSignV2<'a> {
         let (inst, rest) = unsafe { data.split_at_unchecked(SubAccountSignV2Args::LEN) };
         let args = unsafe { SubAccountSignV2Args::load_unchecked(inst)? };
         let instruction_payload_len = args.instruction_payload_len as usize;
-        if instruction_payload_len > rest.len() {
+        let data_payload_len = SubAccountSignV2Args::LEN
+            .checked_add(instruction_payload_len)
+            .ok_or(SwigError::InvalidSwigSignInstructionDataTooShort)?;
+        if instruction_payload_len > rest.len() || data_payload_len > data.len() {
             return Err(SwigError::InvalidSwigSignInstructionDataTooShort.into());
         }
         let (instruction_payload, authority_payload) =
@@ -165,6 +169,7 @@ impl<'a> SubAccountSignV2<'a> {
         Ok(Self {
             args,
             authority_payload,
+            data_payload: &data[..data_payload_len],
             instruction_payload,
         })
     }
@@ -208,14 +213,14 @@ pub fn sub_account_sign_v2(
             role.authority.authenticate_session(
                 all_accounts,
                 sign.authority_payload,
-                sign.instruction_payload,
+                sign.data_payload,
                 clock.slot,
             )?;
         } else {
             role.authority.authenticate(
                 all_accounts,
                 sign.authority_payload,
-                sign.instruction_payload,
+                sign.data_payload,
                 clock.slot,
             )?;
         }

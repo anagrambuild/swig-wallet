@@ -150,11 +150,6 @@ pub fn close_swig_v1(
     if !has_all && !has_manage && !has_close {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
-    // There is no V2 sub-account close lifecycle yet. Closing the parent would
-    // remove the authorization root needed to access its state and asset PDAs.
-    if swig.sub_account_counter != 0 {
-        return Err(SwigError::SwigHasSubAccountV2.into());
-    }
     if let Some(claimer) = configured_rent_claimer {
         if ctx.accounts.destination.key().as_ref() != claimer.as_ref() {
             return Err(SwigError::InvalidRentClaimerDestination.into());

@@ -715,7 +715,7 @@
         },
         {
           "name": "payer",
-          "isMut": false,
+          "isMut": true,
           "isSigner": true,
           "docs": [
             "the payer"

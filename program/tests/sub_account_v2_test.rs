@@ -391,7 +391,7 @@ fn test_toggle_rejects_invalid_enabled_byte() {
 }
 
 #[test]
-fn test_close_swig_rejects_existing_sub_account_v2() {
+fn test_close_swig_allows_existing_sub_account_v2() {
     let mut context = setup_test_context().unwrap();
     let (swig_key, root, creator, id) = setup_v2(&mut context).unwrap();
     create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
@@ -400,6 +400,7 @@ fn test_close_swig_rejects_existing_sub_account_v2() {
         &program_id(),
     );
     let destination = Keypair::new();
+    context.svm.airdrop(&destination.pubkey(), 0).unwrap();
     let close = CloseSwigV1Instruction::new_with_ed25519_authority(
         swig_key,
         swig_wallet_address,
@@ -409,11 +410,11 @@ fn test_close_swig_rejects_existing_sub_account_v2() {
     )
     .unwrap();
 
-    assert!(send(&mut context, &root, close).is_err());
+    send(&mut context, &root, close).unwrap();
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     assert_eq!(
         swig_account.data[0],
-        swig_state::Discriminator::SwigConfigAccount as u8
+        swig_state::Discriminator::ClosedSwigAccount as u8
     );
 }
 

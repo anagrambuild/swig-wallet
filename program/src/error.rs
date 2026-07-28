@@ -164,8 +164,6 @@ pub enum SwigError {
     InvalidSwigSubAccountV2Disabled,
     /// Invalid seed used for V2 sub-account derivation
     InvalidSeedSubAccountV2,
-    /// A Swig with V2 sub-accounts cannot be closed
-    SwigHasSubAccountV2,
 }
 
 /// Implements conversion from SwigError to ProgramError.

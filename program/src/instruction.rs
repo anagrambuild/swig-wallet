@@ -271,10 +271,10 @@ pub enum SwigInstruction {
     ///
     /// Required accounts:
     /// 1. `[writable]` Swig wallet account
-    /// 2. `[signer]` Payer account
+    /// 2. `[writable, signer]` Payer account
     /// 3. `[writable]` V2 sub-account state account
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
-    #[account(1, signer, name="payer", desc="the payer")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
     #[account(2, writable, name="sub_account_state", desc="the v2 sub account state account to toggle")]
     ToggleSubAccountV2 = 19,
 

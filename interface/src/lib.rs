@@ -4078,7 +4078,7 @@ impl ToggleSubAccountV2Instruction {
     {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
-            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(payer, true),
             AccountMeta::new(sub_account_state, false),
         ];
         let args = ToggleSubAccountV2Args::new(auth_role_id, subacc_id, enabled);
@@ -4117,7 +4117,7 @@ impl ToggleSubAccountV2Instruction {
     {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
-            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(payer, true),
             AccountMeta::new(sub_account_state, false),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
@@ -4200,9 +4200,10 @@ impl SubAccountSignV2Instruction {
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        let data_payload = [args_bytes, &ix_bytes].concat();
         let account_payload_bytes = secp_account_payload(&accounts)?;
         let authority_payload = secp256k1_v2_authority_payload(
-            &ix_bytes,
+            &data_payload,
             &account_payload_bytes,
             current_slot,
             counter,
@@ -4245,12 +4246,11 @@ impl SubAccountSignV2Instruction {
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
         // Instructions sysvar is the last base account (index 4); CPI accounts
-        // are appended after it by the compaction step. The signed data is the
-        // ix bytes; the instruction data is args ++ ix bytes ++ authority payload.
+        // are appended after it by the compaction step.
         let data_prefix = [args_bytes, &ix_bytes].concat();
         secp256r1_v2_instructions(
             &accounts,
-            &ix_bytes,
+            &data_prefix,
             &data_prefix,
             current_slot,
             counter,
@@ -4532,8 +4532,8 @@ impl WithdrawFromSubAccountV2Instruction {
 
 /// Builds the Secp256k1 authority payload (`slot ++ counter ++ signature`) for
 /// a V2 instruction. `counter` must be the authority's next odometer value
-/// (on-chain odometer + 1); `signed_data` is what gets signed (args for
-/// create/toggle/withdraw, ix bytes for sign).
+/// (on-chain odometer + 1); `signed_data` is the instruction data prefix the
+/// program authenticates.
 fn secp256k1_v2_authority_payload<F>(
     signed_data: &[u8],
     account_payload: &[u8],
@@ -4570,8 +4570,7 @@ fn secp_account_payload(accounts: &[AccountMeta]) -> anyhow::Result<Vec<u8>> {
 /// Builds the `[verify_ix, main_ix]` pair for a Secp256r1-authenticated V2
 /// instruction.
 ///
-/// - `signed_data` is the byte string the program authenticates over: the args
-///   for create/toggle/withdraw, or the compact-instruction bytes for sign.
+/// - `signed_data` is the byte string the program authenticates over.
 /// - `data_prefix` is what precedes the authority payload in the instruction
 ///   data: the args, or `args ++ ix_bytes` for sign.
 /// - `sysvar_index` is the position of the instructions sysvar in `accounts`.
@@ -4617,4 +4616,133 @@ where
         data: [data_prefix, &authority_payload].concat(),
     };
     Ok(vec![verify_ix, main_ix])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_inner_instruction() -> Instruction {
+        Instruction {
+            program_id: Pubkey::new_unique(),
+            accounts: Vec::new(),
+            data: vec![1, 2, 3],
+        }
+    }
+
+    #[test]
+    fn sub_account_sign_v2_secp_payloads_bind_role_id() {
+        let swig = Pubkey::new_unique();
+        let state = Pubkey::new_unique();
+        let asset = Pubkey::new_unique();
+
+        let mut k1_role_1 = [0u8; 32];
+        SubAccountSignV2Instruction::new_with_secp256k1_authority(
+            swig,
+            state,
+            asset,
+            |payload| {
+                k1_role_1.copy_from_slice(payload);
+                [0u8; 65]
+            },
+            10,
+            1,
+            1,
+            0,
+            vec![test_inner_instruction()],
+        )
+        .unwrap();
+
+        let mut k1_role_2 = [0u8; 32];
+        SubAccountSignV2Instruction::new_with_secp256k1_authority(
+            swig,
+            state,
+            asset,
+            |payload| {
+                k1_role_2.copy_from_slice(payload);
+                [0u8; 65]
+            },
+            10,
+            1,
+            2,
+            0,
+            vec![test_inner_instruction()],
+        )
+        .unwrap();
+        assert_ne!(k1_role_1, k1_role_2);
+
+        let public_key = [2u8; 33];
+        let mut r1_role_1 = [0u8; 32];
+        SubAccountSignV2Instruction::new_with_secp256r1_authority(
+            swig,
+            state,
+            asset,
+            |payload| {
+                r1_role_1.copy_from_slice(payload);
+                [0u8; 64]
+            },
+            10,
+            1,
+            1,
+            0,
+            vec![test_inner_instruction()],
+            &public_key,
+        )
+        .unwrap();
+
+        let mut r1_role_2 = [0u8; 32];
+        SubAccountSignV2Instruction::new_with_secp256r1_authority(
+            swig,
+            state,
+            asset,
+            |payload| {
+                r1_role_2.copy_from_slice(payload);
+                [0u8; 64]
+            },
+            10,
+            1,
+            2,
+            0,
+            vec![test_inner_instruction()],
+            &public_key,
+        )
+        .unwrap();
+        assert_ne!(r1_role_1, r1_role_2);
+    }
+
+    #[test]
+    fn toggle_sub_account_v2_secp_payer_is_writable() {
+        let swig = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let state = Pubkey::new_unique();
+
+        let k1 = ToggleSubAccountV2Instruction::new_with_secp256k1_authority(
+            swig,
+            payer,
+            |_| [0u8; 65],
+            10,
+            1,
+            state,
+            1,
+            0,
+            false,
+        )
+        .unwrap();
+        assert!(k1.accounts[1].is_writable);
+
+        let r1 = ToggleSubAccountV2Instruction::new_with_secp256r1_authority(
+            swig,
+            payer,
+            |_| [0u8; 64],
+            10,
+            1,
+            state,
+            1,
+            0,
+            false,
+            &[2u8; 33],
+        )
+        .unwrap();
+        assert!(r1[1].accounts[1].is_writable);
+    }
 }
