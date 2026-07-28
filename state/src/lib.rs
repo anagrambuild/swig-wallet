@@ -71,6 +71,10 @@ pub enum AccountClassification {
         state: StakeAccountState,
         /// The staked balance
         balance: u64,
+        /// The account's lamport balance. Tracked separately from `balance`
+        /// because an undelegated stake account can be drained by a withdrawal
+        /// without its delegated stake amount ever changing.
+        lamports: u64,
         /// Amount staked/unstaked during this transaction
         spent: u64,
     },

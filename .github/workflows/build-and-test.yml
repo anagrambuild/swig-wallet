@@ -83,6 +83,50 @@ jobs:
           mkdir -p target/nextest/reports
           cp target/nextest/ci/output.xml target/nextest/reports/rust-sdk-tests.xml
 
+      # Stake tests are gated behind the `stake_tests` feature and talk to a real
+      # validator over RPC, so they need both the feature flag and a running
+      # validator. Without this step they are silently compiled out.
+      - name: Build Solana Program for stake tests
+        run: |
+          cargo build-sbf --arch v1
+
+      - name: Start test validator for stake tests
+        run: |
+          solana-test-validator \
+            --limit-ledger-size 0 \
+            --bind-address 127.0.0.1 \
+            --bpf-program swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB target/deploy/swig.so \
+            --reset \
+            --ticks-per-slot 10 \
+            --slots-per-epoch 64 \
+            --ledger /tmp/stake-test-ledger \
+            > /tmp/stake-validator.log 2>&1 &
+          echo "waiting for validator RPC"
+          for i in $(seq 1 60); do
+            if curl -s -m 3 http://127.0.0.1:8899 -X POST \
+                -H 'content-type: application/json' \
+                -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' | grep -q ok; then
+              echo "validator healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "validator failed to start" >&2
+          tail -50 /tmp/stake-validator.log >&2
+          exit 1
+
+      # Run serially: the tests share one validator, and the delegation test
+      # waits on epoch boundaries.
+      - name: Run Stake Tests with nextest
+        run: |
+          cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --exclude test-program-authority --features=stake_tests --test-threads=1
+          mkdir -p target/nextest/reports
+          cp target/nextest/ci/output.xml target/nextest/reports/stake-tests.xml
+
+      - name: Stop test validator
+        if: always()
+        run: pkill -f "[s]olana-test-validator" || true
+
       - name: Upload Test Results
         uses: actions/upload-artifact@v4
         if: always()
