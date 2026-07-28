@@ -777,7 +777,6 @@ impl<'c> SwigWallet<'c> {
 
         if state_account.owner != swig_interface::program_id()
             || state_account.data.len() != SubAccountV2::LEN
-            || state_account.data[3] > 1
         {
             return Err(SwigError::InvalidSwigData);
         }
@@ -788,6 +787,7 @@ impl<'c> SwigWallet<'c> {
         state
             .check_discriminator()
             .map_err(|_| SwigError::InvalidSwigData)?;
+        state.is_enabled().map_err(|_| SwigError::InvalidSwigData)?;
         if state.bump != state_bump
             || state.asset_bump != asset_bump
             || state.subacc_id != subacc_id

@@ -108,6 +108,30 @@ fn test_v2_lookup_rejects_prefunded_uninitialized_state() {
 }
 
 #[test_log::test]
+fn test_v2_lookup_rejects_invalid_enabled_byte() {
+    let (litesvm, main_authority) = setup_test_environment();
+    let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+    let secondary = Keypair::new();
+    let (subacc_id, _asset) = create_v2_setup(&mut swig_wallet, &secondary);
+    let (state, _) = Pubkey::find_program_address(
+        &sub_account_v2_state_seeds(swig_wallet.get_swig_id(), &subacc_id.to_le_bytes()),
+        &swig_interface::program_id(),
+    );
+
+    let mut state_account = swig_wallet.litesvm().get_account(&state).unwrap();
+    state_account.data[3] = 2;
+    swig_wallet
+        .litesvm()
+        .set_account(state, state_account)
+        .unwrap();
+
+    assert!(matches!(
+        swig_wallet.get_sub_account_v2(subacc_id),
+        Err(SwigError::InvalidSwigData)
+    ));
+}
+
+#[test_log::test]
 fn test_v2_sign_and_withdraw() {
     let (litesvm, main_authority) = setup_test_environment();
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
