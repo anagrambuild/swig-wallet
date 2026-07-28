@@ -14,8 +14,8 @@ pub struct SubAccountV2 {
     pub bump: u8,
     /// Asset PDA bump seed
     pub asset_bump: u8,
-    /// Kill-switch for the whole sub-account
-    pub enabled: bool,
+    /// Kill-switch for the whole sub-account (`0` = disabled, `1` = enabled)
+    pub enabled: u8,
     /// Sub-account identifier, drawn from the Swig header counter
     pub subacc_id: u32,
     /// ID of the parent Swig account
@@ -51,7 +51,7 @@ impl SubAccountV2 {
             discriminator: Discriminator::SwigSubAccountV2 as u8,
             bump,
             asset_bump,
-            enabled: true,
+            enabled: 1,
             subacc_id,
             swig_id,
             sub_account,
@@ -65,6 +65,21 @@ impl SubAccountV2 {
             Discriminator::SwigSubAccountV2 => Ok(()),
             _ => Err(ProgramError::InvalidAccountData),
         }
+    }
+
+    /// Returns whether the sub-account is enabled, rejecting invalid wire
+    /// values instead of interpreting arbitrary non-zero bytes as `true`.
+    pub fn is_enabled(&self) -> Result<bool, ProgramError> {
+        match self.enabled {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(ProgramError::InvalidAccountData),
+        }
+    }
+
+    /// Stores the canonical wire value for the enabled flag.
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = u8::from(enabled);
     }
 }
 
@@ -83,7 +98,8 @@ mod tests {
     fn test_sub_account_v2_roundtrip() {
         let state = SubAccountV2::new(254, 253, 7, [3u8; 32], [4u8; 32]);
         assert_eq!(state.discriminator, Discriminator::SwigSubAccountV2 as u8);
-        assert_eq!(state.enabled, true);
+        assert_eq!(state.enabled, 1);
+        assert!(state.is_enabled().unwrap());
         assert_eq!(state.subacc_id, 7);
 
         let bytes = state.into_bytes().unwrap();
@@ -105,5 +121,27 @@ mod tests {
         assert!(state.check_discriminator().is_err());
         state.discriminator = 9; // not a valid discriminator at all
         assert!(state.check_discriminator().is_err());
+    }
+
+    #[test]
+    fn test_enabled_rejects_invalid_wire_value() {
+        let mut state = SubAccountV2::new(1, 1, 0, [0u8; 32], [0u8; 32]);
+        state.enabled = 2;
+
+        let bytes = state.into_bytes().unwrap();
+        let loaded = unsafe { SubAccountV2::load_unchecked(bytes).unwrap() };
+        assert!(loaded.is_enabled().is_err());
+    }
+
+    #[test]
+    fn test_set_enabled_uses_canonical_wire_values() {
+        let mut state = SubAccountV2::new(1, 1, 0, [0u8; 32], [0u8; 32]);
+        state.set_enabled(false);
+        assert_eq!(state.enabled, 0);
+        assert!(!state.is_enabled().unwrap());
+
+        state.set_enabled(true);
+        assert_eq!(state.enabled, 1);
+        assert!(state.is_enabled().unwrap());
     }
 }
