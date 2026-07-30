@@ -227,7 +227,10 @@ fn test_secp256k1_sub_account_sign_v2() {
         ))],
     );
 
-    context.svm.airdrop(&fixture.asset_pda, 1_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&fixture.asset_pda, 1_000_000_000)
+        .unwrap();
     let recipient = Keypair::new();
     let transfer_amount = 100_000_000;
     let inner = solana_system_interface::instruction::transfer(
@@ -259,7 +262,11 @@ fn test_secp256k1_sub_account_sign_v2() {
 
     send(&mut context, &fixture.payer, vec![ix]).expect("secp256k1 sign v2 should succeed");
     assert_eq!(
-        context.svm.get_account(&recipient.pubkey()).unwrap().lamports,
+        context
+            .svm
+            .get_account(&recipient.pubkey())
+            .unwrap()
+            .lamports,
         transfer_amount
     );
     assert_eq!(
@@ -281,7 +288,10 @@ fn test_secp256r1_sub_account_sign_v2() {
         ))],
     );
 
-    context.svm.airdrop(&fixture.asset_pda, 1_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&fixture.asset_pda, 1_000_000_000)
+        .unwrap();
     let recipient = Keypair::new();
     let transfer_amount = 100_000_000;
     let inner = solana_system_interface::instruction::transfer(
@@ -316,7 +326,11 @@ fn test_secp256r1_sub_account_sign_v2() {
 
     send(&mut context, &fixture.payer, ixs).expect("secp256r1 sign v2 should succeed");
     assert_eq!(
-        context.svm.get_account(&recipient.pubkey()).unwrap().lamports,
+        context
+            .svm
+            .get_account(&recipient.pubkey())
+            .unwrap()
+            .lamports,
         transfer_amount
     );
     assert_eq!(
@@ -341,7 +355,10 @@ fn test_secp256k1_withdraw_sol_from_sub_account_v2() {
         )],
     );
 
-    context.svm.airdrop(&fixture.asset_pda, 1_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&fixture.asset_pda, 1_000_000_000)
+        .unwrap();
     let before = context
         .svm
         .get_account(&fixture.swig_wallet_address)
@@ -396,7 +413,10 @@ fn test_secp256r1_withdraw_sol_from_sub_account_v2() {
         )],
     );
 
-    context.svm.airdrop(&fixture.asset_pda, 1_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&fixture.asset_pda, 1_000_000_000)
+        .unwrap();
     let before = context
         .svm
         .get_account(&fixture.swig_wallet_address)
