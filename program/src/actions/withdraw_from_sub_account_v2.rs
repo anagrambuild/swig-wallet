@@ -200,6 +200,12 @@ pub fn withdraw_from_sub_account_v2(
         // Both Token and Token-2022 use the same 165-byte base account layout.
         // Extensions may follow it, so validate the base before reading it.
         const TOKEN_ACCOUNT_BASE_LEN: usize = 165;
+        // Offset of the `state` field in that layout:
+        // mint(32) + owner(32) + amount(8) + delegate COption<Pubkey>(36).
+        const TOKEN_ACCOUNT_STATE_OFFSET: usize = 108;
+        // `AccountState::Initialized`. `Uninitialized`(0) and `Frozen`(2) are
+        // both rejected.
+        const TOKEN_ACCOUNT_STATE_INITIALIZED: u8 = 1;
         if token_account.data_len() < TOKEN_ACCOUNT_BASE_LEN
             || swig_token_account.data_len() < TOKEN_ACCOUNT_BASE_LEN
         {
@@ -209,7 +215,10 @@ pub fn withdraw_from_sub_account_v2(
         let swig_token_account_data = unsafe { swig_token_account.borrow_data_unchecked() };
 
         // Only initialized, transferable token accounts are accepted.
-        if token_account_data[108] != 1 || swig_token_account_data[108] != 1 {
+        if token_account_data[TOKEN_ACCOUNT_STATE_OFFSET] != TOKEN_ACCOUNT_STATE_INITIALIZED
+            || swig_token_account_data[TOKEN_ACCOUNT_STATE_OFFSET]
+                != TOKEN_ACCOUNT_STATE_INITIALIZED
+        {
             return Err(ProgramError::InvalidAccountData);
         }
         if unsafe {
