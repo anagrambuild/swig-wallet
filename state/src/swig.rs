@@ -99,8 +99,12 @@ pub fn sub_account_signer<'a>(
 }
 
 /// Generates the seeds for a V2 sub-account state account.
+///
+/// `id_le` is the little-endian `subacc_id`. It is typed as a fixed 4-byte
+/// array so a wrong-length seed is a compile error rather than a silently
+/// different PDA.
 #[inline(always)]
-pub fn sub_account_v2_state_seeds<'a>(swig_id: &'a [u8], id_le: &'a [u8]) -> [&'a [u8]; 3] {
+pub fn sub_account_v2_state_seeds<'a>(swig_id: &'a [u8], id_le: &'a [u8; 4]) -> [&'a [u8]; 3] {
     [b"sub-account-v2-state".as_ref(), swig_id, id_le]
 }
 
@@ -108,8 +112,8 @@ pub fn sub_account_v2_state_seeds<'a>(swig_id: &'a [u8], id_le: &'a [u8]) -> [&'
 #[inline(always)]
 pub fn sub_account_v2_state_seeds_with_bump<'a>(
     swig_id: &'a [u8],
-    id_le: &'a [u8],
-    bump: &'a [u8],
+    id_le: &'a [u8; 4],
+    bump: &'a [u8; 1],
 ) -> [&'a [u8]; 4] {
     [b"sub-account-v2-state".as_ref(), swig_id, id_le, bump]
 }
@@ -117,20 +121,23 @@ pub fn sub_account_v2_state_seeds_with_bump<'a>(
 /// Creates a signer seeds array for a V2 sub-account state account.
 pub fn sub_account_v2_state_signer<'a>(
     swig_id: &'a [u8],
-    id_le: &'a [u8],
+    id_le: &'a [u8; 4],
     bump: &'a [u8; 1],
 ) -> [Seed<'a>; 4] {
     [
         b"sub-account-v2-state".as_ref().into(),
         swig_id.into(),
-        id_le.into(),
+        id_le.as_ref().into(),
         bump.as_ref().into(),
     ]
 }
 
 /// Generates the seeds for a V2 sub-account asset account.
+///
+/// `id_le` is the little-endian `subacc_id`, typed as a fixed 4-byte array for
+/// the same reason as [`sub_account_v2_state_seeds`].
 #[inline(always)]
-pub fn sub_account_v2_asset_seeds<'a>(swig_id: &'a [u8], id_le: &'a [u8]) -> [&'a [u8]; 3] {
+pub fn sub_account_v2_asset_seeds<'a>(swig_id: &'a [u8], id_le: &'a [u8; 4]) -> [&'a [u8]; 3] {
     [b"sub-account-v2".as_ref(), swig_id, id_le]
 }
 
@@ -138,8 +145,8 @@ pub fn sub_account_v2_asset_seeds<'a>(swig_id: &'a [u8], id_le: &'a [u8]) -> [&'
 #[inline(always)]
 pub fn sub_account_v2_asset_seeds_with_bump<'a>(
     swig_id: &'a [u8],
-    id_le: &'a [u8],
-    bump: &'a [u8],
+    id_le: &'a [u8; 4],
+    bump: &'a [u8; 1],
 ) -> [&'a [u8]; 4] {
     [b"sub-account-v2".as_ref(), swig_id, id_le, bump]
 }
@@ -147,13 +154,13 @@ pub fn sub_account_v2_asset_seeds_with_bump<'a>(
 /// Creates a signer seeds array for a V2 sub-account asset account.
 pub fn sub_account_v2_asset_signer<'a>(
     swig_id: &'a [u8],
-    id_le: &'a [u8],
+    id_le: &'a [u8; 4],
     bump: &'a [u8; 1],
 ) -> [Seed<'a>; 4] {
     [
         b"sub-account-v2".as_ref().into(),
         swig_id.into(),
-        id_le.into(),
+        id_le.as_ref().into(),
         bump.as_ref().into(),
     ]
 }
