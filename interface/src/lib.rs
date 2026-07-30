@@ -4045,9 +4045,14 @@ impl ToggleSubAccountV2Instruction {
         subacc_id: u32,
         enabled: bool,
     ) -> anyhow::Result<Instruction> {
+        // The payer is writable to match the instruction's declared accounts and
+        // the Secp variants below. Those cannot use `new_readonly`: the signed
+        // account payload is built from these metas client-side but rebuilt from
+        // the runtime `AccountInfo` on-chain, and a fee-paying account is always
+        // writable at runtime, so the two would disagree.
         let accounts = vec![
             AccountMeta::new(swig_account, false),
-            AccountMeta::new_readonly(payer, true),
+            AccountMeta::new(payer, true),
             AccountMeta::new(sub_account_state, false),
             AccountMeta::new_readonly(authority, true),
         ];
