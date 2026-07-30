@@ -152,8 +152,6 @@ pub enum SwigError {
     AuthorityCannotCreateSubAccountV2,
     /// Authority lacks a scoped V2 sub-account permission for this operation
     PermissionDeniedMissingSubAccountV2Permission,
-    /// V2 sub-account state account has an invalid discriminator
-    InvalidSwigSubAccountV2Discriminator,
     /// V2 sub-account state account owner mismatch
     OwnerMismatchSubAccountV2State,
     /// V2 sub-account Swig ID mismatch
