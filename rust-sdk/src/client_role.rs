@@ -133,8 +133,8 @@ pub trait ClientRole {
     ) -> Result<Vec<Instruction>, SwigError>;
 
     /// Creates a V2 create-sub-account instruction. `sub_account_state` and
-    /// `sub_account` are the (already derived) state and asset PDAs for the next
-    /// sub-account id.
+    /// `sub_account` are the (already derived) state and asset PDAs for the
+    /// next sub-account id.
     ///
     /// Defaults to unsupported; authority types that support V2 override this.
     fn create_sub_account_v2_instruction(
@@ -2056,6 +2056,43 @@ impl ClientRole for Ed25519SessionClientRole {
         ])
     }
 
+    fn withdraw_token_from_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        source_token: Pubkey,
+        destination_token: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        amount: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+        Ok(vec![
+            WithdrawFromSubAccountV2Instruction::new_token_with_ed25519_authority(
+                swig_account,
+                session_key,
+                payer,
+                sub_account_state,
+                sub_account,
+                swig_wallet_address,
+                source_token,
+                destination_token,
+                token_program,
+                role_id,
+                subacc_id,
+                amount,
+            )?,
+        ])
+    }
+
     fn toggle_sub_account_v2_instruction(
         &self,
         swig_account: Pubkey,
@@ -2492,6 +2529,43 @@ impl ClientRole for Secp256k1SessionClientRole {
                 sub_account_state,
                 sub_account,
                 swig_wallet_address,
+                role_id,
+                subacc_id,
+                amount,
+            )?,
+        ])
+    }
+
+    fn withdraw_token_from_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        source_token: Pubkey,
+        destination_token: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        amount: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+        Ok(vec![
+            WithdrawFromSubAccountV2Instruction::new_token_with_ed25519_authority(
+                swig_account,
+                session_key,
+                payer,
+                sub_account_state,
+                sub_account,
+                swig_wallet_address,
+                source_token,
+                destination_token,
+                token_program,
                 role_id,
                 subacc_id,
                 amount,
@@ -2940,6 +3014,43 @@ impl ClientRole for Secp256r1SessionClientRole {
                 sub_account_state,
                 sub_account,
                 swig_wallet_address,
+                role_id,
+                subacc_id,
+                amount,
+            )?,
+        ])
+    }
+
+    fn withdraw_token_from_sub_account_v2_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        source_token: Pubkey,
+        destination_token: Pubkey,
+        token_program: Pubkey,
+        role_id: u32,
+        subacc_id: u32,
+        amount: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let session_key = Pubkey::new_from_array(self.session_authority.session_key);
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_state::swig::swig_wallet_address_seeds(swig_account.as_ref()),
+            &swig_interface::program_id(),
+        );
+        Ok(vec![
+            WithdrawFromSubAccountV2Instruction::new_token_with_ed25519_authority(
+                swig_account,
+                session_key,
+                payer,
+                sub_account_state,
+                sub_account,
+                swig_wallet_address,
+                source_token,
+                destination_token,
+                token_program,
                 role_id,
                 subacc_id,
                 amount,

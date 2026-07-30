@@ -366,8 +366,9 @@ fn test_v2_secp256k1_create_and_token_withdraw() {
 
 #[test_log::test]
 fn test_v2_secp256r1_create_and_token_withdraw() {
-    use crate::tests::common::create_test_secp256r1_keypair;
     use solana_secp256r1_program::sign_message;
+
+    use crate::tests::common::create_test_secp256r1_keypair;
 
     let (litesvm, main_authority) = setup_test_environment();
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
@@ -406,4 +407,184 @@ fn test_v2_secp256r1_create_and_token_withdraw() {
         .unwrap();
     assert_eq!(token_balance(&mut swig_wallet, &source_token), 6_000);
     assert_eq!(token_balance(&mut swig_wallet, &destination_token), 4_000);
+}
+
+// ------------------------------------------------------------ session roles
+
+/// Adds an Ed25519 session authority holding `permissions`, opens a session on
+/// it, and leaves the wallet acting as that session. Returns the role id.
+///
+/// Session roles build their V2 instructions with the Ed25519 builders using
+/// the session key as the authority, so the wallet has to sign as the session
+/// key once the session is live.
+fn start_ed25519_session<'a>(
+    swig_wallet: &mut SwigWallet<'a>,
+    main_payer: &'a Keypair,
+    session_root: &'a Keypair,
+    session_key: &'a Keypair,
+    permissions: Vec<Permission>,
+) -> u32 {
+    let create_authority =
+        CreateEd25519SessionAuthority::new(session_root.pubkey().to_bytes(), [0; 32], 100);
+    swig_wallet
+        .add_authority(
+            AuthorityType::Ed25519Session,
+            create_authority.into_bytes().unwrap(),
+            permissions,
+        )
+        .unwrap();
+
+    let role_id = swig_wallet
+        .get_role_id(&session_root.pubkey().to_bytes())
+        .unwrap();
+
+    // Act as the session role with the root key to open the session.
+    swig_wallet
+        .switch_authority(
+            role_id,
+            Box::new(Ed25519SessionClientRole::new(create_authority)),
+            Some(session_root),
+        )
+        .unwrap();
+    // `create_session` signs with the fee payer alone rather than
+    // fee_payer + authority, so the session root has to be the payer for it.
+    swig_wallet
+        .litesvm()
+        .airdrop(&session_root.pubkey(), 10_000_000_000)
+        .unwrap();
+    let original_payer = main_payer;
+    swig_wallet.switch_payer(session_root).unwrap();
+    swig_wallet
+        .create_session(session_key.pubkey(), 100)
+        .unwrap();
+    swig_wallet.switch_payer(original_payer).unwrap();
+
+    // Re-point the client role at the now-live session key and sign as it.
+    swig_wallet
+        .switch_authority(
+            role_id,
+            Box::new(Ed25519SessionClientRole::new(
+                CreateEd25519SessionAuthority::new(
+                    session_root.pubkey().to_bytes(),
+                    session_key.pubkey().to_bytes(),
+                    100,
+                ),
+            )),
+            Some(session_key),
+        )
+        .unwrap();
+    role_id
+}
+
+#[test_log::test]
+fn test_v2_ed25519_session_create_and_sol_withdraw() {
+    let (litesvm, main_authority) = setup_test_environment();
+    let session_root = Keypair::new();
+    let session_key = Keypair::new();
+    let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+
+    start_ed25519_session(
+        &mut swig_wallet,
+        &main_authority,
+        &session_root,
+        &session_key,
+        vec![Permission::SubAccountV2Create],
+    );
+
+    let (_signature, subacc_id) = swig_wallet.create_sub_account_v2().unwrap();
+    let asset = swig_wallet.get_sub_account_v2(subacc_id).unwrap().unwrap();
+    swig_wallet
+        .litesvm()
+        .airdrop(&asset, 1_000_000_000)
+        .unwrap();
+
+    let wallet_address = swig_wallet.get_swig_wallet_address().unwrap();
+    let before = swig_wallet
+        .litesvm()
+        .get_account(&wallet_address)
+        .unwrap()
+        .lamports;
+    swig_wallet
+        .withdraw_from_sub_account_v2(subacc_id, 250_000_000)
+        .unwrap();
+    assert_eq!(
+        swig_wallet
+            .litesvm()
+            .get_account(&wallet_address)
+            .unwrap()
+            .lamports,
+        before + 250_000_000
+    );
+}
+
+/// Regression for the session roles missing a token-withdraw impl: they used to
+/// fall through to the trait default and return "unsupported".
+#[test_log::test]
+fn test_v2_ed25519_session_token_withdraw() {
+    let (litesvm, main_authority) = setup_test_environment();
+    let session_root = Keypair::new();
+    let session_key = Keypair::new();
+    let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+
+    start_ed25519_session(
+        &mut swig_wallet,
+        &main_authority,
+        &session_root,
+        &session_key,
+        vec![Permission::SubAccountV2Create],
+    );
+
+    let (_signature, subacc_id) = swig_wallet.create_sub_account_v2().unwrap();
+    let asset = swig_wallet.get_sub_account_v2(subacc_id).unwrap().unwrap();
+    let (source_token, destination_token) =
+        setup_v2_tokens(&mut swig_wallet, &main_authority, &asset, 10_000);
+
+    swig_wallet
+        .withdraw_token_from_sub_account_v2(
+            subacc_id,
+            source_token,
+            destination_token,
+            spl_token::ID,
+            4_000,
+        )
+        .unwrap();
+    assert_eq!(token_balance(&mut swig_wallet, &source_token), 6_000);
+    assert_eq!(token_balance(&mut swig_wallet, &destination_token), 4_000);
+}
+
+#[test_log::test]
+fn test_v2_ed25519_session_toggle_blocks_ops() {
+    let (litesvm, main_authority) = setup_test_environment();
+    let session_root = Keypair::new();
+    let session_key = Keypair::new();
+    let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
+
+    start_ed25519_session(
+        &mut swig_wallet,
+        &main_authority,
+        &session_root,
+        &session_key,
+        vec![Permission::SubAccountV2Create],
+    );
+
+    let (_signature, subacc_id) = swig_wallet.create_sub_account_v2().unwrap();
+    let asset = swig_wallet.get_sub_account_v2(subacc_id).unwrap().unwrap();
+    swig_wallet
+        .litesvm()
+        .airdrop(&asset, 1_000_000_000)
+        .unwrap();
+
+    swig_wallet.toggle_sub_account_v2(subacc_id, false).unwrap();
+    assert!(
+        swig_wallet
+            .withdraw_from_sub_account_v2(subacc_id, 1_000)
+            .is_err(),
+        "a disabled sub-account must reject withdrawals from a session role"
+    );
+
+    // Distinct amount so the retry is not a byte-identical, already-processed tx.
+    swig_wallet.toggle_sub_account_v2(subacc_id, true).unwrap();
+    swig_wallet
+        .withdraw_from_sub_account_v2(subacc_id, 2_000)
+        .unwrap();
 }
