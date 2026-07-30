@@ -5,6 +5,8 @@
 //! actions such as limits on token operations, program interactions, and
 //! stake management.
 
+extern crate alloc;
+
 pub mod all;
 pub mod all_but_manage_authority;
 pub mod close_swig_authority;
@@ -310,6 +312,10 @@ impl ActionLoader {
     /// `actions_data` is walked sequentially by `[header][data]`, matching how
     /// `calculate_num_actions` reads the same buffer.
     pub fn reject_duplicate_v2_scoped(actions_data: &[u8]) -> Result<(), ProgramError> {
+        // Single forward pass collecting one packed `(type, subacc_id)` key per
+        // V2 action, then sort + adjacent-compare. Roles are capped at 255
+        // actions by `calculate_num_actions`, so this vector stays small.
+        let mut keys: alloc::vec::Vec<u64> = alloc::vec::Vec::new();
         let mut cursor = 0;
         while cursor + Action::LEN <= actions_data.len() {
             let header =
@@ -322,28 +328,20 @@ impl ActionLoader {
                 return Err(ProgramError::InvalidInstructionData);
             }
 
-            if let Some(key) =
+            if let Some((ty, id)) =
                 v2_dedup_key(header.permission()?, &actions_data[data_start..data_end])
             {
-                // Compare against every action before this one; a match means the
-                // key appears twice.
-                let mut prior = 0;
-                while prior < cursor {
-                    let ph = unsafe {
-                        Action::load_unchecked(&actions_data[prior..prior + Action::LEN])?
-                    };
-                    let pdata_start = prior + Action::LEN;
-                    let pdata_end = pdata_start + ph.length() as usize;
-                    if v2_dedup_key(ph.permission()?, &actions_data[pdata_start..pdata_end])
-                        == Some(key)
-                    {
-                        return Err(SwigStateError::DuplicateV2SubAccountAction.into());
-                    }
-                    prior = pdata_end;
-                }
+                keys.push(((ty as u64) << 32) | id as u64);
             }
 
             cursor = data_end;
+        }
+
+        keys.sort_unstable();
+        for pair in keys.windows(2) {
+            if pair[0] == pair[1] {
+                return Err(SwigStateError::DuplicateV2SubAccountAction.into());
+            }
         }
         Ok(())
     }

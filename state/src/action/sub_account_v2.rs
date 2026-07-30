@@ -161,6 +161,17 @@ mod tests {
         buf
     }
 
+    /// Builds an `[Action header]` byte buffer for a zero-length marker action.
+    fn marker_action_bytes(permission: super::Permission) -> Vec<u8> {
+        use crate::action::Action;
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(permission as u16).to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes());
+        assert_eq!(buf.len(), Action::LEN);
+        buf
+    }
+
     #[test]
     fn test_reject_duplicate_v2_scoped() {
         use crate::action::{ActionLoader, Permission};
@@ -179,5 +190,65 @@ mod tests {
         let mut diff_type = scoped_action_bytes(Permission::SubAccountV2Sign, 3);
         diff_type.extend(scoped_action_bytes(Permission::SubAccountV2Withdraw, 3));
         assert!(ActionLoader::reject_duplicate_v2_scoped(&diff_type).is_ok());
+    }
+
+    /// The sort-based pass must catch duplicates that are not adjacent in the
+    /// buffer, which is the case a plain adjacent-compare would miss.
+    #[test]
+    fn test_reject_duplicate_v2_scoped_detects_non_adjacent() {
+        use crate::action::{ActionLoader, Permission};
+
+        let mut buf = scoped_action_bytes(Permission::SubAccountV2Sign, 3);
+        buf.extend(scoped_action_bytes(Permission::SubAccountV2Withdraw, 9));
+        buf.extend(scoped_action_bytes(Permission::SubAccountV2Toggle, 1));
+        buf.extend(scoped_action_bytes(Permission::SubAccountV2Sign, 3));
+        assert!(ActionLoader::reject_duplicate_v2_scoped(&buf).is_err());
+    }
+
+    /// `SubAccountV2Create` is a zero-length, non-repeatable marker: a role
+    /// needs at most one.
+    #[test]
+    fn test_reject_duplicate_v2_scoped_rejects_two_create_markers() {
+        use crate::action::{ActionLoader, Permission};
+
+        let mut dup = marker_action_bytes(Permission::SubAccountV2Create);
+        dup.extend(marker_action_bytes(Permission::SubAccountV2Create));
+        assert!(ActionLoader::reject_duplicate_v2_scoped(&dup).is_err());
+
+        // A single marker alongside scoped actions is fine.
+        let mut single = marker_action_bytes(Permission::SubAccountV2Create);
+        single.extend(scoped_action_bytes(Permission::SubAccountV2All, 0));
+        assert!(ActionLoader::reject_duplicate_v2_scoped(&single).is_ok());
+    }
+
+    /// Only the five V2 types are deduplicated; everything else keeps its
+    /// existing behavior, including being repeatable.
+    #[test]
+    fn test_reject_duplicate_v2_scoped_ignores_non_v2_actions() {
+        use crate::action::{ActionLoader, Permission};
+
+        let mut buf = marker_action_bytes(Permission::All);
+        buf.extend(marker_action_bytes(Permission::All));
+        buf.extend(marker_action_bytes(Permission::ManageAuthority));
+        buf.extend(marker_action_bytes(Permission::ManageAuthority));
+        assert!(ActionLoader::reject_duplicate_v2_scoped(&buf).is_ok());
+    }
+
+    /// A role holding the maximum number of distinct scoped actions must be
+    /// accepted — this is the buffer size the single forward pass has to stay
+    /// linear over.
+    #[test]
+    fn test_reject_duplicate_v2_scoped_accepts_max_distinct_scopes() {
+        use crate::action::{ActionLoader, Permission};
+
+        let mut buf = Vec::new();
+        for subacc_id in 0..255u32 {
+            buf.extend(scoped_action_bytes(Permission::SubAccountV2Sign, subacc_id));
+        }
+        assert!(ActionLoader::reject_duplicate_v2_scoped(&buf).is_ok());
+
+        // One repeat anywhere in a full buffer is still caught.
+        buf.extend(scoped_action_bytes(Permission::SubAccountV2Sign, 128));
+        assert!(ActionLoader::reject_duplicate_v2_scoped(&buf).is_err());
     }
 }
