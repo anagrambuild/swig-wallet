@@ -1,3 +1,4 @@
+pub mod agent_role_test;
 pub mod authority_tests;
 pub mod creation_tests;
 pub mod destination_tests;
