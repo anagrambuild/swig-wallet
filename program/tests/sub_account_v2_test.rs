@@ -791,3 +791,148 @@ fn test_create_v2_pre_grant_for_other_id_still_auto_grants() {
         "the unrelated pre-grant must survive"
     );
 }
+
+/// The skip must key on `SubAccountV2All` exactly. A pre-granted *specific*
+/// scope for the same id is a different dedup key, so the umbrella still has to
+/// be auto-granted -- otherwise the creator silently ends up with narrower
+/// access than every other creator gets.
+#[test_log::test]
+fn test_pre_granted_specific_scope_does_not_suppress_auto_grant() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, _root, creator, id) = setup_v2_with_extra_actions(
+        &mut context,
+        vec![ClientAction::SubAccountV2Sign(SubAccountV2Sign::new(0))],
+    )
+    .unwrap();
+
+    assert_eq!(
+        role_all_scope_count(&context, &swig_key, CREATOR_ROLE_ID, 0),
+        0
+    );
+
+    create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+
+    assert_eq!(
+        role_all_scope_count(&context, &swig_key, CREATOR_ROLE_ID, 0),
+        1,
+        "a pre-granted Sign scope must not be mistaken for the All umbrella"
+    );
+}
+
+/// Dedup is per-role, so another role holding `All { id }` must not suppress the
+/// acting role's auto-grant.
+#[test_log::test]
+fn test_pre_grant_on_another_role_does_not_suppress_creator_auto_grant() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, creator, id) = setup_v2(&mut context).unwrap();
+
+    let bystander = Keypair::new();
+    context
+        .svm
+        .airdrop(&bystander.pubkey(), 10_000_000_000)
+        .unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: bystander.pubkey().as_ref(),
+        },
+        vec![ClientAction::SubAccountV2All(SubAccountV2All::new(0))],
+    )
+    .unwrap();
+    let bystander_role = 2;
+    assert_eq!(
+        role_all_scope_count(&context, &swig_key, bystander_role, 0),
+        1
+    );
+
+    create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+
+    assert_eq!(
+        role_all_scope_count(&context, &swig_key, CREATOR_ROLE_ID, 0),
+        1,
+        "creator must still receive its own umbrella"
+    );
+    assert_eq!(
+        role_all_scope_count(&context, &swig_key, bystander_role, 0),
+        1,
+        "the other role's scope is untouched"
+    );
+}
+
+/// After the auto-grant is skipped, the pre-granted scope must actually
+/// authorize the runtime operations -- the skip must not leave the creator
+/// under-privileged.
+#[test_log::test]
+fn test_pre_granted_scope_authorizes_runtime_ops_after_skip() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, _root, creator, id) = setup_v2_with_extra_actions(
+        &mut context,
+        vec![ClientAction::SubAccountV2All(SubAccountV2All::new(0))],
+    )
+    .unwrap();
+
+    let (state_pda, asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+    context.svm.airdrop(&asset_pda, 1_000_000_000).unwrap();
+
+    // sign
+    let recipient = Keypair::new();
+    let inner =
+        solana_system_interface::instruction::transfer(&asset_pda, &recipient.pubkey(), 10_000_000);
+    let sign = SubAccountSignV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        state_pda,
+        asset_pda,
+        creator.pubkey(),
+        CREATOR_ROLE_ID,
+        0,
+        vec![inner],
+    )
+    .unwrap();
+    send(&mut context, &creator, sign).expect("sign must be authorized by the pre-granted scope");
+    assert_eq!(
+        context
+            .svm
+            .get_account(&recipient.pubkey())
+            .unwrap()
+            .lamports,
+        10_000_000
+    );
+
+    // withdraw
+    let (swig_wallet_address, _) = Pubkey::find_program_address(
+        &swig_state::swig::swig_wallet_address_seeds(swig_key.as_ref()),
+        &program_id(),
+    );
+    let withdraw = WithdrawFromSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        creator.pubkey(),
+        creator.pubkey(),
+        state_pda,
+        asset_pda,
+        swig_wallet_address,
+        CREATOR_ROLE_ID,
+        0,
+        5_000_000,
+    )
+    .unwrap();
+    send(&mut context, &creator, withdraw).expect("withdraw must be authorized");
+
+    // toggle
+    let toggle = ToggleSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        creator.pubkey(),
+        creator.pubkey(),
+        state_pda,
+        CREATOR_ROLE_ID,
+        0,
+        false,
+    )
+    .unwrap();
+    send(&mut context, &creator, toggle).expect("toggle must be authorized");
+    let state_acc = context.svm.get_account(&state_pda).unwrap();
+    let state = unsafe { SubAccountV2::load_unchecked(&state_acc.data).unwrap() };
+    assert!(!state.is_enabled().unwrap());
+}

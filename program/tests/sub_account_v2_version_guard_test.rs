@@ -36,6 +36,10 @@ use swig_state::{
 /// private to the crate, so the code is mirrored here.
 const ERR_V2_WITH_SWIG_V1: u32 = 47;
 
+/// `SwigError::InvalidSwigAccountDiscriminator`, which `require_swig_v2` also
+/// uses for an account too short to hold a header.
+const ERR_INVALID_DISCRIMINATOR: u32 = 0;
+
 /// Byte offset of `Swig::wallet_bump`; V1 stored `reserved_lamports: u64` here.
 const WALLET_BUMP_OFFSET: usize = 40;
 
@@ -139,12 +143,9 @@ fn setup_v1_before_any_sub_account(
     (swig_key, id, creator, creator_role)
 }
 
-/// Builds a V2 swig with one sub-account, then rewrites the header's trailing
-/// `u64` so the account presents as V1. Returns everything the runtime
-/// instructions need.
-fn setup_then_downgrade(
+/// Builds a healthy V2 swig with a creator role and sub-account 0, funded.
+fn setup_v2_with_sub_account(
     context: &mut SwigTestContext,
-    reserved_lamports: u64,
 ) -> (Pubkey, [u8; 32], Keypair, u32, Pubkey, Pubkey) {
     let root = Keypair::new();
     let creator = Keypair::new();
@@ -187,14 +188,26 @@ fn setup_then_downgrade(
     send(context, &creator, ix).unwrap();
     context.svm.airdrop(&asset_pda, 1_000_000_000).unwrap();
 
-    // Downgrade: overwrite `wallet_bump ++ _padding ++ sub_account_counter` with
-    // the `reserved_lamports: u64` a V1 account carried at the same offset.
+    (swig_key, id, creator, creator_role, state_pda, asset_pda)
+}
+
+/// As [`setup_v2_with_sub_account`], then rewrites the header's trailing `u64`
+/// so the account presents as V1.
+fn setup_then_downgrade(
+    context: &mut SwigTestContext,
+    reserved_lamports: u64,
+) -> (Pubkey, [u8; 32], Keypair, u32, Pubkey, Pubkey) {
+    let parts = setup_v2_with_sub_account(context);
+    let swig_key = parts.0;
+
+    // Overwrite `wallet_bump ++ _padding ++ sub_account_counter` with the
+    // `reserved_lamports: u64` a V1 account carried at the same offset.
     let mut account = context.svm.get_account(&swig_key).unwrap();
     account.data[WALLET_BUMP_OFFSET..WALLET_BUMP_OFFSET + 8]
         .copy_from_slice(&reserved_lamports.to_le_bytes());
     context.svm.set_account(swig_key, account).unwrap();
 
-    (swig_key, id, creator, creator_role, state_pda, asset_pda)
+    parts
 }
 
 #[test_log::test]
@@ -364,4 +377,163 @@ fn test_v1_swig_with_zero_low_byte_still_rejected() {
     .unwrap();
 
     assert_rejected_as_v1(send(&mut context, &creator, ix), "ToggleSubAccountV2");
+}
+
+/// `is_swig_v2` is a conjunction: non-zero bump **and** zeroed padding. This
+/// pins the second half. A header with the real wallet bump but dirty padding
+/// is not a shape the program writes, and the old `wallet_bump == 0` check
+/// would have waved it straight through.
+#[test_log::test]
+fn test_v2_header_with_dirty_padding_is_rejected() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, _id, creator, creator_role, state_pda, _asset) =
+        setup_then_downgrade(&mut context, V1_RESERVE_NONZERO_LOW_BYTE);
+
+    // Restore the genuine wallet bump, then dirty only the padding.
+    let mut account = context.svm.get_account(&swig_key).unwrap();
+    let (_, wallet_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+    account.data[WALLET_BUMP_OFFSET] = wallet_bump;
+    account.data[WALLET_BUMP_OFFSET + 1] = 0;
+    account.data[WALLET_BUMP_OFFSET + 2] = 1;
+    account.data[WALLET_BUMP_OFFSET + 3] = 0;
+    context.svm.set_account(swig_key, account).unwrap();
+
+    let ix = ToggleSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        creator.pubkey(),
+        creator.pubkey(),
+        state_pda,
+        creator_role,
+        0,
+        false,
+    )
+    .unwrap();
+
+    assert_rejected_as_v1(send(&mut context, &creator, ix), "ToggleSubAccountV2");
+}
+
+/// An account too short to hold a Swig header must be rejected before
+/// `is_swig_v2` reads offset 40..44 -- that read is `unsafe` and assumes the
+/// length was checked. The program does own short accounts.
+#[test_log::test]
+fn test_swig_shorter_than_the_header_is_rejected() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, _id, creator, creator_role, state_pda, _asset) =
+        setup_then_downgrade(&mut context, V1_RESERVE_NONZERO_LOW_BYTE);
+
+    // Keep a valid discriminator so the length guard is what stops us.
+    let mut account = context.svm.get_account(&swig_key).unwrap();
+    account.data.truncate(Swig::LEN - 1);
+    context.svm.set_account(swig_key, account).unwrap();
+
+    let ix = ToggleSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        creator.pubkey(),
+        creator.pubkey(),
+        state_pda,
+        creator_role,
+        0,
+        false,
+    )
+    .unwrap();
+
+    match send(&mut context, &creator, ix) {
+        Ok(()) => panic!("a truncated swig must not be accepted"),
+        Err(TransactionError::InstructionError(_, InstructionError::Custom(code))) => {
+            assert_eq!(
+                code, ERR_INVALID_DISCRIMINATOR,
+                "expected the length guard to reject, got custom error {code}"
+            );
+        },
+        Err(other) => panic!("expected a custom program error, got {other:?}"),
+    }
+}
+
+/// Regression for the window `is_swig_v2` reads.
+///
+/// `sub_account_counter` sits in the four bytes above `_padding` and becomes
+/// non-zero the moment a V2 sub-account exists. An earlier version of the check
+/// read the last eight header bytes as one `u64`, which covered the counter --
+/// so creating a single sub-account flipped a healthy V2 wallet to being read as
+/// V1 and bricked every subsequent V2 instruction. Widening the window again
+/// must fail here.
+#[test_log::test]
+fn test_sub_account_counter_does_not_flip_swig_to_v1() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, id, creator, creator_role, state_pda, asset_pda) =
+        setup_v2_with_sub_account(&mut context);
+
+    // Drive the counter well past zero.
+    for subacc_id in 1..4u32 {
+        let (state, state_bump) = v2_state_pda(&id, subacc_id);
+        let (asset, asset_bump) = v2_asset_pda(&id, subacc_id);
+        let ix = CreateSubAccountV2Instruction::new_with_ed25519_authority(
+            swig_key,
+            creator.pubkey(),
+            creator.pubkey(),
+            state,
+            asset,
+            creator_role,
+            state_bump,
+            asset_bump,
+        )
+        .unwrap();
+        send(&mut context, &creator, ix).unwrap();
+    }
+
+    let counter = {
+        let data = context.svm.get_account(&swig_key).unwrap().data;
+        let swig = unsafe { Swig::load_unchecked(&data[..Swig::LEN]).unwrap() };
+        swig.sub_account_counter
+    };
+    assert_eq!(
+        counter, 4,
+        "counter must be non-zero for this to mean anything"
+    );
+
+    // Every runtime instruction must still see a V2 wallet. The asset PDA is
+    // already funded by the setup.
+    let recipient = Keypair::new();
+    let inner =
+        solana_system_interface::instruction::transfer(&asset_pda, &recipient.pubkey(), 1_000_000);
+    let sign = SubAccountSignV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        state_pda,
+        asset_pda,
+        creator.pubkey(),
+        creator_role,
+        0,
+        vec![inner],
+    )
+    .unwrap();
+    send(&mut context, &creator, sign).expect("sign must work with a non-zero counter");
+
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+    let withdraw = WithdrawFromSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        creator.pubkey(),
+        creator.pubkey(),
+        state_pda,
+        asset_pda,
+        wallet,
+        creator_role,
+        0,
+        1_000,
+    )
+    .unwrap();
+    send(&mut context, &creator, withdraw).expect("withdraw must work with a non-zero counter");
+
+    let toggle = ToggleSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        creator.pubkey(),
+        creator.pubkey(),
+        state_pda,
+        creator_role,
+        0,
+        false,
+    )
+    .unwrap();
+    send(&mut context, &creator, toggle).expect("toggle must work with a non-zero counter");
 }

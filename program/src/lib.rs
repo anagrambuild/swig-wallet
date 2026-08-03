@@ -605,6 +605,63 @@ mod tests {
         assert!(!unsafe { is_swig_v2(&swig_header_bytes(0, 0)) });
     }
 
+    /// Pins the documented limit of the heuristic, so narrowing or widening it
+    /// is a deliberate decision rather than a silent one.
+    ///
+    /// `reserved_lamports % 2^32` in `1..=255` leaves the three padding bytes
+    /// zero and is therefore indistinguishable from a V2 bump. 256 is the
+    /// smallest value that reads as V1. No such account exists in practice —
+    /// a rent reserve is at least ~890k lamports — and a mainnet scan found
+    /// none, but the band is real and worth stating.
+    #[test]
+    fn is_swig_v2_known_limit_below_256_reads_as_v2() {
+        assert!(!unsafe { is_swig_v2(&v1_header_bytes(256)) }, "256 is v1");
+        for reserved_lamports in [1u64, 128, 255] {
+            assert!(
+                unsafe { is_swig_v2(&v1_header_bytes(reserved_lamports)) },
+                "reserved_lamports {reserved_lamports} is the documented blind spot"
+            );
+        }
+    }
+
+    /// The low byte alone is not a version test: it is the low byte of a V1
+    /// `reserved_lamports`, which a rent-carrying balance leaves non-zero. This
+    /// is the bug `require_swig_v2` replaced.
+    #[test]
+    fn require_swig_v2_rejects_v1_that_a_bump_only_check_would_accept() {
+        // A real mainnet reserve; low byte 0x80, so `wallet_bump != 0` passes.
+        let data = v1_header_bytes(1_614_720);
+        assert_ne!(data[WALLET_BUMP_OFFSET], 0);
+        assert!(matches!(
+            require_swig_v2(&data),
+            Err(ProgramError::Custom(code))
+                if code == SwigError::SignV2CannotBeUsedWithSwigV1 as u32
+        ));
+    }
+
+    #[test]
+    fn require_swig_v2_accepts_a_migrated_account_with_sub_accounts() {
+        assert!(require_swig_v2(&swig_header_bytes(253, 0)).is_ok());
+        assert!(require_swig_v2(&swig_header_bytes(253, 7)).is_ok());
+    }
+
+    /// `is_swig_v2` reads offset 40..44 unchecked, so anything shorter than a
+    /// header must be rejected before it runs.
+    #[test]
+    fn require_swig_v2_rejects_data_shorter_than_the_header() {
+        let full = swig_header_bytes(253, 0);
+        for len in [0usize, 1, WALLET_BUMP_OFFSET, Swig::LEN - 1] {
+            assert!(
+                matches!(
+                    require_swig_v2(&full[..len]),
+                    Err(ProgramError::Custom(code))
+                        if code == SwigError::InvalidSwigAccountDiscriminator as u32
+                ),
+                "length {len} must be rejected"
+            );
+        }
+    }
+
     #[test]
     fn validated_duplicate_account_index_requires_prior_account() {
         assert_eq!(validated_duplicate_account_index(0, 1).unwrap(), 0);
