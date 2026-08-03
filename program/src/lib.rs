@@ -145,41 +145,50 @@ unsafe fn is_swig_config_account(account: &AccountInfo) -> bool {
     data.len() >= Swig::LEN && *data.get_unchecked(0) == Discriminator::SwigConfigAccount as u8
 }
 
-/// Determines if a Swig account is v2 format by checking the last 7 bytes.
+/// Byte offset of `Swig::wallet_bump`, the first byte of the window
+/// [`is_swig_v2`] reads.
+const WALLET_BUMP_OFFSET: usize = core::mem::offset_of!(Swig, wallet_bump);
+
+// The window is exactly `wallet_bump ++ _padding`. Any field added after
+// `_padding` must stay outside it: `sub_account_counter` is non-zero for a swig
+// that has created a V2 sub-account, and including it would flip a live V2
+// account back to being read as V1.
+const _: () = {
+    assert!(core::mem::offset_of!(Swig, _padding) == WALLET_BUMP_OFFSET + 1);
+    assert!(core::mem::offset_of!(Swig, sub_account_counter) == WALLET_BUMP_OFFSET + 4);
+};
+
+/// Determines if a Swig account is v2 format from its wallet bump and the three
+/// reserved bytes that follow it.
 ///
 /// # Account Format Differences
 ///
-/// **Swig V2** (last 8 bytes): `[wallet_bump: u8, _padding: [u8; 7]]`
-/// - Example bytes: `[253, 0, 0, 0, 0, 0, 0, 0]` where 253 is the bump seed
-/// - As little-endian u64: `0x0000000000000FD` (the wallet_bump in the lowest
-///   byte)
-/// - After right shift by 8: `0x000000000000000` (removes wallet_bump, leaves
-///   only padding)
-/// - Result: equals 0 ✓ → **V2 account**
+/// **Swig V2** stores `wallet_bump: u8` followed by `_padding: [u8; 3]`. A
+/// migrated account always has a non-zero bump and zeroed padding.
+/// - Example bytes: `[253, 0, 0, 0]` where 253 is the bump seed
+/// - Low byte non-zero, upper three zero ✓ → **V2 account**
 ///
-/// **Swig V1** (last 8 bytes): `u64` value (typically role_counter,
-/// session_expiry, etc.)
-/// - Example values: 1, 2, 100, 256, 1000, etc.
-/// - Example bytes for 256: `[0, 1, 0, 0, 0, 0, 0, 0]` (little-endian)
-/// - As little-endian u64: `0x0000000000000100`
-/// - After right shift by 8: `0x0000000000000001` (non-zero in upper 7 bytes)
-/// - Result: non-zero ✓ → **V1 account**
+/// **Swig V1** stored a `reserved_lamports: u64` starting at the same offset.
+/// - A rent-carrying balance sets at least one of the upper three bytes
+/// - Result: non-zero upper bytes ✓ → **V1 account**
 ///
-/// # Why This Works
+/// # Why the counter is excluded
 ///
-/// The key insight is that v2 accounts have 7 consecutive zero bytes (padding),
-/// while v1 accounts store a u64 value that, when interpreted as bytes, will
-/// almost certainly have at least one non-zero byte in positions other than the
-/// first byte. Even small u64 values like 1, 2, 100 will have zeros in the
-/// first byte but the actual value stored in subsequent bytes.
+/// `sub_account_counter` occupies the four bytes after `_padding` and becomes
+/// non-zero as soon as a V2 sub-account is created. The previous check read the
+/// last eight bytes as a `u64` and required the upper seven to be zero, which
+/// covered the counter — so creating a single sub-account permanently flipped a
+/// V2 account to being read as V1.
 ///
-/// By reading the last 8 bytes as a u64 and right-shifting by 8 bits, we:
-/// 1. Remove the first byte (wallet_bump in v2, or low byte of u64 in v1)
-/// 2. Check if the remaining 7 bytes are all zeros
+/// # Known limits
 ///
-/// This is a zero-copy operation using a single unaligned u64 read, followed by
-/// a single shift and comparison, making it extremely efficient (3 CPU
-/// operations total).
+/// This is a heuristic over bytes V1 used for a different purpose, so it is not
+/// exact. A V1 account misreads as V2 when `reserved_lamports % 2^32` lands in
+/// `1..=255`. The previous check was wrong for `reserved_lamports <= 255`,
+/// including `0`, which is the more likely V1 state; this narrows the common
+/// case at the cost of a wrap-around band around every 2^32 lamports. The only
+/// caller, `close_token_account_v1`, tries the other authority as a fallback,
+/// so a misread costs an extra comparison rather than correctness.
 ///
 /// # Safety
 ///
@@ -190,13 +199,37 @@ unsafe fn is_swig_config_account(account: &AccountInfo) -> bool {
 /// * `data` - The account data slice, must be `Swig::LEN` bytes
 ///
 /// # Returns
-/// * `true` if the account is v2 format (last 7 bytes are zero)
-/// * `false` if the account is v1 format (last 7 bytes contain non-zero values)
+/// * `true` if the account is v2 format (non-zero bump, zeroed padding)
+/// * `false` otherwise
 #[inline(always)]
 pub(crate) unsafe fn is_swig_v2(data: &[u8]) -> bool {
-    let last_8_bytes_ptr = data.as_ptr().add(Swig::LEN - 8) as *const u64;
-    let last_8_bytes = last_8_bytes_ptr.read_unaligned();
-    last_8_bytes >> 8 == 0
+    // `wallet_bump ++ _padding` as one little-endian u32: bump in the low byte,
+    // the three reserved bytes above it. Equivalent to
+    // `wallet_bump != 0 && _padding == [0u8; 3]`, without a fallible load.
+    let window = (data.as_ptr().add(WALLET_BUMP_OFFSET) as *const u32).read_unaligned();
+    window & 0xFF != 0 && window >> 8 == 0
+}
+
+/// Rejects a pre-wallet-address (V1) Swig account.
+///
+/// The V2-only instructions require the migrated generation. Testing
+/// `wallet_bump != 0` on its own is not enough: on a V1 account that byte is the
+/// low byte of `reserved_lamports`, which a rent-carrying balance leaves
+/// non-zero, so such a check accepts nearly every real V1 account. Route the
+/// decision through [`is_swig_v2`] so every caller shares one definition.
+///
+/// The length check is required before the unchecked read in [`is_swig_v2`] —
+/// the program owns accounts smaller than a Swig header.
+#[inline(always)]
+pub(crate) fn require_swig_v2(data: &[u8]) -> ProgramResult {
+    if data.len() < Swig::LEN {
+        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+    }
+    if !unsafe { is_swig_v2(data) } {
+        return Err(SwigError::SignV2CannotBeUsedWithSwigV1.into());
+    }
+
+    Ok(())
 }
 
 /// Core instruction execution function.
@@ -515,6 +548,118 @@ mod tests {
     fn validate_account_capacity_rejects_array_capacity_overflow() {
         assert_invalid_accounts_length(validate_account_capacity(4, 3, 4));
         assert_invalid_accounts_length(validate_account_capacity(4, 4, 3));
+    }
+
+    /// Serializes a Swig header with the given wallet bump and V2 sub-account
+    /// counter.
+    fn swig_header_bytes(wallet_bump: u8, sub_account_counter: u32) -> Vec<u8> {
+        use swig_state::IntoBytes;
+
+        let mut swig = Swig::new([7u8; 32], 254, wallet_bump);
+        swig.sub_account_counter = sub_account_counter;
+        swig.into_bytes().unwrap().to_vec()
+    }
+
+    /// Overlays a V1 `reserved_lamports: u64` over the bump+padding window.
+    fn v1_header_bytes(reserved_lamports: u64) -> Vec<u8> {
+        let mut data = swig_header_bytes(0, 0);
+        data[WALLET_BUMP_OFFSET..WALLET_BUMP_OFFSET + 8]
+            .copy_from_slice(&reserved_lamports.to_le_bytes());
+        data
+    }
+
+    #[test]
+    fn is_swig_v2_accepts_migrated_account() {
+        assert!(unsafe { is_swig_v2(&swig_header_bytes(253, 0)) });
+    }
+
+    /// Regression: `sub_account_counter` reuses former padding, so it must sit
+    /// outside the window `is_swig_v2` reads. Creating a V2 sub-account must
+    /// not flip a migrated account back to being read as V1.
+    #[test]
+    fn is_swig_v2_ignores_sub_account_counter() {
+        for counter in [1u32, 2, 255, 256, 65_536, u32::MAX] {
+            assert!(
+                unsafe { is_swig_v2(&swig_header_bytes(253, counter)) },
+                "counter {counter} must not affect v2 detection"
+            );
+        }
+    }
+
+    /// A rent-carrying V1 `reserved_lamports` sets the upper window bytes.
+    #[test]
+    fn is_swig_v2_rejects_v1_reserved_lamports() {
+        for reserved_lamports in [256u64, 890_880, 1_392_000, 2_039_280, 1u64 << 32, u64::MAX] {
+            assert!(
+                !unsafe { is_swig_v2(&v1_header_bytes(reserved_lamports)) },
+                "reserved_lamports {reserved_lamports} must read as v1"
+            );
+        }
+    }
+
+    /// An unmigrated account with a zero bump is V1. The previous last-8-bytes
+    /// check read this as V2.
+    #[test]
+    fn is_swig_v2_rejects_zero_wallet_bump() {
+        assert!(!unsafe { is_swig_v2(&v1_header_bytes(0)) });
+        assert!(!unsafe { is_swig_v2(&swig_header_bytes(0, 0)) });
+    }
+
+    /// Pins the documented limit of the heuristic, so narrowing or widening it
+    /// is a deliberate decision rather than a silent one.
+    ///
+    /// `reserved_lamports % 2^32` in `1..=255` leaves the three padding bytes
+    /// zero and is therefore indistinguishable from a V2 bump. 256 is the
+    /// smallest value that reads as V1. No such account exists in practice —
+    /// a rent reserve is at least ~890k lamports — and a mainnet scan found
+    /// none, but the band is real and worth stating.
+    #[test]
+    fn is_swig_v2_known_limit_below_256_reads_as_v2() {
+        assert!(!unsafe { is_swig_v2(&v1_header_bytes(256)) }, "256 is v1");
+        for reserved_lamports in [1u64, 128, 255] {
+            assert!(
+                unsafe { is_swig_v2(&v1_header_bytes(reserved_lamports)) },
+                "reserved_lamports {reserved_lamports} is the documented blind spot"
+            );
+        }
+    }
+
+    /// The low byte alone is not a version test: it is the low byte of a V1
+    /// `reserved_lamports`, which a rent-carrying balance leaves non-zero. This
+    /// is the bug `require_swig_v2` replaced.
+    #[test]
+    fn require_swig_v2_rejects_v1_that_a_bump_only_check_would_accept() {
+        // A real mainnet reserve; low byte 0x80, so `wallet_bump != 0` passes.
+        let data = v1_header_bytes(1_614_720);
+        assert_ne!(data[WALLET_BUMP_OFFSET], 0);
+        assert!(matches!(
+            require_swig_v2(&data),
+            Err(ProgramError::Custom(code))
+                if code == SwigError::SignV2CannotBeUsedWithSwigV1 as u32
+        ));
+    }
+
+    #[test]
+    fn require_swig_v2_accepts_a_migrated_account_with_sub_accounts() {
+        assert!(require_swig_v2(&swig_header_bytes(253, 0)).is_ok());
+        assert!(require_swig_v2(&swig_header_bytes(253, 7)).is_ok());
+    }
+
+    /// `is_swig_v2` reads offset 40..44 unchecked, so anything shorter than a
+    /// header must be rejected before it runs.
+    #[test]
+    fn require_swig_v2_rejects_data_shorter_than_the_header() {
+        let full = swig_header_bytes(253, 0);
+        for len in [0usize, 1, WALLET_BUMP_OFFSET, Swig::LEN - 1] {
+            assert!(
+                matches!(
+                    require_swig_v2(&full[..len]),
+                    Err(ProgramError::Custom(code))
+                        if code == SwigError::InvalidSwigAccountDiscriminator as u32
+                ),
+                "length {len} must be rejected"
+            );
+        }
     }
 
     #[test]

@@ -98,6 +98,73 @@ pub fn sub_account_signer<'a>(
     ]
 }
 
+/// Generates the seeds for a V2 sub-account state account.
+///
+/// `id_le` is the little-endian `subacc_id`. It is typed as a fixed 4-byte
+/// array so a wrong-length seed is a compile error rather than a silently
+/// different PDA.
+#[inline(always)]
+pub fn sub_account_v2_state_seeds<'a>(swig_id: &'a [u8], id_le: &'a [u8; 4]) -> [&'a [u8]; 3] {
+    [b"sub-account-v2-state".as_ref(), swig_id, id_le]
+}
+
+/// Generates the seeds for a V2 sub-account state account with bump seed.
+#[inline(always)]
+pub fn sub_account_v2_state_seeds_with_bump<'a>(
+    swig_id: &'a [u8],
+    id_le: &'a [u8; 4],
+    bump: &'a [u8; 1],
+) -> [&'a [u8]; 4] {
+    [b"sub-account-v2-state".as_ref(), swig_id, id_le, bump]
+}
+
+/// Creates a signer seeds array for a V2 sub-account state account.
+pub fn sub_account_v2_state_signer<'a>(
+    swig_id: &'a [u8],
+    id_le: &'a [u8; 4],
+    bump: &'a [u8; 1],
+) -> [Seed<'a>; 4] {
+    [
+        b"sub-account-v2-state".as_ref().into(),
+        swig_id.into(),
+        id_le.as_ref().into(),
+        bump.as_ref().into(),
+    ]
+}
+
+/// Generates the seeds for a V2 sub-account asset account.
+///
+/// `id_le` is the little-endian `subacc_id`, typed as a fixed 4-byte array for
+/// the same reason as [`sub_account_v2_state_seeds`].
+#[inline(always)]
+pub fn sub_account_v2_asset_seeds<'a>(swig_id: &'a [u8], id_le: &'a [u8; 4]) -> [&'a [u8]; 3] {
+    [b"sub-account-v2".as_ref(), swig_id, id_le]
+}
+
+/// Generates the seeds for a V2 sub-account asset account with bump seed.
+#[inline(always)]
+pub fn sub_account_v2_asset_seeds_with_bump<'a>(
+    swig_id: &'a [u8],
+    id_le: &'a [u8; 4],
+    bump: &'a [u8; 1],
+) -> [&'a [u8]; 4] {
+    [b"sub-account-v2".as_ref(), swig_id, id_le, bump]
+}
+
+/// Creates a signer seeds array for a V2 sub-account asset account.
+pub fn sub_account_v2_asset_signer<'a>(
+    swig_id: &'a [u8],
+    id_le: &'a [u8; 4],
+    bump: &'a [u8; 1],
+) -> [Seed<'a>; 4] {
+    [
+        b"sub-account-v2".as_ref().into(),
+        swig_id.into(),
+        id_le.as_ref().into(),
+        bump.as_ref().into(),
+    ]
+}
+
 /// Builder for constructing and modifying Swig accounts.
 pub struct SwigBuilder<'a> {
     /// Buffer for role data
@@ -285,6 +352,8 @@ impl<'a> SwigBuilder<'a> {
     ) -> Result<(), ProgramError> {
         // Calculate the actual number of actions from the actions data
         let num_actions = Self::calculate_num_actions(actions_data)?;
+        // Reject duplicate V2 sub-account scoped actions within this role.
+        ActionLoader::reject_duplicate_v2_scoped(actions_data)?;
 
         // check number of roles and iterate to last boundary
         let mut cursor = 0;
@@ -373,7 +442,8 @@ impl<'a> SwigBuilder<'a> {
         position.id = self.swig.role_counter;
         cursor += Position::LEN;
         cursor += authority_length;
-        // todo check actions for duplicates
+        // V2 scoped duplicates are rejected above; general action dedup (SWI-450)
+        // is still TODO.
         let mut action_cursor = 0;
         let actions_start_cursor_pos = cursor;
         for _i in 0..num_actions {
@@ -424,7 +494,12 @@ pub struct Swig {
     pub role_counter: u32,
     /// Wallet address bump seed
     pub wallet_bump: u8,
-    pub _padding: [u8; 7],
+    pub _padding: [u8; 3],
+    /// Counter for generating unique V2 sub-account IDs.
+    ///
+    /// Occupies former padding, so the header stays 48 bytes and existing
+    /// accounts (whose padding is zeroed) read a counter of 0 with no migration.
+    pub sub_account_counter: u32,
 }
 
 /// Immutable split view of a Swig account buffer.
@@ -451,7 +526,8 @@ impl Swig {
             roles: 0,
             role_counter: 0,
             wallet_bump,
-            _padding: [0; 7],
+            _padding: [0; 3],
+            sub_account_counter: 0,
         }
     }
 

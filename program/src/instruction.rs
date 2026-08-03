@@ -251,4 +251,65 @@ pub enum SwigInstruction {
     #[account(1, writable, signer, name="payer", desc="the payer")]
     #[account(2, name="system_program", desc="the system program")]
     SetRentClaimerV1 = 17,
+
+    /// Creates a new V2 sub-account.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account for rent
+    /// 3. `[writable]` V2 sub-account state account to create
+    /// 4. `[writable]` V2 sub-account asset account to create
+    /// 5. System program account
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, writable, name="sub_account_state", desc="the v2 sub account state account to create")]
+    #[account(3, writable, name="sub_account", desc="the v2 sub account asset account to create")]
+    #[account(4, name="system_program", desc="the system program")]
+    CreateSubAccountV2 = 18,
+
+    /// Toggles the enabled kill-switch on a V2 sub-account.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. `[writable]` V2 sub-account state account
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, writable, name="sub_account_state", desc="the v2 sub account state account to toggle")]
+    ToggleSubAccountV2 = 19,
+
+    /// Signs and executes a transaction as a V2 sub-account asset account.
+    ///
+    /// Swig is writable because Secp authorities record their signature odometer
+    /// in the swig account during authentication.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. V2 sub-account state account
+    /// 3. `[writable]` V2 sub-account asset account (CPI signer)
+    /// 4. System program account
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, name="sub_account_state", desc="the v2 sub account state account")]
+    #[account(2, writable, name="sub_account", desc="the v2 sub account asset account")]
+    #[account(3, name="system_program", desc="the system program")]
+    SubAccountSignV2 = 20,
+
+    /// Withdraws assets from a V2 sub-account to the swig wallet address.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Payer account
+    /// 3. V2 sub-account state account
+    /// 4. `[writable]` V2 sub-account asset account (source)
+    /// 5. `[writable]` Swig wallet address account (destination)
+    /// 6. `[name]` authority context (signer for Ed25519, sysvar for Secp256r1, placeholder for Secp256k1)
+    /// 7. System program account
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, name="sub_account_state", desc="the v2 sub account state account")]
+    #[account(3, writable, name="sub_account", desc="the v2 sub account asset account to withdraw from")]
+    #[account(4, writable, name="swig_wallet_address", desc="the swig wallet address (destination)")]
+    #[account(5, name="authority_context", desc="authority context: signer for Ed25519, sysvar for Secp256r1, or placeholder for Secp256k1")]
+    #[account(6, name="system_program", desc="the system program")]
+    WithdrawFromSubAccountV2 = 21,
 }

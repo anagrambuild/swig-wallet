@@ -10,6 +10,7 @@ pub mod close_swig_v1;
 pub mod close_token_account_v1;
 pub mod create_session_v1;
 pub mod create_sub_account_v1;
+pub mod create_sub_account_v2;
 pub mod create_v1;
 pub mod migrate_to_wallet_address_v1;
 pub mod recover_authority_v1;
@@ -17,30 +18,35 @@ pub mod remove_authority_v1;
 pub mod set_rent_claimer_v1;
 pub mod sign_v2;
 pub mod sub_account_sign_v1;
+pub mod sub_account_sign_v2;
 pub mod toggle_sub_account_v1;
+pub mod toggle_sub_account_v2;
 pub mod transfer_assets_v1;
 pub mod update_authority_v1;
 pub mod withdraw_from_sub_account_v1;
+pub mod withdraw_from_sub_account_v2;
 
 use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
 
 use self::{
     add_authority_v1::*, close_swig_v1::*, close_token_account_v1::*, create_session_v1::*,
-    create_sub_account_v1::*, create_v1::*, migrate_to_wallet_address_v1::*,
-    recover_authority_v1::*, remove_authority_v1::*, set_rent_claimer_v1::*, sign_v2::*,
-    sub_account_sign_v1::*, toggle_sub_account_v1::*, transfer_assets_v1::*,
-    update_authority_v1::*, withdraw_from_sub_account_v1::*,
+    create_sub_account_v1::*, create_sub_account_v2::*, create_v1::*,
+    migrate_to_wallet_address_v1::*, recover_authority_v1::*, remove_authority_v1::*,
+    set_rent_claimer_v1::*, sign_v2::*, sub_account_sign_v1::*, sub_account_sign_v2::*,
+    toggle_sub_account_v1::*, toggle_sub_account_v2::*, transfer_assets_v1::*,
+    update_authority_v1::*, withdraw_from_sub_account_v1::*, withdraw_from_sub_account_v2::*,
 };
 use crate::{
     instruction::{
         accounts::{
             AddAuthorityV1Accounts, CloseSwigV1Accounts, CloseTokenAccountV1Accounts,
-            CreateSessionV1Accounts, CreateSubAccountV1Accounts, CreateV1Accounts,
-            MigrateToWalletAddressV1Accounts, RecoverAuthorityV1Accounts,
+            CreateSessionV1Accounts, CreateSubAccountV1Accounts, CreateSubAccountV2Accounts,
+            CreateV1Accounts, MigrateToWalletAddressV1Accounts, RecoverAuthorityV1Accounts,
             RemoveAuthorityV1Accounts, SetRentClaimerV1Accounts, SignV2Accounts,
-            SubAccountSignV1Accounts, ToggleSubAccountV1Accounts, TransferAssetsV1Accounts,
-            UpdateAuthorityV1Accounts, WithdrawFromSubAccountV1Accounts,
+            SubAccountSignV1Accounts, SubAccountSignV2Accounts, ToggleSubAccountV1Accounts,
+            ToggleSubAccountV2Accounts, TransferAssetsV1Accounts, UpdateAuthorityV1Accounts,
+            WithdrawFromSubAccountV1Accounts, WithdrawFromSubAccountV2Accounts,
         },
         SwigInstruction,
     },
@@ -93,6 +99,14 @@ pub fn process_action(
             process_sub_account_sign_v1(accounts, account_classification, data)
         },
         SwigInstruction::ToggleSubAccountV1 => process_toggle_sub_account_v1(accounts, data),
+        SwigInstruction::CreateSubAccountV2 => process_create_sub_account_v2(accounts, data),
+        SwigInstruction::ToggleSubAccountV2 => process_toggle_sub_account_v2(accounts, data),
+        SwigInstruction::SubAccountSignV2 => {
+            process_sub_account_sign_v2(accounts, account_classification, data)
+        },
+        SwigInstruction::WithdrawFromSubAccountV2 => {
+            process_withdraw_from_sub_account_v2(accounts, account_classification, data)
+        },
         SwigInstruction::MigrateToWalletAddressV1 => {
             process_migrate_to_wallet_address_v1(accounts, data)
         },
@@ -202,6 +216,46 @@ fn process_withdraw_from_sub_account_v1(
 fn process_toggle_sub_account_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = ToggleSubAccountV1Accounts::context(accounts)?;
     toggle_sub_account_v1(account_ctx, data, accounts)
+}
+
+/// Processes a CreateSubAccountV2 instruction.
+///
+/// Creates a new counter-identified V2 sub-account.
+fn process_create_sub_account_v2(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = CreateSubAccountV2Accounts::context(accounts)?;
+    create_sub_account_v2(account_ctx, data, accounts)
+}
+
+/// Processes a ToggleSubAccountV2 instruction.
+///
+/// Flips the enabled kill-switch on a V2 sub-account.
+fn process_toggle_sub_account_v2(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = ToggleSubAccountV2Accounts::context(accounts)?;
+    toggle_sub_account_v2(account_ctx, data, accounts)
+}
+
+/// Processes a SubAccountSignV2 instruction.
+///
+/// Signs and executes a transaction as a V2 sub-account asset account.
+fn process_sub_account_sign_v2(
+    accounts: &[AccountInfo],
+    account_classification: &[AccountClassification],
+    data: &[u8],
+) -> ProgramResult {
+    let account_ctx = SubAccountSignV2Accounts::context(accounts)?;
+    sub_account_sign_v2(account_ctx, accounts, data, account_classification)
+}
+
+/// Processes a WithdrawFromSubAccountV2 instruction.
+///
+/// Withdraws assets from a V2 sub-account to the swig wallet address.
+fn process_withdraw_from_sub_account_v2(
+    accounts: &[AccountInfo],
+    account_classification: &[AccountClassification],
+    data: &[u8],
+) -> ProgramResult {
+    let account_ctx = WithdrawFromSubAccountV2Accounts::context(accounts)?;
+    withdraw_from_sub_account_v2(account_ctx, accounts, data, account_classification)
 }
 
 /// Processes a MigrateToWalletAddressV1 instruction.

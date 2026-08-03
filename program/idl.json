@@ -651,6 +651,198 @@
         "type": "u8",
         "value": 17
       }
+    },
+    {
+      "name": "CreateSubAccountV2",
+      "accounts": [
+        {
+          "name": "swig",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig smart wallet"
+          ]
+        },
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "the payer"
+          ]
+        },
+        {
+          "name": "subAccountState",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the v2 sub account state account to create"
+          ]
+        },
+        {
+          "name": "subAccount",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the v2 sub account asset account to create"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the system program"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 18
+      }
+    },
+    {
+      "name": "ToggleSubAccountV2",
+      "accounts": [
+        {
+          "name": "swig",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig smart wallet"
+          ]
+        },
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "the payer"
+          ]
+        },
+        {
+          "name": "subAccountState",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the v2 sub account state account to toggle"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 19
+      }
+    },
+    {
+      "name": "SubAccountSignV2",
+      "accounts": [
+        {
+          "name": "swig",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig smart wallet"
+          ]
+        },
+        {
+          "name": "subAccountState",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the v2 sub account state account"
+          ]
+        },
+        {
+          "name": "subAccount",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the v2 sub account asset account"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the system program"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 20
+      }
+    },
+    {
+      "name": "WithdrawFromSubAccountV2",
+      "accounts": [
+        {
+          "name": "swig",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig smart wallet"
+          ]
+        },
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "the payer"
+          ]
+        },
+        {
+          "name": "subAccountState",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the v2 sub account state account"
+          ]
+        },
+        {
+          "name": "subAccount",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the v2 sub account asset account to withdraw from"
+          ]
+        },
+        {
+          "name": "swigWalletAddress",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig wallet address (destination)"
+          ]
+        },
+        {
+          "name": "authorityContext",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "authority context: signer for Ed25519, sysvar for Secp256r1, or placeholder for Secp256k1"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the system program"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 21
+      }
     }
   ],
   "metadata": {

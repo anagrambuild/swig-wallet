@@ -27,6 +27,11 @@ use swig_state::{
     IntoBytes, Transmutable,
 };
 pub type Context = SwigTestContext;
+
+/// Reusable realloc-stability harness (snapshot the swig, run a size-modifying
+/// op, assert unrelated roles + rent claimer survive). See [`stability`].
+pub mod stability;
+
 pub fn program_id() -> Pubkey {
     swig::ID.into()
 }

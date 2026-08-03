@@ -18,6 +18,10 @@ use swig_state::{
         stake_limit::StakeLimit,
         stake_recurring_limit::StakeRecurringLimit,
         sub_account::SubAccount,
+        sub_account_v2::{
+            SubAccountV2All, SubAccountV2Create, SubAccountV2Sign, SubAccountV2Toggle,
+            SubAccountV2Withdraw,
+        },
         token_destination_limit::TokenDestinationLimit,
         token_limit::TokenLimit,
         token_recurring_destination_limit::TokenRecurringDestinationLimit,
@@ -168,6 +172,22 @@ pub enum Permission {
     /// This grants access to all wallet operations but excludes the ability
     /// to add, remove, or modify authorities/subaccounts.
     AllButManageAuthority,
+
+    /// Permission to create V2 sub-accounts (non-repeatable marker).
+    SubAccountV2Create,
+
+    /// Scoped umbrella permission for V2 sub-account runtime operations
+    /// (sign/withdraw/toggle) on a single sub-account id.
+    SubAccountV2All { subacc_id: u32 },
+
+    /// Scoped permission to sign as a single V2 sub-account.
+    SubAccountV2Sign { subacc_id: u32 },
+
+    /// Scoped permission to withdraw from a single V2 sub-account.
+    SubAccountV2Withdraw { subacc_id: u32 },
+
+    /// Scoped permission to toggle a single V2 sub-account.
+    SubAccountV2Toggle { subacc_id: u32 },
 }
 
 impl Permission {
@@ -339,6 +359,29 @@ impl Permission {
                     actions.push(ClientAction::AllButManageAuthority(
                         AllButManageAuthority {},
                     ));
+                },
+                Permission::SubAccountV2Create => {
+                    actions.push(ClientAction::SubAccountV2Create(SubAccountV2Create));
+                },
+                Permission::SubAccountV2All { subacc_id } => {
+                    actions.push(ClientAction::SubAccountV2All(SubAccountV2All::new(
+                        subacc_id,
+                    )));
+                },
+                Permission::SubAccountV2Sign { subacc_id } => {
+                    actions.push(ClientAction::SubAccountV2Sign(SubAccountV2Sign::new(
+                        subacc_id,
+                    )));
+                },
+                Permission::SubAccountV2Withdraw { subacc_id } => {
+                    actions.push(ClientAction::SubAccountV2Withdraw(
+                        SubAccountV2Withdraw::new(subacc_id),
+                    ));
+                },
+                Permission::SubAccountV2Toggle { subacc_id } => {
+                    actions.push(ClientAction::SubAccountV2Toggle(SubAccountV2Toggle::new(
+                        subacc_id,
+                    )));
                 },
             }
         }
@@ -547,6 +590,43 @@ impl Permission {
             });
         }
 
+        // Check for V2 sub-account permissions. The create marker is single; the
+        // scoped permissions are repeatable (one per sub-account id).
+        if swig_state::role::Role::get_action::<SubAccountV2Create>(role, &[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .is_some()
+        {
+            permissions.push(Permission::SubAccountV2Create);
+        }
+        for action in swig_state::role::Role::get_all_actions_of_type::<SubAccountV2All>(role)
+            .map_err(|_| SwigError::InvalidSwigData)?
+        {
+            permissions.push(Permission::SubAccountV2All {
+                subacc_id: action.subacc_id,
+            });
+        }
+        for action in swig_state::role::Role::get_all_actions_of_type::<SubAccountV2Sign>(role)
+            .map_err(|_| SwigError::InvalidSwigData)?
+        {
+            permissions.push(Permission::SubAccountV2Sign {
+                subacc_id: action.subacc_id,
+            });
+        }
+        for action in swig_state::role::Role::get_all_actions_of_type::<SubAccountV2Withdraw>(role)
+            .map_err(|_| SwigError::InvalidSwigData)?
+        {
+            permissions.push(Permission::SubAccountV2Withdraw {
+                subacc_id: action.subacc_id,
+            });
+        }
+        for action in swig_state::role::Role::get_all_actions_of_type::<SubAccountV2Toggle>(role)
+            .map_err(|_| SwigError::InvalidSwigData)?
+        {
+            permissions.push(Permission::SubAccountV2Toggle {
+                subacc_id: action.subacc_id,
+            });
+        }
+
         // Check for StakeLimit permission
         if let Some(action) = swig_state::role::Role::get_action::<StakeLimit>(role, &[])
             .map_err(|_| SwigError::InvalidSwigData)?
@@ -652,6 +732,11 @@ impl Permission {
                 balance_field_end: _,
             } => 4,
             Permission::SubAccount { sub_account: _ } => 9,
+            Permission::SubAccountV2Create => 22,
+            Permission::SubAccountV2All { subacc_id: _ } => 23,
+            Permission::SubAccountV2Sign { subacc_id: _ } => 24,
+            Permission::SubAccountV2Withdraw { subacc_id: _ } => 25,
+            Permission::SubAccountV2Toggle { subacc_id: _ } => 26,
             Permission::Stake {
                 amount: _,
                 recurring,

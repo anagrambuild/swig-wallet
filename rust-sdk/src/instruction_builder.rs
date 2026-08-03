@@ -10,7 +10,10 @@ use swig_state::{
         ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
         secp256r1::CreateSecp256r1SessionAuthority, AuthorityType,
     },
-    swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds},
+    swig::{
+        sub_account_seeds, sub_account_v2_asset_seeds, sub_account_v2_state_seeds,
+        swig_account_seeds, swig_wallet_address_seeds,
+    },
     IntoBytes,
 };
 
@@ -542,6 +545,130 @@ impl SwigInstructionBuilder {
             sub_account,
             sub_account_role_id,
             auth_role_id,
+            enabled,
+            current_slot,
+        )
+    }
+
+    /// Derives the V2 state and asset PDAs for a sub-account id.
+    pub fn sub_account_v2_pdas(&self, subacc_id: u32) -> (Pubkey, Pubkey) {
+        let id_le = subacc_id.to_le_bytes();
+        let (state, _) = Pubkey::find_program_address(
+            &sub_account_v2_state_seeds(&self.swig_id, &id_le),
+            &swig_interface::program_id(),
+        );
+        let (asset, _) = Pubkey::find_program_address(
+            &sub_account_v2_asset_seeds(&self.swig_id, &id_le),
+            &swig_interface::program_id(),
+        );
+        (state, asset)
+    }
+
+    /// Creates instructions to create a V2 sub-account for the given id (the
+    /// next value of the on-chain counter). The caller supplies the derived
+    /// state/asset PDAs and their bumps.
+    pub fn create_sub_account_v2(
+        &self,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        state_bump: u8,
+        asset_bump: u8,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.client_role.create_sub_account_v2_instruction(
+            self.swig_account,
+            self.payer,
+            self.role_id,
+            sub_account_state,
+            sub_account,
+            state_bump,
+            asset_bump,
+            current_slot,
+        )
+    }
+
+    /// Creates instructions to sign as a V2 sub-account.
+    pub fn sign_instruction_with_sub_account_v2(
+        &self,
+        subacc_id: u32,
+        instructions: Vec<Instruction>,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let (sub_account_state, sub_account) = self.sub_account_v2_pdas(subacc_id);
+        self.client_role.sub_account_sign_v2_instruction(
+            self.swig_account,
+            sub_account_state,
+            sub_account,
+            self.role_id,
+            subacc_id,
+            instructions,
+            current_slot,
+        )
+    }
+
+    /// Creates instructions to withdraw SOL from a V2 sub-account to the swig
+    /// wallet address.
+    pub fn withdraw_from_sub_account_v2(
+        &self,
+        subacc_id: u32,
+        amount: u64,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let (sub_account_state, sub_account) = self.sub_account_v2_pdas(subacc_id);
+        self.client_role.withdraw_from_sub_account_v2_instruction(
+            self.swig_account,
+            self.payer,
+            sub_account_state,
+            sub_account,
+            self.role_id,
+            subacc_id,
+            amount,
+            current_slot,
+        )
+    }
+
+    /// Creates instructions to withdraw tokens from a V2 sub-account to a
+    /// token account owned by the swig wallet address.
+    pub fn withdraw_token_from_sub_account_v2(
+        &self,
+        subacc_id: u32,
+        source_token: Pubkey,
+        destination_token: Pubkey,
+        token_program: Pubkey,
+        amount: u64,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let (sub_account_state, sub_account) = self.sub_account_v2_pdas(subacc_id);
+        self.client_role
+            .withdraw_token_from_sub_account_v2_instruction(
+                self.swig_account,
+                self.payer,
+                sub_account_state,
+                sub_account,
+                source_token,
+                destination_token,
+                token_program,
+                self.role_id,
+                subacc_id,
+                amount,
+                current_slot,
+            )
+    }
+
+    /// Creates instructions to toggle a V2 sub-account's enabled kill-switch.
+    pub fn toggle_sub_account_v2(
+        &self,
+        subacc_id: u32,
+        enabled: bool,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let (sub_account_state, _) = self.sub_account_v2_pdas(subacc_id);
+        self.client_role.toggle_sub_account_v2_instruction(
+            self.swig_account,
+            self.payer,
+            sub_account_state,
+            self.role_id,
+            subacc_id,
             enabled,
             current_slot,
         )
