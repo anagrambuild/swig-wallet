@@ -114,12 +114,12 @@ pub fn withdraw_from_sub_account_v2(
         if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
+        // V2 requires the wallet-address (migrated) Swig generation. Checked
+        // before the split, which needs the buffer mutably.
+        crate::require_swig_v2(swig_account_data)?;
         let parts = Swig::split_parts_mut(swig_account_data)?;
         let swig = parts.state;
         let swig_roles = parts.roles;
-        if swig.wallet_bump == 0 {
-            return Err(SwigError::SignV2CannotBeUsedWithSwigV1.into());
-        }
         let swig_id = swig.id;
 
         // Validate the destination is the canonical swig wallet address PDA.

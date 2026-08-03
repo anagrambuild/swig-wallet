@@ -42,6 +42,15 @@ const CREATOR_ROLE_ID: u32 = 1;
 /// `SubAccountV2Create` permission. Returns
 /// (swig_key, root_keypair, creator_keypair, id).
 fn setup_v2(context: &mut SwigTestContext) -> anyhow::Result<(Pubkey, Keypair, Keypair, [u8; 32])> {
+    setup_v2_with_extra_actions(context, vec![])
+}
+
+/// As [`setup_v2`], with `extra` actions granted to the creator role alongside
+/// `SubAccountV2Create`.
+fn setup_v2_with_extra_actions(
+    context: &mut SwigTestContext,
+    extra: Vec<ClientAction>,
+) -> anyhow::Result<(Pubkey, Keypair, Keypair, [u8; 32])> {
     let root = Keypair::new();
     let creator = Keypair::new();
     context.svm.airdrop(&root.pubkey(), 10_000_000_000).unwrap();
@@ -53,6 +62,8 @@ fn setup_v2(context: &mut SwigTestContext) -> anyhow::Result<(Pubkey, Keypair, K
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_ed25519(context, &root, id)?;
 
+    let mut actions = vec![ClientAction::SubAccountV2Create(SubAccountV2Create)];
+    actions.extend(extra);
     add_authority_with_ed25519_root(
         context,
         &swig_key,
@@ -61,7 +72,7 @@ fn setup_v2(context: &mut SwigTestContext) -> anyhow::Result<(Pubkey, Keypair, K
             authority_type: AuthorityType::Ed25519,
             authority: creator.pubkey().as_ref(),
         },
-        vec![ClientAction::SubAccountV2Create(SubAccountV2Create)],
+        actions,
     )?;
     Ok((swig_key, root, creator, id))
 }
@@ -122,6 +133,39 @@ fn decode_counter(context: &SwigTestContext, swig_key: &Pubkey) -> u32 {
     let data = context.svm.get_account(swig_key).unwrap().data;
     let swig = unsafe { Swig::load_unchecked(&data[..Swig::LEN]).unwrap() };
     swig.sub_account_counter
+}
+
+/// Counts how many `SubAccountV2All` actions the role holds for `subacc_id`.
+///
+/// The auto-grant must never leave two: a role may hold at most one scoped V2
+/// action per `(type, id)`, and a second copy is what
+/// `reject_duplicate_v2_scoped` fails the whole create over.
+fn role_all_scope_count(
+    context: &SwigTestContext,
+    swig_key: &Pubkey,
+    role_id: u32,
+    subacc_id: u32,
+) -> usize {
+    let data = context.svm.get_account(swig_key).unwrap().data;
+    let swig = SwigWithRoles::from_bytes(&data).unwrap();
+    let role = swig.get_role(role_id).unwrap().unwrap();
+    let mut cursor = 0;
+    let mut count = 0;
+    for _ in 0..role.position.num_actions() {
+        let header =
+            unsafe { Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN]).unwrap() };
+        cursor += Action::LEN;
+        let len = header.length() as usize;
+        if header.permission().unwrap() == Permission::SubAccountV2All {
+            let body = &role.actions[cursor..cursor + len];
+            let read_id = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
+            if read_id == subacc_id {
+                count += 1;
+            }
+        }
+        cursor += len;
+    }
+    count
 }
 
 /// Returns true if the given role holds a `SubAccountV2All` action for
@@ -683,4 +727,67 @@ fn test_create_sub_account_v2_preserves_other_roles_and_permissions() {
     let after3 = SwigSnapshot::capture(&context, &swig_key);
     after2.assert_others_stable(&after3, &[id_creator]);
     assert_eq!(after3.counter, 3);
+}
+
+/// The design allows scoping a sub-account id before it exists. When the id the
+/// counter then draws is that same id, the auto-grant must not append a second
+/// `SubAccountV2All` — the duplicate check would fail the whole create.
+#[test_log::test]
+fn test_create_v2_when_creator_pre_granted_all_for_the_drawn_id() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, _root, creator, id) = setup_v2_with_extra_actions(
+        &mut context,
+        vec![ClientAction::SubAccountV2All(SubAccountV2All::new(0))],
+    )
+    .unwrap();
+
+    // Pre-grant is in place before anything is created.
+    assert_eq!(decode_counter(&context, &swig_key), 0);
+    assert_eq!(
+        role_all_scope_count(&context, &swig_key, CREATOR_ROLE_ID, 0),
+        1
+    );
+
+    // Creating id 0 used to fail with DuplicateV2SubAccountAction (1009).
+    let (state_pda, _asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0)
+        .expect("create must succeed when the scope is already granted");
+
+    assert_eq!(decode_counter(&context, &swig_key), 1);
+    assert_eq!(
+        role_all_scope_count(&context, &swig_key, CREATOR_ROLE_ID, 0),
+        1,
+        "the pre-grant must be left alone, not duplicated"
+    );
+
+    // The sub-account really was created, and the scope still authorizes it.
+    let state_acc = context.svm.get_account(&state_pda).unwrap();
+    assert_eq!(state_acc.owner, program_id());
+    let state = unsafe { SubAccountV2::load_unchecked(&state_acc.data).unwrap() };
+    assert_eq!(state.subacc_id, 0);
+    assert!(state.is_enabled().unwrap());
+}
+
+/// A pre-grant for a *different* id must not suppress the auto-grant: the role
+/// ends up holding both scopes.
+#[test_log::test]
+fn test_create_v2_pre_grant_for_other_id_still_auto_grants() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, _root, creator, id) = setup_v2_with_extra_actions(
+        &mut context,
+        vec![ClientAction::SubAccountV2All(SubAccountV2All::new(5))],
+    )
+    .unwrap();
+
+    create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+
+    assert_eq!(
+        role_all_scope_count(&context, &swig_key, CREATOR_ROLE_ID, 0),
+        1,
+        "the drawn id must still be auto-granted"
+    );
+    assert_eq!(
+        role_all_scope_count(&context, &swig_key, CREATOR_ROLE_ID, 5),
+        1,
+        "the unrelated pre-grant must survive"
+    );
 }

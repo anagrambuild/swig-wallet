@@ -30,22 +30,17 @@ use crate::{
     AccountClassification,
 };
 
-/// Authorizes a scoped V2 sub-account runtime operation.
+/// Reports whether an action buffer holds a scoped V2 action for `subacc_id`.
 ///
-/// Returns `Ok(())` if `role` holds a matching `specific` action for `subacc_id`
-/// or a `SubAccountV2All` action for `subacc_id`. Wallet-level overrides are
-/// intentionally not consulted — access is default-denied.
-///
-/// `specific` must be one of the scoped V2 runtime permissions
-/// (`SubAccountV2Sign`/`Withdraw`/`Toggle`). All scoped V2 bodies carry
-/// `subacc_id` as their first four little-endian bytes.
-pub(crate) fn authorize_scoped_v2(
-    role: &RoleMut<'_>,
+/// Matches `specific`, and also `SubAccountV2All` when `accept_all` is set. All
+/// scoped V2 bodies carry `subacc_id` as their first four little-endian bytes.
+pub(crate) fn has_scoped_v2(
+    actions: &[u8],
     specific: Permission,
     subacc_id: u32,
-) -> ProgramResult {
+    accept_all: bool,
+) -> Result<bool, ProgramError> {
     let id_le = subacc_id.to_le_bytes();
-    let actions = &*role.actions;
     let mut cursor = 0usize;
     while cursor + Action::LEN <= actions.len() {
         let header = unsafe { Action::load_unchecked(&actions[cursor..cursor + Action::LEN])? };
@@ -57,14 +52,35 @@ pub(crate) fn authorize_scoped_v2(
             return Err(SwigError::StateError.into());
         }
         let permission = header.permission()?;
-        if (permission == specific || permission == Permission::SubAccountV2All)
+        if (permission == specific || (accept_all && permission == Permission::SubAccountV2All))
             && header.length() as usize >= 4
             && actions[data_start..data_start + 4] == id_le
         {
-            return Ok(());
+            return Ok(true);
         }
         cursor = data_end;
     }
+
+    Ok(false)
+}
+
+/// Authorizes a scoped V2 sub-account runtime operation.
+///
+/// Returns `Ok(())` if `role` holds a matching `specific` action for `subacc_id`
+/// or a `SubAccountV2All` action for `subacc_id`. Wallet-level overrides are
+/// intentionally not consulted — access is default-denied.
+///
+/// `specific` must be one of the scoped V2 runtime permissions
+/// (`SubAccountV2Sign`/`Withdraw`/`Toggle`).
+pub(crate) fn authorize_scoped_v2(
+    role: &RoleMut<'_>,
+    specific: Permission,
+    subacc_id: u32,
+) -> ProgramResult {
+    if has_scoped_v2(role.actions, specific, subacc_id, true)? {
+        return Ok(());
+    }
+
     Err(SwigError::PermissionDeniedMissingSubAccountV2Permission.into())
 }
 
@@ -195,12 +211,12 @@ pub fn sub_account_sign_v2(
         {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
+        // V2 requires the wallet-address (migrated) Swig generation. Checked
+        // before the split, which needs the buffer mutably.
+        crate::require_swig_v2(swig_account_data)?;
         let parts = Swig::split_parts_mut(swig_account_data)?;
         let swig = parts.state;
         let swig_roles = parts.roles;
-        if swig.wallet_bump == 0 {
-            return Err(SwigError::SignV2CannotBeUsedWithSwigV1.into());
-        }
         let swig_id = swig.id;
 
         let role_opt = Swig::get_mut_role(sign.args.role_id, swig_roles)?;

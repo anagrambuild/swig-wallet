@@ -210,6 +210,28 @@ pub(crate) unsafe fn is_swig_v2(data: &[u8]) -> bool {
     window & 0xFF != 0 && window >> 8 == 0
 }
 
+/// Rejects a pre-wallet-address (V1) Swig account.
+///
+/// The V2-only instructions require the migrated generation. Testing
+/// `wallet_bump != 0` on its own is not enough: on a V1 account that byte is the
+/// low byte of `reserved_lamports`, which a rent-carrying balance leaves
+/// non-zero, so such a check accepts nearly every real V1 account. Route the
+/// decision through [`is_swig_v2`] so every caller shares one definition.
+///
+/// The length check is required before the unchecked read in [`is_swig_v2`] —
+/// the program owns accounts smaller than a Swig header.
+#[inline(always)]
+pub(crate) fn require_swig_v2(data: &[u8]) -> ProgramResult {
+    if data.len() < Swig::LEN {
+        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+    }
+    if !unsafe { is_swig_v2(data) } {
+        return Err(SwigError::SignV2CannotBeUsedWithSwigV1.into());
+    }
+
+    Ok(())
+}
+
 /// Core instruction execution function.
 ///
 /// This function processes all accounts in the instruction context, classifies
