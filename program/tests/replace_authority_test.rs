@@ -7,13 +7,13 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::{LocalSigner, PrivateKeySigner};
 use common::*;
 use solana_sdk::{
-    instruction::{AccountMeta, Instruction},
+    instruction::{AccountMeta, Instruction, InstructionError},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
     sysvar::clock::Clock,
-    transaction::VersionedTransaction,
+    transaction::{TransactionError, VersionedTransaction},
 };
 use swig::actions::replace_authority_v1::REPLACE_AUTHORITY_PROOF_V1_DISCRIMINATOR;
 use swig_interface::{
@@ -27,7 +27,9 @@ use swig_state::{
     authority::{
         ed25519::{CreateEd25519SessionAuthority, ED25519Authority, Ed25519SessionAuthority},
         programexec::ProgramExecAuthority,
-        secp256k1::{CreateSecp256k1SessionAuthority, Secp256k1Authority},
+        secp256k1::{
+            CreateSecp256k1SessionAuthority, Secp256k1Authority, Secp256k1SessionAuthority,
+        },
         secp256r1::{CreateSecp256r1SessionAuthority, Secp256r1Authority},
         AuthorityType,
     },
@@ -112,6 +114,15 @@ fn compressed_evm_public_key(wallet: &PrivateKeySigner) -> Vec<u8> {
         .verifying_key()
         .to_encoded_point(true)
         .to_bytes()
+        .to_vec()
+}
+
+fn uncompressed_evm_public_key(wallet: &PrivateKeySigner) -> Vec<u8> {
+    wallet
+        .credential()
+        .verifying_key()
+        .to_encoded_point(false)
+        .to_bytes()[1..]
         .to_vec()
 }
 
@@ -496,7 +507,9 @@ fn test_replace_authority_rejects_same_signer_for_every_supported_target_type() 
     )
     .unwrap();
 
-    let secp256k1_target = compressed_evm_public_key(&LocalSigner::random());
+    let secp256k1_wallet = LocalSigner::random();
+    let secp256k1_target = compressed_evm_public_key(&secp256k1_wallet);
+    let secp256k1_target_uncompressed = uncompressed_evm_public_key(&secp256k1_wallet);
     add_authority_with_ed25519_root(
         &mut context,
         &swig,
@@ -509,7 +522,10 @@ fn test_replace_authority_rejects_same_signer_for_every_supported_target_type() 
     )
     .unwrap();
 
-    let secp256k1_session_target = compressed_evm_public_key(&LocalSigner::random());
+    let secp256k1_session_wallet = LocalSigner::random();
+    let secp256k1_session_target = compressed_evm_public_key(&secp256k1_session_wallet);
+    let secp256k1_session_target_uncompressed =
+        uncompressed_evm_public_key(&secp256k1_session_wallet);
     let mut padded_secp256k1_session_target = [0u8; 64];
     padded_secp256k1_session_target[..33].copy_from_slice(&secp256k1_session_target);
     let secp256k1_session =
@@ -555,17 +571,33 @@ fn test_replace_authority_rejects_same_signer_for_every_supported_target_type() 
     .unwrap();
 
     let same_signers = [
-        (1, ed25519_target.pubkey().to_bytes().to_vec()),
-        (2, ed25519_session_target.pubkey().to_bytes().to_vec()),
-        (3, secp256k1_target),
-        (4, secp256k1_session_target),
-        (5, secp256r1_target.to_vec()),
-        (6, secp256r1_session_target.to_vec()),
+        (
+            1,
+            ed25519_target.pubkey().to_bytes().to_vec(),
+            ed25519_target.pubkey().to_bytes().to_vec(),
+        ),
+        (
+            2,
+            ed25519_session_target.pubkey().to_bytes().to_vec(),
+            ed25519_session_target.pubkey().to_bytes().to_vec(),
+        ),
+        (3, secp256k1_target_uncompressed, secp256k1_target),
+        (
+            4,
+            secp256k1_session_target_uncompressed,
+            secp256k1_session_target,
+        ),
+        (5, secp256r1_target.to_vec(), secp256r1_target.to_vec()),
+        (
+            6,
+            secp256r1_session_target.to_vec(),
+            secp256r1_session_target.to_vec(),
+        ),
     ];
 
-    for (target_role_id, same_signer) in &same_signers {
+    for (target_role_id, replacement, _) in &same_signers {
         assert!(
-            send_ed25519_replace(&mut context, swig, &root, 0, *target_role_id, same_signer)
+            send_ed25519_replace(&mut context, swig, &root, 0, *target_role_id, replacement)
                 .is_err(),
             "target role {target_role_id} accepted its existing signer"
         );
@@ -573,7 +605,7 @@ fn test_replace_authority_rejects_same_signer_for_every_supported_target_type() 
 
     let account = context.svm.get_account(&swig).unwrap();
     let state = SwigWithRoles::from_bytes(&account.data).unwrap();
-    for (target_role_id, same_signer) in &same_signers {
+    for (target_role_id, _, stored_signer) in &same_signers {
         assert_eq!(
             state
                 .get_role(*target_role_id)
@@ -582,10 +614,82 @@ fn test_replace_authority_rejects_same_signer_for_every_supported_target_type() 
                 .authority
                 .identity()
                 .unwrap(),
-            same_signer,
+            stored_signer,
             "target role {target_role_id} changed after a rejected replacement"
         );
     }
+}
+
+#[test_log::test]
+fn test_replace_authority_accepts_uncompressed_secp256k1_for_regular_and_session_targets() {
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &root, id).unwrap();
+
+    let old_regular = compressed_evm_public_key(&LocalSigner::random());
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256k1,
+            authority: &old_regular,
+        },
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    )
+    .unwrap();
+
+    let old_session = compressed_evm_public_key(&LocalSigner::random());
+    let mut padded_old_session = [0u8; 64];
+    padded_old_session[..33].copy_from_slice(&old_session);
+    let old_session_authority =
+        CreateSecp256k1SessionAuthority::new(padded_old_session, [9; 32], 100);
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256k1Session,
+            authority: old_session_authority.into_bytes().unwrap(),
+        },
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    )
+    .unwrap();
+
+    let new_regular_wallet = LocalSigner::random();
+    let new_regular_compressed = compressed_evm_public_key(&new_regular_wallet);
+    let new_regular_uncompressed = uncompressed_evm_public_key(&new_regular_wallet);
+    send_ed25519_replace(&mut context, swig, &root, 0, 1, &new_regular_uncompressed).unwrap();
+
+    let new_session_wallet = LocalSigner::random();
+    let new_session_compressed = compressed_evm_public_key(&new_session_wallet);
+    let new_session_uncompressed = uncompressed_evm_public_key(&new_session_wallet);
+    send_ed25519_replace(&mut context, swig, &root, 0, 2, &new_session_uncompressed).unwrap();
+
+    let account = context.svm.get_account(&swig).unwrap();
+    let state = SwigWithRoles::from_bytes(&account.data).unwrap();
+    let regular = state
+        .get_role(1)
+        .unwrap()
+        .unwrap()
+        .authority
+        .as_any()
+        .downcast_ref::<Secp256k1Authority>()
+        .unwrap();
+    assert_eq!(regular.public_key.as_slice(), new_regular_compressed);
+
+    let session = state
+        .get_role(2)
+        .unwrap()
+        .unwrap()
+        .authority
+        .as_any()
+        .downcast_ref::<Secp256k1SessionAuthority>()
+        .unwrap();
+    assert_eq!(session.public_key.as_slice(), new_session_compressed);
+    assert_eq!(session.session_key, [0; 32]);
+    assert_eq!(session.current_session_expiration, 0);
 }
 
 #[test_log::test]
@@ -904,7 +1008,7 @@ fn test_replace_authority_rejects_wrong_key_length_without_mutation() {
     let root = Keypair::new();
     let old_target = Keypair::new();
     let acting_authority = Keypair::new();
-    let new_passkey = create_test_secp256r1_public_key();
+    let new_uncompressed_k1 = uncompressed_evm_public_key(&LocalSigner::random());
     let id = rand::random::<[u8; 32]>();
     let (swig, _) = create_swig_ed25519(&mut context, &root, id).unwrap();
 
@@ -936,7 +1040,7 @@ fn test_replace_authority_rejects_wrong_key_length_without_mutation() {
         acting_authority.pubkey(),
         2,
         1,
-        &new_passkey,
+        &new_uncompressed_k1,
     )
     .unwrap();
     let message = v0::Message::try_compile(
@@ -1077,7 +1181,9 @@ fn test_program_exec_replacement_rotates_secp256k1_authority() {
     let mut context = setup_test_context().unwrap();
     let root_authority = Keypair::new();
     let old_authority = compressed_evm_public_key(&LocalSigner::random());
-    let new_authority = compressed_evm_public_key(&LocalSigner::random());
+    let new_authority_wallet = LocalSigner::random();
+    let new_authority = compressed_evm_public_key(&new_authority_wallet);
+    let new_authority_uncompressed = uncompressed_evm_public_key(&new_authority_wallet);
     let policy_program_id = deploy_policy_test_program(&mut context).unwrap();
     let id = rand::random::<[u8; 32]>();
     let (swig, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
@@ -1111,7 +1217,7 @@ fn test_program_exec_replacement_rotates_secp256k1_authority() {
         1,
         AuthorityType::Secp256k1,
         &old_authority,
-        &new_authority,
+        &new_authority_uncompressed,
     );
     send_replacement_transaction(&mut context, &instructions).unwrap();
 
@@ -1130,6 +1236,60 @@ fn test_program_exec_replacement_rotates_secp256k1_authority() {
         new_authority.as_slice()
     );
     assert_eq!(replaced_authority.signature_odometer, 0);
+}
+
+#[test_log::test]
+fn test_program_exec_replacement_proof_cannot_be_replayed_after_rotation() {
+    let mut context = setup_test_context().unwrap();
+    let old_authority = Keypair::new();
+    let new_authority = Keypair::new();
+    let policy_program_id = deploy_policy_test_program(&mut context).unwrap();
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &old_authority, id).unwrap();
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
+
+    add_program_exec_replacer(
+        &mut context,
+        &swig,
+        &old_authority,
+        policy_program_id,
+        vec![ClientAction::ReplaceAuthority(ReplaceAuthority::new(0))],
+    );
+
+    let instructions = program_exec_replacement_instructions(
+        policy_program_id,
+        swig,
+        swig_wallet_address,
+        1,
+        0,
+        AuthorityType::Ed25519,
+        old_authority.pubkey().as_ref(),
+        new_authority.pubkey().as_ref(),
+    );
+    send_replacement_transaction(&mut context, &instructions).unwrap();
+
+    context.svm.expire_blockhash();
+    let replay_error = send_replacement_transaction(&mut context, &instructions).unwrap_err();
+    assert!(matches!(
+        replay_error.err,
+        TransactionError::InstructionError(1, InstructionError::Custom(_))
+    ));
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let replaced_authority = swig_state
+        .get_role(0)
+        .unwrap()
+        .unwrap()
+        .authority
+        .as_any()
+        .downcast_ref::<ED25519Authority>()
+        .unwrap();
+    assert_eq!(
+        replaced_authority.public_key,
+        new_authority.pubkey().to_bytes()
+    );
 }
 
 #[test_log::test]

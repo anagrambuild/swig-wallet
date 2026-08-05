@@ -23,8 +23,10 @@ impl ReplaceAuthorityInstruction {
         target_role_id: u32,
         new_authority: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
-        if !matches!(new_authority.len(), 32 | 33) {
-            return Err(anyhow::anyhow!("new authority must contain 32 or 33 bytes"));
+        if !matches!(new_authority.len(), 32 | 33 | 64) {
+            return Err(anyhow::anyhow!(
+                "new authority must contain 32, 33, or 64 bytes"
+            ));
         }
 
         let args =
@@ -47,19 +49,29 @@ impl ReplaceAuthorityInstruction {
         current_authority: &[u8],
         new_authority: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
-        let expected_len = match target_authority_type {
-            AuthorityType::Ed25519 | AuthorityType::Ed25519Session => 32,
-            AuthorityType::Secp256k1
-            | AuthorityType::Secp256k1Session
-            | AuthorityType::Secp256r1
-            | AuthorityType::Secp256r1Session => 33,
+        let (current_authority, new_authority) = match target_authority_type {
+            AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
+                if current_authority.len() != 32 || new_authority.len() != 32 {
+                    return Err(anyhow::anyhow!(
+                        "current and new authority must match the target authority type"
+                    ));
+                }
+                (current_authority.to_vec(), new_authority.to_vec())
+            },
+            AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => (
+                normalize_secp256k1_authority(current_authority)?.to_vec(),
+                normalize_secp256k1_authority(new_authority)?.to_vec(),
+            ),
+            AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
+                if current_authority.len() != 33 || new_authority.len() != 33 {
+                    return Err(anyhow::anyhow!(
+                        "current and new authority must match the target authority type"
+                    ));
+                }
+                (current_authority.to_vec(), new_authority.to_vec())
+            },
             _ => return Err(anyhow::anyhow!("unsupported target authority type")),
         };
-        if current_authority.len() != expected_len || new_authority.len() != expected_len {
-            return Err(anyhow::anyhow!(
-                "current and new authority must match the target authority type"
-            ));
-        }
 
         let acting_role_id = acting_role_id.to_le_bytes();
         let target_role_id = target_role_id.to_le_bytes();
@@ -71,8 +83,8 @@ impl ReplaceAuthorityInstruction {
             &acting_role_id,
             &target_role_id,
             &target_authority_type,
-            current_authority,
-            new_authority,
+            current_authority.as_slice(),
+            new_authority.as_slice(),
         ]);
 
         Ok([
@@ -231,6 +243,26 @@ impl ReplaceAuthorityInstruction {
     }
 }
 
+fn normalize_secp256k1_authority(authority: &[u8]) -> anyhow::Result<[u8; 33]> {
+    match authority.len() {
+        33 => authority
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("invalid secp256k1 authority length")),
+        64 => {
+            let key: &[u8; 64] = authority
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("invalid secp256k1 authority length"))?;
+            let mut compressed = [0u8; 33];
+            compressed[0] = if key[63] & 1 == 0 { 0x02 } else { 0x03 };
+            compressed[1..].copy_from_slice(&key[..32]);
+            Ok(compressed)
+        },
+        _ => Err(anyhow::anyhow!(
+            "secp256k1 authority must contain 33 or 64 bytes"
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,5 +307,42 @@ mod tests {
             &[4; 32],
         )
         .is_err());
+    }
+
+    #[test]
+    fn program_exec_proof_data_canonicalizes_uncompressed_secp256k1() {
+        let swig = Pubkey::new_unique();
+        let wallet = Pubkey::new_unique();
+        let mut current_uncompressed = [0u8; 64];
+        current_uncompressed[..32].fill(3);
+        current_uncompressed[63] = 2;
+        let mut new_uncompressed = [0u8; 64];
+        new_uncompressed[..32].fill(4);
+        new_uncompressed[63] = 3;
+
+        let current_compressed = normalize_secp256k1_authority(&current_uncompressed).unwrap();
+        let new_compressed = normalize_secp256k1_authority(&new_uncompressed).unwrap();
+        let compressed_proof = ReplaceAuthorityInstruction::program_exec_proof_data(
+            swig,
+            wallet,
+            1,
+            2,
+            AuthorityType::Secp256k1,
+            &current_compressed,
+            &new_compressed,
+        )
+        .unwrap();
+        let uncompressed_proof = ReplaceAuthorityInstruction::program_exec_proof_data(
+            swig,
+            wallet,
+            1,
+            2,
+            AuthorityType::Secp256k1,
+            &current_uncompressed,
+            &new_uncompressed,
+        )
+        .unwrap();
+
+        assert_eq!(uncompressed_proof, compressed_proof);
     }
 }

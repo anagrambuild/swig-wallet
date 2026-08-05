@@ -102,7 +102,7 @@ impl<'a> ReplaceAuthorityV1<'a> {
         }
 
         let new_authority_len = args.new_authority_len as usize;
-        if !matches!(new_authority_len, 32 | 33) {
+        if !matches!(new_authority_len, 32 | 33 | 64) {
             return Err(SwigError::ReplaceAuthorityInvalidSignerLength.into());
         }
 
@@ -234,15 +234,17 @@ fn replace_target_signer(
                 return Err(SwigError::UnsupportedReplaceAuthorityType.into());
             }
 
-            let expected_signer_len = match target_signer_type {
-                AuthorityType::Ed25519 | AuthorityType::Ed25519Session => 32,
-                AuthorityType::Secp256k1
-                | AuthorityType::Secp256k1Session
-                | AuthorityType::Secp256r1
-                | AuthorityType::Secp256r1Session => 33,
+            let valid_signer_len = match target_signer_type {
+                AuthorityType::Ed25519 | AuthorityType::Ed25519Session => new_authority.len() == 32,
+                AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => {
+                    matches!(new_authority.len(), 33 | 64)
+                },
+                AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => {
+                    new_authority.len() == 33
+                },
                 _ => unreachable!(),
             };
-            if new_authority.len() != expected_signer_len {
+            if !valid_signer_len {
                 return Err(SwigError::ReplaceAuthorityInvalidSignerLength.into());
             }
 
@@ -295,9 +297,7 @@ fn replace_target_signer(
                     authority.current_session_expiration = 0;
                 },
                 AuthorityType::Secp256k1 => {
-                    let new_signer: [u8; 33] = new_authority
-                        .try_into()
-                        .map_err(|_| SwigError::ReplaceAuthorityInvalidSignerLength)?;
+                    let new_signer = normalize_secp256k1_authority(new_authority)?;
                     let authority_end = authority_start + Secp256k1Authority::LEN;
                     let authority = unsafe {
                         Secp256k1Authority::load_mut_unchecked(
@@ -318,9 +318,7 @@ fn replace_target_signer(
                     authority.signature_odometer = 0;
                 },
                 AuthorityType::Secp256k1Session => {
-                    let new_signer: [u8; 33] = new_authority
-                        .try_into()
-                        .map_err(|_| SwigError::ReplaceAuthorityInvalidSignerLength)?;
+                    let new_signer = normalize_secp256k1_authority(new_authority)?;
                     let authority_end = authority_start + Secp256k1SessionAuthority::LEN;
                     let authority = unsafe {
                         Secp256k1SessionAuthority::load_mut_unchecked(
@@ -406,6 +404,28 @@ fn reject_same_signer(current_signer: &[u8], new_signer: &[u8]) -> ProgramResult
         return Err(SwigError::ReplaceAuthoritySameSigner.into());
     }
     Ok(())
+}
+
+fn normalize_secp256k1_authority(authority: &[u8]) -> Result<[u8; 33], ProgramError> {
+    match authority.len() {
+        33 => authority
+            .try_into()
+            .map_err(|_| SwigError::ReplaceAuthorityInvalidSignerLength.into()),
+        64 => {
+            let uncompressed: &[u8; 64] = authority
+                .try_into()
+                .map_err(|_| SwigError::ReplaceAuthorityInvalidSignerLength)?;
+            Ok(compress_secp256k1_authority(uncompressed))
+        },
+        _ => Err(SwigError::ReplaceAuthorityInvalidSignerLength.into()),
+    }
+}
+
+fn compress_secp256k1_authority(key: &[u8; 64]) -> [u8; 33] {
+    let mut compressed = [0u8; 33];
+    compressed[0] = if key[63] & 1 == 0 { 0x02 } else { 0x03 };
+    compressed[1..].copy_from_slice(&key[..32]);
+    compressed
 }
 
 fn verify_program_exec_replacement_proof(
@@ -596,6 +616,17 @@ mod tests {
     }
 
     #[test]
+    fn instruction_payload_accepts_uncompressed_secp256k1_length() {
+        let args = ReplaceAuthorityV1Args::new(2, 7, 64);
+        let new_authority = [9u8; 64];
+        let data = [args.into_bytes().unwrap(), new_authority.as_slice()].concat();
+
+        let parsed = ReplaceAuthorityV1::from_instruction_bytes(&data).unwrap();
+
+        assert_eq!(parsed.new_authority, new_authority);
+    }
+
+    #[test]
     fn instruction_payload_rejects_nonzero_padding() {
         let args = ReplaceAuthorityV1Args::new(2, 7, 32);
         let mut data = [args.into_bytes().unwrap(), &[9u8; 32]].concat();
@@ -622,5 +653,17 @@ mod tests {
             ProgramError::Custom(code) if code == SwigError::ReplaceAuthoritySameSigner as u32
         ));
         assert!(reject_same_signer(&signer, &[8u8; 33]).is_ok());
+    }
+
+    #[test]
+    fn uncompressed_secp256k1_normalizes_to_stored_format() {
+        let mut uncompressed = [0u8; 64];
+        uncompressed[..32].fill(7);
+        uncompressed[63] = 3;
+
+        let normalized = normalize_secp256k1_authority(&uncompressed).unwrap();
+
+        assert_eq!(normalized[0], 0x03);
+        assert_eq!(&normalized[1..], &uncompressed[..32]);
     }
 }
