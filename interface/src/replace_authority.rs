@@ -1,11 +1,15 @@
 use solana_sdk::{
+    hash::hashv,
     instruction::{AccountMeta, Instruction},
     keccak,
     pubkey::Pubkey,
 };
 use solana_secp256r1_program::new_secp256r1_instruction_with_signature;
-use swig::actions::replace_authority_v1::ReplaceAuthorityV1Args;
-use swig_state::IntoBytes;
+use swig::actions::replace_authority_v1::{
+    ReplaceAuthorityV1Args, REPLACE_AUTHORITY_PROOF_V1_DISCRIMINATOR,
+    REPLACE_AUTHORITY_PROOF_V1_DOMAIN,
+};
+use swig_state::{authority::AuthorityType, IntoBytes};
 
 use crate::{
     accounts_payload_from_meta, build_program_exec_authority_payload, prepare_secp256k1_payload,
@@ -30,6 +34,52 @@ impl ReplaceAuthorityInstruction {
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
 
         Ok([args_bytes, new_authority].concat())
+    }
+
+    /// Builds the exact state-change proof required when a ProgramExec role
+    /// authorizes ReplaceAuthority.
+    pub fn program_exec_proof_data(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        acting_role_id: u32,
+        target_role_id: u32,
+        target_authority_type: AuthorityType,
+        current_authority: &[u8],
+        new_authority: &[u8],
+    ) -> anyhow::Result<Vec<u8>> {
+        let expected_len = match target_authority_type {
+            AuthorityType::Ed25519 | AuthorityType::Ed25519Session => 32,
+            AuthorityType::Secp256k1
+            | AuthorityType::Secp256k1Session
+            | AuthorityType::Secp256r1
+            | AuthorityType::Secp256r1Session => 33,
+            _ => return Err(anyhow::anyhow!("unsupported target authority type")),
+        };
+        if current_authority.len() != expected_len || new_authority.len() != expected_len {
+            return Err(anyhow::anyhow!(
+                "current and new authority must match the target authority type"
+            ));
+        }
+
+        let acting_role_id = acting_role_id.to_le_bytes();
+        let target_role_id = target_role_id.to_le_bytes();
+        let target_authority_type = (target_authority_type as u16).to_le_bytes();
+        let replacement_hash = hashv(&[
+            REPLACE_AUTHORITY_PROOF_V1_DOMAIN,
+            swig_account.as_ref(),
+            swig_wallet_address.as_ref(),
+            &acting_role_id,
+            &target_role_id,
+            &target_authority_type,
+            current_authority,
+            new_authority,
+        ]);
+
+        Ok([
+            REPLACE_AUTHORITY_PROOF_V1_DISCRIMINATOR.as_slice(),
+            replacement_hash.as_ref(),
+        ]
+        .concat())
     }
 
     /// Replaces a signer using an Ed25519 transaction signer. This is also the
@@ -163,16 +213,10 @@ impl ReplaceAuthorityInstruction {
     ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
 
-        let replacement_intent = preceding_instruction
-            .accounts
-            .get(2)
-            .ok_or_else(|| anyhow::anyhow!("replacement proof instruction missing intent account"))?
-            .pubkey;
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new_readonly(swig_wallet_address, false),
             AccountMeta::new_readonly(INSTRUCTIONS_ID, false),
-            AccountMeta::new_readonly(replacement_intent, false),
         ];
         let authority_payload = build_program_exec_authority_payload(2, None);
         let data_payload = Self::build_data_payload(acting_role_id, target_role_id, new_authority)?;
@@ -184,5 +228,52 @@ impl ReplaceAuthorityInstruction {
         };
 
         Ok(vec![preceding_instruction, main_ix])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn program_exec_proof_data_has_exact_v1_envelope() {
+        let proof = ReplaceAuthorityInstruction::program_exec_proof_data(
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            1,
+            2,
+            AuthorityType::Ed25519,
+            &[3; 32],
+            &[4; 32],
+        )
+        .unwrap();
+
+        assert_eq!(proof.len(), 40);
+        assert_eq!(&proof[..8], &REPLACE_AUTHORITY_PROOF_V1_DISCRIMINATOR);
+    }
+
+    #[test]
+    fn program_exec_proof_data_rejects_invalid_signer_shape() {
+        assert!(ReplaceAuthorityInstruction::program_exec_proof_data(
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            1,
+            2,
+            AuthorityType::Secp256k1,
+            &[3; 32],
+            &[4; 33],
+        )
+        .is_err());
+
+        assert!(ReplaceAuthorityInstruction::program_exec_proof_data(
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            1,
+            2,
+            AuthorityType::ProgramExec,
+            &[3; 32],
+            &[4; 32],
+        )
+        .is_err());
     }
 }

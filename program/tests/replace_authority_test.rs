@@ -7,8 +7,6 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::{LocalSigner, PrivateKeySigner};
 use common::*;
 use solana_sdk::{
-    account::Account,
-    hash::hashv,
     instruction::{AccountMeta, Instruction},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
@@ -17,6 +15,7 @@ use solana_sdk::{
     sysvar::clock::Clock,
     transaction::VersionedTransaction,
 };
+use swig::actions::replace_authority_v1::REPLACE_AUTHORITY_PROOF_V1_DISCRIMINATOR;
 use swig_interface::{
     AuthorityConfig, ClientAction, CreateSessionInstruction, ReplaceAuthorityInstruction,
 };
@@ -39,11 +38,6 @@ use swig_state::{
 solana_sdk::declare_id!("BXAu5ZWHnGun2XZjUZ9nqwiZ5dNVmofPGYdMC4rx4qLV");
 const TEST_POLICY_PROGRAM_ID: Pubkey = ID;
 const TEST_POLICY_PROGRAM_PATH: &str = "../target/deploy/test_program_authority.so";
-const REPLACEMENT_PROOF_INSTRUCTION_PREFIX: [u8; 8] = *b"execreV1";
-const REPLACEMENT_INTENT_SEED: &[u8] = b"pending-recovery";
-const REPLACEMENT_INTENT_DISCRIMINATOR: [u8; 8] = *b"rpendV01";
-const REPLACEMENT_INTENT_STATUS_EXECUTED: u8 = 2;
-const REPLACEMENT_INTENT_LEN: usize = 8 + 32 + 32 + 4 + 32 + 32 + 32 + 8 + 8 + 1 + 1 + 2 + 2 + 2;
 
 fn deploy_policy_test_program(context: &mut SwigTestContext) -> anyhow::Result<Pubkey> {
     let program_data = std::fs::read(TEST_POLICY_PROGRAM_PATH).map_err(|e| {
@@ -58,99 +52,32 @@ fn deploy_policy_test_program(context: &mut SwigTestContext) -> anyhow::Result<P
     Ok(TEST_POLICY_PROGRAM_ID)
 }
 
-fn find_replacement_intent_address(
-    policy_program_id: &Pubkey,
-    swig_wallet_address: &Pubkey,
-    target_role_id: u32,
-) -> (Pubkey, u8) {
-    Pubkey::find_program_address(
-        &[
-            REPLACEMENT_INTENT_SEED,
-            swig_wallet_address.as_ref(),
-            &target_role_id.to_le_bytes(),
-        ],
-        policy_program_id,
-    )
-}
-
-fn write_pubkey(data: &mut [u8], offset: usize, pubkey: &Pubkey) {
-    data[offset..offset + 32].copy_from_slice(pubkey.as_ref());
-}
-
-fn write_hash(data: &mut [u8], offset: usize, value: &[u8; 32]) {
-    data[offset..offset + 32].copy_from_slice(value);
-}
-
-fn create_executed_replacement_intent(
-    context: &mut SwigTestContext,
-    policy_program_id: Pubkey,
-    swig_wallet_address: Pubkey,
-    target_role_id: u32,
-    guardian: Pubkey,
-    authority_type: AuthorityType,
-    old_authority: &[u8],
-    new_authority: &[u8],
-) -> Pubkey {
-    let (intent, bump) =
-        find_replacement_intent_address(&policy_program_id, &swig_wallet_address, target_role_id);
-    let mut data = vec![0u8; REPLACEMENT_INTENT_LEN];
-    data[0..8].copy_from_slice(&REPLACEMENT_INTENT_DISCRIMINATOR);
-    write_pubkey(&mut data, 8, &Pubkey::new_unique());
-    write_pubkey(&mut data, 40, &swig_wallet_address);
-    data[72..76].copy_from_slice(&target_role_id.to_le_bytes());
-    write_pubkey(&mut data, 76, &guardian);
-    write_hash(&mut data, 108, &hashv(&[old_authority]).to_bytes());
-    write_hash(&mut data, 140, &hashv(&[new_authority]).to_bytes());
-    data[172..180].copy_from_slice(&1u64.to_le_bytes());
-    data[180..188].copy_from_slice(&1u64.to_le_bytes());
-    data[188] = REPLACEMENT_INTENT_STATUS_EXECUTED;
-    data[189] = bump;
-    data[190..192].copy_from_slice(&(authority_type as u16).to_le_bytes());
-    data[192..194].copy_from_slice(&(old_authority.len() as u16).to_le_bytes());
-    data[194..196].copy_from_slice(&(new_authority.len() as u16).to_le_bytes());
-
-    context
-        .svm
-        .set_account(
-            intent,
-            Account {
-                lamports: 1_000_000,
-                data,
-                owner: policy_program_id,
-                executable: false,
-                rent_epoch: 0,
-            },
-        )
-        .unwrap();
-
-    intent
-}
-
 fn replacement_proof_instruction(
     policy_program_id: Pubkey,
     swig: Pubkey,
     swig_wallet_address: Pubkey,
+    acting_role_id: u32,
     target_role_id: u32,
-    authority_type: u16,
-    old_authority: &[u8],
+    authority_type: AuthorityType,
+    current_authority: &[u8],
     new_authority: &[u8],
 ) -> Instruction {
-    let (intent, _) =
-        find_replacement_intent_address(&policy_program_id, &swig_wallet_address, target_role_id);
-    let mut data = Vec::with_capacity(8 + 2 + 2 + 2 + old_authority.len() + new_authority.len());
-    data.extend_from_slice(&REPLACEMENT_PROOF_INSTRUCTION_PREFIX);
-    data.extend_from_slice(&authority_type.to_le_bytes());
-    data.extend_from_slice(&(old_authority.len() as u16).to_le_bytes());
-    data.extend_from_slice(&(new_authority.len() as u16).to_le_bytes());
-    data.extend_from_slice(old_authority);
-    data.extend_from_slice(new_authority);
+    let data = ReplaceAuthorityInstruction::program_exec_proof_data(
+        swig,
+        swig_wallet_address,
+        acting_role_id,
+        target_role_id,
+        authority_type,
+        current_authority,
+        new_authority,
+    )
+    .unwrap();
 
     Instruction {
         program_id: policy_program_id,
         accounts: vec![
             AccountMeta::new_readonly(swig, false),
             AccountMeta::new_readonly(swig_wallet_address, false),
-            AccountMeta::new(intent, false),
         ],
         data,
     }
@@ -244,46 +171,60 @@ fn send_ed25519_replace(
         .map_err(Box::new)
 }
 
-fn install_operator(
-    _context: &mut SwigTestContext,
-    _policy_program_id: Pubkey,
-    _admin: &Keypair,
-    _operator: Pubkey,
-) -> Pubkey {
-    Pubkey::new_unique()
-}
-
-fn configure_replacement_policy(
-    _context: &mut SwigTestContext,
-    _policy_program_id: Pubkey,
-    _operator: &Keypair,
-    _swig_wallet_address: Pubkey,
-    _target_role_id: u32,
-    _guardian: Pubkey,
-    _delay_slots: u64,
-) {
-}
-
-fn start_replacement_intent(
+fn add_program_exec_replacer(
     context: &mut SwigTestContext,
+    swig: &Pubkey,
+    root_authority: &Keypair,
     policy_program_id: Pubkey,
-    guardian: &Keypair,
-    swig_wallet_address: Pubkey,
-    target_role_id: u32,
-    authority_type: AuthorityType,
-    old_authority: &[u8],
-    new_authority: &[u8],
+    actions: Vec<ClientAction>,
 ) {
-    create_executed_replacement_intent(
+    let authority = ProgramExecAuthority::create_authority_data(
+        &policy_program_id.to_bytes(),
+        &REPLACE_AUTHORITY_PROOF_V1_DISCRIMINATOR,
+    );
+    add_authority_with_ed25519_root(
         context,
+        swig,
+        root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::ProgramExec,
+            authority: &authority,
+        },
+        actions,
+    )
+    .unwrap();
+}
+
+#[allow(clippy::too_many_arguments)]
+fn program_exec_replacement_instructions(
+    policy_program_id: Pubkey,
+    swig: Pubkey,
+    swig_wallet_address: Pubkey,
+    acting_role_id: u32,
+    target_role_id: u32,
+    target_authority_type: AuthorityType,
+    current_authority: &[u8],
+    new_authority: &[u8],
+) -> Vec<Instruction> {
+    let proof = replacement_proof_instruction(
         policy_program_id,
+        swig,
         swig_wallet_address,
+        acting_role_id,
         target_role_id,
-        guardian.pubkey(),
-        authority_type,
-        old_authority,
+        target_authority_type,
+        current_authority,
         new_authority,
     );
+    ReplaceAuthorityInstruction::new_with_program_exec(
+        swig,
+        swig_wallet_address,
+        proof,
+        acting_role_id,
+        target_role_id,
+        new_authority,
+    )
+    .unwrap()
 }
 
 #[test_log::test]
@@ -1029,33 +970,13 @@ fn test_replace_authority_rejects_wrong_key_length_without_mutation() {
 fn test_program_exec_replacement_rotates_passkey_authority() {
     let mut context = setup_test_context().unwrap();
     let root_authority = Keypair::new();
-    let admin = Keypair::new();
-    let operator = Keypair::new();
-    let guardian = Keypair::new();
     let policy_program_id = deploy_policy_test_program(&mut context).unwrap();
-
-    install_operator(&mut context, policy_program_id, &admin, operator.pubkey());
-    context
-        .svm
-        .airdrop(&operator.pubkey(), 1_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&guardian.pubkey(), 1_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&root_authority.pubkey(), 10_000_000_000)
-        .unwrap();
-
     let old_passkey = create_test_secp256r1_public_key();
     let new_passkey = create_test_secp256r1_public_key();
     let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
     let swig_wallet_address =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
-
-    create_swig_ed25519(&mut context, &root_authority, id).unwrap();
 
     add_authority_with_ed25519_root(
         &mut context,
@@ -1068,68 +989,24 @@ fn test_program_exec_replacement_rotates_passkey_authority() {
         vec![ClientAction::ManageAuthority(ManageAuthority {})],
     )
     .unwrap();
-
-    let policy_program_id_bytes = policy_program_id.to_bytes();
-    let program_exec_data = ProgramExecAuthority::create_authority_data(
-        &policy_program_id_bytes,
-        &REPLACEMENT_PROOF_INSTRUCTION_PREFIX,
-    );
-    add_authority_with_ed25519_root(
+    add_program_exec_replacer(
         &mut context,
         &swig,
         &root_authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::ProgramExec,
-            authority: &program_exec_data,
-        },
+        policy_program_id,
         vec![ClientAction::ReplaceAuthority(ReplaceAuthority::new(1))],
-    )
-    .unwrap();
-
-    let delay_slots = 10;
-    configure_replacement_policy(
-        &mut context,
-        policy_program_id,
-        &operator,
-        swig_wallet_address,
-        1,
-        guardian.pubkey(),
-        delay_slots,
     );
-    start_replacement_intent(
-        &mut context,
+
+    let instructions = program_exec_replacement_instructions(
         policy_program_id,
-        &guardian,
+        swig,
         swig_wallet_address,
+        2,
         1,
         AuthorityType::Secp256r1,
         &old_passkey,
         &new_passkey,
     );
-    context
-        .svm
-        .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + delay_slots + 1);
-    context.svm.expire_blockhash();
-
-    let execute_ix = replacement_proof_instruction(
-        policy_program_id,
-        swig,
-        swig_wallet_address,
-        1,
-        AuthorityType::Secp256r1 as u16,
-        &old_passkey,
-        &new_passkey,
-    );
-    let instructions = ReplaceAuthorityInstruction::new_with_program_exec(
-        swig,
-        swig_wallet_address,
-        execute_ix,
-        2,
-        1,
-        &new_passkey,
-    )
-    .unwrap();
-
     send_replacement_transaction(&mut context, &instructions).unwrap();
 
     let swig_account = context.svm.get_account(&swig).unwrap();
@@ -1140,7 +1017,6 @@ fn test_program_exec_replacement_rotates_passkey_authority() {
         .as_any()
         .downcast_ref::<Secp256r1Authority>()
         .unwrap();
-
     assert_eq!(replaced_authority.public_key, new_passkey);
     assert_eq!(replaced_authority.signature_odometer, 0);
     assert!(replaced_role
@@ -1154,104 +1030,42 @@ fn test_program_exec_replacement_rotates_ed25519_authority() {
     let mut context = setup_test_context().unwrap();
     let root_authority = Keypair::new();
     let new_root_authority = Keypair::new();
-    let admin = Keypair::new();
-    let operator = Keypair::new();
-    let guardian = Keypair::new();
     let policy_program_id = deploy_policy_test_program(&mut context).unwrap();
-
-    install_operator(&mut context, policy_program_id, &admin, operator.pubkey());
-    context
-        .svm
-        .airdrop(&operator.pubkey(), 1_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&guardian.pubkey(), 1_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&root_authority.pubkey(), 10_000_000_000)
-        .unwrap();
-
     let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
     let swig_wallet_address =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
 
-    create_swig_ed25519(&mut context, &root_authority, id).unwrap();
-
-    let policy_program_id_bytes = policy_program_id.to_bytes();
-    let program_exec_data = ProgramExecAuthority::create_authority_data(
-        &policy_program_id_bytes,
-        &REPLACEMENT_PROOF_INSTRUCTION_PREFIX,
-    );
-    add_authority_with_ed25519_root(
+    add_program_exec_replacer(
         &mut context,
         &swig,
         &root_authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::ProgramExec,
-            authority: &program_exec_data,
-        },
+        policy_program_id,
         vec![ClientAction::ReplaceAuthority(ReplaceAuthority::new(0))],
-    )
-    .unwrap();
-
-    let delay_slots = 10;
-    configure_replacement_policy(
-        &mut context,
-        policy_program_id,
-        &operator,
-        swig_wallet_address,
-        0,
-        guardian.pubkey(),
-        delay_slots,
     );
-    start_replacement_intent(
-        &mut context,
+
+    let instructions = program_exec_replacement_instructions(
         policy_program_id,
-        &guardian,
+        swig,
         swig_wallet_address,
+        1,
         0,
         AuthorityType::Ed25519,
         root_authority.pubkey().as_ref(),
         new_root_authority.pubkey().as_ref(),
     );
-    context
-        .svm
-        .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + delay_slots + 1);
-    context.svm.expire_blockhash();
-
-    let execute_ix = replacement_proof_instruction(
-        policy_program_id,
-        swig,
-        swig_wallet_address,
-        0,
-        AuthorityType::Ed25519 as u16,
-        root_authority.pubkey().as_ref(),
-        new_root_authority.pubkey().as_ref(),
-    );
-    let instructions = ReplaceAuthorityInstruction::new_with_program_exec(
-        swig,
-        swig_wallet_address,
-        execute_ix,
-        1,
-        0,
-        new_root_authority.pubkey().as_ref(),
-    )
-    .unwrap();
-
     send_replacement_transaction(&mut context, &instructions).unwrap();
 
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let replaced_role = swig_state.get_role(0).unwrap().unwrap();
-    let replaced_authority = replaced_role
+    let replaced_authority = swig_state
+        .get_role(0)
+        .unwrap()
+        .unwrap()
         .authority
         .as_any()
         .downcast_ref::<ED25519Authority>()
         .unwrap();
-
     assert_eq!(
         replaced_authority.public_key,
         new_root_authority.pubkey().to_bytes()
@@ -1262,35 +1076,14 @@ fn test_program_exec_replacement_rotates_ed25519_authority() {
 fn test_program_exec_replacement_rotates_secp256k1_authority() {
     let mut context = setup_test_context().unwrap();
     let root_authority = Keypair::new();
-    let old_wallet = LocalSigner::random();
-    let new_wallet = LocalSigner::random();
-    let old_authority = compressed_evm_public_key(&old_wallet);
-    let new_authority = compressed_evm_public_key(&new_wallet);
-    let admin = Keypair::new();
-    let operator = Keypair::new();
-    let guardian = Keypair::new();
+    let old_authority = compressed_evm_public_key(&LocalSigner::random());
+    let new_authority = compressed_evm_public_key(&LocalSigner::random());
     let policy_program_id = deploy_policy_test_program(&mut context).unwrap();
-
-    install_operator(&mut context, policy_program_id, &admin, operator.pubkey());
-    context
-        .svm
-        .airdrop(&operator.pubkey(), 1_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&guardian.pubkey(), 1_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&root_authority.pubkey(), 10_000_000_000)
-        .unwrap();
-
     let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
     let swig_wallet_address =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
 
-    create_swig_ed25519(&mut context, &root_authority, id).unwrap();
     add_authority_with_ed25519_root(
         &mut context,
         &swig,
@@ -1302,79 +1095,36 @@ fn test_program_exec_replacement_rotates_secp256k1_authority() {
         vec![ClientAction::ManageAuthority(ManageAuthority {})],
     )
     .unwrap();
-
-    let policy_program_id_bytes = policy_program_id.to_bytes();
-    let program_exec_data = ProgramExecAuthority::create_authority_data(
-        &policy_program_id_bytes,
-        &REPLACEMENT_PROOF_INSTRUCTION_PREFIX,
-    );
-    add_authority_with_ed25519_root(
+    add_program_exec_replacer(
         &mut context,
         &swig,
         &root_authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::ProgramExec,
-            authority: &program_exec_data,
-        },
+        policy_program_id,
         vec![ClientAction::ReplaceAuthority(ReplaceAuthority::new(1))],
-    )
-    .unwrap();
-
-    let delay_slots = 10;
-    configure_replacement_policy(
-        &mut context,
-        policy_program_id,
-        &operator,
-        swig_wallet_address,
-        1,
-        guardian.pubkey(),
-        delay_slots,
     );
-    start_replacement_intent(
-        &mut context,
+
+    let instructions = program_exec_replacement_instructions(
         policy_program_id,
-        &guardian,
+        swig,
         swig_wallet_address,
+        2,
         1,
         AuthorityType::Secp256k1,
         &old_authority,
         &new_authority,
     );
-    context
-        .svm
-        .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + delay_slots + 1);
-    context.svm.expire_blockhash();
-
-    let execute_ix = replacement_proof_instruction(
-        policy_program_id,
-        swig,
-        swig_wallet_address,
-        1,
-        AuthorityType::Secp256k1 as u16,
-        &old_authority,
-        &new_authority,
-    );
-    let instructions = ReplaceAuthorityInstruction::new_with_program_exec(
-        swig,
-        swig_wallet_address,
-        execute_ix,
-        2,
-        1,
-        &new_authority,
-    )
-    .unwrap();
-
     send_replacement_transaction(&mut context, &instructions).unwrap();
 
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let replaced_role = swig_state.get_role(1).unwrap().unwrap();
-    let replaced_authority = replaced_role
+    let replaced_authority = swig_state
+        .get_role(1)
+        .unwrap()
+        .unwrap()
         .authority
         .as_any()
         .downcast_ref::<Secp256k1Authority>()
         .unwrap();
-
     assert_eq!(
         replaced_authority.public_key.as_ref(),
         new_authority.as_slice()
@@ -1386,33 +1136,14 @@ fn test_program_exec_replacement_rotates_secp256k1_authority() {
 fn test_program_exec_replacement_requires_authority_management_permission() {
     let mut context = setup_test_context().unwrap();
     let root_authority = Keypair::new();
-    let admin = Keypair::new();
-    let operator = Keypair::new();
-    let guardian = Keypair::new();
-    let policy_program_id = deploy_policy_test_program(&mut context).unwrap();
-
-    install_operator(&mut context, policy_program_id, &admin, operator.pubkey());
-    context
-        .svm
-        .airdrop(&operator.pubkey(), 1_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&guardian.pubkey(), 1_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&root_authority.pubkey(), 10_000_000_000)
-        .unwrap();
-
     let old_passkey = create_test_secp256r1_public_key();
     let new_passkey = create_test_secp256r1_public_key();
+    let policy_program_id = deploy_policy_test_program(&mut context).unwrap();
     let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
     let swig_wallet_address =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
 
-    create_swig_ed25519(&mut context, &root_authority, id).unwrap();
     add_authority_with_ed25519_root(
         &mut context,
         &swig,
@@ -1424,253 +1155,53 @@ fn test_program_exec_replacement_requires_authority_management_permission() {
         vec![ClientAction::ManageAuthority(ManageAuthority {})],
     )
     .unwrap();
-
-    let policy_program_id_bytes = policy_program_id.to_bytes();
-    let program_exec_data = ProgramExecAuthority::create_authority_data(
-        &policy_program_id_bytes,
-        &REPLACEMENT_PROOF_INSTRUCTION_PREFIX,
-    );
-    add_authority_with_ed25519_root(
+    add_program_exec_replacer(
         &mut context,
         &swig,
         &root_authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::ProgramExec,
-            authority: &program_exec_data,
-        },
+        policy_program_id,
         vec![ClientAction::AllButManageAuthority(AllButManageAuthority)],
-    )
-    .unwrap();
-
-    let delay_slots = 10;
-    configure_replacement_policy(
-        &mut context,
-        policy_program_id,
-        &operator,
-        swig_wallet_address,
-        1,
-        guardian.pubkey(),
-        delay_slots,
     );
-    start_replacement_intent(
-        &mut context,
-        policy_program_id,
-        &guardian,
-        swig_wallet_address,
-        1,
-        AuthorityType::Secp256r1,
-        &old_passkey,
-        &new_passkey,
-    );
-    context
-        .svm
-        .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + delay_slots + 1);
-    context.svm.expire_blockhash();
 
-    let execute_ix = replacement_proof_instruction(
+    let instructions = program_exec_replacement_instructions(
         policy_program_id,
         swig,
         swig_wallet_address,
-        1,
-        AuthorityType::Secp256r1 as u16,
-        &old_passkey,
-        &new_passkey,
-    );
-    let instructions = ReplaceAuthorityInstruction::new_with_program_exec(
-        swig,
-        swig_wallet_address,
-        execute_ix,
         2,
         1,
-        &new_passkey,
-    )
-    .unwrap();
-
-    assert!(send_replacement_transaction(&mut context, &instructions).is_err());
-
-    let swig_account = context.svm.get_account(&swig).unwrap();
-    let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let replaced_role = swig_state.get_role(1).unwrap().unwrap();
-    let replaced_authority = replaced_role
-        .authority
-        .as_any()
-        .downcast_ref::<Secp256r1Authority>()
-        .unwrap();
-
-    assert_eq!(replaced_authority.public_key, old_passkey);
-}
-
-#[test_log::test]
-fn test_replacement_binding_rejects_pending_account_mismatch() {
-    let mut context = setup_test_context().unwrap();
-    let root_authority = Keypair::new();
-    let admin = Keypair::new();
-    let operator = Keypair::new();
-    let guardian = Keypair::new();
-    let policy_program_id = deploy_policy_test_program(&mut context).unwrap();
-
-    install_operator(&mut context, policy_program_id, &admin, operator.pubkey());
-    context
-        .svm
-        .airdrop(&operator.pubkey(), 1_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&guardian.pubkey(), 1_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&root_authority.pubkey(), 10_000_000_000)
-        .unwrap();
-
-    let primary_passkey = create_test_secp256r1_public_key();
-    let secondary_passkey = create_test_secp256r1_public_key();
-    let new_legit_passkey = create_test_secp256r1_public_key();
-    let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
-    let swig_wallet_address =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
-
-    create_swig_ed25519(&mut context, &root_authority, id).unwrap();
-    add_authority_with_ed25519_root(
-        &mut context,
-        &swig,
-        &root_authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::Secp256r1,
-            authority: &primary_passkey,
-        },
-        vec![ClientAction::ManageAuthority(ManageAuthority {})],
-    )
-    .unwrap();
-    add_authority_with_ed25519_root(
-        &mut context,
-        &swig,
-        &root_authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::Secp256r1,
-            authority: &secondary_passkey,
-        },
-        vec![ClientAction::ManageAuthority(ManageAuthority {})],
-    )
-    .unwrap();
-
-    let policy_program_id_bytes = policy_program_id.to_bytes();
-    let program_exec_data = ProgramExecAuthority::create_authority_data(
-        &policy_program_id_bytes,
-        &REPLACEMENT_PROOF_INSTRUCTION_PREFIX,
-    );
-    add_authority_with_ed25519_root(
-        &mut context,
-        &swig,
-        &root_authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::ProgramExec,
-            authority: &program_exec_data,
-        },
-        vec![ClientAction::ReplaceAuthority(ReplaceAuthority::new(1))],
-    )
-    .unwrap();
-
-    let delay_slots = 10;
-    configure_replacement_policy(
-        &mut context,
-        policy_program_id,
-        &operator,
-        swig_wallet_address,
-        1,
-        guardian.pubkey(),
-        delay_slots,
-    );
-    start_replacement_intent(
-        &mut context,
-        policy_program_id,
-        &guardian,
-        swig_wallet_address,
-        1,
         AuthorityType::Secp256r1,
-        &primary_passkey,
-        &new_legit_passkey,
+        &old_passkey,
+        &new_passkey,
     );
-    context
-        .svm
-        .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + delay_slots + 1);
-    context.svm.expire_blockhash();
-
-    let execute_ix = replacement_proof_instruction(
-        policy_program_id,
-        swig,
-        swig_wallet_address,
-        1,
-        AuthorityType::Secp256r1 as u16,
-        &primary_passkey,
-        &new_legit_passkey,
-    );
-    let mut instructions = ReplaceAuthorityInstruction::new_with_program_exec(
-        swig,
-        swig_wallet_address,
-        execute_ix,
-        3,
-        1,
-        &new_legit_passkey,
-    )
-    .unwrap();
-    let (wrong_intent, _) =
-        find_replacement_intent_address(&policy_program_id, &swig_wallet_address, 2);
-    instructions[1].accounts[3].pubkey = wrong_intent;
-
     assert!(send_replacement_transaction(&mut context, &instructions).is_err());
 
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let role_one = swig_state.get_role(1).unwrap().unwrap();
-    let role_one_authority = role_one
-        .authority
-        .as_any()
-        .downcast_ref::<Secp256r1Authority>()
-        .unwrap();
-    assert_eq!(role_one_authority.public_key, primary_passkey);
-
-    let role_two = swig_state.get_role(2).unwrap().unwrap();
-    let role_two_authority = role_two
-        .authority
-        .as_any()
-        .downcast_ref::<Secp256r1Authority>()
-        .unwrap();
-    assert_eq!(role_two_authority.public_key, secondary_passkey);
+    assert_eq!(
+        swig_state
+            .get_role(1)
+            .unwrap()
+            .unwrap()
+            .authority
+            .identity()
+            .unwrap(),
+        old_passkey
+    );
 }
 
 #[test_log::test]
-fn test_replacement_rejects_authority_type_mismatch() {
+fn test_program_exec_replacement_rejects_mismatched_proof_fields() {
     let mut context = setup_test_context().unwrap();
     let root_authority = Keypair::new();
-    let new_ed25519_authority = Keypair::new();
-    let admin = Keypair::new();
-    let operator = Keypair::new();
-    let guardian = Keypair::new();
-    let policy_program_id = deploy_policy_test_program(&mut context).unwrap();
-
-    install_operator(&mut context, policy_program_id, &admin, operator.pubkey());
-    context
-        .svm
-        .airdrop(&operator.pubkey(), 1_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&guardian.pubkey(), 1_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&root_authority.pubkey(), 10_000_000_000)
-        .unwrap();
-
     let old_passkey = create_test_secp256r1_public_key();
+    let new_passkey = create_test_secp256r1_public_key();
+    let unrelated_passkey = create_test_secp256r1_public_key();
+    let policy_program_id = deploy_policy_test_program(&mut context).unwrap();
     let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let (swig, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
     let swig_wallet_address =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
 
-    create_swig_ed25519(&mut context, &root_authority, id).unwrap();
     add_authority_with_ed25519_root(
         &mut context,
         &swig,
@@ -1682,78 +1213,193 @@ fn test_replacement_rejects_authority_type_mismatch() {
         vec![ClientAction::ManageAuthority(ManageAuthority {})],
     )
     .unwrap();
-
-    let policy_program_id_bytes = policy_program_id.to_bytes();
-    let program_exec_data = ProgramExecAuthority::create_authority_data(
-        &policy_program_id_bytes,
-        &REPLACEMENT_PROOF_INSTRUCTION_PREFIX,
+    add_program_exec_replacer(
+        &mut context,
+        &swig,
+        &root_authority,
+        policy_program_id,
+        vec![ClientAction::ReplaceAuthority(ReplaceAuthority::new(1))],
     );
+
+    let mismatched_proofs = [
+        ReplaceAuthorityInstruction::program_exec_proof_data(
+            swig,
+            swig_wallet_address,
+            3,
+            1,
+            AuthorityType::Secp256r1,
+            &old_passkey,
+            &new_passkey,
+        )
+        .unwrap(),
+        ReplaceAuthorityInstruction::program_exec_proof_data(
+            swig,
+            swig_wallet_address,
+            2,
+            9,
+            AuthorityType::Secp256r1,
+            &old_passkey,
+            &new_passkey,
+        )
+        .unwrap(),
+        ReplaceAuthorityInstruction::program_exec_proof_data(
+            swig,
+            swig_wallet_address,
+            2,
+            1,
+            AuthorityType::Secp256k1,
+            &old_passkey,
+            &new_passkey,
+        )
+        .unwrap(),
+        ReplaceAuthorityInstruction::program_exec_proof_data(
+            swig,
+            swig_wallet_address,
+            2,
+            1,
+            AuthorityType::Secp256r1,
+            &unrelated_passkey,
+            &new_passkey,
+        )
+        .unwrap(),
+        ReplaceAuthorityInstruction::program_exec_proof_data(
+            swig,
+            swig_wallet_address,
+            2,
+            1,
+            AuthorityType::Secp256r1,
+            &old_passkey,
+            &unrelated_passkey,
+        )
+        .unwrap(),
+        ReplaceAuthorityInstruction::program_exec_proof_data(
+            Pubkey::new_unique(),
+            swig_wallet_address,
+            2,
+            1,
+            AuthorityType::Secp256r1,
+            &old_passkey,
+            &new_passkey,
+        )
+        .unwrap(),
+        ReplaceAuthorityInstruction::program_exec_proof_data(
+            swig,
+            Pubkey::new_unique(),
+            2,
+            1,
+            AuthorityType::Secp256r1,
+            &old_passkey,
+            &new_passkey,
+        )
+        .unwrap(),
+    ];
+
+    for proof_data in mismatched_proofs {
+        context.svm.expire_blockhash();
+        let proof = Instruction {
+            program_id: policy_program_id,
+            accounts: vec![
+                AccountMeta::new_readonly(swig, false),
+                AccountMeta::new_readonly(swig_wallet_address, false),
+            ],
+            data: proof_data,
+        };
+        let instructions = ReplaceAuthorityInstruction::new_with_program_exec(
+            swig,
+            swig_wallet_address,
+            proof,
+            2,
+            1,
+            &new_passkey,
+        )
+        .unwrap();
+        assert!(send_replacement_transaction(&mut context, &instructions).is_err());
+    }
+
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(
+        swig_state
+            .get_role(1)
+            .unwrap()
+            .unwrap()
+            .authority
+            .identity()
+            .unwrap(),
+        old_passkey
+    );
+}
+
+#[test_log::test]
+fn test_program_exec_replacement_rejects_malformed_proof() {
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+    let old_passkey = create_test_secp256r1_public_key();
+    let new_passkey = create_test_secp256r1_public_key();
+    let policy_program_id = deploy_policy_test_program(&mut context).unwrap();
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
+
     add_authority_with_ed25519_root(
         &mut context,
         &swig,
         &root_authority,
         AuthorityConfig {
-            authority_type: AuthorityType::ProgramExec,
-            authority: &program_exec_data,
+            authority_type: AuthorityType::Secp256r1,
+            authority: &old_passkey,
         },
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    )
+    .unwrap();
+    add_program_exec_replacer(
+        &mut context,
+        &swig,
+        &root_authority,
+        policy_program_id,
         vec![ClientAction::ReplaceAuthority(ReplaceAuthority::new(1))],
-    )
-    .unwrap();
-
-    let delay_slots = 10;
-    configure_replacement_policy(
-        &mut context,
-        policy_program_id,
-        &operator,
-        swig_wallet_address,
-        1,
-        guardian.pubkey(),
-        delay_slots,
     );
-    start_replacement_intent(
-        &mut context,
-        policy_program_id,
-        &guardian,
-        swig_wallet_address,
-        1,
-        AuthorityType::Ed25519,
-        root_authority.pubkey().as_ref(),
-        new_ed25519_authority.pubkey().as_ref(),
-    );
-    context
-        .svm
-        .warp_to_slot(context.svm.get_sysvar::<Clock>().slot + delay_slots + 1);
-    context.svm.expire_blockhash();
 
-    let execute_ix = replacement_proof_instruction(
-        policy_program_id,
-        swig,
-        swig_wallet_address,
-        1,
-        AuthorityType::Ed25519 as u16,
-        root_authority.pubkey().as_ref(),
-        new_ed25519_authority.pubkey().as_ref(),
-    );
-    let instructions = ReplaceAuthorityInstruction::new_with_program_exec(
-        swig,
-        swig_wallet_address,
-        execute_ix,
-        2,
-        1,
-        new_ed25519_authority.pubkey().as_ref(),
-    )
-    .unwrap();
-
-    assert!(send_replacement_transaction(&mut context, &instructions).is_err());
+    for proof_data in [
+        REPLACE_AUTHORITY_PROOF_V1_DISCRIMINATOR.to_vec(),
+        [
+            REPLACE_AUTHORITY_PROOF_V1_DISCRIMINATOR.as_slice(),
+            &[0u8; 33],
+        ]
+        .concat(),
+    ] {
+        context.svm.expire_blockhash();
+        let proof = Instruction {
+            program_id: policy_program_id,
+            accounts: vec![
+                AccountMeta::new_readonly(swig, false),
+                AccountMeta::new_readonly(swig_wallet_address, false),
+            ],
+            data: proof_data,
+        };
+        let instructions = ReplaceAuthorityInstruction::new_with_program_exec(
+            swig,
+            swig_wallet_address,
+            proof,
+            2,
+            1,
+            &new_passkey,
+        )
+        .unwrap();
+        assert!(send_replacement_transaction(&mut context, &instructions).is_err());
+    }
 
     let swig_account = context.svm.get_account(&swig).unwrap();
     let swig_state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    let replaced_role = swig_state.get_role(1).unwrap().unwrap();
-    let replaced_authority = replaced_role
-        .authority
-        .as_any()
-        .downcast_ref::<Secp256r1Authority>()
-        .unwrap();
-
-    assert_eq!(replaced_authority.public_key, old_passkey);
+    assert_eq!(
+        swig_state
+            .get_role(1)
+            .unwrap()
+            .unwrap()
+            .authority
+            .identity()
+            .unwrap(),
+        old_passkey
+    );
 }

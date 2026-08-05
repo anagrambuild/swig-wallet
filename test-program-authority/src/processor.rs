@@ -15,8 +15,8 @@ pub mod instructions {
     /// Invalid discriminator for testing failures
     pub const INVALID_DISCRIMINATOR: [u8; 8] = [9, 9, 9, 9, 9, 9, 9, 9];
 
-    /// Recovery execute discriminator used by recovery-authority tests.
-    pub const RECOVERY_EXECUTE: [u8; 8] = *b"execreV1";
+    /// Generic proof discriminator used by ReplaceAuthority tests.
+    pub const REPLACE_AUTHORITY_PROOF_V1: [u8; 8] = *b"rplauth1";
 }
 
 /// State account data format:
@@ -39,7 +39,9 @@ pub fn process_instruction(
 
     match discriminator {
         instructions::TEST_TOKEN_TRANSFER => process_test_token_transfer(accounts, remaining_data),
-        instructions::RECOVERY_EXECUTE => process_recovery_execute(accounts, remaining_data),
+        instructions::REPLACE_AUTHORITY_PROOF_V1 => {
+            process_replace_authority_proof(accounts, remaining_data)
+        },
         instructions::INVALID_DISCRIMINATOR => {
             process_invalid_instruction(accounts, remaining_data)
         },
@@ -87,12 +89,12 @@ fn process_test_token_transfer(accounts: &[AccountInfo], _data: &[u8]) -> Progra
     }
 }
 
-fn process_recovery_execute(accounts: &[AccountInfo], _data: &[u8]) -> ProgramResult {
-    if accounts.len() < 3 {
+fn process_replace_authority_proof(accounts: &[AccountInfo], _data: &[u8]) -> ProgramResult {
+    if accounts.len() < 2 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
 
-    msg!("Test program: accepted recovery execute instruction");
+    msg!("Test program: accepted ReplaceAuthority proof");
     Ok(())
 }
 
@@ -110,6 +112,7 @@ mod tests {
     fn test_discriminators() {
         assert_eq!(instructions::TEST_TOKEN_TRANSFER.len(), 8);
         assert_eq!(instructions::INVALID_DISCRIMINATOR.len(), 8);
+        assert_eq!(instructions::REPLACE_AUTHORITY_PROOF_V1, *b"rplauth1");
         assert_ne!(
             instructions::TEST_TOKEN_TRANSFER,
             instructions::INVALID_DISCRIMINATOR

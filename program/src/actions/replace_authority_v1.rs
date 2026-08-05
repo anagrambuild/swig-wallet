@@ -4,7 +4,7 @@
 //! target role and permissions. Any authority may perform the replacement when
 //! its role has All, ManageAuthority, or the target-scoped ReplaceAuthority
 //! action. ProgramExec authorities must also prove that the configured external
-//! external policy program approved the exact replacement.
+//! policy program approved the exact replacement.
 
 use no_padding::NoPadding;
 use pinocchio::{
@@ -41,21 +41,9 @@ use crate::{
     },
 };
 
-const REPLACEMENT_PROOF_INSTRUCTION_PREFIX: [u8; 8] = *b"execreV1";
-const REPLACEMENT_INTENT_SEED: &[u8] = b"pending-recovery";
-const REPLACEMENT_INTENT_DISCRIMINATOR: [u8; 8] = *b"rpendV01";
-const REPLACEMENT_INTENT_STATUS_EXECUTED: u8 = 2;
-const REPLACEMENT_INTENT_LEN: usize = 8 + 32 + 32 + 4 + 32 + 32 + 32 + 8 + 8 + 1 + 1 + 2 + 2 + 2;
-const INTENT_SWIG_WALLET_OFFSET: usize = 40;
-const INTENT_TARGET_ROLE_OFFSET: usize = 72;
-const INTENT_CURRENT_SIGNER_HASH_OFFSET: usize = 108;
-const INTENT_NEW_SIGNER_HASH_OFFSET: usize = 140;
-const INTENT_STATUS_OFFSET: usize = 188;
-const INTENT_AUTHORITY_TYPE_OFFSET: usize = 190;
-const INTENT_CURRENT_SIGNER_LEN_OFFSET: usize = 192;
-const INTENT_NEW_SIGNER_LEN_OFFSET: usize = 194;
-const REPLACEMENT_SIGNER_DATA_HEADER_LEN: usize = 2 + 2 + 2;
-const MAX_SIGNER_LEN: usize = 64;
+pub const REPLACE_AUTHORITY_PROOF_V1_DISCRIMINATOR: [u8; 8] = *b"rplauth1";
+pub const REPLACE_AUTHORITY_PROOF_V1_DOMAIN: &[u8] = b"swig-replace-authority-v1";
+const REPLACE_AUTHORITY_PROOF_V1_LEN: usize = 8 + 32;
 
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
@@ -145,6 +133,7 @@ pub fn replace_authority_v1(
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
 
     let replace = ReplaceAuthorityV1::from_instruction_bytes(data)?;
+    let swig_key = *ctx.accounts.swig.key();
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
@@ -186,17 +175,13 @@ pub fn replace_authority_v1(
         acting_authority_type
     };
 
-    let expected_replacement = if acting_authority_type == AuthorityType::ProgramExec {
+    let program_exec_proof = if acting_authority_type == AuthorityType::ProgramExec {
         let swig_wallet_address = all_accounts
             .get(1)
             .ok_or(SwigAuthenticateError::InvalidAuthorityPayload)?;
-        let replacement_intent = all_accounts
-            .get(3)
-            .ok_or(SwigAuthenticateError::InvalidAuthorityPayload)?;
-        Some(load_verified_program_replacement(
+        Some(load_program_exec_replacement_proof(
             ctx.accounts.swig,
             swig_wallet_address,
-            replacement_intent,
             all_accounts,
             replace.authority_payload,
         )?)
@@ -207,38 +192,28 @@ pub fn replace_authority_v1(
     replace_target_signer(
         swig,
         swig_roles,
+        &swig_key,
+        replace.args.acting_role_id,
         replace.args.target_role_id,
         replace.new_authority,
-        expected_replacement.as_ref(),
+        program_exec_proof.as_ref(),
     )
 }
 
-struct SignerReplacement {
-    target_role_id: u32,
-    signer_type: u16,
-    current_signer: [u8; MAX_SIGNER_LEN],
-    current_signer_len: usize,
-    new_signer: [u8; MAX_SIGNER_LEN],
-    new_signer_len: usize,
-}
-
-impl SignerReplacement {
-    fn current_signer(&self) -> &[u8] {
-        &self.current_signer[..self.current_signer_len]
-    }
-
-    fn new_signer(&self) -> &[u8] {
-        &self.new_signer[..self.new_signer_len]
-    }
+struct ProgramExecReplacementProof {
+    swig_wallet_address: [u8; 32],
+    replacement_hash: [u8; 32],
 }
 
 #[inline(never)]
 fn replace_target_signer(
     swig: &Swig,
     swig_roles: &mut [u8],
+    swig_key: &[u8; 32],
+    acting_role_id: u32,
     target_role_id: u32,
     new_authority: &[u8],
-    expected_replacement: Option<&SignerReplacement>,
+    program_exec_proof: Option<&ProgramExecReplacementProof>,
 ) -> ProgramResult {
     let mut cursor = 0;
     for _ in 0..swig.roles {
@@ -246,16 +221,6 @@ fn replace_target_signer(
             unsafe { Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])? };
         if position.id() == target_role_id {
             let target_signer_type = position.authority_type()?;
-            if let Some(replacement) = expected_replacement {
-                if replacement.target_role_id != target_role_id
-                    || replacement.new_signer() != new_authority
-                {
-                    return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
-                }
-                if replacement.signer_type != target_signer_type as u16 {
-                    return Err(SwigError::ReplaceAuthorityTypeMismatch.into());
-                }
-            }
 
             if !matches!(
                 target_signer_type,
@@ -281,14 +246,6 @@ fn replace_target_signer(
                 return Err(SwigError::ReplaceAuthorityInvalidSignerLength.into());
             }
 
-            if let Some(replacement) = expected_replacement {
-                if replacement.current_signer_len != expected_signer_len
-                    || replacement.new_signer_len != expected_signer_len
-                {
-                    return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
-                }
-            }
-
             let authority_start = cursor + Position::LEN;
             match target_signer_type {
                 AuthorityType::Ed25519 => {
@@ -301,7 +258,15 @@ fn replace_target_signer(
                             &mut swig_roles[authority_start..authority_end],
                         )?
                     };
-                    verify_expected_current_signer(expected_replacement, &authority.public_key)?;
+                    verify_program_exec_replacement_proof(
+                        program_exec_proof,
+                        swig_key,
+                        acting_role_id,
+                        target_role_id,
+                        target_signer_type,
+                        &authority.public_key,
+                        &new_signer,
+                    )?;
                     reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                 },
@@ -315,7 +280,15 @@ fn replace_target_signer(
                             &mut swig_roles[authority_start..authority_end],
                         )?
                     };
-                    verify_expected_current_signer(expected_replacement, &authority.public_key)?;
+                    verify_program_exec_replacement_proof(
+                        program_exec_proof,
+                        swig_key,
+                        acting_role_id,
+                        target_role_id,
+                        target_signer_type,
+                        &authority.public_key,
+                        &new_signer,
+                    )?;
                     reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                     authority.session_key = [0; 32];
@@ -331,7 +304,15 @@ fn replace_target_signer(
                             &mut swig_roles[authority_start..authority_end],
                         )?
                     };
-                    verify_expected_current_signer(expected_replacement, &authority.public_key)?;
+                    verify_program_exec_replacement_proof(
+                        program_exec_proof,
+                        swig_key,
+                        acting_role_id,
+                        target_role_id,
+                        target_signer_type,
+                        &authority.public_key,
+                        &new_signer,
+                    )?;
                     reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                     authority.signature_odometer = 0;
@@ -346,7 +327,15 @@ fn replace_target_signer(
                             &mut swig_roles[authority_start..authority_end],
                         )?
                     };
-                    verify_expected_current_signer(expected_replacement, &authority.public_key)?;
+                    verify_program_exec_replacement_proof(
+                        program_exec_proof,
+                        swig_key,
+                        acting_role_id,
+                        target_role_id,
+                        target_signer_type,
+                        &authority.public_key,
+                        &new_signer,
+                    )?;
                     reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                     authority.signature_odometer = 0;
@@ -363,7 +352,15 @@ fn replace_target_signer(
                             &mut swig_roles[authority_start..authority_end],
                         )?
                     };
-                    verify_expected_current_signer(expected_replacement, &authority.public_key)?;
+                    verify_program_exec_replacement_proof(
+                        program_exec_proof,
+                        swig_key,
+                        acting_role_id,
+                        target_role_id,
+                        target_signer_type,
+                        &authority.public_key,
+                        &new_signer,
+                    )?;
                     reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                     authority.signature_odometer = 0;
@@ -378,7 +375,15 @@ fn replace_target_signer(
                             &mut swig_roles[authority_start..authority_end],
                         )?
                     };
-                    verify_expected_current_signer(expected_replacement, &authority.public_key)?;
+                    verify_program_exec_replacement_proof(
+                        program_exec_proof,
+                        swig_key,
+                        acting_role_id,
+                        target_role_id,
+                        target_signer_type,
+                        &authority.public_key,
+                        &new_signer,
+                    )?;
                     reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                     authority.signature_odometer = 0;
@@ -403,142 +408,45 @@ fn reject_same_signer(current_signer: &[u8], new_signer: &[u8]) -> ProgramResult
     Ok(())
 }
 
-fn verify_expected_current_signer(
-    expected_replacement: Option<&SignerReplacement>,
+fn verify_program_exec_replacement_proof(
+    proof: Option<&ProgramExecReplacementProof>,
+    swig_key: &[u8; 32],
+    acting_role_id: u32,
+    target_role_id: u32,
+    target_signer_type: AuthorityType,
     current_signer: &[u8],
+    new_signer: &[u8],
 ) -> ProgramResult {
-    if let Some(replacement) = expected_replacement {
-        if replacement.current_signer() != current_signer {
-            return Err(SwigError::ReplaceAuthorityCurrentSignerMismatch.into());
-        }
+    let Some(proof) = proof else {
+        return Ok(());
+    };
+    let expected_hash = replacement_proof_hash(
+        swig_key,
+        &proof.swig_wallet_address,
+        acting_role_id,
+        target_role_id,
+        target_signer_type,
+        current_signer,
+        new_signer,
+    )?;
+    if expected_hash != proof.replacement_hash {
+        return Err(SwigError::ReplaceAuthorityProofMismatch.into());
     }
     Ok(())
 }
 
 #[inline(never)]
-fn load_verified_program_replacement(
+fn load_program_exec_replacement_proof(
     swig: &AccountInfo,
     swig_wallet_address: &AccountInfo,
-    replacement_intent: &AccountInfo,
     all_accounts: &[AccountInfo],
     authority_payload: &[u8],
-) -> Result<SignerReplacement, ProgramError> {
+) -> Result<ProgramExecReplacementProof, ProgramError> {
     let (expected_swig_wallet_address, _) =
         find_program_address(&swig_wallet_address_seeds(swig.key().as_ref()), &crate::ID);
     if !sol_assert_bytes_eq(swig_wallet_address.key(), &expected_swig_wallet_address, 32) {
         return Err(SwigError::InvalidSeedSwigAccount.into());
     }
-
-    let proof_ix =
-        load_replacement_proof_ix(swig, swig_wallet_address, all_accounts, authority_payload)?;
-
-    if !sol_assert_bytes_eq(
-        replacement_intent.key(),
-        proof_ix.replacement_intent.as_ref(),
-        32,
-    ) {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
-    }
-    if !sol_assert_bytes_eq(replacement_intent.owner(), proof_ix.program_id.as_ref(), 32) {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
-    }
-
-    let intent_data = unsafe { replacement_intent.borrow_data_unchecked() };
-    if intent_data.len() < REPLACEMENT_INTENT_LEN
-        || intent_data[0..8] != REPLACEMENT_INTENT_DISCRIMINATOR
-    {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
-    }
-
-    let intent_swig_wallet = read_hash(intent_data, INTENT_SWIG_WALLET_OFFSET)?;
-    if !sol_assert_bytes_eq(&intent_swig_wallet, swig_wallet_address.key(), 32) {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
-    }
-
-    let target_role_id = read_u32(intent_data, INTENT_TARGET_ROLE_OFFSET)?;
-    let target_role_id_bytes = target_role_id.to_le_bytes();
-    let (expected_intent, _) = find_program_address(
-        &[
-            REPLACEMENT_INTENT_SEED,
-            swig_wallet_address.key().as_ref(),
-            &target_role_id_bytes,
-        ],
-        &proof_ix.program_id,
-    );
-    if !sol_assert_bytes_eq(replacement_intent.key(), &expected_intent, 32) {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
-    }
-
-    let intent_status = intent_data
-        .get(INTENT_STATUS_OFFSET)
-        .copied()
-        .ok_or(SwigError::ReplaceAuthorityIntentMismatch)?;
-    if intent_status != REPLACEMENT_INTENT_STATUS_EXECUTED {
-        return Err(SwigError::ReplaceAuthorityIntentNotExecuted.into());
-    }
-
-    let intent_authority_type = read_u16(intent_data, INTENT_AUTHORITY_TYPE_OFFSET)?;
-    if proof_ix.authority_type != intent_authority_type {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
-    }
-    let intent_current_signer_len = read_u16(intent_data, INTENT_CURRENT_SIGNER_LEN_OFFSET)?;
-    if proof_ix.current_signer_len as u16 != intent_current_signer_len {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
-    }
-    let intent_new_signer_len = read_u16(intent_data, INTENT_NEW_SIGNER_LEN_OFFSET)?;
-    if proof_ix.new_signer_len as u16 != intent_new_signer_len {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
-    }
-
-    let current_signer_hash = hash_signer(proof_ix.current_signer())?;
-    let intent_current_signer_hash = read_hash(intent_data, INTENT_CURRENT_SIGNER_HASH_OFFSET)?;
-    if current_signer_hash != intent_current_signer_hash {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
-    }
-
-    let new_signer_hash = hash_signer(proof_ix.new_signer())?;
-    let intent_new_signer_hash = read_hash(intent_data, INTENT_NEW_SIGNER_HASH_OFFSET)?;
-    if new_signer_hash != intent_new_signer_hash {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
-    }
-
-    Ok(SignerReplacement {
-        target_role_id,
-        signer_type: proof_ix.authority_type,
-        current_signer: proof_ix.current_signer,
-        current_signer_len: proof_ix.current_signer_len,
-        new_signer: proof_ix.new_signer,
-        new_signer_len: proof_ix.new_signer_len,
-    })
-}
-
-struct ReplacementProofIx {
-    program_id: [u8; 32],
-    replacement_intent: [u8; 32],
-    authority_type: u16,
-    current_signer: [u8; MAX_SIGNER_LEN],
-    current_signer_len: usize,
-    new_signer: [u8; MAX_SIGNER_LEN],
-    new_signer_len: usize,
-}
-
-impl ReplacementProofIx {
-    fn current_signer(&self) -> &[u8] {
-        &self.current_signer[..self.current_signer_len]
-    }
-
-    fn new_signer(&self) -> &[u8] {
-        &self.new_signer[..self.new_signer_len]
-    }
-}
-
-#[inline(never)]
-fn load_replacement_proof_ix(
-    swig: &AccountInfo,
-    swig_wallet_address: &AccountInfo,
-    all_accounts: &[AccountInfo],
-    authority_payload: &[u8],
-) -> Result<ReplacementProofIx, ProgramError> {
     if authority_payload.is_empty() || authority_payload.len() > 2 {
         return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
     }
@@ -553,7 +461,7 @@ fn load_replacement_proof_ix(
     let sysvar_instructions = all_accounts
         .get(instruction_sysvar_index)
         .ok_or(SwigAuthenticateError::InvalidAuthorityPayload)?;
-    if sysvar_instructions.key().as_ref() != &INSTRUCTIONS_ID {
+    if sysvar_instructions.key().as_ref() != INSTRUCTIONS_ID {
         return Err(SwigAuthenticateError::PermissionDeniedProgramExecInvalidInstruction.into());
     }
 
@@ -563,17 +471,13 @@ fn load_replacement_proof_ix(
     let verify_ix_index = match target_ix_index {
         Some(index) => {
             if index >= current_index {
-                return Err(
-                    SwigAuthenticateError::PermissionDeniedProgramExecInvalidInstruction.into(),
-                );
+                return Err(SwigError::ReplaceAuthorityProofInvalidInstruction.into());
             }
             index
         },
         None => {
             if current_index == 0 {
-                return Err(
-                    SwigAuthenticateError::PermissionDeniedProgramExecInvalidInstruction.into(),
-                );
+                return Err(SwigError::ReplaceAuthorityProofInvalidInstruction.into());
             }
             current_index - 1
         },
@@ -581,136 +485,77 @@ fn load_replacement_proof_ix(
 
     let proof_ix = unsafe { ixs.deserialize_instruction_unchecked(verify_ix_index) };
     let instruction_data = proof_ix.get_instruction_data();
-    if instruction_data.len() < 8 + REPLACEMENT_SIGNER_DATA_HEADER_LEN
-        || instruction_data[0..8] != REPLACEMENT_PROOF_INSTRUCTION_PREFIX
+    if instruction_data.len() != REPLACE_AUTHORITY_PROOF_V1_LEN
+        || instruction_data[0..8] != REPLACE_AUTHORITY_PROOF_V1_DISCRIMINATOR
     {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
+        return Err(SwigError::ReplaceAuthorityProofInvalidData.into());
     }
-    let replacement_signers = parse_replace_authority_data(&instruction_data[8..])?;
+    let replacement_hash: [u8; 32] = instruction_data[8..]
+        .try_into()
+        .map_err(|_| SwigError::ReplaceAuthorityProofInvalidData)?;
 
-    let swig_meta = proof_ix.get_account_meta_at(0)?;
-    let swig_wallet_meta = proof_ix.get_account_meta_at(1)?;
-    let intent_meta = proof_ix.get_account_meta_at(2)?;
+    let swig_meta = proof_ix
+        .get_account_meta_at(0)
+        .map_err(|_| SwigError::ReplaceAuthorityProofInvalidAccounts)?;
+    let swig_wallet_meta = proof_ix
+        .get_account_meta_at(1)
+        .map_err(|_| SwigError::ReplaceAuthorityProofInvalidAccounts)?;
     if !sol_assert_bytes_eq(swig_meta.key.as_ref(), swig.key(), 32) {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
+        return Err(SwigError::ReplaceAuthorityProofInvalidAccounts.into());
     }
     if !sol_assert_bytes_eq(swig_wallet_meta.key.as_ref(), swig_wallet_address.key(), 32) {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
+        return Err(SwigError::ReplaceAuthorityProofInvalidAccounts.into());
     }
 
-    Ok(ReplacementProofIx {
-        program_id: *proof_ix.get_program_id(),
-        replacement_intent: intent_meta.key,
-        authority_type: replacement_signers.authority_type,
-        current_signer: replacement_signers.current_signer,
-        current_signer_len: replacement_signers.current_signer_len,
-        new_signer: replacement_signers.new_signer,
-        new_signer_len: replacement_signers.new_signer_len,
+    Ok(ProgramExecReplacementProof {
+        swig_wallet_address: *swig_wallet_address.key(),
+        replacement_hash,
     })
 }
 
 #[inline(never)]
-fn hash_signer(signer: &[u8]) -> Result<[u8; 32], ProgramError> {
+fn replacement_proof_hash(
+    swig_key: &[u8; 32],
+    swig_wallet_address: &[u8; 32],
+    acting_role_id: u32,
+    target_role_id: u32,
+    target_signer_type: AuthorityType,
+    current_signer: &[u8],
+    new_signer: &[u8],
+) -> Result<[u8; 32], ProgramError> {
+    let acting_role_id = acting_role_id.to_le_bytes();
+    let target_role_id = target_role_id.to_le_bytes();
+    let target_signer_type = (target_signer_type as u16).to_le_bytes();
+    let values: [&[u8]; 8] = [
+        REPLACE_AUTHORITY_PROOF_V1_DOMAIN,
+        swig_key,
+        swig_wallet_address,
+        &acting_role_id,
+        &target_role_id,
+        &target_signer_type,
+        current_signer,
+        new_signer,
+    ];
     let mut hash = [0u8; 32];
 
     #[cfg(target_os = "solana")]
     unsafe {
         let res = sol_sha256(
-            [signer.as_ref()].as_ptr() as *const u8,
-            1,
+            values.as_ptr() as *const u8,
+            values.len() as u64,
             hash.as_mut_ptr(),
         );
         if res != 0 {
-            return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
+            return Err(SwigError::ReplaceAuthorityProofMismatch.into());
         }
     }
 
     #[cfg(not(target_os = "solana"))]
     {
-        let _ = signer;
+        let _ = values;
     }
 
     Ok(hash)
-}
-
-fn read_u32(data: &[u8], offset: usize) -> Result<u32, ProgramError> {
-    let bytes: [u8; 4] = data
-        .get(offset..offset + 4)
-        .ok_or(SwigError::ReplaceAuthorityIntentMismatch)?
-        .try_into()
-        .map_err(|_| SwigError::ReplaceAuthorityIntentMismatch)?;
-    Ok(u32::from_le_bytes(bytes))
-}
-
-fn read_u16(data: &[u8], offset: usize) -> Result<u16, ProgramError> {
-    let bytes: [u8; 2] = data
-        .get(offset..offset + 2)
-        .ok_or(SwigError::ReplaceAuthorityIntentMismatch)?
-        .try_into()
-        .map_err(|_| SwigError::ReplaceAuthorityIntentMismatch)?;
-    Ok(u16::from_le_bytes(bytes))
-}
-
-fn read_hash(data: &[u8], offset: usize) -> Result<[u8; 32], ProgramError> {
-    data.get(offset..offset + 32)
-        .ok_or(SwigError::ReplaceAuthorityIntentMismatch)?
-        .try_into()
-        .map_err(|_| SwigError::ReplaceAuthorityIntentMismatch.into())
-}
-
-struct ParsedReplaceAuthorityData {
-    authority_type: u16,
-    current_signer: [u8; MAX_SIGNER_LEN],
-    current_signer_len: usize,
-    new_signer: [u8; MAX_SIGNER_LEN],
-    new_signer_len: usize,
-}
-
-fn parse_replace_authority_data(data: &[u8]) -> Result<ParsedReplaceAuthorityData, ProgramError> {
-    if data.len() < REPLACEMENT_SIGNER_DATA_HEADER_LEN {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
-    }
-
-    let authority_type = read_u16(data, 0)?;
-    let current_signer_len = read_u16(data, 2)? as usize;
-    let new_signer_len = read_u16(data, 4)? as usize;
-    if current_signer_len == 0
-        || current_signer_len > MAX_SIGNER_LEN
-        || new_signer_len == 0
-        || new_signer_len > MAX_SIGNER_LEN
-    {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
-    }
-
-    let old_start = REPLACEMENT_SIGNER_DATA_HEADER_LEN;
-    let new_start = old_start
-        .checked_add(current_signer_len)
-        .ok_or(SwigError::ReplaceAuthorityIntentMismatch)?;
-    let expected_len = new_start
-        .checked_add(new_signer_len)
-        .ok_or(SwigError::ReplaceAuthorityIntentMismatch)?;
-    if data.len() != expected_len {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
-    }
-
-    let mut current_signer = [0u8; MAX_SIGNER_LEN];
-    current_signer[..current_signer_len].copy_from_slice(
-        data.get(old_start..new_start)
-            .ok_or(SwigError::ReplaceAuthorityIntentMismatch)?,
-    );
-    let mut new_signer = [0u8; MAX_SIGNER_LEN];
-    new_signer[..new_signer_len].copy_from_slice(
-        data.get(new_start..expected_len)
-            .ok_or(SwigError::ReplaceAuthorityIntentMismatch)?,
-    );
-
-    Ok(ParsedReplaceAuthorityData {
-        authority_type,
-        current_signer,
-        current_signer_len,
-        new_signer,
-        new_signer_len,
-    })
 }
 
 #[cfg(test)]
