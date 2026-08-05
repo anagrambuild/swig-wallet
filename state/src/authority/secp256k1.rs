@@ -568,7 +568,7 @@ fn validate_account_count(account_count: usize) -> Result<(), ProgramError> {
 ///
 /// # Returns
 /// * `[u8; 33]` - The compressed public key
-fn compress(key: &[u8; 64]) -> [u8; 33] {
+pub fn compress(key: &[u8; 64]) -> [u8; 33] {
     let mut compressed = [0u8; 33];
     compressed[0] = if key[63] & 1 == 0 { 0x02 } else { 0x03 };
     compressed[1..33].copy_from_slice(&key[..32]);

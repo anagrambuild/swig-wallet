@@ -228,18 +228,17 @@ pub enum SwigInstruction {
     #[account(3, name="system_program", desc="the system program")]
     CloseSwigV1 = 15,
 
-    /// Rotates a signer authority through the constrained recovery path.
+    /// Replaces a role's signer while preserving its type and permissions.
     ///
     /// Required accounts:
     /// 1. `[writable]` Swig wallet account
-    /// 2. Swig wallet address account
-    /// 3. Instructions sysvar account
-    /// 4. Recovery pending state account
+    ///
+    /// Additional authority-specific accounts follow the Swig account. An
+    /// Ed25519 or session authority supplies its signer account. Secp256r1 and
+    /// ProgramExec authorities supply the instructions sysvar. ProgramExec also
+    /// supplies the Swig wallet address.
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
-    #[account(1, name="swig_wallet_address", desc="the swig wallet address account")]
-    #[account(2, name="instructions", desc="the instructions sysvar account")]
-    #[account(3, name="pending_recovery", desc="the recovery pending state account")]
-    RecoverAuthorityV1 = 16,
+    ReplaceAuthorityV1 = 16,
 
     /// Sets an immutable rent claimer for this swig wallet.
     ///

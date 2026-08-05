@@ -122,22 +122,22 @@ pub enum SwigError {
     TokenAccountNotEmpty,
     /// Wallet has excess SOL balance (beyond rent-exempt minimum)
     WalletNotEmpty,
-    /// Recover authority instruction data is too short
-    InvalidSwigRecoverAuthorityInstructionDataTooShort,
-    /// Recovery authority scheme is not supported for this rotation path
-    OnlyPasskeyRecoverySupported,
-    /// Existing authority does not match the recovery request
-    RecoveryOldAuthorityMismatch,
-    /// Recovery instruction and pending state are not bound to the same request
-    RecoveryInstructionMismatch,
-    /// Recovery pending state has not been executed
-    RecoveryPendingNotExecuted,
-    /// Recovery authority scheme does not match the target role authority
-    RecoveryAuthorityTypeMismatch,
-    /// Recovery authority payload length is invalid for the target role
-    RecoveryInvalidAuthorityLength,
-    /// Recovery does not support this authority scheme
-    UnsupportedRecoveryAuthorityScheme,
+    /// Replace authority instruction data is too short
+    InvalidSwigReplaceAuthorityInstructionDataTooShort,
+    /// Replace authority instruction payload is malformed
+    ReplaceAuthorityInvalidPayload,
+    /// External replacement proof does not match the requested state change
+    ReplaceAuthorityProofMismatch,
+    /// External replacement proof data is malformed
+    ReplaceAuthorityProofInvalidData,
+    /// External replacement proof accounts do not match the Swig
+    ReplaceAuthorityProofInvalidAccounts,
+    /// External replacement proof references an invalid instruction
+    ReplaceAuthorityProofInvalidInstruction,
+    /// Signer length is invalid for the target role
+    ReplaceAuthorityInvalidSignerLength,
+    /// Signer replacement does not support this signer type
+    UnsupportedReplaceAuthorityType,
     /// Set rent claimer instruction data is too short
     InvalidSwigSetRentClaimerInstructionDataTooShort,
     /// Rent claimer can only be set once
@@ -162,6 +162,8 @@ pub enum SwigError {
     InvalidSwigSubAccountV2Disabled,
     /// Invalid seed used for V2 sub-account derivation
     InvalidSeedSubAccountV2,
+    /// Replacement signer must differ from the target role's current signer
+    ReplaceAuthoritySameSigner,
 }
 
 /// Implements conversion from SwigError to ProgramError.
