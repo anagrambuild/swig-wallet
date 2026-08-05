@@ -2,9 +2,9 @@
 //!
 //! This instruction replaces one signer with another while preserving the
 //! target role and permissions. Any authority may perform the replacement when
-//! its role has the ReplaceAuthority action. ProgramExec authorities must also
-//! prove that the configured external recovery program approved the exact
-//! replacement.
+//! its role has All, ManageAuthority, or the target-scoped ReplaceAuthority
+//! action. ProgramExec authorities must also prove that the configured external
+//! recovery program approved the exact replacement.
 
 use no_padding::NoPadding;
 use pinocchio::{
@@ -21,7 +21,7 @@ use pinocchio::{
 };
 use swig_assertions::{check_self_owned, sol_assert_bytes_eq};
 use swig_state::{
-    action::replace_authority::ReplaceAuthority,
+    action::{all::All, manage_authority::ManageAuthority, replace_authority::ReplaceAuthority},
     authority::{
         ed25519::{ED25519Authority, Ed25519SessionAuthority},
         secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority},
@@ -175,10 +175,12 @@ pub fn replace_authority_v1(
             )?;
         }
 
-        if acting_role
-            .get_action::<ReplaceAuthority>(&replace.args.target_role_id.to_le_bytes())?
-            .is_none()
-        {
+        let has_permission = acting_role.get_action::<All>(&[])?.is_some()
+            || acting_role.get_action::<ManageAuthority>(&[])?.is_some()
+            || acting_role
+                .get_action::<ReplaceAuthority>(&replace.args.target_role_id.to_le_bytes())?
+                .is_some();
+        if !has_permission {
             return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
         }
         acting_authority_type
@@ -300,6 +302,7 @@ fn replace_target_signer(
                         )?
                     };
                     verify_recovery_current(verified_recovery, &authority.public_key)?;
+                    reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                 },
                 AuthorityType::Ed25519Session => {
@@ -313,6 +316,7 @@ fn replace_target_signer(
                         )?
                     };
                     verify_recovery_current(verified_recovery, &authority.public_key)?;
+                    reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                     authority.session_key = [0; 32];
                     authority.current_session_expiration = 0;
@@ -328,6 +332,7 @@ fn replace_target_signer(
                         )?
                     };
                     verify_recovery_current(verified_recovery, &authority.public_key)?;
+                    reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                     authority.signature_odometer = 0;
                 },
@@ -342,6 +347,7 @@ fn replace_target_signer(
                         )?
                     };
                     verify_recovery_current(verified_recovery, &authority.public_key)?;
+                    reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                     authority.signature_odometer = 0;
                     authority.session_key = [0; 32];
@@ -358,6 +364,7 @@ fn replace_target_signer(
                         )?
                     };
                     verify_recovery_current(verified_recovery, &authority.public_key)?;
+                    reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                     authority.signature_odometer = 0;
                 },
@@ -372,6 +379,7 @@ fn replace_target_signer(
                         )?
                     };
                     verify_recovery_current(verified_recovery, &authority.public_key)?;
+                    reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                     authority.signature_odometer = 0;
                     authority.session_key = [0; 32];
@@ -386,6 +394,13 @@ fn replace_target_signer(
     }
 
     Err(SwigError::InvalidAuthorityNotFoundByRoleId.into())
+}
+
+fn reject_same_signer(current_signer: &[u8], new_signer: &[u8]) -> ProgramResult {
+    if current_signer == new_signer {
+        return Err(SwigError::ReplaceAuthoritySameSigner.into());
+    }
+    Ok(())
 }
 
 fn verify_recovery_current(
@@ -750,5 +765,17 @@ mod tests {
         let data = [args.into_bytes().unwrap(), &[9u8; 31]].concat();
 
         assert!(ReplaceAuthorityV1::from_instruction_bytes(&data).is_err());
+    }
+
+    #[test]
+    fn same_signer_returns_the_dedicated_error() {
+        let signer = [7u8; 33];
+        let error = reject_same_signer(&signer, &signer).unwrap_err();
+
+        assert!(matches!(
+            error,
+            ProgramError::Custom(code) if code == SwigError::ReplaceAuthoritySameSigner as u32
+        ));
+        assert!(reject_same_signer(&signer, &[8u8; 33]).is_ok());
     }
 }

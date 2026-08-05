@@ -21,12 +21,15 @@ use swig_interface::{
     AuthorityConfig, ClientAction, CreateSessionInstruction, ReplaceAuthorityInstruction,
 };
 use swig_state::{
-    action::{manage_authority::ManageAuthority, replace_authority::ReplaceAuthority},
+    action::{
+        all_but_manage_authority::AllButManageAuthority, manage_authority::ManageAuthority,
+        replace_authority::ReplaceAuthority,
+    },
     authority::{
         ed25519::{CreateEd25519SessionAuthority, ED25519Authority, Ed25519SessionAuthority},
         programexec::ProgramExecAuthority,
-        secp256k1::Secp256k1Authority,
-        secp256r1::Secp256r1Authority,
+        secp256k1::{CreateSecp256k1SessionAuthority, Secp256k1Authority},
+        secp256r1::{CreateSecp256r1SessionAuthority, Secp256r1Authority},
         AuthorityType,
     },
     swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
@@ -205,6 +208,42 @@ fn send_recovery_transaction(
         .map_err(Box::new)
 }
 
+fn send_ed25519_replace(
+    context: &mut SwigTestContext,
+    swig: Pubkey,
+    acting_authority: &Keypair,
+    acting_role_id: u32,
+    target_role_id: u32,
+    new_authority: &[u8],
+) -> Result<(), Box<litesvm::types::FailedTransactionMetadata>> {
+    context.svm.expire_blockhash();
+    let replace_ix = ReplaceAuthorityInstruction::new_with_ed25519_authority(
+        swig,
+        acting_authority.pubkey(),
+        acting_role_id,
+        target_role_id,
+        new_authority,
+    )
+    .unwrap();
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[replace_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let transaction = VersionedTransaction::try_new(
+        VersionedMessage::V0(message),
+        &[&context.default_payer, acting_authority],
+    )
+    .unwrap();
+    context
+        .svm
+        .send_transaction(transaction)
+        .map(|_| ())
+        .map_err(Box::new)
+}
+
 fn install_operator(
     _context: &mut SwigTestContext,
     _recovery_program_id: Pubkey,
@@ -316,6 +355,296 @@ fn test_ed25519_authority_can_replace_authority_without_changing_actions() {
         .unwrap();
     assert_eq!(target.public_key, new_target.pubkey().to_bytes());
     assert_eq!(target_role.actions, before_actions.as_slice());
+}
+
+#[test_log::test]
+fn test_all_permission_can_replace_authority() {
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let old_target = Keypair::new();
+    let new_target = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &root, id).unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: old_target.pubkey().as_ref(),
+        },
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    )
+    .unwrap();
+
+    send_ed25519_replace(
+        &mut context,
+        swig,
+        &root,
+        0,
+        1,
+        new_target.pubkey().as_ref(),
+    )
+    .unwrap();
+
+    let account = context.svm.get_account(&swig).unwrap();
+    let state = SwigWithRoles::from_bytes(&account.data).unwrap();
+    assert_eq!(
+        state
+            .get_role(1)
+            .unwrap()
+            .unwrap()
+            .authority
+            .identity()
+            .unwrap(),
+        new_target.pubkey().as_ref()
+    );
+}
+
+#[test_log::test]
+fn test_manage_authority_permission_can_replace_authority() {
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let old_target = Keypair::new();
+    let new_target = Keypair::new();
+    let manager = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &root, id).unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: old_target.pubkey().as_ref(),
+        },
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    )
+    .unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: manager.pubkey().as_ref(),
+        },
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    )
+    .unwrap();
+
+    send_ed25519_replace(
+        &mut context,
+        swig,
+        &manager,
+        2,
+        1,
+        new_target.pubkey().as_ref(),
+    )
+    .unwrap();
+
+    let account = context.svm.get_account(&swig).unwrap();
+    let state = SwigWithRoles::from_bytes(&account.data).unwrap();
+    assert_eq!(
+        state
+            .get_role(1)
+            .unwrap()
+            .unwrap()
+            .authority
+            .identity()
+            .unwrap(),
+        new_target.pubkey().as_ref()
+    );
+}
+
+#[test_log::test]
+fn test_all_but_manage_authority_cannot_replace_authority() {
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let old_target = Keypair::new();
+    let new_target = Keypair::new();
+    let acting_authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &root, id).unwrap();
+
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: old_target.pubkey().as_ref(),
+        },
+        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+    )
+    .unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: acting_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::AllButManageAuthority(AllButManageAuthority)],
+    )
+    .unwrap();
+
+    assert!(send_ed25519_replace(
+        &mut context,
+        swig,
+        &acting_authority,
+        2,
+        1,
+        new_target.pubkey().as_ref(),
+    )
+    .is_err());
+
+    let account = context.svm.get_account(&swig).unwrap();
+    let state = SwigWithRoles::from_bytes(&account.data).unwrap();
+    assert_eq!(
+        state
+            .get_role(1)
+            .unwrap()
+            .unwrap()
+            .authority
+            .identity()
+            .unwrap(),
+        old_target.pubkey().as_ref()
+    );
+}
+
+#[test_log::test]
+fn test_replace_authority_rejects_same_signer_for_every_supported_target_type() {
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &root, id).unwrap();
+    let target_actions = || vec![ClientAction::ManageAuthority(ManageAuthority {})];
+
+    let ed25519_target = Keypair::new();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: ed25519_target.pubkey().as_ref(),
+        },
+        target_actions(),
+    )
+    .unwrap();
+
+    let ed25519_session_target = Keypair::new();
+    let ed25519_session = CreateEd25519SessionAuthority::new(
+        ed25519_session_target.pubkey().to_bytes(),
+        [1; 32],
+        100,
+    );
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519Session,
+            authority: ed25519_session.into_bytes().unwrap(),
+        },
+        target_actions(),
+    )
+    .unwrap();
+
+    let secp256k1_target = compressed_evm_public_key(&LocalSigner::random());
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256k1,
+            authority: &secp256k1_target,
+        },
+        target_actions(),
+    )
+    .unwrap();
+
+    let secp256k1_session_target = compressed_evm_public_key(&LocalSigner::random());
+    let mut padded_secp256k1_session_target = [0u8; 64];
+    padded_secp256k1_session_target[..33].copy_from_slice(&secp256k1_session_target);
+    let secp256k1_session =
+        CreateSecp256k1SessionAuthority::new(padded_secp256k1_session_target, [2; 32], 100);
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256k1Session,
+            authority: secp256k1_session.into_bytes().unwrap(),
+        },
+        target_actions(),
+    )
+    .unwrap();
+
+    let secp256r1_target = create_test_secp256r1_public_key();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256r1,
+            authority: &secp256r1_target,
+        },
+        target_actions(),
+    )
+    .unwrap();
+
+    let secp256r1_session_target = create_test_secp256r1_public_key();
+    let secp256r1_session =
+        CreateSecp256r1SessionAuthority::new(secp256r1_session_target, [3; 32], 100);
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Secp256r1Session,
+            authority: secp256r1_session.into_bytes().unwrap(),
+        },
+        target_actions(),
+    )
+    .unwrap();
+
+    let same_signers = [
+        (1, ed25519_target.pubkey().to_bytes().to_vec()),
+        (2, ed25519_session_target.pubkey().to_bytes().to_vec()),
+        (3, secp256k1_target),
+        (4, secp256k1_session_target),
+        (5, secp256r1_target.to_vec()),
+        (6, secp256r1_session_target.to_vec()),
+    ];
+
+    for (target_role_id, same_signer) in &same_signers {
+        assert!(
+            send_ed25519_replace(&mut context, swig, &root, 0, *target_role_id, same_signer)
+                .is_err(),
+            "target role {target_role_id} accepted its existing signer"
+        );
+    }
+
+    let account = context.svm.get_account(&swig).unwrap();
+    let state = SwigWithRoles::from_bytes(&account.data).unwrap();
+    for (target_role_id, same_signer) in &same_signers {
+        assert_eq!(
+            state
+                .get_role(*target_role_id)
+                .unwrap()
+                .unwrap()
+                .authority
+                .identity()
+                .unwrap(),
+            same_signer,
+            "target role {target_role_id} changed after a rejected replacement"
+        );
+    }
 }
 
 #[test_log::test]
@@ -1054,7 +1383,7 @@ fn test_program_exec_recovery_rotates_secp256k1_authority() {
 }
 
 #[test_log::test]
-fn test_program_exec_recovery_requires_replace_authority_permission() {
+fn test_program_exec_recovery_requires_authority_management_permission() {
     let mut context = setup_test_context().unwrap();
     let root_authority = Keypair::new();
     let admin = Keypair::new();
@@ -1109,7 +1438,7 @@ fn test_program_exec_recovery_requires_replace_authority_permission() {
             authority_type: AuthorityType::ProgramExec,
             authority: &program_exec_data,
         },
-        vec![ClientAction::ManageAuthority(ManageAuthority {})],
+        vec![ClientAction::AllButManageAuthority(AllButManageAuthority)],
     )
     .unwrap();
 

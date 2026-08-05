@@ -162,6 +162,8 @@ pub enum SwigError {
     InvalidSwigSubAccountV2Disabled,
     /// Invalid seed used for V2 sub-account derivation
     InvalidSeedSubAccountV2,
+    /// Replacement signer must differ from the target role's current signer
+    ReplaceAuthoritySameSigner,
 }
 
 /// Implements conversion from SwigError to ProgramError.
