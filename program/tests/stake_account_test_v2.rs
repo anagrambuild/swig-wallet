@@ -63,6 +63,13 @@ impl ValidatorProcess {
     }
 
     fn start(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if RpcClient::new_with_timeout(LOCALHOST, Duration::from_secs(1))
+            .get_health()
+            .is_ok()
+        {
+            return Ok(());
+        }
+
         if self.child.is_some() {
             return Ok(());
         }
