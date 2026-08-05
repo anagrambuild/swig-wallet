@@ -4,7 +4,7 @@
 //! target role and permissions. Any authority may perform the replacement when
 //! its role has All, ManageAuthority, or the target-scoped ReplaceAuthority
 //! action. ProgramExec authorities must also prove that the configured external
-//! recovery program approved the exact replacement.
+//! external policy program approved the exact replacement.
 
 use no_padding::NoPadding;
 use pinocchio::{
@@ -41,20 +41,20 @@ use crate::{
     },
 };
 
-const EXECUTE_RECOVERY_V1_DISCRIMINATOR: [u8; 8] = *b"execreV1";
-const PENDING_RECOVERY_SEED: &[u8] = b"pending-recovery";
-const PENDING_RECOVERY_V1_DISCRIMINATOR: [u8; 8] = *b"rpendV01";
-const PENDING_RECOVERY_STATUS_EXECUTED: u8 = 2;
-const PENDING_RECOVERY_V1_LEN: usize = 8 + 32 + 32 + 4 + 32 + 32 + 32 + 8 + 8 + 1 + 1 + 2 + 2 + 2;
-const PENDING_SWIG_WALLET_OFFSET: usize = 40;
-const PENDING_TARGET_ROLE_OFFSET: usize = 72;
-const PENDING_OLD_AUTHORITY_HASH_OFFSET: usize = 108;
-const PENDING_NEW_AUTHORITY_HASH_OFFSET: usize = 140;
-const PENDING_STATUS_OFFSET: usize = 188;
-const PENDING_AUTHORITY_TYPE_OFFSET: usize = 190;
-const PENDING_OLD_AUTHORITY_LEN_OFFSET: usize = 192;
-const PENDING_NEW_AUTHORITY_LEN_OFFSET: usize = 194;
-const RECOVERY_SIGNER_DATA_HEADER_LEN: usize = 2 + 2 + 2;
+const REPLACEMENT_PROOF_INSTRUCTION_PREFIX: [u8; 8] = *b"execreV1";
+const REPLACEMENT_INTENT_SEED: &[u8] = b"pending-recovery";
+const REPLACEMENT_INTENT_DISCRIMINATOR: [u8; 8] = *b"rpendV01";
+const REPLACEMENT_INTENT_STATUS_EXECUTED: u8 = 2;
+const REPLACEMENT_INTENT_LEN: usize = 8 + 32 + 32 + 4 + 32 + 32 + 32 + 8 + 8 + 1 + 1 + 2 + 2 + 2;
+const INTENT_SWIG_WALLET_OFFSET: usize = 40;
+const INTENT_TARGET_ROLE_OFFSET: usize = 72;
+const INTENT_CURRENT_SIGNER_HASH_OFFSET: usize = 108;
+const INTENT_NEW_SIGNER_HASH_OFFSET: usize = 140;
+const INTENT_STATUS_OFFSET: usize = 188;
+const INTENT_AUTHORITY_TYPE_OFFSET: usize = 190;
+const INTENT_CURRENT_SIGNER_LEN_OFFSET: usize = 192;
+const INTENT_NEW_SIGNER_LEN_OFFSET: usize = 194;
+const REPLACEMENT_SIGNER_DATA_HEADER_LEN: usize = 2 + 2 + 2;
 const MAX_SIGNER_LEN: usize = 64;
 
 #[repr(C, align(8))]
@@ -186,17 +186,17 @@ pub fn replace_authority_v1(
         acting_authority_type
     };
 
-    let verified_recovery = if acting_authority_type == AuthorityType::ProgramExec {
+    let expected_replacement = if acting_authority_type == AuthorityType::ProgramExec {
         let swig_wallet_address = all_accounts
             .get(1)
             .ok_or(SwigAuthenticateError::InvalidAuthorityPayload)?;
-        let pending_recovery = all_accounts
+        let replacement_intent = all_accounts
             .get(3)
             .ok_or(SwigAuthenticateError::InvalidAuthorityPayload)?;
-        Some(load_verified_recovery_replacement(
+        Some(load_verified_program_replacement(
             ctx.accounts.swig,
             swig_wallet_address,
-            pending_recovery,
+            replacement_intent,
             all_accounts,
             replace.authority_payload,
         )?)
@@ -209,7 +209,7 @@ pub fn replace_authority_v1(
         swig_roles,
         replace.args.target_role_id,
         replace.new_authority,
-        verified_recovery.as_ref(),
+        expected_replacement.as_ref(),
     )
 }
 
@@ -238,7 +238,7 @@ fn replace_target_signer(
     swig_roles: &mut [u8],
     target_role_id: u32,
     new_authority: &[u8],
-    verified_recovery: Option<&SignerReplacement>,
+    expected_replacement: Option<&SignerReplacement>,
 ) -> ProgramResult {
     let mut cursor = 0;
     for _ in 0..swig.roles {
@@ -246,13 +246,13 @@ fn replace_target_signer(
             unsafe { Position::load_unchecked(&swig_roles[cursor..cursor + Position::LEN])? };
         if position.id() == target_role_id {
             let target_signer_type = position.authority_type()?;
-            if let Some(recovery) = verified_recovery {
-                if recovery.target_role_id != target_role_id
-                    || recovery.new_signer() != new_authority
+            if let Some(replacement) = expected_replacement {
+                if replacement.target_role_id != target_role_id
+                    || replacement.new_signer() != new_authority
                 {
                     return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
                 }
-                if recovery.signer_type != target_signer_type as u16 {
+                if replacement.signer_type != target_signer_type as u16 {
                     return Err(SwigError::ReplaceAuthorityTypeMismatch.into());
                 }
             }
@@ -281,9 +281,9 @@ fn replace_target_signer(
                 return Err(SwigError::ReplaceAuthorityInvalidSignerLength.into());
             }
 
-            if let Some(recovery) = verified_recovery {
-                if recovery.current_signer_len != expected_signer_len
-                    || recovery.new_signer_len != expected_signer_len
+            if let Some(replacement) = expected_replacement {
+                if replacement.current_signer_len != expected_signer_len
+                    || replacement.new_signer_len != expected_signer_len
                 {
                     return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
                 }
@@ -301,7 +301,7 @@ fn replace_target_signer(
                             &mut swig_roles[authority_start..authority_end],
                         )?
                     };
-                    verify_recovery_current(verified_recovery, &authority.public_key)?;
+                    verify_expected_current_signer(expected_replacement, &authority.public_key)?;
                     reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                 },
@@ -315,7 +315,7 @@ fn replace_target_signer(
                             &mut swig_roles[authority_start..authority_end],
                         )?
                     };
-                    verify_recovery_current(verified_recovery, &authority.public_key)?;
+                    verify_expected_current_signer(expected_replacement, &authority.public_key)?;
                     reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                     authority.session_key = [0; 32];
@@ -331,7 +331,7 @@ fn replace_target_signer(
                             &mut swig_roles[authority_start..authority_end],
                         )?
                     };
-                    verify_recovery_current(verified_recovery, &authority.public_key)?;
+                    verify_expected_current_signer(expected_replacement, &authority.public_key)?;
                     reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                     authority.signature_odometer = 0;
@@ -346,7 +346,7 @@ fn replace_target_signer(
                             &mut swig_roles[authority_start..authority_end],
                         )?
                     };
-                    verify_recovery_current(verified_recovery, &authority.public_key)?;
+                    verify_expected_current_signer(expected_replacement, &authority.public_key)?;
                     reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                     authority.signature_odometer = 0;
@@ -363,7 +363,7 @@ fn replace_target_signer(
                             &mut swig_roles[authority_start..authority_end],
                         )?
                     };
-                    verify_recovery_current(verified_recovery, &authority.public_key)?;
+                    verify_expected_current_signer(expected_replacement, &authority.public_key)?;
                     reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                     authority.signature_odometer = 0;
@@ -378,7 +378,7 @@ fn replace_target_signer(
                             &mut swig_roles[authority_start..authority_end],
                         )?
                     };
-                    verify_recovery_current(verified_recovery, &authority.public_key)?;
+                    verify_expected_current_signer(expected_replacement, &authority.public_key)?;
                     reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
                     authority.signature_odometer = 0;
@@ -403,12 +403,12 @@ fn reject_same_signer(current_signer: &[u8], new_signer: &[u8]) -> ProgramResult
     Ok(())
 }
 
-fn verify_recovery_current(
-    verified_recovery: Option<&SignerReplacement>,
+fn verify_expected_current_signer(
+    expected_replacement: Option<&SignerReplacement>,
     current_signer: &[u8],
 ) -> ProgramResult {
-    if let Some(recovery) = verified_recovery {
-        if recovery.current_signer() != current_signer {
+    if let Some(replacement) = expected_replacement {
+        if replacement.current_signer() != current_signer {
             return Err(SwigError::ReplaceAuthorityCurrentSignerMismatch.into());
         }
     }
@@ -416,10 +416,10 @@ fn verify_recovery_current(
 }
 
 #[inline(never)]
-fn load_verified_recovery_replacement(
+fn load_verified_program_replacement(
     swig: &AccountInfo,
     swig_wallet_address: &AccountInfo,
-    pending_recovery: &AccountInfo,
+    replacement_intent: &AccountInfo,
     all_accounts: &[AccountInfo],
     authority_payload: &[u8],
 ) -> Result<SignerReplacement, ProgramError> {
@@ -429,92 +429,92 @@ fn load_verified_recovery_replacement(
         return Err(SwigError::InvalidSeedSwigAccount.into());
     }
 
-    let execute_ix =
-        load_recovery_execute_ix(swig, swig_wallet_address, all_accounts, authority_payload)?;
+    let proof_ix =
+        load_replacement_proof_ix(swig, swig_wallet_address, all_accounts, authority_payload)?;
 
     if !sol_assert_bytes_eq(
-        pending_recovery.key(),
-        execute_ix.pending_recovery.as_ref(),
+        replacement_intent.key(),
+        proof_ix.replacement_intent.as_ref(),
         32,
     ) {
         return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
     }
-    if !sol_assert_bytes_eq(pending_recovery.owner(), execute_ix.program_id.as_ref(), 32) {
+    if !sol_assert_bytes_eq(replacement_intent.owner(), proof_ix.program_id.as_ref(), 32) {
         return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
     }
 
-    let pending_data = unsafe { pending_recovery.borrow_data_unchecked() };
-    if pending_data.len() < PENDING_RECOVERY_V1_LEN
-        || pending_data[0..8] != PENDING_RECOVERY_V1_DISCRIMINATOR
+    let intent_data = unsafe { replacement_intent.borrow_data_unchecked() };
+    if intent_data.len() < REPLACEMENT_INTENT_LEN
+        || intent_data[0..8] != REPLACEMENT_INTENT_DISCRIMINATOR
     {
         return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
     }
 
-    let pending_swig_wallet = read_hash(pending_data, PENDING_SWIG_WALLET_OFFSET)?;
-    if !sol_assert_bytes_eq(&pending_swig_wallet, swig_wallet_address.key(), 32) {
+    let intent_swig_wallet = read_hash(intent_data, INTENT_SWIG_WALLET_OFFSET)?;
+    if !sol_assert_bytes_eq(&intent_swig_wallet, swig_wallet_address.key(), 32) {
         return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
     }
 
-    let target_role_id = read_u32(pending_data, PENDING_TARGET_ROLE_OFFSET)?;
+    let target_role_id = read_u32(intent_data, INTENT_TARGET_ROLE_OFFSET)?;
     let target_role_id_bytes = target_role_id.to_le_bytes();
-    let (expected_pending, _) = find_program_address(
+    let (expected_intent, _) = find_program_address(
         &[
-            PENDING_RECOVERY_SEED,
+            REPLACEMENT_INTENT_SEED,
             swig_wallet_address.key().as_ref(),
             &target_role_id_bytes,
         ],
-        &execute_ix.program_id,
+        &proof_ix.program_id,
     );
-    if !sol_assert_bytes_eq(pending_recovery.key(), &expected_pending, 32) {
+    if !sol_assert_bytes_eq(replacement_intent.key(), &expected_intent, 32) {
         return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
     }
 
-    let pending_status = pending_data
-        .get(PENDING_STATUS_OFFSET)
+    let intent_status = intent_data
+        .get(INTENT_STATUS_OFFSET)
         .copied()
         .ok_or(SwigError::ReplaceAuthorityIntentMismatch)?;
-    if pending_status != PENDING_RECOVERY_STATUS_EXECUTED {
-        return Err(SwigError::ReplaceAuthorityPendingRecoveryNotExecuted.into());
+    if intent_status != REPLACEMENT_INTENT_STATUS_EXECUTED {
+        return Err(SwigError::ReplaceAuthorityIntentNotExecuted.into());
     }
 
-    let pending_authority_type = read_u16(pending_data, PENDING_AUTHORITY_TYPE_OFFSET)?;
-    if execute_ix.authority_type != pending_authority_type {
+    let intent_authority_type = read_u16(intent_data, INTENT_AUTHORITY_TYPE_OFFSET)?;
+    if proof_ix.authority_type != intent_authority_type {
         return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
     }
-    let pending_current_signer_len = read_u16(pending_data, PENDING_OLD_AUTHORITY_LEN_OFFSET)?;
-    if execute_ix.current_signer_len as u16 != pending_current_signer_len {
+    let intent_current_signer_len = read_u16(intent_data, INTENT_CURRENT_SIGNER_LEN_OFFSET)?;
+    if proof_ix.current_signer_len as u16 != intent_current_signer_len {
         return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
     }
-    let pending_new_signer_len = read_u16(pending_data, PENDING_NEW_AUTHORITY_LEN_OFFSET)?;
-    if execute_ix.new_signer_len as u16 != pending_new_signer_len {
-        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
-    }
-
-    let current_signer_hash = hash_signer(execute_ix.current_signer())?;
-    let pending_current_signer_hash = read_hash(pending_data, PENDING_OLD_AUTHORITY_HASH_OFFSET)?;
-    if current_signer_hash != pending_current_signer_hash {
+    let intent_new_signer_len = read_u16(intent_data, INTENT_NEW_SIGNER_LEN_OFFSET)?;
+    if proof_ix.new_signer_len as u16 != intent_new_signer_len {
         return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
     }
 
-    let new_signer_hash = hash_signer(execute_ix.new_signer())?;
-    let pending_new_signer_hash = read_hash(pending_data, PENDING_NEW_AUTHORITY_HASH_OFFSET)?;
-    if new_signer_hash != pending_new_signer_hash {
+    let current_signer_hash = hash_signer(proof_ix.current_signer())?;
+    let intent_current_signer_hash = read_hash(intent_data, INTENT_CURRENT_SIGNER_HASH_OFFSET)?;
+    if current_signer_hash != intent_current_signer_hash {
+        return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
+    }
+
+    let new_signer_hash = hash_signer(proof_ix.new_signer())?;
+    let intent_new_signer_hash = read_hash(intent_data, INTENT_NEW_SIGNER_HASH_OFFSET)?;
+    if new_signer_hash != intent_new_signer_hash {
         return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
     }
 
     Ok(SignerReplacement {
         target_role_id,
-        signer_type: execute_ix.authority_type,
-        current_signer: execute_ix.current_signer,
-        current_signer_len: execute_ix.current_signer_len,
-        new_signer: execute_ix.new_signer,
-        new_signer_len: execute_ix.new_signer_len,
+        signer_type: proof_ix.authority_type,
+        current_signer: proof_ix.current_signer,
+        current_signer_len: proof_ix.current_signer_len,
+        new_signer: proof_ix.new_signer,
+        new_signer_len: proof_ix.new_signer_len,
     })
 }
 
-struct RecoveryExecuteIx {
+struct ReplacementProofIx {
     program_id: [u8; 32],
-    pending_recovery: [u8; 32],
+    replacement_intent: [u8; 32],
     authority_type: u16,
     current_signer: [u8; MAX_SIGNER_LEN],
     current_signer_len: usize,
@@ -522,7 +522,7 @@ struct RecoveryExecuteIx {
     new_signer_len: usize,
 }
 
-impl RecoveryExecuteIx {
+impl ReplacementProofIx {
     fn current_signer(&self) -> &[u8] {
         &self.current_signer[..self.current_signer_len]
     }
@@ -533,12 +533,12 @@ impl RecoveryExecuteIx {
 }
 
 #[inline(never)]
-fn load_recovery_execute_ix(
+fn load_replacement_proof_ix(
     swig: &AccountInfo,
     swig_wallet_address: &AccountInfo,
     all_accounts: &[AccountInfo],
     authority_payload: &[u8],
-) -> Result<RecoveryExecuteIx, ProgramError> {
+) -> Result<ReplacementProofIx, ProgramError> {
     if authority_payload.is_empty() || authority_payload.len() > 2 {
         return Err(SwigAuthenticateError::InvalidAuthorityPayload.into());
     }
@@ -579,18 +579,18 @@ fn load_recovery_execute_ix(
         },
     };
 
-    let recovery_ix = unsafe { ixs.deserialize_instruction_unchecked(verify_ix_index) };
-    let instruction_data = recovery_ix.get_instruction_data();
-    if instruction_data.len() < 8 + RECOVERY_SIGNER_DATA_HEADER_LEN
-        || instruction_data[0..8] != EXECUTE_RECOVERY_V1_DISCRIMINATOR
+    let proof_ix = unsafe { ixs.deserialize_instruction_unchecked(verify_ix_index) };
+    let instruction_data = proof_ix.get_instruction_data();
+    if instruction_data.len() < 8 + REPLACEMENT_SIGNER_DATA_HEADER_LEN
+        || instruction_data[0..8] != REPLACEMENT_PROOF_INSTRUCTION_PREFIX
     {
         return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
     }
-    let recovery_signers = parse_replace_authority_data(&instruction_data[8..])?;
+    let replacement_signers = parse_replace_authority_data(&instruction_data[8..])?;
 
-    let swig_meta = recovery_ix.get_account_meta_at(0)?;
-    let swig_wallet_meta = recovery_ix.get_account_meta_at(1)?;
-    let pending_meta = recovery_ix.get_account_meta_at(2)?;
+    let swig_meta = proof_ix.get_account_meta_at(0)?;
+    let swig_wallet_meta = proof_ix.get_account_meta_at(1)?;
+    let intent_meta = proof_ix.get_account_meta_at(2)?;
     if !sol_assert_bytes_eq(swig_meta.key.as_ref(), swig.key(), 32) {
         return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
     }
@@ -598,14 +598,14 @@ fn load_recovery_execute_ix(
         return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
     }
 
-    Ok(RecoveryExecuteIx {
-        program_id: *recovery_ix.get_program_id(),
-        pending_recovery: pending_meta.key,
-        authority_type: recovery_signers.authority_type,
-        current_signer: recovery_signers.current_signer,
-        current_signer_len: recovery_signers.current_signer_len,
-        new_signer: recovery_signers.new_signer,
-        new_signer_len: recovery_signers.new_signer_len,
+    Ok(ReplacementProofIx {
+        program_id: *proof_ix.get_program_id(),
+        replacement_intent: intent_meta.key,
+        authority_type: replacement_signers.authority_type,
+        current_signer: replacement_signers.current_signer,
+        current_signer_len: replacement_signers.current_signer_len,
+        new_signer: replacement_signers.new_signer,
+        new_signer_len: replacement_signers.new_signer_len,
     })
 }
 
@@ -667,7 +667,7 @@ struct ParsedReplaceAuthorityData {
 }
 
 fn parse_replace_authority_data(data: &[u8]) -> Result<ParsedReplaceAuthorityData, ProgramError> {
-    if data.len() < RECOVERY_SIGNER_DATA_HEADER_LEN {
+    if data.len() < REPLACEMENT_SIGNER_DATA_HEADER_LEN {
         return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
     }
 
@@ -682,7 +682,7 @@ fn parse_replace_authority_data(data: &[u8]) -> Result<ParsedReplaceAuthorityDat
         return Err(SwigError::ReplaceAuthorityIntentMismatch.into());
     }
 
-    let old_start = RECOVERY_SIGNER_DATA_HEADER_LEN;
+    let old_start = REPLACEMENT_SIGNER_DATA_HEADER_LEN;
     let new_start = old_start
         .checked_add(current_signer_len)
         .ok_or(SwigError::ReplaceAuthorityIntentMismatch)?;

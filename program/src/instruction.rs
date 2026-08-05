@@ -236,7 +236,7 @@ pub enum SwigInstruction {
     /// Additional authority-specific accounts follow the Swig account. An
     /// Ed25519 or session authority supplies its signer account. Secp256r1 and
     /// ProgramExec authorities supply the instructions sysvar. ProgramExec also
-    /// supplies the Swig wallet address and recovery pending state.
+    /// supplies the Swig wallet address and external replacement intent.
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
     ReplaceAuthorityV1 = 16,
 

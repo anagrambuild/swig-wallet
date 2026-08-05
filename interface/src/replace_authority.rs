@@ -163,16 +163,16 @@ impl ReplaceAuthorityInstruction {
     ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
 
-        let pending_recovery = preceding_instruction
+        let replacement_intent = preceding_instruction
             .accounts
             .get(2)
-            .ok_or_else(|| anyhow::anyhow!("recovery execute instruction missing pending account"))?
+            .ok_or_else(|| anyhow::anyhow!("replacement proof instruction missing intent account"))?
             .pubkey;
         let accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new_readonly(swig_wallet_address, false),
             AccountMeta::new_readonly(INSTRUCTIONS_ID, false),
-            AccountMeta::new_readonly(pending_recovery, false),
+            AccountMeta::new_readonly(replacement_intent, false),
         ];
         let authority_payload = build_program_exec_authority_payload(2, None);
         let data_payload = Self::build_data_payload(acting_role_id, target_role_id, new_authority)?;

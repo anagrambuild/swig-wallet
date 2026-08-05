@@ -126,13 +126,13 @@ pub enum SwigError {
     InvalidSwigReplaceAuthorityInstructionDataTooShort,
     /// Replace authority instruction payload is malformed
     ReplaceAuthorityInvalidPayload,
-    /// Existing signer does not match the external recovery proof
+    /// Existing signer does not match the external replacement proof
     ReplaceAuthorityCurrentSignerMismatch,
-    /// Replacement instruction and external recovery state disagree
+    /// Replacement instruction and external replacement intent disagree
     ReplaceAuthorityIntentMismatch,
-    /// External recovery pending state has not been executed
-    ReplaceAuthorityPendingRecoveryNotExecuted,
-    /// External recovery signer type does not match the target role
+    /// External replacement intent has not been executed
+    ReplaceAuthorityIntentNotExecuted,
+    /// External replacement signer type does not match the target role
     ReplaceAuthorityTypeMismatch,
     /// Signer length is invalid for the target role
     ReplaceAuthorityInvalidSignerLength,
