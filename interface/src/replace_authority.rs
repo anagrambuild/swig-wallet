@@ -9,7 +9,10 @@ use swig::actions::replace_authority_v1::{
     ReplaceAuthorityV1Args, REPLACE_AUTHORITY_PROOF_V1_DISCRIMINATOR,
     REPLACE_AUTHORITY_PROOF_V1_DOMAIN,
 };
-use swig_state::{authority::AuthorityType, IntoBytes};
+use swig_state::{
+    authority::{secp256k1::compress, AuthorityType},
+    IntoBytes,
+};
 
 use crate::{
     accounts_payload_from_meta, build_program_exec_authority_payload, prepare_secp256k1_payload,
@@ -252,10 +255,7 @@ fn normalize_secp256k1_authority(authority: &[u8]) -> anyhow::Result<[u8; 33]> {
             let key: &[u8; 64] = authority
                 .try_into()
                 .map_err(|_| anyhow::anyhow!("invalid secp256k1 authority length"))?;
-            let mut compressed = [0u8; 33];
-            compressed[0] = if key[63] & 1 == 0 { 0x02 } else { 0x03 };
-            compressed[1..].copy_from_slice(&key[..32]);
-            Ok(compressed)
+            Ok(compress(key))
         },
         _ => Err(anyhow::anyhow!(
             "secp256k1 authority must contain 33 or 64 bytes"

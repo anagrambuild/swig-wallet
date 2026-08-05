@@ -24,7 +24,7 @@ use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, replace_authority::ReplaceAuthority},
     authority::{
         ed25519::{ED25519Authority, Ed25519SessionAuthority},
-        secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority},
+        secp256k1::{compress, Secp256k1Authority, Secp256k1SessionAuthority},
         secp256r1::{Secp256r1Authority, Secp256r1SessionAuthority},
         AuthorityType,
     },
@@ -415,17 +415,10 @@ fn normalize_secp256k1_authority(authority: &[u8]) -> Result<[u8; 33], ProgramEr
             let uncompressed: &[u8; 64] = authority
                 .try_into()
                 .map_err(|_| SwigError::ReplaceAuthorityInvalidSignerLength)?;
-            Ok(compress_secp256k1_authority(uncompressed))
+            Ok(compress(uncompressed))
         },
         _ => Err(SwigError::ReplaceAuthorityInvalidSignerLength.into()),
     }
-}
-
-fn compress_secp256k1_authority(key: &[u8; 64]) -> [u8; 33] {
-    let mut compressed = [0u8; 33];
-    compressed[0] = if key[63] & 1 == 0 { 0x02 } else { 0x03 };
-    compressed[1..].copy_from_slice(&key[..32]);
-    compressed
 }
 
 fn verify_program_exec_replacement_proof(
