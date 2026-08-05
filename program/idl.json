@@ -577,7 +577,7 @@
       }
     },
     {
-      "name": "RecoverAuthorityV1",
+      "name": "ReplaceAuthorityV1",
       "accounts": [
         {
           "name": "swig",
@@ -585,30 +585,6 @@
           "isSigner": false,
           "docs": [
             "the swig smart wallet"
-          ]
-        },
-        {
-          "name": "swigWalletAddress",
-          "isMut": false,
-          "isSigner": false,
-          "docs": [
-            "the swig wallet address account"
-          ]
-        },
-        {
-          "name": "instructions",
-          "isMut": false,
-          "isSigner": false,
-          "docs": [
-            "the instructions sysvar account"
-          ]
-        },
-        {
-          "name": "pendingRecovery",
-          "isMut": false,
-          "isSigner": false,
-          "docs": [
-            "the recovery pending state account"
           ]
         }
       ],

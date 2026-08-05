@@ -9,7 +9,7 @@ use swig_state::{
         program_all::ProgramAll,
         program_curated::ProgramCurated,
         program_scope::{NumericType, ProgramScope, ProgramScopeType},
-        recovery_authority::RecoveryAuthority,
+        replace_authority::ReplaceAuthority,
         sol_destination_limit::SolDestinationLimit,
         sol_limit::SolLimit,
         sol_recurring_destination_limit::SolRecurringDestinationLimit,
@@ -65,8 +65,9 @@ pub enum Permission {
     /// authorities from the wallet and modifying their permissions.
     ManageAuthority,
 
-    /// Permission to rotate passkey authority through the recovery path.
-    RecoveryAuthority,
+    /// Permission to replace one role's signer without changing its
+    /// permissions.
+    ReplaceAuthority { role_id: u32 },
 
     /// Permission to interact with specific tokens. Can be configured with
     /// either a fixed limit or a recurring limit that resets after a
@@ -206,8 +207,10 @@ impl Permission {
                 Permission::ManageAuthority => {
                     actions.push(ClientAction::ManageAuthority(ManageAuthority {}));
                 },
-                Permission::RecoveryAuthority => {
-                    actions.push(ClientAction::RecoveryAuthority(RecoveryAuthority {}));
+                Permission::ReplaceAuthority { role_id } => {
+                    actions.push(ClientAction::ReplaceAuthority(ReplaceAuthority::new(
+                        role_id,
+                    )));
                 },
                 Permission::Token {
                     mint,
@@ -416,11 +419,12 @@ impl Permission {
             permissions.push(Permission::ManageAuthority);
         }
 
-        if swig_state::role::Role::get_action::<RecoveryAuthority>(role, &[])
+        for action in swig_state::role::Role::get_all_actions_of_type::<ReplaceAuthority>(role)
             .map_err(|_| SwigError::InvalidSwigData)?
-            .is_some()
         {
-            permissions.push(Permission::RecoveryAuthority);
+            permissions.push(Permission::ReplaceAuthority {
+                role_id: action.role_id,
+            });
         }
 
         // Check for SolLimit permission
@@ -674,7 +678,7 @@ impl Permission {
         match self {
             Permission::All => 7,
             Permission::ManageAuthority => 8,
-            Permission::RecoveryAuthority => 21,
+            Permission::ReplaceAuthority { role_id: _ } => 21,
             Permission::Sol {
                 amount: _,
                 recurring,

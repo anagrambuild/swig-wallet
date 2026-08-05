@@ -15,7 +15,7 @@ pub mod program;
 pub mod program_all;
 pub mod program_curated;
 pub mod program_scope;
-pub mod recovery_authority;
+pub mod replace_authority;
 pub mod sol_destination_limit;
 pub mod sol_limit;
 pub mod sol_recurring_destination_limit;
@@ -39,7 +39,7 @@ use program::Program;
 use program_all::ProgramAll;
 use program_curated::ProgramCurated;
 use program_scope::ProgramScope;
-use recovery_authority::RecoveryAuthority;
+use replace_authority::ReplaceAuthority;
 use sol_destination_limit::SolDestinationLimit;
 use sol_limit::SolLimit;
 use sol_recurring_destination_limit::SolRecurringDestinationLimit;
@@ -175,8 +175,8 @@ pub enum Permission {
     TokenRecurringDestinationLimit = 19,
     /// Permission to close token accounts and the swig account
     CloseSwigAuthority = 20,
-    /// Permission to rotate passkey authority through the recovery path
-    RecoveryAuthority = 21,
+    /// Permission to replace a role's signer without changing its permissions
+    ReplaceAuthority = 21,
     /// Permission to create V2 sub-accounts (non-repeatable marker)
     SubAccountV2Create = 22,
     /// Scoped umbrella permission for V2 sub-account runtime operations
@@ -286,7 +286,7 @@ impl ActionLoader {
             Permission::ProgramCurated => ProgramCurated::valid_layout(data),
             Permission::AllButManageAuthority => AllButManageAuthority::valid_layout(data),
             Permission::CloseSwigAuthority => CloseSwigAuthority::valid_layout(data),
-            Permission::RecoveryAuthority => RecoveryAuthority::valid_layout(data),
+            Permission::ReplaceAuthority => ReplaceAuthority::valid_layout(data),
             Permission::TokenDestinationLimit => TokenDestinationLimit::valid_layout(data),
             Permission::TokenRecurringDestinationLimit => {
                 TokenRecurringDestinationLimit::valid_layout(data)
