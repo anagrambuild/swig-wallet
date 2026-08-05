@@ -4,7 +4,7 @@ mod common;
 use std::{
     process::{Child, Command},
     str::FromStr,
-    sync::{Mutex, MutexGuard},
+    sync::Mutex,
     thread,
     time::Duration,
 };
@@ -42,14 +42,16 @@ use swig_state::{
 // Constants
 const LOCALHOST: &str = "http://127.0.0.1:8899";
 const STAKE_PROGRAM_ID: SolanaPubkey = solana_stake_interface::program::id();
+const VALIDATOR_STARTUP_ATTEMPTS: usize = 60;
+const VALIDATOR_STARTUP_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const VALIDATOR_RPC_TIMEOUT: Duration = Duration::from_secs(1);
 
 // Global static validator process that will be shared across all tests
 static GLOBAL_VALIDATOR: Lazy<Mutex<ValidatorProcess>> = Lazy::new(|| {
     let mut validator = ValidatorProcess::new();
-    // Start the validator process when first accessed
-    if let Err(e) = validator.start() {
-        eprintln!("Warning: Failed to start validator: {}", e);
-    }
+    validator
+        .start()
+        .expect("Failed to connect to or start a test validator");
     Mutex::new(validator)
 });
 
@@ -62,13 +64,13 @@ impl ValidatorProcess {
         ValidatorProcess { child: None }
     }
 
-    fn start(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if self.child.is_some() {
+    fn start(&mut self) -> anyhow::Result<()> {
+        if Self::rpc_is_healthy() {
             return Ok(());
         }
 
         let child = Command::new("solana-test-validator")
-            .args(&[
+            .args([
                 "--reset",
                 "--quiet",
                 "--rpc-port",
@@ -79,12 +81,23 @@ impl ValidatorProcess {
             .spawn()?;
 
         self.child = Some(child);
-        thread::sleep(Duration::from_secs(5));
-        Ok(())
+        for _ in 0..VALIDATOR_STARTUP_ATTEMPTS {
+            if Self::rpc_is_healthy() {
+                return Ok(());
+            }
+            if let Some(status) = self.child.as_mut().unwrap().try_wait()? {
+                anyhow::bail!("solana-test-validator exited before RPC was healthy: {status}");
+            }
+            thread::sleep(VALIDATOR_STARTUP_POLL_INTERVAL);
+        }
+
+        anyhow::bail!("validator RPC did not become healthy at {LOCALHOST}")
     }
 
-    fn _get_guard(&self) -> MutexGuard<ValidatorProcess> {
-        GLOBAL_VALIDATOR.lock().unwrap()
+    fn rpc_is_healthy() -> bool {
+        RpcClient::new_with_timeout(LOCALHOST, VALIDATOR_RPC_TIMEOUT)
+            .get_health()
+            .is_ok()
     }
 }
 
