@@ -229,8 +229,8 @@ pub fn withdraw_from_sub_account_v1(
         let mut found_role_id = None;
         let mut found_bump = None;
 
-        // Try role IDs from 0 to some reasonable maximum (let's try up to 10)
-        for potential_role_id in 0u32..=10u32 {
+        // role_counter is monotonic, so this also covers removed creator roles.
+        for potential_role_id in 0..swig.role_counter {
             let role_id_bytes = potential_role_id.to_le_bytes();
             let sub_account_seeds = swig_state::swig::sub_account_seeds(&swig.id, &role_id_bytes);
             let (derived_address, bump) =
