@@ -264,6 +264,138 @@ fn test_withdraw_sol_from_sub_account() {
     );
 }
 
+#[test_log::test]
+fn test_root_withdraw_scans_all_allocated_role_ids() {
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let id = rand::random::<[u8; 32]>();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root_authority, id).unwrap();
+
+    // Advance the monotonic role counter past the legacy 0..=10 fallback while
+    // keeping only the root role live.
+    for role_id in 1..=10 {
+        let placeholder_authority = Keypair::new();
+        add_authority_with_ed25519_root(
+            &mut context,
+            &swig_key,
+            &root_authority,
+            AuthorityConfig {
+                authority_type: AuthorityType::Ed25519,
+                authority: placeholder_authority.pubkey().as_ref(),
+            },
+            vec![ClientAction::ManageAuthority(ManageAuthority {})],
+        )
+        .unwrap();
+        remove_authority_with_ed25519_root(&mut context, &swig_key, &root_authority, role_id)
+            .unwrap();
+    }
+
+    let sub_account_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&sub_account_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: sub_account_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation())],
+    )
+    .unwrap();
+
+    let creator_role_id = 11;
+    let sub_account = create_sub_account(
+        &mut context,
+        &swig_key,
+        &sub_account_authority,
+        creator_role_id,
+        id,
+    )
+    .unwrap();
+    context.svm.airdrop(&sub_account, 5_000_000_000).unwrap();
+    remove_authority_with_ed25519_root(&mut context, &swig_key, &root_authority, creator_role_id)
+        .unwrap();
+
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    assert_eq!(swig.state.roles, 1);
+    assert_eq!(swig.state.role_counter, 12);
+    assert!(swig.get_role(creator_role_id).unwrap().is_none());
+
+    // The next unallocated role ID must remain outside the scan and fail closed.
+    let unallocated_role_id = swig.state.role_counter;
+    let unallocated_role_id_bytes = unallocated_role_id.to_le_bytes();
+    let (unallocated_sub_account, _) = Pubkey::find_program_address(
+        &sub_account_seeds(&id, &unallocated_role_id_bytes),
+        &program_id(),
+    );
+    context
+        .svm
+        .airdrop(&unallocated_sub_account, 1_000_000)
+        .unwrap();
+    let error = withdraw_from_sub_account(
+        &mut context,
+        &swig_key,
+        &unallocated_sub_account,
+        &root_authority,
+        0,
+        1,
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Could not find the role_id that created this sub-account"),
+        "unexpected error: {error:?}"
+    );
+
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+    let swig_balance_before = context
+        .svm
+        .get_account(&swig_wallet_address)
+        .unwrap()
+        .lamports;
+    let sub_account_balance_before = context.svm.get_account(&sub_account).unwrap().lamports;
+    let withdraw_amount = 1_000_000_000;
+
+    let result = withdraw_from_sub_account(
+        &mut context,
+        &swig_key,
+        &sub_account,
+        &root_authority,
+        0,
+        withdraw_amount,
+    )
+    .unwrap();
+
+    assert_eq!(
+        context
+            .svm
+            .get_account(&swig_wallet_address)
+            .unwrap()
+            .lamports,
+        swig_balance_before + withdraw_amount
+    );
+    assert_eq!(
+        context.svm.get_account(&sub_account).unwrap().lamports,
+        sub_account_balance_before - withdraw_amount
+    );
+    println!(
+        "role 11 root withdrawal CU: {}",
+        result.compute_units_consumed
+    );
+}
+
 // Test signing transactions with a sub-account
 #[test_log::test]
 fn test_sub_account_sign() {
