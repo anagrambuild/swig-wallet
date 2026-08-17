@@ -307,6 +307,10 @@ impl ProgramScope {
                 Ok(())
             },
             x if x == ProgramScopeType::RecurringLimit as u8 => {
+                if self.window == 0 {
+                    return Err(ProgramError::InvalidArgument);
+                }
+
                 let current_slot = current_slot.ok_or(ProgramError::InvalidArgument)?;
 
                 // Check if window has passed and reset the spent amount if needed
@@ -437,10 +441,11 @@ impl<'a> Actionable<'a> for ProgramScope {
             return Ok(false);
         }
 
-        let scope_type = &data[112..120];
-        let recurring_scope_type = (ProgramScopeType::RecurringLimit as u64).to_le_bytes();
+        let scope_type = u64::from_le_bytes([
+            data[112], data[113], data[114], data[115], data[116], data[117], data[118], data[119],
+        ]) as u8;
         let window = &data[32..40];
 
-        Ok(scope_type != recurring_scope_type || window != [0u8; 8])
+        Ok(scope_type != ProgramScopeType::RecurringLimit as u8 || window != [0u8; 8])
     }
 }
