@@ -922,6 +922,14 @@
           ]
         },
         {
+          "name": "rentClaimerDestination",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "configured rent claimer, or swig wallet address when unset"
+          ]
+        },
+        {
           "name": "systemProgram",
           "isMut": false,
           "isSigner": false,

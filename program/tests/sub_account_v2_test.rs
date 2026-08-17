@@ -4,8 +4,10 @@
 //! that `All` alone cannot create.
 mod common;
 
-use common::stability::{scoped_v2_body, SwigSnapshot};
-use common::*;
+use common::{
+    stability::{scoped_v2_body, SwigSnapshot},
+    *,
+};
 use litesvm_token::spl_token;
 use solana_sdk::{
     message::{v0, VersionedMessage},
@@ -13,6 +15,7 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
+    sysvar::rent::Rent,
     transaction::VersionedTransaction,
 };
 use swig_interface::{
@@ -553,6 +556,7 @@ fn test_close_sub_account_v2_sweeps_lamports_and_unblocks_parent_close() {
         state_pda,
         asset_pda,
         swig_wallet_address,
+        swig_wallet_address,
         root.pubkey(),
         0,
         0,
@@ -574,6 +578,27 @@ fn test_close_sub_account_v2_sweeps_lamports_and_unblocks_parent_close() {
     .unwrap();
     send(&mut context, &creator, disable).unwrap();
 
+    let arbitrary_destination = Keypair::new();
+    context
+        .svm
+        .airdrop(&arbitrary_destination.pubkey(), 1)
+        .unwrap();
+    let redirect_without_claimer = CloseSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        root.pubkey(),
+        state_pda,
+        asset_pda,
+        swig_wallet_address,
+        arbitrary_destination.pubkey(),
+        root.pubkey(),
+        0,
+        0,
+    )
+    .unwrap();
+    assert!(send(&mut context, &root, redirect_without_claimer).is_err());
+    assert_eq!(decode_active_count(&context, &swig_key), 1);
+    context.svm.expire_blockhash();
+
     let wallet_before = context
         .svm
         .get_account(&swig_wallet_address)
@@ -586,6 +611,7 @@ fn test_close_sub_account_v2_sweeps_lamports_and_unblocks_parent_close() {
         root.pubkey(),
         state_pda,
         asset_pda,
+        swig_wallet_address,
         swig_wallet_address,
         root.pubkey(),
         0,
@@ -645,8 +671,11 @@ fn test_close_legacy_v2_sub_account_materializes_active_count() {
     let mut context = setup_test_context().unwrap();
     let (swig_key, root, creator, id) = setup_v2(&mut context).unwrap();
     let claimer = Keypair::new();
+    context.svm.airdrop(&claimer.pubkey(), 1).unwrap();
     set_rent_claimer_with_ed25519(&mut context, &swig_key, &root, 0, claimer.pubkey()).unwrap();
     let (state_pda, asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+    context.svm.airdrop(&state_pda, 500_000_000).unwrap();
+    context.svm.airdrop(&asset_pda, 1_000_000_000).unwrap();
     strip_active_count_tail(&mut context, &swig_key);
 
     let legacy_account = context.svm.get_account(&swig_key).unwrap();
@@ -688,12 +717,25 @@ fn test_close_legacy_v2_sub_account_materializes_active_count() {
     )
     .unwrap();
     send(&mut context, &creator, disable).unwrap();
+    let wallet_before = context.svm.get_account(&wallet).unwrap().lamports;
+    let claimer_before = context.svm.get_account(&claimer.pubkey()).unwrap().lamports;
+    let state_account = context.svm.get_account(&state_pda).unwrap();
+    let asset_account = context.svm.get_account(&asset_pda).unwrap();
+    let state_rent = Rent::default()
+        .minimum_balance(state_account.data.len())
+        .min(state_account.lamports);
+    let asset_rent = Rent::default()
+        .minimum_balance(asset_account.data.len())
+        .min(asset_account.lamports);
+    let total_lamports = state_account.lamports + asset_account.lamports;
+    let total_rent = state_rent + asset_rent;
     let close_child = CloseSubAccountV2Instruction::new_with_ed25519_authority(
         swig_key,
         root.pubkey(),
         state_pda,
         asset_pda,
         wallet,
+        claimer.pubkey(),
         root.pubkey(),
         0,
         0,
@@ -702,12 +744,129 @@ fn test_close_legacy_v2_sub_account_materializes_active_count() {
     send(&mut context, &root, close_child).unwrap();
 
     assert_eq!(decode_active_count(&context, &swig_key), 0);
+    assert_eq!(
+        context.svm.get_account(&wallet).unwrap().lamports,
+        wallet_before + total_lamports - total_rent
+    );
+    assert_eq!(
+        context.svm.get_account(&claimer.pubkey()).unwrap().lamports,
+        claimer_before + total_rent
+    );
     let account = context.svm.get_account(&swig_key).unwrap();
     let parts = Swig::split_parts(&account.data).unwrap();
     assert_eq!(
         swig_state::tail::rent_claimer::read_strict(parts.tail).unwrap(),
         Some(&claimer.pubkey().to_bytes())
     );
+}
+
+#[test]
+fn test_close_sub_account_v2_rejects_missing_or_wrong_rent_claimer() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, creator, id) = setup_v2(&mut context).unwrap();
+    let (state_pda, asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+    let claimer = Keypair::new();
+    let wrong_claimer = Keypair::new();
+    context.svm.airdrop(&claimer.pubkey(), 1).unwrap();
+    context.svm.airdrop(&wrong_claimer.pubkey(), 1).unwrap();
+    set_rent_claimer_with_ed25519(&mut context, &swig_key, &root, 0, claimer.pubkey()).unwrap();
+    let disable = ToggleSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        creator.pubkey(),
+        creator.pubkey(),
+        state_pda,
+        CREATOR_ROLE_ID,
+        0,
+        false,
+    )
+    .unwrap();
+    send(&mut context, &creator, disable).unwrap();
+    let (wallet, _) = Pubkey::find_program_address(
+        &swig_state::swig::swig_wallet_address_seeds(swig_key.as_ref()),
+        &program_id(),
+    );
+    let state_before = context.svm.get_account(&state_pda).unwrap();
+    let asset_before = context.svm.get_account(&asset_pda).unwrap();
+
+    let wrong_destination = CloseSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        root.pubkey(),
+        state_pda,
+        asset_pda,
+        wallet,
+        wrong_claimer.pubkey(),
+        root.pubkey(),
+        0,
+        0,
+    )
+    .unwrap();
+    assert!(send(&mut context, &root, wrong_destination).is_err());
+    assert_eq!(decode_active_count(&context, &swig_key), 1);
+    assert_eq!(context.svm.get_account(&state_pda).unwrap(), state_before);
+    assert_eq!(context.svm.get_account(&asset_pda).unwrap(), asset_before);
+
+    context.svm.expire_blockhash();
+    let mut missing_destination = CloseSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        root.pubkey(),
+        state_pda,
+        asset_pda,
+        wallet,
+        claimer.pubkey(),
+        root.pubkey(),
+        0,
+        0,
+    )
+    .unwrap();
+    missing_destination.accounts.remove(5);
+    assert!(send(&mut context, &root, missing_destination).is_err());
+    assert_eq!(decode_active_count(&context, &swig_key), 1);
+    assert_eq!(context.svm.get_account(&state_pda).unwrap(), state_before);
+    assert_eq!(context.svm.get_account(&asset_pda).unwrap(), asset_before);
+}
+
+#[test]
+fn test_close_sub_account_v2_rejects_rent_destination_aliasing_source() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, creator, id) = setup_v2(&mut context).unwrap();
+    let (state_pda, _) = v2_state_pda(&id, 0);
+    let (asset_pda, _) = v2_asset_pda(&id, 0);
+    set_rent_claimer_with_ed25519(&mut context, &swig_key, &root, 0, asset_pda).unwrap();
+    create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+    let disable = ToggleSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        creator.pubkey(),
+        creator.pubkey(),
+        state_pda,
+        CREATOR_ROLE_ID,
+        0,
+        false,
+    )
+    .unwrap();
+    send(&mut context, &creator, disable).unwrap();
+    let (wallet, _) = Pubkey::find_program_address(
+        &swig_state::swig::swig_wallet_address_seeds(swig_key.as_ref()),
+        &program_id(),
+    );
+    let state_before = context.svm.get_account(&state_pda).unwrap();
+    let asset_before = context.svm.get_account(&asset_pda).unwrap();
+    let close = CloseSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        root.pubkey(),
+        state_pda,
+        asset_pda,
+        wallet,
+        asset_pda,
+        root.pubkey(),
+        0,
+        0,
+    )
+    .unwrap();
+
+    assert!(send(&mut context, &root, close).is_err());
+    assert_eq!(decode_active_count(&context, &swig_key), 1);
+    assert_eq!(context.svm.get_account(&state_pda).unwrap(), state_before);
+    assert_eq!(context.svm.get_account(&asset_pda).unwrap(), asset_before);
 }
 
 #[test]
@@ -1017,8 +1176,8 @@ fn test_pre_granted_specific_scope_does_not_suppress_auto_grant() {
     );
 }
 
-/// Dedup is per-role, so another role holding `All { id }` must not suppress the
-/// acting role's auto-grant.
+/// Dedup is per-role, so another role holding `All { id }` must not suppress
+/// the acting role's auto-grant.
 #[test_log::test]
 fn test_pre_grant_on_another_role_does_not_suppress_creator_auto_grant() {
     let mut context = setup_test_context().unwrap();
