@@ -87,10 +87,15 @@ pub fn entry(count: u32) -> [u8; ENTRY_LEN] {
 }
 
 /// Computes the active-child count for a wallet created before the count tail
-/// existed. Before close instructions were available, every allocated V2 id
-/// was live. V1 children are represented by populated, non-tombstoned actions.
-pub fn legacy_count(swig: &Swig, roles: &[u8]) -> Result<u32, ProgramError> {
-    let mut count = swig.sub_account_counter;
+/// existed. The program layer supplies the number of allocated V2 ids only
+/// after it has established that the parent uses the V2 header. V1 children
+/// are represented by populated, non-tombstoned actions in either generation.
+pub fn legacy_count(
+    swig: &Swig,
+    roles: &[u8],
+    allocated_v2_count: u32,
+) -> Result<u32, ProgramError> {
+    let mut count = allocated_v2_count;
     let mut role_cursor = 0usize;
 
     for _ in 0..swig.roles {

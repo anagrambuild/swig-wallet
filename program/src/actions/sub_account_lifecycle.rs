@@ -11,14 +11,30 @@ use swig_state::{
     tail::{active_sub_account_count, validate_strict, SavedTail},
 };
 
-use crate::error::SwigError;
+use crate::{error::SwigError, is_swig_v2};
 
-pub(crate) fn active_count_or_legacy(data: &[u8]) -> Result<u32, ProgramError> {
+/// Returns the active-child count that gates final parent closure.
+///
+/// The close guard is a V2 lifecycle invariant. A V1 header aliases the V2
+/// `sub_account_counter` with the upper half of `reserved_lamports`, so V1
+/// parents retain their legacy close behavior and are treated as having no
+/// active children here. Their V1 children must migrate with the parent before
+/// they can use the explicit child-close instructions.
+pub(crate) fn active_count_for_close(data: &[u8]) -> Result<u32, ProgramError> {
     let parts = Swig::split_parts(data)?;
     validate_strict(parts.tail)?;
+
+    if !unsafe { is_swig_v2(data) } {
+        return Ok(0);
+    }
+
     match active_sub_account_count::read(parts.tail)? {
         Some(count) => Ok(count),
-        None => active_sub_account_count::legacy_count(parts.state, parts.roles),
+        None => active_sub_account_count::legacy_count(
+            parts.state,
+            parts.roles,
+            parts.state.sub_account_counter,
+        ),
     }
 }
 
@@ -34,9 +50,18 @@ pub(crate) fn adjust_active_count(
         let parts = Swig::split_parts(data)?;
         validate_strict(parts.tail)?;
         let stored = active_sub_account_count::read(parts.tail)?;
+        let allocated_v2_count = if unsafe { is_swig_v2(data) } {
+            parts.state.sub_account_counter
+        } else {
+            0
+        };
         let current = match stored {
             Some(count) => count,
-            None => active_sub_account_count::legacy_count(parts.state, parts.roles)?,
+            None => active_sub_account_count::legacy_count(
+                parts.state,
+                parts.roles,
+                allocated_v2_count,
+            )?,
         };
         (
             SavedTail::take(parts.tail)?,

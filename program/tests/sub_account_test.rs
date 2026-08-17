@@ -29,7 +29,7 @@ use swig_state::{
         Action, Permission,
     },
     authority::AuthorityType,
-    swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
+    swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, Swig, SwigWithRoles},
     tail::active_sub_account_count,
     IntoBytes, Transmutable, TransmutableMut,
 };
@@ -194,7 +194,7 @@ fn test_create_sub_account() {
 }
 
 #[test_log::test]
-fn test_close_swig_rejects_existing_sub_account_v1() {
+fn test_close_v2_swig_rejects_existing_sub_account_v1() {
     let mut context = setup_test_context().unwrap();
     let (swig_key, root, child_authority, id) =
         setup_test_with_sub_account_authority(&mut context).unwrap();
@@ -229,6 +229,62 @@ fn test_close_swig_rejects_existing_sub_account_v1() {
     assert_eq!(
         context.svm.get_account(&swig_key).unwrap().data[0],
         swig_state::Discriminator::SwigConfigAccount as u8
+    );
+}
+
+#[test_log::test]
+fn test_close_v1_swig_ignores_active_count_and_counter_alias() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, child_authority, id) =
+        setup_test_with_sub_account_authority(&mut context).unwrap();
+    let (wallet, wallet_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
+    // Model an unmigrated V1 header while preserving the canonical low-byte
+    // bump so the legacy parent-close signing path remains usable. The upper
+    // word is non-zero and would be misread as sub_account_counter == 1 if the
+    // V1 bytes were trusted as a V2 header.
+    let reserved_lamports = (1u64 << 32) | (1u64 << 8) | u64::from(wallet_bump);
+    let mut swig_account = context.svm.get_account(&swig_key).unwrap();
+    swig_account.data[Swig::LEN - 8..Swig::LEN].copy_from_slice(&reserved_lamports.to_le_bytes());
+    context.svm.set_account(swig_key, swig_account).unwrap();
+
+    create_sub_account(&mut context, &swig_key, &child_authority, 1, id).unwrap();
+
+    // V1 child creation still records the real count for a future migration;
+    // it must not seed the count from the aliased upper reserve word.
+    let account = context.svm.get_account(&swig_key).unwrap();
+    let parts = Swig::split_parts(&account.data).unwrap();
+    assert_eq!(active_sub_account_count::read(parts.tail).unwrap(), Some(1));
+
+    let destination = Keypair::new();
+    context.svm.airdrop(&destination.pubkey(), 0).unwrap();
+    let close = CloseSwigV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        wallet,
+        root.pubkey(),
+        destination.pubkey(),
+        0,
+    )
+    .unwrap();
+    let message = v0::Message::try_compile(
+        &root.pubkey(),
+        &[close],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let transaction =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&root]).unwrap();
+
+    assert!(
+        context.svm.send_transaction(transaction).is_ok(),
+        "V1 parent close must retain legacy behavior"
+    );
+    let closed = context.svm.get_account(&swig_key).unwrap();
+    assert_eq!(
+        closed.data,
+        vec![swig_state::Discriminator::ClosedSwigAccount as u8]
     );
 }
 
