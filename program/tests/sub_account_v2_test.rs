@@ -16,9 +16,9 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::{
-    AuthorityConfig, ClientAction, CloseSwigV1Instruction, CreateSubAccountV2Instruction,
-    SubAccountSignV2Instruction, ToggleSubAccountV2Instruction,
-    WithdrawFromSubAccountV2Instruction,
+    AuthorityConfig, ClientAction, CloseSubAccountV2Instruction, CloseSwigV1Instruction,
+    CreateSubAccountV2Instruction, SignV2Instruction, SubAccountSignV2Instruction,
+    ToggleSubAccountV2Instruction, WithdrawFromSubAccountV2Instruction,
 };
 use swig_state::{
     action::{
@@ -140,6 +140,19 @@ fn decode_active_count(context: &SwigTestContext, swig_key: &Pubkey) -> u32 {
     let data = context.svm.get_account(swig_key).unwrap().data;
     let parts = Swig::split_parts(&data).unwrap();
     active_sub_account_count::read(parts.tail).unwrap().unwrap()
+}
+
+fn strip_active_count_tail(context: &mut SwigTestContext, swig_key: &Pubkey) {
+    let count = decode_active_count(context, swig_key);
+    let mut account = context.svm.get_account(swig_key).unwrap();
+    let parts = Swig::split_parts(&account.data).unwrap();
+    assert!(parts
+        .tail
+        .ends_with(&active_sub_account_count::entry(count)));
+    account
+        .data
+        .truncate(account.data.len() - active_sub_account_count::ENTRY_LEN);
+    context.svm.set_account(*swig_key, account).unwrap();
 }
 
 /// Counts how many `SubAccountV2All` actions the role holds for `subacc_id`.
@@ -521,6 +534,180 @@ fn test_close_swig_rejects_existing_sub_account_v2() {
         swig_state::Discriminator::SwigConfigAccount as u8
     );
     assert_eq!(decode_active_count(&context, &swig_key), 1);
+}
+
+#[test]
+fn test_close_sub_account_v2_sweeps_lamports_and_unblocks_parent_close() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, creator, id) = setup_v2(&mut context).unwrap();
+    let (state_pda, asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+    context.svm.airdrop(&asset_pda, 1_000_000_000).unwrap();
+    let (swig_wallet_address, _) = Pubkey::find_program_address(
+        &swig_state::swig::swig_wallet_address_seeds(swig_key.as_ref()),
+        &program_id(),
+    );
+
+    let close_while_enabled = CloseSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        root.pubkey(),
+        state_pda,
+        asset_pda,
+        swig_wallet_address,
+        root.pubkey(),
+        0,
+        0,
+    )
+    .unwrap();
+    assert!(send(&mut context, &root, close_while_enabled).is_err());
+    assert_eq!(decode_active_count(&context, &swig_key), 1);
+    context.svm.expire_blockhash();
+
+    let disable = ToggleSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        creator.pubkey(),
+        creator.pubkey(),
+        state_pda,
+        CREATOR_ROLE_ID,
+        0,
+        false,
+    )
+    .unwrap();
+    send(&mut context, &creator, disable).unwrap();
+
+    let wallet_before = context
+        .svm
+        .get_account(&swig_wallet_address)
+        .unwrap()
+        .lamports;
+    let state_lamports = context.svm.get_account(&state_pda).unwrap().lamports;
+    let asset_lamports = context.svm.get_account(&asset_pda).unwrap().lamports;
+    let close_child = CloseSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        root.pubkey(),
+        state_pda,
+        asset_pda,
+        swig_wallet_address,
+        root.pubkey(),
+        0,
+        0,
+    )
+    .unwrap();
+    send(&mut context, &root, close_child).unwrap();
+
+    assert!(context.svm.get_account(&state_pda).is_none());
+    assert!(context.svm.get_account(&asset_pda).is_none());
+    assert_eq!(decode_active_count(&context, &swig_key), 0);
+    assert_eq!(
+        context
+            .svm
+            .get_account(&swig_wallet_address)
+            .unwrap()
+            .lamports,
+        wallet_before + state_lamports + asset_lamports
+    );
+
+    // Drain the parent wallet PDA before the existing CloseSwigV1 empty-wallet
+    // check, then prove the zero-child guard permits final closure.
+    let destination = Keypair::new();
+    context.svm.airdrop(&destination.pubkey(), 0).unwrap();
+    let wallet_lamports = context
+        .svm
+        .get_account(&swig_wallet_address)
+        .unwrap()
+        .lamports;
+    let drain = solana_system_interface::instruction::transfer(
+        &swig_wallet_address,
+        &destination.pubkey(),
+        wallet_lamports,
+    );
+    let sign =
+        SignV2Instruction::new_ed25519(swig_key, swig_wallet_address, root.pubkey(), drain, 0)
+            .unwrap();
+    send(&mut context, &root, sign).unwrap();
+
+    let close_parent = CloseSwigV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        swig_wallet_address,
+        root.pubkey(),
+        destination.pubkey(),
+        0,
+    )
+    .unwrap();
+    send(&mut context, &root, close_parent).unwrap();
+    assert_eq!(
+        context.svm.get_account(&swig_key).unwrap().data[0],
+        swig_state::Discriminator::ClosedSwigAccount as u8
+    );
+}
+
+#[test]
+fn test_close_legacy_v2_sub_account_materializes_active_count() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, creator, id) = setup_v2(&mut context).unwrap();
+    let claimer = Keypair::new();
+    set_rent_claimer_with_ed25519(&mut context, &swig_key, &root, 0, claimer.pubkey()).unwrap();
+    let (state_pda, asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+    strip_active_count_tail(&mut context, &swig_key);
+
+    let legacy_account = context.svm.get_account(&swig_key).unwrap();
+    let legacy_parts = Swig::split_parts(&legacy_account.data).unwrap();
+    assert_eq!(
+        active_sub_account_count::read(legacy_parts.tail).unwrap(),
+        None
+    );
+    assert_eq!(
+        swig_state::tail::rent_claimer::read_strict(legacy_parts.tail).unwrap(),
+        Some(&claimer.pubkey().to_bytes())
+    );
+
+    let (wallet, _) = Pubkey::find_program_address(
+        &swig_state::swig::swig_wallet_address_seeds(swig_key.as_ref()),
+        &program_id(),
+    );
+    let destination = Keypair::new();
+    context.svm.airdrop(&destination.pubkey(), 0).unwrap();
+    let close_parent = CloseSwigV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        wallet,
+        root.pubkey(),
+        destination.pubkey(),
+        0,
+    )
+    .unwrap();
+    assert!(send(&mut context, &root, close_parent).is_err());
+    context.svm.expire_blockhash();
+
+    let disable = ToggleSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        creator.pubkey(),
+        creator.pubkey(),
+        state_pda,
+        CREATOR_ROLE_ID,
+        0,
+        false,
+    )
+    .unwrap();
+    send(&mut context, &creator, disable).unwrap();
+    let close_child = CloseSubAccountV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        root.pubkey(),
+        state_pda,
+        asset_pda,
+        wallet,
+        root.pubkey(),
+        0,
+        0,
+    )
+    .unwrap();
+    send(&mut context, &root, close_child).unwrap();
+
+    assert_eq!(decode_active_count(&context, &swig_key), 0);
+    let account = context.svm.get_account(&swig_key).unwrap();
+    let parts = Swig::split_parts(&account.data).unwrap();
+    assert_eq!(
+        swig_state::tail::rent_claimer::read_strict(parts.tail).unwrap(),
+        Some(&claimer.pubkey().to_bytes())
+    );
 }
 
 #[test]
