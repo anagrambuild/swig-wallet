@@ -80,6 +80,28 @@ impl<'a> CloseSwigV1<'a> {
     }
 }
 
+/// Validates that close proceeds cannot be routed to an unrecoverable or
+/// Swig-owned destination. A configured rent claimer additionally pins the
+/// only permitted destination.
+fn validate_close_destination(
+    destination: &Pubkey,
+    swig: &Pubkey,
+    swig_wallet_address: &Pubkey,
+    configured_rent_claimer: Option<&[u8; 32]>,
+) -> ProgramResult {
+    if destination == &[0u8; 32] || destination == swig || destination == swig_wallet_address {
+        return Err(SwigError::InvalidRentClaimerDestination.into());
+    }
+
+    if let Some(claimer) = configured_rent_claimer {
+        if destination != claimer {
+            return Err(SwigError::InvalidRentClaimerDestination.into());
+        }
+    }
+
+    Ok(())
+}
+
 /// Closes the Swig account and returns all lamports to destination.
 pub fn close_swig_v1(
     ctx: Context<CloseSwigV1Accounts>,
@@ -150,11 +172,12 @@ pub fn close_swig_v1(
     if !has_all && !has_manage && !has_close {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
-    if let Some(claimer) = configured_rent_claimer {
-        if ctx.accounts.destination.key().as_ref() != claimer.as_ref() {
-            return Err(SwigError::InvalidRentClaimerDestination.into());
-        }
-    }
+    validate_close_destination(
+        ctx.accounts.destination.key(),
+        ctx.accounts.swig.key(),
+        ctx.accounts.swig_wallet_address.key(),
+        configured_rent_claimer,
+    )?;
 
     // Store swig values before dropping borrow
     let wallet_bump = swig.wallet_bump;
@@ -210,4 +233,43 @@ pub fn close_swig_v1(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_invalid_destination(
+        destination: &Pubkey,
+        swig: &Pubkey,
+        swig_wallet_address: &Pubkey,
+    ) {
+        assert!(matches!(
+            validate_close_destination(destination, swig, swig_wallet_address, None),
+            Err(ProgramError::Custom(code))
+                if code == SwigError::InvalidRentClaimerDestination as u32
+        ));
+    }
+
+    #[test]
+    fn close_destination_rejects_zero_pubkey_without_configured_claimer() {
+        assert_invalid_destination(&[0u8; 32], &[1u8; 32], &[2u8; 32]);
+    }
+
+    #[test]
+    fn close_destination_rejects_swig_without_configured_claimer() {
+        let swig = [1u8; 32];
+        assert_invalid_destination(&swig, &swig, &[2u8; 32]);
+    }
+
+    #[test]
+    fn close_destination_rejects_wallet_address_without_configured_claimer() {
+        let wallet = [2u8; 32];
+        assert_invalid_destination(&wallet, &[1u8; 32], &wallet);
+    }
+
+    #[test]
+    fn close_destination_allows_safe_external_destination_without_configured_claimer() {
+        assert!(validate_close_destination(&[3u8; 32], &[1u8; 32], &[2u8; 32], None).is_ok());
+    }
 }
