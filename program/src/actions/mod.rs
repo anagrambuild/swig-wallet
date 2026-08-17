@@ -6,6 +6,7 @@
 //! instruction's business logic.
 
 pub mod add_authority_v1;
+pub mod close_sub_account_v1;
 pub mod close_swig_v1;
 pub mod close_token_account_v1;
 pub mod create_session_v1;
@@ -31,8 +32,8 @@ use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
 
 use self::{
-    add_authority_v1::*, close_swig_v1::*, close_token_account_v1::*, create_session_v1::*,
-    create_sub_account_v1::*, create_sub_account_v2::*, create_v1::*,
+    add_authority_v1::*, close_sub_account_v1::*, close_swig_v1::*, close_token_account_v1::*,
+    create_session_v1::*, create_sub_account_v1::*, create_sub_account_v2::*, create_v1::*,
     migrate_to_wallet_address_v1::*, remove_authority_v1::*, replace_authority_v1::*,
     set_rent_claimer_v1::*, sign_v2::*, sub_account_sign_v1::*, sub_account_sign_v2::*,
     toggle_sub_account_v1::*, toggle_sub_account_v2::*, transfer_assets_v1::*,
@@ -41,13 +42,14 @@ use self::{
 use crate::{
     instruction::{
         accounts::{
-            AddAuthorityV1Accounts, CloseSwigV1Accounts, CloseTokenAccountV1Accounts,
-            CreateSessionV1Accounts, CreateSubAccountV1Accounts, CreateSubAccountV2Accounts,
-            CreateV1Accounts, MigrateToWalletAddressV1Accounts, RemoveAuthorityV1Accounts,
-            ReplaceAuthorityV1Accounts, SetRentClaimerV1Accounts, SignV2Accounts,
-            SubAccountSignV1Accounts, SubAccountSignV2Accounts, ToggleSubAccountV1Accounts,
-            ToggleSubAccountV2Accounts, TransferAssetsV1Accounts, UpdateAuthorityV1Accounts,
-            WithdrawFromSubAccountV1Accounts, WithdrawFromSubAccountV2Accounts,
+            AddAuthorityV1Accounts, CloseSubAccountV1Accounts, CloseSwigV1Accounts,
+            CloseTokenAccountV1Accounts, CreateSessionV1Accounts, CreateSubAccountV1Accounts,
+            CreateSubAccountV2Accounts, CreateV1Accounts, MigrateToWalletAddressV1Accounts,
+            RemoveAuthorityV1Accounts, ReplaceAuthorityV1Accounts, SetRentClaimerV1Accounts,
+            SignV2Accounts, SubAccountSignV1Accounts, SubAccountSignV2Accounts,
+            ToggleSubAccountV1Accounts, ToggleSubAccountV2Accounts, TransferAssetsV1Accounts,
+            UpdateAuthorityV1Accounts, WithdrawFromSubAccountV1Accounts,
+            WithdrawFromSubAccountV2Accounts,
         },
         SwigInstruction,
     },
@@ -115,6 +117,7 @@ pub fn process_action(
             process_transfer_assets_v1(accounts, account_classification, data)
         },
         SwigInstruction::CloseTokenAccountV1 => process_close_token_account_v1(accounts, data),
+        SwigInstruction::CloseSubAccountV1 => process_close_sub_account_v1(accounts, data),
         SwigInstruction::CloseSwigV1 => process_close_swig_v1(accounts, data),
         SwigInstruction::ReplaceAuthorityV1 => process_replace_authority_v1(accounts, data),
         SwigInstruction::SetRentClaimerV1 => process_set_rent_claimer_v1(accounts, data),
@@ -197,6 +200,15 @@ fn process_create_session_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramRe
 fn process_create_sub_account_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = CreateSubAccountV1Accounts::context(accounts)?;
     create_sub_account_v1(account_ctx, data, accounts)
+}
+
+/// Processes a CloseSubAccountV1 instruction.
+///
+/// Closes a disabled V1 sub-account and updates the parent's active-child
+/// count.
+fn process_close_sub_account_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = CloseSubAccountV1Accounts::context(accounts)?;
+    close_sub_account_v1(account_ctx, data, accounts)
 }
 
 /// Processes a WithdrawFromSubAccountV1 instruction.

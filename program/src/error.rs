@@ -168,6 +168,10 @@ pub enum SwigError {
     ActiveSubAccountsRemain,
     /// Active sub-account count would underflow
     ActiveSubAccountCountUnderflow,
+    /// A sub-account must be disabled before it can be closed
+    SubAccountMustBeDisabled,
+    /// A role containing a live V1 sub-account cannot be removed or rewritten
+    ActiveV1SubAccountMustBeClosed,
 }
 
 /// Implements conversion from SwigError to ProgramError.

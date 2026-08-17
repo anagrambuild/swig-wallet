@@ -311,4 +311,21 @@ pub enum SwigInstruction {
     #[account(5, name="authority_context", desc="authority context: signer for Ed25519, sysvar for Secp256r1, or placeholder for Secp256k1")]
     #[account(6, name="system_program", desc="the system program")]
     WithdrawFromSubAccountV2 = 21,
+
+    /// Closes a disabled V1 sub-account, sweeping its SOL to the Swig wallet
+    /// address. Token accounts and other positions controlled by the child PDA
+    /// must be closed first.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Payer for legacy count-tail initialization
+    /// 3. `[writable]` V1 sub-account asset PDA
+    /// 4. `[writable]` Swig wallet address PDA
+    /// 5. System program
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="payer for legacy count initialization")]
+    #[account(2, writable, name="sub_account", desc="the v1 sub account asset PDA")]
+    #[account(3, writable, name="swig_wallet_address", desc="the swig wallet address destination")]
+    #[account(4, name="system_program", desc="the system program")]
+    CloseSubAccountV1 = 22,
 }

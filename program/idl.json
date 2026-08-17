@@ -819,6 +819,56 @@
         "type": "u8",
         "value": 21
       }
+    },
+    {
+      "name": "CloseSubAccountV1",
+      "accounts": [
+        {
+          "name": "swig",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig smart wallet"
+          ]
+        },
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "payer for legacy count initialization"
+          ]
+        },
+        {
+          "name": "subAccount",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the v1 sub account asset PDA"
+          ]
+        },
+        {
+          "name": "swigWalletAddress",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig wallet address destination"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the system program"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 22
+      }
     }
   ],
   "metadata": {

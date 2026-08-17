@@ -9,7 +9,10 @@ use core::convert::TryInto;
 use pinocchio::program_error::ProgramError;
 
 use crate::{
-    action::{sub_account::SubAccount, Action, Permission},
+    action::{
+        sub_account::{SubAccount, CLOSED_SUB_ACCOUNT},
+        Action, Permission,
+    },
     role::Position,
     swig::Swig,
     tail::{read_first_of, TailDescriptor, TailHeader, TailKind, TailReadError, TAIL_HEADER_LEN},
@@ -86,6 +89,36 @@ pub fn entry(count: u32) -> [u8; ENTRY_LEN] {
     buf
 }
 
+pub fn has_active_v1(actions: &[u8]) -> Result<bool, ProgramError> {
+    let mut cursor = 0usize;
+    while cursor < actions.len() {
+        let header_end = cursor
+            .checked_add(Action::LEN)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        if header_end > actions.len() {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let header = unsafe { Action::load_unchecked(&actions[cursor..header_end])? };
+        let data_end = header_end
+            .checked_add(header.length() as usize)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        if data_end > actions.len() {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if header.permission()? == Permission::SubAccount {
+            if header.length() as usize != SubAccount::LEN {
+                return Err(ProgramError::InvalidAccountData);
+            }
+            let child = unsafe { SubAccount::load_unchecked(&actions[header_end..data_end])? };
+            if child.sub_account != [0u8; 32] && child.sub_account != CLOSED_SUB_ACCOUNT {
+                return Ok(true);
+            }
+        }
+        cursor = data_end;
+    }
+    Ok(false)
+}
+
 /// Computes the active-child count for a wallet created before the count tail
 /// existed. The program layer supplies the number of allocated V2 ids only
 /// after it has established that the parent uses the V2 header. V1 children
@@ -135,7 +168,7 @@ pub fn legacy_count(
                     return Err(ProgramError::InvalidAccountData);
                 }
                 let child = unsafe { SubAccount::load_unchecked(&actions[header_end..data_end])? };
-                if child.sub_account != [0u8; 32] {
+                if child.sub_account != [0u8; 32] && child.sub_account != CLOSED_SUB_ACCOUNT {
                     count = count
                         .checked_add(1)
                         .ok_or(ProgramError::InvalidAccountData)?;
