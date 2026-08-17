@@ -164,6 +164,10 @@ pub enum SwigError {
     InvalidSeedSubAccountV2,
     /// Replacement signer must differ from the target role's current signer
     ReplaceAuthoritySameSigner,
+    /// Parent Swig cannot close while any V1 or V2 sub-account remains active
+    ActiveSubAccountsRemain,
+    /// Active sub-account count would underflow
+    ActiveSubAccountCountUnderflow,
 }
 
 /// Implements conversion from SwigError to ProgramError.

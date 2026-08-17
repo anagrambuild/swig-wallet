@@ -12,11 +12,34 @@ use solana_sdk::{
 };
 use swig_interface::{AuthorityConfig, ClientAction, SetRentClaimerV1Instruction};
 use swig_state::{
-    action::sol_limit::SolLimit,
+    action::{sol_limit::SolLimit, sub_account::SubAccount},
     authority::AuthorityType,
     swig::{swig_wallet_address_seeds, Swig},
-    tail::rent_claimer,
+    tail::{active_sub_account_count, rent_claimer},
 };
+
+fn add_sub_account_authority(
+    context: &mut SwigTestContext,
+    swig: &solana_sdk::pubkey::Pubkey,
+    root: &Keypair,
+    authority: &Keypair,
+) {
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    add_authority_with_ed25519_root(
+        context,
+        swig,
+        root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::SubAccount(SubAccount::new_for_creation())],
+    )
+    .unwrap();
+}
 
 #[test_log::test]
 fn test_set_rent_claimer_happy_path() {
@@ -33,6 +56,50 @@ fn test_set_rent_claimer_happy_path() {
     let parts = Swig::split_parts(&swig_account.data).unwrap();
     let parsed = rent_claimer::read_strict(parts.tail).unwrap();
     assert_eq!(parsed, Some(&claimer.pubkey().to_bytes()));
+}
+
+#[test_log::test]
+fn test_set_rent_claimer_after_active_count_preserves_both_tail_entries() {
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let child_authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &root, id).unwrap();
+    add_sub_account_authority(&mut context, &swig, &root, &child_authority);
+
+    create_sub_account(&mut context, &swig, &child_authority, 1, id).unwrap();
+    let claimer = Keypair::new();
+    set_rent_claimer_with_ed25519(&mut context, &swig, &root, 0, claimer.pubkey()).unwrap();
+
+    let account = context.svm.get_account(&swig).unwrap();
+    let parts = Swig::split_parts(&account.data).unwrap();
+    assert_eq!(
+        rent_claimer::read_strict(parts.tail).unwrap(),
+        Some(&claimer.pubkey().to_bytes())
+    );
+    assert_eq!(active_sub_account_count::read(parts.tail).unwrap(), Some(1));
+}
+
+#[test_log::test]
+fn test_create_sub_account_after_rent_claimer_preserves_both_tail_entries() {
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let child_authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &root, id).unwrap();
+    let claimer = Keypair::new();
+    set_rent_claimer_with_ed25519(&mut context, &swig, &root, 0, claimer.pubkey()).unwrap();
+    add_sub_account_authority(&mut context, &swig, &root, &child_authority);
+
+    create_sub_account(&mut context, &swig, &child_authority, 1, id).unwrap();
+
+    let account = context.svm.get_account(&swig).unwrap();
+    let parts = Swig::split_parts(&account.data).unwrap();
+    assert_eq!(
+        rent_claimer::read_strict(parts.tail).unwrap(),
+        Some(&claimer.pubkey().to_bytes())
+    );
+    assert_eq!(active_sub_account_count::read(parts.tail).unwrap(), Some(1));
 }
 
 #[test_log::test]

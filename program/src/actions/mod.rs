@@ -17,6 +17,7 @@ pub mod remove_authority_v1;
 pub mod replace_authority_v1;
 pub mod set_rent_claimer_v1;
 pub mod sign_v2;
+pub(crate) mod sub_account_lifecycle;
 pub mod sub_account_sign_v1;
 pub mod sub_account_sign_v2;
 pub mod toggle_sub_account_v1;

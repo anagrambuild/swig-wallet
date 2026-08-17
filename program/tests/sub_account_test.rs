@@ -17,8 +17,8 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::{
-    AuthorityConfig, ClientAction, CreateSubAccountInstruction, SignV2Instruction,
-    ToggleSubAccountInstruction, WithdrawFromSubAccountInstruction,
+    AuthorityConfig, ClientAction, CloseSwigV1Instruction, CreateSubAccountInstruction,
+    SignV2Instruction, ToggleSubAccountInstruction, WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
     action::{
@@ -30,6 +30,7 @@ use swig_state::{
     },
     authority::AuthorityType,
     swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
+    tail::active_sub_account_count,
     IntoBytes, Transmutable, TransmutableMut,
 };
 
@@ -189,6 +190,45 @@ fn test_create_sub_account() {
         "Sub-account should have at least rent-exempt minimum balance. Has: {}, Required: {}",
         sub_account_data.lamports,
         minimum_balance
+    );
+}
+
+#[test_log::test]
+fn test_close_swig_rejects_existing_sub_account_v1() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, child_authority, id) =
+        setup_test_with_sub_account_authority(&mut context).unwrap();
+    create_sub_account(&mut context, &swig_key, &child_authority, 1, id).unwrap();
+
+    let account = context.svm.get_account(&swig_key).unwrap();
+    let parts = swig_state::swig::Swig::split_parts(&account.data).unwrap();
+    assert_eq!(active_sub_account_count::read(parts.tail).unwrap(), Some(1));
+
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+    let destination = Keypair::new();
+    context.svm.airdrop(&destination.pubkey(), 0).unwrap();
+    let close = CloseSwigV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        wallet,
+        root.pubkey(),
+        destination.pubkey(),
+        0,
+    )
+    .unwrap();
+    let message = v0::Message::try_compile(
+        &root.pubkey(),
+        &[close],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let transaction =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&root]).unwrap();
+    assert!(context.svm.send_transaction(transaction).is_err());
+    assert_eq!(
+        context.svm.get_account(&swig_key).unwrap().data[0],
+        swig_state::Discriminator::SwigConfigAccount as u8
     );
 }
 
