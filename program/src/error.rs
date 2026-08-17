@@ -164,6 +164,8 @@ pub enum SwigError {
     InvalidSeedSubAccountV2,
     /// Replacement signer must differ from the target role's current signer
     ReplaceAuthoritySameSigner,
+    /// Swig account has already migrated to the wallet-address layout
+    SwigAlreadyMigrated,
 }
 
 /// Implements conversion from SwigError to ProgramError.
