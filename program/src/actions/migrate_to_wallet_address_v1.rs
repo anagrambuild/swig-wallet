@@ -12,7 +12,9 @@ use pinocchio::{
     sysvars::{clock::Clock, rent::Rent, Sysvar},
     ProgramResult,
 };
-use swig_assertions::{check_self_pda, check_system_owner, check_zero_data};
+use swig_assertions::{
+    check_bytes_match, check_self_owned, check_self_pda, check_system_owner, check_zero_data,
+};
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
     swig::{swig_wallet_address_seeds_with_bump, Swig},
@@ -143,6 +145,14 @@ pub fn migrate_to_wallet_address_v1(
     migrate_data: &[u8],
     all_accounts: &[AccountInfo],
 ) -> ProgramResult {
+    check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
+    check_bytes_match(
+        ctx.accounts.system_program.key(),
+        &pinocchio_system::ID,
+        32,
+        SwigError::InvalidSystemProgram,
+    )?;
+
     let migrate = MigrateToWalletAddressV1::from_instruction_bytes(migrate_data)?;
 
     let (old_swig_id, old_swig_bump, old_swig_roles, old_swig_role_counter) = {
