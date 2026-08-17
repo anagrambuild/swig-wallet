@@ -3886,6 +3886,7 @@ impl CloseSubAccountV1Instruction {
         payer: Pubkey,
         sub_account: Pubkey,
         swig_wallet_address: Pubkey,
+        rent_claimer_destination: Pubkey,
         authority: Pubkey,
         auth_role_id: u32,
         sub_account_role_id: u32,
@@ -3895,6 +3896,7 @@ impl CloseSubAccountV1Instruction {
             AccountMeta::new(payer, true),
             AccountMeta::new(sub_account, false),
             AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new(rent_claimer_destination, false),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
@@ -3905,7 +3907,7 @@ impl CloseSubAccountV1Instruction {
         Ok(Instruction {
             program_id: program_id(),
             accounts,
-            data: [args_bytes, &[5]].concat(),
+            data: [args_bytes, &[6]].concat(),
         })
     }
 
@@ -3914,6 +3916,7 @@ impl CloseSubAccountV1Instruction {
         payer: Pubkey,
         sub_account: Pubkey,
         swig_wallet_address: Pubkey,
+        rent_claimer_destination: Pubkey,
         mut authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
@@ -3928,6 +3931,7 @@ impl CloseSubAccountV1Instruction {
             AccountMeta::new(payer, true),
             AccountMeta::new(sub_account, false),
             AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new(rent_claimer_destination, false),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
         let args = CloseSubAccountV1Args::new(auth_role_id, sub_account_role_id);
@@ -3954,6 +3958,7 @@ impl CloseSubAccountV1Instruction {
         payer: Pubkey,
         sub_account: Pubkey,
         swig_wallet_address: Pubkey,
+        rent_claimer_destination: Pubkey,
         mut authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
@@ -3969,6 +3974,7 @@ impl CloseSubAccountV1Instruction {
             AccountMeta::new(payer, true),
             AccountMeta::new(sub_account, false),
             AccountMeta::new(swig_wallet_address, false),
+            AccountMeta::new(rent_claimer_destination, false),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
@@ -3982,7 +3988,7 @@ impl CloseSubAccountV1Instruction {
             args_bytes,
             current_slot,
             counter,
-            5,
+            6,
             &mut authority_payload_fn,
             public_key,
         )

@@ -312,20 +312,23 @@ pub enum SwigInstruction {
     #[account(6, name="system_program", desc="the system program")]
     WithdrawFromSubAccountV2 = 21,
 
-    /// Closes a disabled V1 sub-account, sweeping its SOL to the Swig wallet
-    /// address. Token accounts and other positions controlled by the child PDA
-    /// must be closed first.
+    /// Closes a disabled V1 sub-account. Operational SOL returns to the Swig
+    /// wallet address; rent returns to the configured rent claimer, or to the
+    /// wallet when no claimer is configured. Token accounts and other positions
+    /// controlled by the child PDA must be closed first.
     ///
     /// Required accounts:
     /// 1. `[writable]` Swig wallet account
     /// 2. `[writable, signer]` Payer for legacy count-tail initialization
     /// 3. `[writable]` V1 sub-account asset PDA
     /// 4. `[writable]` Swig wallet address PDA
-    /// 5. System program
+    /// 5. `[writable]` Configured rent claimer, or the Swig wallet address when unset
+    /// 6. System program
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
     #[account(1, writable, signer, name="payer", desc="payer for legacy count initialization")]
     #[account(2, writable, name="sub_account", desc="the v1 sub account asset PDA")]
     #[account(3, writable, name="swig_wallet_address", desc="the swig wallet address destination")]
-    #[account(4, name="system_program", desc="the system program")]
+    #[account(4, writable, name="rent_claimer_destination", desc="configured rent claimer, or swig wallet address when unset")]
+    #[account(5, name="system_program", desc="the system program")]
     CloseSubAccountV1 = 22,
 }

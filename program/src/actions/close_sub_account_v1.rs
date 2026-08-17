@@ -1,12 +1,19 @@
-//! Closes a disabled V1 sub-account and returns its SOL to the Swig wallet PDA.
+//! Closes a disabled V1 sub-account, returning operational SOL to the Swig
+//! wallet PDA and rent to the configured rent claimer.
 
 use no_padding::NoPadding;
-use pinocchio::{account_info::AccountInfo, program_error::ProgramError, ProgramResult};
+use pinocchio::{
+    account_info::AccountInfo,
+    program_error::ProgramError,
+    sysvars::{rent::Rent, Sysvar},
+    ProgramResult,
+};
 use swig_assertions::{check_bytes_match, check_self_owned, check_self_pda, check_system_owner};
 use swig_state::{
     action::sub_account::{SubAccount, CLOSED_SUB_ACCOUNT},
     role::RoleMut,
     swig::{sub_account_seeds_with_bump, sub_account_signer, swig_wallet_address_seeds, Swig},
+    tail::rent_claimer,
     Discriminator, IntoBytes, Transmutable,
 };
 
@@ -90,11 +97,12 @@ pub fn close_sub_account_v1(
     )?;
     let close = CloseSubAccountV1::from_instruction_bytes(data)?;
 
-    let (swig_id, child_bump) = {
+    let (swig_id, child_bump, configured_rent_claimer) = {
         let swig_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
         if swig_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
+        crate::require_swig_v2(swig_data)?;
         let parts = Swig::split_parts_mut(swig_data)?;
         authenticate_close_authority(
             parts.roles,
@@ -120,7 +128,11 @@ pub fn close_sub_account_v1(
         if child.role_id != close.args.sub_account_role_id {
             return Err(SwigError::InvalidSwigSubAccountRoleIdMismatch.into());
         }
-        (parts.state.id, child.bump)
+        (
+            parts.state.id,
+            child.bump,
+            rent_claimer::read_strict(parts.tail)?.copied(),
+        )
     };
 
     let role_id = close.args.sub_account_role_id.to_le_bytes();
@@ -137,18 +149,48 @@ pub fn close_sub_account_v1(
     if ctx.accounts.swig_wallet_address.key() != &expected_wallet {
         return Err(SwigError::InvalidSeedSwigAccount.into());
     }
+    let expected_rent_destination = configured_rent_claimer
+        .as_ref()
+        .unwrap_or(ctx.accounts.swig_wallet_address.key());
+    if ctx.accounts.rent_claimer_destination.key() != expected_rent_destination
+        || ctx.accounts.rent_claimer_destination.key() == ctx.accounts.sub_account.key()
+    {
+        return Err(SwigError::InvalidRentClaimerDestination.into());
+    }
 
     adjust_active_count(ctx.accounts.swig, ctx.accounts.payer, -1)?;
 
     let lamports = ctx.accounts.sub_account.lamports();
     if lamports > 0 {
+        let rent_lamports =
+            lamports.min(Rent::get()?.minimum_balance(ctx.accounts.sub_account.data_len()));
+        let operational_lamports = lamports.saturating_sub(rent_lamports);
         let signer = sub_account_signer(&swig_id, &role_id, &bump);
-        pinocchio_system::instructions::Transfer {
-            from: ctx.accounts.sub_account,
-            to: ctx.accounts.swig_wallet_address,
-            lamports,
+        if ctx.accounts.rent_claimer_destination.key() == ctx.accounts.swig_wallet_address.key() {
+            pinocchio_system::instructions::Transfer {
+                from: ctx.accounts.sub_account,
+                to: ctx.accounts.swig_wallet_address,
+                lamports,
+            }
+            .invoke_signed(&[signer.as_slice().into()])?;
+        } else {
+            if operational_lamports > 0 {
+                pinocchio_system::instructions::Transfer {
+                    from: ctx.accounts.sub_account,
+                    to: ctx.accounts.swig_wallet_address,
+                    lamports: operational_lamports,
+                }
+                .invoke_signed(&[signer.as_slice().into()])?;
+            }
+            if rent_lamports > 0 {
+                pinocchio_system::instructions::Transfer {
+                    from: ctx.accounts.sub_account,
+                    to: ctx.accounts.rent_claimer_destination,
+                    lamports: rent_lamports,
+                }
+                .invoke_signed(&[signer.as_slice().into()])?;
+            }
         }
-        .invoke_signed(&[signer.as_slice().into()])?;
     }
 
     let swig_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
