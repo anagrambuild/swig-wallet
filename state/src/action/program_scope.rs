@@ -431,4 +431,16 @@ impl<'a> Actionable<'a> for ProgramScope {
     fn match_data(&self, data: &[u8]) -> bool {
         data.len() >= 32 && data[0..32] == self.target_account
     }
+
+    fn valid_layout(data: &'a [u8]) -> Result<bool, ProgramError> {
+        if data.len() != Self::LEN {
+            return Ok(false);
+        }
+
+        let scope_type = &data[112..120];
+        let recurring_scope_type = (ProgramScopeType::RecurringLimit as u64).to_le_bytes();
+        let window = &data[32..40];
+
+        Ok(scope_type != recurring_scope_type || window != [0u8; 8])
+    }
 }

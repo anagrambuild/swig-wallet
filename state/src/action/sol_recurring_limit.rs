@@ -77,15 +77,17 @@ impl<'a> Actionable<'a> for SolRecurringLimit {
     const REPEATABLE: bool = false;
 
     fn valid_layout(data: &'a [u8]) -> Result<bool, ProgramError> {
+        if data.len() != Self::LEN {
+            return Ok(false);
+        }
+
         // current amount needs to be equal to recurring amount
         let current_amount = &data[24..32];
         let recurring_amount = &data[0..8];
+        // window needs to be non-zero
+        let window = &data[8..16];
         // last reset needs to be 0
         let last_reset = &data[16..24];
-        Ok(
-            current_amount == recurring_amount
-                && last_reset == &[0u8; 8]
-                && data.len() == Self::LEN,
-        )
+        Ok(current_amount == recurring_amount && window != [0u8; 8] && last_reset == [0u8; 8])
     }
 }

@@ -87,11 +87,17 @@ impl<'a> Actionable<'a> for TokenRecurringLimit {
     }
 
     fn valid_layout(data: &'a [u8]) -> Result<bool, ProgramError> {
+        if data.len() != Self::LEN {
+            return Ok(false);
+        }
+
         // current amount needs to be equal to limit
         let current = &data[48..56];
         let limit = &data[40..48];
+        // window needs to be non-zero
+        let window = &data[32..40];
         // last reset needs to be 0
         let last_reset = &data[56..64];
-        Ok(current == limit && last_reset == &[0u8; 8] && data.len() == Self::LEN)
+        Ok(current == limit && window != [0u8; 8] && last_reset == [0u8; 8])
     }
 }
