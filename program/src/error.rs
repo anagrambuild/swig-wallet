@@ -164,6 +164,8 @@ pub enum SwigError {
     InvalidSeedSubAccountV2,
     /// Replacement signer must differ from the target role's current signer
     ReplaceAuthoritySameSigner,
+    /// SignV2 wallet-address PDA owner or data length violated the invariant
+    WalletAddressInvariantViolation,
 }
 
 /// Implements conversion from SwigError to ProgramError.
