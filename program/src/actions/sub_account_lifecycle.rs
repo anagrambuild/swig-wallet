@@ -9,31 +9,33 @@ use pinocchio_system::instructions::Transfer;
 use swig_state::{
     swig::Swig,
     tail::{active_sub_account_count, validate_strict, SavedTail},
+    Transmutable,
 };
 
 use crate::{error::SwigError, is_swig_v2};
 
 /// Returns the active-child count that gates final parent closure.
 ///
-/// A V1 header aliases the V2 `sub_account_counter` with the upper half of
-/// `reserved_lamports`. Only trust that allocator after establishing the V2
-/// header; legacy V1 reconstruction starts at zero and counts surviving V1
-/// actions instead.
+/// The close guard is a V2 lifecycle invariant. Check the version before
+/// parsing roles or tail state so V1 parents retain their legacy close path.
 pub(crate) fn active_count_for_close(data: &[u8]) -> Result<u32, ProgramError> {
+    if data.len() < Swig::LEN {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if !unsafe { is_swig_v2(data) } {
+        return Ok(0);
+    }
+
     let parts = Swig::split_parts(data)?;
     validate_strict(parts.tail)?;
 
-    let allocated_v2_count = if unsafe { is_swig_v2(data) } {
-        parts.state.sub_account_counter
-    } else {
-        0
-    };
-
     match active_sub_account_count::read(parts.tail)? {
         Some(count) => Ok(count),
-        None => {
-            active_sub_account_count::legacy_count(parts.state, parts.roles, allocated_v2_count)
-        },
+        None => active_sub_account_count::legacy_count(
+            parts.state,
+            parts.roles,
+            parts.state.sub_account_counter,
+        ),
     }
 }
 
