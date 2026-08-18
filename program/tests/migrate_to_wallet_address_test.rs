@@ -5,18 +5,21 @@ mod common;
 use common::*;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
-    instruction::{AccountMeta, Instruction},
+    instruction::{AccountMeta, Instruction, InstructionError},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    transaction::VersionedTransaction,
+    transaction::{TransactionError, VersionedTransaction},
 };
 use swig::actions::migrate_to_wallet_address_v1::MigrateToWalletAddressV1Args;
 use swig_state::{
     swig::{swig_wallet_address_seeds, Swig},
     IntoBytes, Transmutable,
 };
+
+const OWNER_MISMATCH_SWIG_ACCOUNT_ERROR: u32 = 1;
+const INVALID_SYSTEM_PROGRAM_ERROR: u32 = 24;
 
 fn migrate_instruction(
     swig: Pubkey,
@@ -25,6 +28,7 @@ fn migrate_instruction(
     swig_wallet_address: Pubkey,
     wallet_address_bump: u8,
     authority_is_signer: bool,
+    system_program: Pubkey,
 ) -> Instruction {
     let mut data = MigrateToWalletAddressV1Args::new(wallet_address_bump, 0)
         .into_bytes()
@@ -39,7 +43,7 @@ fn migrate_instruction(
             AccountMeta::new_readonly(authority, authority_is_signer),
             AccountMeta::new(payer, true),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            AccountMeta::new_readonly(system_program, false),
         ],
         data,
     }
@@ -76,6 +80,7 @@ fn test_migration_rejects_nonsigner_authority() {
         swig_wallet_address,
         wallet_address_bump,
         false,
+        solana_system_interface::program::ID,
     );
 
     let message = VersionedMessage::V0(
@@ -112,6 +117,7 @@ fn test_migration_accepts_authenticated_authority() {
         swig_wallet_address,
         wallet_address_bump,
         true,
+        solana_system_interface::program::ID,
     );
 
     let message = VersionedMessage::V0(
@@ -139,4 +145,86 @@ fn test_migration_accepts_authenticated_authority() {
     let swig_account = context.svm.get_account(&swig).unwrap();
     let migrated_swig = unsafe { Swig::load_unchecked(&swig_account.data[..Swig::LEN]).unwrap() };
     assert_eq!(migrated_swig.wallet_bump, wallet_address_bump);
+}
+
+#[test_log::test]
+fn test_migration_rejects_non_program_owned_swig() {
+    let (mut context, authority, swig, swig_wallet_address, wallet_address_bump) =
+        setup_unmigrated_swig();
+
+    let mut swig_account = context.svm.get_account(&swig).unwrap();
+    swig_account.owner = solana_system_interface::program::ID;
+    context.svm.set_account(swig, swig_account).unwrap();
+
+    let migrate_ix = migrate_instruction(
+        swig,
+        authority.pubkey(),
+        context.default_payer.pubkey(),
+        swig_wallet_address,
+        wallet_address_bump,
+        true,
+        solana_system_interface::program::ID,
+    );
+
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                migrate_ix,
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+
+    let error = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(OWNER_MISMATCH_SWIG_ACCOUNT_ERROR),
+        )
+    );
+}
+
+#[test_log::test]
+fn test_migration_rejects_wrong_system_program() {
+    let (mut context, authority, swig, swig_wallet_address, wallet_address_bump) =
+        setup_unmigrated_swig();
+
+    let migrate_ix = migrate_instruction(
+        swig,
+        authority.pubkey(),
+        context.default_payer.pubkey(),
+        swig_wallet_address,
+        wallet_address_bump,
+        true,
+        context.default_payer.pubkey(),
+    );
+
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                migrate_ix,
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+
+    let error = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(INVALID_SYSTEM_PROGRAM_ERROR),
+        )
+    );
 }
