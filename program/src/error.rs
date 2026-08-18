@@ -144,7 +144,7 @@ pub enum SwigError {
     RentClaimerAlreadySet,
     /// Rent claimer pubkey is invalid
     InvalidRentClaimerValue,
-    /// Destination does not match configured rent claimer
+    /// Close destination is invalid or does not match the configured rent claimer
     InvalidRentClaimerDestination,
     /// V2 sub-account instruction data is too short
     InvalidSwigCreateSubAccountV2InstructionDataTooShort,
