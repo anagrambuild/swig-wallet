@@ -16,7 +16,7 @@ use swig_state::{
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::Swig,
-    tail::SavedTail,
+    tail::{active_sub_account_count, SavedTail},
     Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut,
 };
 
@@ -813,6 +813,17 @@ pub fn update_authority_v1(
                 0 // Will be calculated in the operation
             },
         };
+
+        // V1 child metadata lives inside its role action. Until the child close
+        // path tombstones that action, do not allow update operations that can
+        // replace or remove it. AddActions is structurally append-only and safe.
+        if operation != AuthorityUpdateOperation::AddActions
+            && active_sub_account_count::has_active_v1(
+                &swig_roles[actions_offset..actions_offset + current_actions_size],
+            )?
+        {
+            return Err(SwigError::ActiveV1SubAccountMustBeClosed.into());
+        }
 
         (
             saved_tail,

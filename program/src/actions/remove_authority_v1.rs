@@ -13,7 +13,7 @@ use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
     swig::{Swig, SwigBuilder},
-    tail::SavedTail,
+    tail::{active_sub_account_count, SavedTail},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -209,6 +209,9 @@ pub fn remove_authority_v1(
 
         if role_to_remove.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+        }
+        if active_sub_account_count::has_active_v1(role_to_remove.unwrap().actions)? {
+            return Err(SwigError::ActiveV1SubAccountMustBeClosed.into());
         }
         let mut swig_builder = SwigBuilder {
             role_buffer: swig_roles,

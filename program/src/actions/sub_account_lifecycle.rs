@@ -3,16 +3,47 @@
 use pinocchio::{
     account_info::AccountInfo,
     program_error::ProgramError,
-    sysvars::{rent::Rent, Sysvar},
+    sysvars::{clock::Clock, rent::Rent, Sysvar},
 };
 use pinocchio_system::instructions::Transfer;
 use swig_state::{
+    action::{
+        all::All, close_swig_authority::CloseSwigAuthority, manage_authority::ManageAuthority,
+    },
+    role::RoleMut,
     swig::Swig,
     tail::{active_sub_account_count, validate_strict, SavedTail},
-    Transmutable,
+    SwigAuthenticateError, Transmutable,
 };
 
 use crate::{error::SwigError, is_swig_v2};
+
+pub(crate) fn authenticate_close_authority(
+    roles: &mut [u8],
+    role_id: u32,
+    accounts: &[AccountInfo],
+    authority_payload: &[u8],
+    data_payload: &[u8],
+) -> Result<(), ProgramError> {
+    let role =
+        Swig::get_mut_role(role_id, roles)?.ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
+    let slot = Clock::get()?.slot;
+    if role.authority.session_based() {
+        role.authority
+            .authenticate_session(accounts, authority_payload, data_payload, slot)?;
+    } else {
+        role.authority
+            .authenticate(accounts, authority_payload, data_payload, slot)?;
+    }
+
+    let has_all = role.get_action::<All>(&[])?.is_some();
+    let has_manage = role.get_action::<ManageAuthority>(&[])?.is_some();
+    let has_close = role.get_action::<CloseSwigAuthority>(&[])?.is_some();
+    if !has_all && !has_manage && !has_close {
+        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+    }
+    Ok(())
+}
 
 /// Returns the active-child count that gates final parent closure.
 ///
