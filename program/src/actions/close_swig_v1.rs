@@ -105,9 +105,8 @@ pub fn close_swig_v1(
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 
-    // The active-child lifecycle is a V2 invariant. Unmigrated V1 parents keep
-    // their legacy close behavior; V1-shaped children can only be closed after
-    // the parent migrates to V2.
+    // V1 parents reconstruct live children from role actions without trusting
+    // the header bytes that alias the V2 sub-account counter.
     if active_count_for_close(swig_account_data)? != 0 {
         return Err(SwigError::ActiveSubAccountsRemain.into());
     }
