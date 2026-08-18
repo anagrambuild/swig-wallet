@@ -353,14 +353,134 @@ impl ActionLoader {
         let mut cursor = 0;
 
         while cursor < bytes.len() {
-            let action = unsafe { Action::load_unchecked(&bytes[cursor..cursor + Action::LEN])? };
-            if action.permission() == Ok(T::TYPE) {
-                return Ok(Some(unsafe {
-                    T::load_unchecked(&bytes[cursor..cursor + action.length() as usize])?
-                }));
+            let data_start = cursor
+                .checked_add(Action::LEN)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            let header = bytes
+                .get(cursor..data_start)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            let action = unsafe { Action::load_unchecked(header)? };
+            let data_end = data_start
+                .checked_add(action.length() as usize)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            let action_data = bytes
+                .get(data_start..data_end)
+                .ok_or(ProgramError::InvalidAccountData)?;
+
+            // Actions are contiguous, so the boundary must be the exact start
+            // of the next header. This also guarantees forward progress.
+            if action.boundary() as usize != data_end {
+                return Err(ProgramError::InvalidAccountData);
             }
-            cursor = action.boundary() as usize;
+
+            if action.permission()? == T::TYPE {
+                return Ok(Some(unsafe { T::load_unchecked(action_data)? }));
+            }
+            cursor = data_end;
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[repr(C, align(8))]
+    struct AlignedBytes<const N: usize>([u8; N]);
+
+    fn write_header<const N: usize>(bytes: &mut AlignedBytes<N>, offset: usize, action: &Action) {
+        bytes.0[offset..offset + Action::LEN]
+            .copy_from_slice(action.into_bytes().expect("serialize action header"));
+    }
+
+    #[test]
+    fn find_action_rejects_truncated_header() {
+        let bytes = AlignedBytes([0; Action::LEN - 1]);
+
+        for len in 1..Action::LEN {
+            assert!(matches!(
+                ActionLoader::find_action::<All>(&bytes.0[..len]),
+                Err(ProgramError::InvalidAccountData)
+            ));
+        }
+    }
+
+    #[test]
+    fn find_action_loads_data_after_header() {
+        const DATA_END: usize = Action::LEN + SolLimit::LEN;
+        let mut bytes = AlignedBytes([0; DATA_END]);
+        let amount = 42_u64;
+        let header = Action::new(Permission::SolLimit, SolLimit::LEN as u16, DATA_END as u32);
+        write_header(&mut bytes, 0, &header);
+        bytes.0[Action::LEN..DATA_END].copy_from_slice(&amount.to_le_bytes());
+
+        let action = ActionLoader::find_action::<SolLimit>(&bytes.0)
+            .expect("valid action data")
+            .expect("SolLimit action");
+
+        assert_eq!(action.amount, amount);
+    }
+
+    #[test]
+    fn find_action_rejects_truncated_data() {
+        let mut bytes = AlignedBytes([0; Action::LEN]);
+        let header = Action::new(
+            Permission::SolLimit,
+            SolLimit::LEN as u16,
+            (Action::LEN + SolLimit::LEN) as u32,
+        );
+        write_header(&mut bytes, 0, &header);
+
+        assert!(matches!(
+            ActionLoader::find_action::<SolLimit>(&bytes.0),
+            Err(ProgramError::InvalidAccountData)
+        ));
+    }
+
+    #[test]
+    fn find_action_rejects_non_advancing_boundary() {
+        let mut bytes = AlignedBytes([0; Action::LEN]);
+        let header = Action::new(Permission::All, All::LEN as u16, 0);
+        write_header(&mut bytes, 0, &header);
+
+        assert!(matches!(
+            ActionLoader::find_action::<All>(&bytes.0),
+            Err(ProgramError::InvalidAccountData)
+        ));
+    }
+
+    #[test]
+    fn find_action_rejects_boundary_inside_action_data() {
+        const DATA_END: usize = Action::LEN + Program::LEN;
+        let mut bytes = AlignedBytes([0; DATA_END]);
+        let program_header =
+            Action::new(Permission::Program, Program::LEN as u16, Action::LEN as u32);
+        write_header(&mut bytes, 0, &program_header);
+
+        let embedded_all = Action::new(Permission::All, All::LEN as u16, DATA_END as u32);
+        write_header(&mut bytes, Action::LEN, &embedded_all);
+
+        assert!(matches!(
+            ActionLoader::find_action::<All>(&bytes.0),
+            Err(ProgramError::InvalidAccountData)
+        ));
+    }
+
+    #[test]
+    fn find_action_follows_valid_boundaries() {
+        const FIRST_END: usize = Action::LEN + SolLimit::LEN;
+        const SECOND_END: usize = FIRST_END + Action::LEN;
+        let mut bytes = AlignedBytes([0; SECOND_END]);
+        let sol_limit = Action::new(Permission::SolLimit, SolLimit::LEN as u16, FIRST_END as u32);
+        write_header(&mut bytes, 0, &sol_limit);
+        bytes.0[Action::LEN..FIRST_END].copy_from_slice(&42_u64.to_le_bytes());
+
+        let all = Action::new(Permission::All, All::LEN as u16, SECOND_END as u32);
+        write_header(&mut bytes, FIRST_END, &all);
+
+        assert!(ActionLoader::find_action::<All>(&bytes.0)
+            .expect("valid action data")
+            .is_some());
     }
 }
