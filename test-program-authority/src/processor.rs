@@ -1,7 +1,12 @@
 //! Test program instruction processor
 
 use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, msg, program_error::ProgramError,
+    account_info::AccountInfo,
+    entrypoint::ProgramResult,
+    instruction::{AccountMeta, Instruction},
+    msg,
+    program::invoke,
+    program_error::ProgramError,
     pubkey::Pubkey,
 };
 
@@ -17,6 +22,12 @@ pub mod instructions {
 
     /// Generic proof discriminator used by ReplaceAuthority tests.
     pub const REPLACE_AUTHORITY_PROOF_V1: [u8; 8] = *b"rplauth1";
+
+    /// CPI System::Assign against the first account (wallet PDA).
+    pub const MUTATE_WALLET_ASSIGN: [u8; 8] = [10, 10, 10, 10, 10, 10, 10, 10];
+
+    /// CPI System::Allocate against the first account (wallet PDA).
+    pub const MUTATE_WALLET_ALLOCATE: [u8; 8] = [11, 11, 11, 11, 11, 11, 11, 11];
 }
 
 /// State account data format:
@@ -41,6 +52,12 @@ pub fn process_instruction(
         instructions::TEST_TOKEN_TRANSFER => process_test_token_transfer(accounts, remaining_data),
         instructions::REPLACE_AUTHORITY_PROOF_V1 => {
             process_replace_authority_proof(accounts, remaining_data)
+        },
+        instructions::MUTATE_WALLET_ASSIGN => {
+            process_mutate_wallet_assign(accounts, remaining_data)
+        },
+        instructions::MUTATE_WALLET_ALLOCATE => {
+            process_mutate_wallet_allocate(accounts, remaining_data)
         },
         instructions::INVALID_DISCRIMINATOR => {
             process_invalid_instruction(accounts, remaining_data)
@@ -96,6 +113,40 @@ fn process_replace_authority_proof(accounts: &[AccountInfo], _data: &[u8]) -> Pr
 
     msg!("Test program: accepted ReplaceAuthority proof");
     Ok(())
+}
+
+fn process_mutate_wallet_assign(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    if accounts.is_empty() || data.len() < 32 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+    let wallet = &accounts[0];
+    let mut ix_data = vec![1, 0, 0, 0];
+    ix_data.extend_from_slice(&data[..32]);
+    invoke(
+        &Instruction {
+            program_id: Pubkey::from([0u8; 32]),
+            accounts: vec![AccountMeta::new(*wallet.key, true)],
+            data: ix_data,
+        },
+        &[wallet.clone()],
+    )
+}
+
+fn process_mutate_wallet_allocate(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    if accounts.is_empty() || data.len() < 8 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+    let wallet = &accounts[0];
+    let mut ix_data = vec![8, 0, 0, 0];
+    ix_data.extend_from_slice(&data[..8]);
+    invoke(
+        &Instruction {
+            program_id: Pubkey::from([0u8; 32]),
+            accounts: vec![AccountMeta::new(*wallet.key, true)],
+            data: ix_data,
+        },
+        &[wallet.clone()],
+    )
 }
 
 /// Process invalid instruction - for testing failure cases

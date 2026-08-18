@@ -819,6 +819,132 @@
         "type": "u8",
         "value": 21
       }
+    },
+    {
+      "name": "CloseSubAccountV1",
+      "accounts": [
+        {
+          "name": "swig",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig smart wallet"
+          ]
+        },
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "payer for legacy count initialization"
+          ]
+        },
+        {
+          "name": "subAccount",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the v1 sub account asset PDA"
+          ]
+        },
+        {
+          "name": "swigWalletAddress",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig wallet address destination"
+          ]
+        },
+        {
+          "name": "rentClaimerDestination",
+          "isMut": true,
+          "isSigner": false,
+          "isOptional": true,
+          "docs": [
+            "the configured rent claimer; omit when unset"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the system program"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 22
+      }
+    },
+    {
+      "name": "CloseSubAccountV2",
+      "accounts": [
+        {
+          "name": "swig",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig smart wallet"
+          ]
+        },
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "payer for legacy count initialization"
+          ]
+        },
+        {
+          "name": "subAccountState",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the v2 sub account state PDA"
+          ]
+        },
+        {
+          "name": "subAccount",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the v2 sub account asset PDA"
+          ]
+        },
+        {
+          "name": "swigWalletAddress",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the swig wallet address destination"
+          ]
+        },
+        {
+          "name": "rentClaimerDestination",
+          "isMut": true,
+          "isSigner": false,
+          "isOptional": true,
+          "docs": [
+            "the configured rent claimer; omit when unset"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the system program"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 23
+      }
     }
   ],
   "metadata": {

@@ -18,11 +18,12 @@ use common::*;
 use litesvm_token::spl_token;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
+    instruction::InstructionError,
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    transaction::VersionedTransaction,
+    transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{
     AuthorityConfig, ClientAction, CloseSwigV1Instruction, CloseTokenAccountV1Instruction,
@@ -38,6 +39,10 @@ use swig_state::{
     swig::{swig_account_seeds, swig_wallet_address_seeds, Swig, SwigWithRoles},
     tail::rent_claimer,
 };
+
+/// `SwigError::InvalidRentClaimerDestination`. The program's error module is
+/// private to the crate, so the stable program error code is mirrored here.
+const ERR_INVALID_RENT_CLAIMER_DESTINATION: u32 = 61;
 
 // ---------------------------------------------------------------------------
 // Local helpers
@@ -110,6 +115,21 @@ fn close_swig_ed25519(
     );
     let tx = VersionedTransaction::try_new(message, &[&context.default_payer, authority]).unwrap();
     context.svm.send_transaction(tx)
+}
+
+fn assert_invalid_close_destination(
+    result: Result<litesvm::types::TransactionMetadata, litesvm::types::FailedTransactionMetadata>,
+    destination_kind: &str,
+) {
+    let error = result.expect_err(destination_kind);
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(ERR_INVALID_RENT_CLAIMER_DESTINATION),
+        ),
+        "{destination_kind} must be rejected by the close destination validator"
+    );
 }
 
 fn secp256k1_counter(
@@ -891,9 +911,9 @@ fn d17_add_then_set_writes_tail_at_correct_offset() {
 // F. Close enforcement — CloseSwigV1
 // ===========================================================================
 
-/// F1: an unset wallet closes to any destination (today's behavior).
+/// F1: an unset wallet closes to a safe external destination (today's behavior).
 #[test_log::test]
-fn f1_unset_close_allows_any_destination() {
+fn f1_unset_close_allows_safe_external_destination() {
     let mut context = setup_test_context().unwrap();
     let root = Keypair::new();
     let id = rand::random::<[u8; 32]>();
@@ -903,8 +923,56 @@ fn f1_unset_close_allows_any_destination() {
     let result = close_swig_ed25519(&mut context, &swig_pubkey, &root, 0, &destination);
     assert!(
         result.is_ok(),
-        "unset wallet should close to any destination: {:?}",
+        "unset wallet should close to a safe external destination: {:?}",
         result.err()
+    );
+}
+
+/// F2: without a configured claimer, close proceeds must not alias the Swig
+/// config PDA that is tombstoned by the same instruction.
+#[test_log::test]
+fn f2_unset_close_rejects_swig_config_destination() {
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &root, id).unwrap();
+    let swig_before = context.svm.get_account(&swig_pubkey).unwrap();
+
+    let result = close_swig_ed25519(&mut context, &swig_pubkey, &root, 0, &swig_pubkey);
+    assert_invalid_close_destination(result, "Swig config PDA destination");
+
+    assert_eq!(
+        context.svm.get_account(&swig_pubkey).unwrap(),
+        swig_before,
+        "rejected close must not mutate the Swig config account"
+    );
+}
+
+/// F3: without a configured claimer, close proceeds must not be routed back to
+/// the wallet-address PDA because the tombstoned config can no longer authorize
+/// that PDA after the close.
+#[test_log::test]
+fn f3_unset_close_rejects_wallet_address_destination() {
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig_pubkey, _) = create_swig_ed25519(&mut context, &root, id).unwrap();
+    let wallet = wallet_address(&swig_pubkey);
+    let swig_before = context.svm.get_account(&swig_pubkey).unwrap();
+    let wallet_before = context.svm.get_account(&wallet);
+
+    let result = close_swig_ed25519(&mut context, &swig_pubkey, &root, 0, &wallet);
+    assert_invalid_close_destination(result, "Swig wallet-address PDA destination");
+
+    assert_eq!(
+        context.svm.get_account(&swig_pubkey).unwrap(),
+        swig_before,
+        "rejected close must not mutate the Swig config account"
+    );
+    assert_eq!(
+        context.svm.get_account(&wallet),
+        wallet_before,
+        "rejected close must not mutate the wallet-address PDA"
     );
 }
 

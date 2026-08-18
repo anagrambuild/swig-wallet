@@ -22,7 +22,9 @@ use swig_state::{
 /// so the stable custom error code is mirrored here.
 const ERR_INVALID_SEED_SWIG_ACCOUNT: u32 = 9;
 /// `SwigError::SwigAlreadyMigrated`.
-const ERR_SWIG_ALREADY_MIGRATED: u32 = 71;
+const ERR_SWIG_ALREADY_MIGRATED: u32 = 76;
+const OWNER_MISMATCH_SWIG_ACCOUNT_ERROR: u32 = 1;
+const INVALID_SYSTEM_PROGRAM_ERROR: u32 = 24;
 
 fn migrate_instruction(
     swig: Pubkey,
@@ -31,6 +33,7 @@ fn migrate_instruction(
     swig_wallet_address: Pubkey,
     wallet_address_bump: u8,
     authority_is_signer: bool,
+    system_program: Pubkey,
 ) -> Instruction {
     let mut data = MigrateToWalletAddressV1Args::new(wallet_address_bump, 0)
         .into_bytes()
@@ -45,7 +48,7 @@ fn migrate_instruction(
             AccountMeta::new_readonly(authority, authority_is_signer),
             AccountMeta::new(payer, true),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            AccountMeta::new_readonly(system_program, false),
         ],
         data,
     }
@@ -98,6 +101,7 @@ fn test_migration_rejects_nonsigner_authority() {
         swig_wallet_address,
         wallet_address_bump,
         false,
+        solana_system_interface::program::ID,
     );
 
     let message = VersionedMessage::V0(
@@ -134,6 +138,7 @@ fn test_migration_accepts_authenticated_authority() {
         swig_wallet_address,
         wallet_address_bump,
         true,
+        solana_system_interface::program::ID,
     );
 
     let message = VersionedMessage::V0(
@@ -177,6 +182,7 @@ fn test_migration_rejects_alternate_valid_wallet_bump() {
         alternate_address,
         alternate_bump,
         true,
+        solana_system_interface::program::ID,
     );
     let message = VersionedMessage::V0(
         v0::Message::try_compile(
@@ -224,6 +230,7 @@ fn test_migration_rejects_replay_without_resetting_sub_account_counter() {
         swig_wallet_address,
         wallet_address_bump,
         true,
+        solana_system_interface::program::ID,
     );
     let message = VersionedMessage::V0(
         v0::Message::try_compile(
@@ -254,6 +261,7 @@ fn test_migration_rejects_replay_without_resetting_sub_account_counter() {
         swig_wallet_address,
         wallet_address_bump,
         true,
+        solana_system_interface::program::ID,
     );
     let replay_message = VersionedMessage::V0(
         v0::Message::try_compile(
@@ -292,4 +300,86 @@ fn test_migration_rejects_replay_without_resetting_sub_account_counter() {
     let after = context.svm.get_account(&swig).unwrap();
     let swig_state = unsafe { Swig::load_unchecked(&after.data[..Swig::LEN]).unwrap() };
     assert_eq!(swig_state.sub_account_counter, 7);
+}
+
+#[test_log::test]
+fn test_migration_rejects_non_program_owned_swig() {
+    let (mut context, authority, swig, swig_wallet_address, wallet_address_bump) =
+        setup_unmigrated_swig();
+
+    let mut swig_account = context.svm.get_account(&swig).unwrap();
+    swig_account.owner = solana_system_interface::program::ID;
+    context.svm.set_account(swig, swig_account).unwrap();
+
+    let migrate_ix = migrate_instruction(
+        swig,
+        authority.pubkey(),
+        context.default_payer.pubkey(),
+        swig_wallet_address,
+        wallet_address_bump,
+        true,
+        solana_system_interface::program::ID,
+    );
+
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                migrate_ix,
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+
+    let error = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(OWNER_MISMATCH_SWIG_ACCOUNT_ERROR),
+        )
+    );
+}
+
+#[test_log::test]
+fn test_migration_rejects_wrong_system_program() {
+    let (mut context, authority, swig, swig_wallet_address, wallet_address_bump) =
+        setup_unmigrated_swig();
+
+    let migrate_ix = migrate_instruction(
+        swig,
+        authority.pubkey(),
+        context.default_payer.pubkey(),
+        swig_wallet_address,
+        wallet_address_bump,
+        true,
+        context.default_payer.pubkey(),
+    );
+
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                migrate_ix,
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+
+    let error = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(INVALID_SYSTEM_PROGRAM_ERROR),
+        )
+    );
 }

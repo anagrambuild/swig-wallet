@@ -29,7 +29,10 @@ use swig_state::{
 };
 
 use crate::{
-    actions::{sub_account_sign_v2::has_scoped_v2, update_authority_v1::append_actions_to_role},
+    actions::{
+        sub_account_lifecycle::adjust_active_count, sub_account_sign_v2::has_scoped_v2,
+        update_authority_v1::append_actions_to_role,
+    },
     error::SwigError,
     instruction::{
         accounts::{Context, CreateSubAccountV2Accounts},
@@ -177,9 +180,9 @@ pub fn create_sub_account_v2(
             return Err(SwigError::AuthorityCannotCreateSubAccountV2.into());
         }
 
-        // Draw and consume a fresh sub-account id.
+        // Draw a fresh sub-account id. It is consumed after the active-count
+        // tail has been materialized, outside this account-data borrow.
         let new_id = swig.sub_account_counter;
-        swig.sub_account_counter = new_id.checked_add(1).ok_or(SwigError::StateError)?;
 
         // The design allows scoping an id before it exists, so the creator may
         // already hold `SubAccountV2All { new_id }`. Presence of the scope is the
@@ -207,6 +210,18 @@ pub fn create_sub_account_v2(
         ctx.accounts.sub_account.key(),
         SwigError::InvalidSeedSubAccountV2,
     )?;
+
+    // Materialize/update the independent live-child count before consuming the
+    // monotonic V2 id. Any later failure rolls both mutations back atomically.
+    adjust_active_count(ctx.accounts.swig, ctx.accounts.payer, 1)?;
+    {
+        let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        let parts = Swig::split_parts_mut(swig_account_data)?;
+        if parts.state.sub_account_counter != new_id {
+            return Err(SwigError::StateError.into());
+        }
+        parts.state.sub_account_counter = new_id.checked_add(1).ok_or(SwigError::StateError)?;
+    }
 
     // Initialize the program-owned state account. Anyone can transfer SOL to
     // this predictable PDA before creation, and `CreateAccount` rejects such a
