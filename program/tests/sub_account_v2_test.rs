@@ -33,6 +33,7 @@ use swig_state::{
     authority::AuthorityType,
     sub_account_v2::SubAccountV2,
     swig::{sub_account_v2_asset_seeds, sub_account_v2_state_seeds, Swig, SwigWithRoles},
+    tail::active_sub_account_count,
     Transmutable,
 };
 
@@ -133,6 +134,12 @@ fn decode_counter(context: &SwigTestContext, swig_key: &Pubkey) -> u32 {
     let data = context.svm.get_account(swig_key).unwrap().data;
     let swig = unsafe { Swig::load_unchecked(&data[..Swig::LEN]).unwrap() };
     swig.sub_account_counter
+}
+
+fn decode_active_count(context: &SwigTestContext, swig_key: &Pubkey) -> u32 {
+    let data = context.svm.get_account(swig_key).unwrap().data;
+    let parts = Swig::split_parts(&data).unwrap();
+    active_sub_account_count::read(parts.tail).unwrap().unwrap()
 }
 
 /// Counts how many `SubAccountV2All` actions the role holds for `subacc_id`.
@@ -485,7 +492,7 @@ fn test_invalid_stored_enabled_byte_is_rejected() {
 }
 
 #[test]
-fn test_close_swig_allows_existing_sub_account_v2() {
+fn test_close_swig_rejects_existing_sub_account_v2() {
     let mut context = setup_test_context().unwrap();
     let (swig_key, root, creator, id) = setup_v2(&mut context).unwrap();
     create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
@@ -504,12 +511,16 @@ fn test_close_swig_allows_existing_sub_account_v2() {
     )
     .unwrap();
 
-    send(&mut context, &root, close).unwrap();
+    assert!(
+        send(&mut context, &root, close).is_err(),
+        "parent close must fail while a V2 sub-account is active"
+    );
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     assert_eq!(
         swig_account.data[0],
-        swig_state::Discriminator::ClosedSwigAccount as u8
+        swig_state::Discriminator::SwigConfigAccount as u8
     );
+    assert_eq!(decode_active_count(&context, &swig_key), 1);
 }
 
 #[test]

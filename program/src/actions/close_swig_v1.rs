@@ -23,6 +23,7 @@ use swig_state::{
 };
 
 use crate::{
+    actions::sub_account_lifecycle::active_count_for_close,
     error::SwigError,
     instruction::{
         accounts::{CloseSwigV1Accounts, Context},
@@ -102,6 +103,12 @@ pub fn close_swig_v1(
 
     if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+    }
+
+    // The active-child close guard applies only to migrated V2 Swigs. V1
+    // parents retain their legacy close behavior and are not parsed here.
+    if active_count_for_close(swig_account_data)? != 0 {
+        return Err(SwigError::ActiveSubAccountsRemain.into());
     }
 
     let parts = Swig::split_parts_mut(swig_account_data)?;

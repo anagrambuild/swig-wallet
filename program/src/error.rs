@@ -166,6 +166,10 @@ pub enum SwigError {
     ReplaceAuthoritySameSigner,
     /// SignV2 wallet-address PDA owner or data length violated the invariant
     WalletAddressInvariantViolation,
+    /// Parent Swig cannot close while any V2 sub-account remains active
+    ActiveSubAccountsRemain,
+    /// Active sub-account count would underflow
+    ActiveSubAccountCountUnderflow,
 }
 
 /// Implements conversion from SwigError to ProgramError.
