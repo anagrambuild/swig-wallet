@@ -38,7 +38,9 @@ use swig_state::{
         Action, Permission,
     },
     role::RoleMut,
-    swig::{swig_account_signer, swig_wallet_address_signer, Swig},
+    swig::{
+        swig_account_signer, swig_wallet_address_seeds_with_bump, swig_wallet_address_signer, Swig,
+    },
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -104,7 +106,16 @@ const NO_EXCLUDE_RANGES: &[core::ops::Range<usize>] = &[];
 const MAX_ACCOUNT_SNAPSHOTS: usize = 100;
 
 const SYSTEM_TRANSFER_DISCRIMINATOR: u32 = 2;
+const SYSTEM_CREATE_ACCOUNT_DISCRIMINATOR: u32 = 0;
+const SYSTEM_ASSIGN_DISCRIMINATOR: u32 = 1;
+const SYSTEM_CREATE_ACCOUNT_WITH_SEED_DISCRIMINATOR: u32 = 3;
+const SYSTEM_INITIALIZE_NONCE_DISCRIMINATOR: u32 = 6;
+const SYSTEM_ALLOCATE_DISCRIMINATOR: u32 = 8;
+const SYSTEM_ALLOCATE_WITH_SEED_DISCRIMINATOR: u32 = 9;
+const SYSTEM_ASSIGN_WITH_SEED_DISCRIMINATOR: u32 = 10;
+const SYSTEM_UPGRADE_NONCE_DISCRIMINATOR: u32 = 12;
 const SYSTEM_TRANSFER_DATA_LEN: usize = 12;
+const WALLET_ADDRESS_DATA_LEN: usize = 0;
 const TOKEN_TRANSFER_DISCRIMINATOR: u8 = 3;
 const TOKEN_TRANSFER_CHECKED_DISCRIMINATOR: u8 = 12;
 const TOKEN_TRANSFER_DATA_LEN: usize = 9;
@@ -239,6 +250,13 @@ pub fn sign_v2(
     let parts = Swig::split_parts_mut(swig_account_data)?;
     let swig = parts.state;
     let swig_roles = parts.roles;
+    let wallet_bump = [swig.wallet_bump];
+    check_self_pda(
+        &swig_wallet_address_seeds_with_bump(ctx.accounts.swig.key().as_ref(), &wallet_bump),
+        ctx.accounts.swig_wallet_address.key(),
+        SwigError::InvalidSeedSwigAccount,
+    )?;
+    assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
     // The generic account classifier already identified account 0 as Swig config.
     // Keep this hot-path discriminator check as a local unsafe-read precondition.
     let Some(role) = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)? else {
@@ -281,6 +299,10 @@ pub fn sign_v2(
     if has_unrestricted_sign_permission {
         for ix in ix_iter {
             let instruction = ix.map_err(|_| SwigError::InstructionExecutionError)?;
+            reject_wallet_address_shape_mutation(
+                &instruction,
+                ctx.accounts.swig_wallet_address.key(),
+            )?;
             instruction.execute(
                 all_accounts,
                 ctx.accounts.swig_wallet_address.key(),
@@ -288,6 +310,7 @@ pub fn sign_v2(
             )?;
         }
 
+        assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
         return Ok(());
     }
 
@@ -323,6 +346,10 @@ pub fn sign_v2(
                 let data = unsafe { account.borrow_data_unchecked() };
                 let hash = hash_except(&data, account.owner(), NO_EXCLUDE_RANGES);
                 Some(hash)
+            },
+            AccountClassification::SwigWalletAddress => {
+                let data = unsafe { account.borrow_data_unchecked() };
+                Some(hash_except(&data, account.owner(), NO_EXCLUDE_RANGES))
             },
             AccountClassification::SwigTokenAccount { .. } => {
                 let data = unsafe { account.borrow_data_unchecked() };
@@ -386,6 +413,11 @@ pub fn sign_v2(
                     return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                 }
             }
+
+            reject_wallet_address_shape_mutation(
+                &instruction,
+                ctx.accounts.swig_wallet_address.key(),
+            )?;
 
             let swig_wallet_address_balance_before = ctx.accounts.swig_wallet_address.lamports();
             instruction.execute(
@@ -530,8 +562,8 @@ pub fn sign_v2(
                 }
 
                 let swig_wallet_balance = ctx.accounts.swig_wallet_address.lamports();
-                let swig_wallet_rent_exempt_minimum = pinocchio::sysvars::rent::Rent::get()?
-                    .minimum_balance(ctx.accounts.swig_wallet_address.data_len());
+                let swig_wallet_rent_exempt_minimum =
+                    pinocchio::sysvars::rent::Rent::get()?.minimum_balance(WALLET_ADDRESS_DATA_LEN);
                 if swig_wallet_balance < swig_wallet_rent_exempt_minimum {
                     return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
                 }
@@ -770,6 +802,21 @@ pub fn sign_v2(
 
                 return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
             },
+            AccountClassification::SwigWalletAddress => {
+                let account_info = unsafe { all_accounts.get_unchecked(index) };
+                assert_wallet_address_invariants(account_info)?;
+
+                if account_info.is_writable() {
+                    let data = unsafe { account_info.borrow_data_unchecked() };
+                    let current_hash = hash_except(&data, account_info.owner(), NO_EXCLUDE_RANGES);
+                    let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
+                    if *snapshot_hash != current_hash {
+                        return Err(SwigError::WalletAddressInvariantViolation.into());
+                    }
+                }
+
+                continue;
+            },
             AccountClassification::ProgramScope { spent, .. } => {
                 let account_info = unsafe { all_accounts.get_unchecked(index) };
                 let Some(program_scope) =
@@ -805,6 +852,49 @@ pub fn sign_v2(
             },
             _ => {},
         }
+    }
+
+    assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
+    Ok(())
+}
+
+fn assert_wallet_address_invariants(wallet: &AccountInfo) -> ProgramResult {
+    check_system_owner(wallet, SwigError::WalletAddressInvariantViolation)?;
+    check_zero_data(wallet, SwigError::WalletAddressInvariantViolation)?;
+    Ok(())
+}
+
+fn reject_wallet_address_shape_mutation(
+    instruction: &swig_compact_instructions::InstructionHolder,
+    wallet: &Pubkey,
+) -> ProgramResult {
+    if *instruction.program_id != SYSTEM_PROGRAM_ID || instruction.data.len() < 4 {
+        return Ok(());
+    }
+
+    let discriminator = u32::from_le_bytes([
+        instruction.data[0],
+        instruction.data[1],
+        instruction.data[2],
+        instruction.data[3],
+    ]);
+    let target_index = match discriminator {
+        SYSTEM_CREATE_ACCOUNT_DISCRIMINATOR | SYSTEM_CREATE_ACCOUNT_WITH_SEED_DISCRIMINATOR => 1,
+        SYSTEM_ASSIGN_DISCRIMINATOR
+        | SYSTEM_INITIALIZE_NONCE_DISCRIMINATOR
+        | SYSTEM_ALLOCATE_DISCRIMINATOR
+        | SYSTEM_ALLOCATE_WITH_SEED_DISCRIMINATOR
+        | SYSTEM_ASSIGN_WITH_SEED_DISCRIMINATOR
+        | SYSTEM_UPGRADE_NONCE_DISCRIMINATOR => 0,
+        _ => return Ok(()),
+    };
+
+    if instruction
+        .accounts
+        .get(target_index)
+        .is_some_and(|account| account.pubkey == wallet)
+    {
+        return Err(SwigError::WalletAddressInvariantViolation.into());
     }
 
     Ok(())

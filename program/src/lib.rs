@@ -22,7 +22,7 @@ use pinocchio::{
     memory::sol_memcmp,
     msg,
     program_error::ProgramError,
-    pubkey::Pubkey,
+    pubkey::{create_program_address, Pubkey},
     ProgramResult,
 };
 use pinocchio_pubkey::{declare_id, pubkey};
@@ -32,7 +32,7 @@ use swig_state::{
         program_scope::{NumericType, ProgramScope},
         Action, Actionable, Permission,
     },
-    swig::{Swig, SwigWithRoles},
+    swig::{swig_wallet_address_seeds_with_bump, Swig, SwigWithRoles},
     AccountClassification, Discriminator, StakeAccountState, Transmutable,
 };
 use util::{read_program_scope_account_balance, ProgramScopeCache};
@@ -143,6 +143,31 @@ unsafe fn is_swig_config_account(account: &AccountInfo) -> bool {
 
     let data = account.borrow_data_unchecked();
     data.len() >= Swig::LEN && *data.get_unchecked(0) == Discriminator::SwigConfigAccount as u8
+}
+
+unsafe fn is_derived_swig_wallet_address(
+    swig_account: &AccountInfo,
+    candidate: &AccountInfo,
+) -> bool {
+    if !is_swig_config_account(swig_account) {
+        return false;
+    }
+
+    let data = swig_account.borrow_data_unchecked();
+    if data.len() < Swig::LEN {
+        return false;
+    }
+
+    let bump = [*data.get_unchecked(WALLET_BUMP_OFFSET)];
+    if bump[0] == 0 {
+        return false;
+    }
+
+    let seeds = swig_wallet_address_seeds_with_bump(swig_account.key().as_ref(), &bump);
+    match create_program_address(&seeds, &crate::ID) {
+        Ok(expected) => sol_memcmp(candidate.key(), &expected, 32) == 0,
+        Err(_) => false,
+    }
 }
 
 /// Byte offset of `Swig::wallet_bump`, the first byte of the window
@@ -368,6 +393,12 @@ unsafe fn classify_account(
     account_classifications: &[MaybeUninit<AccountClassification>],
     program_scope_cache: Option<&ProgramScopeCache>,
 ) -> Result<AccountClassification, ProgramError> {
+    if index == 1
+        && is_derived_swig_wallet_address(accounts.get_unchecked(0).assume_init_ref(), account)
+    {
+        return Ok(AccountClassification::SwigWalletAddress);
+    }
+
     match account.owner() {
         &crate::ID => {
             if !is_swig_config_account(account) {
@@ -386,18 +417,6 @@ unsafe fn classify_account(
             } else {
                 Err(SwigError::InvalidAccountsSwigMustBeFirst.into())
             }
-        },
-        &SYSTEM_PROGRAM_ID if index == 1 => {
-            let first_account = accounts.get_unchecked(0).assume_init_ref();
-
-            // When the account is a Swig account, it's safe to assume the
-            // account directly after will be the SwigWalletAddress. This is validated
-            // further down in instructions relevant to the account structure via signer
-            // seeds.
-            if is_swig_config_account(first_account) {
-                return Ok(AccountClassification::SwigWalletAddress);
-            }
-            Ok(AccountClassification::None)
         },
         &STAKING_ID => {
             if index == 0 {
