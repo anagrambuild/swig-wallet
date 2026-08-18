@@ -12,6 +12,7 @@ pub use swig;
 use swig::actions::{
     add_authority_v1::AddAuthorityV1Args,
     close_sub_account_v1::CloseSubAccountV1Args,
+    close_sub_account_v2::CloseSubAccountV2Args,
     close_swig_v1::CloseSwigV1Args,
     close_token_account_v1::CloseTokenAccountV1Args,
     create_session_v1::CreateSessionV1Args,
@@ -3996,6 +3997,130 @@ impl CloseSubAccountV1Instruction {
             current_slot,
             counter,
             6,
+            &mut authority_payload_fn,
+            public_key,
+        )
+    }
+}
+
+/// Instruction builder for closing a disabled V2 state/asset PDA pair.
+pub struct CloseSubAccountV2Instruction;
+
+impl CloseSubAccountV2Instruction {
+    pub fn new_with_ed25519_authority(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        rent_claimer_destination: Option<Pubkey>,
+        authority: Pubkey,
+        auth_role_id: u32,
+        subacc_id: u32,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new(sub_account_state, false),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            optional_rent_claimer_destination_meta(rent_claimer_destination),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            AccountMeta::new_readonly(authority, true),
+        ];
+        let args = CloseSubAccountV2Args::new(auth_role_id, subacc_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &[7]].concat(),
+        })
+    }
+
+    pub fn new_with_secp256k1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        rent_claimer_destination: Option<Pubkey>,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        auth_role_id: u32,
+        subacc_id: u32,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new(sub_account_state, false),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            optional_rent_claimer_destination_meta(rent_claimer_destination),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+        ];
+        let args = CloseSubAccountV2Args::new(auth_role_id, subacc_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        let account_payload = secp_account_payload(&accounts)?;
+        let authority_payload = secp256k1_v2_authority_payload(
+            args_bytes,
+            &account_payload,
+            current_slot,
+            counter,
+            &mut authority_payload_fn,
+        );
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        })
+    }
+
+    pub fn new_with_secp256r1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        sub_account_state: Pubkey,
+        sub_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        rent_claimer_destination: Option<Pubkey>,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        auth_role_id: u32,
+        subacc_id: u32,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new(sub_account_state, false),
+            AccountMeta::new(sub_account, false),
+            AccountMeta::new(swig_wallet_address, false),
+            optional_rent_claimer_destination_meta(rent_claimer_destination),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+        ];
+        let args = CloseSubAccountV2Args::new(auth_role_id, subacc_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        secp256r1_v2_instructions(
+            &accounts,
+            args_bytes,
+            args_bytes,
+            current_slot,
+            counter,
+            7,
             &mut authority_payload_fn,
             public_key,
         )
