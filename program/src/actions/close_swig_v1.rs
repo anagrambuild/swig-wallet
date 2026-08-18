@@ -85,11 +85,16 @@ impl<'a> CloseSwigV1<'a> {
 /// only permitted destination.
 fn validate_close_destination(
     destination: &Pubkey,
+    destination_is_writable: bool,
     swig: &Pubkey,
     swig_wallet_address: &Pubkey,
     configured_rent_claimer: Option<&[u8; 32]>,
 ) -> ProgramResult {
-    if destination == &[0u8; 32] || destination == swig || destination == swig_wallet_address {
+    if !destination_is_writable
+        || destination == &[0u8; 32]
+        || destination == swig
+        || destination == swig_wallet_address
+    {
         return Err(SwigError::InvalidRentClaimerDestination.into());
     }
 
@@ -174,6 +179,7 @@ pub fn close_swig_v1(
     }
     validate_close_destination(
         ctx.accounts.destination.key(),
+        ctx.accounts.destination.is_writable(),
         ctx.accounts.swig.key(),
         ctx.accounts.swig_wallet_address.key(),
         configured_rent_claimer,
@@ -245,7 +251,7 @@ mod tests {
         swig_wallet_address: &Pubkey,
     ) {
         assert!(matches!(
-            validate_close_destination(destination, swig, swig_wallet_address, None),
+            validate_close_destination(destination, true, swig, swig_wallet_address, None),
             Err(ProgramError::Custom(code))
                 if code == SwigError::InvalidRentClaimerDestination as u32
         ));
@@ -270,6 +276,15 @@ mod tests {
 
     #[test]
     fn close_destination_allows_safe_external_destination_without_configured_claimer() {
-        assert!(validate_close_destination(&[3u8; 32], &[1u8; 32], &[2u8; 32], None).is_ok());
+        assert!(validate_close_destination(&[3u8; 32], true, &[1u8; 32], &[2u8; 32], None).is_ok());
+    }
+
+    #[test]
+    fn close_destination_rejects_readonly_account() {
+        assert!(matches!(
+            validate_close_destination(&[3u8; 32], false, &[1u8; 32], &[2u8; 32], None),
+            Err(ProgramError::Custom(code))
+                if code == SwigError::InvalidRentClaimerDestination as u32
+        ));
     }
 }
