@@ -4013,7 +4013,7 @@ impl CloseSubAccountV2Instruction {
         sub_account_state: Pubkey,
         sub_account: Pubkey,
         swig_wallet_address: Pubkey,
-        rent_claimer_destination: Pubkey,
+        rent_claimer_destination: Option<Pubkey>,
         authority: Pubkey,
         auth_role_id: u32,
         subacc_id: u32,
@@ -4024,7 +4024,7 @@ impl CloseSubAccountV2Instruction {
             AccountMeta::new(sub_account_state, false),
             AccountMeta::new(sub_account, false),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new(rent_claimer_destination, false),
+            optional_rent_claimer_destination_meta(rent_claimer_destination),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
@@ -4045,7 +4045,7 @@ impl CloseSubAccountV2Instruction {
         sub_account_state: Pubkey,
         sub_account: Pubkey,
         swig_wallet_address: Pubkey,
-        rent_claimer_destination: Pubkey,
+        rent_claimer_destination: Option<Pubkey>,
         mut authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
@@ -4061,7 +4061,7 @@ impl CloseSubAccountV2Instruction {
             AccountMeta::new(sub_account_state, false),
             AccountMeta::new(sub_account, false),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new(rent_claimer_destination, false),
+            optional_rent_claimer_destination_meta(rent_claimer_destination),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
         let args = CloseSubAccountV2Args::new(auth_role_id, subacc_id);
@@ -4089,7 +4089,7 @@ impl CloseSubAccountV2Instruction {
         sub_account_state: Pubkey,
         sub_account: Pubkey,
         swig_wallet_address: Pubkey,
-        rent_claimer_destination: Pubkey,
+        rent_claimer_destination: Option<Pubkey>,
         mut authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
@@ -4106,7 +4106,7 @@ impl CloseSubAccountV2Instruction {
             AccountMeta::new(sub_account_state, false),
             AccountMeta::new(sub_account, false),
             AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new(rent_claimer_destination, false),
+            optional_rent_claimer_destination_meta(rent_claimer_destination),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];

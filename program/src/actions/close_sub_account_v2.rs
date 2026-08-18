@@ -162,15 +162,23 @@ pub fn close_sub_account_v2(
     if ctx.accounts.swig_wallet_address.key() != &expected_wallet {
         return Err(SwigError::InvalidSeedSwigAccount.into());
     }
-    let expected_rent_destination = configured_rent_claimer
-        .as_ref()
-        .unwrap_or(ctx.accounts.swig_wallet_address.key());
-    if ctx.accounts.rent_claimer_destination.key() != expected_rent_destination
-        || ctx.accounts.rent_claimer_destination.key() == ctx.accounts.sub_account_state.key()
-        || ctx.accounts.rent_claimer_destination.key() == ctx.accounts.sub_account.key()
-    {
-        return Err(SwigError::InvalidRentClaimerDestination.into());
-    }
+    let rent_destination = match (
+        configured_rent_claimer.as_ref(),
+        ctx.accounts.rent_claimer_destination,
+    ) {
+        (Some(expected), Some(provided))
+            if provided.key() == expected
+                && provided.key() != ctx.accounts.sub_account_state.key()
+                && provided.key() != ctx.accounts.sub_account.key() =>
+        {
+            provided
+        },
+        (None, None) => ctx.accounts.swig_wallet_address,
+        (None, Some(provided)) if provided.key() == ctx.accounts.swig_wallet_address.key() => {
+            ctx.accounts.swig_wallet_address
+        },
+        _ => return Err(SwigError::InvalidRentClaimerDestination.into()),
+    };
 
     adjust_active_count(ctx.accounts.swig, ctx.accounts.payer, -1)?;
 
@@ -181,7 +189,7 @@ pub fn close_sub_account_v2(
             asset_lamports.min(rent.minimum_balance(ctx.accounts.sub_account.data_len()));
         let asset_operational = asset_lamports.saturating_sub(asset_rent);
         let signer = sub_account_v2_asset_signer(&swig_id, &id_le, &asset_bump_seed);
-        if ctx.accounts.rent_claimer_destination.key() == ctx.accounts.swig_wallet_address.key() {
+        if rent_destination.key() == ctx.accounts.swig_wallet_address.key() {
             pinocchio_system::instructions::Transfer {
                 from: ctx.accounts.sub_account,
                 to: ctx.accounts.swig_wallet_address,
@@ -200,7 +208,7 @@ pub fn close_sub_account_v2(
             if asset_rent > 0 {
                 pinocchio_system::instructions::Transfer {
                     from: ctx.accounts.sub_account,
-                    to: ctx.accounts.rent_claimer_destination,
+                    to: rent_destination,
                     lamports: asset_rent,
                 }
                 .invoke_signed(&[signer.as_slice().into()])?;
@@ -215,11 +223,11 @@ pub fn close_sub_account_v2(
         let state_operational = state_lamports.saturating_sub(state_rent);
         let wallet_lamports = ctx.accounts.swig_wallet_address.lamports();
         let destination_is_wallet =
-            ctx.accounts.rent_claimer_destination.key() == ctx.accounts.swig_wallet_address.key();
+            rent_destination.key() == ctx.accounts.swig_wallet_address.key();
         let destination_lamports = if destination_is_wallet {
             0
         } else {
-            ctx.accounts.rent_claimer_destination.lamports()
+            rent_destination.lamports()
         };
         unsafe {
             *ctx.accounts
@@ -235,9 +243,7 @@ pub fn close_sub_account_v2(
                 })
                 .ok_or(SwigError::StateError)?;
             if !destination_is_wallet {
-                *ctx.accounts
-                    .rent_claimer_destination
-                    .borrow_mut_lamports_unchecked() = destination_lamports
+                *rent_destination.borrow_mut_lamports_unchecked() = destination_lamports
                     .checked_add(state_rent)
                     .ok_or(SwigError::StateError)?;
             }

@@ -345,14 +345,15 @@ pub enum SwigInstruction {
     /// 3. `[writable]` V2 sub-account state PDA
     /// 4. `[writable]` V2 sub-account asset PDA
     /// 5. `[writable]` Swig wallet address PDA
-    /// 6. `[writable]` Configured rent claimer, or the Swig wallet address when unset
+    /// 6. `[writable, optional]` Configured rent claimer. Use the program ID
+    ///    placeholder when no claimer is configured.
     /// 7. System program
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
     #[account(1, writable, signer, name="payer", desc="payer for legacy count initialization")]
     #[account(2, writable, name="sub_account_state", desc="the v2 sub account state PDA")]
     #[account(3, writable, name="sub_account", desc="the v2 sub account asset PDA")]
     #[account(4, writable, name="swig_wallet_address", desc="the swig wallet address destination")]
-    #[account(5, writable, name="rent_claimer_destination", desc="configured rent claimer, or swig wallet address when unset")]
+    #[account(5, writable, optional, name="rent_claimer_destination", desc="the configured rent claimer; omit when unset")]
     #[account(6, name="system_program", desc="the system program")]
     CloseSubAccountV2 = 23,
 }
