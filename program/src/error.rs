@@ -164,7 +164,9 @@ pub enum SwigError {
     InvalidSeedSubAccountV2,
     /// Replacement signer must differ from the target role's current signer
     ReplaceAuthoritySameSigner,
-    /// Parent Swig cannot close while any V1 or V2 sub-account remains active
+    /// SignV2 wallet-address PDA owner or data length violated the invariant
+    WalletAddressInvariantViolation,
+    /// Parent Swig cannot close while any V2 sub-account remains active
     ActiveSubAccountsRemain,
     /// Active sub-account count would underflow
     ActiveSubAccountCountUnderflow,
