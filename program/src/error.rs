@@ -144,7 +144,8 @@ pub enum SwigError {
     RentClaimerAlreadySet,
     /// Rent claimer pubkey is invalid
     InvalidRentClaimerValue,
-    /// Close destination is invalid or does not match the configured rent claimer
+    /// Close destination is invalid or does not match the configured rent
+    /// claimer
     InvalidRentClaimerDestination,
     /// V2 sub-account instruction data is too short
     InvalidSwigCreateSubAccountV2InstructionDataTooShort,
@@ -174,6 +175,8 @@ pub enum SwigError {
     SubAccountMustBeDisabled,
     /// A role containing a live V1 sub-account cannot be removed or rewritten
     ActiveV1SubAccountMustBeClosed,
+    /// Swig account has already migrated to the wallet-address layout
+    SwigAlreadyMigrated,
 }
 
 /// Implements conversion from SwigError to ProgramError.
