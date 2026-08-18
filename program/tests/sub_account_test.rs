@@ -425,7 +425,7 @@ fn test_close_sub_account_v1_sweeps_lamports_and_unblocks_parent_close() {
         root.pubkey(),
         sub_account,
         wallet,
-        wallet,
+        None,
         root.pubkey(),
         0,
         child_role_id,
@@ -454,7 +454,7 @@ fn test_close_sub_account_v1_sweeps_lamports_and_unblocks_parent_close() {
         root.pubkey(),
         sub_account,
         wallet,
-        arbitrary_destination.pubkey(),
+        Some(arbitrary_destination.pubkey()),
         root.pubkey(),
         0,
         child_role_id,
@@ -470,12 +470,14 @@ fn test_close_sub_account_v1_sweeps_lamports_and_unblocks_parent_close() {
         root.pubkey(),
         sub_account,
         wallet,
-        wallet,
+        None,
         root.pubkey(),
         0,
         child_role_id,
     )
     .unwrap();
+    assert_eq!(close_child.accounts[4].pubkey, program_id());
+    assert!(!close_child.accounts[4].is_writable);
     send_single(&mut context, &root, close_child).unwrap();
     assert!(context.svm.get_account(&sub_account).is_none());
     assert_eq!(active_sub_account_count(&context, &swig_key), 0);
@@ -547,7 +549,7 @@ fn test_close_sub_account_v1_refunds_only_rent_to_configured_claimer() {
         root.pubkey(),
         sub_account,
         wallet,
-        claimer.pubkey(),
+        Some(claimer.pubkey()),
         root.pubkey(),
         0,
         child_role_id,
@@ -567,7 +569,7 @@ fn test_close_sub_account_v1_refunds_only_rent_to_configured_claimer() {
 }
 
 #[test_log::test]
-fn test_close_sub_account_v1_rejects_missing_or_wrong_rent_claimer() {
+fn test_close_sub_account_v1_rejects_omitted_or_wrong_rent_claimer() {
     let mut context = setup_test_context().unwrap();
     let (swig_key, root, child_authority, id) =
         setup_test_with_sub_account_authority(&mut context).unwrap();
@@ -597,7 +599,7 @@ fn test_close_sub_account_v1_rejects_missing_or_wrong_rent_claimer() {
         root.pubkey(),
         sub_account,
         wallet,
-        wrong_claimer.pubkey(),
+        Some(wrong_claimer.pubkey()),
         root.pubkey(),
         0,
         child_role_id,
@@ -608,19 +610,19 @@ fn test_close_sub_account_v1_rejects_missing_or_wrong_rent_claimer() {
     assert_eq!(active_sub_account_count(&context, &swig_key), 1);
 
     context.svm.expire_blockhash();
-    let mut missing_destination = CloseSubAccountV1Instruction::new_with_ed25519_authority(
+    let omitted_destination = CloseSubAccountV1Instruction::new_with_ed25519_authority(
         swig_key,
         root.pubkey(),
         sub_account,
         wallet,
-        claimer.pubkey(),
+        None,
         root.pubkey(),
         0,
         child_role_id,
     )
     .unwrap();
-    missing_destination.accounts.remove(4);
-    assert!(send_single(&mut context, &root, missing_destination).is_err());
+    assert_eq!(omitted_destination.accounts[4].pubkey, program_id());
+    assert!(send_single(&mut context, &root, omitted_destination).is_err());
     assert!(context.svm.get_account(&sub_account).is_some());
     assert_eq!(active_sub_account_count(&context, &swig_key), 1);
 }
@@ -654,7 +656,7 @@ fn test_close_sub_account_v1_requires_migrated_parent() {
         root.pubkey(),
         sub_account,
         wallet,
-        wallet,
+        None,
         root.pubkey(),
         0,
         child_role_id,
@@ -712,7 +714,7 @@ fn test_close_legacy_v1_sub_account_materializes_active_count() {
         root.pubkey(),
         child,
         wallet,
-        wallet,
+        Some(wallet),
         root.pubkey(),
         0,
         child_role_id,

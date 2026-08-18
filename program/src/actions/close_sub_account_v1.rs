@@ -149,14 +149,21 @@ pub fn close_sub_account_v1(
     if ctx.accounts.swig_wallet_address.key() != &expected_wallet {
         return Err(SwigError::InvalidSeedSwigAccount.into());
     }
-    let expected_rent_destination = configured_rent_claimer
-        .as_ref()
-        .unwrap_or(ctx.accounts.swig_wallet_address.key());
-    if ctx.accounts.rent_claimer_destination.key() != expected_rent_destination
-        || ctx.accounts.rent_claimer_destination.key() == ctx.accounts.sub_account.key()
-    {
-        return Err(SwigError::InvalidRentClaimerDestination.into());
-    }
+    let rent_destination = match (
+        configured_rent_claimer.as_ref(),
+        ctx.accounts.rent_claimer_destination,
+    ) {
+        (Some(expected), Some(provided))
+            if provided.key() == expected && provided.key() != ctx.accounts.sub_account.key() =>
+        {
+            provided
+        },
+        (None, None) => ctx.accounts.swig_wallet_address,
+        (None, Some(provided)) if provided.key() == ctx.accounts.swig_wallet_address.key() => {
+            ctx.accounts.swig_wallet_address
+        },
+        _ => return Err(SwigError::InvalidRentClaimerDestination.into()),
+    };
 
     adjust_active_count(ctx.accounts.swig, ctx.accounts.payer, -1)?;
 
@@ -166,7 +173,7 @@ pub fn close_sub_account_v1(
             lamports.min(Rent::get()?.minimum_balance(ctx.accounts.sub_account.data_len()));
         let operational_lamports = lamports.saturating_sub(rent_lamports);
         let signer = sub_account_signer(&swig_id, &role_id, &bump);
-        if ctx.accounts.rent_claimer_destination.key() == ctx.accounts.swig_wallet_address.key() {
+        if rent_destination.key() == ctx.accounts.swig_wallet_address.key() {
             pinocchio_system::instructions::Transfer {
                 from: ctx.accounts.sub_account,
                 to: ctx.accounts.swig_wallet_address,
@@ -185,7 +192,7 @@ pub fn close_sub_account_v1(
             if rent_lamports > 0 {
                 pinocchio_system::instructions::Transfer {
                     from: ctx.accounts.sub_account,
-                    to: ctx.accounts.rent_claimer_destination,
+                    to: rent_destination,
                     lamports: rent_lamports,
                 }
                 .invoke_signed(&[signer.as_slice().into()])?;

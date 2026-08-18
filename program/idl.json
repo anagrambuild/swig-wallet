@@ -859,8 +859,9 @@
           "name": "rentClaimerDestination",
           "isMut": true,
           "isSigner": false,
+          "isOptional": true,
           "docs": [
-            "configured rent claimer, or swig wallet address when unset"
+            "the configured rent claimer; omit when unset"
           ]
         },
         {
