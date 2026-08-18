@@ -5,18 +5,24 @@ mod common;
 use common::*;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
-    instruction::{AccountMeta, Instruction},
+    instruction::{AccountMeta, Instruction, InstructionError},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    transaction::VersionedTransaction,
+    transaction::{TransactionError, VersionedTransaction},
 };
 use swig::actions::migrate_to_wallet_address_v1::MigrateToWalletAddressV1Args;
 use swig_state::{
     swig::{swig_wallet_address_seeds, swig_wallet_address_seeds_with_bump, Swig},
     IntoBytes, Transmutable,
 };
+
+/// `SwigError::InvalidSeedSwigAccount`. The program's error module is private,
+/// so the stable custom error code is mirrored here.
+const ERR_INVALID_SEED_SWIG_ACCOUNT: u32 = 9;
+/// `SwigError::SwigAlreadyMigrated`.
+const ERR_SWIG_ALREADY_MIGRATED: u32 = 71;
 
 fn migrate_instruction(
     swig: Pubkey,
@@ -183,9 +189,21 @@ fn test_migration_rejects_alternate_valid_wallet_bump() {
     );
     let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
 
+    let result = context.svm.send_transaction(tx);
     assert!(
-        context.svm.send_transaction(tx).is_err(),
-        "migration must reject a noncanonical but valid wallet-address bump"
+        matches!(
+            result,
+            Err(ref error)
+                if matches!(
+                    error.err,
+                    TransactionError::InstructionError(
+                        _,
+                        InstructionError::Custom(ERR_INVALID_SEED_SWIG_ACCOUNT)
+                    )
+                )
+        ),
+        "migration must reject a noncanonical but valid wallet-address bump with \
+         InvalidSeedSwigAccount; got {result:?}"
     );
     assert_eq!(
         context.svm.get_account(&swig).unwrap().data,
@@ -250,9 +268,21 @@ fn test_migration_rejects_replay_without_resetting_sub_account_counter() {
         VersionedTransaction::try_new(replay_message, &[&context.default_payer, &authority])
             .unwrap();
 
+    let replay_result = context.svm.send_transaction(replay_tx);
     assert!(
-        context.svm.send_transaction(replay_tx).is_err(),
-        "an already-migrated Swig must reject migration replay"
+        matches!(
+            replay_result,
+            Err(ref error)
+                if matches!(
+                    error.err,
+                    TransactionError::InstructionError(
+                        _,
+                        InstructionError::Custom(ERR_SWIG_ALREADY_MIGRATED)
+                    )
+                )
+        ),
+        "an already-migrated Swig must reject migration replay with SwigAlreadyMigrated; got \
+         {replay_result:?}"
     );
     assert_eq!(
         context.svm.get_account(&swig).unwrap().data,
