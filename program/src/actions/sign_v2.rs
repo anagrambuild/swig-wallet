@@ -113,6 +113,7 @@ const SYSTEM_INITIALIZE_NONCE_DISCRIMINATOR: u32 = 6;
 const SYSTEM_ALLOCATE_DISCRIMINATOR: u32 = 8;
 const SYSTEM_ALLOCATE_WITH_SEED_DISCRIMINATOR: u32 = 9;
 const SYSTEM_ASSIGN_WITH_SEED_DISCRIMINATOR: u32 = 10;
+const SYSTEM_TRANSFER_WITH_SEED_DISCRIMINATOR: u32 = 11;
 const SYSTEM_UPGRADE_NONCE_DISCRIMINATOR: u32 = 12;
 const SYSTEM_TRANSFER_DATA_LEN: usize = 12;
 const WALLET_ADDRESS_DATA_LEN: usize = 0;
@@ -250,7 +251,6 @@ pub fn sign_v2(
     let parts = Swig::split_parts_mut(swig_account_data)?;
     let swig = parts.state;
     let swig_roles = parts.roles;
-    assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
     // The generic account classifier already identified account 0 as Swig config.
     // Keep this hot-path discriminator check as a local unsafe-read precondition.
     let Some(role) = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)? else {
@@ -293,18 +293,23 @@ pub fn sign_v2(
     if has_unrestricted_sign_permission {
         for ix in ix_iter {
             let instruction = ix.map_err(|_| SwigError::InstructionExecutionError)?;
-            reject_wallet_address_shape_mutation(
-                &instruction,
-                ctx.accounts.swig_wallet_address.key(),
-            )?;
+            let check_shape = wallet_shape_can_change(&instruction);
+            if check_shape {
+                reject_wallet_address_shape_mutation(
+                    &instruction,
+                    ctx.accounts.swig_wallet_address.key(),
+                )?;
+            }
             instruction.execute(
                 all_accounts,
                 ctx.accounts.swig_wallet_address.key(),
                 &[signer.into()],
             )?;
+            if check_shape {
+                assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
+            }
         }
 
-        assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
         return Ok(());
     }
 
@@ -865,6 +870,23 @@ fn assert_wallet_address_invariants(wallet: &AccountInfo) -> ProgramResult {
     check_system_owner(wallet, SwigError::WalletAddressInvariantViolation)?;
     check_zero_data(wallet, SwigError::WalletAddressInvariantViolation)?;
     Ok(())
+}
+
+fn wallet_shape_can_change(instruction: &swig_compact_instructions::InstructionHolder) -> bool {
+    if *instruction.program_id == SYSTEM_PROGRAM_ID {
+        if instruction.data.len() < 4 {
+            return true;
+        }
+        let discriminator = u32::from_le_bytes([
+            instruction.data[0],
+            instruction.data[1],
+            instruction.data[2],
+            instruction.data[3],
+        ]);
+        return discriminator != SYSTEM_TRANSFER_DISCRIMINATOR
+            && discriminator != SYSTEM_TRANSFER_WITH_SEED_DISCRIMINATOR;
+    }
+    *instruction.program_id != SPL_TOKEN_ID && *instruction.program_id != SPL_TOKEN_2022_ID
 }
 
 fn reject_wallet_address_shape_mutation(
