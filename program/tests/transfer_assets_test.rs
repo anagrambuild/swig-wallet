@@ -8,14 +8,14 @@ use litesvm::types::TransactionMetadata;
 use litesvm_token::spl_token;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
-    instruction::{AccountMeta, Instruction},
+    instruction::{AccountMeta, Instruction, InstructionError},
     message::{v0, VersionedMessage},
     program_pack::Pack,
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
     sysvar::rent::Rent,
-    transaction::VersionedTransaction,
+    transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{swig, TransferAssetsV1Instruction};
 use swig_state::{
@@ -24,6 +24,8 @@ use swig_state::{
     swig::{swig_wallet_address_seeds, Swig, SwigWithRoles},
     Discriminator, IntoBytes, Transmutable,
 };
+
+const INVALID_ACCOUNTS_LENGTH_ERROR: u32 = 22;
 
 /// Helper function to create a transfer assets instruction using Ed25519
 /// authority
@@ -42,6 +44,26 @@ fn create_transfer_assets_instruction(
         role_id,
     )
     .expect("Failed to create transfer assets instruction")
+}
+
+fn setup_ed25519_transfer_assets() -> (SwigTestContext, Keypair, Pubkey, Pubkey) {
+    let mut context = setup_test_context().unwrap();
+    let authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&authority.pubkey(), 10_000_000_000)
+        .unwrap();
+
+    let (swig, _bench) =
+        create_swig_ed25519(&mut context, &authority, rand::random::<[u8; 32]>()).unwrap();
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(&swig.to_bytes()), &program_id());
+
+    let mut swig_account = context.svm.get_account(&swig).unwrap();
+    swig_account.lamports += 5_000_000;
+    context.svm.set_account(swig, swig_account).unwrap();
+
+    (context, authority, swig, wallet)
 }
 
 #[test_log::test]
@@ -518,12 +540,8 @@ fn test_transfer_assets_spl_token_invalid_destination() {
 }
 
 // Happy-path SPL migration using the kit's `new_with_ed25519_authority` helper.
-// Currently FAILS because the helper appends a 5th base account (the authority)
-// while the program's `base_account_count = 4` doesn't account for it — the loop
-// iterating SPL triples starts at index 4 (the authority pubkey) instead of the
-// source ATA. Documents a kit/program contract mismatch; tracked separately
-// from the line-191 seed bug.
-#[ignore]
+// The authority context occupies account 4, so the SPL tail begins at account
+// 5.
 #[test_log::test]
 fn test_transfer_assets_spl_happy_path() {
     let mut context = setup_test_context().unwrap();
@@ -639,6 +657,133 @@ fn test_transfer_assets_spl_happy_path() {
     );
 
     println!("✅ SPL happy path: tokens moved from state PDA to wallet PDA");
+}
+
+#[test_log::test]
+fn test_transfer_assets_rejects_incomplete_spl_tail_before_sol_sweep() {
+    let (mut context, authority, swig, wallet) = setup_ed25519_transfer_assets();
+    let swig_before = context.svm.get_account(&swig).unwrap().lamports;
+    let wallet_before = context.svm.get_account(&wallet).unwrap().lamports;
+
+    let first_tail_account = Keypair::new();
+    let second_tail_account = Keypair::new();
+    context
+        .svm
+        .airdrop(&first_tail_account.pubkey(), 1_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&second_tail_account.pubkey(), 1_000_000)
+        .unwrap();
+
+    let mut transfer_ix = TransferAssetsV1Instruction::new_with_ed25519_authority(
+        swig,
+        wallet,
+        context.default_payer.pubkey(),
+        authority.pubkey(),
+        0,
+    )
+    .unwrap();
+    transfer_ix.accounts.push(AccountMeta::new_readonly(
+        first_tail_account.pubkey(),
+        false,
+    ));
+    transfer_ix.accounts.push(AccountMeta::new_readonly(
+        second_tail_account.pubkey(),
+        false,
+    ));
+
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                transfer_ix,
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+
+    let error = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(INVALID_ACCOUNTS_LENGTH_ERROR),
+        )
+    );
+    assert_eq!(
+        context.svm.get_account(&swig).unwrap().lamports,
+        swig_before
+    );
+    assert_eq!(
+        context.svm.get_account(&wallet).unwrap().lamports,
+        wallet_before
+    );
+}
+
+#[test_log::test]
+fn test_transfer_assets_rejects_unsupported_token_program_before_sol_sweep() {
+    let (mut context, authority, swig, wallet) = setup_ed25519_transfer_assets();
+    let swig_before = context.svm.get_account(&swig).unwrap().lamports;
+    let wallet_before = context.svm.get_account(&wallet).unwrap().lamports;
+
+    let source = Keypair::new();
+    let destination = Keypair::new();
+    let unsupported_program = Keypair::new();
+    for account in [&source, &destination, &unsupported_program] {
+        context.svm.airdrop(&account.pubkey(), 1_000_000).unwrap();
+    }
+
+    let mut transfer_ix = TransferAssetsV1Instruction::new_with_ed25519_authority(
+        swig,
+        wallet,
+        context.default_payer.pubkey(),
+        authority.pubkey(),
+        0,
+    )
+    .unwrap();
+    transfer_ix
+        .accounts
+        .push(AccountMeta::new(source.pubkey(), false));
+    transfer_ix
+        .accounts
+        .push(AccountMeta::new(destination.pubkey(), false));
+    transfer_ix.accounts.push(AccountMeta::new_readonly(
+        unsupported_program.pubkey(),
+        false,
+    ));
+
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                transfer_ix,
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+
+    let error = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(1, InstructionError::IncorrectProgramId)
+    );
+    assert_eq!(
+        context.svm.get_account(&swig).unwrap().lamports,
+        swig_before
+    );
+    assert_eq!(
+        context.svm.get_account(&wallet).unwrap().lamports,
+        wallet_before
+    );
 }
 
 // Reproduces the seed-derivation bug at transfer_assets_v1.rs:191.
@@ -771,7 +916,10 @@ fn test_transfer_assets_spl_signer_privilege_repro() {
                 "❌ Bug present in transfer_assets_v1.rs:191\n   logs: {}",
                 logs
             );
-            panic!("BUG REPRODUCED: line 191 uses ctx.accounts.swig.key().as_ref() instead of &swig.id");
+            panic!(
+                "BUG REPRODUCED: line 191 uses ctx.accounts.swig.key().as_ref() instead of \
+                 &swig.id"
+            );
         },
     }
 }
