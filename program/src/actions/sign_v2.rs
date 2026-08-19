@@ -38,7 +38,9 @@ use swig_state::{
         Action, Permission,
     },
     role::RoleMut,
-    swig::{swig_account_signer, swig_wallet_address_signer, Swig},
+    swig::{
+        swig_account_signer, swig_wallet_address_seeds_with_bump, swig_wallet_address_signer, Swig,
+    },
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -305,6 +307,15 @@ pub fn sign_v2(
         assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
         return Ok(());
     }
+
+    check_self_pda(
+        &swig_wallet_address_seeds_with_bump(
+            ctx.accounts.swig.key().as_ref(),
+            &[swig.wallet_bump],
+        ),
+        ctx.accounts.swig_wallet_address.key(),
+        SwigError::InvalidSeedSwigAccount,
+    )?;
 
     let has_program_all_permission =
         RoleMut::get_action_mut::<ProgramAll>(role.actions, &[])?.is_some();
