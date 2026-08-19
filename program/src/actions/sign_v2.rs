@@ -38,9 +38,7 @@ use swig_state::{
         Action, Permission,
     },
     role::RoleMut,
-    swig::{
-        swig_account_signer, swig_wallet_address_seeds_with_bump, swig_wallet_address_signer, Swig,
-    },
+    swig::{swig_account_signer, swig_wallet_address_signer, Swig},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -250,12 +248,6 @@ pub fn sign_v2(
     let parts = Swig::split_parts_mut(swig_account_data)?;
     let swig = parts.state;
     let swig_roles = parts.roles;
-    let wallet_bump = [swig.wallet_bump];
-    check_self_pda(
-        &swig_wallet_address_seeds_with_bump(ctx.accounts.swig.key().as_ref(), &wallet_bump),
-        ctx.accounts.swig_wallet_address.key(),
-        SwigError::InvalidSeedSwigAccount,
-    )?;
     assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
     // The generic account classifier already identified account 0 as Swig config.
     // Keep this hot-path discriminator check as a local unsafe-read precondition.
