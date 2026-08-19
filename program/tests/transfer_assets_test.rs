@@ -17,7 +17,7 @@ use solana_sdk::{
     sysvar::rent::Rent,
     transaction::{TransactionError, VersionedTransaction},
 };
-use swig_interface::{swig, TransferAssetsV1Instruction};
+use swig_interface::{swig, TransferAssetsV1Instruction, TransferAssetsV1SplMigration};
 use swig_state::{
     action::all::All,
     authority::AuthorityType,
@@ -771,9 +771,7 @@ fn test_transfer_assets_spl_token_invalid_destination() {
     assert_eq!(dest_account_data, destination_before.data);
 }
 
-// Happy-path SPL migration using the kit's `new_with_ed25519_authority` helper.
-// The authority context occupies account 4, so the SPL tail begins at account
-// 5.
+// Happy-path SPL migration using the kit's normalized migration builder.
 #[test_log::test]
 fn test_transfer_assets_spl_happy_path() {
     let mut context = setup_test_context().unwrap();
@@ -832,25 +830,19 @@ fn test_transfer_assets_spl_happy_path() {
     let source_before_unpacked = spl_token::state::Account::unpack(&source_before).unwrap();
     assert_eq!(source_before_unpacked.amount, initial_amount);
 
-    let helper_ix = TransferAssetsV1Instruction::new_with_ed25519_authority(
+    let transfer_ix = TransferAssetsV1Instruction::new_with_ed25519_authority_and_migrations(
         swig_pubkey,
         swig_wallet_address_pubkey,
         context.default_payer.pubkey(),
         authority.pubkey(),
         0,
+        &[TransferAssetsV1SplMigration::new(
+            source_ata,
+            dest_ata,
+            spl_token::ID,
+        )],
     )
     .unwrap();
-
-    let mut accounts = helper_ix.accounts;
-    accounts.push(AccountMeta::new(source_ata, false));
-    accounts.push(AccountMeta::new(dest_ata, false));
-    accounts.push(AccountMeta::new_readonly(spl_token::ID, false));
-
-    let transfer_ix = Instruction {
-        program_id: program_id(),
-        accounts,
-        data: helper_ix.data,
-    };
 
     let message = VersionedMessage::V0(
         v0::Message::try_compile(

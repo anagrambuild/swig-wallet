@@ -3124,6 +3124,67 @@ impl ToggleSubAccountInstruction {
     }
 }
 
+const TRANSFER_ASSETS_V1_CANONICAL_PREFIX_LEN: usize = 5;
+const TRANSFER_ASSETS_V1_SPL_MIGRATION_LEN: usize = 3;
+
+/// One SPL-token migration appended to a `TransferAssetsV1` instruction.
+///
+/// Builders encode each migration as a writable source account, a writable
+/// destination account, and a read-only token program account.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TransferAssetsV1SplMigration {
+    pub source: Pubkey,
+    pub destination: Pubkey,
+    pub token_program: Pubkey,
+}
+
+impl TransferAssetsV1SplMigration {
+    pub fn new(source: Pubkey, destination: Pubkey, token_program: Pubkey) -> Self {
+        Self {
+            source,
+            destination,
+            token_program,
+        }
+    }
+}
+
+/// Authority-specific builders normalize into this account layout before
+/// serializing or signing the instruction.
+struct TransferAssetsV1AccountLayout<'a> {
+    swig_account: Pubkey,
+    swig_wallet_address: Pubkey,
+    payer: Pubkey,
+    authority_context: AccountMeta,
+    spl_migrations: &'a [TransferAssetsV1SplMigration],
+}
+
+impl TransferAssetsV1AccountLayout<'_> {
+    fn into_accounts(self) -> anyhow::Result<Vec<AccountMeta>> {
+        let capacity = self
+            .spl_migrations
+            .len()
+            .checked_mul(TRANSFER_ASSETS_V1_SPL_MIGRATION_LEN)
+            .and_then(|tail_len| tail_len.checked_add(TRANSFER_ASSETS_V1_CANONICAL_PREFIX_LEN))
+            .ok_or_else(|| anyhow::anyhow!("TransferAssetsV1 account count overflow"))?;
+        let mut accounts = Vec::with_capacity(capacity);
+        accounts.extend([
+            AccountMeta::new(self.swig_account, false),
+            AccountMeta::new(self.swig_wallet_address, false),
+            AccountMeta::new(self.payer, true),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            self.authority_context,
+        ]);
+        for migration in self.spl_migrations {
+            accounts.extend([
+                AccountMeta::new(migration.source, false),
+                AccountMeta::new(migration.destination, false),
+                AccountMeta::new_readonly(migration.token_program, false),
+            ]);
+        }
+        Ok(accounts)
+    }
+}
+
 pub struct TransferAssetsV1Instruction;
 
 impl TransferAssetsV1Instruction {
@@ -3134,13 +3195,32 @@ impl TransferAssetsV1Instruction {
         authority: Pubkey,
         role_id: u32,
     ) -> anyhow::Result<Instruction> {
-        let accounts = vec![
-            AccountMeta::new(swig_account, false),
-            AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
-            AccountMeta::new_readonly(authority, true),
-        ];
+        Self::new_with_ed25519_authority_and_migrations(
+            swig_account,
+            swig_wallet_address,
+            payer,
+            authority,
+            role_id,
+            &[],
+        )
+    }
+
+    pub fn new_with_ed25519_authority_and_migrations(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        payer: Pubkey,
+        authority: Pubkey,
+        role_id: u32,
+        spl_migrations: &[TransferAssetsV1SplMigration],
+    ) -> anyhow::Result<Instruction> {
+        let accounts = TransferAssetsV1AccountLayout {
+            swig_account,
+            swig_wallet_address,
+            payer,
+            authority_context: AccountMeta::new_readonly(authority, true),
+            spl_migrations,
+        }
+        .into_accounts()?;
 
         let args = TransferAssetsV1Args::new(role_id);
         let args_bytes = args
@@ -3158,19 +3238,50 @@ impl TransferAssetsV1Instruction {
         swig_account: Pubkey,
         swig_wallet_address: Pubkey,
         payer: Pubkey,
-        mut authority_payload_fn: F,
+        authority_payload_fn: F,
         current_slot: u64,
         role_id: u32,
     ) -> anyhow::Result<Instruction>
     where
         F: FnMut(&[u8]) -> [u8; 65],
     {
-        let accounts = vec![
-            AccountMeta::new(swig_account, false),
-            AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
-        ];
+        Self::new_with_secp256k1_authority_and_migrations(
+            swig_account,
+            swig_wallet_address,
+            payer,
+            authority_payload_fn,
+            current_slot,
+            role_id,
+            &[],
+        )
+    }
+
+    pub fn new_with_secp256k1_authority_and_migrations<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        role_id: u32,
+        spl_migrations: &[TransferAssetsV1SplMigration],
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let accounts = TransferAssetsV1AccountLayout {
+            swig_account,
+            swig_wallet_address,
+            payer,
+            // Secp256k1 has no runtime authority account. Keep the prefix
+            // stable with the same placeholder convention used by V2
+            // sub-account builders.
+            authority_context: AccountMeta::new_readonly(
+                solana_system_interface::program::ID,
+                false,
+            ),
+            spl_migrations,
+        }
+        .into_accounts()?;
 
         let args = TransferAssetsV1Args::new(role_id);
         let args_bytes = args
@@ -3214,7 +3325,7 @@ impl TransferAssetsV1Instruction {
         swig_account: Pubkey,
         swig_wallet_address: Pubkey,
         payer: Pubkey,
-        mut authority_payload_fn: F,
+        authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
         role_id: u32,
@@ -3223,13 +3334,44 @@ impl TransferAssetsV1Instruction {
     where
         F: FnMut(&[u8]) -> [u8; 64],
     {
-        let accounts = vec![
-            AccountMeta::new(swig_account, false),
-            AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
-            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
-        ];
+        Self::new_with_secp256r1_authority_and_migrations(
+            swig_account,
+            swig_wallet_address,
+            payer,
+            authority_payload_fn,
+            current_slot,
+            counter,
+            role_id,
+            public_key,
+            &[],
+        )
+    }
+
+    pub fn new_with_secp256r1_authority_and_migrations<F>(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        role_id: u32,
+        public_key: &[u8; 33],
+        spl_migrations: &[TransferAssetsV1SplMigration],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let accounts = TransferAssetsV1AccountLayout {
+            swig_account,
+            swig_wallet_address,
+            payer,
+            authority_context: AccountMeta::new_readonly(
+                solana_sdk::sysvar::instructions::ID,
+                false,
+            ),
+            spl_migrations,
+        }
+        .into_accounts()?;
 
         let args = TransferAssetsV1Args::new(role_id);
         let args_bytes = args
@@ -3294,18 +3436,35 @@ impl TransferAssetsV1Instruction {
         preceding_instruction: Instruction,
         role_id: u32,
     ) -> anyhow::Result<Vec<Instruction>> {
+        Self::new_with_program_exec_and_migrations(
+            swig_account,
+            swig_wallet_address,
+            payer,
+            preceding_instruction,
+            role_id,
+            &[],
+        )
+    }
+
+    pub fn new_with_program_exec_and_migrations(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        role_id: u32,
+        spl_migrations: &[TransferAssetsV1SplMigration],
+    ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
 
-        let mut accounts = vec![
-            AccountMeta::new(swig_account, false),
-            AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
-        ];
-
-        // Add instructions sysvar at a stable index
-        let instruction_sysvar_index = accounts.len() as u8;
-        accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+        let instruction_sysvar_index = 4;
+        let accounts = TransferAssetsV1AccountLayout {
+            swig_account,
+            swig_wallet_address,
+            payer,
+            authority_context: AccountMeta::new_readonly(INSTRUCTIONS_ID, false),
+            spl_migrations,
+        }
+        .into_accounts()?;
 
         let args = TransferAssetsV1Args::new(role_id);
         let args_bytes = args
@@ -3333,17 +3492,37 @@ impl TransferAssetsV1Instruction {
         role_id: u32,
         target_ix_index: u8,
     ) -> anyhow::Result<Vec<Instruction>> {
+        Self::new_with_program_exec_ix_index_and_migrations(
+            swig_account,
+            swig_wallet_address,
+            payer,
+            preceding_instruction,
+            role_id,
+            target_ix_index,
+            &[],
+        )
+    }
+
+    pub fn new_with_program_exec_ix_index_and_migrations(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        role_id: u32,
+        target_ix_index: u8,
+        spl_migrations: &[TransferAssetsV1SplMigration],
+    ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
 
-        let mut accounts = vec![
-            AccountMeta::new(swig_account, false),
-            AccountMeta::new(swig_wallet_address, false),
-            AccountMeta::new(payer, true),
-            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
-        ];
-
-        let instruction_sysvar_index = accounts.len() as u8;
-        accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+        let instruction_sysvar_index = 4;
+        let accounts = TransferAssetsV1AccountLayout {
+            swig_account,
+            swig_wallet_address,
+            payer,
+            authority_context: AccountMeta::new_readonly(INSTRUCTIONS_ID, false),
+            spl_migrations,
+        }
+        .into_accounts()?;
 
         let args = TransferAssetsV1Args::new(role_id);
         let args_bytes = args
@@ -4965,5 +5144,183 @@ mod tests {
         )
         .unwrap();
         assert!(r1[1].accounts[1].is_writable);
+    }
+
+    fn assert_transfer_assets_layout(
+        instruction: &Instruction,
+        swig: Pubkey,
+        wallet: Pubkey,
+        payer: Pubkey,
+        authority_context: AccountMeta,
+        migration: TransferAssetsV1SplMigration,
+    ) {
+        assert_eq!(
+            instruction.accounts,
+            vec![
+                AccountMeta::new(swig, false),
+                AccountMeta::new(wallet, false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+                authority_context,
+                AccountMeta::new(migration.source, false),
+                AccountMeta::new(migration.destination, false),
+                AccountMeta::new_readonly(migration.token_program, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn transfer_assets_v1_builders_normalize_before_authentication() {
+        let swig = Pubkey::new_unique();
+        let wallet = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let authority = Pubkey::new_unique();
+        let migration = TransferAssetsV1SplMigration::new(
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
+
+        let ed25519 = TransferAssetsV1Instruction::new_with_ed25519_authority_and_migrations(
+            swig,
+            wallet,
+            payer,
+            authority,
+            0,
+            &[migration],
+        )
+        .unwrap();
+        assert_transfer_assets_layout(
+            &ed25519,
+            swig,
+            wallet,
+            payer,
+            AccountMeta::new_readonly(authority, true),
+            migration,
+        );
+
+        let mut k1_payload_with_migration = [0u8; 32];
+        let secp256k1 = TransferAssetsV1Instruction::new_with_secp256k1_authority_and_migrations(
+            swig,
+            wallet,
+            payer,
+            |payload| {
+                k1_payload_with_migration.copy_from_slice(payload);
+                [0u8; 65]
+            },
+            10,
+            0,
+            &[migration],
+        )
+        .unwrap();
+        assert_transfer_assets_layout(
+            &secp256k1,
+            swig,
+            wallet,
+            payer,
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            migration,
+        );
+
+        let mut k1_payload_without_migration = [0u8; 32];
+        let secp256k1_without_migration =
+            TransferAssetsV1Instruction::new_with_secp256k1_authority(
+                swig,
+                wallet,
+                payer,
+                |payload| {
+                    k1_payload_without_migration.copy_from_slice(payload);
+                    [0u8; 65]
+                },
+                10,
+                0,
+            )
+            .unwrap();
+        assert_eq!(secp256k1_without_migration.accounts.len(), 5);
+        assert_eq!(
+            secp256k1_without_migration.accounts[4],
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false)
+        );
+        assert_ne!(k1_payload_with_migration, k1_payload_without_migration);
+
+        let mut r1_payload_with_migration = [0u8; 32];
+        let secp256r1 = TransferAssetsV1Instruction::new_with_secp256r1_authority_and_migrations(
+            swig,
+            wallet,
+            payer,
+            |payload| {
+                r1_payload_with_migration.copy_from_slice(payload);
+                [0u8; 64]
+            },
+            10,
+            1,
+            0,
+            &[2u8; 33],
+            &[migration],
+        )
+        .unwrap();
+        assert_transfer_assets_layout(
+            &secp256r1[1],
+            swig,
+            wallet,
+            payer,
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+            migration,
+        );
+
+        let mut r1_payload_without_migration = [0u8; 32];
+        TransferAssetsV1Instruction::new_with_secp256r1_authority(
+            swig,
+            wallet,
+            payer,
+            |payload| {
+                r1_payload_without_migration.copy_from_slice(payload);
+                [0u8; 64]
+            },
+            10,
+            1,
+            0,
+            &[2u8; 33],
+        )
+        .unwrap();
+        assert_ne!(r1_payload_with_migration, r1_payload_without_migration);
+
+        let program_exec = TransferAssetsV1Instruction::new_with_program_exec_and_migrations(
+            swig,
+            wallet,
+            payer,
+            test_inner_instruction(),
+            0,
+            &[migration],
+        )
+        .unwrap();
+        assert_transfer_assets_layout(
+            &program_exec[1],
+            swig,
+            wallet,
+            payer,
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+            migration,
+        );
+
+        let program_exec_ix_index =
+            TransferAssetsV1Instruction::new_with_program_exec_ix_index_and_migrations(
+                swig,
+                wallet,
+                payer,
+                test_inner_instruction(),
+                0,
+                0,
+                &[migration],
+            )
+            .unwrap();
+        assert_transfer_assets_layout(
+            &program_exec_ix_index[1],
+            swig,
+            wallet,
+            payer,
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+            migration,
+        );
     }
 }

@@ -184,6 +184,12 @@ pub enum SwigInstruction {
     /// 2. `[writable]` Swig wallet address account (destination)
     /// 3. `[writable, signer]` Payer account
     /// 4. System program account
+    /// 5. Authority context: signer for Ed25519, instructions sysvar for
+    ///    Secp256r1/ProgramExec, or System Program placeholder for Secp256k1
+    /// 6. Optional `(source, destination, token_program)` account triples
+    ///
+    /// Legacy Secp256k1 clients may omit account 5. Canonical builders always
+    /// include it so the SPL migration tail begins at a stable index.
     #[account(0, writable, name="swig", desc="the swig smart wallet (source)")]
     #[account(1, writable, name="swig_wallet_address", desc="the swig wallet address (destination)")]
     #[account(2, writable, signer, name="payer", desc="the payer")]
