@@ -596,10 +596,7 @@ fn test_sign_v2_program_curated_token_transfer_still_works() {
     let root = Keypair::new();
     let authority = Keypair::new();
     let recipient = Keypair::new();
-    context
-        .svm
-        .airdrop(&root.pubkey(), 10_000_000_000)
-        .unwrap();
+    context.svm.airdrop(&root.pubkey(), 10_000_000_000).unwrap();
     context
         .svm
         .airdrop(&authority.pubkey(), 10_000_000_000)

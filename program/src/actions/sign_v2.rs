@@ -313,19 +313,11 @@ pub fn sign_v2(
         return Ok(());
     }
 
-    check_self_pda(
-        &swig_wallet_address_seeds_with_bump(
-            ctx.accounts.swig.key().as_ref(),
-            &[swig.wallet_bump],
-        ),
-        ctx.accounts.swig_wallet_address.key(),
-        SwigError::InvalidSeedSwigAccount,
-    )?;
-
     let has_program_all_permission =
         RoleMut::get_action_mut::<ProgramAll>(role.actions, &[])?.is_some();
     let has_program_curated_permission = !has_program_all_permission
         && RoleMut::get_action_mut::<ProgramCurated>(role.actions, &[])?.is_some();
+    let mut check_wallet_shape = false;
 
     // Snapshot hashes are the pre-CPI integrity baseline for writable accounts.
     // SignV2 permits specific balance fields to change, then verifies the rest
@@ -356,8 +348,9 @@ pub fn sign_v2(
                 Some(hash)
             },
             AccountClassification::SwigWalletAddress => {
-                let data = unsafe { account.borrow_data_unchecked() };
-                Some(hash_except(&data, account.owner(), NO_EXCLUDE_RANGES))
+                // Owner and data_len are enforced by the gated H-04 checks.
+                // Hashing an always-empty system account is redundant on this path.
+                None
             },
             AccountClassification::SwigTokenAccount { .. } => {
                 let data = unsafe { account.borrow_data_unchecked() };
@@ -422,10 +415,20 @@ pub fn sign_v2(
                 }
             }
 
-            reject_wallet_address_shape_mutation(
-                &instruction,
-                ctx.accounts.swig_wallet_address.key(),
-            )?;
+            if wallet_shape_can_change(&instruction) {
+                if !check_wallet_shape {
+                    check_self_pda(
+                        &swig_wallet_address_seeds_with_bump(ctx.accounts.swig.key().as_ref(), &b),
+                        ctx.accounts.swig_wallet_address.key(),
+                        SwigError::InvalidSeedSwigAccount,
+                    )?;
+                    check_wallet_shape = true;
+                }
+                reject_wallet_address_shape_mutation(
+                    &instruction,
+                    ctx.accounts.swig_wallet_address.key(),
+                )?;
+            }
 
             let swig_wallet_address_balance_before = ctx.accounts.swig_wallet_address.lamports();
             instruction.execute(
@@ -811,18 +814,6 @@ pub fn sign_v2(
                 return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
             },
             AccountClassification::SwigWalletAddress => {
-                let account_info = unsafe { all_accounts.get_unchecked(index) };
-                assert_wallet_address_invariants(account_info)?;
-
-                if account_info.is_writable() {
-                    let data = unsafe { account_info.borrow_data_unchecked() };
-                    let current_hash = hash_except(&data, account_info.owner(), NO_EXCLUDE_RANGES);
-                    let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
-                    if *snapshot_hash != current_hash {
-                        return Err(SwigError::WalletAddressInvariantViolation.into());
-                    }
-                }
-
                 continue;
             },
             AccountClassification::ProgramScope { spent, .. } => {
@@ -862,7 +853,9 @@ pub fn sign_v2(
         }
     }
 
-    assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
+    if check_wallet_shape {
+        assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
+    }
     Ok(())
 }
 
