@@ -26,6 +26,9 @@ use swig_state::{
 };
 
 const INVALID_ACCOUNTS_LENGTH_ERROR: u32 = 22;
+const INVALID_OPERATION_ERROR: u32 = 26;
+const OWNER_MISMATCH_TOKEN_ACCOUNT_ERROR: u32 = 30;
+const INVALID_SWIG_TOKEN_ACCOUNT_OWNER_ERROR: u32 = 41;
 
 /// Helper function to create a transfer assets instruction using Ed25519
 /// authority
@@ -64,6 +67,216 @@ fn setup_ed25519_transfer_assets() -> (SwigTestContext, Keypair, Pubkey, Pubkey)
     context.svm.set_account(swig, swig_account).unwrap();
 
     (context, authority, swig, wallet)
+}
+
+fn append_spl_migration(instruction: &mut Instruction, source: Pubkey, destination: Pubkey) {
+    instruction.accounts.push(AccountMeta::new(source, false));
+    instruction
+        .accounts
+        .push(AccountMeta::new(destination, false));
+    instruction
+        .accounts
+        .push(AccountMeta::new_readonly(spl_token::ID, false));
+}
+
+fn assert_zero_balance_malformed_migration_rejected(
+    malformation: u8,
+    expected_error: InstructionError,
+) {
+    let (mut context, authority, swig, wallet) = setup_ed25519_transfer_assets();
+    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let mut source = setup_ata(&mut context.svm, &mint, &swig, &context.default_payer).unwrap();
+    let mut destination =
+        setup_ata(&mut context.svm, &mint, &wallet, &context.default_payer).unwrap();
+
+    match malformation {
+        // AccountInfo owner does not match the supplied token program.
+        0 => {
+            let mut account = context.svm.get_account(&destination).unwrap();
+            account.owner = solana_system_interface::program::ID;
+            context.svm.set_account(destination, account).unwrap();
+        },
+        // Short data that still contains the legacy fields previously read by
+        // the permissive implementation.
+        1 => {
+            let mut account = context.svm.get_account(&destination).unwrap();
+            account.data.truncate(109);
+            context.svm.set_account(destination, account).unwrap();
+        },
+        // Full-length but explicitly uninitialized token account.
+        2 => {
+            let mut account = context.svm.get_account(&destination).unwrap();
+            account.data[108] = 0;
+            context.svm.set_account(destination, account).unwrap();
+        },
+        // Destination belongs to a different mint.
+        3 => {
+            let other_mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+            destination = setup_ata(
+                &mut context.svm,
+                &other_mint,
+                &wallet,
+                &context.default_payer,
+            )
+            .unwrap();
+        },
+        // Source token authority is not the swig PDA.
+        4 => {
+            let malicious_owner = Keypair::new();
+            source = setup_ata(
+                &mut context.svm,
+                &mint,
+                &malicious_owner.pubkey(),
+                &context.default_payer,
+            )
+            .unwrap();
+        },
+        _ => panic!("unknown malformed migration case"),
+    }
+
+    let swig_before = context.svm.get_account(&swig).unwrap();
+    let wallet_before = context.svm.get_account(&wallet).unwrap();
+    let source_before = context.svm.get_account(&source).unwrap();
+    let destination_before = context.svm.get_account(&destination).unwrap();
+
+    let mut transfer_ix = TransferAssetsV1Instruction::new_with_ed25519_authority(
+        swig,
+        wallet,
+        context.default_payer.pubkey(),
+        authority.pubkey(),
+        0,
+    )
+    .unwrap();
+    append_spl_migration(&mut transfer_ix, source, destination);
+
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                transfer_ix,
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let transaction =
+        VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+    let error = context.svm.send_transaction(transaction).unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(1, expected_error)
+    );
+
+    assert_eq!(context.svm.get_account(&swig).unwrap(), swig_before);
+    assert_eq!(context.svm.get_account(&wallet).unwrap(), wallet_before);
+    assert_eq!(context.svm.get_account(&source).unwrap(), source_before);
+    assert_eq!(
+        context.svm.get_account(&destination).unwrap(),
+        destination_before
+    );
+}
+
+fn assert_malformed_destination_rejected_at(malformed_position: usize) {
+    let (mut context, authority, swig, wallet) = setup_ed25519_transfer_assets();
+    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let source = setup_ata(&mut context.svm, &mint, &swig, &context.default_payer).unwrap();
+    let destination = setup_ata(&mut context.svm, &mint, &wallet, &context.default_payer).unwrap();
+    let malicious_owner = Keypair::new();
+    let malformed_destination = setup_ata(
+        &mut context.svm,
+        &mint,
+        &malicious_owner.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+
+    let swig_before = context.svm.get_account(&swig).unwrap();
+    let wallet_before = context.svm.get_account(&wallet).unwrap();
+    let source_before = context.svm.get_account(&source).unwrap();
+    let destination_before = context.svm.get_account(&destination).unwrap();
+    let malformed_before = context.svm.get_account(&malformed_destination).unwrap();
+
+    let mut transfer_ix = TransferAssetsV1Instruction::new_with_ed25519_authority(
+        swig,
+        wallet,
+        context.default_payer.pubkey(),
+        authority.pubkey(),
+        0,
+    )
+    .unwrap();
+    for position in 0..3 {
+        append_spl_migration(
+            &mut transfer_ix,
+            source,
+            if position == malformed_position {
+                malformed_destination
+            } else {
+                destination
+            },
+        );
+    }
+
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                transfer_ix,
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let transaction =
+        VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+    let error = context.svm.send_transaction(transaction).unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(INVALID_SWIG_TOKEN_ACCOUNT_OWNER_ERROR),
+        )
+    );
+
+    assert_eq!(context.svm.get_account(&swig).unwrap(), swig_before);
+    assert_eq!(context.svm.get_account(&wallet).unwrap(), wallet_before);
+    assert_eq!(context.svm.get_account(&source).unwrap(), source_before);
+    assert_eq!(
+        context.svm.get_account(&destination).unwrap(),
+        destination_before
+    );
+    assert_eq!(
+        context.svm.get_account(&malformed_destination).unwrap(),
+        malformed_before
+    );
+}
+
+#[test_log::test]
+fn test_transfer_assets_rejects_zero_balance_malformed_accounts_before_sol_sweep() {
+    assert_zero_balance_malformed_migration_rejected(
+        0,
+        InstructionError::Custom(OWNER_MISMATCH_TOKEN_ACCOUNT_ERROR),
+    );
+    assert_zero_balance_malformed_migration_rejected(1, InstructionError::InvalidAccountData);
+    assert_zero_balance_malformed_migration_rejected(2, InstructionError::InvalidAccountData);
+    assert_zero_balance_malformed_migration_rejected(
+        3,
+        InstructionError::Custom(INVALID_OPERATION_ERROR),
+    );
+    assert_zero_balance_malformed_migration_rejected(
+        4,
+        InstructionError::Custom(INVALID_SWIG_TOKEN_ACCOUNT_OWNER_ERROR),
+    );
+}
+
+#[test_log::test]
+fn test_transfer_assets_rejects_malformed_first_middle_and_last_entries() {
+    for malformed_position in 0..3 {
+        assert_malformed_destination_rejected_at(malformed_position);
+    }
 }
 
 #[test_log::test]
@@ -466,34 +679,43 @@ fn test_transfer_assets_spl_token_invalid_destination() {
     let source_token_data = spl_token::state::Account::unpack(&source_account_data).unwrap();
     assert_eq!(source_token_data.amount, initial_token_amount);
 
-    // Now attempt to transfer assets with the malicious destination
-    // This should succeed but skip the token transfer due to ownership validation
-    let transfer_ix = Instruction {
-        program_id: program_id(),
-        accounts: vec![
-            AccountMeta::new(swig_pubkey, false),
-            AccountMeta::new(swig_wallet_address_pubkey, false),
-            AccountMeta::new(authority.pubkey(), true), // authority is the payer
-            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
-            // Token transfer accounts: source, destination, token_program
-            AccountMeta::new(source_ata, false),
-            AccountMeta::new(malicious_dest_ata, false), // malicious destination
-            AccountMeta::new_readonly(spl_token::ID, false),
-        ],
-        data: TransferAssetsV1Instruction::new_with_ed25519_authority(
-            swig_pubkey,
-            swig_wallet_address_pubkey,
-            authority.pubkey(), // authority is the payer
-            authority.pubkey(),
-            0, // role_id
-        )
-        .unwrap()
-        .data,
-    };
+    // Give the swig excess SOL so the regression proves the complete SPL tail
+    // is rejected before either asset class can be migrated.
+    let mut swig_account = context.svm.get_account(&swig_pubkey).unwrap();
+    swig_account.lamports += 5_000_000;
+    context.svm.set_account(swig_pubkey, swig_account).unwrap();
+
+    let swig_before = context.svm.get_account(&swig_pubkey).unwrap();
+    let wallet_before = context
+        .svm
+        .get_account(&swig_wallet_address_pubkey)
+        .unwrap();
+    let source_before = context.svm.get_account(&source_ata).unwrap();
+    let destination_before = context.svm.get_account(&malicious_dest_ata).unwrap();
+
+    // Start from the production authority builder so this reaches SPL
+    // validation instead of failing at authority authentication.
+    let mut transfer_ix = TransferAssetsV1Instruction::new_with_ed25519_authority(
+        swig_pubkey,
+        swig_wallet_address_pubkey,
+        context.default_payer.pubkey(),
+        authority.pubkey(),
+        0,
+    )
+    .unwrap();
+    transfer_ix
+        .accounts
+        .push(AccountMeta::new(source_ata, false));
+    transfer_ix
+        .accounts
+        .push(AccountMeta::new(malicious_dest_ata, false));
+    transfer_ix
+        .accounts
+        .push(AccountMeta::new_readonly(spl_token::ID, false));
 
     let transfer_message = VersionedMessage::V0(
         v0::Message::try_compile(
-            &authority.pubkey(), // authority pays for the transaction
+            &context.default_payer.pubkey(),
             &[
                 ComputeBudgetInstruction::set_compute_unit_limit(400_000),
                 transfer_ix,
@@ -504,18 +726,28 @@ fn test_transfer_assets_spl_token_invalid_destination() {
         .unwrap(),
     );
 
-    let transfer_tx = VersionedTransaction::try_new(transfer_message, &[&authority]).unwrap();
+    let transfer_tx =
+        VersionedTransaction::try_new(transfer_message, &[&context.default_payer, &authority])
+            .unwrap();
 
-    let transfer_result = context.svm.send_transaction(transfer_tx);
-
-    // The transaction should fail because the destination account ownership check
-    // should reject the invalid destination token account
-    assert!(
-        transfer_result.is_err(),
-        "Transaction should fail due to invalid destination ownership"
+    let transfer_error = context.svm.send_transaction(transfer_tx).unwrap_err();
+    assert_eq!(
+        transfer_error.err,
+        TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(INVALID_SWIG_TOKEN_ACCOUNT_OWNER_ERROR),
+        )
     );
 
-    println!("✅ Expected failure occurred: {:?}", transfer_result.err());
+    let swig_after = context.svm.get_account(&swig_pubkey).unwrap();
+    let wallet_after = context
+        .svm
+        .get_account(&swig_wallet_address_pubkey)
+        .unwrap();
+    assert_eq!(swig_after.lamports, swig_before.lamports);
+    assert_eq!(swig_after.data, swig_before.data);
+    assert_eq!(wallet_after.lamports, wallet_before.lamports);
+    assert_eq!(wallet_after.data, wallet_before.data);
 
     // Since the transaction failed, verify that no tokens were transferred
     let final_source_account_data = context.svm.get_account(&source_ata).unwrap().data;
@@ -527,6 +759,7 @@ fn test_transfer_assets_spl_token_invalid_destination() {
         final_source_token_data.amount, initial_token_amount,
         "Source token account should still have all tokens since transfer was rejected"
     );
+    assert_eq!(final_source_account_data, source_before.data);
 
     // Verify malicious destination account has no tokens
     let dest_account_data = context.svm.get_account(&malicious_dest_ata).unwrap().data;
@@ -535,8 +768,7 @@ fn test_transfer_assets_spl_token_invalid_destination() {
         dest_token_data.amount, 0,
         "Malicious destination should have received no tokens"
     );
-
-    println!("✅ Test passed: SPL token transfer with invalid destination was properly rejected");
+    assert_eq!(dest_account_data, destination_before.data);
 }
 
 // Happy-path SPL migration using the kit's `new_with_ed25519_authority` helper.
