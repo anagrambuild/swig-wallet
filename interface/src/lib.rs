@@ -3240,6 +3240,7 @@ impl TransferAssetsV1Instruction {
         payer: Pubkey,
         authority_payload_fn: F,
         current_slot: u64,
+        counter: u32,
         role_id: u32,
     ) -> anyhow::Result<Instruction>
     where
@@ -3251,6 +3252,7 @@ impl TransferAssetsV1Instruction {
             payer,
             authority_payload_fn,
             current_slot,
+            counter,
             role_id,
             &[],
         )
@@ -3262,6 +3264,7 @@ impl TransferAssetsV1Instruction {
         payer: Pubkey,
         mut authority_payload_fn: F,
         current_slot: u64,
+        counter: u32,
         role_id: u32,
         spl_migrations: &[TransferAssetsV1SplMigration],
     ) -> anyhow::Result<Instruction>
@@ -3272,13 +3275,9 @@ impl TransferAssetsV1Instruction {
             swig_account,
             swig_wallet_address,
             payer,
-            // Secp256k1 has no runtime authority account. Keep the prefix
-            // stable with the same placeholder convention used by V2
-            // sub-account builders.
-            authority_context: AccountMeta::new_readonly(
-                solana_system_interface::program::ID,
-                false,
-            ),
+            // Secp256k1 has no runtime authority account. Shank optional
+            // accounts use the invoking program ID as their sentinel.
+            authority_context: AccountMeta::new_readonly(program_id(), false),
             spl_migrations,
         }
         .into_accounts()?;
@@ -3302,7 +3301,7 @@ impl TransferAssetsV1Instruction {
         // Sign the payload
         let nonced_payload = prepare_secp256k1_payload(
             current_slot,
-            0u32,
+            counter,
             args_bytes,
             &account_payload_bytes,
             prefix,
@@ -3312,6 +3311,7 @@ impl TransferAssetsV1Instruction {
         // Add authority payload
         let mut authority_payload = Vec::new();
         authority_payload.extend_from_slice(&current_slot.to_le_bytes());
+        authority_payload.extend_from_slice(&counter.to_le_bytes());
         authority_payload.extend_from_slice(&signature);
 
         Ok(Instruction {
@@ -3418,6 +3418,7 @@ impl TransferAssetsV1Instruction {
         authority_payload.extend_from_slice(&current_slot.to_le_bytes()); // 8 bytes
         authority_payload.extend_from_slice(&counter.to_le_bytes()); // 4 bytes
         authority_payload.push(4); // this is the index of the instruction sysvar
+        authority_payload.extend_from_slice(&[0u8; 4]);
 
         // Create the main instruction
         let main_ix = Instruction {
@@ -3455,6 +3456,12 @@ impl TransferAssetsV1Instruction {
         spl_migrations: &[TransferAssetsV1SplMigration],
     ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
+
+        if !spl_migrations.is_empty() {
+            return Err(anyhow::anyhow!(
+                "TransferAssetsV1 ProgramExec migrations require exact intent binding"
+            ));
+        }
 
         let instruction_sysvar_index = 4;
         let accounts = TransferAssetsV1AccountLayout {
@@ -3513,6 +3520,12 @@ impl TransferAssetsV1Instruction {
         spl_migrations: &[TransferAssetsV1SplMigration],
     ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
+
+        if !spl_migrations.is_empty() {
+            return Err(anyhow::anyhow!(
+                "TransferAssetsV1 ProgramExec migrations require exact intent binding"
+            ));
+        }
 
         let instruction_sysvar_index = 4;
         let accounts = TransferAssetsV1AccountLayout {
@@ -5209,6 +5222,7 @@ mod tests {
                 [0u8; 65]
             },
             10,
+            1,
             0,
             &[migration],
         )
@@ -5218,9 +5232,13 @@ mod tests {
             swig,
             wallet,
             payer,
-            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            AccountMeta::new_readonly(program_id(), false),
             migration,
         );
+        let k1_authority_payload = &secp256k1.data[TransferAssetsV1Args::LEN..];
+        assert_eq!(k1_authority_payload.len(), 77);
+        assert_eq!(&k1_authority_payload[..8], &10u64.to_le_bytes());
+        assert_eq!(&k1_authority_payload[8..12], &1u32.to_le_bytes());
 
         let mut k1_payload_without_migration = [0u8; 32];
         let secp256k1_without_migration =
@@ -5233,13 +5251,14 @@ mod tests {
                     [0u8; 65]
                 },
                 10,
+                1,
                 0,
             )
             .unwrap();
         assert_eq!(secp256k1_without_migration.accounts.len(), 5);
         assert_eq!(
             secp256k1_without_migration.accounts[4],
-            AccountMeta::new_readonly(solana_system_interface::program::ID, false)
+            AccountMeta::new_readonly(program_id(), false)
         );
         assert_ne!(k1_payload_with_migration, k1_payload_without_migration);
 
@@ -5267,6 +5286,12 @@ mod tests {
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
             migration,
         );
+        let r1_authority_payload = &secp256r1[1].data[TransferAssetsV1Args::LEN..];
+        assert_eq!(r1_authority_payload.len(), 17);
+        assert_eq!(&r1_authority_payload[..8], &10u64.to_le_bytes());
+        assert_eq!(&r1_authority_payload[8..12], &1u32.to_le_bytes());
+        assert_eq!(r1_authority_payload[12], 4);
+        assert_eq!(&r1_authority_payload[13..17], &[0u8; 4]);
 
         let mut r1_payload_without_migration = [0u8; 32];
         TransferAssetsV1Instruction::new_with_secp256r1_authority(
@@ -5285,7 +5310,7 @@ mod tests {
         .unwrap();
         assert_ne!(r1_payload_with_migration, r1_payload_without_migration);
 
-        let program_exec = TransferAssetsV1Instruction::new_with_program_exec_and_migrations(
+        let program_exec_error = TransferAssetsV1Instruction::new_with_program_exec_and_migrations(
             swig,
             wallet,
             payer,
@@ -5293,17 +5318,12 @@ mod tests {
             0,
             &[migration],
         )
-        .unwrap();
-        assert_transfer_assets_layout(
-            &program_exec[1],
-            swig,
-            wallet,
-            payer,
-            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
-            migration,
-        );
+        .unwrap_err();
+        assert!(program_exec_error
+            .to_string()
+            .contains("require exact intent binding"));
 
-        let program_exec_ix_index =
+        let program_exec_ix_index_error =
             TransferAssetsV1Instruction::new_with_program_exec_ix_index_and_migrations(
                 swig,
                 wallet,
@@ -5313,14 +5333,28 @@ mod tests {
                 0,
                 &[migration],
             )
-            .unwrap();
-        assert_transfer_assets_layout(
-            &program_exec_ix_index[1],
+            .unwrap_err();
+        assert!(program_exec_ix_index_error
+            .to_string()
+            .contains("require exact intent binding"));
+
+        let program_exec = TransferAssetsV1Instruction::new_with_program_exec(
             swig,
             wallet,
             payer,
-            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
-            migration,
+            test_inner_instruction(),
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            program_exec[1].accounts,
+            vec![
+                AccountMeta::new(swig, false),
+                AccountMeta::new(wallet, false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+                AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+            ]
         );
     }
 }

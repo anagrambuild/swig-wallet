@@ -3,6 +3,9 @@
 
 mod common;
 
+use alloy_primitives::B256;
+use alloy_signer::SignerSync;
+use alloy_signer_local::LocalSigner;
 use common::*;
 use litesvm::types::TransactionMetadata;
 use litesvm_token::spl_token;
@@ -14,7 +17,7 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    sysvar::rent::Rent,
+    sysvar::{clock::Clock, rent::Rent},
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{swig, TransferAssetsV1Instruction, TransferAssetsV1SplMigration};
@@ -67,6 +70,24 @@ fn setup_ed25519_transfer_assets() -> (SwigTestContext, Keypair, Pubkey, Pubkey)
     context.svm.set_account(swig, swig_account).unwrap();
 
     (context, authority, swig, wallet)
+}
+
+fn create_transfer_assets_secp256r1_keypair(
+) -> (openssl::ec::EcKey<openssl::pkey::Private>, [u8; 33]) {
+    use openssl::{
+        bn::BigNumContext,
+        ec::{EcGroup, EcKey, PointConversionForm},
+        nid::Nid,
+    };
+
+    let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+    let signing_key = EcKey::generate(&group).unwrap();
+    let mut context = BigNumContext::new().unwrap();
+    let public_key = signing_key
+        .public_key()
+        .to_bytes(&group, PointConversionForm::COMPRESSED, &mut context)
+        .unwrap();
+    (signing_key, public_key.try_into().unwrap())
 }
 
 fn append_spl_migration(instruction: &mut Instruction, source: Pubkey, destination: Pubkey) {
@@ -693,25 +714,21 @@ fn test_transfer_assets_spl_token_invalid_destination() {
     let source_before = context.svm.get_account(&source_ata).unwrap();
     let destination_before = context.svm.get_account(&malicious_dest_ata).unwrap();
 
-    // Start from the production authority builder so this reaches SPL
-    // validation instead of failing at authority authentication.
-    let mut transfer_ix = TransferAssetsV1Instruction::new_with_ed25519_authority(
+    // Use the production migration builder so this reaches SPL validation
+    // instead of failing at authority authentication.
+    let transfer_ix = TransferAssetsV1Instruction::new_with_ed25519_authority_and_migrations(
         swig_pubkey,
         swig_wallet_address_pubkey,
         context.default_payer.pubkey(),
         authority.pubkey(),
         0,
+        &[TransferAssetsV1SplMigration::new(
+            source_ata,
+            malicious_dest_ata,
+            spl_token::ID,
+        )],
     )
     .unwrap();
-    transfer_ix
-        .accounts
-        .push(AccountMeta::new(source_ata, false));
-    transfer_ix
-        .accounts
-        .push(AccountMeta::new(malicious_dest_ata, false));
-    transfer_ix
-        .accounts
-        .push(AccountMeta::new_readonly(spl_token::ID, false));
 
     let transfer_message = VersionedMessage::V0(
         v0::Message::try_compile(
@@ -881,6 +898,168 @@ fn test_transfer_assets_spl_happy_path() {
     );
 
     println!("✅ SPL happy path: tokens moved from state PDA to wallet PDA");
+}
+
+#[test_log::test]
+fn test_transfer_assets_spl_secp256k1_production_builder() {
+    let mut context = setup_test_context().unwrap();
+    let authority = LocalSigner::random();
+    let (swig, _) =
+        create_swig_secp256k1(&mut context, &authority, rand::random::<[u8; 32]>()).unwrap();
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(&swig.to_bytes()), &program_id());
+
+    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let source = setup_ata(&mut context.svm, &mint, &swig, &context.default_payer).unwrap();
+    let destination = setup_ata(&mut context.svm, &mint, &wallet, &context.default_payer).unwrap();
+    mint_to(
+        &mut context.svm,
+        &mint,
+        &context.default_payer,
+        &source,
+        1_000,
+    )
+    .unwrap();
+
+    let signing_fn = |payload: &[u8]| -> [u8; 65] {
+        let payload: [u8; 32] = payload.try_into().unwrap();
+        authority
+            .sign_hash_sync(&B256::from(payload))
+            .unwrap()
+            .as_bytes()
+    };
+    let transfer_ix = TransferAssetsV1Instruction::new_with_secp256k1_authority_and_migrations(
+        swig,
+        wallet,
+        context.default_payer.pubkey(),
+        signing_fn,
+        context.svm.get_sysvar::<Clock>().slot,
+        1,
+        0,
+        &[TransferAssetsV1SplMigration::new(
+            source,
+            destination,
+            spl_token::ID,
+        )],
+    )
+    .unwrap();
+
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                transfer_ix,
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let transaction = VersionedTransaction::try_new(message, &[&context.default_payer]).unwrap();
+    let result = context.svm.send_transaction(transaction);
+    assert!(
+        result.is_ok(),
+        "Secp256k1 production builder failed: {:?}",
+        result.err()
+    );
+
+    let source_data = context.svm.get_account(&source).unwrap().data;
+    let destination_data = context.svm.get_account(&destination).unwrap().data;
+    assert_eq!(
+        spl_token::state::Account::unpack(&source_data)
+            .unwrap()
+            .amount,
+        0
+    );
+    assert_eq!(
+        spl_token::state::Account::unpack(&destination_data)
+            .unwrap()
+            .amount,
+        1_000
+    );
+}
+
+#[test_log::test]
+fn test_transfer_assets_spl_secp256r1_production_builder() {
+    let mut context = setup_test_context().unwrap();
+    let (signing_key, public_key) = create_transfer_assets_secp256r1_keypair();
+    let (swig, _) =
+        create_swig_secp256r1(&mut context, &public_key, rand::random::<[u8; 32]>()).unwrap();
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(&swig.to_bytes()), &program_id());
+
+    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let source = setup_ata(&mut context.svm, &mint, &swig, &context.default_payer).unwrap();
+    let destination = setup_ata(&mut context.svm, &mint, &wallet, &context.default_payer).unwrap();
+    mint_to(
+        &mut context.svm,
+        &mint,
+        &context.default_payer,
+        &source,
+        1_000,
+    )
+    .unwrap();
+
+    let signing_fn = |message_hash: &[u8]| -> [u8; 64] {
+        solana_secp256r1_program::sign_message(
+            message_hash,
+            &signing_key.private_key_to_der().unwrap(),
+        )
+        .unwrap()
+    };
+    let transfer_ixs = TransferAssetsV1Instruction::new_with_secp256r1_authority_and_migrations(
+        swig,
+        wallet,
+        context.default_payer.pubkey(),
+        signing_fn,
+        context.svm.get_sysvar::<Clock>().slot,
+        1,
+        0,
+        &public_key,
+        &[TransferAssetsV1SplMigration::new(
+            source,
+            destination,
+            spl_token::ID,
+        )],
+    )
+    .unwrap();
+
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                transfer_ixs[0].clone(),
+                transfer_ixs[1].clone(),
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let transaction = VersionedTransaction::try_new(message, &[&context.default_payer]).unwrap();
+    let result = context.svm.send_transaction(transaction);
+    assert!(
+        result.is_ok(),
+        "Secp256r1 production builder failed: {:?}",
+        result.err()
+    );
+
+    let source_data = context.svm.get_account(&source).unwrap().data;
+    let destination_data = context.svm.get_account(&destination).unwrap().data;
+    assert_eq!(
+        spl_token::state::Account::unpack(&source_data)
+            .unwrap()
+            .amount,
+        0
+    );
+    assert_eq!(
+        spl_token::state::Account::unpack(&destination_data)
+            .unwrap()
+            .amount,
+        1_000
+    );
 }
 
 #[test_log::test]

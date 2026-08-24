@@ -31,7 +31,7 @@ use crate::{
         SwigInstruction,
     },
     util::TokenTransfer,
-    AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
+    AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID,
 };
 
 const FIXED_ACCOUNT_COUNT: usize = 4;
@@ -99,7 +99,7 @@ fn spl_tail_start(
             AuthorityType::Secp256r1 => authority_payload.get(12).copied(),
             AuthorityType::Secp256k1 => accounts
                 .get(FIXED_ACCOUNT_COUNT)
-                .filter(|account| account.key() == &SYSTEM_PROGRAM_ID)
+                .filter(|account| account.key() == &crate::ID)
                 .map(|_| FIXED_ACCOUNT_COUNT as u8),
             _ => return Err(SwigError::InvalidAuthorityType.into()),
         }
