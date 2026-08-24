@@ -71,9 +71,14 @@ fn validate_spl_migration(
     {
         return Err(ProgramError::InvalidAccountData);
     }
+    // In the canonical SPL token-account layout, bytes 0..32 store the mint.
+    // The source and destination must therefore represent the same token.
     if unsafe { sol_memcmp(&source_data[..32], &destination_data[..32], 32) } != 0 {
         return Err(SwigError::InvalidOperation.into());
     }
+    // Bytes 32..64 store the token-account authority (not AccountInfo::owner).
+    // The source must be controlled by the Swig state PDA, and the destination
+    // must be controlled by the Swig wallet-address PDA.
     if unsafe { sol_memcmp(&source_data[32..64], swig.as_ref(), 32) } != 0
         || unsafe { sol_memcmp(&destination_data[32..64], swig_wallet_address.as_ref(), 32) } != 0
     {
