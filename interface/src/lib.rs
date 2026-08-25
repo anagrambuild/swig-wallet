@@ -3457,12 +3457,6 @@ impl TransferAssetsV1Instruction {
     ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
 
-        if !spl_migrations.is_empty() {
-            return Err(anyhow::anyhow!(
-                "TransferAssetsV1 ProgramExec migrations require exact intent binding"
-            ));
-        }
-
         let instruction_sysvar_index = 4;
         let accounts = TransferAssetsV1AccountLayout {
             swig_account,
@@ -3520,12 +3514,6 @@ impl TransferAssetsV1Instruction {
         spl_migrations: &[TransferAssetsV1SplMigration],
     ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
-
-        if !spl_migrations.is_empty() {
-            return Err(anyhow::anyhow!(
-                "TransferAssetsV1 ProgramExec migrations require exact intent binding"
-            ));
-        }
 
         let instruction_sysvar_index = 4;
         let accounts = TransferAssetsV1AccountLayout {
@@ -5310,7 +5298,7 @@ mod tests {
         .unwrap();
         assert_ne!(r1_payload_with_migration, r1_payload_without_migration);
 
-        let program_exec_error = TransferAssetsV1Instruction::new_with_program_exec_and_migrations(
+        let program_exec = TransferAssetsV1Instruction::new_with_program_exec_and_migrations(
             swig,
             wallet,
             payer,
@@ -5318,12 +5306,17 @@ mod tests {
             0,
             &[migration],
         )
-        .unwrap_err();
-        assert!(program_exec_error
-            .to_string()
-            .contains("require exact intent binding"));
+        .unwrap();
+        assert_transfer_assets_layout(
+            &program_exec[1],
+            swig,
+            wallet,
+            payer,
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+            migration,
+        );
 
-        let program_exec_ix_index_error =
+        let program_exec_ix_index =
             TransferAssetsV1Instruction::new_with_program_exec_ix_index_and_migrations(
                 swig,
                 wallet,
@@ -5333,10 +5326,15 @@ mod tests {
                 0,
                 &[migration],
             )
-            .unwrap_err();
-        assert!(program_exec_ix_index_error
-            .to_string()
-            .contains("require exact intent binding"));
+            .unwrap();
+        assert_transfer_assets_layout(
+            &program_exec_ix_index[1],
+            swig,
+            wallet,
+            payer,
+            AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
+            migration,
+        );
 
         let program_exec = TransferAssetsV1Instruction::new_with_program_exec(
             swig,
