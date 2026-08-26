@@ -7,7 +7,7 @@
 //! accounts.
 
 pub mod actions;
-mod error;
+pub mod error;
 pub mod instruction;
 pub mod util;
 use core::mem::MaybeUninit;

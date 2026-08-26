@@ -27,6 +27,7 @@ use crate::{
         accounts::{Context, SubAccountSignV2Accounts},
         SwigInstruction,
     },
+    util::{capture_authority_isolation, ed25519_authority_signer_key, verify_authority_isolation},
     AccountClassification,
 };
 
@@ -205,7 +206,7 @@ pub fn sub_account_sign_v2(
 
     let sign = SubAccountSignV2::from_instruction_bytes(data)?;
 
-    let swig_id = {
+    let (swig_id, authority_signer) = {
         let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
         if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8
         {
@@ -241,8 +242,18 @@ pub fn sub_account_sign_v2(
             )?;
         }
         authorize_scoped_v2(&role, Permission::SubAccountV2Sign, sign.args.subacc_id)?;
-        swig_id
+        let authority_signer = ed25519_authority_signer_key(
+            role.position.authority_type()?,
+            sign.authority_payload,
+            all_accounts,
+        )?
+        .copied();
+        (swig_id, authority_signer)
     };
+    let isolation = authority_signer
+        .as_ref()
+        .map(|key| capture_authority_isolation(all_accounts, key))
+        .transpose()?;
 
     // Validate the state account and obtain the asset bump for signing.
     let asset_bump = validate_v2_state(
@@ -274,6 +285,10 @@ pub fn sub_account_sign_v2(
         } else {
             return Err(SwigError::InstructionExecutionError.into());
         }
+    }
+
+    if let (Some(key), Some(guard)) = (authority_signer.as_ref(), isolation.as_ref()) {
+        verify_authority_isolation(guard, all_accounts, key)?;
     }
 
     // Ensure the asset account remains rent-exempt.

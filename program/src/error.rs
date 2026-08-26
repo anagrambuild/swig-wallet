@@ -177,6 +177,9 @@ pub enum SwigError {
     ActiveV1SubAccountMustBeClosed,
     /// Swig account has already migrated to the wallet-address layout
     SwigAlreadyMigrated,
+    /// Inner CPIs modified the authenticating authority's personal SOL or token
+    /// accounts in a way that is not explained by ATA/account creation
+    PermissionDeniedAuthorityExternalAssetChange,
 }
 
 /// Implements conversion from SwigError to ProgramError.
