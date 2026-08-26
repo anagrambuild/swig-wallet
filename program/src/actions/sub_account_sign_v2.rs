@@ -279,7 +279,7 @@ pub fn sub_account_sign_v2(
     }
 
     if let Some(guard) = isolation.as_ref() {
-        verify_authority_isolation(guard, all_accounts, ctx.accounts.sub_account.key())?;
+        verify_authority_isolation(guard, all_accounts)?;
     }
 
     // Ensure the asset account remains rent-exempt.

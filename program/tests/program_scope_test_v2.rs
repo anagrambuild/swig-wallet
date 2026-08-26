@@ -1075,7 +1075,14 @@ fn test_program_scope_balance_underflow_check_v2() {
     )
     .unwrap();
 
-    // Mint initial tokens to the external funding account
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &swig_wallet_ata,
+        500,
+    )
+    .unwrap();
     mint_to(
         &mut context.svm,
         &mint_pubkey,
@@ -1117,43 +1124,28 @@ fn test_program_scope_balance_underflow_check_v2() {
     )
     .unwrap();
 
-    // CPI 1: Fund the swig wallet ATA with tokens (deposit from external account)
-    let funding_amount = 500;
-    let funding_ix = spl_token::instruction::transfer(
-        &spl_token::ID,
-        &external_funding_ata,
-        &swig_wallet_ata,
-        &external_funding_account.pubkey(),
-        &[],
-        funding_amount,
-    )
-    .unwrap();
-
-    // CPI 2: Withdraw tokens from swig wallet ATA (should be properly tracked now)
-    // In V2, the authority is swig_wallet_address
+    // Withdraw only. Personal token deposits must be sibling ixs, not inner SignV2.
     let withdrawal_amount = 100;
     let withdrawal_ix = spl_token::instruction::transfer(
         &spl_token::ID,
         &swig_wallet_ata,
         &external_funding_ata,
-        &swig_wallet_address, // V2: swig_wallet_address signs for this withdrawal
+        &swig_wallet_address,
         &[],
         withdrawal_amount,
     )
     .unwrap();
 
-    // Compact the instructions for SignV2
     let initial_accounts = vec![
         AccountMeta::new(swig, false),
         AccountMeta::new(swig_wallet_address, false),
         AccountMeta::new_readonly(swig_authority.pubkey(), true),
         AccountMeta::new(external_funding_ata, false),
         AccountMeta::new(swig_wallet_ata, false),
-        AccountMeta::new_readonly(external_funding_account.pubkey(), true),
         AccountMeta::new_readonly(spl_token::ID, false),
     ];
     let (final_accounts, compact_ixs) =
-        compact_instructions(swig, initial_accounts, vec![funding_ix, withdrawal_ix]);
+        compact_instructions(swig, initial_accounts, vec![withdrawal_ix]);
     let instruction_payload = compact_ixs.into_bytes();
 
     // Prepare the sign_v2 instruction
@@ -1179,11 +1171,7 @@ fn test_program_scope_balance_underflow_check_v2() {
     .unwrap();
     let tx = VersionedTransaction::try_new(
         VersionedMessage::V0(message),
-        &[
-            &context.default_payer,
-            &swig_authority,
-            &external_funding_account,
-        ],
+        &[&context.default_payer, &swig_authority],
     )
     .unwrap();
     let result = context.svm.send_transaction(tx);

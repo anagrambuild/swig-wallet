@@ -229,7 +229,7 @@ pub fn sub_account_sign_v1(
     }
 
     if let Some(guard) = isolation.as_ref() {
-        verify_authority_isolation(guard, all_accounts, ctx.accounts.sub_account.key())?;
+        verify_authority_isolation(guard, all_accounts)?;
     }
 
     // Check that the sub-account maintains sufficient lamports for rent exemption
