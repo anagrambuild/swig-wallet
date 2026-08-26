@@ -472,10 +472,25 @@ pub fn hash_except(
 }
 
 const TOKEN_ACCOUNT_BASE_DATA_LEN: usize = 165;
+const TOKEN_MINT_BASE_LEN: usize = 82;
+const TOKEN_MULTISIG_LEN: usize = 355;
 const TOKEN_AUTHORITY_OFF: usize = 32;
 const TOKEN_AMOUNT_OFF: usize = 64;
+const TOKEN_2022_ACCOUNT_TYPE_OFF: usize = 165;
+const TOKEN_2022_MINT_TYPE_OFF: usize = 82;
+const TOKEN_2022_TYPE_ACCOUNT: u8 = 2;
+const TOKEN_2022_TYPE_MINT: u8 = 1;
 const MAX_PROTECTED_TOKENS: usize = 4;
+const MAX_FROZEN: usize = 4;
 const MAX_WRITABLE: usize = 8;
+const STAKE_STAKER_OFF: usize = 12;
+const STAKE_WITHDRAWER_OFF: usize = 44;
+const VOTE_WITHDRAWER_OFF: usize = 32;
+const NONCE_AUTHORITY_OFF_A: usize = 4;
+const NONCE_AUTHORITY_OFF_B: usize = 40;
+const NONCE_ACCOUNT_LEN: usize = 80;
+const PROGRAMDATA_AUTHORITY_TAG_OFF: usize = 12;
+const PROGRAMDATA_AUTHORITY_OFF: usize = 16;
 
 pub struct AuthorityIsolationGuard {
     authority_index: u8,
@@ -486,7 +501,14 @@ pub struct AuthorityIsolationGuard {
     writable_lamports: [u64; MAX_WRITABLE],
     token_index: [u8; MAX_PROTECTED_TOKENS],
     token_amount: [u64; MAX_PROTECTED_TOKENS],
+    token_lamports: [u64; MAX_PROTECTED_TOKENS],
+    token_data_len: [u16; MAX_PROTECTED_TOKENS],
     token_rest: [MaybeUninit<[u8; 157]>; MAX_PROTECTED_TOKENS],
+    token_tail_hash: [MaybeUninit<[u8; 32]>; MAX_PROTECTED_TOKENS],
+    frozen_count: u8,
+    frozen_index: [u8; MAX_FROZEN],
+    frozen_lamports: [u64; MAX_FROZEN],
+    frozen_hash: [MaybeUninit<[u8; 32]>; MAX_FROZEN],
 }
 
 #[inline(always)]
@@ -505,7 +527,7 @@ pub fn ed25519_authority_signer_index(
     }
 }
 
-#[inline(always)]
+#[inline(never)]
 pub fn new_authority_isolation(
     all_accounts: &[AccountInfo],
     authority_index: usize,
@@ -522,35 +544,187 @@ pub fn new_authority_isolation(
         writable_lamports: [0; MAX_WRITABLE],
         token_index: [0; MAX_PROTECTED_TOKENS],
         token_amount: [0; MAX_PROTECTED_TOKENS],
+        token_lamports: [0; MAX_PROTECTED_TOKENS],
+        token_data_len: [0; MAX_PROTECTED_TOKENS],
         token_rest: [MaybeUninit::uninit(); MAX_PROTECTED_TOKENS],
+        token_tail_hash: [MaybeUninit::uninit(); MAX_PROTECTED_TOKENS],
+        frozen_count: 0,
+        frozen_index: [0; MAX_FROZEN],
+        frozen_lamports: [0; MAX_FROZEN],
+        frozen_hash: [MaybeUninit::uninit(); MAX_FROZEN],
     })
 }
 
 #[inline(always)]
-pub fn isolation_should_observe(account: &AccountInfo, authority_key: &Pubkey) -> bool {
-    if account.lamports() == 0 {
-        return true;
-    }
-    if account.data_len() < TOKEN_ACCOUNT_BASE_DATA_LEN {
-        return false;
-    }
-    let owner = account.owner();
-    if owner != &crate::SPL_TOKEN_ID && owner != &crate::SPL_TOKEN_2022_ID {
-        return false;
-    }
-    let data = unsafe { account.borrow_data_unchecked() };
-    &data[TOKEN_AUTHORITY_OFF..TOKEN_AUTHORITY_OFF + 32] == authority_key.as_ref()
+fn pubkey_eq(data: &[u8], authority_key: &Pubkey) -> bool {
+    data == authority_key.as_ref()
 }
 
 #[inline(always)]
+fn coption_is_key(data: &[u8], off: usize, authority_key: &Pubkey) -> bool {
+    data.len() >= off + 36
+        && data[off..off + 4] == [1, 0, 0, 0]
+        && pubkey_eq(&data[off + 4..off + 36], authority_key)
+}
+
+#[inline(always)]
+fn is_token_program(owner: &Pubkey) -> bool {
+    owner == &crate::SPL_TOKEN_ID || owner == &crate::SPL_TOKEN_2022_ID
+}
+
+#[inline(always)]
+fn is_token_account(data: &[u8]) -> bool {
+    let len = data.len();
+    (len == TOKEN_ACCOUNT_BASE_DATA_LEN)
+        || (len > TOKEN_ACCOUNT_BASE_DATA_LEN
+            && data[TOKEN_2022_ACCOUNT_TYPE_OFF] == TOKEN_2022_TYPE_ACCOUNT)
+}
+
+#[inline(always)]
+fn is_mint_account(data: &[u8]) -> bool {
+    let len = data.len();
+    if is_token_account(data) {
+        return false;
+    }
+    (len == TOKEN_MINT_BASE_LEN)
+        || (len > TOKEN_MINT_BASE_LEN && data[TOKEN_2022_MINT_TYPE_OFF] == TOKEN_2022_TYPE_MINT)
+}
+
+#[inline(never)]
+fn alice_is_mint_authority(data: &[u8], authority_key: &Pubkey) -> bool {
+    coption_is_key(data, 0, authority_key) || coption_is_key(data, 46, authority_key)
+}
+
+#[inline(never)]
+fn alice_in_multisig(data: &[u8], authority_key: &Pubkey) -> bool {
+    if data.len() != TOKEN_MULTISIG_LEN || data[2] != 1 {
+        return false;
+    }
+    let n = data[1] as usize;
+    if n > 11 {
+        return false;
+    }
+    let mut off = 3;
+    for _ in 0..n {
+        if pubkey_eq(&data[off..off + 32], authority_key) {
+            return true;
+        }
+        off += 32;
+    }
+    false
+}
+
+#[inline(always)]
+fn token_owner_is_alice_or_multisig(
+    owner: &[u8],
+    authority_key: &Pubkey,
+    all_accounts: &[AccountInfo],
+) -> bool {
+    if pubkey_eq(owner, authority_key) {
+        return true;
+    }
+    for account in all_accounts {
+        if account.key().as_ref() != owner {
+            continue;
+        }
+        if !is_token_program(account.owner()) || account.data_len() != TOKEN_MULTISIG_LEN {
+            return false;
+        }
+        let data = unsafe { account.borrow_data_unchecked() };
+        return alice_in_multisig(data, authority_key);
+    }
+    false
+}
+
+#[inline(never)]
+fn alice_controls_frozen_account(account: &AccountInfo, authority_key: &Pubkey) -> bool {
+    let owner = account.owner();
+    let len = account.data_len();
+    if is_token_program(owner) {
+        if len < TOKEN_MINT_BASE_LEN {
+            return false;
+        }
+        let data = unsafe { account.borrow_data_unchecked() };
+        if is_mint_account(data) {
+            return alice_is_mint_authority(data, authority_key);
+        }
+        return alice_in_multisig(data, authority_key);
+    }
+    if owner == &crate::STAKING_ID && len >= STAKE_WITHDRAWER_OFF + 32 {
+        let data = unsafe { account.borrow_data_unchecked() };
+        return pubkey_eq(
+            &data[STAKE_STAKER_OFF..STAKE_STAKER_OFF + 32],
+            authority_key,
+        ) || pubkey_eq(
+            &data[STAKE_WITHDRAWER_OFF..STAKE_WITHDRAWER_OFF + 32],
+            authority_key,
+        );
+    }
+    if owner == &crate::VOTE_PROGRAM_ID && len >= VOTE_WITHDRAWER_OFF + 32 {
+        let data = unsafe { account.borrow_data_unchecked() };
+        return pubkey_eq(
+            &data[VOTE_WITHDRAWER_OFF..VOTE_WITHDRAWER_OFF + 32],
+            authority_key,
+        );
+    }
+    if owner == &crate::SYSTEM_PROGRAM_ID && len == NONCE_ACCOUNT_LEN {
+        let data = unsafe { account.borrow_data_unchecked() };
+        return pubkey_eq(
+            &data[NONCE_AUTHORITY_OFF_A..NONCE_AUTHORITY_OFF_A + 32],
+            authority_key,
+        ) || pubkey_eq(
+            &data[NONCE_AUTHORITY_OFF_B..NONCE_AUTHORITY_OFF_B + 32],
+            authority_key,
+        );
+    }
+    if owner == &crate::BPF_LOADER_UPGRADEABLE_ID && len >= PROGRAMDATA_AUTHORITY_OFF + 32 {
+        let data = unsafe { account.borrow_data_unchecked() };
+        return data[PROGRAMDATA_AUTHORITY_TAG_OFF..PROGRAMDATA_AUTHORITY_TAG_OFF + 4]
+            == [1, 0, 0, 0]
+            && pubkey_eq(
+                &data[PROGRAMDATA_AUTHORITY_OFF..PROGRAMDATA_AUTHORITY_OFF + 32],
+                authority_key,
+            );
+    }
+    false
+}
+
+#[inline(always)]
+pub fn isolation_should_observe(
+    account: &AccountInfo,
+    authority_key: &Pubkey,
+    all_accounts: &[AccountInfo],
+) -> bool {
+    if account.lamports() == 0 {
+        return true;
+    }
+    let len = account.data_len();
+    if len == 0 {
+        return false;
+    }
+    if is_token_program(account.owner()) && len >= TOKEN_ACCOUNT_BASE_DATA_LEN {
+        let data = unsafe { account.borrow_data_unchecked() };
+        return pubkey_eq(
+            &data[TOKEN_AUTHORITY_OFF..TOKEN_AUTHORITY_OFF + 32],
+            authority_key,
+        );
+    }
+    if len == TOKEN_ACCOUNT_BASE_DATA_LEN {
+        return false;
+    }
+    alice_controls_frozen_account(account, authority_key)
+}
+
+#[inline(never)]
 pub fn observe_writable_for_isolation(
     guard: &mut AuthorityIsolationGuard,
     index: usize,
     account: &AccountInfo,
     authority_key: &Pubkey,
+    all_accounts: &[AccountInfo],
 ) -> ProgramResult {
     let owner = account.owner();
-    let is_token = owner == &crate::SPL_TOKEN_ID || owner == &crate::SPL_TOKEN_2022_ID;
+    let is_token = is_token_program(owner);
     if is_token || account.lamports() == 0 {
         let count = guard.writable_count as usize;
         if count >= MAX_WRITABLE {
@@ -560,11 +734,29 @@ pub fn observe_writable_for_isolation(
         guard.writable_lamports[count] = account.lamports();
         guard.writable_count = (count + 1) as u8;
     }
+    if alice_controls_frozen_account(account, authority_key) {
+        let frozen_i = guard.frozen_count as usize;
+        if frozen_i >= MAX_FROZEN {
+            return Err(SwigError::InvalidAccountsLength.into());
+        }
+        let data = unsafe { account.borrow_data_unchecked() };
+        guard.frozen_index[frozen_i] = index as u8;
+        guard.frozen_lamports[frozen_i] = account.lamports();
+        guard.frozen_hash[frozen_i].write(hash_except(data, owner, &[]));
+        guard.frozen_count = (frozen_i + 1) as u8;
+        return Ok(());
+    }
     if !is_token || account.data_len() < TOKEN_ACCOUNT_BASE_DATA_LEN {
         return Ok(());
     }
     let data = unsafe { account.borrow_data_unchecked() };
-    if &data[TOKEN_AUTHORITY_OFF..TOKEN_AUTHORITY_OFF + 32] != authority_key.as_ref() {
+    if !is_token_account(data)
+        || !token_owner_is_alice_or_multisig(
+            &data[TOKEN_AUTHORITY_OFF..TOKEN_AUTHORITY_OFF + 32],
+            authority_key,
+            all_accounts,
+        )
+    {
         return Ok(());
     }
     let token_i = guard.token_count as usize;
@@ -578,7 +770,16 @@ pub fn observe_writable_for_isolation(
     rest[64..].copy_from_slice(&data[72..165]);
     guard.token_index[token_i] = index as u8;
     guard.token_amount[token_i] = u64::from_le_bytes(amount);
+    guard.token_lamports[token_i] = account.lamports();
+    guard.token_data_len[token_i] = data.len() as u16;
     guard.token_rest[token_i].write(rest);
+    if data.len() > TOKEN_ACCOUNT_BASE_DATA_LEN {
+        guard.token_tail_hash[token_i].write(hash_except(
+            &data[TOKEN_ACCOUNT_BASE_DATA_LEN..],
+            owner,
+            &[],
+        ));
+    }
     guard.token_count = (token_i + 1) as u8;
     Ok(())
 }
@@ -592,13 +793,19 @@ pub fn capture_authority_isolation(
     let authority_key = unsafe { all_accounts.get_unchecked(authority_index).key() };
     for (index, account) in all_accounts.iter().enumerate() {
         if account.is_writable() {
-            observe_writable_for_isolation(&mut guard, index, account, authority_key)?;
+            observe_writable_for_isolation(
+                &mut guard,
+                index,
+                account,
+                authority_key,
+                all_accounts,
+            )?;
         }
     }
     Ok(guard)
 }
 
-#[inline(always)]
+#[inline(never)]
 pub fn verify_authority_isolation(
     guard: &AuthorityIsolationGuard,
     all_accounts: &[AccountInfo],
@@ -616,14 +823,38 @@ pub fn verify_authority_isolation(
             }
             let data = unsafe { account.borrow_data_unchecked() };
             let rest = unsafe { guard.token_rest[i].assume_init_ref() };
-            if data[..64] != rest[..64] || data[72..165] != rest[64..] {
+            if data.len() != guard.token_data_len[i] as usize
+                || data[..64] != rest[..64]
+                || data[72..165] != rest[64..]
+            {
                 return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+            }
+            if data.len() > TOKEN_ACCOUNT_BASE_DATA_LEN {
+                let tail = hash_except(&data[TOKEN_ACCOUNT_BASE_DATA_LEN..], owner, &[]);
+                if tail != unsafe { *guard.token_tail_hash[i].assume_init_ref() } {
+                    return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+                }
             }
             let mut amount = [0u8; 8];
             amount.copy_from_slice(&data[TOKEN_AMOUNT_OFF..TOKEN_AMOUNT_OFF + 8]);
-            if u64::from_le_bytes(amount) < guard.token_amount[i] {
+            if u64::from_le_bytes(amount) < guard.token_amount[i]
+                || account.lamports() < guard.token_lamports[i]
+            {
                 return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
             }
+        }
+    }
+
+    let frozen_count = guard.frozen_count as usize;
+    for i in 0..frozen_count {
+        let account = unsafe { all_accounts.get_unchecked(guard.frozen_index[i] as usize) };
+        if account.lamports() < guard.frozen_lamports[i] {
+            return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+        }
+        let data = unsafe { account.borrow_data_unchecked() };
+        let hash = hash_except(data, account.owner(), &[]);
+        if hash != unsafe { *guard.frozen_hash[i].assume_init_ref() } {
+            return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
         }
     }
 

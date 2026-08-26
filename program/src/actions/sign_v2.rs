@@ -51,9 +51,8 @@ use crate::{
         SwigInstruction,
     },
     util::{
-        capture_authority_isolation, ed25519_authority_signer_index, hash_except,
-        isolation_should_observe, new_authority_isolation, observe_writable_for_isolation,
-        verify_authority_isolation,
+        ed25519_authority_signer_index, hash_except, isolation_should_observe,
+        new_authority_isolation, observe_writable_for_isolation, verify_authority_isolation,
     },
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
 };
@@ -297,9 +296,29 @@ pub fn sign_v2(
         || RoleMut::get_action_mut::<AllButManageAuthority>(role.actions, &[])?.is_some();
 
     if has_unrestricted_sign_permission {
-        let isolation = isolation_idx
-            .map(|idx| capture_authority_isolation(all_accounts, idx))
-            .transpose()?;
+        let isolation_key = isolation_idx.and_then(|idx| all_accounts.get(idx).map(|a| a.key()));
+        let isolation_lamports_before =
+            isolation_idx.map(|idx| unsafe { all_accounts.get_unchecked(idx).lamports() });
+        let mut isolation = None;
+        if let Some(key) = isolation_key {
+            for (index, account) in all_accounts.iter().enumerate() {
+                if index < account_classifiers.len()
+                    && !matches!(account_classifiers[index], AccountClassification::None)
+                {
+                    continue;
+                }
+                if account.is_writable() && isolation_should_observe(account, key, all_accounts) {
+                    if isolation.is_none() {
+                        if let Some(idx) = isolation_idx {
+                            isolation = Some(new_authority_isolation(all_accounts, idx)?);
+                        }
+                    }
+                    if let Some(guard) = isolation.as_mut() {
+                        observe_writable_for_isolation(guard, index, account, key, all_accounts)?;
+                    }
+                }
+            }
+        }
         for ix in ix_iter {
             let instruction = ix.map_err(|_| SwigError::InstructionExecutionError)?;
             let check_shape = wallet_shape_can_change(&instruction);
@@ -321,6 +340,10 @@ pub fn sign_v2(
 
         if let Some(guard) = isolation.as_ref() {
             verify_authority_isolation(guard, all_accounts)?;
+        } else if let (Some(idx), Some(before)) = (isolation_idx, isolation_lamports_before) {
+            if unsafe { all_accounts.get_unchecked(idx).lamports() } < before {
+                return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+            }
         }
 
         return Ok(());
@@ -356,14 +379,14 @@ pub fn sign_v2(
 
         if matches!(account_classifier, AccountClassification::None) {
             if let Some(key) = isolation_key {
-                if isolation_should_observe(account, key) {
+                if isolation_should_observe(account, key, all_accounts) {
                     if isolation.is_none() {
                         if let Some(idx) = isolation_idx {
                             isolation = Some(new_authority_isolation(all_accounts, idx)?);
                         }
                     }
                     if let Some(guard) = isolation.as_mut() {
-                        observe_writable_for_isolation(guard, index, account, key)?;
+                        observe_writable_for_isolation(guard, index, account, key, all_accounts)?;
                     }
                 }
             }

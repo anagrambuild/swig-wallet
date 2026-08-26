@@ -214,6 +214,94 @@ fn sign_v2_blocks_inner_approve_of_alice_personal_token_account() {
     assert_eq!(token.delegated_amount, 0);
 }
 
+fn setup_alice_mint_and_swig(context: &mut Context, alice: &Keypair) -> (Pubkey, Pubkey, Pubkey) {
+    context
+        .svm
+        .airdrop(&alice.pubkey(), 10_000_000_000)
+        .unwrap();
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(context, alice, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let mint = litesvm_token::CreateMint::new(&mut context.svm, alice)
+        .decimals(9)
+        .token_program_id(&spl_token::ID)
+        .send()
+        .unwrap();
+    (swig, swig_wallet_address, mint)
+}
+
+#[test_log::test]
+fn sign_v2_blocks_inner_mint_to_from_alice_mint() {
+    let mut context = setup_test_context().unwrap();
+    let alice = Keypair::new();
+    let attacker = Keypair::new();
+    let (swig, swig_wallet_address, mint) = setup_alice_mint_and_swig(&mut context, &alice);
+    let attacker_ata = setup_ata(
+        &mut context.svm,
+        &mint,
+        &attacker.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+    let inner_ix = Instruction {
+        program_id: spl_token::id(),
+        accounts: vec![
+            AccountMeta::new(mint, false),
+            AccountMeta::new(attacker_ata, false),
+            AccountMeta::new_readonly(alice.pubkey(), true),
+        ],
+        data: TokenInstruction::MintTo { amount: 1_000 }.pack(),
+    };
+    let sign_v2_ix =
+        SignV2Instruction::new_ed25519(swig, swig_wallet_address, alice.pubkey(), inner_ix, 0)
+            .unwrap();
+    let message = v0::Message::try_compile(
+        &alice.pubkey(),
+        &[sign_v2_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&alice]).unwrap();
+    let err = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(err.err, isolation_error());
+    assert_eq!(token_amount(&context, &attacker_ata), 0);
+}
+
+#[test_log::test]
+fn sign_v2_blocks_inner_set_authority_on_alice_mint() {
+    let mut context = setup_test_context().unwrap();
+    let alice = Keypair::new();
+    let attacker = Keypair::new();
+    let (swig, swig_wallet_address, mint) = setup_alice_mint_and_swig(&mut context, &alice);
+    let inner_ix = Instruction {
+        program_id: spl_token::id(),
+        accounts: vec![
+            AccountMeta::new(mint, false),
+            AccountMeta::new_readonly(alice.pubkey(), true),
+        ],
+        data: TokenInstruction::SetAuthority {
+            authority_type: spl_token::instruction::AuthorityType::MintTokens,
+            new_authority: Some(attacker.pubkey()).into(),
+        }
+        .pack(),
+    };
+    let sign_v2_ix =
+        SignV2Instruction::new_ed25519(swig, swig_wallet_address, alice.pubkey(), inner_ix, 0)
+            .unwrap();
+    let message = v0::Message::try_compile(
+        &alice.pubkey(),
+        &[sign_v2_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&alice]).unwrap();
+    let err = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(err.err, isolation_error());
+}
+
 #[test_log::test]
 fn sign_v2_blocks_inner_system_transfer_from_alice() {
     let mut context = setup_test_context().unwrap();
