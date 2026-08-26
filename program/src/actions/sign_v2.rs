@@ -52,6 +52,7 @@ use crate::{
     },
     util::{
         capture_authority_isolation, ed25519_authority_signer_index, hash_except,
+        isolation_should_observe, new_authority_isolation, observe_writable_for_isolation,
         verify_authority_isolation,
     },
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
@@ -278,10 +279,8 @@ pub fn sign_v2(
     }
     // Intentionally no restricted keys: SignV2 forwards existing outer signer
     // bits in compact CPI metas in addition to the Swig wallet PDA signer.
-    let isolation =
-        ed25519_authority_signer_index(role.position.authority_type()?, sign_v2.authority_payload)?
-            .map(|idx| capture_authority_isolation(all_accounts, idx))
-            .transpose()?;
+    let isolation_idx =
+        ed25519_authority_signer_index(role.position.authority_type()?, sign_v2.authority_payload)?;
     let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,
@@ -298,6 +297,9 @@ pub fn sign_v2(
         || RoleMut::get_action_mut::<AllButManageAuthority>(role.actions, &[])?.is_some();
 
     if has_unrestricted_sign_permission {
+        let isolation = isolation_idx
+            .map(|idx| capture_authority_isolation(all_accounts, idx))
+            .transpose()?;
         for ix in ix_iter {
             let instruction = ix.map_err(|_| SwigError::InstructionExecutionError)?;
             let check_shape = wallet_shape_can_change(&instruction);
@@ -329,6 +331,10 @@ pub fn sign_v2(
     let has_program_curated_permission = !has_program_all_permission
         && RoleMut::get_action_mut::<ProgramCurated>(role.actions, &[])?.is_some();
     let mut check_wallet_shape = false;
+    let mut isolation = None;
+    let isolation_key = isolation_idx.and_then(|idx| all_accounts.get(idx).map(|a| a.key()));
+    let isolation_lamports_before =
+        isolation_idx.map(|idx| unsafe { all_accounts.get_unchecked(idx).lamports() });
 
     // Snapshot hashes are the pre-CPI integrity baseline for writable accounts.
     // SignV2 permits specific balance fields to change, then verifies the rest
@@ -346,6 +352,21 @@ pub fn sign_v2(
         // Only check writable accounts as read-only accounts won't modify data
         if !account.is_writable() {
             continue;
+        }
+
+        if matches!(account_classifier, AccountClassification::None) {
+            if let Some(key) = isolation_key {
+                if isolation_should_observe(account, key) {
+                    if isolation.is_none() {
+                        if let Some(idx) = isolation_idx {
+                            isolation = Some(new_authority_isolation(all_accounts, idx)?);
+                        }
+                    }
+                    if let Some(guard) = isolation.as_mut() {
+                        observe_writable_for_isolation(guard, index, account, key)?;
+                    }
+                }
+            }
         }
 
         let hash = match account_classifier {
@@ -562,6 +583,10 @@ pub fn sign_v2(
 
     if let Some(guard) = isolation.as_ref() {
         verify_authority_isolation(guard, all_accounts)?;
+    } else if let (Some(idx), Some(before)) = (isolation_idx, isolation_lamports_before) {
+        if unsafe { all_accounts.get_unchecked(idx).lamports() } < before {
+            return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+        }
     }
 
     let actions = role.actions;

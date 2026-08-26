@@ -475,7 +475,7 @@ const TOKEN_ACCOUNT_BASE_DATA_LEN: usize = 165;
 const TOKEN_AUTHORITY_OFF: usize = 32;
 const TOKEN_AMOUNT_OFF: usize = 64;
 const MAX_PROTECTED_TOKENS: usize = 4;
-const MAX_WRITABLE: usize = 16;
+const MAX_WRITABLE: usize = 8;
 
 pub struct AuthorityIsolationGuard {
     authority_index: u8,
@@ -505,66 +505,91 @@ pub fn ed25519_authority_signer_index(
 }
 
 #[inline(always)]
-pub fn capture_authority_isolation(
+pub fn new_authority_isolation(
     all_accounts: &[AccountInfo],
     authority_index: usize,
 ) -> Result<AuthorityIsolationGuard, ProgramError> {
     if authority_index >= all_accounts.len() {
         return Err(SwigError::InvalidAuthorityPayload.into());
     }
-    let authority = unsafe { all_accounts.get_unchecked(authority_index) };
-    let authority_key = authority.key();
-    let mut writable_count = 0u8;
-    let mut token_count = 0u8;
-    let mut writable_index = [0u8; MAX_WRITABLE];
-    let mut writable_lamports = [0u64; MAX_WRITABLE];
-    let mut token_index = [0u8; MAX_PROTECTED_TOKENS];
-    let mut token_amount = [0u64; MAX_PROTECTED_TOKENS];
+    Ok(AuthorityIsolationGuard {
+        authority_index: authority_index as u8,
+        token_count: 0,
+        writable_count: 0,
+        authority_lamports: unsafe { all_accounts.get_unchecked(authority_index).lamports() },
+        writable_index: [0; MAX_WRITABLE],
+        writable_lamports: [0; MAX_WRITABLE],
+        token_index: [0; MAX_PROTECTED_TOKENS],
+        token_amount: [0; MAX_PROTECTED_TOKENS],
+    })
+}
 
-    for (index, account) in all_accounts.iter().enumerate() {
-        if !account.is_writable() {
-            continue;
-        }
-        let count = writable_count as usize;
+#[inline(always)]
+pub fn isolation_should_observe(account: &AccountInfo, authority_key: &Pubkey) -> bool {
+    if account.lamports() == 0 {
+        return true;
+    }
+    if account.data_len() < TOKEN_ACCOUNT_BASE_DATA_LEN {
+        return false;
+    }
+    let owner = account.owner();
+    if owner != &crate::SPL_TOKEN_ID && owner != &crate::SPL_TOKEN_2022_ID {
+        return false;
+    }
+    let data = unsafe { account.borrow_data_unchecked() };
+    &data[TOKEN_AUTHORITY_OFF..TOKEN_AUTHORITY_OFF + 32] == authority_key.as_ref()
+}
+
+#[inline(always)]
+pub fn observe_writable_for_isolation(
+    guard: &mut AuthorityIsolationGuard,
+    index: usize,
+    account: &AccountInfo,
+    authority_key: &Pubkey,
+) -> ProgramResult {
+    let owner = account.owner();
+    let is_token = owner == &crate::SPL_TOKEN_ID || owner == &crate::SPL_TOKEN_2022_ID;
+    if is_token || account.lamports() == 0 {
+        let count = guard.writable_count as usize;
         if count >= MAX_WRITABLE {
             return Err(SwigError::InvalidAccountsLength.into());
         }
-        writable_index[count] = index as u8;
-        writable_lamports[count] = account.lamports();
-        writable_count = (count + 1) as u8;
-
-        if account.data_len() < TOKEN_ACCOUNT_BASE_DATA_LEN {
-            continue;
-        }
-        let owner = account.owner();
-        if owner != &crate::SPL_TOKEN_ID && owner != &crate::SPL_TOKEN_2022_ID {
-            continue;
-        }
-        let data = unsafe { account.borrow_data_unchecked() };
-        if &data[TOKEN_AUTHORITY_OFF..TOKEN_AUTHORITY_OFF + 32] != authority_key.as_ref() {
-            continue;
-        }
-        let token_i = token_count as usize;
-        if token_i >= MAX_PROTECTED_TOKENS {
-            return Err(SwigError::InvalidAccountsLength.into());
-        }
-        let mut amount = [0u8; 8];
-        amount.copy_from_slice(&data[TOKEN_AMOUNT_OFF..TOKEN_AMOUNT_OFF + 8]);
-        token_index[token_i] = index as u8;
-        token_amount[token_i] = u64::from_le_bytes(amount);
-        token_count = (token_i + 1) as u8;
+        guard.writable_index[count] = index as u8;
+        guard.writable_lamports[count] = account.lamports();
+        guard.writable_count = (count + 1) as u8;
     }
+    if !is_token || account.data_len() < TOKEN_ACCOUNT_BASE_DATA_LEN {
+        return Ok(());
+    }
+    let data = unsafe { account.borrow_data_unchecked() };
+    if &data[TOKEN_AUTHORITY_OFF..TOKEN_AUTHORITY_OFF + 32] != authority_key.as_ref() {
+        return Ok(());
+    }
+    let token_i = guard.token_count as usize;
+    if token_i >= MAX_PROTECTED_TOKENS {
+        return Err(SwigError::InvalidAccountsLength.into());
+    }
+    let mut amount = [0u8; 8];
+    amount.copy_from_slice(&data[TOKEN_AMOUNT_OFF..TOKEN_AMOUNT_OFF + 8]);
+    guard.token_index[token_i] = index as u8;
+    guard.token_amount[token_i] = u64::from_le_bytes(amount);
+    guard.token_count = (token_i + 1) as u8;
+    Ok(())
+}
 
-    Ok(AuthorityIsolationGuard {
-        authority_index: authority_index as u8,
-        token_count,
-        writable_count,
-        authority_lamports: authority.lamports(),
-        writable_index,
-        writable_lamports,
-        token_index,
-        token_amount,
-    })
+#[inline(always)]
+pub fn capture_authority_isolation(
+    all_accounts: &[AccountInfo],
+    authority_index: usize,
+) -> Result<AuthorityIsolationGuard, ProgramError> {
+    let mut guard = new_authority_isolation(all_accounts, authority_index)?;
+    let authority_key = unsafe { all_accounts.get_unchecked(authority_index).key() };
+    for (index, account) in all_accounts.iter().enumerate() {
+        if account.is_writable() {
+            observe_writable_for_isolation(&mut guard, index, account, authority_key)?;
+        }
+    }
+    Ok(guard)
 }
 
 #[inline(always)]
