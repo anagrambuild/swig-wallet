@@ -486,6 +486,7 @@ pub struct AuthorityIsolationGuard {
     writable_lamports: [u64; MAX_WRITABLE],
     token_index: [u8; MAX_PROTECTED_TOKENS],
     token_amount: [u64; MAX_PROTECTED_TOKENS],
+    token_rest: [MaybeUninit<[u8; 157]>; MAX_PROTECTED_TOKENS],
 }
 
 #[inline(always)]
@@ -521,6 +522,7 @@ pub fn new_authority_isolation(
         writable_lamports: [0; MAX_WRITABLE],
         token_index: [0; MAX_PROTECTED_TOKENS],
         token_amount: [0; MAX_PROTECTED_TOKENS],
+        token_rest: [MaybeUninit::uninit(); MAX_PROTECTED_TOKENS],
     })
 }
 
@@ -571,8 +573,12 @@ pub fn observe_writable_for_isolation(
     }
     let mut amount = [0u8; 8];
     amount.copy_from_slice(&data[TOKEN_AMOUNT_OFF..TOKEN_AMOUNT_OFF + 8]);
+    let mut rest = [0u8; 157];
+    rest[..64].copy_from_slice(&data[..64]);
+    rest[64..].copy_from_slice(&data[72..165]);
     guard.token_index[token_i] = index as u8;
     guard.token_amount[token_i] = u64::from_le_bytes(amount);
+    guard.token_rest[token_i].write(rest);
     guard.token_count = (token_i + 1) as u8;
     Ok(())
 }
@@ -599,11 +605,6 @@ pub fn verify_authority_isolation(
 ) -> ProgramResult {
     let token_count = guard.token_count as usize;
     if token_count != 0 {
-        let authority_key = unsafe {
-            all_accounts
-                .get_unchecked(guard.authority_index as usize)
-                .key()
-        };
         for i in 0..token_count {
             let account = unsafe { all_accounts.get_unchecked(guard.token_index[i] as usize) };
             if account.data_len() < TOKEN_ACCOUNT_BASE_DATA_LEN {
@@ -614,7 +615,8 @@ pub fn verify_authority_isolation(
                 return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
             }
             let data = unsafe { account.borrow_data_unchecked() };
-            if &data[TOKEN_AUTHORITY_OFF..TOKEN_AUTHORITY_OFF + 32] != authority_key.as_ref() {
+            let rest = unsafe { guard.token_rest[i].assume_init_ref() };
+            if data[..64] != rest[..64] || data[72..165] != rest[64..] {
                 return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
             }
             let mut amount = [0u8; 8];

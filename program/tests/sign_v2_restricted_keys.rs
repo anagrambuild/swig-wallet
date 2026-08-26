@@ -154,6 +154,67 @@ fn sign_v2_blocks_limited_role_personal_token_drain() {
 }
 
 #[test_log::test]
+fn sign_v2_blocks_inner_approve_of_alice_personal_token_account() {
+    let mut context = setup_test_context().unwrap();
+    let alice = Keypair::new();
+    let attacker = Keypair::new();
+    context
+        .svm
+        .airdrop(&alice.pubkey(), 10_000_000_000)
+        .unwrap();
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &alice, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let alice_ata = setup_ata(
+        &mut context.svm,
+        &mint,
+        &alice.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+    mint_to(
+        &mut context.svm,
+        &mint,
+        &context.default_payer,
+        &alice_ata,
+        PERSONAL_TOKEN_BALANCE,
+    )
+    .unwrap();
+
+    let inner_ix = Instruction {
+        program_id: spl_token::id(),
+        accounts: vec![
+            AccountMeta::new(alice_ata, false),
+            AccountMeta::new_readonly(attacker.pubkey(), false),
+            AccountMeta::new_readonly(alice.pubkey(), true),
+        ],
+        data: TokenInstruction::Approve {
+            amount: STOLEN_AMOUNT,
+        }
+        .pack(),
+    };
+    let sign_v2_ix =
+        SignV2Instruction::new_ed25519(swig, swig_wallet_address, alice.pubkey(), inner_ix, 0)
+            .unwrap();
+    let message = v0::Message::try_compile(
+        &alice.pubkey(),
+        &[sign_v2_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&alice]).unwrap();
+    let err = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(err.err, isolation_error());
+    let account = context.svm.get_account(&alice_ata).unwrap();
+    let token = spl_token::state::Account::unpack(&account.data).unwrap();
+    assert_eq!(token.amount, PERSONAL_TOKEN_BALANCE);
+    assert_eq!(token.delegated_amount, 0);
+}
+
+#[test_log::test]
 fn sign_v2_blocks_inner_system_transfer_from_alice() {
     let mut context = setup_test_context().unwrap();
     let alice = Keypair::new();
