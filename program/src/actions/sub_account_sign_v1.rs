@@ -25,9 +25,7 @@ use crate::{
         accounts::{Context, SubAccountSignV1Accounts},
         SwigInstruction,
     },
-    util::{
-        capture_authority_isolation, ed25519_authority_signer_index, verify_authority_isolation,
-    },
+    util::{capture_authority_isolation, verify_authority_isolation},
     AccountClassification,
 };
 
@@ -203,10 +201,7 @@ pub fn sub_account_sign_v1(
     let sub_account_bump = sub_account.bump;
     let sub_account_role_id = sub_account.role_id;
     let sub_account_swig_id = sub_account.swig_id;
-    let isolation =
-        ed25519_authority_signer_index(role.position.authority_type()?, sign_v1.authority_payload)?
-            .map(|idx| capture_authority_isolation(all_accounts, idx))
-            .transpose()?;
+    let isolation = capture_authority_isolation(all_accounts, ctx.accounts.sub_account.key())?;
     let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,

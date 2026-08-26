@@ -481,6 +481,7 @@ const TOKEN_2022_MINT_TYPE_OFF: usize = 82;
 const TOKEN_2022_TYPE_ACCOUNT: u8 = 2;
 const TOKEN_2022_TYPE_MINT: u8 = 1;
 const MAX_PROTECTED_TOKENS: usize = 4;
+pub const MAX_PROTECTED_SIGNERS: usize = 4;
 const MAX_FROZEN: usize = 4;
 const MAX_WRITABLE: usize = 8;
 const STAKE_STAKER_OFF: usize = 12;
@@ -493,10 +494,12 @@ const PROGRAMDATA_AUTHORITY_TAG_OFF: usize = 12;
 const PROGRAMDATA_AUTHORITY_OFF: usize = 16;
 
 pub struct AuthorityIsolationGuard {
-    authority_index: u8,
+    signer_count: u8,
     token_count: u8,
     writable_count: u8,
-    authority_lamports: u64,
+    frozen_count: u8,
+    signer_index: [u8; MAX_PROTECTED_SIGNERS],
+    signer_lamports: [u64; MAX_PROTECTED_SIGNERS],
     writable_index: [u8; MAX_WRITABLE],
     writable_lamports: [u64; MAX_WRITABLE],
     token_index: [u8; MAX_PROTECTED_TOKENS],
@@ -505,41 +508,58 @@ pub struct AuthorityIsolationGuard {
     token_data_len: [u16; MAX_PROTECTED_TOKENS],
     token_rest: [MaybeUninit<[u8; 157]>; MAX_PROTECTED_TOKENS],
     token_tail_hash: [MaybeUninit<[u8; 32]>; MAX_PROTECTED_TOKENS],
-    frozen_count: u8,
     frozen_index: [u8; MAX_FROZEN],
     frozen_lamports: [u64; MAX_FROZEN],
     frozen_hash: [MaybeUninit<[u8; 32]>; MAX_FROZEN],
 }
 
-#[inline(always)]
-pub fn ed25519_authority_signer_index(
-    authority_type: AuthorityType,
-    authority_payload: &[u8],
-) -> Result<Option<usize>, ProgramError> {
-    match authority_type {
-        AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
-            if authority_payload.is_empty() {
-                return Err(SwigError::InvalidAuthorityPayload.into());
-            }
-            Ok(Some(authority_payload[0] as usize))
-        },
-        _ => Ok(None),
+#[inline(never)]
+pub fn collect_outer_signer_indices(
+    all_accounts: &[AccountInfo],
+    pda: &Pubkey,
+    out: &mut [u8; MAX_PROTECTED_SIGNERS],
+) -> u8 {
+    let mut count = 0u8;
+    for (index, account) in all_accounts.iter().enumerate() {
+        if !account.is_signer() || account.key() == pda {
+            continue;
+        }
+        if count as usize >= MAX_PROTECTED_SIGNERS {
+            break;
+        }
+        out[count as usize] = index as u8;
+        count += 1;
     }
+    count
 }
 
 #[inline(never)]
 pub fn new_authority_isolation(
     all_accounts: &[AccountInfo],
-    authority_index: usize,
+    signer_indices: &[u8],
+    signer_count: u8,
 ) -> Result<AuthorityIsolationGuard, ProgramError> {
-    if authority_index >= all_accounts.len() {
+    if signer_count == 0 {
         return Err(SwigError::InvalidAuthorityPayload.into());
     }
+    let mut signer_index = [0u8; MAX_PROTECTED_SIGNERS];
+    let mut signer_lamports = [0u64; MAX_PROTECTED_SIGNERS];
+    let n = signer_count as usize;
+    for i in 0..n {
+        let idx = signer_indices[i] as usize;
+        if idx >= all_accounts.len() {
+            return Err(SwigError::InvalidAuthorityPayload.into());
+        }
+        signer_index[i] = signer_indices[i];
+        signer_lamports[i] = unsafe { all_accounts.get_unchecked(idx).lamports() };
+    }
     Ok(AuthorityIsolationGuard {
-        authority_index: authority_index as u8,
+        signer_count,
         token_count: 0,
         writable_count: 0,
-        authority_lamports: unsafe { all_accounts.get_unchecked(authority_index).lamports() },
+        frozen_count: 0,
+        signer_index,
+        signer_lamports,
         writable_index: [0; MAX_WRITABLE],
         writable_lamports: [0; MAX_WRITABLE],
         token_index: [0; MAX_PROTECTED_TOKENS],
@@ -548,7 +568,6 @@ pub fn new_authority_isolation(
         token_data_len: [0; MAX_PROTECTED_TOKENS],
         token_rest: [MaybeUninit::uninit(); MAX_PROTECTED_TOKENS],
         token_tail_hash: [MaybeUninit::uninit(); MAX_PROTECTED_TOKENS],
-        frozen_count: 0,
         frozen_index: [0; MAX_FROZEN],
         frozen_lamports: [0; MAX_FROZEN],
         frozen_hash: [MaybeUninit::uninit(); MAX_FROZEN],
@@ -558,6 +577,22 @@ pub fn new_authority_isolation(
 #[inline(always)]
 fn pubkey_eq(data: &[u8], authority_key: &Pubkey) -> bool {
     data == authority_key.as_ref()
+}
+
+#[inline(always)]
+fn pubkey_eq_any_signer(
+    data: &[u8],
+    all_accounts: &[AccountInfo],
+    signer_indices: &[u8],
+    signer_count: u8,
+) -> bool {
+    for i in 0..signer_count as usize {
+        let key = unsafe { all_accounts.get_unchecked(signer_indices[i] as usize).key() };
+        if pubkey_eq(data, key) {
+            return true;
+        }
+    }
+    false
 }
 
 #[inline(always)]
@@ -636,6 +671,38 @@ fn token_owner_is_alice_or_multisig(
     false
 }
 
+#[inline(always)]
+fn token_owner_is_any_signer_or_multisig(
+    owner: &[u8],
+    all_accounts: &[AccountInfo],
+    signer_indices: &[u8],
+    signer_count: u8,
+) -> bool {
+    for i in 0..signer_count as usize {
+        let key = unsafe { all_accounts.get_unchecked(signer_indices[i] as usize).key() };
+        if token_owner_is_alice_or_multisig(owner, key, all_accounts) {
+            return true;
+        }
+    }
+    false
+}
+
+#[inline(always)]
+fn any_signer_controls_frozen(
+    account: &AccountInfo,
+    all_accounts: &[AccountInfo],
+    signer_indices: &[u8],
+    signer_count: u8,
+) -> bool {
+    for i in 0..signer_count as usize {
+        let key = unsafe { all_accounts.get_unchecked(signer_indices[i] as usize).key() };
+        if alice_controls_frozen_account(account, key) {
+            return true;
+        }
+    }
+    false
+}
+
 #[inline(never)]
 fn alice_controls_frozen_account(account: &AccountInfo, authority_key: &Pubkey) -> bool {
     let owner = account.owner();
@@ -692,9 +759,13 @@ fn alice_controls_frozen_account(account: &AccountInfo, authority_key: &Pubkey) 
 #[inline(always)]
 pub fn isolation_should_observe(
     account: &AccountInfo,
-    authority_key: &Pubkey,
     all_accounts: &[AccountInfo],
+    signer_indices: &[u8],
+    signer_count: u8,
 ) -> bool {
+    if signer_count == 0 {
+        return false;
+    }
     if account.lamports() == 0 {
         return true;
     }
@@ -704,15 +775,23 @@ pub fn isolation_should_observe(
     }
     if is_token_program(account.owner()) && len >= TOKEN_ACCOUNT_BASE_DATA_LEN {
         let data = unsafe { account.borrow_data_unchecked() };
-        return pubkey_eq(
+        return pubkey_eq_any_signer(
             &data[TOKEN_AUTHORITY_OFF..TOKEN_AUTHORITY_OFF + 32],
-            authority_key,
+            all_accounts,
+            signer_indices,
+            signer_count,
         );
     }
     if len == TOKEN_ACCOUNT_BASE_DATA_LEN {
         return false;
     }
-    alice_controls_frozen_account(account, authority_key)
+    for i in 0..signer_count as usize {
+        let key = unsafe { all_accounts.get_unchecked(signer_indices[i] as usize).key() };
+        if alice_controls_frozen_account(account, key) {
+            return true;
+        }
+    }
+    false
 }
 
 #[inline(never)]
@@ -720,7 +799,6 @@ pub fn observe_writable_for_isolation(
     guard: &mut AuthorityIsolationGuard,
     index: usize,
     account: &AccountInfo,
-    authority_key: &Pubkey,
     all_accounts: &[AccountInfo],
 ) -> ProgramResult {
     let owner = account.owner();
@@ -734,7 +812,12 @@ pub fn observe_writable_for_isolation(
         guard.writable_lamports[count] = account.lamports();
         guard.writable_count = (count + 1) as u8;
     }
-    if alice_controls_frozen_account(account, authority_key) {
+    if any_signer_controls_frozen(
+        account,
+        all_accounts,
+        &guard.signer_index,
+        guard.signer_count,
+    ) {
         let frozen_i = guard.frozen_count as usize;
         if frozen_i >= MAX_FROZEN {
             return Err(SwigError::InvalidAccountsLength.into());
@@ -751,10 +834,11 @@ pub fn observe_writable_for_isolation(
     }
     let data = unsafe { account.borrow_data_unchecked() };
     if !is_token_account(data)
-        || !token_owner_is_alice_or_multisig(
+        || !token_owner_is_any_signer_or_multisig(
             &data[TOKEN_AUTHORITY_OFF..TOKEN_AUTHORITY_OFF + 32],
-            authority_key,
             all_accounts,
+            &guard.signer_index,
+            guard.signer_count,
         )
     {
         return Ok(());
@@ -787,22 +871,22 @@ pub fn observe_writable_for_isolation(
 #[inline(always)]
 pub fn capture_authority_isolation(
     all_accounts: &[AccountInfo],
-    authority_index: usize,
-) -> Result<AuthorityIsolationGuard, ProgramError> {
-    let mut guard = new_authority_isolation(all_accounts, authority_index)?;
-    let authority_key = unsafe { all_accounts.get_unchecked(authority_index).key() };
+    pda: &Pubkey,
+) -> Result<Option<AuthorityIsolationGuard>, ProgramError> {
+    let mut signer_indices = [0u8; MAX_PROTECTED_SIGNERS];
+    let signer_count = collect_outer_signer_indices(all_accounts, pda, &mut signer_indices);
+    if signer_count == 0 {
+        return Ok(None);
+    }
+    let mut guard = new_authority_isolation(all_accounts, &signer_indices, signer_count)?;
     for (index, account) in all_accounts.iter().enumerate() {
-        if account.is_writable() {
-            observe_writable_for_isolation(
-                &mut guard,
-                index,
-                account,
-                authority_key,
-                all_accounts,
-            )?;
+        if account.is_writable()
+            && isolation_should_observe(account, all_accounts, &signer_indices, signer_count)
+        {
+            observe_writable_for_isolation(&mut guard, index, account, all_accounts)?;
         }
     }
-    Ok(guard)
+    Ok(Some(guard))
 }
 
 #[inline(never)]
@@ -858,21 +942,33 @@ pub fn verify_authority_isolation(
         }
     }
 
-    let authority_after = unsafe {
-        all_accounts
-            .get_unchecked(guard.authority_index as usize)
-            .lamports()
-    };
-    if authority_after >= guard.authority_lamports {
+    let mut spent = 0u64;
+    let signer_count = guard.signer_count as usize;
+    for i in 0..signer_count {
+        let after = unsafe {
+            all_accounts
+                .get_unchecked(guard.signer_index[i] as usize)
+                .lamports()
+        };
+        if after < guard.signer_lamports[i] {
+            spent = spent.saturating_add(guard.signer_lamports[i] - after);
+        }
+    }
+    if spent == 0 {
         return Ok(());
     }
-    let spent = guard.authority_lamports - authority_after;
     let mut explained = 0u64;
     let writable_count = guard.writable_count as usize;
-    let auth_idx = guard.authority_index;
     for i in 0..writable_count {
         let index = guard.writable_index[i];
-        if index == auth_idx {
+        let mut is_protected_signer = false;
+        for s in 0..signer_count {
+            if index == guard.signer_index[s] {
+                is_protected_signer = true;
+                break;
+            }
+        }
+        if is_protected_signer {
             continue;
         }
         let account = unsafe { all_accounts.get_unchecked(index as usize) };

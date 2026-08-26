@@ -27,9 +27,7 @@ use crate::{
         accounts::{Context, SubAccountSignV2Accounts},
         SwigInstruction,
     },
-    util::{
-        capture_authority_isolation, ed25519_authority_signer_index, verify_authority_isolation,
-    },
+    util::{capture_authority_isolation, verify_authority_isolation},
     AccountClassification,
 };
 
@@ -208,7 +206,7 @@ pub fn sub_account_sign_v2(
 
     let sign = SubAccountSignV2::from_instruction_bytes(data)?;
 
-    let (swig_id, authority_index) = {
+    let swig_id = {
         let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
         if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8
         {
@@ -244,15 +242,9 @@ pub fn sub_account_sign_v2(
             )?;
         }
         authorize_scoped_v2(&role, Permission::SubAccountV2Sign, sign.args.subacc_id)?;
-        let authority_index = ed25519_authority_signer_index(
-            role.position.authority_type()?,
-            sign.authority_payload,
-        )?;
-        (swig_id, authority_index)
+        swig_id
     };
-    let isolation = authority_index
-        .map(|idx| capture_authority_isolation(all_accounts, idx))
-        .transpose()?;
+    let isolation = capture_authority_isolation(all_accounts, ctx.accounts.sub_account.key())?;
 
     // Validate the state account and obtain the asset bump for signing.
     let asset_bump = validate_v2_state(

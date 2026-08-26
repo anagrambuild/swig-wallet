@@ -51,8 +51,9 @@ use crate::{
         SwigInstruction,
     },
     util::{
-        ed25519_authority_signer_index, hash_except, isolation_should_observe,
+        collect_outer_signer_indices, hash_except, isolation_should_observe,
         new_authority_isolation, observe_writable_for_isolation, verify_authority_isolation,
+        MAX_PROTECTED_SIGNERS,
     },
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
 };
@@ -278,8 +279,12 @@ pub fn sign_v2(
     }
     // Intentionally no restricted keys: SignV2 forwards existing outer signer
     // bits in compact CPI metas in addition to the Swig wallet PDA signer.
-    let isolation_idx =
-        ed25519_authority_signer_index(role.position.authority_type()?, sign_v2.authority_payload)?;
+    let mut signer_indices = [0u8; MAX_PROTECTED_SIGNERS];
+    let signer_count = collect_outer_signer_indices(
+        all_accounts,
+        ctx.accounts.swig_wallet_address.key(),
+        &mut signer_indices,
+    );
     let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,
@@ -296,25 +301,39 @@ pub fn sign_v2(
         || RoleMut::get_action_mut::<AllButManageAuthority>(role.actions, &[])?.is_some();
 
     if has_unrestricted_sign_permission {
-        let isolation_key = isolation_idx.and_then(|idx| all_accounts.get(idx).map(|a| a.key()));
-        let isolation_lamports_before =
-            isolation_idx.map(|idx| unsafe { all_accounts.get_unchecked(idx).lamports() });
+        let mut signer_lamports_before = [0u64; MAX_PROTECTED_SIGNERS];
+        for i in 0..signer_count as usize {
+            signer_lamports_before[i] = unsafe {
+                all_accounts
+                    .get_unchecked(signer_indices[i] as usize)
+                    .lamports()
+            };
+        }
         let mut isolation = None;
-        if let Some(key) = isolation_key {
+        if signer_count > 0 {
             for (index, account) in all_accounts.iter().enumerate() {
                 if index < account_classifiers.len()
                     && !matches!(account_classifiers[index], AccountClassification::None)
                 {
                     continue;
                 }
-                if account.is_writable() && isolation_should_observe(account, key, all_accounts) {
+                if account.is_writable()
+                    && isolation_should_observe(
+                        account,
+                        all_accounts,
+                        &signer_indices,
+                        signer_count,
+                    )
+                {
                     if isolation.is_none() {
-                        if let Some(idx) = isolation_idx {
-                            isolation = Some(new_authority_isolation(all_accounts, idx)?);
-                        }
+                        isolation = Some(new_authority_isolation(
+                            all_accounts,
+                            &signer_indices,
+                            signer_count,
+                        )?);
                     }
                     if let Some(guard) = isolation.as_mut() {
-                        observe_writable_for_isolation(guard, index, account, key, all_accounts)?;
+                        observe_writable_for_isolation(guard, index, account, all_accounts)?;
                     }
                 }
             }
@@ -340,9 +359,16 @@ pub fn sign_v2(
 
         if let Some(guard) = isolation.as_ref() {
             verify_authority_isolation(guard, all_accounts)?;
-        } else if let (Some(idx), Some(before)) = (isolation_idx, isolation_lamports_before) {
-            if unsafe { all_accounts.get_unchecked(idx).lamports() } < before {
-                return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+        } else {
+            for i in 0..signer_count as usize {
+                let after = unsafe {
+                    all_accounts
+                        .get_unchecked(signer_indices[i] as usize)
+                        .lamports()
+                };
+                if after < signer_lamports_before[i] {
+                    return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+                }
             }
         }
 
@@ -355,9 +381,14 @@ pub fn sign_v2(
         && RoleMut::get_action_mut::<ProgramCurated>(role.actions, &[])?.is_some();
     let mut check_wallet_shape = false;
     let mut isolation = None;
-    let isolation_key = isolation_idx.and_then(|idx| all_accounts.get(idx).map(|a| a.key()));
-    let isolation_lamports_before =
-        isolation_idx.map(|idx| unsafe { all_accounts.get_unchecked(idx).lamports() });
+    let mut signer_lamports_before = [0u64; MAX_PROTECTED_SIGNERS];
+    for i in 0..signer_count as usize {
+        signer_lamports_before[i] = unsafe {
+            all_accounts
+                .get_unchecked(signer_indices[i] as usize)
+                .lamports()
+        };
+    }
 
     // Snapshot hashes are the pre-CPI integrity baseline for writable accounts.
     // SignV2 permits specific balance fields to change, then verifies the rest
@@ -377,17 +408,17 @@ pub fn sign_v2(
             continue;
         }
 
-        if matches!(account_classifier, AccountClassification::None) {
-            if let Some(key) = isolation_key {
-                if isolation_should_observe(account, key, all_accounts) {
-                    if isolation.is_none() {
-                        if let Some(idx) = isolation_idx {
-                            isolation = Some(new_authority_isolation(all_accounts, idx)?);
-                        }
-                    }
-                    if let Some(guard) = isolation.as_mut() {
-                        observe_writable_for_isolation(guard, index, account, key, all_accounts)?;
-                    }
+        if matches!(account_classifier, AccountClassification::None) && signer_count > 0 {
+            if isolation_should_observe(account, all_accounts, &signer_indices, signer_count) {
+                if isolation.is_none() {
+                    isolation = Some(new_authority_isolation(
+                        all_accounts,
+                        &signer_indices,
+                        signer_count,
+                    )?);
+                }
+                if let Some(guard) = isolation.as_mut() {
+                    observe_writable_for_isolation(guard, index, account, all_accounts)?;
                 }
             }
         }
@@ -606,9 +637,16 @@ pub fn sign_v2(
 
     if let Some(guard) = isolation.as_ref() {
         verify_authority_isolation(guard, all_accounts)?;
-    } else if let (Some(idx), Some(before)) = (isolation_idx, isolation_lamports_before) {
-        if unsafe { all_accounts.get_unchecked(idx).lamports() } < before {
-            return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+    } else {
+        for i in 0..signer_count as usize {
+            let after = unsafe {
+                all_accounts
+                    .get_unchecked(signer_indices[i] as usize)
+                    .lamports()
+            };
+            if after < signer_lamports_before[i] {
+                return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+            }
         }
     }
 

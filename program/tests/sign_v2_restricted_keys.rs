@@ -347,6 +347,126 @@ fn sign_v2_blocks_inner_system_transfer_from_alice() {
 }
 
 #[test_log::test]
+fn sign_v2_blocks_inner_system_transfer_from_distinct_fee_payer() {
+    let mut context = setup_test_context().unwrap();
+    let alice = Keypair::new();
+    let fee_payer = Keypair::new();
+    let recipient = Keypair::new();
+    context
+        .svm
+        .airdrop(&alice.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&fee_payer.pubkey(), 10_000_000_000)
+        .unwrap();
+    context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &alice, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let amount = 500_000_000;
+    let inner_ix = solana_system_interface::instruction::transfer(
+        &fee_payer.pubkey(),
+        &recipient.pubkey(),
+        amount,
+    );
+    let sign_v2_ix =
+        SignV2Instruction::new_ed25519(swig, swig_wallet_address, alice.pubkey(), inner_ix, 0)
+            .unwrap();
+    let message = v0::Message::try_compile(
+        &fee_payer.pubkey(),
+        &[sign_v2_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&fee_payer, &alice])
+        .unwrap();
+    let err = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(err.err, isolation_error());
+    assert_eq!(
+        context
+            .svm
+            .get_account(&recipient.pubkey())
+            .unwrap()
+            .lamports,
+        1_000_000
+    );
+}
+
+#[test_log::test]
+fn sign_v2_blocks_inner_token_drain_from_distinct_fee_payer() {
+    let mut context = setup_test_context().unwrap();
+    let alice = Keypair::new();
+    let fee_payer = Keypair::new();
+    let attacker = Keypair::new();
+    context
+        .svm
+        .airdrop(&alice.pubkey(), 10_000_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&fee_payer.pubkey(), 10_000_000_000)
+        .unwrap();
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &alice, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let payer_ata = setup_ata(
+        &mut context.svm,
+        &mint,
+        &fee_payer.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+    let attacker_ata = setup_ata(
+        &mut context.svm,
+        &mint,
+        &attacker.pubkey(),
+        &context.default_payer,
+    )
+    .unwrap();
+    mint_to(
+        &mut context.svm,
+        &mint,
+        &context.default_payer,
+        &payer_ata,
+        PERSONAL_TOKEN_BALANCE,
+    )
+    .unwrap();
+    let inner_ix = Instruction {
+        program_id: spl_token::id(),
+        accounts: vec![
+            AccountMeta::new(payer_ata, false),
+            AccountMeta::new(attacker_ata, false),
+            AccountMeta::new_readonly(fee_payer.pubkey(), true),
+        ],
+        data: TokenInstruction::Transfer {
+            amount: STOLEN_AMOUNT,
+        }
+        .pack(),
+    };
+    let sign_v2_ix =
+        SignV2Instruction::new_ed25519(swig, swig_wallet_address, alice.pubkey(), inner_ix, 0)
+            .unwrap();
+    let message = v0::Message::try_compile(
+        &fee_payer.pubkey(),
+        &[sign_v2_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&fee_payer, &alice])
+        .unwrap();
+    let err = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(err.err, isolation_error());
+    assert_eq!(token_amount(&context, &payer_ata), PERSONAL_TOKEN_BALANCE);
+    assert_eq!(token_amount(&context, &attacker_ata), 0);
+}
+
+#[test_log::test]
 fn sign_v2_allows_inner_ata_create_paid_by_alice() {
     let mut context = setup_test_context().unwrap();
     let alice = Keypair::new();
