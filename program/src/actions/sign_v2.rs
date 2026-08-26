@@ -330,6 +330,7 @@ pub fn sign_v2(
                             all_accounts,
                             &signer_indices,
                             signer_count,
+                            ctx.accounts.swig_wallet_address.key(),
                         )?);
                     }
                     if let Some(guard) = isolation.as_mut() {
@@ -358,7 +359,11 @@ pub fn sign_v2(
         }
 
         if let Some(guard) = isolation.as_ref() {
-            verify_authority_isolation(guard, all_accounts)?;
+            verify_authority_isolation(
+                guard,
+                all_accounts,
+                ctx.accounts.swig_wallet_address.key(),
+            )?;
         } else {
             for i in 0..signer_count as usize {
                 let after = unsafe {
@@ -415,6 +420,7 @@ pub fn sign_v2(
                         all_accounts,
                         &signer_indices,
                         signer_count,
+                        ctx.accounts.swig_wallet_address.key(),
                     )?);
                 }
                 if let Some(guard) = isolation.as_mut() {
@@ -632,21 +638,6 @@ pub fn sign_v2(
             }
         } else {
             return Err(SwigError::InstructionExecutionError.into());
-        }
-    }
-
-    if let Some(guard) = isolation.as_ref() {
-        verify_authority_isolation(guard, all_accounts)?;
-    } else {
-        for i in 0..signer_count as usize {
-            let after = unsafe {
-                all_accounts
-                    .get_unchecked(signer_indices[i] as usize)
-                    .lamports()
-            };
-            if after < signer_lamports_before[i] {
-                return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
-            }
         }
     }
 
@@ -956,6 +947,21 @@ pub fn sign_v2(
 
     if check_wallet_shape {
         assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
+    }
+
+    if let Some(guard) = isolation.as_ref() {
+        verify_authority_isolation(guard, all_accounts, ctx.accounts.swig_wallet_address.key())?;
+    } else {
+        for i in 0..signer_count as usize {
+            let after = unsafe {
+                all_accounts
+                    .get_unchecked(signer_indices[i] as usize)
+                    .lamports()
+            };
+            if after < signer_lamports_before[i] {
+                return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+            }
+        }
     }
     Ok(())
 }

@@ -511,6 +511,8 @@ pub struct AuthorityIsolationGuard {
     frozen_index: [u8; MAX_FROZEN],
     frozen_lamports: [u64; MAX_FROZEN],
     frozen_hash: [MaybeUninit<[u8; 32]>; MAX_FROZEN],
+    pda_index: u8,
+    pda_lamports: u64,
 }
 
 #[inline(never)]
@@ -538,6 +540,7 @@ pub fn new_authority_isolation(
     all_accounts: &[AccountInfo],
     signer_indices: &[u8],
     signer_count: u8,
+    pda: &Pubkey,
 ) -> Result<AuthorityIsolationGuard, ProgramError> {
     if signer_count == 0 {
         return Err(SwigError::InvalidAuthorityPayload.into());
@@ -552,6 +555,15 @@ pub fn new_authority_isolation(
         }
         signer_index[i] = signer_indices[i];
         signer_lamports[i] = unsafe { all_accounts.get_unchecked(idx).lamports() };
+    }
+    let mut pda_index = u8::MAX;
+    let mut pda_lamports = 0u64;
+    for (index, account) in all_accounts.iter().enumerate() {
+        if account.key() == pda {
+            pda_index = index as u8;
+            pda_lamports = account.lamports();
+            break;
+        }
     }
     Ok(AuthorityIsolationGuard {
         signer_count,
@@ -571,6 +583,8 @@ pub fn new_authority_isolation(
         frozen_index: [0; MAX_FROZEN],
         frozen_lamports: [0; MAX_FROZEN],
         frozen_hash: [MaybeUninit::uninit(); MAX_FROZEN],
+        pda_index,
+        pda_lamports,
     })
 }
 
@@ -878,7 +892,7 @@ pub fn capture_authority_isolation(
     if signer_count == 0 {
         return Ok(None);
     }
-    let mut guard = new_authority_isolation(all_accounts, &signer_indices, signer_count)?;
+    let mut guard = new_authority_isolation(all_accounts, &signer_indices, signer_count, pda)?;
     for (index, account) in all_accounts.iter().enumerate() {
         if account.is_writable()
             && isolation_should_observe(account, all_accounts, &signer_indices, signer_count)
@@ -893,6 +907,7 @@ pub fn capture_authority_isolation(
 pub fn verify_authority_isolation(
     guard: &AuthorityIsolationGuard,
     all_accounts: &[AccountInfo],
+    allowed_sol_dest: &Pubkey,
 ) -> ProgramResult {
     let token_count = guard.token_count as usize;
     if token_count != 0 {
@@ -979,13 +994,24 @@ pub fn verify_authority_isolation(
         }
         let gained = after - before;
         let owner = account.owner();
-        if owner != &crate::SPL_TOKEN_ID
+        if account.key() != allowed_sol_dest
+            && owner != &crate::SPL_TOKEN_ID
             && owner != &crate::SPL_TOKEN_2022_ID
             && !(before == 0 && owner != &crate::SYSTEM_PROGRAM_ID)
         {
             return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
         }
         explained = explained.saturating_add(gained);
+    }
+    if guard.pda_index != u8::MAX {
+        let pda_after = unsafe {
+            all_accounts
+                .get_unchecked(guard.pda_index as usize)
+                .lamports()
+        };
+        if pda_after > guard.pda_lamports {
+            explained = explained.saturating_add(pda_after - guard.pda_lamports);
+        }
     }
     if explained < spent {
         return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
