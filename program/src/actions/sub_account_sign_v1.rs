@@ -25,7 +25,9 @@ use crate::{
         accounts::{Context, SubAccountSignV1Accounts},
         SwigInstruction,
     },
-    util::{capture_authority_isolation, ed25519_authority_signer_key, verify_authority_isolation},
+    util::{
+        capture_authority_isolation, ed25519_authority_signer_index, verify_authority_isolation,
+    },
     AccountClassification,
 };
 
@@ -201,14 +203,10 @@ pub fn sub_account_sign_v1(
     let sub_account_bump = sub_account.bump;
     let sub_account_role_id = sub_account.role_id;
     let sub_account_swig_id = sub_account.swig_id;
-    let authority_signer_key = ed25519_authority_signer_key(
-        role.position.authority_type()?,
-        sign_v1.authority_payload,
-        all_accounts,
-    )?;
-    let isolation = authority_signer_key
-        .map(|key| capture_authority_isolation(all_accounts, key))
-        .transpose()?;
+    let isolation =
+        ed25519_authority_signer_index(role.position.authority_type()?, sign_v1.authority_payload)?
+            .map(|idx| capture_authority_isolation(all_accounts, idx))
+            .transpose()?;
     let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,
@@ -235,8 +233,8 @@ pub fn sub_account_sign_v1(
         }
     }
 
-    if let (Some(key), Some(guard)) = (authority_signer_key, isolation.as_ref()) {
-        verify_authority_isolation(guard, all_accounts, key)?;
+    if let Some(guard) = isolation.as_ref() {
+        verify_authority_isolation(guard, all_accounts)?;
     }
 
     // Check that the sub-account maintains sufficient lamports for rent exemption

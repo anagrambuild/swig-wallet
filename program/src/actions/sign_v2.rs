@@ -51,7 +51,7 @@ use crate::{
         SwigInstruction,
     },
     util::{
-        capture_authority_isolation, ed25519_authority_signer_key, hash_except,
+        capture_authority_isolation, ed25519_authority_signer_index, hash_except,
         verify_authority_isolation,
     },
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
@@ -278,14 +278,10 @@ pub fn sign_v2(
     }
     // Intentionally no restricted keys: SignV2 forwards existing outer signer
     // bits in compact CPI metas in addition to the Swig wallet PDA signer.
-    let authority_signer_key = ed25519_authority_signer_key(
-        role.position.authority_type()?,
-        sign_v2.authority_payload,
-        all_accounts,
-    )?;
-    let isolation = authority_signer_key
-        .map(|key| capture_authority_isolation(all_accounts, key))
-        .transpose()?;
+    let isolation =
+        ed25519_authority_signer_index(role.position.authority_type()?, sign_v2.authority_payload)?
+            .map(|idx| capture_authority_isolation(all_accounts, idx))
+            .transpose()?;
     let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,
@@ -321,8 +317,8 @@ pub fn sign_v2(
             }
         }
 
-        if let (Some(key), Some(guard)) = (authority_signer_key, isolation.as_ref()) {
-            verify_authority_isolation(guard, all_accounts, key)?;
+        if let Some(guard) = isolation.as_ref() {
+            verify_authority_isolation(guard, all_accounts)?;
         }
 
         return Ok(());
@@ -564,8 +560,8 @@ pub fn sign_v2(
         }
     }
 
-    if let (Some(key), Some(guard)) = (authority_signer_key, isolation.as_ref()) {
-        verify_authority_isolation(guard, all_accounts, key)?;
+    if let Some(guard) = isolation.as_ref() {
+        verify_authority_isolation(guard, all_accounts)?;
     }
 
     let actions = role.actions;
