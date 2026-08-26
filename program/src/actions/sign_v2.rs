@@ -284,7 +284,7 @@ pub fn sign_v2(
         all_accounts,
         ctx.accounts.swig_wallet_address.key(),
         &mut signer_indices,
-    );
+    )?;
     let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,

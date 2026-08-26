@@ -481,7 +481,7 @@ const TOKEN_2022_MINT_TYPE_OFF: usize = 82;
 const TOKEN_2022_TYPE_ACCOUNT: u8 = 2;
 const TOKEN_2022_TYPE_MINT: u8 = 1;
 const MAX_PROTECTED_TOKENS: usize = 4;
-pub const MAX_PROTECTED_SIGNERS: usize = 4;
+pub const MAX_PROTECTED_SIGNERS: usize = 64;
 const MAX_FROZEN: usize = 4;
 const MAX_WRITABLE: usize = 8;
 const STAKE_STAKER_OFF: usize = 12;
@@ -518,19 +518,19 @@ pub fn collect_outer_signer_indices(
     all_accounts: &[AccountInfo],
     pda: &Pubkey,
     out: &mut [u8; MAX_PROTECTED_SIGNERS],
-) -> u8 {
+) -> Result<u8, ProgramError> {
     let mut count = 0u8;
     for (index, account) in all_accounts.iter().enumerate() {
         if !account.is_signer() || account.key() == pda {
             continue;
         }
         if count as usize >= MAX_PROTECTED_SIGNERS {
-            break;
+            return Err(SwigError::InvalidAccountsLength.into());
         }
         out[count as usize] = index as u8;
         count += 1;
     }
-    count
+    Ok(count)
 }
 
 #[inline(never)]
@@ -874,7 +874,7 @@ pub fn capture_authority_isolation(
     pda: &Pubkey,
 ) -> Result<Option<AuthorityIsolationGuard>, ProgramError> {
     let mut signer_indices = [0u8; MAX_PROTECTED_SIGNERS];
-    let signer_count = collect_outer_signer_indices(all_accounts, pda, &mut signer_indices);
+    let signer_count = collect_outer_signer_indices(all_accounts, pda, &mut signer_indices)?;
     if signer_count == 0 {
         return Ok(None);
     }

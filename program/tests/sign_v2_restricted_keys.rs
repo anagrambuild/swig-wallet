@@ -16,12 +16,14 @@ use solana_sdk::{
     signer::Signer,
     transaction::{TransactionError, VersionedTransaction},
 };
+use swig::actions::sign_v2::SignV2Args;
 use swig::error::SwigError;
-use swig_interface::{AuthorityConfig, ClientAction, SignV2Instruction};
+use swig_interface::{compact_instructions, AuthorityConfig, ClientAction, SignV2Instruction};
 use swig_state::{
     action::{sol_limit::SolLimit, sub_account::SubAccount},
     authority::AuthorityType,
     swig::swig_wallet_address_seeds,
+    IntoBytes,
 };
 
 const PERSONAL_TOKEN_BALANCE: u64 = 1_000;
@@ -422,6 +424,80 @@ fn sign_v2_blocks_inner_system_transfer_from_distinct_fee_payer() {
     .unwrap();
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&fee_payer, &alice])
         .unwrap();
+    let err = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(err.err, isolation_error());
+    assert_eq!(
+        context
+            .svm
+            .get_account(&recipient.pubkey())
+            .unwrap()
+            .lamports,
+        1_000_000
+    );
+}
+
+#[test_log::test]
+fn sign_v2_blocks_inner_system_transfer_from_fifth_outer_signer() {
+    let mut context = setup_test_context().unwrap();
+    let alice = Keypair::new();
+    let extra: [Keypair; 4] = std::array::from_fn(|_| Keypair::new());
+    let recipient = Keypair::new();
+    context
+        .svm
+        .airdrop(&alice.pubkey(), 10_000_000_000)
+        .unwrap();
+    for signer in &extra {
+        context
+            .svm
+            .airdrop(&signer.pubkey(), 10_000_000_000)
+            .unwrap();
+    }
+    context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &alice, id).unwrap();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let amount = 500_000_000;
+    let inner_ix = solana_system_interface::instruction::transfer(
+        &extra[3].pubkey(),
+        &recipient.pubkey(),
+        amount,
+    );
+    let initial_accounts = vec![
+        AccountMeta::new(swig, false),
+        AccountMeta::new(swig_wallet_address, false),
+        AccountMeta::new_readonly(alice.pubkey(), true),
+        AccountMeta::new_readonly(extra[0].pubkey(), true),
+        AccountMeta::new_readonly(extra[1].pubkey(), true),
+        AccountMeta::new_readonly(extra[2].pubkey(), true),
+        AccountMeta::new(extra[3].pubkey(), true),
+        AccountMeta::new(recipient.pubkey(), false),
+    ];
+    let (final_accounts, compact_ixs) =
+        compact_instructions(swig, initial_accounts, vec![inner_ix]);
+    let instruction_payload = compact_ixs.into_bytes();
+    let sign_args = SignV2Args::new(0, instruction_payload.len() as u16);
+    let mut sign_ix_data = Vec::new();
+    sign_ix_data.extend_from_slice(sign_args.into_bytes().unwrap());
+    sign_ix_data.extend_from_slice(&instruction_payload);
+    sign_ix_data.push(2);
+    let sign_v2_ix = Instruction {
+        program_id: swig::ID.into(),
+        accounts: final_accounts,
+        data: sign_ix_data,
+    };
+    let message = v0::Message::try_compile(
+        &alice.pubkey(),
+        &[sign_v2_ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(message),
+        &[&alice, &extra[0], &extra[1], &extra[2], &extra[3]],
+    )
+    .unwrap();
     let err = context.svm.send_transaction(tx).unwrap_err();
     assert_eq!(err.err, isolation_error());
     assert_eq!(
