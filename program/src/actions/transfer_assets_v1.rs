@@ -89,6 +89,7 @@ fn validate_spl_migration(
 }
 
 fn spl_tail_start(
+    accounts: &[AccountInfo],
     authority_type: AuthorityType,
     session_based: bool,
     authority_payload: &[u8],
@@ -101,7 +102,10 @@ fn spl_tail_start(
                 authority_payload.first().copied()
             },
             AuthorityType::Secp256r1 => authority_payload.get(12).copied(),
-            AuthorityType::Secp256k1 => None,
+            AuthorityType::Secp256k1 => accounts
+                .get(FIXED_ACCOUNT_COUNT)
+                .filter(|account| account.key() == &crate::ID)
+                .map(|_| FIXED_ACCOUNT_COUNT as u8),
             _ => return Err(SwigError::InvalidAuthorityType.into()),
         }
     }
@@ -275,6 +279,7 @@ pub fn transfer_assets_v1(
     // context may reuse a fixed signer account or occupy account 4, while
     // direct Secp256k1 authentication has no context account.
     let spl_tail_start = spl_tail_start(
+        accounts,
         role.authority.authority_type(),
         role.authority.session_based(),
         transfer_ix.authority_payload,

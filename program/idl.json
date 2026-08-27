@@ -484,6 +484,15 @@
           "docs": [
             "the system program"
           ]
+        },
+        {
+          "name": "authorityContext",
+          "isMut": false,
+          "isSigner": false,
+          "isOptional": true,
+          "docs": [
+            "authority context; use the program ID sentinel when omitted"
+          ]
         }
       ],
       "args": [],

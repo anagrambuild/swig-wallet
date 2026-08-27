@@ -3,6 +3,9 @@
 
 mod common;
 
+use alloy_primitives::B256;
+use alloy_signer::SignerSync;
+use alloy_signer_local::LocalSigner;
 use common::*;
 use litesvm::types::TransactionMetadata;
 use litesvm_token::spl_token;
@@ -14,13 +17,15 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    sysvar::rent::Rent,
+    sysvar::{clock::Clock, rent::Rent},
     transaction::{TransactionError, VersionedTransaction},
 };
-use swig_interface::{swig, TransferAssetsV1Instruction};
+use swig_interface::{
+    swig, AuthorityConfig, ClientAction, TransferAssetsV1Instruction, TransferAssetsV1SplMigration,
+};
 use swig_state::{
     action::all::All,
-    authority::AuthorityType,
+    authority::{programexec::ProgramExecAuthority, AuthorityType},
     swig::{swig_wallet_address_seeds, Swig, SwigWithRoles},
     Discriminator, IntoBytes, Transmutable,
 };
@@ -29,6 +34,12 @@ const INVALID_ACCOUNTS_LENGTH_ERROR: u32 = 22;
 const INVALID_OPERATION_ERROR: u32 = 26;
 const OWNER_MISMATCH_TOKEN_ACCOUNT_ERROR: u32 = 30;
 const INVALID_SWIG_TOKEN_ACCOUNT_OWNER_ERROR: u32 = 41;
+const PROGRAM_EXEC_TEST_PROGRAM_PATH: &str = "../target/deploy/test_program_authority.so";
+const PROGRAM_EXEC_TEST_DISCRIMINATOR: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+
+mod program_exec_test_program {
+    solana_sdk::declare_id!("BXAu5ZWHnGun2XZjUZ9nqwiZ5dNVmofPGYdMC4rx4qLV");
+}
 
 /// Helper function to create a transfer assets instruction using Ed25519
 /// authority
@@ -67,6 +78,33 @@ fn setup_ed25519_transfer_assets() -> (SwigTestContext, Keypair, Pubkey, Pubkey)
     context.svm.set_account(swig, swig_account).unwrap();
 
     (context, authority, swig, wallet)
+}
+
+fn create_transfer_assets_secp256r1_keypair(
+) -> (openssl::ec::EcKey<openssl::pkey::Private>, [u8; 33]) {
+    use openssl::{
+        bn::BigNumContext,
+        ec::{EcGroup, EcKey, PointConversionForm},
+        nid::Nid,
+    };
+
+    let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+    let signing_key = EcKey::generate(&group).unwrap();
+    let mut context = BigNumContext::new().unwrap();
+    let public_key = signing_key
+        .public_key()
+        .to_bytes(&group, PointConversionForm::COMPRESSED, &mut context)
+        .unwrap();
+    (signing_key, public_key.try_into().unwrap())
+}
+
+fn deploy_program_exec_test_program(context: &mut SwigTestContext) {
+    let program_data = std::fs::read(PROGRAM_EXEC_TEST_PROGRAM_PATH)
+        .expect("build test-program-authority with cargo build-sbf before running this test");
+    context
+        .svm
+        .add_program(program_exec_test_program::ID, &program_data)
+        .expect("deploy test-program-authority");
 }
 
 fn append_spl_migration(instruction: &mut Instruction, source: Pubkey, destination: Pubkey) {
@@ -693,25 +731,21 @@ fn test_transfer_assets_spl_token_invalid_destination() {
     let source_before = context.svm.get_account(&source_ata).unwrap();
     let destination_before = context.svm.get_account(&malicious_dest_ata).unwrap();
 
-    // Start from the production authority builder so this reaches SPL
-    // validation instead of failing at authority authentication.
-    let mut transfer_ix = TransferAssetsV1Instruction::new_with_ed25519_authority(
+    // Use the production migration builder so this reaches SPL validation
+    // instead of failing at authority authentication.
+    let transfer_ix = TransferAssetsV1Instruction::new_with_ed25519_authority_and_migrations(
         swig_pubkey,
         swig_wallet_address_pubkey,
         context.default_payer.pubkey(),
         authority.pubkey(),
         0,
+        &[TransferAssetsV1SplMigration::new(
+            source_ata,
+            malicious_dest_ata,
+            spl_token::ID,
+        )],
     )
     .unwrap();
-    transfer_ix
-        .accounts
-        .push(AccountMeta::new(source_ata, false));
-    transfer_ix
-        .accounts
-        .push(AccountMeta::new(malicious_dest_ata, false));
-    transfer_ix
-        .accounts
-        .push(AccountMeta::new_readonly(spl_token::ID, false));
 
     let transfer_message = VersionedMessage::V0(
         v0::Message::try_compile(
@@ -771,9 +805,7 @@ fn test_transfer_assets_spl_token_invalid_destination() {
     assert_eq!(dest_account_data, destination_before.data);
 }
 
-// Happy-path SPL migration using the kit's `new_with_ed25519_authority` helper.
-// The authority context occupies account 4, so the SPL tail begins at account
-// 5.
+// Happy-path SPL migration using the kit's normalized migration builder.
 #[test_log::test]
 fn test_transfer_assets_spl_happy_path() {
     let mut context = setup_test_context().unwrap();
@@ -832,25 +864,19 @@ fn test_transfer_assets_spl_happy_path() {
     let source_before_unpacked = spl_token::state::Account::unpack(&source_before).unwrap();
     assert_eq!(source_before_unpacked.amount, initial_amount);
 
-    let helper_ix = TransferAssetsV1Instruction::new_with_ed25519_authority(
+    let transfer_ix = TransferAssetsV1Instruction::new_with_ed25519_authority_and_migrations(
         swig_pubkey,
         swig_wallet_address_pubkey,
         context.default_payer.pubkey(),
         authority.pubkey(),
         0,
+        &[TransferAssetsV1SplMigration::new(
+            source_ata,
+            dest_ata,
+            spl_token::ID,
+        )],
     )
     .unwrap();
-
-    let mut accounts = helper_ix.accounts;
-    accounts.push(AccountMeta::new(source_ata, false));
-    accounts.push(AccountMeta::new(dest_ata, false));
-    accounts.push(AccountMeta::new_readonly(spl_token::ID, false));
-
-    let transfer_ix = Instruction {
-        program_id: program_id(),
-        accounts,
-        data: helper_ix.data,
-    };
 
     let message = VersionedMessage::V0(
         v0::Message::try_compile(
@@ -889,6 +915,290 @@ fn test_transfer_assets_spl_happy_path() {
     );
 
     println!("✅ SPL happy path: tokens moved from state PDA to wallet PDA");
+}
+
+#[test_log::test]
+fn test_transfer_assets_spl_secp256k1_production_builder() {
+    let mut context = setup_test_context().unwrap();
+    let authority = LocalSigner::random();
+    let (swig, _) =
+        create_swig_secp256k1(&mut context, &authority, rand::random::<[u8; 32]>()).unwrap();
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(&swig.to_bytes()), &program_id());
+
+    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let source = setup_ata(&mut context.svm, &mint, &swig, &context.default_payer).unwrap();
+    let destination = setup_ata(&mut context.svm, &mint, &wallet, &context.default_payer).unwrap();
+    mint_to(
+        &mut context.svm,
+        &mint,
+        &context.default_payer,
+        &source,
+        1_000,
+    )
+    .unwrap();
+
+    let signing_fn = |payload: &[u8]| -> [u8; 65] {
+        let payload: [u8; 32] = payload.try_into().unwrap();
+        authority
+            .sign_hash_sync(&B256::from(payload))
+            .unwrap()
+            .as_bytes()
+    };
+    let transfer_ix = TransferAssetsV1Instruction::new_with_secp256k1_authority_and_migrations(
+        swig,
+        wallet,
+        context.default_payer.pubkey(),
+        signing_fn,
+        context.svm.get_sysvar::<Clock>().slot,
+        1,
+        0,
+        &[TransferAssetsV1SplMigration::new(
+            source,
+            destination,
+            spl_token::ID,
+        )],
+    )
+    .unwrap();
+
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                transfer_ix,
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let transaction = VersionedTransaction::try_new(message, &[&context.default_payer]).unwrap();
+    let result = context.svm.send_transaction(transaction);
+    assert!(
+        result.is_ok(),
+        "Secp256k1 production builder failed: {:?}",
+        result.err()
+    );
+
+    let source_data = context.svm.get_account(&source).unwrap().data;
+    let destination_data = context.svm.get_account(&destination).unwrap().data;
+    assert_eq!(
+        spl_token::state::Account::unpack(&source_data)
+            .unwrap()
+            .amount,
+        0
+    );
+    assert_eq!(
+        spl_token::state::Account::unpack(&destination_data)
+            .unwrap()
+            .amount,
+        1_000
+    );
+}
+
+#[test_log::test]
+fn test_transfer_assets_spl_secp256r1_production_builder() {
+    let mut context = setup_test_context().unwrap();
+    let (signing_key, public_key) = create_transfer_assets_secp256r1_keypair();
+    let (swig, _) =
+        create_swig_secp256r1(&mut context, &public_key, rand::random::<[u8; 32]>()).unwrap();
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(&swig.to_bytes()), &program_id());
+
+    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let source = setup_ata(&mut context.svm, &mint, &swig, &context.default_payer).unwrap();
+    let destination = setup_ata(&mut context.svm, &mint, &wallet, &context.default_payer).unwrap();
+    mint_to(
+        &mut context.svm,
+        &mint,
+        &context.default_payer,
+        &source,
+        1_000,
+    )
+    .unwrap();
+
+    let signing_fn = |message_hash: &[u8]| -> [u8; 64] {
+        solana_secp256r1_program::sign_message(
+            message_hash,
+            &signing_key.private_key_to_der().unwrap(),
+        )
+        .unwrap()
+    };
+    let transfer_ixs = TransferAssetsV1Instruction::new_with_secp256r1_authority_and_migrations(
+        swig,
+        wallet,
+        context.default_payer.pubkey(),
+        signing_fn,
+        context.svm.get_sysvar::<Clock>().slot,
+        1,
+        0,
+        &public_key,
+        &[TransferAssetsV1SplMigration::new(
+            source,
+            destination,
+            spl_token::ID,
+        )],
+    )
+    .unwrap();
+
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                transfer_ixs[0].clone(),
+                transfer_ixs[1].clone(),
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let transaction = VersionedTransaction::try_new(message, &[&context.default_payer]).unwrap();
+    let result = context.svm.send_transaction(transaction);
+    assert!(
+        result.is_ok(),
+        "Secp256r1 production builder failed: {:?}",
+        result.err()
+    );
+
+    let source_data = context.svm.get_account(&source).unwrap().data;
+    let destination_data = context.svm.get_account(&destination).unwrap().data;
+    assert_eq!(
+        spl_token::state::Account::unpack(&source_data)
+            .unwrap()
+            .amount,
+        0
+    );
+    assert_eq!(
+        spl_token::state::Account::unpack(&destination_data)
+            .unwrap()
+            .amount,
+        1_000
+    );
+}
+
+#[test_log::test]
+fn test_transfer_assets_spl_program_exec_production_builder() {
+    let mut context = setup_test_context().unwrap();
+    let root_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&root_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    let (swig, _) =
+        create_swig_ed25519(&mut context, &root_authority, rand::random::<[u8; 32]>()).unwrap();
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(&swig.to_bytes()), &program_id());
+    deploy_program_exec_test_program(&mut context);
+
+    let program_exec_authority = ProgramExecAuthority::create_authority_data(
+        &program_exec_test_program::ID.to_bytes(),
+        &PROGRAM_EXEC_TEST_DISCRIMINATOR,
+    );
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::ProgramExec,
+            authority: &program_exec_authority,
+        },
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
+
+    let state_account = Keypair::new();
+    context
+        .svm
+        .set_account(
+            state_account.pubkey(),
+            solana_sdk::account::Account {
+                lamports: 1_000_000,
+                data: vec![0],
+                owner: program_exec_test_program::ID,
+                executable: false,
+                rent_epoch: 0,
+            },
+        )
+        .unwrap();
+
+    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let source = setup_ata(&mut context.svm, &mint, &swig, &context.default_payer).unwrap();
+    let destination = setup_ata(&mut context.svm, &mint, &wallet, &context.default_payer).unwrap();
+    mint_to(
+        &mut context.svm,
+        &mint,
+        &context.default_payer,
+        &source,
+        1_000,
+    )
+    .unwrap();
+
+    // This test program satisfies the core ProgramExec contract: the expected
+    // program and prefix execute with the Swig config and wallet as its first
+    // two accounts. Application-specific intent policy remains owned by that
+    // external ProgramExec implementation.
+    let preceding_instruction = Instruction {
+        program_id: program_exec_test_program::ID,
+        accounts: vec![
+            AccountMeta::new_readonly(swig, false),
+            AccountMeta::new_readonly(wallet, false),
+            AccountMeta::new_readonly(state_account.pubkey(), false),
+            AccountMeta::new_readonly(program_id(), false),
+        ],
+        data: PROGRAM_EXEC_TEST_DISCRIMINATOR.to_vec(),
+    };
+    let transfer_instructions = TransferAssetsV1Instruction::new_with_program_exec_and_migrations(
+        swig,
+        wallet,
+        context.default_payer.pubkey(),
+        preceding_instruction,
+        1,
+        &[TransferAssetsV1SplMigration::new(
+            source,
+            destination,
+            spl_token::ID,
+        )],
+    )
+    .unwrap();
+
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                transfer_instructions[0].clone(),
+                transfer_instructions[1].clone(),
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let transaction = VersionedTransaction::try_new(message, &[&context.default_payer]).unwrap();
+    let result = context.svm.send_transaction(transaction);
+    assert!(
+        result.is_ok(),
+        "ProgramExec production builder failed: {:?}",
+        result.err()
+    );
+
+    let source_data = context.svm.get_account(&source).unwrap().data;
+    let destination_data = context.svm.get_account(&destination).unwrap().data;
+    assert_eq!(
+        spl_token::state::Account::unpack(&source_data)
+            .unwrap()
+            .amount,
+        0
+    );
+    assert_eq!(
+        spl_token::state::Account::unpack(&destination_data)
+            .unwrap()
+            .amount,
+        1_000
+    );
 }
 
 #[test_log::test]
