@@ -27,6 +27,7 @@ use crate::{
         accounts::{Context, SubAccountSignV2Accounts},
         SwigInstruction,
     },
+    util::{capture_authority_isolation, verify_authority_isolation},
     AccountClassification,
 };
 
@@ -243,6 +244,7 @@ pub fn sub_account_sign_v2(
         authorize_scoped_v2(&role, Permission::SubAccountV2Sign, sign.args.subacc_id)?;
         swig_id
     };
+    let isolation = capture_authority_isolation(all_accounts, ctx.accounts.sub_account.key())?;
 
     // Validate the state account and obtain the asset bump for signing.
     let asset_bump = validate_v2_state(
@@ -274,6 +276,10 @@ pub fn sub_account_sign_v2(
         } else {
             return Err(SwigError::InstructionExecutionError.into());
         }
+    }
+
+    if let Some(guard) = isolation.as_ref() {
+        verify_authority_isolation(guard, all_accounts)?;
     }
 
     // Ensure the asset account remains rent-exempt.

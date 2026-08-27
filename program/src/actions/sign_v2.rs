@@ -50,7 +50,11 @@ use crate::{
         accounts::{Context, SignV2Accounts},
         SwigInstruction,
     },
-    util::hash_except,
+    util::{
+        collect_outer_signer_indices, hash_except, isolation_should_observe,
+        new_authority_isolation, observe_writable_for_isolation, verify_authority_isolation,
+        MAX_PROTECTED_SIGNERS,
+    },
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
 };
 // use swig_instructions::InstructionIterator;
@@ -275,6 +279,12 @@ pub fn sign_v2(
     }
     // Intentionally no restricted keys: SignV2 forwards existing outer signer
     // bits in compact CPI metas in addition to the Swig wallet PDA signer.
+    let mut signer_indices = [0u8; MAX_PROTECTED_SIGNERS];
+    let signer_count = collect_outer_signer_indices(
+        all_accounts,
+        ctx.accounts.swig_wallet_address.key(),
+        &mut signer_indices,
+    )?;
     let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,
@@ -291,6 +301,43 @@ pub fn sign_v2(
         || RoleMut::get_action_mut::<AllButManageAuthority>(role.actions, &[])?.is_some();
 
     if has_unrestricted_sign_permission {
+        let mut signer_lamports_before = [0u64; MAX_PROTECTED_SIGNERS];
+        for i in 0..signer_count as usize {
+            signer_lamports_before[i] = unsafe {
+                all_accounts
+                    .get_unchecked(signer_indices[i] as usize)
+                    .lamports()
+            };
+        }
+        let mut isolation = None;
+        if signer_count > 0 {
+            for (index, account) in all_accounts.iter().enumerate() {
+                if index < account_classifiers.len()
+                    && !matches!(account_classifiers[index], AccountClassification::None)
+                {
+                    continue;
+                }
+                if account.is_writable()
+                    && isolation_should_observe(
+                        account,
+                        all_accounts,
+                        &signer_indices,
+                        signer_count,
+                    )
+                {
+                    if isolation.is_none() {
+                        isolation = Some(new_authority_isolation(
+                            all_accounts,
+                            &signer_indices,
+                            signer_count,
+                        )?);
+                    }
+                    if let Some(guard) = isolation.as_mut() {
+                        observe_writable_for_isolation(guard, index, account, all_accounts)?;
+                    }
+                }
+            }
+        }
         for ix in ix_iter {
             let instruction = ix.map_err(|_| SwigError::InstructionExecutionError)?;
             let check_shape = wallet_shape_can_change(&instruction);
@@ -310,6 +357,21 @@ pub fn sign_v2(
             }
         }
 
+        if let Some(guard) = isolation.as_ref() {
+            verify_authority_isolation(guard, all_accounts)?;
+        } else {
+            for i in 0..signer_count as usize {
+                let after = unsafe {
+                    all_accounts
+                        .get_unchecked(signer_indices[i] as usize)
+                        .lamports()
+                };
+                if after < signer_lamports_before[i] {
+                    return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+                }
+            }
+        }
+
         return Ok(());
     }
 
@@ -318,6 +380,15 @@ pub fn sign_v2(
     let has_program_curated_permission = !has_program_all_permission
         && RoleMut::get_action_mut::<ProgramCurated>(role.actions, &[])?.is_some();
     let mut check_wallet_shape = false;
+    let mut isolation = None;
+    let mut signer_lamports_before = [0u64; MAX_PROTECTED_SIGNERS];
+    for i in 0..signer_count as usize {
+        signer_lamports_before[i] = unsafe {
+            all_accounts
+                .get_unchecked(signer_indices[i] as usize)
+                .lamports()
+        };
+    }
 
     // Snapshot hashes are the pre-CPI integrity baseline for writable accounts.
     // SignV2 permits specific balance fields to change, then verifies the rest
@@ -335,6 +406,21 @@ pub fn sign_v2(
         // Only check writable accounts as read-only accounts won't modify data
         if !account.is_writable() {
             continue;
+        }
+
+        if matches!(account_classifier, AccountClassification::None) && signer_count > 0 {
+            if isolation_should_observe(account, all_accounts, &signer_indices, signer_count) {
+                if isolation.is_none() {
+                    isolation = Some(new_authority_isolation(
+                        all_accounts,
+                        &signer_indices,
+                        signer_count,
+                    )?);
+                }
+                if let Some(guard) = isolation.as_mut() {
+                    observe_writable_for_isolation(guard, index, account, all_accounts)?;
+                }
+            }
         }
 
         let hash = match account_classifier {
@@ -855,6 +941,21 @@ pub fn sign_v2(
 
     if check_wallet_shape {
         assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
+    }
+
+    if let Some(guard) = isolation.as_ref() {
+        verify_authority_isolation(guard, all_accounts)?;
+    } else {
+        for i in 0..signer_count as usize {
+            let after = unsafe {
+                all_accounts
+                    .get_unchecked(signer_indices[i] as usize)
+                    .lamports()
+            };
+            if after < signer_lamports_before[i] {
+                return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+            }
+        }
     }
     Ok(())
 }

@@ -7,7 +7,7 @@
 //! accounts.
 
 pub mod actions;
-mod error;
+pub mod error;
 pub mod instruction;
 pub mod util;
 use core::mem::MaybeUninit;
@@ -49,6 +49,8 @@ const SPL_TOKEN_2022_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXE
 const STAKING_ID: Pubkey = pubkey!("Stake11111111111111111111111111111111111111");
 /// Program ID for the Solana System program
 const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111");
+const VOTE_PROGRAM_ID: Pubkey = pubkey!("Vote111111111111111111111111111111111111111");
+const BPF_LOADER_UPGRADEABLE_ID: Pubkey = pubkey!("BPFLoaderUpgradeab1e11111111111111111111111");
 
 pinocchio::default_allocator!();
 pinocchio::default_panic_handler!();

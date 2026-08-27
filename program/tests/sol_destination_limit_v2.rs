@@ -879,12 +879,6 @@ fn test_sol_destination_limit_cpi_enforcement_v2() {
         .airdrop(&second_authority.pubkey(), 10_000_000_000)
         .unwrap();
 
-    let funding_account = Keypair::new();
-    context
-        .svm
-        .airdrop(&funding_account.pubkey(), 10 * LAMPORTS_PER_SOL)
-        .unwrap();
-
     println!(
         "adding authority {:?}",
         second_authority.pubkey().to_bytes()
@@ -918,15 +912,8 @@ fn test_sol_destination_limit_cpi_enforcement_v2() {
 
     let transfer_amount: u64 = 2 * LAMPORTS_PER_SOL; // 2 SOL (exceeds the 1 SOL limit)
 
-    // Instruction 1: Transfer funds TO the Swig wallet address
-    let fund_swig_ix = solana_system_interface::instruction::transfer(
-        &funding_account.pubkey(),
-        &swig_wallet_address,
-        transfer_amount,
-    );
-
-    // Instruction 2: Transfer funds FROM Swig wallet address to the authority's
-    // wallet
+    // Withdraw from the already-funded wallet. Personal SOL must not be deposited
+    // inside SignV2; funding belongs in a sibling instruction if needed.
     let withdraw_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
         &second_authority.pubkey(),
@@ -938,11 +925,10 @@ fn test_sol_destination_limit_cpi_enforcement_v2() {
         AccountMeta::new(swig_wallet_address, false),
         AccountMeta::new(context.default_payer.pubkey(), true),
         AccountMeta::new(second_authority.pubkey(), true),
-        AccountMeta::new(funding_account.pubkey(), true),
     ];
 
     let (final_accounts, compact_ixs) =
-        compact_instructions(swig, initial_accounts, vec![fund_swig_ix, withdraw_ix]);
+        compact_instructions(swig, initial_accounts, vec![withdraw_ix]);
 
     let instruction_payload = compact_ixs.into_bytes();
 
@@ -972,7 +958,7 @@ fn test_sol_destination_limit_cpi_enforcement_v2() {
         initial_authority_balance / LAMPORTS_PER_SOL
     );
     println!(
-        "Testing {} SOL limit enforcement with funding+withdrawing {} SOL...",
+        "Testing {} SOL dest-limit enforcement withdrawing {} SOL...",
         LAMPORTS_PER_SOL / LAMPORTS_PER_SOL,
         transfer_amount / LAMPORTS_PER_SOL
     );
@@ -988,7 +974,7 @@ fn test_sol_destination_limit_cpi_enforcement_v2() {
 
     let test_tx = VersionedTransaction::try_new(
         VersionedMessage::V0(test_message),
-        &[&context.default_payer, &second_authority, &funding_account], // All required signers
+        &[&context.default_payer, &second_authority],
     )
     .unwrap();
 
