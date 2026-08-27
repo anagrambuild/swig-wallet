@@ -67,6 +67,16 @@ jobs:
           mkdir -p target/nextest/reports
           cp target/nextest/ci/output.xml target/nextest/reports/standard-tests.xml
 
+      - name: Build Solana Program with inbound CPI allowlist test feature
+        run: |
+          cargo build-sbf --arch v1 --features=test_inbound_cpi_allowlist
+
+      - name: Run Inbound CPI Allowlist Tests with nextest
+        run: |
+          cargo nextest run --config-file nextest.toml --profile ci -p swig --test non_sign_cpi_guard --features=test_inbound_cpi_allowlist
+          mkdir -p target/nextest/reports
+          cp target/nextest/ci/output.xml target/nextest/reports/inbound-cpi-allowlist-tests.xml
+
       - name: Build Solana Program with program_scope_test feature
         run: |
           cargo build-sbf --arch v1 --features=program_scope_test

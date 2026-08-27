@@ -42,6 +42,7 @@ use self::{
     withdraw_from_sub_account_v1::*, withdraw_from_sub_account_v2::*,
 };
 use crate::{
+    cpi_guard::enforce_instruction_cpi_policy,
     instruction::{
         accounts::{
             AddAuthorityV1Accounts, CloseSubAccountV1Accounts, CloseSubAccountV2Accounts,
@@ -82,6 +83,7 @@ pub fn process_action(
     }
     let discriminator = unsafe { *(data.get_unchecked(..2).as_ptr() as *const u16) };
     let ix = SwigInstruction::from_primitive(discriminator);
+    enforce_instruction_cpi_policy(accounts, ix)?;
     match ix {
         SwigInstruction::CreateV1 => process_create_v1(accounts, data),
         SwigInstruction::DeprecatedSignV1 => {
