@@ -1,9 +1,9 @@
 //! Inbound CPI policy for Swig instructions.
 //!
 //! Signing instructions own their existing top-level checks because they are
-//! latency-sensitive execution paths. Every other instruction is direct-only
-//! unless the current top-level transaction instruction matches one exact
-//! compile-time allowlist entry.
+//! latency-sensitive execution paths. Every non-sign instruction is
+//! direct-only unless the current top-level transaction instruction matches
+//! one exact compile-time allowlist entry.
 
 use pinocchio::{
     account_info::AccountInfo,
@@ -43,11 +43,11 @@ const NON_SIGN_CPI_ALLOWLIST: &[NonSignCpiAllowlistEntry] = &[NonSignCpiAllowlis
 /// not expose the immediate CPI caller, so this policy deliberately binds the
 /// top-level transaction instruction that owns the invocation tree.
 #[inline(always)]
-pub(crate) fn enforce_instruction_cpi_policy(
+pub(crate) fn enforce_non_sign_cpi_policy(
     accounts: &[AccountInfo],
     instruction: SwigInstruction,
 ) -> ProgramResult {
-    if is_signing_instruction(instruction) || get_stack_height(1) {
+    if get_stack_height(1) {
         return Ok(());
     }
 
@@ -80,15 +80,4 @@ pub(crate) fn enforce_instruction_cpi_policy(
     } else {
         Err(SwigError::Cpi.into())
     }
-}
-
-#[inline(always)]
-fn is_signing_instruction(instruction: SwigInstruction) -> bool {
-    matches!(
-        instruction,
-        SwigInstruction::DeprecatedSignV1
-            | SwigInstruction::SignV2
-            | SwigInstruction::SubAccountSignV1
-            | SwigInstruction::SubAccountSignV2
-    )
 }
