@@ -18,6 +18,7 @@ use pinocchio::{
 use swig_assertions::{check_self_owned, check_self_pda};
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
+    authority::AuthorityType,
     role::RoleMut,
     swig::{swig_account_signer, swig_wallet_address_seeds_with_bump, Swig},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
@@ -32,6 +33,90 @@ use crate::{
     util::TokenTransfer,
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID,
 };
+
+const FIXED_ACCOUNT_COUNT: usize = 4;
+const AUTHORITY_CONTEXT_ACCOUNT_COUNT: usize = 1;
+const SPL_MIGRATION_ACCOUNT_COUNT: usize = 3;
+const TOKEN_ACCOUNT_BASE_LEN: usize = 165;
+const TOKEN_ACCOUNT_AMOUNT_START: usize = 64;
+const TOKEN_ACCOUNT_AMOUNT_END: usize = 72;
+const TOKEN_ACCOUNT_STATE_OFFSET: usize = 108;
+const TOKEN_ACCOUNT_STATE_INITIALIZED: u8 = 1;
+
+fn validate_spl_migration(
+    source_token_account: &AccountInfo,
+    destination_token_account: &AccountInfo,
+    token_program: &AccountInfo,
+    swig: &Pubkey,
+    swig_wallet_address: &Pubkey,
+) -> ProgramResult {
+    if token_program.key() != &SPL_TOKEN_ID && token_program.key() != &SPL_TOKEN_2022_ID {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if !source_token_account.is_writable() || !destination_token_account.is_writable() {
+        return Err(SwigError::InvalidOperation.into());
+    }
+    if source_token_account.owner() != token_program.key()
+        || destination_token_account.owner() != token_program.key()
+    {
+        return Err(SwigError::OwnerMismatchTokenAccount.into());
+    }
+
+    let source_data = source_token_account.try_borrow_data()?;
+    let destination_data = destination_token_account.try_borrow_data()?;
+    if source_data.len() < TOKEN_ACCOUNT_BASE_LEN
+        || destination_data.len() < TOKEN_ACCOUNT_BASE_LEN
+        || source_data[TOKEN_ACCOUNT_STATE_OFFSET] != TOKEN_ACCOUNT_STATE_INITIALIZED
+        || destination_data[TOKEN_ACCOUNT_STATE_OFFSET] != TOKEN_ACCOUNT_STATE_INITIALIZED
+    {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    // In the canonical SPL token-account layout, bytes 0..32 store the mint.
+    // The source and destination must therefore represent the same token.
+    if unsafe { sol_memcmp(&source_data[..32], &destination_data[..32], 32) } != 0 {
+        return Err(SwigError::InvalidOperation.into());
+    }
+    // Bytes 32..64 store the token-account authority (not AccountInfo::owner).
+    // The source must be controlled by the Swig state PDA, and the destination
+    // must be controlled by the Swig wallet-address PDA.
+    if unsafe { sol_memcmp(&source_data[32..64], swig.as_ref(), 32) } != 0
+        || unsafe { sol_memcmp(&destination_data[32..64], swig_wallet_address.as_ref(), 32) } != 0
+    {
+        return Err(SwigError::InvalidSwigTokenAccountOwner.into());
+    }
+
+    Ok(())
+}
+
+fn spl_tail_start(
+    authority_type: AuthorityType,
+    session_based: bool,
+    authority_payload: &[u8],
+) -> Result<usize, ProgramError> {
+    let authority_context_index = if session_based {
+        authority_payload.first().copied()
+    } else {
+        match authority_type {
+            AuthorityType::Ed25519 | AuthorityType::ProgramExec => {
+                authority_payload.first().copied()
+            },
+            AuthorityType::Secp256r1 => authority_payload.get(12).copied(),
+            AuthorityType::Secp256k1 => None,
+            _ => return Err(SwigError::InvalidAuthorityType.into()),
+        }
+    }
+    .map(usize::from);
+
+    match authority_context_index {
+        // A fixed account, such as the payer, may also authenticate the role.
+        None | Some(0..=3) => Ok(FIXED_ACCOUNT_COUNT),
+        // Public builders place a dedicated authority context directly after
+        // the fixed prefix.
+        Some(FIXED_ACCOUNT_COUNT) => Ok(FIXED_ACCOUNT_COUNT + AUTHORITY_CONTEXT_ACCOUNT_COUNT),
+        // Reject gaps between the fixed prefix and variadic SPL triples.
+        Some(_) => Err(SwigError::InvalidAccountsLength.into()),
+    }
+}
 
 /// Arguments for transferring assets from swig account to swig wallet address.
 ///
@@ -186,6 +271,34 @@ pub fn transfer_assets_v1(
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
 
+    // Derive the tail boundary from the authenticated authority context. The
+    // context may reuse a fixed signer account or occupy account 4, while
+    // direct Secp256k1 authentication has no context account.
+    let spl_tail_start = spl_tail_start(
+        role.authority.authority_type(),
+        role.authority.session_based(),
+        transfer_ix.authority_payload,
+    )?;
+    let spl_accounts = accounts
+        .get(spl_tail_start..)
+        .ok_or(SwigError::InvalidAccountsLength)?;
+
+    // Validate the complete variadic layout before sweeping SOL. Returning an
+    // error here prevents a successful partial migration and keeps the whole
+    // instruction atomic.
+    if spl_accounts.len() % SPL_MIGRATION_ACCOUNT_COUNT != 0 {
+        return Err(SwigError::InvalidAccountsLength.into());
+    }
+    for migration_accounts in spl_accounts.chunks_exact(SPL_MIGRATION_ACCOUNT_COUNT) {
+        validate_spl_migration(
+            &migration_accounts[0],
+            &migration_accounts[1],
+            &migration_accounts[2],
+            ctx.accounts.swig.key(),
+            ctx.accounts.swig_wallet_address.key(),
+        )?;
+    }
+
     // Create signer seeds for the swig account.
     //
     // The swig state PDA was derived with seeds [b"swig", swig.id, bump], so to
@@ -213,89 +326,33 @@ pub fn transfer_assets_v1(
         }
     }
 
-    // Transfer SPL tokens
-    // We need to iterate through the remaining accounts to find token accounts
-    let base_account_count = 4; // swig, swig_wallet_address, payer
+    // Transfer SPL tokens from the validated variadic account tail.
+    for migration_accounts in spl_accounts.chunks_exact(SPL_MIGRATION_ACCOUNT_COUNT) {
+        let source_token_account = &migration_accounts[0];
+        let dest_token_account = &migration_accounts[1];
+        let token_program = &migration_accounts[2];
 
-    if accounts.len() > base_account_count {
-        for i in (base_account_count..accounts.len()).step_by(3) {
-            // Each token transfer requires 3 accounts: source, destination, token_program
-            if i + 2 >= accounts.len() {
-                break;
-            }
+        // The complete tail was validated before any mutation. Re-read each
+        // source amount immediately before its CPI so duplicate source entries
+        // cannot transfer a stale balance.
+        let source_data = unsafe { source_token_account.borrow_data_unchecked() };
+        let amount_bytes = &source_data[TOKEN_ACCOUNT_AMOUNT_START..TOKEN_ACCOUNT_AMOUNT_END];
+        let amount = u64::from_le_bytes(amount_bytes.try_into().unwrap());
 
-            let source_token_account = &accounts[i];
-            let dest_token_account = &accounts[i + 1];
-            let token_program = &accounts[i + 2];
-
-            // Verify this is a valid token program
-            if token_program.key() != &SPL_TOKEN_ID && token_program.key() != &SPL_TOKEN_2022_ID {
-                continue;
-            }
-
-            // Check if source account is owned by swig account
-            let source_data = source_token_account.try_borrow_data()?;
-            if source_data.len() < 72 {
-                continue;
-            }
-
-            let source_owner_bytes = &source_data[32..64];
-            if unsafe { sol_memcmp(source_owner_bytes, ctx.accounts.swig.key().as_ref(), 32) } != 0
-            {
-                continue;
-            }
-
-            // Check if destination account is owned by swig wallet address
-            let dest_data = dest_token_account.try_borrow_data()?;
-            if dest_data.len() < 72 {
-                drop(source_data);
-                continue;
-            }
-
-            let dest_owner_bytes = &dest_data[32..64];
-            if unsafe {
-                sol_memcmp(
-                    dest_owner_bytes,
-                    ctx.accounts.swig_wallet_address.key().as_ref(),
-                    32,
-                )
-            } != 0
-            {
-                drop(source_data);
-                drop(dest_data);
-                continue;
-            }
-
-            // Get the token balance
-            let amount_bytes = &source_data[64..72];
-            let amount = unsafe {
-                u64::from_le_bytes([
-                    amount_bytes[0],
-                    amount_bytes[1],
-                    amount_bytes[2],
-                    amount_bytes[3],
-                    amount_bytes[4],
-                    amount_bytes[5],
-                    amount_bytes[6],
-                    amount_bytes[7],
-                ])
-            };
-
-            if amount > 0 {
-                drop(source_data); // Release borrow
-                drop(dest_data); // Release borrow
-
-                // Transfer tokens using CPI
-                let token_transfer = TokenTransfer {
-                    token_program: token_program.key(),
-                    from: source_token_account,
-                    to: dest_token_account,
-                    authority: ctx.accounts.swig,
-                    amount,
-                };
-                token_transfer.invoke_signed(&[(&swig_signer).into()])?;
-            }
+        // A valid zero-balance account is the only migration entry that may be
+        // skipped. Malformed entries always failed during preflight above.
+        if amount == 0 {
+            continue;
         }
+
+        let token_transfer = TokenTransfer {
+            token_program: token_program.key(),
+            from: source_token_account,
+            to: dest_token_account,
+            authority: ctx.accounts.swig,
+            amount,
+        };
+        token_transfer.invoke_signed(&[(&swig_signer).into()])?;
     }
 
     Ok(())
