@@ -6,9 +6,8 @@ use common::*;
 use solana_sdk::{
     instruction::{AccountMeta, Instruction, InstructionError},
     message::{v0, VersionedMessage},
-    signature::Keypair,
+    signature::{Keypair, Signature},
     signer::Signer,
-    sysvar::instructions,
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig::error::SwigError;
@@ -23,17 +22,18 @@ use swig_state::{
 };
 
 const TEST_PROGRAM_ID: solana_sdk::pubkey::Pubkey =
-    solana_sdk::pubkey!("Hg3wRaydFtJhYrdvYrKECacpJYDsC9Px7yKmpncj2fhc");
+    solana_sdk::pubkey!("BXAu5ZWHnGun2XZjUZ9nqwiZ5dNVmofPGYdMC4rx4qLV");
 const TEST_PROGRAM_PATH: &str = "../target/deploy/test_program_authority.so";
-const ALLOWED_OUTER_PREFIX: [u8; 8] = [0x77, 0x6f, 0xf7, 0xd7, 0xbe, 0x03, 0xaa, 0x17];
-const BLOCKED_OUTER_PREFIX: [u8; 8] = [0x77, 0x6f, 0xf7, 0xd7, 0xbe, 0x03, 0xaa, 0x18];
+const INVOKE_SWIG_NON_SIGN: [u8; 8] = *b"swigcpi1";
+const PRODUCTION_ALLOWED_SIGNER: solana_sdk::pubkey::Pubkey =
+    solana_sdk::pubkey!("X4o2kSLzqEQjnAzhq3L3BW92aawMV2n2F37EXd2GMpy");
 
-fn deploy_test_program(context: &mut SwigTestContext, program_id: solana_sdk::pubkey::Pubkey) {
+fn deploy_test_program(context: &mut SwigTestContext) {
     let program_data = std::fs::read(TEST_PROGRAM_PATH)
         .expect("build test-program-authority with cargo build-sbf before running this test");
     context
         .svm
-        .add_program(program_id, &program_data)
+        .add_program(TEST_PROGRAM_ID, &program_data)
         .expect("deploy test-program-authority");
 }
 
@@ -68,25 +68,17 @@ fn create_instruction(
     (instruction, swig, wallet)
 }
 
-fn wrap_non_sign_cpi(
-    mut inner_instruction: Instruction,
-    outer_program_id: solana_sdk::pubkey::Pubkey,
-    outer_prefix: [u8; 8],
-) -> Instruction {
-    inner_instruction
-        .accounts
-        .push(AccountMeta::new_readonly(instructions::ID, false));
-
+fn wrap_non_sign_cpi(inner_instruction: Instruction) -> Instruction {
     let mut accounts = Vec::with_capacity(inner_instruction.accounts.len() + 1);
     accounts.push(AccountMeta::new_readonly(program_id(), false));
     accounts.extend(inner_instruction.accounts);
 
-    let mut data = Vec::with_capacity(outer_prefix.len() + inner_instruction.data.len());
-    data.extend_from_slice(&outer_prefix);
+    let mut data = Vec::with_capacity(INVOKE_SWIG_NON_SIGN.len() + inner_instruction.data.len());
+    data.extend_from_slice(&INVOKE_SWIG_NON_SIGN);
     data.extend_from_slice(&inner_instruction.data);
 
     Instruction {
-        program_id: outer_program_id,
+        program_id: TEST_PROGRAM_ID,
         accounts,
         data,
     }
@@ -120,11 +112,55 @@ fn send_instruction(
 }
 
 fn assert_cpi_rejected(result: Result<(), Box<litesvm::types::FailedTransactionMetadata>>) {
-    let error = result.expect_err("non-allowlisted inbound CPI must fail");
+    let error = result.expect_err("inbound CPI without an allowlisted signer must fail");
     assert_eq!(
         error.err,
         TransactionError::InstructionError(0, InstructionError::Custom(SwigError::Cpi as u32),)
     );
+}
+
+fn setup_test_context_without_signature_verification() -> SwigTestContext {
+    let SwigTestContext { svm, default_payer } = setup_test_context().unwrap();
+    SwigTestContext {
+        svm: svm.with_sigverify(false),
+        default_payer,
+    }
+}
+
+/// Sends a structurally valid transaction while skipping LiteSVM's
+/// cryptographic signature verification. The message header still marks every
+/// requested signer exactly as the Solana runtime would, which lets the program
+/// boundary be tested against the production public key without its private
+/// key.
+fn send_instruction_without_signature_verification(
+    context: &mut SwigTestContext,
+    instruction: Instruction,
+) -> Result<(), Box<litesvm::types::FailedTransactionMetadata>> {
+    assert!(!context.svm.get_sigverify());
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[instruction],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let signatures =
+        vec![Signature::default(); usize::from(message.header().num_required_signatures)];
+    context
+        .svm
+        .send_transaction(VersionedTransaction {
+            signatures,
+            message,
+        })
+        .map(|_| ())
+        .map_err(Box::new)
+}
+
+#[test]
+fn production_allowlisted_signer_is_on_curve() {
+    assert!(PRODUCTION_ALLOWED_SIGNER.is_on_curve());
 }
 
 #[test_log::test]
@@ -140,11 +176,11 @@ fn direct_non_sign_instruction_remains_allowed() {
 }
 
 #[test_log::test]
-fn non_allowlisted_outer_instruction_cannot_cpi_into_create() {
+fn non_allowlisted_signer_cannot_cpi_into_create() {
     let mut context = setup_test_context().unwrap();
-    deploy_test_program(&mut context, TEST_PROGRAM_ID);
+    deploy_test_program(&mut context);
     let (inner, swig, wallet) = create_instruction(context.default_payer.pubkey(), [2u8; 32]);
-    let outer = wrap_non_sign_cpi(inner, TEST_PROGRAM_ID, BLOCKED_OUTER_PREFIX);
+    let outer = wrap_non_sign_cpi(inner);
 
     assert_cpi_rejected(send_instruction(&mut context, outer, None));
     assert!(context.svm.get_account(&swig).is_none());
@@ -152,48 +188,59 @@ fn non_allowlisted_outer_instruction_cannot_cpi_into_create() {
 }
 
 #[test_log::test]
-fn allowlisted_program_and_prefix_can_cpi_into_create() {
+fn allowlisted_key_without_signer_privilege_is_rejected() {
     let mut context = setup_test_context().unwrap();
-    deploy_test_program(&mut context, TEST_PROGRAM_ID);
-    let (inner, swig, wallet) = create_instruction(context.default_payer.pubkey(), [3u8; 32]);
-    let outer = wrap_non_sign_cpi(inner, TEST_PROGRAM_ID, ALLOWED_OUTER_PREFIX);
+    deploy_test_program(&mut context);
+    context.svm.airdrop(&PRODUCTION_ALLOWED_SIGNER, 1).unwrap();
+    let (mut inner, swig, wallet) = create_instruction(context.default_payer.pubkey(), [3u8; 32]);
+    inner
+        .accounts
+        .push(AccountMeta::new_readonly(PRODUCTION_ALLOWED_SIGNER, false));
+    let outer = wrap_non_sign_cpi(inner);
 
-    send_instruction(&mut context, outer, None).unwrap();
+    assert_cpi_rejected(send_instruction(&mut context, outer, None));
+    assert!(context.svm.get_account(&swig).is_none());
+    assert!(context.svm.get_account(&wallet).is_none());
+}
+
+#[test_log::test]
+fn allowlisted_signer_can_cpi_into_create() {
+    let mut context = setup_test_context_without_signature_verification();
+    deploy_test_program(&mut context);
+    context
+        .svm
+        .airdrop(&PRODUCTION_ALLOWED_SIGNER, 10_000_000_000)
+        .unwrap();
+    let (inner, swig, wallet) = create_instruction(PRODUCTION_ALLOWED_SIGNER, [4u8; 32]);
+    let outer = wrap_non_sign_cpi(inner);
+
+    send_instruction_without_signature_verification(&mut context, outer).unwrap();
     assert!(context.svm.get_account(&swig).is_some());
     assert!(context.svm.get_account(&wallet).is_some());
 }
 
 #[test_log::test]
-fn allowlisted_prefix_from_another_program_is_rejected() {
-    let mut context = setup_test_context().unwrap();
-    let other_program_id = solana_sdk::pubkey::Pubkey::new_unique();
-    deploy_test_program(&mut context, other_program_id);
-    let (inner, swig, wallet) = create_instruction(context.default_payer.pubkey(), [4u8; 32]);
-    let outer = wrap_non_sign_cpi(inner, other_program_id, ALLOWED_OUTER_PREFIX);
-
-    assert_cpi_rejected(send_instruction(&mut context, outer, None));
-    assert!(context.svm.get_account(&swig).is_none());
-    assert!(context.svm.get_account(&wallet).is_none());
-}
-
-#[test_log::test]
-fn allowlisted_program_and_prefix_can_cpi_into_another_non_sign_instruction() {
-    let mut context = setup_test_context().unwrap();
-    deploy_test_program(&mut context, TEST_PROGRAM_ID);
-    let root = Keypair::new();
-    let (swig, _) = create_swig_ed25519(&mut context, &root, [5u8; 32]).unwrap();
+fn allowlisted_signer_can_cpi_into_another_non_sign_instruction() {
+    let mut context = setup_test_context_without_signature_verification();
+    deploy_test_program(&mut context);
+    context
+        .svm
+        .airdrop(&PRODUCTION_ALLOWED_SIGNER, 10_000_000_000)
+        .unwrap();
+    let (create, swig, _) = create_instruction(PRODUCTION_ALLOWED_SIGNER, [5u8; 32]);
+    send_instruction_without_signature_verification(&mut context, create).unwrap();
     let claimer = Keypair::new().pubkey();
     let inner = SetRentClaimerV1Instruction::new_with_ed25519_authority(
         swig,
         context.default_payer.pubkey(),
-        root.pubkey(),
+        PRODUCTION_ALLOWED_SIGNER,
         0,
         claimer.to_bytes(),
     )
     .unwrap();
-    let outer = wrap_non_sign_cpi(inner, TEST_PROGRAM_ID, ALLOWED_OUTER_PREFIX);
+    let outer = wrap_non_sign_cpi(inner);
 
-    send_instruction(&mut context, outer, Some(&root)).unwrap();
+    send_instruction_without_signature_verification(&mut context, outer).unwrap();
 
     let account = context.svm.get_account(&swig).unwrap();
     let parts = Swig::split_parts(&account.data).unwrap();

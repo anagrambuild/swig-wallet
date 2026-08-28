@@ -602,8 +602,8 @@ deduplicated account indexes to minimize transaction size.
 │  │ CPI Safety                                                       │ │
 │  │                                                                  │ │
 │  │  - Stack height check: SignV2 must be top-level (not via CPI)    │ │
-│  │  - Non-sign instructions are direct-only unless an exact outer   │ │
-│  │    program + instruction prefix pair is allowlisted              │ │
+│  │  - Non-sign instructions are direct-only unless an exact         │ │
+│  │    allowlisted signer is forwarded with signer privilege         │ │
 │  │  - ProgramExec cannot delegate to the Swig program itself        │ │
 │  │  - Post-execution SHA256 integrity verification on all           │ │
 │  │    classified accounts (detects unauthorized data changes)        │ │

@@ -15,7 +15,6 @@ custom-panic = []
 no-entrypoint = []
 test-sbf = []
 program_scope_test = []
-test_inbound_cpi_allowlist = []
 
 [dependencies]
 solana-program = "3.0.0"
