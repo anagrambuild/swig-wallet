@@ -88,6 +88,8 @@ pub fn process_action(
     }
     let discriminator = unsafe { *(data.get_unchecked(..2).as_ptr() as *const u16) };
     let ix = SwigInstruction::from_primitive(discriminator);
+    // Sign instructions stay CPI-blocked. Everything else allows one authorized
+    // signer until that app migrates off inbound CPI.
     if matches!(
         ix,
         SwigInstruction::SignV2
