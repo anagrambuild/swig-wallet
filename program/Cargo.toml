@@ -58,7 +58,6 @@ test-bpf = []
 no-entrypoint = []
 program_scope_test = []
 stake_tests = []
-test_inbound_cpi_allowlist = []
 
 [lib]
 crate-type = ["cdylib", "lib"]

@@ -19,17 +19,11 @@ struct NonSignCpiAllowlistEntry {
     outer_instruction_prefix: &'static [u8],
 }
 
-// Production has no inbound-CPI exceptions by default. Add an entry only for
-// a reviewed outer program and instruction prefix.
-#[cfg(not(feature = "test_inbound_cpi_allowlist"))]
-const NON_SIGN_CPI_ALLOWLIST: &[NonSignCpiAllowlistEntry] = &[];
-
-// This entry exists only to exercise the positive allowlist path in SBF tests.
-// Never enable this feature in a production build.
-#[cfg(feature = "test_inbound_cpi_allowlist")]
+// Dexter Vault's SetSwigAtomic instruction creates and configures a Swig wallet
+// through CPI as one atomic onboarding operation.
 const NON_SIGN_CPI_ALLOWLIST: &[NonSignCpiAllowlistEntry] = &[NonSignCpiAllowlistEntry {
-    outer_program_id: pinocchio_pubkey::pubkey!("BXAu5ZWHnGun2XZjUZ9nqwiZ5dNVmofPGYdMC4rx4qLV"),
-    outer_instruction_prefix: b"swigcpi1",
+    outer_program_id: pinocchio_pubkey::pubkey!("Hg3wRaydFtJhYrdvYrKECacpJYDsC9Px7yKmpncj2fhc"),
+    outer_instruction_prefix: &[0x77, 0x6f, 0xf7, 0xd7, 0xbe, 0x03, 0xaa, 0x17],
 }];
 
 /// Enforces the inbound-CPI policy before dispatching a non-sign instruction.

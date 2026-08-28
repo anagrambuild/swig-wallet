@@ -23,10 +23,10 @@ use swig_state::{
 };
 
 const TEST_PROGRAM_ID: solana_sdk::pubkey::Pubkey =
-    solana_sdk::pubkey!("BXAu5ZWHnGun2XZjUZ9nqwiZ5dNVmofPGYdMC4rx4qLV");
+    solana_sdk::pubkey!("Hg3wRaydFtJhYrdvYrKECacpJYDsC9Px7yKmpncj2fhc");
 const TEST_PROGRAM_PATH: &str = "../target/deploy/test_program_authority.so";
-const ALLOWED_OUTER_PREFIX: [u8; 8] = *b"swigcpi1";
-const BLOCKED_OUTER_PREFIX: [u8; 8] = *b"swigcpi2";
+const ALLOWED_OUTER_PREFIX: [u8; 8] = [0x77, 0x6f, 0xf7, 0xd7, 0xbe, 0x03, 0xaa, 0x17];
+const BLOCKED_OUTER_PREFIX: [u8; 8] = [0x77, 0x6f, 0xf7, 0xd7, 0xbe, 0x03, 0xaa, 0x18];
 
 fn deploy_test_program(context: &mut SwigTestContext, program_id: solana_sdk::pubkey::Pubkey) {
     let program_data = std::fs::read(TEST_PROGRAM_PATH)
@@ -151,7 +151,6 @@ fn non_allowlisted_outer_instruction_cannot_cpi_into_create() {
     assert!(context.svm.get_account(&wallet).is_none());
 }
 
-#[cfg(feature = "test_inbound_cpi_allowlist")]
 #[test_log::test]
 fn allowlisted_program_and_prefix_can_cpi_into_create() {
     let mut context = setup_test_context().unwrap();
@@ -164,7 +163,6 @@ fn allowlisted_program_and_prefix_can_cpi_into_create() {
     assert!(context.svm.get_account(&wallet).is_some());
 }
 
-#[cfg(feature = "test_inbound_cpi_allowlist")]
 #[test_log::test]
 fn allowlisted_prefix_from_another_program_is_rejected() {
     let mut context = setup_test_context().unwrap();
@@ -178,7 +176,6 @@ fn allowlisted_prefix_from_another_program_is_rejected() {
     assert!(context.svm.get_account(&wallet).is_none());
 }
 
-#[cfg(feature = "test_inbound_cpi_allowlist")]
 #[test_log::test]
 fn allowlisted_program_and_prefix_can_cpi_into_another_non_sign_instruction() {
     let mut context = setup_test_context().unwrap();

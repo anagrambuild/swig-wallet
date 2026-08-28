@@ -29,11 +29,13 @@ pub mod instructions {
     /// CPI System::Allocate against the first account (wallet PDA).
     pub const MUTATE_WALLET_ALLOCATE: [u8; 8] = [11, 11, 11, 11, 11, 11, 11, 11];
 
-    /// CPI into a non-sign Swig instruction through the test allowlist.
-    pub const INVOKE_SWIG_NON_SIGN_ALLOWED: [u8; 8] = *b"swigcpi1";
+    /// CPI into a non-sign Swig instruction through the Dexter allowlist.
+    pub const INVOKE_SWIG_NON_SIGN_ALLOWED: [u8; 8] =
+        [0x77, 0x6f, 0xf7, 0xd7, 0xbe, 0x03, 0xaa, 0x17];
 
     /// CPI into the same Swig instruction with a non-allowlisted prefix.
-    pub const INVOKE_SWIG_NON_SIGN_BLOCKED: [u8; 8] = *b"swigcpi2";
+    pub const INVOKE_SWIG_NON_SIGN_BLOCKED: [u8; 8] =
+        [0x77, 0x6f, 0xf7, 0xd7, 0xbe, 0x03, 0xaa, 0x18];
 }
 
 /// State account data format:
@@ -203,8 +205,14 @@ mod tests {
         assert_eq!(instructions::TEST_TOKEN_TRANSFER.len(), 8);
         assert_eq!(instructions::INVALID_DISCRIMINATOR.len(), 8);
         assert_eq!(instructions::REPLACE_AUTHORITY_PROOF_V1, *b"rplauth1");
-        assert_eq!(instructions::INVOKE_SWIG_NON_SIGN_ALLOWED, *b"swigcpi1");
-        assert_eq!(instructions::INVOKE_SWIG_NON_SIGN_BLOCKED, *b"swigcpi2");
+        assert_eq!(
+            instructions::INVOKE_SWIG_NON_SIGN_ALLOWED,
+            [0x77, 0x6f, 0xf7, 0xd7, 0xbe, 0x03, 0xaa, 0x17]
+        );
+        assert_eq!(
+            instructions::INVOKE_SWIG_NON_SIGN_BLOCKED,
+            [0x77, 0x6f, 0xf7, 0xd7, 0xbe, 0x03, 0xaa, 0x18]
+        );
         assert_ne!(
             instructions::TEST_TOKEN_TRANSFER,
             instructions::INVALID_DISCRIMINATOR
