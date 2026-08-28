@@ -18,7 +18,8 @@ use swig_interface::{
 use swig_state::{
     action::all::All,
     authority::AuthorityType,
-    swig::{swig_account_seeds, swig_wallet_address_seeds},
+    swig::{swig_account_seeds, swig_wallet_address_seeds, Swig},
+    tail::rent_claimer,
 };
 
 const TEST_PROGRAM_ID: solana_sdk::pubkey::Pubkey =
@@ -152,7 +153,7 @@ fn non_allowlisted_outer_instruction_cannot_cpi_into_create() {
 
 #[cfg(feature = "test_inbound_cpi_allowlist")]
 #[test_log::test]
-fn exact_allowlisted_outer_and_inner_instruction_can_cpi() {
+fn allowlisted_program_and_prefix_can_cpi_into_create() {
     let mut context = setup_test_context().unwrap();
     deploy_test_program(&mut context, TEST_PROGRAM_ID);
     let (inner, swig, wallet) = create_instruction(context.default_payer.pubkey(), [3u8; 32]);
@@ -179,22 +180,28 @@ fn allowlisted_prefix_from_another_program_is_rejected() {
 
 #[cfg(feature = "test_inbound_cpi_allowlist")]
 #[test_log::test]
-fn allowlisted_outer_instruction_cannot_invoke_another_swig_instruction() {
+fn allowlisted_program_and_prefix_can_cpi_into_another_non_sign_instruction() {
     let mut context = setup_test_context().unwrap();
     deploy_test_program(&mut context, TEST_PROGRAM_ID);
     let root = Keypair::new();
     let (swig, _) = create_swig_ed25519(&mut context, &root, [5u8; 32]).unwrap();
-    let before = context.svm.get_account(&swig).unwrap();
+    let claimer = Keypair::new().pubkey();
     let inner = SetRentClaimerV1Instruction::new_with_ed25519_authority(
         swig,
         context.default_payer.pubkey(),
         root.pubkey(),
         0,
-        Keypair::new().pubkey().to_bytes(),
+        claimer.to_bytes(),
     )
     .unwrap();
     let outer = wrap_non_sign_cpi(inner, TEST_PROGRAM_ID, ALLOWED_OUTER_PREFIX);
 
-    assert_cpi_rejected(send_instruction(&mut context, outer, Some(&root)));
-    assert_eq!(context.svm.get_account(&swig).unwrap(), before);
+    send_instruction(&mut context, outer, Some(&root)).unwrap();
+
+    let account = context.svm.get_account(&swig).unwrap();
+    let parts = Swig::split_parts(&account.data).unwrap();
+    assert_eq!(
+        rent_claimer::read_strict(parts.tail).unwrap(),
+        Some(&claimer.to_bytes())
+    );
 }

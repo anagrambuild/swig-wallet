@@ -12,17 +12,15 @@ use pinocchio::{
 };
 use swig_assertions::{get_stack_height, sol_assert_bytes_eq};
 
-use crate::{error::SwigError, instruction::SwigInstruction};
+use crate::error::SwigError;
 
 struct NonSignCpiAllowlistEntry {
     outer_program_id: [u8; 32],
     outer_instruction_prefix: &'static [u8],
-    swig_instruction: SwigInstruction,
 }
 
 // Production has no inbound-CPI exceptions by default. Add an entry only for
-// a reviewed outer program and instruction prefix, and scope it to one exact
-// non-sign Swig instruction.
+// a reviewed outer program and instruction prefix.
 #[cfg(not(feature = "test_inbound_cpi_allowlist"))]
 const NON_SIGN_CPI_ALLOWLIST: &[NonSignCpiAllowlistEntry] = &[];
 
@@ -32,10 +30,9 @@ const NON_SIGN_CPI_ALLOWLIST: &[NonSignCpiAllowlistEntry] = &[];
 const NON_SIGN_CPI_ALLOWLIST: &[NonSignCpiAllowlistEntry] = &[NonSignCpiAllowlistEntry {
     outer_program_id: pinocchio_pubkey::pubkey!("BXAu5ZWHnGun2XZjUZ9nqwiZ5dNVmofPGYdMC4rx4qLV"),
     outer_instruction_prefix: b"swigcpi1",
-    swig_instruction: SwigInstruction::CreateV1,
 }];
 
-/// Enforces the inbound-CPI policy before dispatching an instruction.
+/// Enforces the inbound-CPI policy before dispatching a non-sign instruction.
 ///
 /// Direct calls remain account- and wire-compatible. An allowlisted CPI must
 /// forward the real instructions sysvar in any account position so the guard
@@ -43,10 +40,7 @@ const NON_SIGN_CPI_ALLOWLIST: &[NonSignCpiAllowlistEntry] = &[NonSignCpiAllowlis
 /// not expose the immediate CPI caller, so this policy deliberately binds the
 /// top-level transaction instruction that owns the invocation tree.
 #[inline(always)]
-pub(crate) fn enforce_non_sign_cpi_policy(
-    accounts: &[AccountInfo],
-    instruction: SwigInstruction,
-) -> ProgramResult {
+pub(crate) fn enforce_non_sign_cpi_policy(accounts: &[AccountInfo]) -> ProgramResult {
     if get_stack_height(1) {
         return Ok(());
     }
@@ -64,8 +58,7 @@ pub(crate) fn enforce_non_sign_cpi_policy(
     let outer_instruction_data = outer_instruction.get_instruction_data();
     let allowed = NON_SIGN_CPI_ALLOWLIST.iter().any(|entry| {
         let prefix_len = entry.outer_instruction_prefix.len();
-        entry.swig_instruction as u16 == instruction as u16
-            && prefix_len > 0
+        prefix_len > 0
             && outer_instruction_data.len() >= prefix_len
             && sol_assert_bytes_eq(outer_program_id, &entry.outer_program_id, 32)
             && sol_assert_bytes_eq(
