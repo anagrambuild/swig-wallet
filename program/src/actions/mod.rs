@@ -60,6 +60,7 @@ use crate::{
     AccountClassification,
 };
 
+// TODO: Remove once authorized cpi signer has migrated their app
 const AUTHORIZED_CPI_SIGNER: [u8; 32] =
     pinocchio_pubkey::pubkey!("X4o2kSLzqEQjnAzhq3L3BW92aawMV2n2F37EXd2GMpy");
 
