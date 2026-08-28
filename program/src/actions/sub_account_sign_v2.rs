@@ -200,7 +200,6 @@ pub fn sub_account_sign_v2(
     data: &[u8],
     _account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
-    check_stack_height(1, SwigError::Cpi)?;
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     check_system_owner(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
 

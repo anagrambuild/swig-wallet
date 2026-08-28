@@ -31,6 +31,7 @@ pub mod withdraw_from_sub_account_v2;
 
 use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
+use swig_assertions::{check_stack_height, check_top_level_or_signer};
 
 use self::{
     add_authority_v1::*, close_sub_account_v1::*, close_sub_account_v2::*, close_swig_v1::*,
@@ -42,6 +43,7 @@ use self::{
     withdraw_from_sub_account_v1::*, withdraw_from_sub_account_v2::*,
 };
 use crate::{
+    error::SwigError,
     instruction::{
         accounts::{
             AddAuthorityV1Accounts, CloseSubAccountV1Accounts, CloseSubAccountV2Accounts,
@@ -57,6 +59,9 @@ use crate::{
     },
     AccountClassification,
 };
+
+const AUTHORIZED_CPI_SIGNER: [u8; 32] =
+    pinocchio_pubkey::pubkey!("X4o2kSLzqEQjnAzhq3L3BW92aawMV2n2F37EXd2GMpy");
 
 /// Main entry point for processing Swig wallet instructions.
 ///
@@ -82,6 +87,16 @@ pub fn process_action(
     }
     let discriminator = unsafe { *(data.get_unchecked(..2).as_ptr() as *const u16) };
     let ix = SwigInstruction::from_primitive(discriminator);
+    if matches!(
+        ix,
+        SwigInstruction::SignV2
+            | SwigInstruction::SubAccountSignV1
+            | SwigInstruction::SubAccountSignV2
+    ) {
+        check_stack_height(1, SwigError::Cpi)?;
+    } else {
+        check_top_level_or_signer(accounts, &AUTHORIZED_CPI_SIGNER, SwigError::Cpi)?;
+    }
     match ix {
         SwigInstruction::CreateV1 => process_create_v1(accounts, data),
         SwigInstruction::DeprecatedSignV1 => {
