@@ -72,11 +72,6 @@ pub fn process_instruction(
     }
 }
 
-/// Invokes the Swig program with the remaining accounts and instruction data.
-///
-/// Expected accounts:
-/// 0. `[]` Swig program
-/// 1+. Accounts for the inner Swig instruction.
 fn process_invoke_swig_non_sign(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let (swig_program, inner_accounts) = accounts
         .split_first()

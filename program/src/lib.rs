@@ -7,7 +7,6 @@
 //! accounts.
 
 pub mod actions;
-mod cpi_guard;
 pub mod error;
 pub mod instruction;
 pub mod util;

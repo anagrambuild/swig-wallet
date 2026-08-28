@@ -31,6 +31,7 @@ pub mod withdraw_from_sub_account_v2;
 
 use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
+use swig_assertions::{check_stack_height, check_top_level_or_signer};
 
 use self::{
     add_authority_v1::*, close_sub_account_v1::*, close_sub_account_v2::*, close_swig_v1::*,
@@ -42,7 +43,7 @@ use self::{
     withdraw_from_sub_account_v1::*, withdraw_from_sub_account_v2::*,
 };
 use crate::{
-    cpi_guard::enforce_non_sign_cpi_policy,
+    error::SwigError,
     instruction::{
         accounts::{
             AddAuthorityV1Accounts, CloseSubAccountV1Accounts, CloseSubAccountV2Accounts,
@@ -58,6 +59,10 @@ use crate::{
     },
     AccountClassification,
 };
+
+// TODO: Remove once authorized cpi signer has migrated their app
+const AUTHORIZED_CPI_SIGNER: [u8; 32] =
+    pinocchio_pubkey::pubkey!("X4o2kSLzqEQjnAzhq3L3BW92aawMV2n2F37EXd2GMpy");
 
 /// Main entry point for processing Swig wallet instructions.
 ///
@@ -83,11 +88,20 @@ pub fn process_action(
     }
     let discriminator = unsafe { *(data.get_unchecked(..2).as_ptr() as *const u16) };
     let ix = SwigInstruction::from_primitive(discriminator);
+    // Sign instructions stay CPI-blocked. Everything else allows one authorized
+    // signer until that app migrates off inbound CPI.
+    if matches!(
+        ix,
+        SwigInstruction::SignV2
+            | SwigInstruction::SubAccountSignV1
+            | SwigInstruction::SubAccountSignV2
+    ) {
+        check_stack_height(1, SwigError::Cpi)?;
+    } else {
+        check_top_level_or_signer(accounts, &AUTHORIZED_CPI_SIGNER, SwigError::Cpi)?;
+    }
     match ix {
-        SwigInstruction::CreateV1 => {
-            enforce_non_sign_cpi_policy(accounts)?;
-            process_create_v1(accounts, data)
-        },
+        SwigInstruction::CreateV1 => process_create_v1(accounts, data),
         SwigInstruction::DeprecatedSignV1 => {
             msg!(
                 "DEPRECATED. Use SignV2 instead. https://build.onswig.com/examples/v2_features \
@@ -96,84 +110,38 @@ pub fn process_action(
             Err(ProgramError::InvalidInstructionData)
         },
         SwigInstruction::SignV2 => process_sign_v2(accounts, account_classification, data),
-        SwigInstruction::AddAuthorityV1 => {
-            enforce_non_sign_cpi_policy(accounts)?;
-            process_add_authority_v1(accounts, data)
-        },
-        SwigInstruction::RemoveAuthorityV1 => {
-            enforce_non_sign_cpi_policy(accounts)?;
-            process_remove_authority_v1(accounts, data)
-        },
-        SwigInstruction::UpdateAuthorityV1 => {
-            enforce_non_sign_cpi_policy(accounts)?;
-            process_update_authority_v1(accounts, data)
-        },
-        SwigInstruction::CreateSessionV1 => {
-            enforce_non_sign_cpi_policy(accounts)?;
-            process_create_session_v1(accounts, data)
-        },
-        SwigInstruction::CreateSubAccountV1 => {
-            enforce_non_sign_cpi_policy(accounts)?;
-            process_create_sub_account_v1(accounts, data)
-        },
+        SwigInstruction::AddAuthorityV1 => process_add_authority_v1(accounts, data),
+        SwigInstruction::RemoveAuthorityV1 => process_remove_authority_v1(accounts, data),
+        SwigInstruction::UpdateAuthorityV1 => process_update_authority_v1(accounts, data),
+        SwigInstruction::CreateSessionV1 => process_create_session_v1(accounts, data),
+        SwigInstruction::CreateSubAccountV1 => process_create_sub_account_v1(accounts, data),
         SwigInstruction::WithdrawFromSubAccountV1 => {
-            enforce_non_sign_cpi_policy(accounts)?;
             process_withdraw_from_sub_account_v1(accounts, account_classification, data)
         },
         SwigInstruction::SubAccountSignV1 => {
             process_sub_account_sign_v1(accounts, account_classification, data)
         },
-        SwigInstruction::ToggleSubAccountV1 => {
-            enforce_non_sign_cpi_policy(accounts)?;
-            process_toggle_sub_account_v1(accounts, data)
-        },
-        SwigInstruction::CreateSubAccountV2 => {
-            enforce_non_sign_cpi_policy(accounts)?;
-            process_create_sub_account_v2(accounts, data)
-        },
-        SwigInstruction::ToggleSubAccountV2 => {
-            enforce_non_sign_cpi_policy(accounts)?;
-            process_toggle_sub_account_v2(accounts, data)
-        },
+        SwigInstruction::ToggleSubAccountV1 => process_toggle_sub_account_v1(accounts, data),
+        SwigInstruction::CreateSubAccountV2 => process_create_sub_account_v2(accounts, data),
+        SwigInstruction::ToggleSubAccountV2 => process_toggle_sub_account_v2(accounts, data),
         SwigInstruction::SubAccountSignV2 => {
             process_sub_account_sign_v2(accounts, account_classification, data)
         },
         SwigInstruction::WithdrawFromSubAccountV2 => {
-            enforce_non_sign_cpi_policy(accounts)?;
             process_withdraw_from_sub_account_v2(accounts, account_classification, data)
         },
         SwigInstruction::MigrateToWalletAddressV1 => {
-            enforce_non_sign_cpi_policy(accounts)?;
             process_migrate_to_wallet_address_v1(accounts, data)
         },
         SwigInstruction::TransferAssetsV1 => {
-            enforce_non_sign_cpi_policy(accounts)?;
             process_transfer_assets_v1(accounts, account_classification, data)
         },
-        SwigInstruction::CloseTokenAccountV1 => {
-            enforce_non_sign_cpi_policy(accounts)?;
-            process_close_token_account_v1(accounts, data)
-        },
-        SwigInstruction::CloseSubAccountV1 => {
-            enforce_non_sign_cpi_policy(accounts)?;
-            process_close_sub_account_v1(accounts, data)
-        },
-        SwigInstruction::CloseSubAccountV2 => {
-            enforce_non_sign_cpi_policy(accounts)?;
-            process_close_sub_account_v2(accounts, data)
-        },
-        SwigInstruction::CloseSwigV1 => {
-            enforce_non_sign_cpi_policy(accounts)?;
-            process_close_swig_v1(accounts, data)
-        },
-        SwigInstruction::ReplaceAuthorityV1 => {
-            enforce_non_sign_cpi_policy(accounts)?;
-            process_replace_authority_v1(accounts, data)
-        },
-        SwigInstruction::SetRentClaimerV1 => {
-            enforce_non_sign_cpi_policy(accounts)?;
-            process_set_rent_claimer_v1(accounts, data)
-        },
+        SwigInstruction::CloseTokenAccountV1 => process_close_token_account_v1(accounts, data),
+        SwigInstruction::CloseSubAccountV1 => process_close_sub_account_v1(accounts, data),
+        SwigInstruction::CloseSubAccountV2 => process_close_sub_account_v2(accounts, data),
+        SwigInstruction::CloseSwigV1 => process_close_swig_v1(accounts, data),
+        SwigInstruction::ReplaceAuthorityV1 => process_replace_authority_v1(accounts, data),
+        SwigInstruction::SetRentClaimerV1 => process_set_rent_claimer_v1(accounts, data),
     }
 }
 

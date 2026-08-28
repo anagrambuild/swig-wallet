@@ -231,8 +231,6 @@ pub fn sign_v2(
     data: &[u8],
     account_classifiers: &mut [AccountClassification],
 ) -> ProgramResult {
-    check_stack_height(1, SwigError::Cpi)?;
-
     if !matches!(
         account_classifiers[0],
         AccountClassification::ThisSwigV2 { .. }
