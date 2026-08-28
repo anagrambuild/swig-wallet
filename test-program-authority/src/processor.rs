@@ -28,6 +28,9 @@ pub mod instructions {
 
     /// CPI System::Allocate against the first account (wallet PDA).
     pub const MUTATE_WALLET_ALLOCATE: [u8; 8] = [11, 11, 11, 11, 11, 11, 11, 11];
+
+    /// CPI into a non-sign Swig instruction.
+    pub const INVOKE_SWIG_NON_SIGN: [u8; 8] = *b"swigcpi1";
 }
 
 /// State account data format:
@@ -59,11 +62,38 @@ pub fn process_instruction(
         instructions::MUTATE_WALLET_ALLOCATE => {
             process_mutate_wallet_allocate(accounts, remaining_data)
         },
+        instructions::INVOKE_SWIG_NON_SIGN => {
+            process_invoke_swig_non_sign(accounts, remaining_data)
+        },
         instructions::INVALID_DISCRIMINATOR => {
             process_invalid_instruction(accounts, remaining_data)
         },
         _ => Err(ProgramError::InvalidInstructionData),
     }
+}
+
+fn process_invoke_swig_non_sign(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let (swig_program, inner_accounts) = accounts
+        .split_first()
+        .ok_or(ProgramError::NotEnoughAccountKeys)?;
+    if inner_accounts.is_empty() {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let inner_instruction = Instruction {
+        program_id: *swig_program.key,
+        accounts: inner_accounts
+            .iter()
+            .map(|account| AccountMeta {
+                pubkey: *account.key,
+                is_signer: account.is_signer,
+                is_writable: account.is_writable,
+            })
+            .collect(),
+        data: data.to_vec(),
+    };
+
+    invoke(&inner_instruction, accounts)
 }
 
 /// Process test token transfer - calls swig via CPI
@@ -164,6 +194,7 @@ mod tests {
         assert_eq!(instructions::TEST_TOKEN_TRANSFER.len(), 8);
         assert_eq!(instructions::INVALID_DISCRIMINATOR.len(), 8);
         assert_eq!(instructions::REPLACE_AUTHORITY_PROOF_V1, *b"rplauth1");
+        assert_eq!(instructions::INVOKE_SWIG_NON_SIGN, *b"swigcpi1");
         assert_ne!(
             instructions::TEST_TOKEN_TRANSFER,
             instructions::INVALID_DISCRIMINATOR

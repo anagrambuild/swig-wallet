@@ -148,6 +148,13 @@ sol_assert!(check_stack_height, expected: u64 |
       get_stack_height(expected)
 );
 
+sol_assert!(check_top_level_or_signer, accounts: &[AccountInfo], signer: &[u8; 32] |
+    get_stack_height(1)
+        || accounts.iter().any(|account| {
+            account.is_signer() && sol_assert_bytes_eq(account.key().as_ref(), signer.as_ref(), 32)
+        })
+);
+
 sol_assert!(check_zero_data, account: &AccountInfo |
   account.data_len() == 0
 );
