@@ -180,6 +180,9 @@ pub enum SwigError {
     /// Inner CPIs modified the authenticating authority's personal SOL or token
     /// accounts in a way that is not explained by ATA/account creation
     PermissionDeniedAuthorityExternalAssetChange,
+    /// The authority mutation would leave the Swig without an `All` or
+    /// `ManageAuthority` role.
+    NoAdminAuthorityWouldRemain,
 }
 
 /// Implements conversion from SwigError to ProgramError.

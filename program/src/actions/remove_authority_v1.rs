@@ -18,6 +18,7 @@ use swig_state::{
 };
 
 use crate::{
+    actions::admin_invariant::ensure_admin_remains,
     error::SwigError,
     instruction::{
         accounts::{Context, RemoveAuthorityV1Accounts},
@@ -204,14 +205,15 @@ pub fn remove_authority_v1(
         }
 
         // Get the role to remove
-        let role_to_remove =
-            Swig::get_mut_role(remove_authority_v1.args.authority_to_remove_id, swig_roles)?;
-
-        if role_to_remove.is_none() {
-            return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-        }
-        if active_sub_account_count::has_active_v1(role_to_remove.unwrap().actions)? {
-            return Err(SwigError::ActiveV1SubAccountMustBeClosed.into());
+        {
+            let role_to_remove =
+                Swig::get_mut_role(remove_authority_v1.args.authority_to_remove_id, swig_roles)?;
+            let Some(role_to_remove) = role_to_remove else {
+                return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
+            };
+            if active_sub_account_count::has_active_v1(role_to_remove.actions)? {
+                return Err(SwigError::ActiveV1SubAccountMustBeClosed.into());
+            }
         }
         let mut swig_builder = SwigBuilder {
             role_buffer: swig_roles,
@@ -219,6 +221,12 @@ pub fn remove_authority_v1(
         };
         // Remove the role.
         let removed = swig_builder.remove_role(remove_authority_v1.args.authority_to_remove_id)?;
+        // Validate the actual post-removal state before rent is reclaimed.
+        let remaining_roles = swig_builder
+            .role_buffer
+            .get(..removed.0)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        ensure_admin_remains(remaining_roles, swig_builder.swig.roles)?;
         (saved_tail, removed)
     };
     // realloc the account
