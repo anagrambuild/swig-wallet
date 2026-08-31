@@ -3475,14 +3475,13 @@ impl CloseSubAccountV1Instruction {
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
-        let account_payload = secp_account_payload(&accounts)?;
-        let authority_payload = secp256k1_v2_authority_payload(
+        let authority_payload = authority::secp256k1::build_authority_payload(
+            &accounts,
             args_bytes,
-            &account_payload,
             current_slot,
             counter,
             &mut authority_payload_fn,
-        );
+        )?;
         Ok(Instruction {
             program_id: program_id(),
             accounts,
@@ -3519,13 +3518,12 @@ impl CloseSubAccountV1Instruction {
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
-        secp256r1_v2_instructions(
-            &accounts,
+        authority::secp256r1::build_instructions(
+            accounts,
             args_bytes,
             args_bytes,
             current_slot,
             counter,
-            6,
             &mut authority_payload_fn,
             public_key,
         )
@@ -3597,14 +3595,13 @@ impl CloseSubAccountV2Instruction {
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
-        let account_payload = secp_account_payload(&accounts)?;
-        let authority_payload = secp256k1_v2_authority_payload(
+        let authority_payload = authority::secp256k1::build_authority_payload(
+            &accounts,
             args_bytes,
-            &account_payload,
             current_slot,
             counter,
             &mut authority_payload_fn,
-        );
+        )?;
         Ok(Instruction {
             program_id: program_id(),
             accounts,
@@ -3643,13 +3640,12 @@ impl CloseSubAccountV2Instruction {
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
-        secp256r1_v2_instructions(
-            &accounts,
+        authority::secp256r1::build_instructions(
+            accounts,
             args_bytes,
             args_bytes,
             current_slot,
             counter,
-            7,
             &mut authority_payload_fn,
             public_key,
         )
@@ -3659,7 +3655,7 @@ impl CloseSubAccountV2Instruction {
 /// Instruction builders for V2 sub-accounts (Ed25519, Secp256k1, Secp256r1).
 ///
 /// The authority-payload construction mirrors the V1 builders: Ed25519 appends
-/// the signer account index; Secp256k1 appends `slot ++ signature`; Secp256r1
+/// the signer account index; Secp256k1 appends `slot ++ counter ++ signature`; Secp256r1
 /// emits a precompile verify instruction plus a `slot ++ counter ++
 /// sysvar_index` payload.
 pub struct CreateSubAccountV2Instruction;
