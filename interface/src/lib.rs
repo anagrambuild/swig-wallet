@@ -3655,8 +3655,8 @@ impl CloseSubAccountV2Instruction {
 /// Instruction builders for V2 sub-accounts (Ed25519, Secp256k1, Secp256r1).
 ///
 /// The authority-payload construction mirrors the V1 builders: Ed25519 appends
-/// the signer account index; Secp256k1 appends `slot ++ counter ++ signature`; Secp256r1
-/// emits a precompile verify instruction plus a `slot ++ counter ++
+/// the signer account index; Secp256k1 appends `slot ++ counter ++ signature`;
+/// Secp256r1 emits a precompile verify instruction plus a `slot ++ counter ++
 /// sysvar_index` payload.
 pub struct CreateSubAccountV2Instruction;
 
