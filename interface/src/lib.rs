@@ -723,7 +723,10 @@ impl SignV2Instruction {
             compact_instructions(swig_wallet_address, accounts, vec![inner_instruction])?;
 
         // Add instructions sysvar AFTER compact_instructions to ensure stable index
-        let instruction_sysvar_index = accounts.len() as u8;
+        if accounts.len() >= MAX_ACCOUNTS {
+            return Err(CompactInstructionError::TooManyAccounts.into());
+        }
+        let instruction_sysvar_index = u8::try_from(accounts.len())?;
         accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
 
         let ix_bytes = ixs.into_bytes()?;
@@ -766,7 +769,10 @@ impl SignV2Instruction {
         let (mut accounts, ixs) =
             compact_instructions(swig_wallet_address, accounts, vec![inner_instruction])?;
 
-        let instruction_sysvar_index = accounts.len() as u8;
+        if accounts.len() >= MAX_ACCOUNTS {
+            return Err(CompactInstructionError::TooManyAccounts.into());
+        }
+        let instruction_sysvar_index = u8::try_from(accounts.len())?;
         accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
 
         let ix_bytes = ixs.into_bytes()?;
@@ -5058,6 +5064,104 @@ mod tests {
             Pubkey::new_unique(),
             inner_instruction,
             0,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn program_exec_reserves_account_for_instructions_sysvar() {
+        fn inner_instruction(account_count: usize) -> Instruction {
+            Instruction {
+                program_id: Pubkey::new_unique(),
+                accounts: (0..account_count)
+                    .map(|_| AccountMeta::new_readonly(Pubkey::new_unique(), false))
+                    .collect(),
+                data: Vec::new(),
+            }
+        }
+
+        let swig_account = Pubkey::new_unique();
+        let swig_wallet_address = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+
+        let instructions = SignV2Instruction::new_program_exec(
+            swig_account,
+            swig_wallet_address,
+            payer,
+            test_inner_instruction(),
+            inner_instruction(249),
+            0,
+        )
+        .unwrap();
+        assert_eq!(instructions[1].accounts.len(), MAX_ACCOUNTS);
+
+        let error = SignV2Instruction::new_program_exec(
+            swig_account,
+            swig_wallet_address,
+            payer,
+            test_inner_instruction(),
+            inner_instruction(250),
+            0,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<CompactInstructionError>(),
+            Some(&CompactInstructionError::TooManyAccounts)
+        );
+
+        let instructions = SignV2Instruction::new_program_exec_with_ix_index(
+            swig_account,
+            swig_wallet_address,
+            payer,
+            test_inner_instruction(),
+            inner_instruction(249),
+            0,
+            0,
+        )
+        .unwrap();
+        assert_eq!(instructions[1].accounts.len(), MAX_ACCOUNTS);
+
+        let error = SignV2Instruction::new_program_exec_with_ix_index(
+            swig_account,
+            swig_wallet_address,
+            payer,
+            test_inner_instruction(),
+            inner_instruction(250),
+            0,
+            0,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<CompactInstructionError>(),
+            Some(&CompactInstructionError::TooManyAccounts)
+        );
+    }
+
+    #[test]
+    fn sub_account_sign_rejects_compact_payload_larger_than_u16() {
+        let inner_instruction = Instruction {
+            program_id: Pubkey::new_unique(),
+            accounts: Vec::new(),
+            data: vec![0; usize::from(u16::MAX)],
+        };
+
+        assert!(SubAccountSignInstruction::new_with_ed25519_authority(
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            0,
+            vec![inner_instruction.clone()],
+        )
+        .is_err());
+
+        assert!(SubAccountSignV2Instruction::new_with_ed25519_authority(
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            0,
+            0,
+            vec![inner_instruction],
         )
         .is_err());
     }

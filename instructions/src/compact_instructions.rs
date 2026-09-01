@@ -340,20 +340,25 @@ mod tests {
     fn keeps_swig_and_subaccount_pdas_non_signers() {
         let swig = Pubkey::new_unique();
         let sub_account = Pubkey::new_unique();
+        let shared = Pubkey::new_unique();
         let accounts = vec![
             AccountMeta::new_readonly(swig, false),
             AccountMeta::new_readonly(sub_account, false),
         ];
-        let inner = instruction(
-            vec![
-                AccountMeta::new_readonly(swig, true),
-                AccountMeta::new_readonly(sub_account, true),
-            ],
-            Vec::new(),
-        );
+        let instructions = vec![
+            instruction(
+                vec![
+                    AccountMeta::new_readonly(swig, true),
+                    AccountMeta::new_readonly(sub_account, true),
+                    AccountMeta::new_readonly(shared, false),
+                ],
+                Vec::new(),
+            ),
+            instruction(vec![AccountMeta::new(shared, true)], Vec::new()),
+        ];
 
         let (accounts, _) =
-            compact_instructions_sub_account(swig, sub_account, accounts, vec![inner]).unwrap();
+            compact_instructions_sub_account(swig, sub_account, accounts, instructions).unwrap();
 
         assert!(
             !accounts
@@ -369,6 +374,9 @@ mod tests {
                 .unwrap()
                 .is_signer
         );
+        let shared_meta = accounts.iter().find(|meta| meta.pubkey == shared).unwrap();
+        assert!(shared_meta.is_signer);
+        assert!(shared_meta.is_writable);
     }
 
     #[test]
