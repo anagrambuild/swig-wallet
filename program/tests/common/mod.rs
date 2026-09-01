@@ -18,12 +18,15 @@ use swig_interface::{
     UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, sub_account::SubAccount},
+    action::{
+        all::All, manage_authority::ManageAuthority, sub_account::SubAccount, Action, Permission,
+    },
     authority::{
         ed25519::CreateEd25519SessionAuthority, secp256k1::CreateSecp256k1SessionAuthority,
         secp256r1::CreateSecp256r1SessionAuthority, AuthorityType,
     },
-    swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
+    role::Position,
+    swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, Swig, SwigWithRoles},
     IntoBytes, Transmutable,
 };
 pub type Context = SwigTestContext;
@@ -37,8 +40,6 @@ pub fn program_id() -> Pubkey {
 }
 
 pub fn convert_swig_to_v1(context: &mut SwigTestContext, swig_pubkey: &Pubkey) {
-    use swig_state::swig::Swig;
-
     let mut account = context
         .svm
         .get_account(swig_pubkey)
@@ -54,6 +55,92 @@ pub fn convert_swig_to_v1(context: &mut SwigTestContext, swig_pubkey: &Pubkey) {
         .svm
         .set_account(swig_pubkey.clone(), account)
         .expect("Failed to update account");
+}
+
+pub fn duplicate_last_role_action(
+    context: &mut SwigTestContext,
+    swig_pubkey: &Pubkey,
+    role_id: u32,
+    permission: Permission,
+) -> anyhow::Result<()> {
+    let mut account = context
+        .svm
+        .get_account(swig_pubkey)
+        .ok_or(anyhow::anyhow!("Swig account not found"))?;
+    let roles_start = Swig::LEN;
+    let roles_end = Swig::roles_end_offset(&account.data)
+        .map_err(|error| anyhow::anyhow!("Failed to read role boundary: {:?}", error))?;
+    let roles_len = roles_end - roles_start;
+    let mut cursor = 0usize;
+
+    while cursor + Position::LEN <= roles_len {
+        let position = unsafe {
+            Position::load_unchecked(
+                &account.data[roles_start + cursor..roles_start + cursor + Position::LEN],
+            )
+            .map_err(|error| anyhow::anyhow!("Failed to load role: {:?}", error))?
+        };
+        let boundary = position.boundary() as usize;
+        if position.id() != role_id {
+            cursor = boundary;
+            continue;
+        }
+        if boundary != roles_len {
+            return Err(anyhow::anyhow!("role must be the last stored role"));
+        }
+
+        let authority_length = position.authority_length() as usize;
+        let actions_start = cursor + Position::LEN + authority_length;
+        let mut action_cursor = actions_start;
+        while action_cursor + Action::LEN <= boundary {
+            let action = unsafe {
+                Action::load_unchecked(
+                    &account.data
+                        [roles_start + action_cursor..roles_start + action_cursor + Action::LEN],
+                )
+                .map_err(|error| anyhow::anyhow!("Failed to load action: {:?}", error))?
+            };
+            let action_end = action_cursor + Action::LEN + action.length() as usize;
+            if action_end > boundary {
+                return Err(anyhow::anyhow!("invalid stored action"));
+            }
+            if action
+                .permission()
+                .map_err(|error| anyhow::anyhow!("Failed to load permission: {:?}", error))?
+                == permission
+            {
+                let duplicate_len = action_end - action_cursor;
+                let mut duplicate =
+                    account.data[roles_start + action_cursor..roles_start + action_end].to_vec();
+                let action_boundary = boundary - actions_start + duplicate_len;
+                duplicate[4..8].copy_from_slice(&(action_boundary as u32).to_le_bytes());
+
+                let new_position = Position::new(
+                    position.authority_type().map_err(|error| {
+                        anyhow::anyhow!("Failed to load authority type: {:?}", error)
+                    })?,
+                    position.id(),
+                    position.authority_length(),
+                    position.num_actions() + 1,
+                    (boundary + duplicate_len) as u32,
+                );
+                account.data[roles_start + cursor..roles_start + cursor + Position::LEN]
+                    .copy_from_slice(new_position.into_bytes().map_err(|error| {
+                        anyhow::anyhow!("Failed to serialize role: {:?}", error)
+                    })?);
+                account
+                    .data
+                    .splice(roles_start + boundary..roles_start + boundary, duplicate);
+                context.svm.set_account(*swig_pubkey, account)?;
+                return Ok(());
+            }
+            action_cursor = action_end;
+        }
+
+        return Err(anyhow::anyhow!("action not found"));
+    }
+
+    Err(anyhow::anyhow!("role not found"))
 }
 
 pub fn add_authority_with_ed25519_root<'a>(

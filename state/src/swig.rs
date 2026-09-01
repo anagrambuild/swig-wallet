@@ -655,6 +655,9 @@ impl Swig {
             let action_data_end =
                 position.boundary() as usize - (offset + Position::LEN + authority_length);
             let (actions, _rest) = unsafe { actions.split_at_mut_unchecked(action_data_end) };
+            if position.num_actions() > 1 {
+                ActionLoader::validate_non_repeatable_actions(actions)?;
+            }
             let role = RoleMut {
                 position,
                 authority: auth,
@@ -827,15 +830,18 @@ impl<'a> SwigWithRoles<'a> {
                         _ => return Err(ProgramError::InvalidAccountData),
                     };
 
+                let actions = unsafe {
+                    self.roles.get_unchecked(
+                        offset + position.authority_length() as usize..position.boundary() as usize,
+                    )
+                };
+                if position.num_actions() > 1 {
+                    ActionLoader::validate_non_repeatable_actions(actions)?;
+                }
                 return Ok(Some(Role {
                     position,
                     authority,
-                    actions: unsafe {
-                        self.roles.get_unchecked(
-                            offset + position.authority_length() as usize
-                                ..position.boundary() as usize,
-                        )
-                    },
+                    actions,
                 }));
             }
             cursor = position.boundary() as usize;

@@ -12,13 +12,13 @@ use solana_sdk::{
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{
-    AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction, UpdateAuthorityData,
-    UpdateAuthorityInstruction,
+    AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction, SignV2Instruction,
+    UpdateAuthorityData, UpdateAuthorityInstruction,
 };
 use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, sol_limit::SolLimit,
-        sol_recurring_limit::SolRecurringLimit, token_limit::TokenLimit,
+        sol_recurring_limit::SolRecurringLimit, token_limit::TokenLimit, Permission,
     },
     authority::AuthorityType,
     swig::{swig_account_seeds, swig_wallet_address_seeds},
@@ -77,6 +77,36 @@ fn send_admin(
         .map_err(|error| error.err)
 }
 
+fn send_admin_with_payer(
+    context: &mut SwigTestContext,
+    authority: &Keypair,
+    payer: &Keypair,
+    instruction: Instruction,
+) -> Result<(), TransactionError> {
+    context.svm.expire_blockhash();
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[instruction],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let transaction = VersionedTransaction::try_new(
+        VersionedMessage::V0(message),
+        &[
+            context.default_payer.insecure_clone(),
+            authority.insecure_clone(),
+            payer.insecure_clone(),
+        ],
+    )
+    .unwrap();
+    context
+        .svm
+        .send_transaction(transaction)
+        .map(|_| ())
+        .map_err(|error| error.err)
+}
+
 fn assert_duplicate_nonrepeatable(result: Result<(), TransactionError>) {
     assert_eq!(
         result,
@@ -123,6 +153,34 @@ fn create_rejects_duplicate_nonrepeatable_actions() {
 
     assert_duplicate_nonrepeatable(send_payer(&mut context, instruction));
     assert!(context.svm.get_account(&swig).is_none());
+}
+
+#[test]
+fn stored_duplicate_nonrepeatable_action_blocks_signing() {
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let (swig, _) = create_swig_ed25519(&mut context, &root, rand::random::<[u8; 32]>()).unwrap();
+    duplicate_last_role_action(&mut context, &swig, 0, Permission::All).unwrap();
+
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let recipient = Keypair::new();
+    context.svm.airdrop(&wallet, 1_000_000).unwrap();
+    context.svm.airdrop(&recipient.pubkey(), 1).unwrap();
+    let before_swig = context.svm.get_account(&swig).unwrap();
+    let before_wallet = context.svm.get_account(&wallet).unwrap();
+    let before_recipient = context.svm.get_account(&recipient.pubkey()).unwrap();
+    let transfer = solana_system_interface::instruction::transfer(&wallet, &recipient.pubkey(), 1);
+    let instruction =
+        SignV2Instruction::new_ed25519(swig, wallet, root.pubkey(), transfer, 0).unwrap();
+
+    assert_duplicate_nonrepeatable(send_admin(&mut context, &root, instruction));
+    assert_eq!(context.svm.get_account(&swig).unwrap(), before_swig);
+    assert_eq!(context.svm.get_account(&wallet).unwrap(), before_wallet);
+    assert_eq!(
+        context.svm.get_account(&recipient.pubkey()).unwrap(),
+        before_recipient
+    );
 }
 
 #[test]
@@ -217,10 +275,16 @@ fn update_rejects_duplicate_nonrepeatable_actions_for_replace_and_add() {
     )
     .unwrap();
 
+    let rent_payer = Keypair::new();
+    context
+        .svm
+        .airdrop(&rent_payer.pubkey(), 1_000_000_000)
+        .unwrap();
     let before_replace = context.svm.get_account(&swig).unwrap();
+    let before_rent_payer = context.svm.get_account(&rent_payer.pubkey()).unwrap();
     let replace = UpdateAuthorityInstruction::new_with_ed25519_authority(
         swig,
-        context.default_payer.pubkey(),
+        rent_payer.pubkey(),
         root.pubkey(),
         0,
         1,
@@ -230,12 +294,21 @@ fn update_rejects_duplicate_nonrepeatable_actions_for_replace_and_add() {
         ]),
     )
     .unwrap();
-    assert_duplicate_nonrepeatable(send_admin(&mut context, &root, replace));
+    assert_duplicate_nonrepeatable(send_admin_with_payer(
+        &mut context,
+        &root,
+        &rent_payer,
+        replace,
+    ));
     assert_swig_unchanged(
         &context,
         &swig,
         &before_replace.data,
         before_replace.lamports,
+    );
+    assert_eq!(
+        context.svm.get_account(&rent_payer.pubkey()).unwrap(),
+        before_rent_payer
     );
 
     let replace_with_one = UpdateAuthorityInstruction::new_with_ed25519_authority(

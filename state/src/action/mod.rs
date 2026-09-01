@@ -216,6 +216,7 @@ impl TryFrom<&[u8]> for Permission {
 }
 
 impl Permission {
+    #[inline(always)]
     fn is_repeatable(self) -> bool {
         match self {
             Permission::None => true,
@@ -299,6 +300,35 @@ fn v2_validation_key(permission: Permission, data: &[u8]) -> Option<(u16, u32)> 
 pub struct ActionLoader;
 
 impl ActionLoader {
+    /// Rejects duplicate permission types that are declared non-repeatable.
+    #[inline(always)]
+    pub fn validate_non_repeatable_actions(actions_data: &[u8]) -> Result<(), ProgramError> {
+        let mut non_repeatable_permissions = 0u32;
+        let mut cursor = 0;
+        while cursor < actions_data.len() {
+            if cursor + Action::LEN > actions_data.len() {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let header = unsafe {
+                Action::load_unchecked(actions_data.get_unchecked(cursor..cursor + Action::LEN))?
+            };
+            cursor += Action::LEN + header.length() as usize;
+            if cursor > actions_data.len() {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+
+            let permission = header.permission()?;
+            if !permission.is_repeatable() {
+                let permission_bit = 1u32 << permission as u32;
+                if non_repeatable_permissions & permission_bit != 0 {
+                    return Err(SwigStateError::DuplicateNonRepeatableAction.into());
+                }
+                non_repeatable_permissions |= permission_bit;
+            }
+        }
+        Ok(())
+    }
+
     /// Validates the layout of action data based on its permission type.
     pub fn validate_layout(permission: Permission, data: &[u8]) -> Result<bool, ProgramError> {
         match permission {
@@ -356,8 +386,6 @@ impl ActionLoader {
         // V2 action, then sort + adjacent-compare. Roles are capped at 255
         // actions by `calculate_num_actions`, so this vector stays small.
         let mut keys: alloc::vec::Vec<u64> = alloc::vec::Vec::new();
-        let mut non_repeatable_permissions = 0u32;
-        let mut has_duplicate_non_repeatable = false;
         let mut cursor = 0;
         while cursor + Action::LEN <= actions_data.len() {
             let header =
@@ -371,13 +399,6 @@ impl ActionLoader {
             }
 
             let permission = header.permission()?;
-            if !permission.is_repeatable() {
-                let permission_bit = 1u32 << permission as u32;
-                if non_repeatable_permissions & permission_bit != 0 {
-                    has_duplicate_non_repeatable = true;
-                }
-                non_repeatable_permissions |= permission_bit;
-            }
             if let Some((ty, id)) =
                 v2_validation_key(permission, &actions_data[data_start..data_end])
             {
@@ -396,10 +417,7 @@ impl ActionLoader {
                 return Err(SwigStateError::DuplicateV2SubAccountAction.into());
             }
         }
-        if has_duplicate_non_repeatable {
-            return Err(SwigStateError::DuplicateNonRepeatableAction.into());
-        }
-        Ok(())
+        Self::validate_non_repeatable_actions(actions_data)
     }
 
     /// Finds an action of a specific type in the provided bytes.
