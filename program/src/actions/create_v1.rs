@@ -191,6 +191,8 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
         msg!("Root authority type must had one of the following actions: ManageAuthority or All");
         return Err(SwigError::InvalidAuthorityType.into());
     }
+    // A newly created Swig has not issued any V2 sub-account ids yet.
+    ActionLoader::validate_v2_actions(create_v1.actions, 0)?;
     let authority_type = AuthorityType::try_from(create_v1.args.authority_type)?;
     let authority_length = authority_type_to_length(&authority_type)?;
     let account_size = core::alloc::Layout::from_size_align(

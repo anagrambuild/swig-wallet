@@ -37,7 +37,10 @@ use swig_state::{
     },
     authority::AuthorityType,
     sub_account_v2::SubAccountV2,
-    swig::{sub_account_v2_asset_seeds, sub_account_v2_state_seeds, Swig, SwigWithRoles},
+    swig::{
+        sub_account_v2_asset_seeds, sub_account_v2_state_seeds, swig_wallet_address_seeds, Swig,
+        SwigWithRoles,
+    },
     tail::active_sub_account_count,
     SwigStateError, Transmutable,
 };
@@ -168,6 +171,18 @@ fn decode_counter(context: &SwigTestContext, swig_key: &Pubkey) -> u32 {
     let data = context.svm.get_account(swig_key).unwrap().data;
     let swig = unsafe { Swig::load_unchecked(&data[..Swig::LEN]).unwrap() };
     swig.sub_account_counter
+}
+
+fn overwrite_with_v1_counter_overlay(context: &mut SwigTestContext, swig_key: &Pubkey) {
+    let (_, wallet_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+    // V1 stored one reserved-lamports u64 over wallet_bump, padding, and the
+    // V2 counter. This value is recognizably V1 but its upper word reads as a
+    // counterfeit sub_account_counter == 1 if the generation is ignored.
+    let reserved_lamports = (1u64 << 32) | (1u64 << 8) | u64::from(wallet_bump);
+    let mut account = context.svm.get_account(swig_key).unwrap();
+    account.data[Swig::LEN - 8..Swig::LEN].copy_from_slice(&reserved_lamports.to_le_bytes());
+    context.svm.set_account(*swig_key, account).unwrap();
 }
 
 fn decode_active_count(context: &SwigTestContext, swig_key: &Pubkey) -> u32 {
@@ -1233,4 +1248,65 @@ fn test_update_authority_rejects_future_scope_for_replace_and_add() {
     assert_eq!(after_swig.data, before_swig.data);
     assert_eq!(after_swig.lamports, before_swig.lamports);
     assert_eq!(before_payer.lamports - after_payer.lamports, 20_000);
+}
+
+/// V1's reserved-lamports high word must never be treated as an issued V2 id
+/// counter by any authority grant path.
+#[test_log::test]
+fn test_v1_counter_overlay_cannot_authorize_future_scope_grants() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, _creator, _id) = setup_v2(&mut context).unwrap();
+    overwrite_with_v1_counter_overlay(&mut context, &swig_key);
+    assert_eq!(decode_counter(&context, &swig_key), 1);
+
+    let payer_key = context.default_payer.pubkey();
+    let before_swig = context.svm.get_account(&swig_key).unwrap();
+    let before_payer = context.svm.get_account(&payer_key).unwrap();
+
+    let future_authority = Keypair::new();
+    let add_authority = AddAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        payer_key,
+        root.pubkey(),
+        0,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: future_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::SubAccountV2All(SubAccountV2All::new(0))],
+    )
+    .unwrap();
+    assert_nonexistent_scope_error(send_admin(&mut context, &root, add_authority));
+
+    let replace = UpdateAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        payer_key,
+        root.pubkey(),
+        0,
+        CREATOR_ROLE_ID,
+        UpdateAuthorityData::ReplaceAll(vec![ClientAction::SubAccountV2Sign(
+            SubAccountV2Sign::new(0),
+        )]),
+    )
+    .unwrap();
+    assert_nonexistent_scope_error(send_admin(&mut context, &root, replace));
+
+    let add_action = UpdateAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        payer_key,
+        root.pubkey(),
+        0,
+        CREATOR_ROLE_ID,
+        UpdateAuthorityData::AddActions(vec![ClientAction::SubAccountV2Sign(
+            SubAccountV2Sign::new(0),
+        )]),
+    )
+    .unwrap();
+    assert_nonexistent_scope_error(send_admin(&mut context, &root, add_action));
+
+    let after_swig = context.svm.get_account(&swig_key).unwrap();
+    let after_payer = context.svm.get_account(&payer_key).unwrap();
+    assert_eq!(after_swig.data, before_swig.data);
+    assert_eq!(after_swig.lamports, before_swig.lamports);
+    assert_eq!(before_payer.lamports - after_payer.lamports, 30_000);
 }

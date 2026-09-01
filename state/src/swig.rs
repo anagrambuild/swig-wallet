@@ -352,7 +352,6 @@ impl<'a> SwigBuilder<'a> {
     ) -> Result<(), ProgramError> {
         // Calculate the actual number of actions from the actions data
         let num_actions = Self::calculate_num_actions(actions_data)?;
-        ActionLoader::validate_v2_actions(actions_data, self.swig.sub_account_counter)?;
 
         // check number of roles and iterate to last boundary
         let mut cursor = 0;

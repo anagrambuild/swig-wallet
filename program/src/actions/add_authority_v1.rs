@@ -12,7 +12,7 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority},
+    action::{all::All, manage_authority::ManageAuthority, ActionLoader},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::{Swig, SwigBuilder},
@@ -187,6 +187,7 @@ pub fn add_authority_v1(
         if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
+        let is_v2 = unsafe { crate::is_swig_v2(swig_account_data) };
         let parts = Swig::split_parts_mut(swig_account_data)?;
         let saved_tail = SavedTail::take(parts.tail)?;
         let swig = parts.state;
@@ -222,6 +223,10 @@ pub fn add_authority_v1(
         if all.is_none() && manage_authority.is_none() {
             return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
         }
+        // V1 overlays these bytes with `reserved_lamports`, so it has issued no
+        // V2 sub-account ids regardless of the integer those bytes resemble.
+        let sub_account_counter = if is_v2 { swig.sub_account_counter } else { 0 };
+        ActionLoader::validate_v2_actions(add_authority_v1.actions, sub_account_counter)?;
         let new_authority_length = authority_type_to_length(&new_authority_type)?;
         let role_size = Position::LEN + new_authority_length + add_authority_v1.actions.len();
 

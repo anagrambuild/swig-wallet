@@ -496,6 +496,7 @@ pub(crate) fn append_actions_to_role(
         if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
+        crate::require_swig_v2(swig_account_data)?;
         let parts = Swig::split_parts_mut(swig_account_data)?;
         let saved_tail = SavedTail::take(parts.tail)?;
         let swig = parts.state;
@@ -735,6 +736,7 @@ pub fn update_authority_v1(
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
 
+        let is_v2 = unsafe { crate::is_swig_v2(swig_account_data) };
         let parts = Swig::split_parts_mut(swig_account_data)?;
         let saved_tail = SavedTail::take(parts.tail)?;
         let swig = parts.state;
@@ -849,7 +851,7 @@ pub fn update_authority_v1(
             authority_offset,
             actions_offset,
             prealloc_size_diff,
-            swig.sub_account_counter,
+            if is_v2 { swig.sub_account_counter } else { 0 },
         )
     };
 
