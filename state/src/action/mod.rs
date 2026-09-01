@@ -304,18 +304,16 @@ impl ActionLoader {
         let mut non_repeatable_permissions = 0u32;
         let mut cursor = 0;
         while cursor < actions_data.len() {
-            if cursor + Action::LEN > actions_data.len() {
-                return Err(ProgramError::InvalidInstructionData);
-            }
-            let header = unsafe {
-                Action::load_unchecked(actions_data.get_unchecked(cursor..cursor + Action::LEN))?
-            };
-            cursor += Action::LEN + header.length() as usize;
+            let header = actions_data
+                .get(cursor..cursor + Action::LEN)
+                .ok_or(ProgramError::InvalidInstructionData)?;
+            let permission = u16::from_le_bytes([header[0], header[1]]) as u32;
+            let length = u16::from_le_bytes([header[2], header[3]]) as usize;
+            cursor += Action::LEN + length;
             if cursor > actions_data.len() {
                 return Err(ProgramError::InvalidInstructionData);
             }
 
-            let permission = header.action_type as u32;
             if permission > Permission::SubAccountV2Toggle as u32 {
                 return Err(SwigStateError::PermissionLoadError.into());
             }
@@ -338,19 +336,31 @@ impl ActionLoader {
     pub(crate) fn validate_two_non_repeatable_actions(
         actions_data: &[u8],
     ) -> Result<(), ProgramError> {
-        let first = unsafe { &*(actions_data.as_ptr() as *const Action) };
-        let second_start = first.boundary() as usize;
-        let second_permission =
-            unsafe { u16::from_le(*(actions_data.as_ptr().add(second_start) as *const u16)) };
+        let first = actions_data
+            .get(..Action::LEN)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        let first_permission = u16::from_le_bytes([first[0], first[1]]) as u32;
+        let first_length = u16::from_le_bytes([first[2], first[3]]) as usize;
+        let second_start = Action::LEN + first_length;
 
-        if first.action_type != second_permission {
-            return Ok(());
+        let second = actions_data
+            .get(second_start..second_start + Action::LEN)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        let second_permission = u16::from_le_bytes([second[0], second[1]]) as u32;
+        let second_length = u16::from_le_bytes([second[2], second[3]]) as usize;
+        let actions_end = second_start + Action::LEN + second_length;
+        if actions_end != actions_data.len() {
+            return Err(ProgramError::InvalidAccountData);
         }
-        let permission = first.action_type as u32;
-        if permission > Permission::SubAccountV2Toggle as u32 {
+
+        if first_permission > Permission::SubAccountV2Toggle as u32
+            || second_permission > Permission::SubAccountV2Toggle as u32
+        {
             return Err(SwigStateError::PermissionLoadError.into());
         }
-        if NON_REPEATABLE_PERMISSION_MASK & (1u32 << permission) != 0 {
+        if first_permission == second_permission
+            && NON_REPEATABLE_PERMISSION_MASK & (1u32 << first_permission) != 0
+        {
             return Err(SwigStateError::DuplicateNonRepeatableAction.into());
         }
         Ok(())
@@ -583,5 +593,44 @@ mod tests {
         assert!(ActionLoader::find_action::<All>(&bytes.0)
             .expect("valid action data")
             .is_some());
+    }
+
+    #[test]
+    fn two_action_validation_rejects_an_invalid_second_permission() {
+        const SECOND_END: usize = Action::LEN * 2;
+        let mut bytes = AlignedBytes([0; SECOND_END]);
+        let first = Action::new(
+            Permission::AllButManageAuthority,
+            AllButManageAuthority::LEN as u16,
+            Action::LEN as u32,
+        );
+        let second = Action::new(Permission::All, All::LEN as u16, SECOND_END as u32);
+        write_header(&mut bytes, 0, &first);
+        write_header(&mut bytes, Action::LEN, &second);
+        bytes.0[Action::LEN..Action::LEN + size_of::<u16>()].copy_from_slice(&27u16.to_le_bytes());
+
+        assert_eq!(
+            ActionLoader::validate_two_non_repeatable_actions(&bytes.0),
+            Err(SwigStateError::PermissionLoadError.into()),
+        );
+    }
+
+    #[test]
+    fn two_action_validation_rejects_an_out_of_bounds_length() {
+        const SECOND_END: usize = Action::LEN * 2;
+        let mut bytes = AlignedBytes([0; SECOND_END]);
+        let first = Action::new(
+            Permission::AllButManageAuthority,
+            u16::MAX,
+            Action::LEN as u32,
+        );
+        let second = Action::new(Permission::All, All::LEN as u16, SECOND_END as u32);
+        write_header(&mut bytes, 0, &first);
+        write_header(&mut bytes, Action::LEN, &second);
+
+        assert_eq!(
+            ActionLoader::validate_two_non_repeatable_actions(&bytes.0),
+            Err(ProgramError::InvalidAccountData),
+        );
     }
 }

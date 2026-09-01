@@ -19,7 +19,6 @@ use swig_state::{
     action::{
         close_swig_authority::CloseSwigAuthority,
         program::Program,
-        program_all::ProgramAll,
         program_curated::ProgramCurated,
         program_scope::{NumericType, ProgramScope},
         sol_destination_limit::SolDestinationLimit,
@@ -292,7 +291,8 @@ pub fn sign_v2(
     let seeds = swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &b);
     let signer = seeds.as_slice();
 
-    let has_unrestricted_sign_permission = has_unrestricted_sign_permission(role.actions)?;
+    let (has_unrestricted_sign_permission, has_program_all_permission, has_program_curated) =
+        sign_permission_flags(role.actions)?;
 
     if has_unrestricted_sign_permission {
         let mut signer_lamports_before = [0u64; MAX_PROTECTED_SIGNERS];
@@ -369,10 +369,7 @@ pub fn sign_v2(
         return Ok(());
     }
 
-    let has_program_all_permission =
-        RoleMut::get_action_mut::<ProgramAll>(role.actions, &[])?.is_some();
-    let has_program_curated_permission = !has_program_all_permission
-        && RoleMut::get_action_mut::<ProgramCurated>(role.actions, &[])?.is_some();
+    let has_program_curated_permission = !has_program_all_permission && has_program_curated;
     let mut check_wallet_shape = false;
     let mut isolation = None;
     let mut signer_lamports_before = [0u64; MAX_PROTECTED_SIGNERS];
@@ -1043,25 +1040,34 @@ fn has_sol_destination_limits(actions_data: &[u8]) -> Result<bool, ProgramError>
     Ok(false)
 }
 
-/// Checks the two unrestricted signing permissions in one action pass.
-fn has_unrestricted_sign_permission(actions_data: &[u8]) -> Result<bool, ProgramError> {
+/// Collects the top-level signing permission flags in one action pass.
+fn sign_permission_flags(actions_data: &[u8]) -> Result<(bool, bool, bool), ProgramError> {
     let mut cursor = 0;
+    let mut has_program_all = false;
+    let mut has_program_curated = false;
     while cursor < actions_data.len() {
-        if cursor + Action::LEN > actions_data.len() {
+        let header = actions_data
+            .get(cursor..cursor + Action::LEN)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        let permission = u16::from_le_bytes([header[0], header[1]]);
+        if permission > Permission::SubAccountV2Toggle as u16 {
+            return Err(swig_state::SwigStateError::PermissionLoadError.into());
+        }
+        if permission == Permission::All as u16
+            || permission == Permission::AllButManageAuthority as u16
+        {
+            return Ok((true, false, false));
+        }
+        has_program_all |= permission == Permission::ProgramAll as u16;
+        has_program_curated |= permission == Permission::ProgramCurated as u16;
+
+        let next = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
+        if next <= cursor || next > actions_data.len() {
             return Err(ProgramError::InvalidAccountData);
         }
-
-        let action =
-            unsafe { Action::load_unchecked(&actions_data[cursor..cursor + Action::LEN])? };
-        if matches!(
-            action.permission()?,
-            Permission::All | Permission::AllButManageAuthority
-        ) {
-            return Ok(true);
-        }
-        cursor = action.boundary() as usize;
+        cursor = next;
     }
-    Ok(false)
+    Ok((false, has_program_all, has_program_curated))
 }
 
 /// Checks if the role has token destination limits configured for a mint.
