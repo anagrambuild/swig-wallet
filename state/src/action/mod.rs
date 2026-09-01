@@ -300,7 +300,7 @@ pub struct ActionLoader;
 impl ActionLoader {
     /// Rejects duplicate permission types that are declared non-repeatable.
     #[inline(always)]
-    fn validate_non_repeatable_actions(actions_data: &[u8]) -> Result<(), ProgramError> {
+    pub(crate) fn validate_non_repeatable_actions(actions_data: &[u8]) -> Result<(), ProgramError> {
         let mut non_repeatable_permissions = 0u32;
         let mut cursor = 0;
         while cursor < actions_data.len() {
@@ -330,44 +330,27 @@ impl ActionLoader {
         Ok(())
     }
 
-    /// Validates a stored role, with a straight-line path for the common
-    /// two-action case.
+    /// Validates the common two-action stored role without a loop.
+    ///
+    /// Callers have already loaded the program-owned role position and sliced
+    /// its action buffer, matching the unchecked traversal used by role lookup.
     #[inline(always)]
-    pub(crate) fn validate_stored_non_repeatable_actions(
+    pub(crate) fn validate_two_non_repeatable_actions(
         actions_data: &[u8],
-        num_actions: u16,
     ) -> Result<(), ProgramError> {
-        if num_actions != 2 {
-            return Self::validate_non_repeatable_actions(actions_data);
-        }
-        if actions_data.len() < Action::LEN * 2 {
-            return Err(ProgramError::InvalidInstructionData);
-        }
+        let first = unsafe { &*(actions_data.as_ptr() as *const Action) };
+        let second_start = first.boundary() as usize;
+        let second_permission =
+            unsafe { u16::from_le(*(actions_data.as_ptr().add(second_start) as *const u16)) };
 
-        let first = unsafe { Action::load_unchecked(actions_data.get_unchecked(..Action::LEN))? };
-        let second_start = Action::LEN + first.length() as usize;
-        if second_start + Action::LEN > actions_data.len() {
-            return Err(ProgramError::InvalidInstructionData);
+        if first.action_type != second_permission {
+            return Ok(());
         }
-        let second = unsafe {
-            Action::load_unchecked(
-                actions_data.get_unchecked(second_start..second_start + Action::LEN),
-            )?
-        };
-        if second_start + Action::LEN + second.length() as usize != actions_data.len() {
-            return Err(ProgramError::InvalidInstructionData);
-        }
-
-        let first_permission = first.action_type as u32;
-        let second_permission = second.action_type as u32;
-        if first_permission > Permission::SubAccountV2Toggle as u32
-            || second_permission > Permission::SubAccountV2Toggle as u32
-        {
+        let permission = first.action_type as u32;
+        if permission > Permission::SubAccountV2Toggle as u32 {
             return Err(SwigStateError::PermissionLoadError.into());
         }
-        if first_permission == second_permission
-            && NON_REPEATABLE_PERMISSION_MASK & (1u32 << first_permission) != 0
-        {
+        if NON_REPEATABLE_PERMISSION_MASK & (1u32 << permission) != 0 {
             return Err(SwigStateError::DuplicateNonRepeatableAction.into());
         }
         Ok(())

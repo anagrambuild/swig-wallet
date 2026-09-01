@@ -17,8 +17,6 @@ use swig_assertions::*;
 use swig_compact_instructions::InstructionIterator;
 use swig_state::{
     action::{
-        all::All,
-        all_but_manage_authority::AllButManageAuthority,
         close_swig_authority::CloseSwigAuthority,
         program::Program,
         program_all::ProgramAll,
@@ -294,9 +292,7 @@ pub fn sign_v2(
     let seeds = swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &b);
     let signer = seeds.as_slice();
 
-    let has_unrestricted_sign_permission = RoleMut::get_action_mut::<All>(role.actions, &[])?
-        .is_some()
-        || RoleMut::get_action_mut::<AllButManageAuthority>(role.actions, &[])?.is_some();
+    let has_unrestricted_sign_permission = has_unrestricted_sign_permission(role.actions)?;
 
     if has_unrestricted_sign_permission {
         let mut signer_lamports_before = [0u64; MAX_PROTECTED_SIGNERS];
@@ -1044,6 +1040,27 @@ fn has_sol_destination_limits(actions_data: &[u8]) -> Result<bool, ProgramError>
         cursor = action.boundary() as usize;
     }
 
+    Ok(false)
+}
+
+/// Checks the two unrestricted signing permissions in one action pass.
+fn has_unrestricted_sign_permission(actions_data: &[u8]) -> Result<bool, ProgramError> {
+    let mut cursor = 0;
+    while cursor < actions_data.len() {
+        if cursor + Action::LEN > actions_data.len() {
+            return Err(ProgramError::InvalidAccountData);
+        }
+
+        let action =
+            unsafe { Action::load_unchecked(&actions_data[cursor..cursor + Action::LEN])? };
+        if matches!(
+            action.permission()?,
+            Permission::All | Permission::AllButManageAuthority
+        ) {
+            return Ok(true);
+        }
+        cursor = action.boundary() as usize;
+    }
     Ok(false)
 }
 

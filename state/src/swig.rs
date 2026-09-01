@@ -655,11 +655,10 @@ impl Swig {
             let action_data_end =
                 position.boundary() as usize - (offset + Position::LEN + authority_length);
             let (actions, _rest) = unsafe { actions.split_at_mut_unchecked(action_data_end) };
-            if position.num_actions() > 1 {
-                ActionLoader::validate_stored_non_repeatable_actions(
-                    actions,
-                    position.num_actions(),
-                )?;
+            if position.num_actions() == 2 {
+                ActionLoader::validate_two_non_repeatable_actions(actions)?;
+            } else if position.num_actions() > 2 {
+                ActionLoader::validate_non_repeatable_actions(actions)?;
             }
             let role = RoleMut {
                 position,
@@ -838,11 +837,10 @@ impl<'a> SwigWithRoles<'a> {
                         offset + position.authority_length() as usize..position.boundary() as usize,
                     )
                 };
-                if position.num_actions() > 1 {
-                    ActionLoader::validate_stored_non_repeatable_actions(
-                        actions,
-                        position.num_actions(),
-                    )?;
+                if position.num_actions() == 2 {
+                    ActionLoader::validate_two_non_repeatable_actions(actions)?;
+                } else if position.num_actions() > 2 {
+                    ActionLoader::validate_non_repeatable_actions(actions)?;
                 }
                 return Ok(Some(Role {
                     position,
