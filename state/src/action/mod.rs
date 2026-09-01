@@ -215,6 +215,42 @@ impl TryFrom<&[u8]> for Permission {
     }
 }
 
+impl Permission {
+    fn is_repeatable(self) -> bool {
+        match self {
+            Permission::None => true,
+            Permission::SolLimit => SolLimit::REPEATABLE,
+            Permission::SolRecurringLimit => SolRecurringLimit::REPEATABLE,
+            Permission::Program => Program::REPEATABLE,
+            Permission::ProgramScope => ProgramScope::REPEATABLE,
+            Permission::TokenLimit => TokenLimit::REPEATABLE,
+            Permission::TokenRecurringLimit => TokenRecurringLimit::REPEATABLE,
+            Permission::All => All::REPEATABLE,
+            Permission::ManageAuthority => ManageAuthority::REPEATABLE,
+            Permission::SubAccount => SubAccount::REPEATABLE,
+            Permission::StakeLimit => StakeLimit::REPEATABLE,
+            Permission::StakeRecurringLimit => StakeRecurringLimit::REPEATABLE,
+            Permission::StakeAll => StakeAll::REPEATABLE,
+            Permission::ProgramAll => ProgramAll::REPEATABLE,
+            Permission::ProgramCurated => ProgramCurated::REPEATABLE,
+            Permission::AllButManageAuthority => AllButManageAuthority::REPEATABLE,
+            Permission::SolDestinationLimit => SolDestinationLimit::REPEATABLE,
+            Permission::SolRecurringDestinationLimit => SolRecurringDestinationLimit::REPEATABLE,
+            Permission::TokenDestinationLimit => TokenDestinationLimit::REPEATABLE,
+            Permission::TokenRecurringDestinationLimit => {
+                TokenRecurringDestinationLimit::REPEATABLE
+            },
+            Permission::CloseSwigAuthority => CloseSwigAuthority::REPEATABLE,
+            Permission::ReplaceAuthority => ReplaceAuthority::REPEATABLE,
+            Permission::SubAccountV2Create => SubAccountV2Create::REPEATABLE,
+            Permission::SubAccountV2All => SubAccountV2All::REPEATABLE,
+            Permission::SubAccountV2Sign => SubAccountV2Sign::REPEATABLE,
+            Permission::SubAccountV2Withdraw => SubAccountV2Withdraw::REPEATABLE,
+            Permission::SubAccountV2Toggle => SubAccountV2Toggle::REPEATABLE,
+        }
+    }
+}
+
 /// Trait for types that can be used as action data.
 ///
 /// This trait defines the interface for action-specific data structures,
@@ -300,7 +336,10 @@ impl ActionLoader {
         }
     }
 
-    /// Validates V2 sub-account actions within a role's full action buffer.
+    /// Validates constraints that require a role's full action buffer.
+    ///
+    /// Non-repeatable permission types may appear at most once. Repeatable
+    /// permissions retain their action-specific matching semantics.
     ///
     /// Each scoped action must target an existing sub-account id (strictly less
     /// than `sub_account_counter`). A role may also hold at most one scoped V2
@@ -317,6 +356,8 @@ impl ActionLoader {
         // V2 action, then sort + adjacent-compare. Roles are capped at 255
         // actions by `calculate_num_actions`, so this vector stays small.
         let mut keys: alloc::vec::Vec<u64> = alloc::vec::Vec::new();
+        let mut non_repeatable_permissions = 0u32;
+        let mut has_duplicate_non_repeatable = false;
         let mut cursor = 0;
         while cursor + Action::LEN <= actions_data.len() {
             let header =
@@ -330,6 +371,13 @@ impl ActionLoader {
             }
 
             let permission = header.permission()?;
+            if !permission.is_repeatable() {
+                let permission_bit = 1u32 << permission as u32;
+                if non_repeatable_permissions & permission_bit != 0 {
+                    has_duplicate_non_repeatable = true;
+                }
+                non_repeatable_permissions |= permission_bit;
+            }
             if let Some((ty, id)) =
                 v2_validation_key(permission, &actions_data[data_start..data_end])
             {
@@ -347,6 +395,9 @@ impl ActionLoader {
             if pair[0] == pair[1] {
                 return Err(SwigStateError::DuplicateV2SubAccountAction.into());
             }
+        }
+        if has_duplicate_non_repeatable {
+            return Err(SwigStateError::DuplicateNonRepeatableAction.into());
         }
         Ok(())
     }

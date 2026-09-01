@@ -221,15 +221,12 @@ mod tests {
         assert!(ActionLoader::validate_v2_actions(&single, 1).is_ok());
     }
 
-    /// Only the five V2 types are deduplicated; everything else keeps its
-    /// existing behavior, including being repeatable.
+    /// Distinct non-repeatable permission types may coexist within one role.
     #[test]
-    fn test_validate_v2_actions_ignores_non_v2_actions() {
+    fn test_validate_v2_actions_accepts_distinct_non_v2_actions() {
         use crate::action::{ActionLoader, Permission};
 
         let mut buf = marker_action_bytes(Permission::All);
-        buf.extend(marker_action_bytes(Permission::All));
-        buf.extend(marker_action_bytes(Permission::ManageAuthority));
         buf.extend(marker_action_bytes(Permission::ManageAuthority));
         assert!(ActionLoader::validate_v2_actions(&buf, 0).is_ok());
     }
