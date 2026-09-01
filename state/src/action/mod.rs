@@ -215,42 +215,40 @@ impl TryFrom<&[u8]> for Permission {
     }
 }
 
-impl Permission {
-    #[inline(always)]
-    fn is_repeatable(self) -> bool {
-        match self {
-            Permission::None => true,
-            Permission::SolLimit => SolLimit::REPEATABLE,
-            Permission::SolRecurringLimit => SolRecurringLimit::REPEATABLE,
-            Permission::Program => Program::REPEATABLE,
-            Permission::ProgramScope => ProgramScope::REPEATABLE,
-            Permission::TokenLimit => TokenLimit::REPEATABLE,
-            Permission::TokenRecurringLimit => TokenRecurringLimit::REPEATABLE,
-            Permission::All => All::REPEATABLE,
-            Permission::ManageAuthority => ManageAuthority::REPEATABLE,
-            Permission::SubAccount => SubAccount::REPEATABLE,
-            Permission::StakeLimit => StakeLimit::REPEATABLE,
-            Permission::StakeRecurringLimit => StakeRecurringLimit::REPEATABLE,
-            Permission::StakeAll => StakeAll::REPEATABLE,
-            Permission::ProgramAll => ProgramAll::REPEATABLE,
-            Permission::ProgramCurated => ProgramCurated::REPEATABLE,
-            Permission::AllButManageAuthority => AllButManageAuthority::REPEATABLE,
-            Permission::SolDestinationLimit => SolDestinationLimit::REPEATABLE,
-            Permission::SolRecurringDestinationLimit => SolRecurringDestinationLimit::REPEATABLE,
-            Permission::TokenDestinationLimit => TokenDestinationLimit::REPEATABLE,
-            Permission::TokenRecurringDestinationLimit => {
-                TokenRecurringDestinationLimit::REPEATABLE
-            },
-            Permission::CloseSwigAuthority => CloseSwigAuthority::REPEATABLE,
-            Permission::ReplaceAuthority => ReplaceAuthority::REPEATABLE,
-            Permission::SubAccountV2Create => SubAccountV2Create::REPEATABLE,
-            Permission::SubAccountV2All => SubAccountV2All::REPEATABLE,
-            Permission::SubAccountV2Sign => SubAccountV2Sign::REPEATABLE,
-            Permission::SubAccountV2Withdraw => SubAccountV2Withdraw::REPEATABLE,
-            Permission::SubAccountV2Toggle => SubAccountV2Toggle::REPEATABLE,
-        }
-    }
+macro_rules! non_repeatable_permission_mask {
+    ($($action:ty),+ $(,)?) => {
+        0u32 $(| ((!<$action>::REPEATABLE as u32) << <$action>::TYPE as u32))+
+    };
 }
+
+const NON_REPEATABLE_PERMISSION_MASK: u32 = non_repeatable_permission_mask!(
+    SolLimit,
+    SolRecurringLimit,
+    Program,
+    ProgramScope,
+    TokenLimit,
+    TokenRecurringLimit,
+    All,
+    ManageAuthority,
+    SubAccount,
+    StakeLimit,
+    StakeRecurringLimit,
+    StakeAll,
+    ProgramAll,
+    ProgramCurated,
+    AllButManageAuthority,
+    SolDestinationLimit,
+    SolRecurringDestinationLimit,
+    TokenDestinationLimit,
+    TokenRecurringDestinationLimit,
+    CloseSwigAuthority,
+    ReplaceAuthority,
+    SubAccountV2Create,
+    SubAccountV2All,
+    SubAccountV2Sign,
+    SubAccountV2Withdraw,
+    SubAccountV2Toggle,
+);
 
 /// Trait for types that can be used as action data.
 ///
@@ -317,14 +315,60 @@ impl ActionLoader {
                 return Err(ProgramError::InvalidInstructionData);
             }
 
-            let permission = header.permission()?;
-            if !permission.is_repeatable() {
-                let permission_bit = 1u32 << permission as u32;
+            let permission = header.action_type as u32;
+            if permission > Permission::SubAccountV2Toggle as u32 {
+                return Err(SwigStateError::PermissionLoadError.into());
+            }
+            let permission_bit = 1u32 << permission;
+            if NON_REPEATABLE_PERMISSION_MASK & permission_bit != 0 {
                 if non_repeatable_permissions & permission_bit != 0 {
                     return Err(SwigStateError::DuplicateNonRepeatableAction.into());
                 }
                 non_repeatable_permissions |= permission_bit;
             }
+        }
+        Ok(())
+    }
+
+    /// Validates a stored role, with a straight-line path for the common
+    /// two-action case.
+    #[inline(always)]
+    pub fn validate_stored_non_repeatable_actions(
+        actions_data: &[u8],
+        num_actions: u16,
+    ) -> Result<(), ProgramError> {
+        if num_actions != 2 {
+            return Self::validate_non_repeatable_actions(actions_data);
+        }
+        if actions_data.len() < Action::LEN * 2 {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+
+        let first = unsafe { Action::load_unchecked(actions_data.get_unchecked(..Action::LEN))? };
+        let second_start = Action::LEN + first.length() as usize;
+        if second_start + Action::LEN > actions_data.len() {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        let second = unsafe {
+            Action::load_unchecked(
+                actions_data.get_unchecked(second_start..second_start + Action::LEN),
+            )?
+        };
+        if second_start + Action::LEN + second.length() as usize != actions_data.len() {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+
+        let first_permission = first.action_type as u32;
+        let second_permission = second.action_type as u32;
+        if first_permission > Permission::SubAccountV2Toggle as u32
+            || second_permission > Permission::SubAccountV2Toggle as u32
+        {
+            return Err(SwigStateError::PermissionLoadError.into());
+        }
+        if first_permission == second_permission
+            && NON_REPEATABLE_PERMISSION_MASK & (1u32 << first_permission) != 0
+        {
+            return Err(SwigStateError::DuplicateNonRepeatableAction.into());
         }
         Ok(())
     }
