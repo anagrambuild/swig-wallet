@@ -681,7 +681,7 @@ impl SignV2Instruction {
             AccountMeta::new_readonly(authority, true),
         ];
         let (mut accounts, ixs) =
-            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+            compact_instructions(swig_wallet_address, accounts, vec![inner_instruction])?;
         for account in &mut accounts {
             if transaction_signers
                 .iter()
@@ -690,8 +690,9 @@ impl SignV2Instruction {
                 account.is_signer = true;
             }
         }
-        let ix_bytes = ixs.into_bytes();
-        let args = swig::actions::sign_v2::SignV2Args::new(role_id, ix_bytes.len() as u16);
+        let ix_bytes = ixs.into_bytes()?;
+        let instruction_payload_len = u16::try_from(ix_bytes.len())?;
+        let args = swig::actions::sign_v2::SignV2Args::new(role_id, instruction_payload_len);
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -719,14 +720,15 @@ impl SignV2Instruction {
         ];
 
         let (mut accounts, ixs) =
-            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+            compact_instructions(swig_wallet_address, accounts, vec![inner_instruction])?;
 
         // Add instructions sysvar AFTER compact_instructions to ensure stable index
         let instruction_sysvar_index = accounts.len() as u8;
         accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
 
-        let ix_bytes = ixs.into_bytes();
-        let args = swig::actions::sign_v2::SignV2Args::new(role_id, ix_bytes.len() as u16);
+        let ix_bytes = ixs.into_bytes()?;
+        let instruction_payload_len = u16::try_from(ix_bytes.len())?;
+        let args = swig::actions::sign_v2::SignV2Args::new(role_id, instruction_payload_len);
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -762,13 +764,14 @@ impl SignV2Instruction {
         ];
 
         let (mut accounts, ixs) =
-            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+            compact_instructions(swig_wallet_address, accounts, vec![inner_instruction])?;
 
         let instruction_sysvar_index = accounts.len() as u8;
         accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
 
-        let ix_bytes = ixs.into_bytes();
-        let args = swig::actions::sign_v2::SignV2Args::new(role_id, ix_bytes.len() as u16);
+        let ix_bytes = ixs.into_bytes()?;
+        let instruction_payload_len = u16::try_from(ix_bytes.len())?;
+        let args = swig::actions::sign_v2::SignV2Args::new(role_id, instruction_payload_len);
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -828,7 +831,7 @@ impl SignV2Instruction {
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
         let (mut accounts, ixs) =
-            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+            compact_instructions(swig_wallet_address, accounts, vec![inner_instruction])?;
         for account in &mut accounts {
             if transaction_signers
                 .iter()
@@ -837,8 +840,9 @@ impl SignV2Instruction {
                 account.is_signer = true;
             }
         }
-        let ix_bytes = ixs.into_bytes();
-        let args = swig::actions::sign_v2::SignV2Args::new(role_id, ix_bytes.len() as u16);
+        let ix_bytes = ixs.into_bytes()?;
+        let instruction_payload_len = u16::try_from(ix_bytes.len())?;
+        let args = swig::actions::sign_v2::SignV2Args::new(role_id, instruction_payload_len);
 
         let arg_bytes = args
             .into_bytes()
@@ -923,7 +927,7 @@ impl SignV2Instruction {
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
         let (mut accounts, ixs) =
-            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+            compact_instructions(swig_wallet_address, accounts, vec![inner_instruction])?;
         for account in &mut accounts {
             if transaction_signers
                 .iter()
@@ -932,8 +936,9 @@ impl SignV2Instruction {
                 account.is_signer = true;
             }
         }
-        let ix_bytes = ixs.into_bytes();
-        let args = swig::actions::sign_v2::SignV2Args::new(role_id, ix_bytes.len() as u16);
+        let ix_bytes = ixs.into_bytes()?;
+        let instruction_payload_len = u16::try_from(ix_bytes.len())?;
+        let args = swig::actions::sign_v2::SignV2Args::new(role_id, instruction_payload_len);
 
         let arg_bytes = args
             .into_bytes()
@@ -2654,9 +2659,10 @@ impl SubAccountSignInstruction {
             AccountMeta::new_readonly(authority, true),
         ];
         let (accounts, ixs) =
-            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions);
-        let ix_bytes = ixs.into_bytes();
-        let args = SubAccountSignV1Args::new(role_id, ix_bytes.len() as u16);
+            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions)?;
+        let ix_bytes = ixs.into_bytes()?;
+        let instruction_payload_len = u16::try_from(ix_bytes.len())?;
+        let args = SubAccountSignV1Args::new(role_id, instruction_payload_len);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -2685,9 +2691,10 @@ impl SubAccountSignInstruction {
         ];
 
         let (accounts, ixs) =
-            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions);
-        let ix_bytes = ixs.into_bytes();
-        let args = SubAccountSignV1Args::new(role_id, ix_bytes.len() as u16);
+            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions)?;
+        let ix_bytes = ixs.into_bytes()?;
+        let instruction_payload_len = u16::try_from(ix_bytes.len())?;
+        let args = SubAccountSignV1Args::new(role_id, instruction_payload_len);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -2738,9 +2745,10 @@ impl SubAccountSignInstruction {
         ];
 
         let (accounts, ixs) =
-            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions);
-        let ix_bytes = ixs.into_bytes();
-        let args = SubAccountSignV1Args::new(role_id, ix_bytes.len() as u16);
+            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions)?;
+        let ix_bytes = ixs.into_bytes()?;
+        let instruction_payload_len = u16::try_from(ix_bytes.len())?;
+        let args = SubAccountSignV1Args::new(role_id, instruction_payload_len);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -2817,9 +2825,10 @@ impl SubAccountSignInstruction {
         accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
 
         let (accounts, ixs) =
-            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions);
-        let ix_bytes = ixs.into_bytes();
-        let args = SubAccountSignV1Args::new(role_id, ix_bytes.len() as u16);
+            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions)?;
+        let ix_bytes = ixs.into_bytes()?;
+        let instruction_payload_len = u16::try_from(ix_bytes.len())?;
+        let args = SubAccountSignV1Args::new(role_id, instruction_payload_len);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -2859,9 +2868,10 @@ impl SubAccountSignInstruction {
         accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
 
         let (accounts, ixs) =
-            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions);
-        let ix_bytes = ixs.into_bytes();
-        let args = SubAccountSignV1Args::new(role_id, ix_bytes.len() as u16);
+            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions)?;
+        let ix_bytes = ixs.into_bytes()?;
+        let instruction_payload_len = u16::try_from(ix_bytes.len())?;
+        let args = SubAccountSignV1Args::new(role_id, instruction_payload_len);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -4561,9 +4571,10 @@ impl SubAccountSignV2Instruction {
             AccountMeta::new_readonly(authority, true),
         ];
         let (accounts, ixs) =
-            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions);
-        let ix_bytes = ixs.into_bytes();
-        let args = SubAccountSignV2Args::new(role_id, subacc_id, ix_bytes.len() as u16);
+            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions)?;
+        let ix_bytes = ixs.into_bytes()?;
+        let instruction_payload_len = u16::try_from(ix_bytes.len())?;
+        let args = SubAccountSignV2Args::new(role_id, subacc_id, instruction_payload_len);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -4595,9 +4606,10 @@ impl SubAccountSignV2Instruction {
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
         let (accounts, ixs) =
-            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions);
-        let ix_bytes = ixs.into_bytes();
-        let args = SubAccountSignV2Args::new(role_id, subacc_id, ix_bytes.len() as u16);
+            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions)?;
+        let ix_bytes = ixs.into_bytes()?;
+        let instruction_payload_len = u16::try_from(ix_bytes.len())?;
+        let args = SubAccountSignV2Args::new(role_id, subacc_id, instruction_payload_len);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -4640,9 +4652,10 @@ impl SubAccountSignV2Instruction {
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
         let (accounts, ixs) =
-            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions);
-        let ix_bytes = ixs.into_bytes();
-        let args = SubAccountSignV2Args::new(role_id, subacc_id, ix_bytes.len() as u16);
+            compact_instructions_sub_account(swig_account, sub_account, accounts, instructions)?;
+        let ix_bytes = ixs.into_bytes()?;
+        let instruction_payload_len = u16::try_from(ix_bytes.len())?;
+        let args = SubAccountSignV2Args::new(role_id, subacc_id, instruction_payload_len);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -5029,6 +5042,24 @@ mod tests {
             accounts: Vec::new(),
             data: vec![1, 2, 3],
         }
+    }
+
+    #[test]
+    fn sign_v2_rejects_compact_payload_larger_than_u16() {
+        let inner_instruction = Instruction {
+            program_id: Pubkey::new_unique(),
+            accounts: Vec::new(),
+            data: vec![0; usize::from(u16::MAX)],
+        };
+
+        assert!(SignV2Instruction::new_ed25519(
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            inner_instruction,
+            0,
+        )
+        .is_err());
     }
 
     #[test]

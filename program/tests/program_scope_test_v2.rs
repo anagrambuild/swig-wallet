@@ -929,12 +929,13 @@ fn test_program_scope_token_limit_cpi_enforcement_v2() {
     ];
 
     let (final_accounts, compact_ixs) = swig_interface::compact_instructions(
-        swig,
+        swig_wallet_address,
         initial_accounts,
         vec![fund_swig_ix, withdraw_ix],
-    );
+    )
+    .unwrap();
 
-    let instruction_payload = compact_ixs.into_bytes();
+    let instruction_payload = compact_ixs.into_bytes().unwrap();
 
     // Prepare the `sign_v2` instruction manually
     let sign_args = SignV2Args::new(1, instruction_payload.len() as u16); // Role ID 1 for limited_authority
@@ -1145,8 +1146,8 @@ fn test_program_scope_balance_underflow_check_v2() {
         AccountMeta::new_readonly(spl_token::ID, false),
     ];
     let (final_accounts, compact_ixs) =
-        compact_instructions(swig, initial_accounts, vec![withdrawal_ix]);
-    let instruction_payload = compact_ixs.into_bytes();
+        compact_instructions(swig_wallet_address, initial_accounts, vec![withdrawal_ix]).unwrap();
+    let instruction_payload = compact_ixs.into_bytes().unwrap();
 
     // Prepare the sign_v2 instruction
     let sign_args = SignV2Args::new(1, instruction_payload.len() as u16);
