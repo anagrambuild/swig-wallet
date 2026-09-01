@@ -30,8 +30,7 @@ use swig_state::{
 
 use crate::{
     actions::{
-        sub_account_lifecycle::adjust_active_count, sub_account_sign_v2::has_scoped_v2,
-        update_authority_v1::append_actions_to_role,
+        sub_account_lifecycle::adjust_active_count, update_authority_v1::append_actions_to_role,
     },
     error::SwigError,
     instruction::{
@@ -140,7 +139,7 @@ pub fn create_sub_account_v2(
     let create = CreateSubAccountV2::from_instruction_bytes(data)?;
 
     // Authenticate, authorize creation, and draw a fresh id under one borrow.
-    let (new_id, swig_id, already_granted) = {
+    let (new_id, swig_id) = {
         let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
         if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8
         {
@@ -184,14 +183,7 @@ pub fn create_sub_account_v2(
         // tail has been materialized, outside this account-data borrow.
         let new_id = swig.sub_account_counter;
 
-        // The design allows scoping an id before it exists, so the creator may
-        // already hold `SubAccountV2All { new_id }`. Presence of the scope is the
-        // grant: appending a second copy would trip the duplicate check in
-        // `perform_replace_all_operation` and fail the whole create.
-        let already_granted =
-            has_scoped_v2(role.actions, Permission::SubAccountV2All, new_id, false)?;
-
-        (new_id, swig.id, already_granted)
+        (new_id, swig.id)
     };
 
     // Verify both PDAs match the provided bumps.
@@ -278,19 +270,17 @@ pub fn create_sub_account_v2(
         .invoke()?;
     }
 
-    // Auto-grant the creator scoped umbrella access via the shared, tail-preserving
-    // append path (grows the swig account and funds the delta from the payer).
-    // Skipped when the role was pre-granted this exact scope; the end state is the
-    // same single `SubAccountV2All { new_id }` either way.
-    if !already_granted {
-        let action_bytes = build_all_action_bytes(new_id);
-        append_actions_to_role(
-            ctx.accounts.swig,
-            ctx.accounts.payer,
-            create.args.role_id,
-            &action_bytes,
-        )?;
-    }
+    // Auto-grant the creator scoped umbrella access via the shared,
+    // tail-preserving append path. The counter has already advanced, so the
+    // newly drawn id now satisfies the same existing-sub-account validation as
+    // every externally supplied grant.
+    let action_bytes = build_all_action_bytes(new_id);
+    append_actions_to_role(
+        ctx.accounts.swig,
+        ctx.accounts.payer,
+        create.args.role_id,
+        &action_bytes,
+    )?;
 
     Ok(())
 }

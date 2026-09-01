@@ -124,6 +124,9 @@ pub enum SwigStateError {
     /// A role may not hold two scoped V2 sub-account actions for the same
     /// `(permission type, subacc_id)`, nor two create markers.
     DuplicateV2SubAccountAction,
+    /// A scoped V2 sub-account action must target an id below the wallet's
+    /// current monotonic sub-account counter.
+    SubAccountV2PermissionTargetDoesNotExist,
 }
 
 /// Error types related to authentication operations.

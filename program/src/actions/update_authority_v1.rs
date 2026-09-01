@@ -289,12 +289,13 @@ fn perform_replace_all_operation(
     current_actions_size: usize,
     new_actions: &[u8],
     authority_to_update_id: u32,
+    sub_account_counter: u32,
 ) -> Result<i64, ProgramError> {
-    // Reject duplicate V2 sub-account scoped actions on the resulting role.
+    // Validate V2 sub-account actions on the resulting role.
     // ReplaceAll receives the role's full new action list, and AddActions routes
     // through here after concatenating existing + new actions, so both mutation
     // paths are covered by this single check.
-    ActionLoader::reject_duplicate_v2_scoped(new_actions)?;
+    ActionLoader::validate_v2_actions(new_actions, sub_account_counter)?;
 
     let new_actions_size = new_actions.len();
     let size_diff = new_actions_size as i64 - current_actions_size as i64;
@@ -413,6 +414,7 @@ fn perform_add_actions_operation(
     current_actions_size: usize,
     new_actions: &[u8],
     authority_to_update_id: u32,
+    sub_account_counter: u32,
 ) -> Result<i64, ProgramError> {
     // For add operation, we need to append new actions to existing ones
     let mut combined_actions = Vec::new();
@@ -433,6 +435,7 @@ fn perform_add_actions_operation(
         current_actions_size,
         &combined_actions,
         authority_to_update_id,
+        sub_account_counter,
     )
 }
 
@@ -480,7 +483,14 @@ pub(crate) fn append_actions_to_role(
     new_actions: &[u8],
 ) -> Result<(), ProgramError> {
     let mut account_len: usize;
-    let (saved_tail, current_roles_len, current_actions_size, authority_offset, actions_offset) = {
+    let (
+        saved_tail,
+        current_roles_len,
+        current_actions_size,
+        authority_offset,
+        actions_offset,
+        sub_account_counter,
+    ) = {
         let swig_account_data = unsafe { swig_account.borrow_mut_data_unchecked() };
         account_len = swig_account_data.len();
         if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
@@ -499,6 +509,7 @@ pub(crate) fn append_actions_to_role(
             current_actions_size,
             authority_offset,
             actions_offset,
+            swig.sub_account_counter,
         )
     };
 
@@ -547,6 +558,7 @@ pub(crate) fn append_actions_to_role(
         current_actions_size,
         new_actions,
         role_id,
+        sub_account_counter,
     )?;
 
     Ok(())
@@ -561,6 +573,7 @@ fn perform_remove_by_type_operation(
     current_actions_size: usize,
     remove_types: &[u8],
     authority_to_update_id: u32,
+    sub_account_counter: u32,
 ) -> Result<i64, ProgramError> {
     let mut filtered_actions = Vec::new();
     let mut cursor = 0;
@@ -607,6 +620,7 @@ fn perform_remove_by_type_operation(
         current_actions_size,
         &filtered_actions,
         authority_to_update_id,
+        sub_account_counter,
     )
 }
 
@@ -619,6 +633,7 @@ fn perform_remove_by_index_operation(
     current_actions_size: usize,
     remove_indices: &[u16],
     authority_to_update_id: u32,
+    sub_account_counter: u32,
 ) -> Result<i64, ProgramError> {
     let mut filtered_actions = Vec::new();
     let mut cursor = 0;
@@ -665,6 +680,7 @@ fn perform_remove_by_index_operation(
         current_actions_size,
         &filtered_actions,
         authority_to_update_id,
+        sub_account_counter,
     )
 }
 
@@ -711,6 +727,7 @@ pub fn update_authority_v1(
         authority_offset,
         actions_offset,
         prealloc_size_diff,
+        sub_account_counter,
     ) = {
         let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
         account_len = swig_account_data.len();
@@ -832,6 +849,7 @@ pub fn update_authority_v1(
             authority_offset,
             actions_offset,
             prealloc_size_diff,
+            swig.sub_account_counter,
         )
     };
 
@@ -884,6 +902,7 @@ pub fn update_authority_v1(
                 current_actions_size,
                 new_actions,
                 update_authority_v1.args.authority_to_update_id,
+                sub_account_counter,
             )?
         },
         AuthorityUpdateOperation::AddActions => {
@@ -896,6 +915,7 @@ pub fn update_authority_v1(
                 current_actions_size,
                 new_actions,
                 update_authority_v1.args.authority_to_update_id,
+                sub_account_counter,
             )?
         },
         AuthorityUpdateOperation::RemoveActionsByType => {
@@ -908,6 +928,7 @@ pub fn update_authority_v1(
                 current_actions_size,
                 remove_types,
                 update_authority_v1.args.authority_to_update_id,
+                sub_account_counter,
             )?
         },
         AuthorityUpdateOperation::RemoveActionsByIndex => {
@@ -920,6 +941,7 @@ pub fn update_authority_v1(
                 current_actions_size,
                 &remove_indices,
                 update_authority_v1.args.authority_to_update_id,
+                sub_account_counter,
             )?
         },
     };
@@ -1052,6 +1074,7 @@ mod tests {
                 actions_offset,
                 current_actions_size,
                 &grown_actions,
+                0,
                 0,
             )?;
             assert_eq!(applied, expected_diff);
