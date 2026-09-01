@@ -300,7 +300,7 @@ pub struct ActionLoader;
 impl ActionLoader {
     /// Rejects duplicate permission types that are declared non-repeatable.
     #[inline(always)]
-    pub fn validate_non_repeatable_actions(actions_data: &[u8]) -> Result<(), ProgramError> {
+    fn validate_non_repeatable_actions(actions_data: &[u8]) -> Result<(), ProgramError> {
         let mut non_repeatable_permissions = 0u32;
         let mut cursor = 0;
         while cursor < actions_data.len() {
@@ -333,7 +333,7 @@ impl ActionLoader {
     /// Validates a stored role, with a straight-line path for the common
     /// two-action case.
     #[inline(always)]
-    pub fn validate_stored_non_repeatable_actions(
+    pub(crate) fn validate_stored_non_repeatable_actions(
         actions_data: &[u8],
         num_actions: u16,
     ) -> Result<(), ProgramError> {
