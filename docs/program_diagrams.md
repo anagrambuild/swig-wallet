@@ -637,7 +637,7 @@ deduplicated account indexes to minimize transaction size.
 │                                                                       │
 │  0-46       SwigError             General program/account errors       │
 │  1000-1007  SwigStateError        Account/state data validation        │
-│  2000-2002  InstructionError      Compact instruction parsing          │
+│  2000-2003  InstructionError      Compact instruction parsing          │
 │  3000-3039  SwigAuthenticateError Authentication + permission checks  │
 └───────────────────────────────────────────────────────────────────────┘
 ```
