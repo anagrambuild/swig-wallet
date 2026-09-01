@@ -12,13 +12,13 @@ use solana_sdk::{
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{
-    AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction, SignV2Instruction,
-    UpdateAuthorityData, UpdateAuthorityInstruction,
+    AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction, UpdateAuthorityData,
+    UpdateAuthorityInstruction,
 };
 use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, sol_limit::SolLimit,
-        sol_recurring_limit::SolRecurringLimit, token_limit::TokenLimit, Permission,
+        sol_recurring_limit::SolRecurringLimit, token_limit::TokenLimit,
     },
     authority::AuthorityType,
     swig::{swig_account_seeds, swig_wallet_address_seeds},
@@ -153,34 +153,6 @@ fn create_rejects_duplicate_nonrepeatable_actions() {
 
     assert_duplicate_nonrepeatable(send_payer(&mut context, instruction));
     assert!(context.svm.get_account(&swig).is_none());
-}
-
-#[test]
-fn stored_duplicate_nonrepeatable_action_blocks_signing() {
-    let mut context = setup_test_context().unwrap();
-    let root = Keypair::new();
-    let (swig, _) = create_swig_ed25519(&mut context, &root, rand::random::<[u8; 32]>()).unwrap();
-    duplicate_last_role_action(&mut context, &swig, 0, Permission::All).unwrap();
-
-    let (wallet, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
-    let recipient = Keypair::new();
-    context.svm.airdrop(&wallet, 1_000_000).unwrap();
-    context.svm.airdrop(&recipient.pubkey(), 1).unwrap();
-    let before_swig = context.svm.get_account(&swig).unwrap();
-    let before_wallet = context.svm.get_account(&wallet).unwrap();
-    let before_recipient = context.svm.get_account(&recipient.pubkey()).unwrap();
-    let transfer = solana_system_interface::instruction::transfer(&wallet, &recipient.pubkey(), 1);
-    let instruction =
-        SignV2Instruction::new_ed25519(swig, wallet, root.pubkey(), transfer, 0).unwrap();
-
-    assert_duplicate_nonrepeatable(send_admin(&mut context, &root, instruction));
-    assert_eq!(context.svm.get_account(&swig).unwrap(), before_swig);
-    assert_eq!(context.svm.get_account(&wallet).unwrap(), before_wallet);
-    assert_eq!(
-        context.svm.get_account(&recipient.pubkey()).unwrap(),
-        before_recipient
-    );
 }
 
 #[test]

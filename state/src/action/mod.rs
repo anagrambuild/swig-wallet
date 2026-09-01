@@ -215,40 +215,41 @@ impl TryFrom<&[u8]> for Permission {
     }
 }
 
-macro_rules! non_repeatable_permission_mask {
-    ($($action:ty),+ $(,)?) => {
-        0u32 $(| ((!<$action>::REPEATABLE as u32) << <$action>::TYPE as u32))+
-    };
+impl Permission {
+    fn is_repeatable(self) -> bool {
+        match self {
+            Permission::None => true,
+            Permission::SolLimit => SolLimit::REPEATABLE,
+            Permission::SolRecurringLimit => SolRecurringLimit::REPEATABLE,
+            Permission::Program => Program::REPEATABLE,
+            Permission::ProgramScope => ProgramScope::REPEATABLE,
+            Permission::TokenLimit => TokenLimit::REPEATABLE,
+            Permission::TokenRecurringLimit => TokenRecurringLimit::REPEATABLE,
+            Permission::All => All::REPEATABLE,
+            Permission::ManageAuthority => ManageAuthority::REPEATABLE,
+            Permission::SubAccount => SubAccount::REPEATABLE,
+            Permission::StakeLimit => StakeLimit::REPEATABLE,
+            Permission::StakeRecurringLimit => StakeRecurringLimit::REPEATABLE,
+            Permission::StakeAll => StakeAll::REPEATABLE,
+            Permission::ProgramAll => ProgramAll::REPEATABLE,
+            Permission::ProgramCurated => ProgramCurated::REPEATABLE,
+            Permission::AllButManageAuthority => AllButManageAuthority::REPEATABLE,
+            Permission::SolDestinationLimit => SolDestinationLimit::REPEATABLE,
+            Permission::SolRecurringDestinationLimit => SolRecurringDestinationLimit::REPEATABLE,
+            Permission::TokenDestinationLimit => TokenDestinationLimit::REPEATABLE,
+            Permission::TokenRecurringDestinationLimit => {
+                TokenRecurringDestinationLimit::REPEATABLE
+            },
+            Permission::CloseSwigAuthority => CloseSwigAuthority::REPEATABLE,
+            Permission::ReplaceAuthority => ReplaceAuthority::REPEATABLE,
+            Permission::SubAccountV2Create => SubAccountV2Create::REPEATABLE,
+            Permission::SubAccountV2All => SubAccountV2All::REPEATABLE,
+            Permission::SubAccountV2Sign => SubAccountV2Sign::REPEATABLE,
+            Permission::SubAccountV2Withdraw => SubAccountV2Withdraw::REPEATABLE,
+            Permission::SubAccountV2Toggle => SubAccountV2Toggle::REPEATABLE,
+        }
+    }
 }
-
-const NON_REPEATABLE_PERMISSION_MASK: u32 = non_repeatable_permission_mask!(
-    SolLimit,
-    SolRecurringLimit,
-    Program,
-    ProgramScope,
-    TokenLimit,
-    TokenRecurringLimit,
-    All,
-    ManageAuthority,
-    SubAccount,
-    StakeLimit,
-    StakeRecurringLimit,
-    StakeAll,
-    ProgramAll,
-    ProgramCurated,
-    AllButManageAuthority,
-    SolDestinationLimit,
-    SolRecurringDestinationLimit,
-    TokenDestinationLimit,
-    TokenRecurringDestinationLimit,
-    CloseSwigAuthority,
-    ReplaceAuthority,
-    SubAccountV2Create,
-    SubAccountV2All,
-    SubAccountV2Sign,
-    SubAccountV2Withdraw,
-    SubAccountV2Toggle,
-);
 
 /// Trait for types that can be used as action data.
 ///
@@ -298,74 +299,6 @@ fn v2_validation_key(permission: Permission, data: &[u8]) -> Option<(u16, u32)> 
 pub struct ActionLoader;
 
 impl ActionLoader {
-    /// Rejects duplicate permission types that are declared non-repeatable.
-    #[inline(always)]
-    pub(crate) fn validate_non_repeatable_actions(actions_data: &[u8]) -> Result<(), ProgramError> {
-        let mut non_repeatable_permissions = 0u32;
-        let mut cursor = 0;
-        while cursor < actions_data.len() {
-            let header = actions_data
-                .get(cursor..cursor + Action::LEN)
-                .ok_or(ProgramError::InvalidInstructionData)?;
-            let permission = u16::from_le_bytes([header[0], header[1]]) as u32;
-            let length = u16::from_le_bytes([header[2], header[3]]) as usize;
-            cursor += Action::LEN + length;
-            if cursor > actions_data.len() {
-                return Err(ProgramError::InvalidInstructionData);
-            }
-
-            if permission > Permission::SubAccountV2Toggle as u32 {
-                return Err(SwigStateError::PermissionLoadError.into());
-            }
-            let permission_bit = 1u32 << permission;
-            if NON_REPEATABLE_PERMISSION_MASK & permission_bit != 0 {
-                if non_repeatable_permissions & permission_bit != 0 {
-                    return Err(SwigStateError::DuplicateNonRepeatableAction.into());
-                }
-                non_repeatable_permissions |= permission_bit;
-            }
-        }
-        Ok(())
-    }
-
-    /// Validates the common two-action stored role without a loop.
-    ///
-    /// Callers have already loaded the program-owned role position and sliced
-    /// its action buffer, matching the unchecked traversal used by role lookup.
-    #[inline(always)]
-    pub(crate) fn validate_two_non_repeatable_actions(
-        actions_data: &[u8],
-    ) -> Result<(), ProgramError> {
-        let first = actions_data
-            .get(..Action::LEN)
-            .ok_or(ProgramError::InvalidAccountData)?;
-        let first_permission = u16::from_le_bytes([first[0], first[1]]) as u32;
-        let first_length = u16::from_le_bytes([first[2], first[3]]) as usize;
-        let second_start = Action::LEN + first_length;
-
-        let second = actions_data
-            .get(second_start..second_start + Action::LEN)
-            .ok_or(ProgramError::InvalidAccountData)?;
-        let second_permission = u16::from_le_bytes([second[0], second[1]]) as u32;
-        let second_length = u16::from_le_bytes([second[2], second[3]]) as usize;
-        let actions_end = second_start + Action::LEN + second_length;
-        if actions_end != actions_data.len() {
-            return Err(ProgramError::InvalidAccountData);
-        }
-
-        if first_permission > Permission::SubAccountV2Toggle as u32
-            || second_permission > Permission::SubAccountV2Toggle as u32
-        {
-            return Err(SwigStateError::PermissionLoadError.into());
-        }
-        if first_permission == second_permission
-            && NON_REPEATABLE_PERMISSION_MASK & (1u32 << first_permission) != 0
-        {
-            return Err(SwigStateError::DuplicateNonRepeatableAction.into());
-        }
-        Ok(())
-    }
-
     /// Validates the layout of action data based on its permission type.
     pub fn validate_layout(permission: Permission, data: &[u8]) -> Result<bool, ProgramError> {
         match permission {
@@ -423,6 +356,8 @@ impl ActionLoader {
         // V2 action, then sort + adjacent-compare. Roles are capped at 255
         // actions by `calculate_num_actions`, so this vector stays small.
         let mut keys: alloc::vec::Vec<u64> = alloc::vec::Vec::new();
+        let mut non_repeatable_permissions = 0u32;
+        let mut has_duplicate_non_repeatable = false;
         let mut cursor = 0;
         while cursor + Action::LEN <= actions_data.len() {
             let header =
@@ -436,6 +371,13 @@ impl ActionLoader {
             }
 
             let permission = header.permission()?;
+            if !permission.is_repeatable() {
+                let permission_bit = 1u32 << permission as u32;
+                if non_repeatable_permissions & permission_bit != 0 {
+                    has_duplicate_non_repeatable = true;
+                }
+                non_repeatable_permissions |= permission_bit;
+            }
             if let Some((ty, id)) =
                 v2_validation_key(permission, &actions_data[data_start..data_end])
             {
@@ -454,7 +396,10 @@ impl ActionLoader {
                 return Err(SwigStateError::DuplicateV2SubAccountAction.into());
             }
         }
-        Self::validate_non_repeatable_actions(actions_data)
+        if has_duplicate_non_repeatable {
+            return Err(SwigStateError::DuplicateNonRepeatableAction.into());
+        }
+        Ok(())
     }
 
     /// Finds an action of a specific type in the provided bytes.
@@ -593,44 +538,5 @@ mod tests {
         assert!(ActionLoader::find_action::<All>(&bytes.0)
             .expect("valid action data")
             .is_some());
-    }
-
-    #[test]
-    fn two_action_validation_rejects_an_invalid_second_permission() {
-        const SECOND_END: usize = Action::LEN * 2;
-        let mut bytes = AlignedBytes([0; SECOND_END]);
-        let first = Action::new(
-            Permission::AllButManageAuthority,
-            AllButManageAuthority::LEN as u16,
-            Action::LEN as u32,
-        );
-        let second = Action::new(Permission::All, All::LEN as u16, SECOND_END as u32);
-        write_header(&mut bytes, 0, &first);
-        write_header(&mut bytes, Action::LEN, &second);
-        bytes.0[Action::LEN..Action::LEN + size_of::<u16>()].copy_from_slice(&27u16.to_le_bytes());
-
-        assert_eq!(
-            ActionLoader::validate_two_non_repeatable_actions(&bytes.0),
-            Err(SwigStateError::PermissionLoadError.into()),
-        );
-    }
-
-    #[test]
-    fn two_action_validation_rejects_an_out_of_bounds_length() {
-        const SECOND_END: usize = Action::LEN * 2;
-        let mut bytes = AlignedBytes([0; SECOND_END]);
-        let first = Action::new(
-            Permission::AllButManageAuthority,
-            u16::MAX,
-            Action::LEN as u32,
-        );
-        let second = Action::new(Permission::All, All::LEN as u16, SECOND_END as u32);
-        write_header(&mut bytes, 0, &first);
-        write_header(&mut bytes, Action::LEN, &second);
-
-        assert_eq!(
-            ActionLoader::validate_two_non_repeatable_actions(&bytes.0),
-            Err(ProgramError::InvalidAccountData),
-        );
     }
 }
