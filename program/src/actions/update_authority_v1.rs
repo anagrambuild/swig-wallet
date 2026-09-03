@@ -26,6 +26,7 @@ use crate::{
         accounts::{Context, UpdateAuthorityV1Accounts},
         SwigInstruction,
     },
+    util::ensure_admin_remains,
 };
 
 /// Calculates the actual number of actions in the provided actions data.
@@ -706,6 +707,7 @@ pub fn update_authority_v1(
     let mut account_len: usize;
     let (
         saved_tail,
+        role_count,
         current_roles_len,
         current_actions_size,
         authority_offset,
@@ -827,6 +829,7 @@ pub fn update_authority_v1(
 
         (
             saved_tail,
+            swig.roles,
             roles_len,
             current_actions_size,
             authority_offset,
@@ -923,6 +926,16 @@ pub fn update_authority_v1(
             )?
         },
     };
+
+    // Validate the actual post-update state. Returning an error rolls the
+    // instruction back atomically.
+    let updated_roles_len = current_roles_len
+        .checked_add_signed(size_diff as isize)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    let updated_roles = swig_roles
+        .get(..updated_roles_len)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    ensure_admin_remains(updated_roles, role_count)?;
 
     if size_diff < 0 {
         let new_size = (account_len as i64 + size_diff) as usize;
