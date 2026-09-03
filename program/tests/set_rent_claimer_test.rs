@@ -5,18 +5,148 @@ mod common;
 use common::*;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
+    instruction::InstructionError,
     message::{v0, VersionedMessage},
+    pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    transaction::VersionedTransaction,
+    transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{AuthorityConfig, ClientAction, SetRentClaimerV1Instruction};
 use swig_state::{
     action::{sol_limit::SolLimit, sub_account::SubAccount},
     authority::AuthorityType,
-    swig::{swig_wallet_address_seeds, Swig},
+    swig::{
+        swig_account_seeds, swig_wallet_address_seeds, swig_wallet_address_seeds_with_bump, Swig,
+    },
     tail::{active_sub_account_count, rent_claimer},
+    Transmutable,
 };
+
+/// `SwigError::SignV2CannotBeUsedWithSwigV1`. The program's error module is
+/// private to integration tests, so mirror its stable error code here.
+const ERR_V2_WITH_SWIG_V1: u32 = 47;
+/// `SwigError::InvalidRentClaimerValue`.
+const ERR_INVALID_RENT_CLAIMER_VALUE: u32 = 60;
+
+#[derive(Clone, Copy)]
+enum WrongBumpOutcome {
+    OnCurve,
+    OffCurve,
+}
+
+fn send_set_rent_claimer(
+    context: &mut SwigTestContext,
+    swig: Pubkey,
+    authority: &Keypair,
+    rent_claimer: Pubkey,
+) -> Result<(), TransactionError> {
+    let set_ix = SetRentClaimerV1Instruction::new_with_ed25519_authority(
+        swig,
+        context.default_payer.pubkey(),
+        authority.pubkey(),
+        0,
+        rent_claimer.to_bytes(),
+    )
+    .unwrap();
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[
+                ComputeBudgetInstruction::set_compute_unit_limit(400_000),
+                set_ix,
+            ],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, authority]).unwrap();
+    context
+        .svm
+        .send_transaction(tx)
+        .map(|_| ())
+        .map_err(|e| e.err)
+}
+
+fn setup_v1_with_wrong_bump_outcome(
+    context: &mut SwigTestContext,
+    outcome: WrongBumpOutcome,
+) -> (Pubkey, Pubkey, Keypair) {
+    let authority = Keypair::new();
+
+    for candidate in 0..=u32::MAX {
+        let mut id = [0u8; 32];
+        id[..4].copy_from_slice(&candidate.to_le_bytes());
+        let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
+        let (wallet_address, _) =
+            Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+        let wrong_bump = [0u8];
+        let wrong_address = Pubkey::create_program_address(
+            &swig_wallet_address_seeds_with_bump(swig.as_ref(), &wrong_bump),
+            &program_id(),
+        );
+        let matches = match outcome {
+            WrongBumpOutcome::OnCurve => wrong_address.is_err(),
+            WrongBumpOutcome::OffCurve => {
+                matches!(wrong_address, Ok(address) if address != wallet_address)
+            },
+        };
+        if matches {
+            let (created_swig, _) = create_swig_ed25519(context, &authority, id).unwrap();
+            assert_eq!(created_swig, swig);
+            // `convert_swig_to_v1` writes reserved_lamports = 256. Its low byte
+            // is zero, so the vulnerable implementation used bump 0 above.
+            convert_swig_to_v1(context, &swig);
+            return (swig, wallet_address, authority);
+        }
+    }
+
+    panic!("could not find a Swig id with the requested bump outcome")
+}
+
+fn assert_v1_rejected_without_mutation(outcome: WrongBumpOutcome) {
+    let mut context = setup_test_context().unwrap();
+    let (swig, wallet_address, authority) = setup_v1_with_wrong_bump_outcome(&mut context, outcome);
+    let before = context.svm.get_account(&swig).unwrap();
+
+    let result = send_set_rent_claimer(&mut context, swig, &authority, wallet_address);
+    assert_eq!(
+        result,
+        Err(TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(ERR_V2_WITH_SWIG_V1),
+        ))
+    );
+
+    let after = context.svm.get_account(&swig).unwrap();
+    assert_eq!(
+        after.data, before.data,
+        "rejection must not resize or write the tail"
+    );
+    assert_eq!(
+        after.lamports, before.lamports,
+        "rejection must not transfer rent into the swig"
+    );
+}
+
+fn alternate_valid_wallet_bump(swig: &Pubkey, canonical_bump: u8) -> u8 {
+    for bump in (0..=u8::MAX).rev() {
+        if bump == 0 || bump == canonical_bump {
+            continue;
+        }
+        let bump_seed = [bump];
+        if Pubkey::create_program_address(
+            &swig_wallet_address_seeds_with_bump(swig.as_ref(), &bump_seed),
+            &program_id(),
+        )
+        .is_ok()
+        {
+            return bump;
+        }
+    }
+    panic!("a second valid wallet-address bump should exist")
+}
 
 fn add_sub_account_authority(
     context: &mut SwigTestContext,
@@ -45,7 +175,7 @@ fn add_sub_account_authority(
 fn test_set_rent_claimer_happy_path() {
     let mut context = setup_test_context().unwrap();
     let authority = Keypair::new();
-    let id = rand::random::<[u8; 32]>();
+    let id = [0x22; 32];
     let (swig_pubkey, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
     let claimer = Keypair::new();
 
@@ -203,6 +333,54 @@ fn test_set_rent_claimer_rejects_swig_wallet_address() {
         result.is_err(),
         "swig wallet address as rent claimer must fail"
     );
+}
+
+#[test_log::test]
+fn test_set_rent_claimer_rejects_v1_before_on_curve_bump_derivation() {
+    assert_v1_rejected_without_mutation(WrongBumpOutcome::OnCurve);
+}
+
+#[test_log::test]
+fn test_set_rent_claimer_rejects_v1_before_off_curve_bump_comparison() {
+    assert_v1_rejected_without_mutation(WrongBumpOutcome::OffCurve);
+}
+
+#[test_log::test]
+fn test_set_rent_claimer_rejects_wallet_address_when_v1_passes_version_heuristic() {
+    let mut context = setup_test_context().unwrap();
+    let authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _) = create_swig_ed25519(&mut context, &authority, id).unwrap();
+    let (wallet_address, canonical_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let alternate_bump = alternate_valid_wallet_bump(&swig, canonical_bump);
+
+    convert_swig_to_v1(&mut context, &swig);
+    let mut malformed = context.svm.get_account(&swig).unwrap();
+    // A V1 header stores `reserved_lamports` over bytes 40..48. Make its low
+    // byte look like a valid but non-canonical bump and the next three bytes
+    // look like V2 padding. This passes the shared version heuristic and would
+    // bypass the old stored-bump comparison.
+    malformed.data[40] = alternate_bump;
+    malformed.data[41..Swig::LEN].fill(0);
+    context.svm.set_account(swig, malformed).unwrap();
+    let before = context.svm.get_account(&swig).unwrap();
+
+    let result = send_set_rent_claimer(&mut context, swig, &authority, wallet_address);
+    assert_eq!(
+        result,
+        Err(TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(ERR_INVALID_RENT_CLAIMER_VALUE),
+        ))
+    );
+
+    let after = context.svm.get_account(&swig).unwrap();
+    assert_eq!(
+        after.data, before.data,
+        "rejection must not write an immutable tail"
+    );
+    assert_eq!(after.lamports, before.lamports);
 }
 
 #[test_log::test]

@@ -19,6 +19,7 @@ use solana_sdk::{
     sysvar::rent::Rent,
     transaction::{TransactionError, VersionedTransaction},
 };
+use swig::error::SwigError;
 use swig_interface::{
     AddAuthorityInstruction, AuthorityConfig, ClientAction, CloseSubAccountV2Instruction,
     CloseSwigV1Instruction, CreateSubAccountV2Instruction, SignV2Instruction,
@@ -163,6 +164,16 @@ fn assert_nonexistent_scope_error(result: Result<(), TransactionError>) {
             InstructionError::Custom(
                 SwigStateError::SubAccountV2PermissionTargetDoesNotExist as u32,
             ),
+        ))
+    );
+}
+
+fn assert_v1_swig_error(result: Result<(), TransactionError>) {
+    assert_eq!(
+        result,
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(SwigError::SignV2CannotBeUsedWithSwigV1 as u32),
         ))
     );
 }
@@ -1276,7 +1287,7 @@ fn test_v1_counter_overlay_cannot_authorize_future_scope_grants() {
         vec![ClientAction::SubAccountV2All(SubAccountV2All::new(0))],
     )
     .unwrap();
-    assert_nonexistent_scope_error(send_admin(&mut context, &root, add_authority));
+    assert_v1_swig_error(send_admin(&mut context, &root, add_authority));
 
     let replace = UpdateAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
@@ -1289,7 +1300,7 @@ fn test_v1_counter_overlay_cannot_authorize_future_scope_grants() {
         )]),
     )
     .unwrap();
-    assert_nonexistent_scope_error(send_admin(&mut context, &root, replace));
+    assert_v1_swig_error(send_admin(&mut context, &root, replace));
 
     let add_action = UpdateAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
@@ -1302,7 +1313,7 @@ fn test_v1_counter_overlay_cannot_authorize_future_scope_grants() {
         )]),
     )
     .unwrap();
-    assert_nonexistent_scope_error(send_admin(&mut context, &root, add_action));
+    assert_v1_swig_error(send_admin(&mut context, &root, add_action));
 
     let after_swig = context.svm.get_account(&swig_key).unwrap();
     let after_payer = context.svm.get_account(&payer_key).unwrap();

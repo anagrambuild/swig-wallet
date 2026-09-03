@@ -8,7 +8,7 @@
 /// - Restricted key handling
 /// - Memory-efficient instruction processing
 mod compact_instructions;
-use core::{marker::PhantomData, mem::MaybeUninit};
+use core::marker::PhantomData;
 
 pub use compact_instructions::*;
 use pinocchio::{
@@ -30,6 +30,8 @@ pub enum InstructionError {
     MissingAccountInfo,
     /// Instruction data is incomplete or invalid
     MissingData,
+    /// Compact instruction declares an invalid number of accounts
+    InvalidAccountCount,
 }
 
 impl From<InstructionError> for ProgramError {
@@ -49,27 +51,32 @@ impl From<InstructionError> for ProgramError {
 pub struct InstructionHolder<'a> {
     pub program_id: &'a Pubkey,
     pub cpi_accounts: Vec<Account<'a>>,
-    pub indexes: &'a [usize],
-    pub accounts: &'a [AccountMeta<'a>],
+    pub indexes: &'a [u8],
+    pub accounts: Vec<AccountMeta<'a>>,
     pub data: &'a [u8],
     pub uses_swig_signer: bool,
 }
 
 impl<'a> InstructionHolder<'a> {
     pub fn execute(
-        &'a self,
+        &self,
         all_accounts: &'a [AccountInfo],
-        swig_key: &'a Pubkey,
+        swig_key: &Pubkey,
         swig_signer: &[Signer],
     ) -> ProgramResult {
         if self.program_id == &pinocchio_system::ID
             && self.data.len() >= 12
             && unsafe { self.data.get_unchecked(0..4) == [2, 0, 0, 0] }
-            && unsafe { self.accounts.get_unchecked(0).pubkey == swig_key }
+            && self
+                .accounts
+                .first()
+                .is_some_and(|account| account.pubkey == swig_key)
         {
+            let [from_index, to_index, ..] = self.indexes else {
+                return Err(InstructionError::InvalidAccountCount.into());
+            };
             // Check if the "from" account (swig_key) is system-owned or program-owned
-            let from_account_index = unsafe { *self.indexes.get_unchecked(0) };
-            let from_account = unsafe { all_accounts.get_unchecked(from_account_index) };
+            let from_account = unsafe { all_accounts.get_unchecked(*from_index as usize) };
 
             if from_account.owner() == &pinocchio_system::ID {
                 // For system-owned PDAs (new swig_wallet_address accounts),
@@ -89,12 +96,9 @@ impl<'a> InstructionHolder<'a> {
                         .try_into()
                         .map_err(|_| ProgramError::InvalidInstructionData)?,
                 );
+                let account1 = unsafe { all_accounts.get_unchecked(*from_index as usize) };
+                let account2 = unsafe { all_accounts.get_unchecked(*to_index as usize) };
                 unsafe {
-                    let index = self.indexes.get_unchecked(0);
-                    let index2 = self.indexes.get_unchecked(1);
-                    let account1 = all_accounts.get_unchecked(*index);
-                    let account2 = all_accounts.get_unchecked(*index2);
-
                     *account1.borrow_mut_lamports_unchecked() -= amount;
                     *account2.borrow_mut_lamports_unchecked() += amount;
                 }
@@ -147,10 +151,10 @@ pub trait RestrictedKeys {
 }
 
 impl<'a> InstructionHolder<'a> {
-    pub fn borrow(&'a self) -> Instruction<'a, 'a, 'a, 'a> {
+    pub fn borrow(&self) -> Instruction<'a, '_, 'a, 'a> {
         Instruction {
             program_id: self.program_id,
-            accounts: self.accounts,
+            accounts: self.accounts.as_slice(),
             data: self.data,
         }
     }
@@ -283,24 +287,23 @@ where
         let (num_accounts, cursor) = self.read_u8()?;
         self.cursor = cursor;
         let num_accounts = num_accounts as usize;
-        const AM_UNINIT: MaybeUninit<AccountMeta> = MaybeUninit::uninit();
-        let mut accounts = [AM_UNINIT; MAX_ACCOUNTS];
+        if num_accounts > MAX_ACCOUNTS {
+            return Err(InstructionError::InvalidAccountCount);
+        }
+        let (indexes, cursor) = self.read_slice(num_accounts)?;
+        self.cursor = cursor;
+        let mut accounts = Vec::with_capacity(num_accounts);
         let mut infos = Vec::with_capacity(num_accounts);
-        const INDEX_UNINIT: MaybeUninit<usize> = MaybeUninit::uninit();
-        let mut indexes = [INDEX_UNINIT; MAX_ACCOUNTS];
         let mut uses_swig_signer = false;
-        for i in 0..num_accounts {
-            let (pubkey_index, cursor) = self.read_u8()?;
-            self.cursor = cursor;
-            let account = self.accounts.get_account(pubkey_index as usize)?;
-            indexes[i].write(pubkey_index as usize);
+        for pubkey_index in indexes {
+            let account = self.accounts.get_account(*pubkey_index as usize)?;
             let pubkey = account.pubkey();
             let is_signer = (pubkey == self.signer || account.signer())
                 && !self.restricted_keys.is_restricted(pubkey);
             if is_signer && pubkey == self.signer {
                 uses_swig_signer = true;
             }
-            accounts[i].write(AccountMeta {
+            accounts.push(AccountMeta {
                 pubkey,
                 is_signer,
                 is_writable: account.writable(),
@@ -317,8 +320,8 @@ where
         Ok(InstructionHolder {
             program_id,
             cpi_accounts: infos,
-            accounts: unsafe { core::slice::from_raw_parts(accounts.as_ptr() as _, num_accounts) },
-            indexes: unsafe { core::slice::from_raw_parts(indexes.as_ptr() as _, num_accounts) },
+            accounts,
+            indexes,
             data,
             uses_swig_signer,
         })
@@ -350,7 +353,11 @@ where
             return Err(InstructionError::MissingData);
         }
         let value_bytes = unsafe { self.data.get_unchecked(self.cursor..end) };
-        let value = unsafe { *(value_bytes.as_ptr() as *const u16) };
+        let value = u16::from_le_bytes(
+            value_bytes
+                .try_into()
+                .map_err(|_| InstructionError::MissingData)?,
+        );
         Ok((value, end))
     }
 
