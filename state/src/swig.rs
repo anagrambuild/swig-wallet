@@ -352,8 +352,6 @@ impl<'a> SwigBuilder<'a> {
     ) -> Result<(), ProgramError> {
         // Calculate the actual number of actions from the actions data
         let num_actions = Self::calculate_num_actions(actions_data)?;
-        // Reject duplicate V2 sub-account scoped actions within this role.
-        ActionLoader::reject_duplicate_v2_scoped(actions_data)?;
 
         // check number of roles and iterate to last boundary
         let mut cursor = 0;

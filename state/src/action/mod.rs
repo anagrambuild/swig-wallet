@@ -236,19 +236,19 @@ pub trait Actionable<'a>: Transmutable + TransmutableMut {
     }
 }
 
-/// Returns a deduplication key for a V2 sub-account action, or `None` for any
-/// non-V2 permission (which is intentionally not deduplicated).
+/// Returns a validation key for a V2 sub-account action, or `None` for any
+/// non-V2 permission (which is intentionally not validated here).
 ///
 /// The scoped permissions key on `(type, subacc_id)`; the create marker keys on
 /// its type with a fixed id so a second marker collides.
-fn v2_dedup_key(permission: Permission, data: &[u8]) -> Option<(u16, u32)> {
+fn v2_validation_key(permission: Permission, data: &[u8]) -> Option<(u16, u32)> {
     match permission {
         Permission::SubAccountV2Create => Some((permission as u16, 0)),
         Permission::SubAccountV2All
         | Permission::SubAccountV2Sign
         | Permission::SubAccountV2Withdraw
         | Permission::SubAccountV2Toggle => {
-            if data.len() >= 4 {
+            if data.len() == SubAccountV2All::LEN {
                 let id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
                 Some((permission as u16, id))
             } else {
@@ -300,18 +300,19 @@ impl ActionLoader {
         }
     }
 
-    /// Rejects duplicate V2 sub-account scoped actions within a role's full
-    /// action buffer.
+    /// Validates V2 sub-account actions within a role's full action buffer.
     ///
-    /// A role may hold at most one scoped V2 action per `(permission type,
-    /// subacc_id)` and at most one `SubAccountV2Create` marker. Only the five V2
-    /// permission types are deduplicated here; all other actions (including V1
-    /// `SubAccount` and repeatable destination limits) are left untouched to
-    /// preserve existing behavior.
+    /// Each scoped action must target an existing sub-account id (strictly less
+    /// than `sub_account_counter`). A role may also hold at most one scoped V2
+    /// action per `(permission type, subacc_id)` and at most one
+    /// `SubAccountV2Create` marker. Other action types are left untouched.
     ///
     /// `actions_data` is walked sequentially by `[header][data]`, matching how
     /// `calculate_num_actions` reads the same buffer.
-    pub fn reject_duplicate_v2_scoped(actions_data: &[u8]) -> Result<(), ProgramError> {
+    pub fn validate_v2_actions(
+        actions_data: &[u8],
+        sub_account_counter: u32,
+    ) -> Result<(), ProgramError> {
         // Single forward pass collecting one packed `(type, subacc_id)` key per
         // V2 action, then sort + adjacent-compare. Roles are capped at 255
         // actions by `calculate_num_actions`, so this vector stays small.
@@ -328,9 +329,13 @@ impl ActionLoader {
                 return Err(ProgramError::InvalidInstructionData);
             }
 
+            let permission = header.permission()?;
             if let Some((ty, id)) =
-                v2_dedup_key(header.permission()?, &actions_data[data_start..data_end])
+                v2_validation_key(permission, &actions_data[data_start..data_end])
             {
+                if permission != Permission::SubAccountV2Create && id >= sub_account_counter {
+                    return Err(SwigStateError::SubAccountV2PermissionTargetDoesNotExist.into());
+                }
                 keys.push(((ty as u64) << 32) | id as u64);
             }
 

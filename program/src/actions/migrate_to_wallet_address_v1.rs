@@ -14,7 +14,8 @@ use pinocchio::{
 };
 use swig_assertions::{check_bytes_match, check_self_owned, check_system_owner, check_zero_data};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority},
+    action::{all::All, manage_authority::ManageAuthority, Action, ActionLoader},
+    role::Position,
     swig::{swig_wallet_address_seeds, Swig},
     Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable,
 };
@@ -204,6 +205,35 @@ pub fn migrate_to_wallet_address_v1(
         if !has_all_permission && !has_manage_authority {
             msg!("Authority lacks All or ManageAuthority permission");
             return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
+        }
+    }
+
+    // Migration resets the overlaid V2 counter to zero while preserving every
+    // role. Reject any scoped V2 permission already stored on the V1 account so
+    // it cannot become a future grant after migration.
+    {
+        let swig_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
+        let parts = Swig::split_parts(swig_data)?;
+        let mut cursor = 0usize;
+        for _ in 0..old_swig_roles {
+            let position_end = cursor
+                .checked_add(Position::LEN)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            let position_bytes = parts
+                .roles
+                .get(cursor..position_end)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            let position = unsafe { Position::load_unchecked(position_bytes)? };
+            let boundary = position.boundary() as usize;
+            let actions_start = position_end
+                .checked_add(position.authority_length() as usize)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            let actions = parts
+                .roles
+                .get(actions_start..boundary)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            ActionLoader::validate_v2_actions(actions, 0)?;
+            cursor = boundary;
         }
     }
 

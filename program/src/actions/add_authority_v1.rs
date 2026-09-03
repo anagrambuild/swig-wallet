@@ -12,7 +12,7 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority},
+    action::{all::All, manage_authority::ManageAuthority, ActionLoader},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::{Swig, SwigBuilder},
@@ -184,6 +184,7 @@ pub fn add_authority_v1(
     let swig_data_len = swig_account_data.len();
     let new_authority_type = AuthorityType::try_from(add_authority_v1.args.new_authority_type)?;
     let (saved_tail, account_size) = {
+        crate::require_swig_v2(swig_account_data)?;
         if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
@@ -222,6 +223,7 @@ pub fn add_authority_v1(
         if all.is_none() && manage_authority.is_none() {
             return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
         }
+        ActionLoader::validate_v2_actions(add_authority_v1.actions, swig.sub_account_counter)?;
         let new_authority_length = authority_type_to_length(&new_authority_type)?;
         let role_size = Position::LEN + new_authority_length + add_authority_v1.actions.len();
 

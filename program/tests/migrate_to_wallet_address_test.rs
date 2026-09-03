@@ -13,9 +13,12 @@ use solana_sdk::{
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig::actions::migrate_to_wallet_address_v1::MigrateToWalletAddressV1Args;
+use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state::{
+    action::sub_account_v2::SubAccountV2All,
+    authority::AuthorityType,
     swig::{swig_wallet_address_seeds, swig_wallet_address_seeds_with_bump, Swig},
-    IntoBytes, Transmutable,
+    IntoBytes, SwigStateError, Transmutable,
 };
 
 /// `SwigError::InvalidSeedSwigAccount`. The program's error module is private,
@@ -166,6 +169,75 @@ fn test_migration_accepts_authenticated_authority() {
     let swig_account = context.svm.get_account(&swig).unwrap();
     let migrated_swig = unsafe { Swig::load_unchecked(&swig_account.data[..Swig::LEN]).unwrap() };
     assert_eq!(migrated_swig.wallet_bump, wallet_address_bump);
+}
+
+#[test_log::test]
+fn test_migration_rejects_stored_future_v2_scope() {
+    let mut context = setup_test_context().unwrap();
+    let authority = Keypair::new();
+    let id = rand::random::<[u8; 32]>();
+    let (swig, _bench) = create_swig_ed25519(&mut context, &authority, id).unwrap();
+
+    // Build a legacy stored scope while the header presents a V2 counter, then
+    // downgrade the same bytes to V1. Migration would reset the real counter to
+    // zero while preserving this role, turning the scope into a future grant.
+    let counter_offset = core::mem::offset_of!(Swig, sub_account_counter);
+    let mut account = context.svm.get_account(&swig).unwrap();
+    account.data[counter_offset..counter_offset + 4].copy_from_slice(&1u32.to_le_bytes());
+    context.svm.set_account(swig, account).unwrap();
+    let scoped_authority = Keypair::new();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: scoped_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::SubAccountV2All(SubAccountV2All::new(0))],
+    )
+    .unwrap();
+    convert_swig_to_v1(&mut context, &swig);
+
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let before_swig = context.svm.get_account(&swig).unwrap();
+    let before_wallet = context.svm.get_account(&swig_wallet_address).unwrap();
+    let migrate_ix = migrate_instruction(
+        swig,
+        authority.pubkey(),
+        context.default_payer.pubkey(),
+        swig_wallet_address,
+        wallet_address_bump,
+        true,
+        solana_system_interface::program::ID,
+    );
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[migrate_ix],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+
+    let error = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(
+                SwigStateError::SubAccountV2PermissionTargetDoesNotExist as u32,
+            ),
+        )
+    );
+    assert_eq!(context.svm.get_account(&swig).unwrap(), before_swig);
+    assert_eq!(
+        context.svm.get_account(&swig_wallet_address).unwrap(),
+        before_wallet
+    );
 }
 
 #[test_log::test]

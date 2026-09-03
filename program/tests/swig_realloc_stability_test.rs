@@ -24,12 +24,8 @@ use solana_sdk::{
 use swig_interface::{AuthorityConfig, ClientAction, CreateSubAccountV2Instruction};
 use swig_state::{
     action::{
-        manage_authority::ManageAuthority,
-        sol_limit::SolLimit,
-        sub_account_v2::{
-            SubAccountV2All, SubAccountV2Create, SubAccountV2Sign, SubAccountV2Toggle,
-            SubAccountV2Withdraw,
-        },
+        close_swig_authority::CloseSwigAuthority, manage_authority::ManageAuthority,
+        program_all::ProgramAll, sol_limit::SolLimit, sub_account_v2::SubAccountV2Create,
         Permission,
     },
     authority::AuthorityType,
@@ -130,7 +126,7 @@ fn test_realloc_stability_with_rent_claimer_and_multiple_roles() {
     )
     .unwrap();
 
-    // Role 3: four permissions (varied scoped V2 types, distinct ids).
+    // Role 3: four permissions of varied types.
     let role3 = Keypair::new();
     fund(&mut context, &role3);
     add_authority_with_ed25519_root(
@@ -140,9 +136,9 @@ fn test_realloc_stability_with_rent_claimer_and_multiple_roles() {
         ed(&role3.pubkey()),
         vec![
             ClientAction::SubAccountV2Create(SubAccountV2Create),
-            ClientAction::SubAccountV2All(SubAccountV2All::new(201)),
-            ClientAction::SubAccountV2Withdraw(SubAccountV2Withdraw::new(202)),
-            ClientAction::SubAccountV2Toggle(SubAccountV2Toggle::new(203)),
+            ClientAction::ProgramAll(ProgramAll {}),
+            ClientAction::SolLimit(SolLimit { amount: 201 }),
+            ClientAction::CloseSwigAuthority(CloseSwigAuthority {}),
         ],
     )
     .unwrap();
@@ -195,8 +191,8 @@ fn test_realloc_stability_with_rent_claimer_and_multiple_roles() {
         r4_id,
         vec![
             ClientAction::SolLimit(SolLimit { amount: 5 }),
-            ClientAction::SubAccountV2Sign(SubAccountV2Sign::new(300)),
-            ClientAction::SubAccountV2Toggle(SubAccountV2Toggle::new(301)),
+            ClientAction::ProgramAll(ProgramAll {}),
+            ClientAction::CloseSwigAuthority(CloseSwigAuthority {}),
         ],
     )
     .unwrap();

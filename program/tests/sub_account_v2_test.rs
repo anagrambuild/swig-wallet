@@ -10,34 +10,40 @@ use common::{
 };
 use litesvm_token::spl_token;
 use solana_sdk::{
+    instruction::InstructionError,
     message::{v0, VersionedMessage},
     program_pack::Pack,
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
     sysvar::rent::Rent,
-    transaction::VersionedTransaction,
+    transaction::{TransactionError, VersionedTransaction},
 };
+use swig::error::SwigError;
 use swig_interface::{
-    AuthorityConfig, ClientAction, CloseSubAccountV2Instruction, CloseSwigV1Instruction,
-    CreateSubAccountV2Instruction, SignV2Instruction, SubAccountSignV2Instruction,
-    ToggleSubAccountV2Instruction, WithdrawFromSubAccountV2Instruction,
+    AddAuthorityInstruction, AuthorityConfig, ClientAction, CloseSubAccountV2Instruction,
+    CloseSwigV1Instruction, CreateSubAccountV2Instruction, SignV2Instruction,
+    SubAccountSignV2Instruction, ToggleSubAccountV2Instruction, UpdateAuthorityData,
+    UpdateAuthorityInstruction, WithdrawFromSubAccountV2Instruction,
 };
 use swig_state::{
     action::{
         all::All,
+        close_swig_authority::CloseSwigAuthority,
         manage_authority::ManageAuthority,
-        sub_account_v2::{
-            SubAccountV2All, SubAccountV2Create, SubAccountV2Sign, SubAccountV2Toggle,
-            SubAccountV2Withdraw,
-        },
+        program_all::ProgramAll,
+        sol_limit::SolLimit,
+        sub_account_v2::{SubAccountV2All, SubAccountV2Create, SubAccountV2Sign},
         Action, Permission,
     },
     authority::AuthorityType,
     sub_account_v2::SubAccountV2,
-    swig::{sub_account_v2_asset_seeds, sub_account_v2_state_seeds, Swig, SwigWithRoles},
+    swig::{
+        sub_account_v2_asset_seeds, sub_account_v2_state_seeds, swig_wallet_address_seeds, Swig,
+        SwigWithRoles,
+    },
     tail::active_sub_account_count,
-    Transmutable,
+    SwigStateError, Transmutable,
 };
 
 const CREATOR_ROLE_ID: u32 = 1;
@@ -46,15 +52,6 @@ const CREATOR_ROLE_ID: u32 = 1;
 /// `SubAccountV2Create` permission. Returns
 /// (swig_key, root_keypair, creator_keypair, id).
 fn setup_v2(context: &mut SwigTestContext) -> anyhow::Result<(Pubkey, Keypair, Keypair, [u8; 32])> {
-    setup_v2_with_extra_actions(context, vec![])
-}
-
-/// As [`setup_v2`], with `extra` actions granted to the creator role alongside
-/// `SubAccountV2Create`.
-fn setup_v2_with_extra_actions(
-    context: &mut SwigTestContext,
-    extra: Vec<ClientAction>,
-) -> anyhow::Result<(Pubkey, Keypair, Keypair, [u8; 32])> {
     let root = Keypair::new();
     let creator = Keypair::new();
     context.svm.airdrop(&root.pubkey(), 10_000_000_000).unwrap();
@@ -66,8 +63,6 @@ fn setup_v2_with_extra_actions(
     let id = rand::random::<[u8; 32]>();
     let (swig_key, _) = create_swig_ed25519(context, &root, id)?;
 
-    let mut actions = vec![ClientAction::SubAccountV2Create(SubAccountV2Create)];
-    actions.extend(extra);
     add_authority_with_ed25519_root(
         context,
         &swig_key,
@@ -76,7 +71,7 @@ fn setup_v2_with_extra_actions(
             authority_type: AuthorityType::Ed25519,
             authority: creator.pubkey().as_ref(),
         },
-        actions,
+        vec![ClientAction::SubAccountV2Create(SubAccountV2Create)],
     )?;
     Ok((swig_key, root, creator, id))
 }
@@ -133,10 +128,72 @@ fn send(
         .map_err(|e| anyhow::anyhow!("tx failed: {:?}", e))
 }
 
+fn send_admin(
+    context: &mut SwigTestContext,
+    authority: &Keypair,
+    ix: solana_sdk::instruction::Instruction,
+) -> Result<(), TransactionError> {
+    context.svm.expire_blockhash();
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(message),
+        &[
+            context.default_payer.insecure_clone(),
+            authority.insecure_clone(),
+        ],
+    )
+    .unwrap();
+    context
+        .svm
+        .send_transaction(tx)
+        .map(|_| ())
+        .map_err(|error| error.err)
+}
+
+fn assert_nonexistent_scope_error(result: Result<(), TransactionError>) {
+    assert_eq!(
+        result,
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(
+                SwigStateError::SubAccountV2PermissionTargetDoesNotExist as u32,
+            ),
+        ))
+    );
+}
+
+fn assert_v1_swig_error(result: Result<(), TransactionError>) {
+    assert_eq!(
+        result,
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(SwigError::SignV2CannotBeUsedWithSwigV1 as u32),
+        ))
+    );
+}
+
 fn decode_counter(context: &SwigTestContext, swig_key: &Pubkey) -> u32 {
     let data = context.svm.get_account(swig_key).unwrap().data;
     let swig = unsafe { Swig::load_unchecked(&data[..Swig::LEN]).unwrap() };
     swig.sub_account_counter
+}
+
+fn overwrite_with_v1_counter_overlay(context: &mut SwigTestContext, swig_key: &Pubkey) {
+    let (_, wallet_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+    // V1 stored one reserved-lamports u64 over wallet_bump, padding, and the
+    // V2 counter. This value is recognizably V1 but its upper word reads as a
+    // counterfeit sub_account_counter == 1 if the generation is ignored.
+    let reserved_lamports = (1u64 << 32) | (1u64 << 8) | u64::from(wallet_bump);
+    let mut account = context.svm.get_account(swig_key).unwrap();
+    account.data[Swig::LEN - 8..Swig::LEN].copy_from_slice(&reserved_lamports.to_le_bytes());
+    context.svm.set_account(*swig_key, account).unwrap();
 }
 
 fn decode_active_count(context: &SwigTestContext, swig_key: &Pubkey) -> u32 {
@@ -156,39 +213,6 @@ fn strip_active_count_tail(context: &mut SwigTestContext, swig_key: &Pubkey) {
         .data
         .truncate(account.data.len() - active_sub_account_count::ENTRY_LEN);
     context.svm.set_account(*swig_key, account).unwrap();
-}
-
-/// Counts how many `SubAccountV2All` actions the role holds for `subacc_id`.
-///
-/// The auto-grant must never leave two: a role may hold at most one scoped V2
-/// action per `(type, id)`, and a second copy is what
-/// `reject_duplicate_v2_scoped` fails the whole create over.
-fn role_all_scope_count(
-    context: &SwigTestContext,
-    swig_key: &Pubkey,
-    role_id: u32,
-    subacc_id: u32,
-) -> usize {
-    let data = context.svm.get_account(swig_key).unwrap().data;
-    let swig = SwigWithRoles::from_bytes(&data).unwrap();
-    let role = swig.get_role(role_id).unwrap().unwrap();
-    let mut cursor = 0;
-    let mut count = 0;
-    for _ in 0..role.position.num_actions() {
-        let header =
-            unsafe { Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN]).unwrap() };
-        cursor += Action::LEN;
-        let len = header.length() as usize;
-        if header.permission().unwrap() == Permission::SubAccountV2All {
-            let body = &role.actions[cursor..cursor + len];
-            let read_id = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
-            if read_id == subacc_id {
-                count += 1;
-            }
-        }
-        cursor += len;
-    }
-    count
 }
 
 /// Returns true if the given role holds a `SubAccountV2All` action for
@@ -1027,7 +1051,7 @@ fn test_create_sub_account_v2_preserves_other_roles_and_permissions() {
     )
     .unwrap();
 
-    // Role 2: two permissions (ManageAuthority + a scoped sign).
+    // Role 2: two permissions.
     let role2 = Keypair::new();
     context
         .svm
@@ -1043,12 +1067,12 @@ fn test_create_sub_account_v2_preserves_other_roles_and_permissions() {
         },
         vec![
             ClientAction::ManageAuthority(ManageAuthority {}),
-            ClientAction::SubAccountV2Sign(SubAccountV2Sign::new(100)),
+            ClientAction::SolLimit(SolLimit { amount: 100 }),
         ],
     )
     .unwrap();
 
-    // Role 3: four permissions of varied types with distinct scoped ids.
+    // Role 3: four permissions of varied types.
     let role3 = Keypair::new();
     context
         .svm
@@ -1064,9 +1088,9 @@ fn test_create_sub_account_v2_preserves_other_roles_and_permissions() {
         },
         vec![
             ClientAction::SubAccountV2Create(SubAccountV2Create),
-            ClientAction::SubAccountV2All(SubAccountV2All::new(101)),
-            ClientAction::SubAccountV2Withdraw(SubAccountV2Withdraw::new(102)),
-            ClientAction::SubAccountV2Toggle(SubAccountV2Toggle::new(103)),
+            ClientAction::ProgramAll(ProgramAll {}),
+            ClientAction::SolLimit(SolLimit { amount: 101 }),
+            ClientAction::CloseSwigAuthority(CloseSwigAuthority {}),
         ],
     )
     .unwrap();
@@ -1131,210 +1155,169 @@ fn test_create_sub_account_v2_preserves_other_roles_and_permissions() {
     assert_eq!(after3.counter, 3);
 }
 
-/// The design allows scoping a sub-account id before it exists. When the id the
-/// counter then draws is that same id, the auto-grant must not append a second
-/// `SubAccountV2All` — the duplicate check would fail the whole create.
+/// A scoped permission cannot be granted until its target id has been created.
 #[test_log::test]
-fn test_create_v2_when_creator_pre_granted_all_for_the_drawn_id() {
+fn test_add_authority_rejects_future_scope_until_subaccount_exists() {
     let mut context = setup_test_context().unwrap();
-    let (swig_key, _root, creator, id) = setup_v2_with_extra_actions(
-        &mut context,
+    let (swig_key, root, creator, id) = setup_v2(&mut context).unwrap();
+    let scoped_authority = Keypair::new();
+
+    let before_swig = context.svm.get_account(&swig_key).unwrap();
+    let payer_key = context.default_payer.pubkey();
+    let before_payer = context.svm.get_account(&payer_key).unwrap();
+    let future_grant = AddAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        payer_key,
+        root.pubkey(),
+        0,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: scoped_authority.pubkey().as_ref(),
+        },
         vec![ClientAction::SubAccountV2All(SubAccountV2All::new(0))],
     )
     .unwrap();
 
-    // Pre-grant is in place before anything is created.
+    assert_nonexistent_scope_error(send_admin(&mut context, &root, future_grant));
     assert_eq!(decode_counter(&context, &swig_key), 0);
-    assert_eq!(
-        role_all_scope_count(&context, &swig_key, CREATOR_ROLE_ID, 0),
-        1
-    );
-
-    // Creating id 0 used to fail with DuplicateV2SubAccountAction (1009).
-    let (state_pda, _asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0)
-        .expect("create must succeed when the scope is already granted");
-
-    assert_eq!(decode_counter(&context, &swig_key), 1);
-    assert_eq!(
-        role_all_scope_count(&context, &swig_key, CREATOR_ROLE_ID, 0),
-        1,
-        "the pre-grant must be left alone, not duplicated"
-    );
-
-    // The sub-account really was created, and the scope still authorizes it.
-    let state_acc = context.svm.get_account(&state_pda).unwrap();
-    assert_eq!(state_acc.owner, program_id());
-    let state = unsafe { SubAccountV2::load_unchecked(&state_acc.data).unwrap() };
-    assert_eq!(state.subacc_id, 0);
-    assert!(state.is_enabled().unwrap());
-}
-
-/// A pre-grant for a *different* id must not suppress the auto-grant: the role
-/// ends up holding both scopes.
-#[test_log::test]
-fn test_create_v2_pre_grant_for_other_id_still_auto_grants() {
-    let mut context = setup_test_context().unwrap();
-    let (swig_key, _root, creator, id) = setup_v2_with_extra_actions(
-        &mut context,
-        vec![ClientAction::SubAccountV2All(SubAccountV2All::new(5))],
-    )
-    .unwrap();
+    let after_swig = context.svm.get_account(&swig_key).unwrap();
+    let after_payer = context.svm.get_account(&payer_key).unwrap();
+    assert_eq!(after_swig.data, before_swig.data);
+    assert_eq!(after_swig.lamports, before_swig.lamports);
+    assert_eq!(before_payer.lamports - after_payer.lamports, 10_000);
 
     create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
-
-    assert_eq!(
-        role_all_scope_count(&context, &swig_key, CREATOR_ROLE_ID, 0),
-        1,
-        "the drawn id must still be auto-granted"
-    );
-    assert_eq!(
-        role_all_scope_count(&context, &swig_key, CREATOR_ROLE_ID, 5),
-        1,
-        "the unrelated pre-grant must survive"
-    );
-}
-
-/// The skip must key on `SubAccountV2All` exactly. A pre-granted *specific*
-/// scope for the same id is a different dedup key, so the umbrella still has to
-/// be auto-granted -- otherwise the creator silently ends up with narrower
-/// access than every other creator gets.
-#[test_log::test]
-fn test_pre_granted_specific_scope_does_not_suppress_auto_grant() {
-    let mut context = setup_test_context().unwrap();
-    let (swig_key, _root, creator, id) = setup_v2_with_extra_actions(
-        &mut context,
-        vec![ClientAction::SubAccountV2Sign(SubAccountV2Sign::new(0))],
+    let existing_grant = AddAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        payer_key,
+        root.pubkey(),
+        0,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: scoped_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::SubAccountV2All(SubAccountV2All::new(0))],
     )
     .unwrap();
-
-    assert_eq!(
-        role_all_scope_count(&context, &swig_key, CREATOR_ROLE_ID, 0),
-        0
-    );
-
-    create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
-
-    assert_eq!(
-        role_all_scope_count(&context, &swig_key, CREATOR_ROLE_ID, 0),
-        1,
-        "a pre-granted Sign scope must not be mistaken for the All umbrella"
-    );
+    send_admin(&mut context, &root, existing_grant).unwrap();
+    assert!(role_has_all_scope(&context, &swig_key, 2, 0));
 }
 
-/// Dedup is per-role, so another role holding `All { id }` must not suppress
-/// the acting role's auto-grant.
+/// Both update modes validate their resulting action list against the wallet's
+/// current sub-account counter before committing a grant.
 #[test_log::test]
-fn test_pre_grant_on_another_role_does_not_suppress_creator_auto_grant() {
+fn test_update_authority_rejects_future_scope_for_replace_and_add() {
     let mut context = setup_test_context().unwrap();
     let (swig_key, root, creator, id) = setup_v2(&mut context).unwrap();
+    create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
 
-    let bystander = Keypair::new();
-    context
-        .svm
-        .airdrop(&bystander.pubkey(), 10_000_000_000)
-        .unwrap();
+    let target = Keypair::new();
     add_authority_with_ed25519_root(
         &mut context,
         &swig_key,
         &root,
         AuthorityConfig {
             authority_type: AuthorityType::Ed25519,
-            authority: bystander.pubkey().as_ref(),
+            authority: target.pubkey().as_ref(),
+        },
+        vec![ClientAction::SolLimit(SolLimit { amount: 1 })],
+    )
+    .unwrap();
+    let target_role_id = 2;
+    let payer_key = context.default_payer.pubkey();
+    let before_swig = context.svm.get_account(&swig_key).unwrap();
+    let before_payer = context.svm.get_account(&payer_key).unwrap();
+
+    let replace = UpdateAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        payer_key,
+        root.pubkey(),
+        0,
+        target_role_id,
+        UpdateAuthorityData::ReplaceAll(vec![ClientAction::SubAccountV2Sign(
+            SubAccountV2Sign::new(1),
+        )]),
+    )
+    .unwrap();
+    assert_nonexistent_scope_error(send_admin(&mut context, &root, replace));
+
+    let add = UpdateAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        payer_key,
+        root.pubkey(),
+        0,
+        target_role_id,
+        UpdateAuthorityData::AddActions(vec![ClientAction::SubAccountV2Sign(
+            SubAccountV2Sign::new(1),
+        )]),
+    )
+    .unwrap();
+    assert_nonexistent_scope_error(send_admin(&mut context, &root, add));
+
+    let after_swig = context.svm.get_account(&swig_key).unwrap();
+    let after_payer = context.svm.get_account(&payer_key).unwrap();
+    assert_eq!(after_swig.data, before_swig.data);
+    assert_eq!(after_swig.lamports, before_swig.lamports);
+    assert_eq!(before_payer.lamports - after_payer.lamports, 20_000);
+}
+
+/// V1's reserved-lamports high word must never be treated as an issued V2 id
+/// counter by any authority grant path.
+#[test_log::test]
+fn test_v1_counter_overlay_cannot_authorize_future_scope_grants() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, _creator, _id) = setup_v2(&mut context).unwrap();
+    overwrite_with_v1_counter_overlay(&mut context, &swig_key);
+    assert_eq!(decode_counter(&context, &swig_key), 1);
+
+    let payer_key = context.default_payer.pubkey();
+    let before_swig = context.svm.get_account(&swig_key).unwrap();
+    let before_payer = context.svm.get_account(&payer_key).unwrap();
+
+    let future_authority = Keypair::new();
+    let add_authority = AddAuthorityInstruction::new_with_ed25519_authority(
+        swig_key,
+        payer_key,
+        root.pubkey(),
+        0,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: future_authority.pubkey().as_ref(),
         },
         vec![ClientAction::SubAccountV2All(SubAccountV2All::new(0))],
     )
     .unwrap();
-    let bystander_role = 2;
-    assert_eq!(
-        role_all_scope_count(&context, &swig_key, bystander_role, 0),
-        1
-    );
+    assert_v1_swig_error(send_admin(&mut context, &root, add_authority));
 
-    create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
-
-    assert_eq!(
-        role_all_scope_count(&context, &swig_key, CREATOR_ROLE_ID, 0),
-        1,
-        "creator must still receive its own umbrella"
-    );
-    assert_eq!(
-        role_all_scope_count(&context, &swig_key, bystander_role, 0),
-        1,
-        "the other role's scope is untouched"
-    );
-}
-
-/// After the auto-grant is skipped, the pre-granted scope must actually
-/// authorize the runtime operations -- the skip must not leave the creator
-/// under-privileged.
-#[test_log::test]
-fn test_pre_granted_scope_authorizes_runtime_ops_after_skip() {
-    let mut context = setup_test_context().unwrap();
-    let (swig_key, _root, creator, id) = setup_v2_with_extra_actions(
-        &mut context,
-        vec![ClientAction::SubAccountV2All(SubAccountV2All::new(0))],
-    )
-    .unwrap();
-
-    let (state_pda, asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
-    context.svm.airdrop(&asset_pda, 1_000_000_000).unwrap();
-
-    // sign
-    let recipient = Keypair::new();
-    let inner =
-        solana_system_interface::instruction::transfer(&asset_pda, &recipient.pubkey(), 10_000_000);
-    let sign = SubAccountSignV2Instruction::new_with_ed25519_authority(
+    let replace = UpdateAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
-        state_pda,
-        asset_pda,
-        creator.pubkey(),
-        CREATOR_ROLE_ID,
+        payer_key,
+        root.pubkey(),
         0,
-        vec![inner],
+        CREATOR_ROLE_ID,
+        UpdateAuthorityData::ReplaceAll(vec![ClientAction::SubAccountV2Sign(
+            SubAccountV2Sign::new(0),
+        )]),
     )
     .unwrap();
-    send(&mut context, &creator, sign).expect("sign must be authorized by the pre-granted scope");
-    assert_eq!(
-        context
-            .svm
-            .get_account(&recipient.pubkey())
-            .unwrap()
-            .lamports,
-        10_000_000
-    );
+    assert_v1_swig_error(send_admin(&mut context, &root, replace));
 
-    // withdraw
-    let (swig_wallet_address, _) = Pubkey::find_program_address(
-        &swig_state::swig::swig_wallet_address_seeds(swig_key.as_ref()),
-        &program_id(),
-    );
-    let withdraw = WithdrawFromSubAccountV2Instruction::new_with_ed25519_authority(
+    let add_action = UpdateAuthorityInstruction::new_with_ed25519_authority(
         swig_key,
-        creator.pubkey(),
-        creator.pubkey(),
-        state_pda,
-        asset_pda,
-        swig_wallet_address,
-        CREATOR_ROLE_ID,
+        payer_key,
+        root.pubkey(),
         0,
-        5_000_000,
+        CREATOR_ROLE_ID,
+        UpdateAuthorityData::AddActions(vec![ClientAction::SubAccountV2Sign(
+            SubAccountV2Sign::new(0),
+        )]),
     )
     .unwrap();
-    send(&mut context, &creator, withdraw).expect("withdraw must be authorized");
+    assert_v1_swig_error(send_admin(&mut context, &root, add_action));
 
-    // toggle
-    let toggle = ToggleSubAccountV2Instruction::new_with_ed25519_authority(
-        swig_key,
-        creator.pubkey(),
-        creator.pubkey(),
-        state_pda,
-        CREATOR_ROLE_ID,
-        0,
-        false,
-    )
-    .unwrap();
-    send(&mut context, &creator, toggle).expect("toggle must be authorized");
-    let state_acc = context.svm.get_account(&state_pda).unwrap();
-    let state = unsafe { SubAccountV2::load_unchecked(&state_acc.data).unwrap() };
-    assert!(!state.is_enabled().unwrap());
+    let after_swig = context.svm.get_account(&swig_key).unwrap();
+    let after_payer = context.svm.get_account(&payer_key).unwrap();
+    assert_eq!(after_swig.data, before_swig.data);
+    assert_eq!(after_swig.lamports, before_swig.lamports);
+    assert_eq!(before_payer.lamports - after_payer.lamports, 30_000);
 }
