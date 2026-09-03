@@ -344,7 +344,7 @@ impl ActionLoader {
     /// Each scoped action must target an existing sub-account id (strictly less
     /// than `sub_account_counter`). A role may also hold at most one scoped V2
     /// action per `(permission type, subacc_id)` and at most one
-    /// `SubAccountV2Create` marker. Other action types are left untouched.
+    /// `SubAccountV2Create` marker.
     ///
     /// `actions_data` is walked sequentially by `[header][data]`, matching how
     /// `calculate_num_actions` reads the same buffer.
