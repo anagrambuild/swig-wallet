@@ -3568,13 +3568,19 @@ where
             ));
         }
 
-        let (_, compact_ixs) =
-            swig_interface::compact_instructions(swig_account, accounts_with_signers, instructions);
+        let (_, compact_ixs) = swig_interface::compact_instructions(
+            swig_wallet_address,
+            accounts_with_signers,
+            instructions,
+        )
+        .map_err(|e| SwigError::InterfaceError(e.to_string()))?;
 
         let inner_instruction = solana_program::instruction::Instruction {
             program_id: swig_interface::program_id(),
             accounts: vec![],
-            data: compact_ixs.into_bytes(),
+            data: compact_ixs
+                .into_bytes()
+                .map_err(|e| SwigError::InterfaceError(e.to_string()))?,
         };
 
         // Get the preceding instruction from the function

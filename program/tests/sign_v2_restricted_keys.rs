@@ -474,8 +474,8 @@ fn sign_v2_blocks_inner_system_transfer_from_fifth_outer_signer() {
         AccountMeta::new(recipient.pubkey(), false),
     ];
     let (final_accounts, compact_ixs) =
-        compact_instructions(swig, initial_accounts, vec![inner_ix]);
-    let instruction_payload = compact_ixs.into_bytes();
+        compact_instructions(swig_wallet_address, initial_accounts, vec![inner_ix]).unwrap();
+    let instruction_payload = compact_ixs.into_bytes().unwrap();
     let sign_args = SignV2Args::new(0, instruction_payload.len() as u16);
     let mut sign_ix_data = Vec::new();
     sign_ix_data.extend_from_slice(sign_args.into_bytes().unwrap());

@@ -73,8 +73,9 @@ fn send_sign_v2_many(
         AccountMeta::new(swig_wallet_address, false),
         AccountMeta::new_readonly(authority.pubkey(), true),
     ];
-    let (accounts, compact_ixs) = compact_instructions(swig, accounts, inner);
-    let instruction_payload = compact_ixs.into_bytes();
+    let (accounts, compact_ixs) =
+        compact_instructions(swig_wallet_address, accounts, inner).unwrap();
+    let instruction_payload = compact_ixs.into_bytes().unwrap();
     let args = SignV2Args::new(role_id, instruction_payload.len() as u16);
     let sign_ix = Instruction {
         program_id: program_id(),
