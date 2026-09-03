@@ -188,9 +188,11 @@ const _: () = {
 /// exact. A V1 account misreads as V2 when `reserved_lamports % 2^32` lands in
 /// `1..=255`. The previous check was wrong for `reserved_lamports <= 255`,
 /// including `0`, which is the more likely V1 state; this narrows the common
-/// case at the cost of a wrap-around band around every 2^32 lamports. The only
-/// caller, `close_token_account_v1`, tries the other authority as a fallback,
-/// so a misread costs an extra comparison rather than correctness.
+/// case at the cost of a wrap-around band around every 2^32 lamports. Callers
+/// must therefore preserve their own semantic safety boundary. For example,
+/// `set_rent_claimer_v1` derives the canonical wallet PDA without trusting the
+/// overlaid bump, while `close_token_account_v1` tries the other authority as a
+/// fallback.
 ///
 /// # Safety
 ///
