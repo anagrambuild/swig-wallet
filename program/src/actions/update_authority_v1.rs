@@ -21,12 +21,12 @@ use swig_state::{
 };
 
 use crate::{
-    actions::admin_invariant::ensure_admin_remains,
     error::SwigError,
     instruction::{
         accounts::{Context, UpdateAuthorityV1Accounts},
         SwigInstruction,
     },
+    util::ensure_admin_remains,
 };
 
 /// Calculates the actual number of actions in the provided actions data.

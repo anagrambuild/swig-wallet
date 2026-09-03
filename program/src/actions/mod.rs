@@ -6,7 +6,6 @@
 //! instruction's business logic.
 
 pub mod add_authority_v1;
-pub(crate) mod admin_invariant;
 pub mod close_sub_account_v1;
 pub mod close_sub_account_v2;
 pub mod close_swig_v1;
