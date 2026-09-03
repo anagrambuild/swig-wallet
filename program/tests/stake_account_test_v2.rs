@@ -1,16 +1,9 @@
 #![cfg(feature = "stake_tests")]
 
 mod common;
-use std::{
-    process::{Child, Command},
-    str::FromStr,
-    sync::{Mutex, MutexGuard},
-    thread,
-    time::Duration,
-};
+use std::{str::FromStr, thread, time::Duration};
 
 use common::*;
-use once_cell::sync::Lazy;
 use solana_client::{
     rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig, rpc_response::RpcVoteAccountInfo,
 };
@@ -43,60 +36,6 @@ use swig_state::{
 const LOCALHOST: &str = "http://127.0.0.1:8899";
 const STAKE_PROGRAM_ID: SolanaPubkey = solana_stake_interface::program::id();
 
-// Global static validator process that will be shared across all tests
-static GLOBAL_VALIDATOR: Lazy<Mutex<ValidatorProcess>> = Lazy::new(|| {
-    let mut validator = ValidatorProcess::new();
-    // Start the validator process when first accessed
-    if let Err(e) = validator.start() {
-        eprintln!("Warning: Failed to start validator: {}", e);
-    }
-    Mutex::new(validator)
-});
-
-struct ValidatorProcess {
-    child: Option<Child>,
-}
-
-impl ValidatorProcess {
-    fn new() -> Self {
-        ValidatorProcess { child: None }
-    }
-
-    fn start(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if self.child.is_some() {
-            return Ok(());
-        }
-
-        let child = Command::new("solana-test-validator")
-            .args(&[
-                "--reset",
-                "--quiet",
-                "--rpc-port",
-                "8899",
-                "--faucet-port",
-                "9900",
-            ])
-            .spawn()?;
-
-        self.child = Some(child);
-        thread::sleep(Duration::from_secs(5));
-        Ok(())
-    }
-
-    fn _get_guard(&self) -> MutexGuard<ValidatorProcess> {
-        GLOBAL_VALIDATOR.lock().unwrap()
-    }
-}
-
-impl Drop for ValidatorProcess {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
 struct TestContext {
     client: RpcClient,
     payer: Keypair,
@@ -104,8 +43,10 @@ struct TestContext {
 
 impl TestContext {
     fn new() -> Self {
-        let _guard = GLOBAL_VALIDATOR.lock().unwrap();
         let client = RpcClient::new(LOCALHOST);
+        client
+            .get_health()
+            .expect("stake tests require the externally managed test validator");
         let payer = Keypair::new();
 
         // Try to airdrop funds to payer
@@ -315,9 +256,9 @@ const STAKE_EPOCH_REWARDS_ACTIVE_ERROR: &str = "0x10";
 
 /// Retries a signing operation while it fails with the transient epoch-rewards
 /// error.
-fn retry_while_epoch_rewards_active<F>(mut attempt: F) -> anyhow::Result<String>
+fn retry_while_epoch_rewards_active<T, F>(mut attempt: F) -> anyhow::Result<T>
 where
-    F: FnMut() -> anyhow::Result<String>,
+    F: FnMut() -> anyhow::Result<T>,
 {
     for _ in 0..30 {
         let result = attempt();
@@ -413,16 +354,20 @@ fn create_initialized_stake_account(
         staker: *authority,
         withdrawer: *authority,
     };
-    let initialize_ix = stake_initialize(&stake_account.pubkey(), &authorized, &Lockup::default());
-    let initialize_tx = Transaction::new_signed_with_payer(
-        &[initialize_ix],
-        Some(&context.payer.pubkey()),
-        &[&context.payer],
-        context.client.get_latest_blockhash()?,
-    );
-    context
-        .client
-        .send_and_confirm_transaction(&initialize_tx)?;
+    retry_while_epoch_rewards_active(|| {
+        let initialize_ix =
+            stake_initialize(&stake_account.pubkey(), &authorized, &Lockup::default());
+        let initialize_tx = Transaction::new_signed_with_payer(
+            &[initialize_ix],
+            Some(&context.payer.pubkey()),
+            &[&context.payer],
+            context.client.get_latest_blockhash()?,
+        );
+        context
+            .client
+            .send_and_confirm_transaction(&initialize_tx)?;
+        Ok(())
+    })?;
     Ok(())
 }
 
