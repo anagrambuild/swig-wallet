@@ -15,7 +15,7 @@ use solana_sdk::{
 use swig::actions::migrate_to_wallet_address_v1::MigrateToWalletAddressV1Args;
 use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state::{
-    action::sub_account_v2::SubAccountV2All,
+    action::{sub_account_v2::SubAccountV2All, Permission},
     authority::AuthorityType,
     swig::{swig_wallet_address_seeds, swig_wallet_address_seeds_with_bump, Swig},
     IntoBytes, SwigStateError, Transmutable,
@@ -237,6 +237,66 @@ fn test_migration_rejects_stored_future_v2_scope() {
     assert_eq!(
         context.svm.get_account(&swig_wallet_address).unwrap(),
         before_wallet
+    );
+}
+
+#[test_log::test]
+fn test_migration_rejects_stored_duplicate_nonrepeatable_action_atomically() {
+    let mut context = setup_test_context().unwrap();
+    let authority = Keypair::new();
+    let (swig, _) =
+        create_swig_ed25519(&mut context, &authority, rand::random::<[u8; 32]>()).unwrap();
+    duplicate_last_role_action(&mut context, &swig, 0, Permission::All).unwrap();
+    convert_swig_to_v1(&mut context, &swig);
+
+    let rent_payer = Keypair::new();
+    context
+        .svm
+        .airdrop(&rent_payer.pubkey(), 1_000_000_000)
+        .unwrap();
+    let (swig_wallet_address, wallet_address_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let before_swig = context.svm.get_account(&swig).unwrap();
+    let before_wallet = context.svm.get_account(&swig_wallet_address).unwrap();
+    let before_rent_payer = context.svm.get_account(&rent_payer.pubkey()).unwrap();
+    let migrate_ix = migrate_instruction(
+        swig,
+        authority.pubkey(),
+        rent_payer.pubkey(),
+        swig_wallet_address,
+        wallet_address_bump,
+        true,
+        solana_system_interface::program::ID,
+    );
+    let message = VersionedMessage::V0(
+        v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[migrate_ix],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap(),
+    );
+    let tx =
+        VersionedTransaction::try_new(message, &[&context.default_payer, &authority, &rent_payer])
+            .unwrap();
+
+    let error = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(SwigStateError::DuplicateNonRepeatableAction as u32),
+        )
+    );
+    assert_eq!(context.svm.get_account(&swig).unwrap(), before_swig);
+    assert_eq!(
+        context.svm.get_account(&swig_wallet_address).unwrap(),
+        before_wallet
+    );
+    assert_eq!(
+        context.svm.get_account(&rent_payer.pubkey()).unwrap(),
+        before_rent_payer
     );
 }
 

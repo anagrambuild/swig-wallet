@@ -19,7 +19,10 @@ use swig_interface::{
     UpdateAuthorityInstruction,
 };
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, sol_limit::SolLimit, Permission},
+    action::{
+        all::All, manage_authority::ManageAuthority, program::Program, sol_limit::SolLimit,
+        Permission,
+    },
     authority::AuthorityType,
     swig::SwigWithRoles,
 };
@@ -162,7 +165,9 @@ fn last_admin_action_removals_are_rejected_and_unchanged() -> Result<()> {
         // also rolls back the preceding realloc and rent transfer.
         UpdateAuthorityData::ReplaceAll(vec![
             ClientAction::SolLimit(SolLimit { amount: 1 }),
-            ClientAction::SolLimit(SolLimit { amount: 2 }),
+            ClientAction::Program(Program {
+                program_id: solana_system_interface::program::ID.to_bytes(),
+            }),
         ]),
         UpdateAuthorityData::RemoveActionsByType(vec![Permission::All as u8]),
         UpdateAuthorityData::RemoveActionsByIndex(vec![0]),

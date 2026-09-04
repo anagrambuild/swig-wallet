@@ -127,6 +127,9 @@ pub enum SwigStateError {
     /// A scoped V2 sub-account action must target an id below the wallet's
     /// current monotonic sub-account counter.
     SubAccountV2PermissionTargetDoesNotExist,
+    /// A role may not hold the same non-repeatable permission type more than
+    /// once.
+    DuplicateNonRepeatableAction,
 }
 
 /// Error types related to authentication operations.

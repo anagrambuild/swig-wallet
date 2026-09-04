@@ -440,8 +440,6 @@ impl<'a> SwigBuilder<'a> {
         position.id = self.swig.role_counter;
         cursor += Position::LEN;
         cursor += authority_length;
-        // V2 scoped duplicates are rejected above; general action dedup (SWI-450)
-        // is still TODO.
         let mut action_cursor = 0;
         let actions_start_cursor_pos = cursor;
         for _i in 0..num_actions {
