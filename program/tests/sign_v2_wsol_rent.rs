@@ -21,9 +21,12 @@ use solana_sdk::{
 use swig::error::SwigError;
 use swig_interface::{AuthorityConfig, ClientAction, SignV2Instruction};
 use swig_state::{
-    action::{program_all::ProgramAll, token_limit::TokenLimit},
+    action::{
+        close_swig_authority::CloseSwigAuthority, program_all::ProgramAll, token_limit::TokenLimit,
+    },
     authority::AuthorityType,
     swig::{swig_wallet_address_seeds, SwigWithRoles},
+    SwigAuthenticateError,
 };
 
 const INITIAL_AMOUNT: u64 = 1_000_000_000;
@@ -42,6 +45,16 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_actions(vec![
+            ClientAction::ProgramAll(ProgramAll),
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: spl_token::native_mint::ID.to_bytes(),
+                current_amount: LIMIT,
+            }),
+        ])
+    }
+
+    fn with_actions(actions: Vec<ClientAction>) -> Self {
         let mut context = setup_test_context().unwrap();
         context
             .svm
@@ -68,13 +81,7 @@ impl Fixture {
                 authority_type: AuthorityType::Ed25519,
                 authority: authority.pubkey().as_ref(),
             },
-            vec![
-                ClientAction::ProgramAll(ProgramAll),
-                ClientAction::TokenLimit(TokenLimit {
-                    token_mint: spl_token::native_mint::ID.to_bytes(),
-                    current_amount: LIMIT,
-                }),
-            ],
+            actions,
         )
         .unwrap();
         let old_reserve = context.svm.get_sysvar::<Rent>().minimum_balance(165);
@@ -180,6 +187,26 @@ impl Fixture {
         )
         .unwrap()
     }
+
+    fn sync_and_transfer(&self, amount: u64) -> Instruction {
+        let mut data = b"syncxfer".to_vec();
+        data.extend_from_slice(&amount.to_le_bytes());
+        Instruction {
+            program_id: COMPOSER,
+            accounts: vec![
+                AccountMeta::new(self.source, false),
+                AccountMeta::new(self.destination, false),
+                AccountMeta::new_readonly(self.wallet, true),
+                AccountMeta::new_readonly(spl_token::ID, false),
+            ],
+            data,
+        }
+    }
+
+    fn snapshot(&self) -> [Option<Account>; 4] {
+        [self.source, self.destination, self.wallet, self.swig]
+            .map(|key| self.context.svm.get_account(&key))
+    }
 }
 
 #[test]
@@ -233,20 +260,7 @@ fn wsol_transfer_can_retain_a_stale_reserve() {
 fn sync_native_and_transfer_in_one_cpi_charge_the_transfer_amount() {
     let mut fixture = Fixture::new();
     let required = fixture.reduce_rent();
-    let mut data = b"syncxfer".to_vec();
-    data.extend_from_slice(&LIMIT.to_le_bytes());
-    let result = fixture
-        .send(Instruction {
-            program_id: COMPOSER,
-            accounts: vec![
-                AccountMeta::new(fixture.source, false),
-                AccountMeta::new(fixture.destination, false),
-                AccountMeta::new_readonly(fixture.wallet, true),
-                AccountMeta::new_readonly(spl_token::ID, false),
-            ],
-            data,
-        })
-        .unwrap();
+    let result = fixture.send(fixture.sync_and_transfer(LIMIT)).unwrap();
     println!("WSOL_SYNC_TRANSFER_CU {}", result.compute_units_consumed);
     assert_eq!(fixture.remaining(), 0);
     assert_eq!(fixture.source_state().is_native, COption::Some(required));
@@ -265,6 +279,167 @@ fn sync_native_and_transfer_in_one_cpi_charge_the_transfer_amount() {
             .amount,
         LIMIT
     );
+}
+
+fn assert_sync_transfer_rejected(
+    mut fixture: Fixture,
+    amount: u64,
+    expected: SwigAuthenticateError,
+) {
+    fixture.reduce_rent();
+    let before = fixture.snapshot();
+    let error = fixture.send(fixture.sync_and_transfer(amount)).unwrap_err();
+    // Both real Token operations ran before Swig rejected the permission debit.
+    for instruction in ["Instruction: SyncNative", "Instruction: Transfer"] {
+        assert!(
+            error
+                .meta
+                .logs
+                .iter()
+                .any(|line| line.ends_with(instruction)),
+            "missing {instruction} in {:?}",
+            error.meta.logs
+        );
+    }
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(0, InstructionError::Custom(expected as u32))
+    );
+    assert_eq!(fixture.snapshot(), before);
+}
+
+#[test]
+fn sync_native_and_over_limit_transfer_roll_back() {
+    assert_sync_transfer_rejected(
+        Fixture::new(),
+        LIMIT + 1,
+        SwigAuthenticateError::PermissionDeniedInsufficientBalance,
+    );
+}
+
+#[test]
+fn sync_native_and_transfer_without_token_permission_roll_back() {
+    assert_sync_transfer_rejected(
+        Fixture::with_actions(vec![ClientAction::ProgramAll(ProgramAll)]),
+        1,
+        SwigAuthenticateError::PermissionDeniedMissingPermission,
+    );
+}
+
+#[test]
+fn sync_native_rent_increase_does_not_consume_token_limit() {
+    let mut fixture = Fixture::new();
+    let lamports = fixture
+        .context
+        .svm
+        .get_account(&fixture.source)
+        .unwrap()
+        .lamports;
+    let lower_reserve = fixture.reduce_rent();
+    let sync = spl_token::instruction::sync_native(&spl_token::ID, &fixture.source).unwrap();
+    fixture.send(sync.clone()).unwrap();
+    assert_eq!(
+        fixture.source_state().is_native,
+        COption::Some(lower_reserve)
+    );
+
+    fixture.context.svm.set_sysvar(&Rent::default());
+    fixture.context.svm.expire_blockhash();
+    fixture.send(sync).unwrap();
+    assert_eq!(
+        fixture.source_state().is_native,
+        COption::Some(fixture.old_reserve)
+    );
+    assert_eq!(fixture.source_state().amount, INITIAL_AMOUNT);
+    assert_eq!(
+        fixture
+            .context
+            .svm
+            .get_account(&fixture.source)
+            .unwrap()
+            .lamports,
+        lamports
+    );
+    assert_eq!(fixture.remaining(), LIMIT);
+}
+
+#[test]
+fn wsol_close_without_permission_rolls_back() {
+    let mut fixture = Fixture::new();
+    fixture.reduce_rent();
+    let before = fixture.snapshot();
+    let close = spl_token::instruction::close_account(
+        &spl_token::ID,
+        &fixture.source,
+        &fixture.wallet,
+        &fixture.wallet,
+        &[],
+    )
+    .unwrap();
+    let error = fixture.send(close).unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(
+                SwigAuthenticateError::PermissionDeniedMissingPermission as u32
+            )
+        )
+    );
+    assert_eq!(fixture.snapshot(), before);
+}
+
+#[test]
+fn wsol_close_with_permission_returns_lamports_without_consuming_token_limit() {
+    let mut fixture = Fixture::with_actions(vec![
+        ClientAction::ProgramAll(ProgramAll),
+        ClientAction::TokenLimit(TokenLimit {
+            token_mint: spl_token::native_mint::ID.to_bytes(),
+            current_amount: LIMIT,
+        }),
+        ClientAction::CloseSwigAuthority(CloseSwigAuthority),
+    ]);
+    fixture.reduce_rent();
+    let source_lamports = fixture
+        .context
+        .svm
+        .get_account(&fixture.source)
+        .unwrap()
+        .lamports;
+    let wallet_before = fixture
+        .context
+        .svm
+        .get_account(&fixture.wallet)
+        .unwrap()
+        .lamports;
+    let close = spl_token::instruction::close_account(
+        &spl_token::ID,
+        &fixture.source,
+        &fixture.wallet,
+        &fixture.wallet,
+        &[],
+    )
+    .unwrap();
+    fixture.send(close).unwrap();
+    assert_eq!(
+        fixture
+            .context
+            .svm
+            .get_account(&fixture.source)
+            .map(|account| account.lamports)
+            .unwrap_or(0),
+        0
+    );
+    assert_eq!(
+        fixture
+            .context
+            .svm
+            .get_account(&fixture.wallet)
+            .unwrap()
+            .lamports,
+        wallet_before + source_lamports
+    );
+    assert_eq!(fixture.remaining(), LIMIT);
 }
 
 #[test]
