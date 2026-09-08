@@ -12,6 +12,28 @@
 3. Run the tests covering `ProgramScope` with `cargo build-sbf --features=program_scope_test && cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=program_scope_test`
 4. Run the tests covering Stake actions by running `cargo build-sbf --features=stake_tests && cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=stake_tests`
 
+## Authority management and recovery
+
+`All` grants unrestricted signing and administration of ordinary roles.
+`ManageAuthority` grants administration without unrestricted signing. Both
+permissions retain the existing prohibition on removing root (role 0).
+Only root may update its own permissions. Another role may replace root's
+signer only with an explicit `ReplaceAuthority(0)` permission.
+
+Root controls recovery delegation: only root may add `ReplaceAuthority`
+permissions or update the permissions of any role that holds them. This rule
+applies to every replacement scope, including scopes targeting another recovery
+role. Replacing another recovery role's signer requires root or the matching
+`ReplaceAuthority(role_id)` permission. A recovery role retains its existing
+permission to rotate its own signer. ProgramExec replacements still require
+proof of the exact approved replacement.
+
+Existing `ReplaceAuthority` grants remain valid after upgrade. Review those
+grants before upgrading: the stored role format does not record who granted a
+permission. Root may revoke and reissue recovery roles as needed. Root can still
+restrict its own permissions subject to the existing last-administrator guard,
+and authority managers retain their ability to remove non-root roles.
+
 ## Audit
 
 Swig has been independently auditted by Accretion with plans to undergo additional audits. A copy of the audit report can be shared upon request.
