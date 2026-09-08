@@ -29,7 +29,7 @@ use crate::{
         accounts::{Context, UpdateAuthorityV1Accounts},
         SwigInstruction,
     },
-    util::ensure_admin_remains,
+    util::{ensure_admin_remains, reject_recovery_grants},
 };
 
 /// Calculates the actual number of actions in the provided actions data.
@@ -835,12 +835,8 @@ pub fn update_authority_v1(
             if matches!(
                 operation,
                 AuthorityUpdateOperation::ReplaceAll | AuthorityUpdateOperation::AddActions
-            ) && ActionLoader::find_action::<ReplaceAuthority>(
-                update_authority_v1.get_actions_data()?,
-            )?
-            .is_some()
-            {
-                return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
+            ) {
+                reject_recovery_grants(update_authority_v1.get_actions_data()?)?;
             }
         }
 

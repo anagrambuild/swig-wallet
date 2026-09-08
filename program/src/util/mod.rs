@@ -30,10 +30,32 @@ use swig_state::{
     read_numeric_field,
     role::{Position, RoleMut},
     swig::{Swig, SwigWithRoles},
-    Transmutable,
+    SwigAuthenticateError, Transmutable,
 };
 
 use crate::error::SwigError;
+
+/// Reject recovery grants in an incoming add/update action payload.
+/// Instruction action boundaries are normalized when stored, so scan by header
+/// lengths here. Stored actions still use the stricter ActionLoader decoder.
+pub(crate) fn reject_recovery_grants(mut actions: &[u8]) -> ProgramResult {
+    while !actions.is_empty() {
+        let header = actions
+            .get(..Action::LEN)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        let action = unsafe { Action::load_unchecked(header)? };
+        let end = Action::LEN
+            .checked_add(action.length() as usize)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        actions = actions
+            .get(end..)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        if action.permission()? == Permission::ReplaceAuthority {
+            return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
+        }
+    }
+    Ok(())
+}
 
 /// Ensures the current role buffer still contains an administrator.
 pub(crate) fn ensure_admin_remains(roles: &[u8], role_count: u16) -> Result<(), ProgramError> {

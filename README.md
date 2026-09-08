@@ -21,12 +21,15 @@ Only root may update its own permissions. Another role may replace root's
 signer only with an explicit `ReplaceAuthority(0)` permission.
 
 Root controls recovery delegation: only root may add `ReplaceAuthority`
-permissions or update the permissions of any role that holds them. This rule
+permissions or use `UpdateAuthorityV1` to change a role that holds them. This rule
 applies to every replacement scope, including scopes targeting another recovery
 role. Replacing another recovery role's signer requires root or the matching
 `ReplaceAuthority(role_id)` permission. A recovery role retains its existing
 permission to rotate its own signer. ProgramExec replacements still require
 proof of the exact approved replacement.
+
+An explicitly granted `SubAccountV2Create` still permits a recovery role to
+create a child and receive its automatic `SubAccountV2All` permission.
 
 Existing `ReplaceAuthority` grants remain valid after upgrade. Review those
 grants before upgrading: the stored role format does not record who granted a

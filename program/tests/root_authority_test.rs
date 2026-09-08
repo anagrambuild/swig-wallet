@@ -12,6 +12,9 @@ use solana_sdk::{
     signer::Signer,
     transaction::{TransactionError, VersionedTransaction},
 };
+use swig::actions::{
+    add_authority_v1::AddAuthorityV1Args, update_authority_v1::UpdateAuthorityV1Args,
+};
 use swig_interface::{
     AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateSessionInstruction,
     RemoveAuthorityInstruction, ReplaceAuthorityInstruction, UpdateAuthorityData,
@@ -20,11 +23,11 @@ use swig_interface::{
 use swig_state::{
     action::{
         all::All, manage_authority::ManageAuthority, replace_authority::ReplaceAuthority,
-        sol_limit::SolLimit, Permission,
+        sol_limit::SolLimit, Action, Permission,
     },
     authority::{ed25519::CreateEd25519SessionAuthority, AuthorityType},
     swig::SwigWithRoles,
-    IntoBytes, SwigAuthenticateError,
+    IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
 fn setup_manager(action: ClientAction) -> (SwigTestContext, Pubkey, Keypair, Keypair) {
@@ -609,5 +612,105 @@ fn active_administrative_sessions_cannot_update_or_replace_root() {
                 SwigAuthenticateError::PermissionDeniedCannotUpdateRootAuthority,
             );
         }
+    }
+}
+
+// Change only the boundary fields in a production Ed25519 builder's payload.
+// Its final byte selects the authority account and is not part of the actions.
+fn clear_instruction_action_boundaries(instruction: &mut Instruction, mut cursor: usize) {
+    let actions_end = instruction.data.len() - 1;
+    while cursor < actions_end {
+        let action_len =
+            u16::from_le_bytes(instruction.data[cursor + 2..cursor + 4].try_into().unwrap())
+                as usize;
+        instruction.data[cursor + 4..cursor + 8].fill(0);
+        cursor += Action::LEN + action_len;
+    }
+    assert_eq!(cursor, actions_end);
+}
+
+#[test]
+fn incoming_action_boundaries_are_normalized_without_weakening_recovery_checks() {
+    for action in [
+        ClientAction::All(All {}),
+        ClientAction::ManageAuthority(ManageAuthority {}),
+    ] {
+        let (mut context, swig, _, manager) = setup_manager(action);
+        let target = Keypair::new();
+        for recovery_grant in [false, true] {
+            let mut actions = vec![ClientAction::SolLimit(SolLimit { amount: 1 })];
+            if recovery_grant {
+                actions.push(ClientAction::ReplaceAuthority(ReplaceAuthority::new(0)));
+            }
+            let mut add = AddAuthorityInstruction::new_with_ed25519_authority(
+                swig,
+                context.default_payer.pubkey(),
+                manager.pubkey(),
+                1,
+                AuthorityConfig {
+                    authority_type: AuthorityType::Ed25519,
+                    authority: target.pubkey().as_ref(),
+                },
+                actions,
+            )
+            .unwrap();
+            clear_instruction_action_boundaries(&mut add, AddAuthorityV1Args::LEN + 32);
+            if recovery_grant {
+                assert_rejected_unchanged(
+                    &mut context,
+                    swig,
+                    &manager,
+                    add,
+                    SwigAuthenticateError::PermissionDeniedToManageAuthority,
+                );
+            } else {
+                send(&mut context, &manager, add).unwrap();
+            }
+        }
+
+        for recovery_grant in [false, true] {
+            for append in [false, true] {
+                let mut actions = if append {
+                    vec![ClientAction::SolLimit(SolLimit { amount: 2 })]
+                } else {
+                    vec![ClientAction::All(All {})]
+                };
+                if recovery_grant {
+                    actions.push(ClientAction::ReplaceAuthority(ReplaceAuthority::new(0)));
+                }
+                let operation = if append {
+                    UpdateAuthorityData::AddActions(actions)
+                } else {
+                    UpdateAuthorityData::ReplaceAll(actions)
+                };
+                let mut update = UpdateAuthorityInstruction::new_with_ed25519_authority(
+                    swig,
+                    context.default_payer.pubkey(),
+                    manager.pubkey(),
+                    1,
+                    2,
+                    operation,
+                )
+                .unwrap();
+                clear_instruction_action_boundaries(&mut update, UpdateAuthorityV1Args::LEN + 1);
+                if recovery_grant {
+                    assert_rejected_unchanged(
+                        &mut context,
+                        swig,
+                        &manager,
+                        update,
+                        SwigAuthenticateError::PermissionDeniedToManageAuthority,
+                    );
+                } else {
+                    send(&mut context, &manager, update).unwrap();
+                }
+            }
+        }
+        let account = context.svm.get_account(&swig).unwrap();
+        let state = SwigWithRoles::from_bytes(&account.data).unwrap();
+        let role = state.get_role(2).unwrap().unwrap();
+        assert_eq!(role.position.num_actions(), 2);
+        assert!(role.get_action::<All>(&[]).unwrap().is_some());
+        assert_eq!(role.get_action::<SolLimit>(&[]).unwrap().unwrap().amount, 2);
     }
 }

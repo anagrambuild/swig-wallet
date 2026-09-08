@@ -12,10 +12,7 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
-    action::{
-        all::All, manage_authority::ManageAuthority, replace_authority::ReplaceAuthority,
-        ActionLoader,
-    },
+    action::{all::All, manage_authority::ManageAuthority, ActionLoader},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::{Swig, SwigBuilder},
@@ -29,6 +26,7 @@ use crate::{
         accounts::{AddAuthorityV1Accounts, Context},
         SwigInstruction,
     },
+    util::reject_recovery_grants,
 };
 
 /// Struct representing the complete add authority instruction data.
@@ -228,10 +226,8 @@ pub fn add_authority_v1(
         }
         // Only root can grant scoped recovery, including scopes targeting
         // another recovery role. Managers must not mint their own exception.
-        if add_authority_v1.args.acting_role_id != 0
-            && ActionLoader::find_action::<ReplaceAuthority>(add_authority_v1.actions)?.is_some()
-        {
-            return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
+        if add_authority_v1.args.acting_role_id != 0 {
+            reject_recovery_grants(add_authority_v1.actions)?;
         }
         ActionLoader::validate_v2_actions(add_authority_v1.actions, swig.sub_account_counter)?;
         let new_authority_length = authority_type_to_length(&new_authority_type)?;
