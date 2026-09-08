@@ -1,0 +1,301 @@
+#![cfg(not(feature = "program_scope_test"))]
+//! Exercise reserve refreshes against the pinned upstream SPL Token SBF fixture.
+
+mod common;
+
+use common::*;
+use litesvm::types::{FailedTransactionMetadata, TransactionMetadata};
+use litesvm_token::spl_token;
+use solana_sdk::{
+    account::Account,
+    instruction::{AccountMeta, Instruction, InstructionError},
+    message::{v0, VersionedMessage},
+    program_option::COption,
+    program_pack::Pack,
+    pubkey::Pubkey,
+    rent::Rent,
+    signature::Keypair,
+    signer::Signer,
+    transaction::{TransactionError, VersionedTransaction},
+};
+use swig::error::SwigError;
+use swig_interface::{AuthorityConfig, ClientAction, SignV2Instruction};
+use swig_state::{
+    action::{program_all::ProgramAll, token_limit::TokenLimit},
+    authority::AuthorityType,
+    swig::{swig_wallet_address_seeds, SwigWithRoles},
+};
+
+const INITIAL_AMOUNT: u64 = 1_000_000_000;
+const LIMIT: u64 = 1_000_000;
+const COMPOSER: Pubkey = Pubkey::from_str_const("BXAu5ZWHnGun2XZjUZ9nqwiZ5dNVmofPGYdMC4rx4qLV");
+
+struct Fixture {
+    context: Context,
+    authority: Keypair,
+    swig: Pubkey,
+    wallet: Pubkey,
+    source: Pubkey,
+    destination: Pubkey,
+    old_reserve: u64,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let mut context = setup_test_context().unwrap();
+        context
+            .svm
+            .add_program(
+                spl_token::ID,
+                include_bytes!("fixtures/spl_token_sync_native.so"),
+            )
+            .unwrap();
+        context
+            .svm
+            .add_program_from_file(COMPOSER, "../target/deploy/test_program_authority.so")
+            .unwrap();
+        let root = Keypair::new();
+        let authority = Keypair::new();
+        let (swig, _) = create_swig_ed25519(&mut context, &root, rand::random()).unwrap();
+        let wallet =
+            Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id())
+                .0;
+        add_authority_with_ed25519_root(
+            &mut context,
+            &swig,
+            &root,
+            AuthorityConfig {
+                authority_type: AuthorityType::Ed25519,
+                authority: authority.pubkey().as_ref(),
+            },
+            vec![
+                ClientAction::ProgramAll(ProgramAll),
+                ClientAction::TokenLimit(TokenLimit {
+                    token_mint: spl_token::native_mint::ID.to_bytes(),
+                    current_amount: LIMIT,
+                }),
+            ],
+        )
+        .unwrap();
+        let old_reserve = context.svm.get_sysvar::<Rent>().minimum_balance(165);
+        let source = Pubkey::new_unique();
+        let destination = Pubkey::new_unique();
+        for (key, owner, amount) in [
+            (source, wallet, INITIAL_AMOUNT),
+            (destination, Pubkey::new_unique(), 0),
+        ] {
+            let token = spl_token::state::Account {
+                mint: spl_token::native_mint::ID,
+                owner,
+                amount,
+                state: spl_token::state::AccountState::Initialized,
+                is_native: COption::Some(old_reserve),
+                ..Default::default()
+            };
+            let mut data = vec![0; spl_token::state::Account::LEN];
+            spl_token::state::Account::pack(token, &mut data).unwrap();
+            context
+                .svm
+                .set_account(
+                    key,
+                    Account {
+                        lamports: amount + old_reserve,
+                        data,
+                        owner: spl_token::ID,
+                        executable: false,
+                        rent_epoch: 0,
+                    },
+                )
+                .unwrap();
+        }
+        Self {
+            context,
+            authority,
+            swig,
+            wallet,
+            source,
+            destination,
+            old_reserve,
+        }
+    }
+
+    fn reduce_rent(&mut self) -> u64 {
+        let rent = Rent::with_lamports_per_byte(3_480);
+        self.context.svm.set_sysvar(&rent);
+        rent.minimum_balance(165)
+    }
+
+    fn send(
+        &mut self,
+        inner: Instruction,
+    ) -> Result<TransactionMetadata, Box<FailedTransactionMetadata>> {
+        let ix = SignV2Instruction::new_ed25519(
+            self.swig,
+            self.wallet,
+            self.authority.pubkey(),
+            inner,
+            1,
+        )
+        .unwrap();
+        let message = v0::Message::try_compile(
+            &self.context.default_payer.pubkey(),
+            &[ix],
+            &[],
+            self.context.svm.latest_blockhash(),
+        )
+        .unwrap();
+        let tx = VersionedTransaction::try_new(
+            VersionedMessage::V0(message),
+            &[&self.context.default_payer, &self.authority],
+        )
+        .unwrap();
+        self.context.svm.send_transaction(tx).map_err(Box::new)
+    }
+
+    fn source_state(&self) -> spl_token::state::Account {
+        spl_token::state::Account::unpack(&self.context.svm.get_account(&self.source).unwrap().data)
+            .unwrap()
+    }
+
+    fn remaining(&self) -> u64 {
+        let account = self.context.svm.get_account(&self.swig).unwrap();
+        let swig = SwigWithRoles::from_bytes(&account.data).unwrap();
+        swig.get_role(1)
+            .unwrap()
+            .unwrap()
+            .get_action::<TokenLimit>(spl_token::native_mint::ID.as_ref())
+            .unwrap()
+            .unwrap()
+            .current_amount
+    }
+
+    fn transfer(&self, amount: u64) -> Instruction {
+        spl_token::instruction::transfer(
+            &spl_token::ID,
+            &self.source,
+            &self.destination,
+            &self.wallet,
+            &[],
+            amount,
+        )
+        .unwrap()
+    }
+}
+
+#[test]
+fn sync_native_refreshes_rent_without_consuming_token_limit() {
+    let mut fixture = Fixture::new();
+    let lamports = fixture
+        .context
+        .svm
+        .get_account(&fixture.source)
+        .unwrap()
+        .lamports;
+    let required = fixture.reduce_rent();
+    assert_ne!(required, fixture.old_reserve);
+    let sync = spl_token::instruction::sync_native(&spl_token::ID, &fixture.source).unwrap();
+    let result = fixture.send(sync.clone()).unwrap();
+    println!("WSOL_SYNC_CU {}", result.compute_units_consumed);
+    assert_eq!(fixture.source_state().is_native, COption::Some(required));
+    assert_eq!(fixture.source_state().amount, lamports - required);
+    assert_eq!(
+        fixture
+            .context
+            .svm
+            .get_account(&fixture.source)
+            .unwrap()
+            .lamports,
+        lamports
+    );
+    assert_eq!(fixture.remaining(), LIMIT);
+
+    fixture.context.svm.expire_blockhash();
+    fixture.send(sync).unwrap();
+    assert_eq!(fixture.remaining(), LIMIT);
+    fixture.send(fixture.transfer(LIMIT)).unwrap();
+    assert_eq!(fixture.remaining(), 0);
+}
+
+#[test]
+fn wsol_transfer_can_retain_a_stale_reserve() {
+    let mut fixture = Fixture::new();
+    fixture.reduce_rent();
+    fixture.send(fixture.transfer(LIMIT)).unwrap();
+    assert_eq!(
+        fixture.source_state().is_native,
+        COption::Some(fixture.old_reserve)
+    );
+    assert_eq!(fixture.source_state().amount, INITIAL_AMOUNT - LIMIT);
+    assert_eq!(fixture.remaining(), 0);
+}
+
+#[test]
+fn sync_native_and_transfer_in_one_cpi_charge_the_transfer_amount() {
+    let mut fixture = Fixture::new();
+    let required = fixture.reduce_rent();
+    let mut data = b"syncxfer".to_vec();
+    data.extend_from_slice(&LIMIT.to_le_bytes());
+    let result = fixture
+        .send(Instruction {
+            program_id: COMPOSER,
+            accounts: vec![
+                AccountMeta::new(fixture.source, false),
+                AccountMeta::new(fixture.destination, false),
+                AccountMeta::new_readonly(fixture.wallet, true),
+                AccountMeta::new_readonly(spl_token::ID, false),
+            ],
+            data,
+        })
+        .unwrap();
+    println!("WSOL_SYNC_TRANSFER_CU {}", result.compute_units_consumed);
+    assert_eq!(fixture.remaining(), 0);
+    assert_eq!(fixture.source_state().is_native, COption::Some(required));
+    assert_eq!(
+        fixture.source_state().amount,
+        INITIAL_AMOUNT + fixture.old_reserve - required - LIMIT
+    );
+    let destination = fixture
+        .context
+        .svm
+        .get_account(&fixture.destination)
+        .unwrap();
+    assert_eq!(
+        spl_token::state::Account::unpack(&destination.data)
+            .unwrap()
+            .amount,
+        LIMIT
+    );
+}
+
+#[test]
+fn wsol_authority_changes_still_fail_and_roll_back() {
+    let mut fixture = Fixture::new();
+    fixture.reduce_rent();
+    let source_before = fixture.context.svm.get_account(&fixture.source).unwrap();
+    let swig_before = fixture.context.svm.get_account(&fixture.swig).unwrap();
+    let ix = spl_token::instruction::set_authority(
+        &spl_token::ID,
+        &fixture.source,
+        Some(&Pubkey::new_unique()),
+        spl_token::instruction::AuthorityType::AccountOwner,
+        &fixture.wallet,
+        &[],
+    )
+    .unwrap();
+    let error = fixture.send(ix).unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(SwigError::AccountDataModifiedUnexpectedly as u32)
+        )
+    );
+    assert_eq!(
+        fixture.context.svm.get_account(&fixture.source).unwrap(),
+        source_before
+    );
+    assert_eq!(
+        fixture.context.svm.get_account(&fixture.swig).unwrap(),
+        swig_before
+    );
+}
