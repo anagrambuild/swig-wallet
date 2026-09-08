@@ -372,7 +372,9 @@ impl ActionLoader {
 
             let permission = header.permission()?;
             if !permission.is_repeatable() {
-                let permission_bit = 1u32 << permission as u32;
+                let permission_bit = 1u32
+                    .checked_shl(permission as u32)
+                    .ok_or(ProgramError::InvalidInstructionData)?;
                 if non_repeatable_permissions & permission_bit != 0 {
                     has_duplicate_non_repeatable = true;
                 }
@@ -441,6 +443,21 @@ impl ActionLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nonrepeatable_permissions_fit_deduplication_bitmap() {
+        for value in 0..=u16::MAX {
+            let Ok(permission) = Permission::try_from(value) else {
+                continue;
+            };
+            if !permission.is_repeatable() {
+                assert!(
+                    (permission as u32) < u32::BITS,
+                    "{permission:?} exceeds the non-repeatable permission bitmap; expand it before adding this permission",
+                );
+            }
+        }
+    }
 
     #[repr(C, align(8))]
     struct AlignedBytes<const N: usize>([u8; N]);
