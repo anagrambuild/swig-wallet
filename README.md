@@ -12,6 +12,12 @@
 3. Run the tests covering `ProgramScope` with `cargo build-sbf --features=program_scope_test && cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=program_scope_test`
 4. Run the tests covering Stake actions by running `cargo build-sbf --features=stake_tests && cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=stake_tests`
 
+## Root administration
+
+Only root may remove its last `All` or `ManageAuthority` permission. Other
+administrators may restore root's admin permissions. Every update still requires
+at least one administrator to remain in the wallet.
+
 ## Audit
 
 Swig has been independently auditted by Accretion with plans to undergo additional audits. A copy of the audit report can be shared upon request.

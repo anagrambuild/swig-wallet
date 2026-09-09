@@ -722,6 +722,7 @@ pub fn update_authority_v1(
 
     let operation = update_authority_v1.get_operation()?;
     let mut account_len: usize;
+    let mut root_had_admin = false;
     let (
         saved_tail,
         role_count,
@@ -813,6 +814,14 @@ pub fn update_authority_v1(
             }
             (current_size, auth_offset, act_offset)
         };
+
+        if update_authority_v1.args.authority_to_update_id == 0
+            && update_authority_v1.args.acting_role_id != 0
+        {
+            let root_actions = &swig_roles[actions_offset..actions_offset + current_actions_size];
+            root_had_admin = ActionLoader::find_action::<All>(root_actions)?.is_some()
+                || ActionLoader::find_action::<ManageAuthority>(root_actions)?.is_some();
+        }
 
         let prealloc_size_diff = match operation {
             AuthorityUpdateOperation::ReplaceAll => {
@@ -957,8 +966,17 @@ pub fn update_authority_v1(
         .checked_add_signed(size_diff as isize)
         .ok_or(ProgramError::InvalidAccountData)?;
     let updated_roles = swig_roles
-        .get(..updated_roles_len)
+        .get_mut(..updated_roles_len)
         .ok_or(ProgramError::InvalidAccountData)?;
+    if root_had_admin {
+        let root = Swig::get_mut_role(0, updated_roles)?
+            .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
+        if root.get_action::<All>(&[])?.is_none()
+            && root.get_action::<ManageAuthority>(&[])?.is_none()
+        {
+            return Err(SwigAuthenticateError::PermissionDeniedCannotUpdateRootAuthority.into());
+        }
+    }
     ensure_admin_remains(updated_roles, role_count)?;
 
     if size_diff < 0 {
