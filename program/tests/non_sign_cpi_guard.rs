@@ -180,7 +180,13 @@ fn unauthorized_signer_cannot_cpi_into_create() {
 fn authorized_key_without_signer_privilege_is_rejected() {
     let mut context = setup_test_context().unwrap();
     deploy_test_program(&mut context);
-    context.svm.airdrop(&AUTHORIZED_CPI_SIGNER, 1).unwrap();
+    context
+        .svm
+        .airdrop(
+            &AUTHORIZED_CPI_SIGNER,
+            context.svm.minimum_balance_for_rent_exemption(0),
+        )
+        .unwrap();
     let (mut inner, swig, wallet) = create_instruction(context.default_payer.pubkey(), [3u8; 32]);
     inner
         .accounts

@@ -31,6 +31,9 @@ pub mod instructions {
 
     /// CPI into a non-sign Swig instruction.
     pub const INVOKE_SWIG_NON_SIGN: [u8; 8] = *b"swigcpi1";
+
+    /// Compose ordinary WSOL synchronization and transfer in one caller CPI.
+    pub const SYNC_NATIVE_AND_TRANSFER: [u8; 8] = *b"syncxfer";
 }
 
 /// State account data format:
@@ -65,11 +68,49 @@ pub fn process_instruction(
         instructions::INVOKE_SWIG_NON_SIGN => {
             process_invoke_swig_non_sign(accounts, remaining_data)
         },
+        instructions::SYNC_NATIVE_AND_TRANSFER => {
+            process_sync_native_and_transfer(accounts, remaining_data)
+        },
         instructions::INVALID_DISCRIMINATOR => {
             process_invalid_instruction(accounts, remaining_data)
         },
         _ => Err(ProgramError::InvalidInstructionData),
     }
+}
+
+/// Accounts: writable source and destination WSOL accounts, signing token
+/// authority, and the executable legacy Token program. Both operations use the
+/// actual Token program; this fixture does not write token-account data itself.
+fn process_sync_native_and_transfer(accounts: &[AccountInfo], amount: &[u8]) -> ProgramResult {
+    if accounts.len() != 4 || amount.len() != 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let token_program = Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    if accounts[3].key != &token_program || !accounts[3].executable {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    invoke(
+        &Instruction {
+            program_id: token_program,
+            accounts: vec![AccountMeta::new(*accounts[0].key, false)],
+            data: vec![17], // SPL TokenInstruction::SyncNative
+        },
+        accounts,
+    )?;
+    let mut transfer_data = vec![3]; // SPL TokenInstruction::Transfer
+    transfer_data.extend_from_slice(amount);
+    invoke(
+        &Instruction {
+            program_id: token_program,
+            accounts: vec![
+                AccountMeta::new(*accounts[0].key, false),
+                AccountMeta::new(*accounts[1].key, false),
+                AccountMeta::new_readonly(*accounts[2].key, true),
+            ],
+            data: transfer_data,
+        },
+        accounts,
+    )
 }
 
 fn process_invoke_swig_non_sign(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
