@@ -46,6 +46,11 @@ fn test_sign_v2_with_ed25519_authority_transfers_sol() {
 
     // Prepare a transfer from wallet address PDA to recipient
     let recipient = Keypair::new();
+    let recipient_rent = context.svm.minimum_balance_for_rent_exemption(0);
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), recipient_rent)
+        .unwrap();
     let transfer_amount = 123_456;
     let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
@@ -80,7 +85,7 @@ fn test_sign_v2_with_ed25519_authority_transfers_sol() {
     );
 
     let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
-    assert_eq!(recipient_account.lamports, transfer_amount);
+    assert_eq!(recipient_account.lamports, recipient_rent + transfer_amount);
 }
 
 #[test_log::test]
@@ -127,6 +132,11 @@ fn test_sign_v2_with_secp256k1_authority_transfers_sol() {
         .unwrap();
 
     let recipient = Keypair::new();
+    let recipient_rent = context.svm.minimum_balance_for_rent_exemption(0);
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), recipient_rent)
+        .unwrap();
     let transfer_amount = 222_222;
     let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
@@ -160,7 +170,7 @@ fn test_sign_v2_with_secp256k1_authority_transfers_sol() {
     );
 
     let recipient_account = context.svm.get_account(&recipient.pubkey()).unwrap();
-    assert_eq!(recipient_account.lamports, transfer_amount);
+    assert_eq!(recipient_account.lamports, recipient_rent + transfer_amount);
 }
 
 use solana_sdk::{
@@ -231,6 +241,11 @@ fn test_sign_v2_with_additional_authority_and_sol_limit() {
 
     // Use second authority to transfer within limit
     let recipient = Keypair::new();
+    let recipient_rent = context.svm.minimum_balance_for_rent_exemption(0);
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), recipient_rent)
+        .unwrap();
     let amount = 50_000u64;
     let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
@@ -312,6 +327,11 @@ fn test_sign_v2_fail_with_insufficient_sol_limit() {
     .unwrap();
 
     let recipient = Keypair::new();
+    let recipient_rent = context.svm.minimum_balance_for_rent_exemption(0);
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), recipient_rent)
+        .unwrap();
     let amount = 1_001u64;
     let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
@@ -450,6 +470,11 @@ fn test_sign_v2_different_payer_and_authority() {
         .unwrap();
 
     let recipient = Keypair::new();
+    let recipient_rent = context.svm.minimum_balance_for_rent_exemption(0);
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), recipient_rent)
+        .unwrap();
     let amount = 100_000u64;
     let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
@@ -532,6 +557,11 @@ fn test_sign_v2_secp256r1_transfer() {
     println!("secp_authority: {:?}", secp_authority);
 
     let recipient = Keypair::new();
+    let recipient_rent = context.svm.minimum_balance_for_rent_exemption(0);
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), recipient_rent)
+        .unwrap();
     let amount = 111_111u64;
     let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,

@@ -283,7 +283,11 @@ fn test_create_sub_account_v2_accepts_prefunded_state_pda() {
 
     // A receiver does not sign a system transfer, so any account can pre-fund
     // the predictable state PDA.
-    let prefund = solana_system_interface::instruction::transfer(&creator.pubkey(), &state_pda, 1);
+    let prefund = solana_system_interface::instruction::transfer(
+        &creator.pubkey(),
+        &state_pda,
+        context.svm.minimum_balance_for_rent_exemption(0),
+    );
     send(&mut context, &creator, prefund).unwrap();
 
     let (created_state, _asset) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
@@ -605,7 +609,10 @@ fn test_close_sub_account_v2_sweeps_lamports_and_unblocks_parent_close() {
     let arbitrary_destination = Keypair::new();
     context
         .svm
-        .airdrop(&arbitrary_destination.pubkey(), 1)
+        .airdrop(
+            &arbitrary_destination.pubkey(),
+            context.svm.minimum_balance_for_rent_exemption(0),
+        )
         .unwrap();
     let redirect_without_claimer = CloseSubAccountV2Instruction::new_with_ed25519_authority(
         swig_key,
@@ -740,7 +747,13 @@ fn test_close_legacy_v2_sub_account_materializes_active_count() {
     let mut context = setup_test_context().unwrap();
     let (swig_key, root, creator, id) = setup_v2(&mut context).unwrap();
     let claimer = Keypair::new();
-    context.svm.airdrop(&claimer.pubkey(), 1).unwrap();
+    context
+        .svm
+        .airdrop(
+            &claimer.pubkey(),
+            context.svm.minimum_balance_for_rent_exemption(0),
+        )
+        .unwrap();
     set_rent_claimer_with_ed25519(&mut context, &swig_key, &root, 0, claimer.pubkey()).unwrap();
     let (state_pda, asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
     context.svm.airdrop(&state_pda, 500_000_000).unwrap();
@@ -836,8 +849,20 @@ fn test_close_sub_account_v2_rejects_omitted_or_wrong_rent_claimer() {
     let (state_pda, asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
     let claimer = Keypair::new();
     let wrong_claimer = Keypair::new();
-    context.svm.airdrop(&claimer.pubkey(), 1).unwrap();
-    context.svm.airdrop(&wrong_claimer.pubkey(), 1).unwrap();
+    context
+        .svm
+        .airdrop(
+            &claimer.pubkey(),
+            context.svm.minimum_balance_for_rent_exemption(0),
+        )
+        .unwrap();
+    context
+        .svm
+        .airdrop(
+            &wrong_claimer.pubkey(),
+            context.svm.minimum_balance_for_rent_exemption(0),
+        )
+        .unwrap();
     set_rent_claimer_with_ed25519(&mut context, &swig_key, &root, 0, claimer.pubkey()).unwrap();
     let disable = ToggleSubAccountV2Instruction::new_with_ed25519_authority(
         swig_key,

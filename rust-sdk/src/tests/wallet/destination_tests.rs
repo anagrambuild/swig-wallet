@@ -236,6 +236,11 @@ fn should_transfer_sol_within_destination_limit() {
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
 
     let destination = Keypair::new().pubkey();
+    let recipient_rent = swig_wallet.litesvm().minimum_balance_for_rent_exemption(0);
+    swig_wallet
+        .litesvm()
+        .airdrop(&destination, recipient_rent)
+        .unwrap();
     let limit_amount = 500_000; // 0.0005 SOL
 
     // Setup secondary authority with SOL destination limit
@@ -299,6 +304,11 @@ fn should_fail_transfer_sol_beyond_destination_limit() {
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
 
     let destination = Keypair::new().pubkey();
+    let recipient_rent = swig_wallet.litesvm().minimum_balance_for_rent_exemption(0);
+    swig_wallet
+        .litesvm()
+        .airdrop(&destination, recipient_rent)
+        .unwrap();
     let limit_amount = 500_000; // 0.0005 SOL
 
     // Setup secondary authority with SOL destination limit
@@ -359,6 +369,11 @@ fn should_transfer_sol_to_different_destination_without_limit() {
 
     let destination = Keypair::new().pubkey();
     let different_destination = Keypair::new().pubkey();
+    let recipient_rent = swig_wallet.litesvm().minimum_balance_for_rent_exemption(0);
+    swig_wallet
+        .litesvm()
+        .airdrop(&different_destination, recipient_rent)
+        .unwrap();
     let limit_amount = 500_000; // 0.0005 SOL
 
     // Setup secondary authority with SOL destination limit for specific destination
@@ -419,7 +434,17 @@ fn should_combine_destination_and_general_limits() {
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
 
     let destination = Keypair::new().pubkey();
+    let recipient_rent = swig_wallet.litesvm().minimum_balance_for_rent_exemption(0);
+    swig_wallet
+        .litesvm()
+        .airdrop(&destination, recipient_rent)
+        .unwrap();
     let different_destination = Keypair::new().pubkey();
+    let recipient_rent = swig_wallet.litesvm().minimum_balance_for_rent_exemption(0);
+    swig_wallet
+        .litesvm()
+        .airdrop(&different_destination, recipient_rent)
+        .unwrap();
     let destination_limit = 500_000; // 0.0005 SOL
     let general_limit = 2_000_000; // 0.002 SOL
 

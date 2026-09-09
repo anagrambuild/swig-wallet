@@ -1,5 +1,5 @@
 #![cfg(not(feature = "program_scope_test"))]
-//! Exercise reserve refreshes against the pinned upstream SPL Token SBF fixture.
+//! Exercise reserve refreshes against the Token program bundled in pinned LiteSVM.
 
 mod common;
 
@@ -56,13 +56,6 @@ impl Fixture {
 
     fn with_actions(actions: Vec<ClientAction>) -> Self {
         let mut context = setup_test_context().unwrap();
-        context
-            .svm
-            .add_program(
-                spl_token::ID,
-                include_bytes!("fixtures/spl_token_sync_native.so"),
-            )
-            .unwrap();
         context
             .svm
             .add_program_from_file(COMPOSER, "../target/deploy/test_program_authority.so")
@@ -289,18 +282,20 @@ fn assert_sync_transfer_rejected(
     fixture.reduce_rent();
     let before = fixture.snapshot();
     let error = fixture.send(fixture.sync_and_transfer(amount)).unwrap_err();
-    // Both real Token operations ran before Swig rejected the permission debit.
-    for instruction in ["Instruction: SyncNative", "Instruction: Transfer"] {
-        assert!(
-            error
-                .meta
-                .logs
-                .iter()
-                .any(|line| line.ends_with(instruction)),
-            "missing {instruction} in {:?}",
-            error.meta.logs
-        );
-    }
+    // The composer runs SyncNative then Transfer. Both Token CPIs must succeed
+    // before Swig rejects the permission debit; p-token omits instruction logs.
+    let token_success = format!("Program {} success", spl_token::ID);
+    assert_eq!(
+        error
+            .meta
+            .logs
+            .iter()
+            .filter(|line| **line == token_success)
+            .count(),
+        2,
+        "both Token CPIs must complete: {:?}",
+        error.meta.logs
+    );
     assert_eq!(
         error.err,
         TransactionError::InstructionError(0, InstructionError::Custom(expected as u32))
