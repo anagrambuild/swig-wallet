@@ -59,6 +59,13 @@ pub const INSTRUCTION_SYSVAR_ACCOUNT: Pubkey =
 /// Exclude range for token account balance field (bytes 64-72)
 const TOKEN_BALANCE_EXCLUDE_RANGE: core::ops::Range<usize> = 64..72;
 
+// Only the reserve payload is mutable. The COption tag stays protected.
+const TOKEN_NATIVE_RESERVE_RANGE: core::ops::Range<usize> = 113..121;
+const WSOL_MINT: Pubkey = from_str("So11111111111111111111111111111111111111112");
+const TOKEN_EXCLUDE_RANGES: &[core::ops::Range<usize>] = &[TOKEN_BALANCE_EXCLUDE_RANGE];
+const WSOL_EXCLUDE_RANGES: &[core::ops::Range<usize>] =
+    &[TOKEN_BALANCE_EXCLUDE_RANGE, TOKEN_NATIVE_RESERVE_RANGE];
+
 /// Exclude ranges for the mutable portion of a stake account.
 ///
 /// A stake account is bincode `StakeStateV2` (200 bytes):
@@ -306,7 +313,7 @@ pub fn sign_v2(
     let mut total_sol_spent: u64 = 0;
 
     // Build exclusion ranges for each account type for snapshots
-    for (index, account_classifier) in account_classifiers.iter().enumerate() {
+    for (index, account_classifier) in account_classifiers.iter_mut().enumerate() {
         let account = unsafe { all_accounts.get_unchecked(index) };
 
         // Only check writable accounts as read-only accounts won't modify data
@@ -324,11 +331,31 @@ pub fn sign_v2(
                 let hash = hash_except(&data, account.owner(), NO_EXCLUDE_RANGES);
                 Some(hash)
             },
-            AccountClassification::SwigTokenAccount { .. } => {
+            AccountClassification::SwigTokenAccount {
+                balance,
+                native_reserve,
+                ..
+            } => {
                 let data = unsafe { account.borrow_data_unchecked() };
-                // Exclude token balance field (bytes 64-72) but include owner
-                let exclude_ranges = [TOKEN_BALANCE_EXCLUDE_RANGE];
-                let hash = hash_except(&data, account.owner(), &exclude_ranges);
+                // Choose the policy once, from pre-CPI identity. Token-2022 and
+                // non-native mints keep their existing amount-only policy.
+                let exclude_ranges = if account.owner() == &SPL_TOKEN_ID
+                    && data.get(TOKEN_MINT_RANGE) == Some(WSOL_MINT.as_slice())
+                {
+                    let reserve = read_wsol_reserve(account.owner(), data)?;
+                    if &data[TOKEN_AUTHORITY_RANGE] != ctx.accounts.swig_wallet_address.key() {
+                        return Err(
+                            SwigAuthenticateError::PermissionDeniedTokenAccountAuthorityNotSwig
+                                .into(),
+                        );
+                    }
+                    *balance = wsol_accounted_balance(*balance, reserve, account.lamports())?;
+                    *native_reserve = Some(reserve);
+                    WSOL_EXCLUDE_RANGES
+                } else {
+                    TOKEN_EXCLUDE_RANGES
+                };
+                let hash = hash_except(data, account.owner(), exclude_ranges);
                 Some(hash)
             },
             AccountClassification::SwigStakeAccount { .. } => {
@@ -410,18 +437,41 @@ pub fn sign_v2(
                 }
 
                 match classifier {
-                    AccountClassification::SwigTokenAccount { balance, spent } => {
+                    AccountClassification::SwigTokenAccount {
+                        balance,
+                        native_reserve,
+                        spent,
+                    } => {
                         let data = unsafe { account.borrow_data_unchecked() };
 
+                        // Preserve the separate, permission-gated close path.
+                        if native_reserve.is_some() && (data.is_empty() || account.lamports() == 0)
+                        {
+                            continue;
+                        }
                         if data.len() < TOKEN_BALANCE_RANGE.end {
                             continue;
                         }
 
-                        let current = u64::from_le_bytes(unsafe {
+                        let mut current = u64::from_le_bytes(unsafe {
                             data.get_unchecked(TOKEN_BALANCE_RANGE)
                                 .try_into()
                                 .unwrap_or([0; 8])
                         });
+
+                        if let Some(previous_reserve) = native_reserve {
+                            let reserve = read_wsol_reserve(account.owner(), data)?;
+                            if reserve != *previous_reserve {
+                                let required = pinocchio::sysvars::rent::Rent::get()?
+                                    .minimum_balance(TOKEN_ACCOUNT_BASE_DATA_LEN);
+                                validate_wsol_reserve_change(*previous_reserve, reserve, required)?;
+                            }
+                            // A SyncNative rent refresh changes amount and reserve
+                            // together. Charge debits in the same units before and
+                            // after CPI, including when a swap also runs in that CPI.
+                            current = wsol_accounted_balance(current, reserve, account.lamports())?;
+                            *previous_reserve = reserve;
+                        }
 
                         if current < *balance {
                             *spent = spent.saturating_add(*balance - current);
@@ -608,7 +658,11 @@ pub fn sign_v2(
 
                 continue;
             },
-            AccountClassification::SwigTokenAccount { spent, .. } => {
+            AccountClassification::SwigTokenAccount {
+                spent,
+                native_reserve,
+                ..
+            } => {
                 let account_info = unsafe { all_accounts.get_unchecked(index) };
                 let data = unsafe { &account_info.borrow_data_unchecked() };
 
@@ -633,8 +687,12 @@ pub fn sign_v2(
                 }
 
                 if account_info.is_writable() {
-                    let exclude_ranges = [TOKEN_BALANCE_EXCLUDE_RANGE];
-                    let current_hash = hash_except(&data, account_info.owner(), &exclude_ranges);
+                    let exclude_ranges = if native_reserve.is_some() {
+                        WSOL_EXCLUDE_RANGES
+                    } else {
+                        TOKEN_EXCLUDE_RANGES
+                    };
+                    let current_hash = hash_except(data, account_info.owner(), exclude_ranges);
                     let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
                     if *snapshot_hash != current_hash {
                         return Err(SwigError::AccountDataModifiedUnexpectedly.into());
@@ -1017,4 +1075,116 @@ where
     }
 
     Ok(())
+}
+
+/// The reserve exception is limited to the legacy Token program's native mint.
+/// Check every byte of the option tag; the pinned zero-copy token accessor only
+/// inspects its first byte and is not a canonical option decoder.
+fn read_wsol_reserve(owner: &Pubkey, data: &[u8]) -> Result<u64, ProgramError> {
+    if owner != &SPL_TOKEN_ID
+        || data.len() != TOKEN_ACCOUNT_BASE_DATA_LEN
+        || data[TOKEN_MINT_RANGE] != WSOL_MINT
+        || data[TOKEN_STATE_INDEX] != TOKEN_ACCOUNT_INITIALIZED_STATE
+        || data[109..113] != [1, 0, 0, 0]
+    {
+        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+    }
+    Ok(u64::from_le_bytes(
+        data[TOKEN_NATIVE_RESERVE_RANGE]
+            .try_into()
+            .map_err(|_| SwigError::AccountDataModifiedUnexpectedly)?,
+    ))
+}
+
+fn validate_wsol_reserve_change(before: u64, after: u64, required: u64) -> ProgramResult {
+    // Accounts need not be synchronized in every transaction. If a refresh did
+    // occur, accept only the network's current minimum, in either direction.
+    if after != before && after != required {
+        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+    }
+    Ok(())
+}
+
+fn wsol_accounted_balance(amount: u64, reserve: u64, lamports: u64) -> Result<u64, ProgramError> {
+    let accounted = amount
+        .checked_add(reserve)
+        .ok_or(SwigError::AccountDataModifiedUnexpectedly)?;
+    // Unsynchronized SOL deposits can leave additional unaccounted lamports.
+    if accounted > lamports {
+        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+    }
+    Ok(accounted)
+}
+
+#[cfg(test)]
+mod wsol_rent_tests {
+    use super::*;
+
+    fn native_data() -> [u8; TOKEN_ACCOUNT_BASE_DATA_LEN] {
+        let mut data = [0; TOKEN_ACCOUNT_BASE_DATA_LEN];
+        data[TOKEN_MINT_RANGE].copy_from_slice(&WSOL_MINT);
+        data[TOKEN_STATE_INDEX] = TOKEN_ACCOUNT_INITIALIZED_STATE;
+        data[109..113].copy_from_slice(&[1, 0, 0, 0]);
+        data[TOKEN_NATIVE_RESERVE_RANGE].copy_from_slice(&2_039_280u64.to_le_bytes());
+        data
+    }
+
+    #[test]
+    fn reserve_refresh_must_be_unchanged_or_current() {
+        for (before, after, required) in [
+            (2_039_280, 2_039_280, 1_855_569),
+            (2_039_280, 1_855_569, 1_855_569),
+            (1_855_569, 2_039_280, 2_039_280),
+        ] {
+            validate_wsol_reserve_change(before, after, required).unwrap();
+        }
+        for after in [0, 1_855_568, 1_855_570, u64::MAX] {
+            assert_eq!(
+                validate_wsol_reserve_change(2_039_280, after, 1_855_569),
+                Err(SwigError::AccountDataModifiedUnexpectedly.into()),
+            );
+        }
+    }
+
+    #[test]
+    fn native_identity_requires_exact_layout_owner_mint_state_and_option_tag() {
+        let data = native_data();
+        assert_eq!(read_wsol_reserve(&SPL_TOKEN_ID, &data).unwrap(), 2_039_280);
+        for owner in [SYSTEM_PROGRAM_ID, SPL_TOKEN_2022_ID] {
+            assert!(read_wsol_reserve(&owner, &data).is_err());
+        }
+        assert!(read_wsol_reserve(&SPL_TOKEN_ID, &data[..164]).is_err());
+        let mut extended = data.to_vec();
+        extended.push(0);
+        assert!(read_wsol_reserve(&SPL_TOKEN_ID, &extended).is_err());
+        for (offset, value) in [
+            (0, 255),
+            (108, 0),
+            (108, 2),
+            (109, 0),
+            (109, 2),
+            (110, 1),
+            (111, 1),
+            (112, 1),
+        ] {
+            let mut invalid = data;
+            invalid[offset] = value;
+            assert_eq!(
+                read_wsol_reserve(&SPL_TOKEN_ID, &invalid),
+                Err(SwigError::AccountDataModifiedUnexpectedly.into())
+            );
+        }
+    }
+
+    #[test]
+    fn accounted_native_balance_is_backed_and_reserve_neutral() {
+        let lamports = 1_002_039_280;
+        let before = wsol_accounted_balance(1_000_000_000, 2_039_280, lamports).unwrap();
+        let after = wsol_accounted_balance(1_000_183_711, 1_855_569, lamports).unwrap();
+        assert_eq!(before, after);
+        // Additional SOL can be present before SyncNative accounts for it.
+        assert_eq!(wsol_accounted_balance(10, 20, 40).unwrap(), 30);
+        assert!(wsol_accounted_balance(10, 20, 29).is_err());
+        assert!(wsol_accounted_balance(u64::MAX, 1, u64::MAX).is_err());
+    }
 }

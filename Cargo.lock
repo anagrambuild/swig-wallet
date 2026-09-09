@@ -3850,9 +3850,9 @@ checksum = "23fb14cb19457329c82206317a5663005a4d404783dc74f4252769b0d5f42856"
 
 [[package]]
 name = "litesvm"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a6d4edace08253a908d301768f291a7115e8e19e13473dd6e1ace78d6366433"
+checksum = "347d8c652d592c618ac996f2ab21f8c0b0f2da3fbbca227a6887ee61bb75f2de"
 dependencies = [
  "agave-feature-set",
  "agave-precompiles",
@@ -3874,6 +3874,7 @@ dependencies = [
  "solana-compute-budget-instruction",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
+ "solana-feature-gate-interface",
  "solana-fee",
  "solana-fee-structure",
  "solana-hash 3.1.0",
@@ -3914,9 +3915,9 @@ dependencies = [
 
 [[package]]
 name = "litesvm-token"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f319bae54889c96cef85253ea2374310998294d1dbd1d40c3b9e117a273d3c1"
+checksum = "d6cdb7d678bfa9279f8cb29079c976a4d930c7b30070a9687f4d6d64b528e748"
 dependencies = [
  "litesvm",
  "smallvec",

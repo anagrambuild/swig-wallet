@@ -272,6 +272,11 @@ fn test_scoped_sign_only() {
     let mut context = setup_test_context().unwrap();
     let (swig, root, _id, _creator, state, asset) = setup(&mut context);
     let recipient = Keypair::new();
+    let recipient_rent = context.svm.minimum_balance_for_rent_exemption(0);
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), recipient_rent)
+        .unwrap();
     let (kp, role) = add_role(
         &mut context,
         &swig,
@@ -288,7 +293,7 @@ fn test_scoped_sign_only() {
             .get_account(&recipient.pubkey())
             .unwrap()
             .lamports,
-        5_000
+        recipient_rent + 5_000
     );
     // withdraw + toggle denied
     let w = withdraw_ix(swig, state, asset, &kp, role, 0, 1_000);
@@ -353,6 +358,11 @@ fn test_all_scope_is_id_scoped() {
     let mut context = setup_test_context().unwrap();
     let (swig, root, id, creator, state0, asset0) = setup(&mut context);
     let recipient = Keypair::new();
+    let recipient_rent = context.svm.minimum_balance_for_rent_exemption(0);
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), recipient_rent)
+        .unwrap();
 
     // Create a second sub-account (id 1) with the creator role.
     let creator_role = role_id_of(&context, &swig, &creator.pubkey());
@@ -416,6 +426,11 @@ fn test_share_one_subaccount_across_roles() {
     let mut context = setup_test_context().unwrap();
     let (swig, root, _id, _creator, state, asset) = setup(&mut context);
     let recipient = Keypair::new();
+    let recipient_rent = context.svm.minimum_balance_for_rent_exemption(0);
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), recipient_rent)
+        .unwrap();
 
     // Two independent roles both granted Sign{0} for the same sub-account.
     let (a, ra) = add_role(
@@ -441,7 +456,7 @@ fn test_share_one_subaccount_across_roles() {
             .get_account(&recipient.pubkey())
             .unwrap()
             .lamports,
-        3_000
+        recipient_rent + 3_000
     );
 }
 
@@ -486,6 +501,11 @@ fn test_role_deletion_removes_scoped_grant() {
     let mut context = setup_test_context().unwrap();
     let (swig, root, _id, _creator, state, asset) = setup(&mut context);
     let recipient = Keypair::new();
+    let recipient_rent = context.svm.minimum_balance_for_rent_exemption(0);
+    context
+        .svm
+        .airdrop(&recipient.pubkey(), recipient_rent)
+        .unwrap();
     let (kp, role) = add_role(
         &mut context,
         &swig,
