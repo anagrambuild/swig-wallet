@@ -447,7 +447,10 @@ fn test_close_sub_account_v1_sweeps_lamports_and_unblocks_parent_close() {
     let arbitrary_destination = Keypair::new();
     context
         .svm
-        .airdrop(&arbitrary_destination.pubkey(), 1)
+        .airdrop(
+            &arbitrary_destination.pubkey(),
+            context.svm.minimum_balance_for_rent_exemption(0),
+        )
         .unwrap();
     let redirect_without_claimer = CloseSubAccountV1Instruction::new_with_ed25519_authority(
         swig_key,
@@ -525,7 +528,13 @@ fn test_close_sub_account_v1_refunds_only_rent_to_configured_claimer() {
         .unwrap();
 
     let claimer = Keypair::new();
-    context.svm.airdrop(&claimer.pubkey(), 1).unwrap();
+    context
+        .svm
+        .airdrop(
+            &claimer.pubkey(),
+            context.svm.minimum_balance_for_rent_exemption(0),
+        )
+        .unwrap();
     set_rent_claimer_with_ed25519(&mut context, &swig_key, &root, 0, claimer.pubkey()).unwrap();
     toggle_sub_account(
         &mut context,
@@ -578,8 +587,20 @@ fn test_close_sub_account_v1_rejects_omitted_or_wrong_rent_claimer() {
         create_sub_account(&mut context, &swig_key, &child_authority, child_role_id, id).unwrap();
     let claimer = Keypair::new();
     let wrong_claimer = Keypair::new();
-    context.svm.airdrop(&claimer.pubkey(), 1).unwrap();
-    context.svm.airdrop(&wrong_claimer.pubkey(), 1).unwrap();
+    context
+        .svm
+        .airdrop(
+            &claimer.pubkey(),
+            context.svm.minimum_balance_for_rent_exemption(0),
+        )
+        .unwrap();
+    context
+        .svm
+        .airdrop(
+            &wrong_claimer.pubkey(),
+            context.svm.minimum_balance_for_rent_exemption(0),
+        )
+        .unwrap();
     set_rent_claimer_with_ed25519(&mut context, &swig_key, &root, 0, claimer.pubkey()).unwrap();
     toggle_sub_account(
         &mut context,
