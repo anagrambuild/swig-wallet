@@ -12,6 +12,19 @@
 3. Run the tests covering `ProgramScope` with `cargo build-sbf --features=program_scope_test && cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=program_scope_test`
 4. Run the tests covering Stake actions by running `cargo build-sbf --features=stake_tests && cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=stake_tests`
 
+The program and Rust SDK tests share exact workspace pins for `litesvm` and
+`litesvm-token` at `0.11.0`. `LiteSVM::new()` enables the p-token feature and loads
+the bundled Token program at `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA` for all
+tests. The WSOL rent tests use that same program; no separate Token binary is
+committed or loaded by those tests. Keep `Cargo.lock` to preserve the dependency
+checksums.
+
+LiteSVM 0.11 includes the `SyncNative` reserve-refresh behavior and stricter rent
+checks. Test setup must fund new accounts to the rent minimum. After changing the
+pin, run the WSOL regressions and all feature suites. The bundled program is a
+reproducible test dependency; its pin does not assert identity with future
+mainnet deployments.
+
 ## Audit
 
 Swig has been independently auditted by Accretion with plans to undergo additional audits. A copy of the audit report can be shared upon request.

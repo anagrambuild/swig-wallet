@@ -21,6 +21,11 @@ fn should_sign_v2_transfer_with_ed25519_within_limits() {
 
     // Prepare a transfer from wallet PDA to recipient
     let recipient = Keypair::new();
+    let recipient_rent = swig_wallet.litesvm().minimum_balance_for_rent_exemption(0);
+    swig_wallet
+        .litesvm()
+        .airdrop(&recipient.pubkey(), recipient_rent)
+        .unwrap();
     let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
         &recipient.pubkey(),
@@ -77,6 +82,11 @@ fn should_sign_v2_fail_transfer_beyond_limits() {
 
     // Attempt transfer beyond limits (2_000_000_000 > 1_000_000_000)
     let recipient = Keypair::new();
+    let recipient_rent = swig_wallet.litesvm().minimum_balance_for_rent_exemption(0);
+    swig_wallet
+        .litesvm()
+        .airdrop(&recipient.pubkey(), recipient_rent)
+        .unwrap();
     let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
         &recipient.pubkey(),
@@ -147,6 +157,11 @@ fn should_sign_v2_with_different_payer_and_authority() {
         .unwrap();
 
     let recipient = Keypair::new();
+    let recipient_rent = swig_wallet.litesvm().minimum_balance_for_rent_exemption(0);
+    swig_wallet
+        .litesvm()
+        .airdrop(&recipient.pubkey(), recipient_rent)
+        .unwrap();
     let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
         &recipient.pubkey(),
@@ -209,6 +224,11 @@ fn should_sign_v2_with_secp256k1_authority_transfers_sol() {
         .unwrap();
 
     let recipient = Keypair::new();
+    let recipient_rent = swig_wallet.litesvm().minimum_balance_for_rent_exemption(0);
+    swig_wallet
+        .litesvm()
+        .airdrop(&recipient.pubkey(), recipient_rent)
+        .unwrap();
     let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
         &recipient.pubkey(),
@@ -265,6 +285,11 @@ fn should_sign_v2_secp256r1_transfer() {
         .unwrap();
 
     let recipient = Keypair::new();
+    let recipient_rent = swig_wallet.litesvm().minimum_balance_for_rent_exemption(0);
+    swig_wallet
+        .litesvm()
+        .airdrop(&recipient.pubkey(), recipient_rent)
+        .unwrap();
     let transfer_ix = solana_system_interface::instruction::transfer(
         &swig_wallet_address,
         &recipient.pubkey(),

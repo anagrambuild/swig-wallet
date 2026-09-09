@@ -496,6 +496,7 @@ unsafe fn classify_account(
                         .try_into()
                         .map_err(|_| ProgramError::InvalidAccountData)?,
                 ),
+                native_reserve: None,
                 spent: 0,
             })
         },

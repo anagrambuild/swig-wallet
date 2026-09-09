@@ -198,6 +198,13 @@ fn send_sign(
     subacc_id: u32,
 ) -> u64 {
     let recipient = Keypair::new();
+    context
+        .svm
+        .airdrop(
+            &recipient.pubkey(),
+            context.svm.minimum_balance_for_rent_exemption(0),
+        )
+        .unwrap();
     let transfer = solana_system_interface::instruction::transfer(
         &addresses.asset,
         &recipient.pubkey(),

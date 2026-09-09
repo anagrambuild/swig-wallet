@@ -1,7 +1,12 @@
 //! Test program instruction processor
 
 use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, msg, program_error::ProgramError,
+    account_info::AccountInfo,
+    entrypoint::ProgramResult,
+    instruction::{AccountMeta, Instruction},
+    msg,
+    program::invoke,
+    program_error::ProgramError,
     pubkey::Pubkey,
 };
 
@@ -17,6 +22,9 @@ pub mod instructions {
 
     /// Generic proof discriminator used by ReplaceAuthority tests.
     pub const REPLACE_AUTHORITY_PROOF_V1: [u8; 8] = *b"rplauth1";
+
+    /// Compose ordinary WSOL synchronization and transfer in one caller CPI.
+    pub const SYNC_NATIVE_AND_TRANSFER: [u8; 8] = *b"syncxfer";
 }
 
 /// State account data format:
@@ -42,11 +50,49 @@ pub fn process_instruction(
         instructions::REPLACE_AUTHORITY_PROOF_V1 => {
             process_replace_authority_proof(accounts, remaining_data)
         },
+        instructions::SYNC_NATIVE_AND_TRANSFER => {
+            process_sync_native_and_transfer(accounts, remaining_data)
+        },
         instructions::INVALID_DISCRIMINATOR => {
             process_invalid_instruction(accounts, remaining_data)
         },
         _ => Err(ProgramError::InvalidInstructionData),
     }
+}
+
+/// Accounts: writable source and destination WSOL accounts, signing token
+/// authority, and the executable legacy Token program. Both operations use the
+/// actual Token program; this fixture does not write token-account data itself.
+fn process_sync_native_and_transfer(accounts: &[AccountInfo], amount: &[u8]) -> ProgramResult {
+    if accounts.len() != 4 || amount.len() != 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let token_program = Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    if accounts[3].key != &token_program || !accounts[3].executable {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    invoke(
+        &Instruction {
+            program_id: token_program,
+            accounts: vec![AccountMeta::new(*accounts[0].key, false)],
+            data: vec![17], // SPL TokenInstruction::SyncNative
+        },
+        accounts,
+    )?;
+    let mut transfer_data = vec![3]; // SPL TokenInstruction::Transfer
+    transfer_data.extend_from_slice(amount);
+    invoke(
+        &Instruction {
+            program_id: token_program,
+            accounts: vec![
+                AccountMeta::new(*accounts[0].key, false),
+                AccountMeta::new(*accounts[1].key, false),
+                AccountMeta::new_readonly(*accounts[2].key, true),
+            ],
+            data: transfer_data,
+        },
+        accounts,
+    )
 }
 
 /// Process test token transfer - calls swig via CPI

@@ -32,8 +32,8 @@ default-env = "=0.1.1"
 solana-sdk = "3.0.0"
 rand = "0.9.0"
 swig-interface = { path = "../interface" }
-litesvm-token = { version = "0.10.0" }
-litesvm = { version = "0.10.0", features = ["precompiles"] }
+litesvm-token.workspace = true
+litesvm.workspace = true
 test-log = "0.2.16"
 anyhow = "1.0.71"
 ecdsa = "0.16.9"

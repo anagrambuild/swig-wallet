@@ -236,7 +236,11 @@ fn test_create_sub_account_v2_accepts_prefunded_state_pda() {
 
     // A receiver does not sign a system transfer, so any account can pre-fund
     // the predictable state PDA.
-    let prefund = solana_system_interface::instruction::transfer(&creator.pubkey(), &state_pda, 1);
+    let prefund = solana_system_interface::instruction::transfer(
+        &creator.pubkey(),
+        &state_pda,
+        context.svm.minimum_balance_for_rent_exemption(0),
+    );
     send(&mut context, &creator, prefund).unwrap();
 
     let (created_state, _asset) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();

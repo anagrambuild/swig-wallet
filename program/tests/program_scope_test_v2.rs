@@ -245,8 +245,8 @@ fn test_token_transfer_with_program_scope_v2() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    // SignV2 may have slightly different overhead than SignV1
-    assert!(swig_transfer_cu - regular_transfer_cu <= 5633);
+    // Budget for the pinned LiteSVM 0.11/p-token runtime.
+    assert!(swig_transfer_cu - regular_transfer_cu <= 6100);
 }
 
 /// Helper function to perform token transfers through the swig using SignV2

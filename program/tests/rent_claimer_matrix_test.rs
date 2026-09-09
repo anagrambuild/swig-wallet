@@ -18,6 +18,7 @@ use common::*;
 use litesvm_token::spl_token;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
+    account::Account,
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
@@ -1150,9 +1151,20 @@ fn h2_insufficient_payer_fails_cleanly() {
     let id = rand::random::<[u8; 32]>();
     let (swig_pubkey, _) = create_swig_ed25519(&mut context, &root, id).unwrap();
 
-    // A payer with enough for the tx fee but not the rent-exemption delta.
+    // Model an already-underfunded payer with enough for the tx fee but not
+    // the rent-exemption delta. A new airdrop below rent exemption is rejected.
     let poor_payer = Keypair::new();
-    context.svm.airdrop(&poor_payer.pubkey(), 100_000).unwrap();
+    context
+        .svm
+        .set_account(
+            poor_payer.pubkey(),
+            Account {
+                lamports: 100_000,
+                owner: solana_system_interface::program::ID,
+                ..Account::default()
+            },
+        )
+        .unwrap();
 
     let set_ix = SetRentClaimerV1Instruction::new_with_ed25519_authority(
         swig_pubkey,
