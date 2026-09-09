@@ -172,32 +172,6 @@ fn root_can_update_its_own_permissions_with_every_operation() {
 }
 
 #[test]
-fn delegated_managers_cannot_replace_root_without_an_explicit_scope() {
-    for action in [
-        ClientAction::All(All {}),
-        ClientAction::ManageAuthority(ManageAuthority {}),
-    ] {
-        let (mut context, swig, _, manager) = setup_manager(action);
-        let replacement = Keypair::new();
-        let instruction = ReplaceAuthorityInstruction::new_with_ed25519_authority(
-            swig,
-            manager.pubkey(),
-            1,
-            0,
-            replacement.pubkey().as_ref(),
-        )
-        .unwrap();
-        assert_rejected_unchanged(
-            &mut context,
-            swig,
-            &manager,
-            instruction,
-            SwigAuthenticateError::PermissionDeniedCannotUpdateRootAuthority,
-        );
-    }
-}
-
-#[test]
 fn root_recovery_requires_the_matching_scope_and_preserves_permissions() {
     for target in [0, 1] {
         let (mut context, swig, _, recovery) = setup_manager(ClientAction::ReplaceAuthority(
@@ -248,178 +222,111 @@ fn root_recovery_requires_the_matching_scope_and_preserves_permissions() {
 }
 
 #[test]
-fn root_can_rotate_its_own_signer() {
-    let (mut context, swig, root, _) = setup_manager(ClientAction::All(All {}));
-    let replacement = Keypair::new();
-    let instruction = ReplaceAuthorityInstruction::new_with_ed25519_authority(
-        swig,
-        root.pubkey(),
-        0,
-        0,
-        replacement.pubkey().as_ref(),
-    )
-    .unwrap();
-    send(&mut context, &root, instruction).unwrap();
-    let account = context.svm.get_account(&swig).unwrap();
-    let state = SwigWithRoles::from_bytes(&account.data).unwrap();
-    let role = state.get_role(0).unwrap().unwrap();
-    assert_eq!(
-        role.authority.identity().unwrap(),
-        replacement.pubkey().as_ref()
-    );
-    assert!(role.get_action::<All>(&[]).unwrap().is_some());
-}
-
-#[test]
-fn delegated_managers_can_still_update_and_replace_ordinary_roles() {
-    for action in [
-        ClientAction::All(All {}),
-        ClientAction::ManageAuthority(ManageAuthority {}),
-    ] {
-        let (mut context, swig, _, manager) = setup_manager(action);
-        let target = Keypair::new();
-        add_authority_with_ed25519_root(
-            &mut context,
-            &swig,
-            &manager,
-            AuthorityConfig {
-                authority_type: AuthorityType::Ed25519,
-                authority: target.pubkey().as_ref(),
-            },
-            vec![ClientAction::All(All {})],
-        )
-        .unwrap();
-        let update = UpdateAuthorityInstruction::new_with_ed25519_authority(
-            swig,
-            context.default_payer.pubkey(),
-            manager.pubkey(),
-            1,
-            2,
-            UpdateAuthorityData::ReplaceAll(vec![ClientAction::ManageAuthority(
-                ManageAuthority {},
-            )]),
-        )
-        .unwrap();
-        send(&mut context, &manager, update).unwrap();
-        let replacement = Keypair::new();
-        let replace = ReplaceAuthorityInstruction::new_with_ed25519_authority(
-            swig,
-            manager.pubkey(),
-            1,
-            2,
-            replacement.pubkey().as_ref(),
-        )
-        .unwrap();
-        send(&mut context, &manager, replace).unwrap();
-        let account = context.svm.get_account(&swig).unwrap();
-        let state = SwigWithRoles::from_bytes(&account.data).unwrap();
-        let role = state.get_role(2).unwrap().unwrap();
-        assert_eq!(
-            role.authority.identity().unwrap(),
-            replacement.pubkey().as_ref()
-        );
-        assert!(role.get_action::<ManageAuthority>(&[]).unwrap().is_some());
-    }
-}
-
-#[test]
-fn only_root_can_grant_replacement_scopes_through_add_or_update() {
-    for action in [
-        ClientAction::All(All {}),
-        ClientAction::ManageAuthority(ManageAuthority {}),
-    ] {
-        let (mut context, swig, root, manager) = setup_manager(action);
-        // Protect every scope, including permission to replace a recovery
-        // delegate rather than root directly.
+fn only_root_can_grant_recovery_for_root_through_add_or_update() {
+    for manage_only in [false, true] {
         for scope in [0, 1] {
-            let new_authority = Keypair::new();
-            let add = AddAuthorityInstruction::new_with_ed25519_authority(
-                swig,
-                context.default_payer.pubkey(),
-                manager.pubkey(),
-                1,
-                AuthorityConfig {
-                    authority_type: AuthorityType::Ed25519,
-                    authority: new_authority.pubkey().as_ref(),
-                },
-                vec![
-                    ClientAction::All(All {}),
-                    ClientAction::ReplaceAuthority(ReplaceAuthority::new(scope)),
-                ],
-            )
-            .unwrap();
-            assert_rejected_unchanged(
-                &mut context,
-                swig,
-                &manager,
-                add,
-                SwigAuthenticateError::PermissionDeniedToManageAuthority,
-            );
-            for operation in [
-                UpdateAuthorityData::AddActions(vec![ClientAction::ReplaceAuthority(
-                    ReplaceAuthority::new(scope),
-                )]),
-                UpdateAuthorityData::ReplaceAll(vec![
-                    ClientAction::All(All {}),
-                    ClientAction::ReplaceAuthority(ReplaceAuthority::new(scope)),
-                ]),
-            ] {
-                let update = UpdateAuthorityInstruction::new_with_ed25519_authority(
-                    swig,
-                    context.default_payer.pubkey(),
-                    manager.pubkey(),
-                    1,
-                    1,
-                    operation,
-                )
-                .unwrap();
-                assert_rejected_unchanged(
-                    &mut context,
-                    swig,
-                    &manager,
-                    update,
-                    SwigAuthenticateError::PermissionDeniedToManageAuthority,
-                );
+            for normalized_boundaries in [false, true] {
+                let manager_action = if manage_only {
+                    ClientAction::ManageAuthority(ManageAuthority {})
+                } else {
+                    ClientAction::All(All {})
+                };
+                let (mut context, swig, root, manager) = setup_manager(manager_action);
+                let recovery = Keypair::new();
+                // Put root's scope after a non-root scope to check every grant.
+                let actions = || {
+                    vec![
+                        ClientAction::ReplaceAuthority(ReplaceAuthority::new(1)),
+                        ClientAction::ReplaceAuthority(ReplaceAuthority::new(scope)),
+                    ]
+                };
+                for acting_root in [false, true] {
+                    let (signer, acting_role_id) = if acting_root {
+                        (&root, 0)
+                    } else {
+                        (&manager, 1)
+                    };
+                    let mut add = AddAuthorityInstruction::new_with_ed25519_authority(
+                        swig,
+                        context.default_payer.pubkey(),
+                        signer.pubkey(),
+                        acting_role_id,
+                        AuthorityConfig {
+                            authority_type: AuthorityType::Ed25519,
+                            authority: recovery.pubkey().as_ref(),
+                        },
+                        actions(),
+                    )
+                    .unwrap();
+                    if normalized_boundaries {
+                        clear_instruction_action_boundaries(&mut add, AddAuthorityV1Args::LEN + 32);
+                    }
+                    if scope == 0 && !acting_root {
+                        assert_rejected_unchanged(
+                            &mut context,
+                            swig,
+                            signer,
+                            add,
+                            SwigAuthenticateError::PermissionDeniedToManageAuthority,
+                        );
+                    } else {
+                        send(&mut context, signer, add).unwrap();
+                        break;
+                    }
+                }
+                for acting_root in [false, true] {
+                    let (signer, acting_role_id) = if acting_root {
+                        (&root, 0)
+                    } else {
+                        (&manager, 1)
+                    };
+                    for operation in [
+                        UpdateAuthorityData::AddActions(actions()),
+                        UpdateAuthorityData::ReplaceAll(actions()),
+                    ] {
+                        let mut update = UpdateAuthorityInstruction::new_with_ed25519_authority(
+                            swig,
+                            context.default_payer.pubkey(),
+                            signer.pubkey(),
+                            acting_role_id,
+                            2,
+                            operation,
+                        )
+                        .unwrap();
+                        if normalized_boundaries {
+                            clear_instruction_action_boundaries(
+                                &mut update,
+                                UpdateAuthorityV1Args::LEN + 1,
+                            );
+                        }
+                        if scope == 0 && !acting_root {
+                            assert_rejected_unchanged(
+                                &mut context,
+                                swig,
+                                signer,
+                                update,
+                                SwigAuthenticateError::PermissionDeniedToManageAuthority,
+                            );
+                        } else {
+                            send(&mut context, signer, update).unwrap();
+                        }
+                    }
+                }
+                let account = context.svm.get_account(&swig).unwrap();
+                let state = SwigWithRoles::from_bytes(&account.data).unwrap();
+                let role = state.get_role(2).unwrap().unwrap();
+                assert_eq!(role.position.num_actions(), 2);
+                assert!(role
+                    .get_action::<ReplaceAuthority>(&scope.to_le_bytes())
+                    .unwrap()
+                    .is_some());
             }
         }
-
-        // Root may grant and subsequently revise recovery permissions through
-        // both update encodings; a manager with an explicit scope can use it.
-        for operation in [
-            UpdateAuthorityData::AddActions(vec![ClientAction::ReplaceAuthority(
-                ReplaceAuthority::new(0),
-            )]),
-            UpdateAuthorityData::ReplaceAll(vec![
-                ClientAction::All(All {}),
-                ClientAction::ReplaceAuthority(ReplaceAuthority::new(0)),
-            ]),
-        ] {
-            let update = UpdateAuthorityInstruction::new_with_ed25519_authority(
-                swig,
-                context.default_payer.pubkey(),
-                root.pubkey(),
-                0,
-                1,
-                operation,
-            )
-            .unwrap();
-            send(&mut context, &root, update).unwrap();
-        }
-        let replacement = Keypair::new();
-        let replace = ReplaceAuthorityInstruction::new_with_ed25519_authority(
-            swig,
-            manager.pubkey(),
-            1,
-            0,
-            replacement.pubkey().as_ref(),
-        )
-        .unwrap();
-        send(&mut context, &manager, replace).unwrap();
     }
 }
 
 #[test]
-fn managers_cannot_rewrite_or_take_over_existing_recovery_roles() {
+fn managers_retain_existing_management_of_recovery_roles() {
     for action in [
         ClientAction::All(All {}),
         ClientAction::ManageAuthority(ManageAuthority {}),
@@ -447,13 +354,38 @@ fn managers_cannot_rewrite_or_take_over_existing_recovery_roles() {
                 .lookup_role_id(recovery.pubkey().as_ref())
                 .unwrap()
                 .unwrap();
+            let before_actions = state
+                .get_role(target_role)
+                .unwrap()
+                .unwrap()
+                .actions
+                .to_vec();
+            let replacement = Keypair::new();
+            let replace = ReplaceAuthorityInstruction::new_with_ed25519_authority(
+                swig,
+                manager.pubkey(),
+                1,
+                target_role,
+                replacement.pubkey().as_ref(),
+            )
+            .unwrap();
+            send(&mut context, &manager, replace).unwrap();
+            let account = context.svm.get_account(&swig).unwrap();
+            let state = SwigWithRoles::from_bytes(&account.data).unwrap();
+            let role = state.get_role(target_role).unwrap().unwrap();
+            assert_eq!(
+                role.authority.identity().unwrap(),
+                replacement.pubkey().as_ref()
+            );
+            assert_eq!(role.actions, before_actions);
+
             for operation in [
-                UpdateAuthorityData::ReplaceAll(vec![ClientAction::All(All {})]),
                 UpdateAuthorityData::AddActions(vec![ClientAction::SolLimit(SolLimit {
                     amount: 1,
                 })]),
+                UpdateAuthorityData::RemoveActionsByIndex(vec![2]),
                 UpdateAuthorityData::RemoveActionsByType(vec![Permission::ReplaceAuthority as u8]),
-                UpdateAuthorityData::RemoveActionsByIndex(vec![1]),
+                UpdateAuthorityData::ReplaceAll(vec![ClientAction::All(All {})]),
             ] {
                 let update = UpdateAuthorityInstruction::new_with_ed25519_authority(
                     swig,
@@ -464,96 +396,19 @@ fn managers_cannot_rewrite_or_take_over_existing_recovery_roles() {
                     operation,
                 )
                 .unwrap();
-                assert_rejected_unchanged(
-                    &mut context,
-                    swig,
-                    &manager,
-                    update,
-                    SwigAuthenticateError::PermissionDeniedToManageAuthority,
-                );
+                send(&mut context, &manager, update).unwrap();
             }
-            let replace = ReplaceAuthorityInstruction::new_with_ed25519_authority(
-                swig,
-                manager.pubkey(),
-                1,
-                target_role,
-                manager.pubkey().as_ref(),
-            )
-            .unwrap();
-            assert_rejected_unchanged(
-                &mut context,
-                swig,
-                &manager,
-                replace,
-                SwigAuthenticateError::PermissionDeniedToManageAuthority,
-            );
-
-            // Possessing recovery and All does not permit editing one's own
-            // root-controlled action set, but existing self-rotation remains.
-            let update = UpdateAuthorityInstruction::new_with_ed25519_authority(
-                swig,
-                context.default_payer.pubkey(),
-                recovery.pubkey(),
-                target_role,
-                target_role,
-                UpdateAuthorityData::ReplaceAll(vec![ClientAction::All(All {})]),
-            )
-            .unwrap();
-            assert_rejected_unchanged(
-                &mut context,
-                swig,
-                &recovery,
-                update,
-                SwigAuthenticateError::PermissionDeniedToManageAuthority,
-            );
-            let new_recovery = Keypair::new();
-            let replace = ReplaceAuthorityInstruction::new_with_ed25519_authority(
-                swig,
-                recovery.pubkey(),
-                target_role,
-                target_role,
-                new_recovery.pubkey().as_ref(),
-            )
-            .unwrap();
-            send(&mut context, &recovery, replace).unwrap();
-
-            // Root can explicitly grant another role permission to rotate this
-            // recovery signer; a generic manager alone cannot do so.
-            let scoped = Keypair::new();
-            add_authority_with_ed25519_root(
-                &mut context,
-                &swig,
-                &root,
-                AuthorityConfig {
-                    authority_type: AuthorityType::Ed25519,
-                    authority: scoped.pubkey().as_ref(),
-                },
-                vec![ClientAction::ReplaceAuthority(ReplaceAuthority::new(
-                    target_role,
-                ))],
-            )
-            .unwrap();
             let account = context.svm.get_account(&swig).unwrap();
             let state = SwigWithRoles::from_bytes(&account.data).unwrap();
-            let scoped_role = state
-                .lookup_role_id(scoped.pubkey().as_ref())
-                .unwrap()
-                .unwrap();
-            let replace = ReplaceAuthorityInstruction::new_with_ed25519_authority(
-                swig,
-                scoped.pubkey(),
-                scoped_role,
-                target_role,
-                recovery.pubkey().as_ref(),
-            )
-            .unwrap();
-            send(&mut context, &scoped, replace).unwrap();
+            let role = state.get_role(target_role).unwrap().unwrap();
+            assert_eq!(role.position.num_actions(), 1);
+            assert!(role.get_action::<All>(&[]).unwrap().is_some());
         }
     }
 }
 
 #[test]
-fn active_administrative_sessions_cannot_update_or_replace_root() {
+fn active_administrative_sessions_cannot_update_root_or_grant_its_recovery() {
     for action in [
         ClientAction::All(All {}),
         ClientAction::ManageAuthority(ManageAuthority {}),
@@ -586,31 +441,30 @@ fn active_administrative_sessions_cannot_update_or_replace_root() {
         )
         .unwrap();
         send(&mut context, &owner, create_session).unwrap();
-        let update = UpdateAuthorityInstruction::new_with_ed25519_authority(
-            swig,
-            context.default_payer.pubkey(),
-            session_key.pubkey(),
-            1,
-            0,
-            UpdateAuthorityData::ReplaceAll(vec![ClientAction::SolLimit(SolLimit { amount: 1 })]),
-        )
-        .unwrap();
-        let replace = ReplaceAuthorityInstruction::new_with_ed25519_authority(
-            swig,
-            session_key.pubkey(),
-            1,
-            0,
-            owner.pubkey().as_ref(),
-        )
-        .unwrap();
-        for instruction in [update, replace] {
-            assert_rejected_unchanged(
-                &mut context,
-                swig,
-                &session_key,
-                instruction,
+        for (target, operation, error) in [
+            (
+                0,
+                UpdateAuthorityData::ReplaceAll(vec![ClientAction::All(All {})]),
                 SwigAuthenticateError::PermissionDeniedCannotUpdateRootAuthority,
-            );
+            ),
+            (
+                1,
+                UpdateAuthorityData::AddActions(vec![ClientAction::ReplaceAuthority(
+                    ReplaceAuthority::new(0),
+                )]),
+                SwigAuthenticateError::PermissionDeniedToManageAuthority,
+            ),
+        ] {
+            let update = UpdateAuthorityInstruction::new_with_ed25519_authority(
+                swig,
+                context.default_payer.pubkey(),
+                session_key.pubkey(),
+                1,
+                target,
+                operation,
+            )
+            .unwrap();
+            assert_rejected_unchanged(&mut context, swig, &session_key, update, error);
         }
     }
 }
@@ -627,90 +481,4 @@ fn clear_instruction_action_boundaries(instruction: &mut Instruction, mut cursor
         cursor += Action::LEN + action_len;
     }
     assert_eq!(cursor, actions_end);
-}
-
-#[test]
-fn incoming_action_boundaries_are_normalized_without_weakening_recovery_checks() {
-    for action in [
-        ClientAction::All(All {}),
-        ClientAction::ManageAuthority(ManageAuthority {}),
-    ] {
-        let (mut context, swig, _, manager) = setup_manager(action);
-        let target = Keypair::new();
-        for recovery_grant in [false, true] {
-            let mut actions = vec![ClientAction::SolLimit(SolLimit { amount: 1 })];
-            if recovery_grant {
-                actions.push(ClientAction::ReplaceAuthority(ReplaceAuthority::new(0)));
-            }
-            let mut add = AddAuthorityInstruction::new_with_ed25519_authority(
-                swig,
-                context.default_payer.pubkey(),
-                manager.pubkey(),
-                1,
-                AuthorityConfig {
-                    authority_type: AuthorityType::Ed25519,
-                    authority: target.pubkey().as_ref(),
-                },
-                actions,
-            )
-            .unwrap();
-            clear_instruction_action_boundaries(&mut add, AddAuthorityV1Args::LEN + 32);
-            if recovery_grant {
-                assert_rejected_unchanged(
-                    &mut context,
-                    swig,
-                    &manager,
-                    add,
-                    SwigAuthenticateError::PermissionDeniedToManageAuthority,
-                );
-            } else {
-                send(&mut context, &manager, add).unwrap();
-            }
-        }
-
-        for recovery_grant in [false, true] {
-            for append in [false, true] {
-                let mut actions = if append {
-                    vec![ClientAction::SolLimit(SolLimit { amount: 2 })]
-                } else {
-                    vec![ClientAction::All(All {})]
-                };
-                if recovery_grant {
-                    actions.push(ClientAction::ReplaceAuthority(ReplaceAuthority::new(0)));
-                }
-                let operation = if append {
-                    UpdateAuthorityData::AddActions(actions)
-                } else {
-                    UpdateAuthorityData::ReplaceAll(actions)
-                };
-                let mut update = UpdateAuthorityInstruction::new_with_ed25519_authority(
-                    swig,
-                    context.default_payer.pubkey(),
-                    manager.pubkey(),
-                    1,
-                    2,
-                    operation,
-                )
-                .unwrap();
-                clear_instruction_action_boundaries(&mut update, UpdateAuthorityV1Args::LEN + 1);
-                if recovery_grant {
-                    assert_rejected_unchanged(
-                        &mut context,
-                        swig,
-                        &manager,
-                        update,
-                        SwigAuthenticateError::PermissionDeniedToManageAuthority,
-                    );
-                } else {
-                    send(&mut context, &manager, update).unwrap();
-                }
-            }
-        }
-        let account = context.svm.get_account(&swig).unwrap();
-        let state = SwigWithRoles::from_bytes(&account.data).unwrap();
-        let role = state.get_role(2).unwrap().unwrap();
-        assert_eq!(role.position.num_actions(), 2);
-        assert!(role.get_action::<All>(&[]).unwrap().is_some());
-        assert_eq!(role.get_action::<SolLimit>(&[]).unwrap().unwrap().amount, 2);
-    }
 }

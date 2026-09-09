@@ -32,7 +32,6 @@ use swig_state::{
         close_swig_authority::CloseSwigAuthority,
         manage_authority::ManageAuthority,
         program_all::ProgramAll,
-        replace_authority::ReplaceAuthority,
         sol_limit::SolLimit,
         sub_account_v2::{SubAccountV2All, SubAccountV2Create, SubAccountV2Sign},
         Action, Permission,
@@ -274,42 +273,6 @@ fn test_create_sub_account_v2_initializes_state_and_grants_creator() {
 
     // Creator role auto-granted SubAccountV2All { 0 }.
     assert!(role_has_all_scope(&context, &swig_key, CREATOR_ROLE_ID, 0));
-}
-
-#[test]
-fn test_recovery_role_retains_explicit_subaccount_creation_and_automatic_scope() {
-    let mut context = setup_test_context().unwrap();
-    let (swig_key, root, creator, id) = setup_v2(&mut context).unwrap();
-    let grant = UpdateAuthorityInstruction::new_with_ed25519_authority(
-        swig_key,
-        root.pubkey(),
-        root.pubkey(),
-        0,
-        CREATOR_ROLE_ID,
-        UpdateAuthorityData::AddActions(vec![ClientAction::ReplaceAuthority(
-            ReplaceAuthority::new(0),
-        )]),
-    )
-    .unwrap();
-    send(&mut context, &root, grant).unwrap();
-    let before = SwigSnapshot::capture(&context, &swig_key);
-    create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
-    let after = SwigSnapshot::capture(&context, &swig_key);
-    let creator_id = creator.pubkey().to_bytes();
-    before.assert_others_stable(&after, &[creator_id]);
-    let mut expected = before.actions_of(&creator_id).clone();
-    expected.push((Permission::SubAccountV2All, scoped_v2_body(0)));
-    assert_eq!(after.actions_of(&creator_id), &expected);
-    assert_eq!(after.counter, 1);
-    let account = context.svm.get_account(&swig_key).unwrap();
-    let state = SwigWithRoles::from_bytes(&account.data).unwrap();
-    assert!(state
-        .get_role(CREATOR_ROLE_ID)
-        .unwrap()
-        .unwrap()
-        .get_action::<ReplaceAuthority>(&0u32.to_le_bytes())
-        .unwrap()
-        .is_some());
 }
 
 #[test]

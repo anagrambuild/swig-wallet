@@ -449,7 +449,8 @@ fn test_update_authority_ed25519_replace_all() -> anyhow::Result<()> {
     let id = [1u8; 32]; // Use a fixed ID for testing
     let (swig, _) = create_swig_ed25519(&mut context, &root_authority, id)?;
 
-    // Exercise replacement of a delegated authority's actions.
+    // Add a second authority that we can update (since we can't update root
+    // authority ID 0)
     let second_authority = Keypair::new();
     let second_authority_pubkey = second_authority.pubkey();
     let authority_config = AuthorityConfig {

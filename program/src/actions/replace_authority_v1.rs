@@ -1,11 +1,10 @@
 //! Replace authority instruction.
 //!
 //! This instruction replaces one signer with another while preserving the
-//! target role and permissions. All and ManageAuthority permit replacement of
-//! ordinary roles. Replacing root or another recovery role requires root or
-//! the target-scoped ReplaceAuthority action. ProgramExec authorities must also
-//! prove that the configured external policy program approved the exact
-//! replacement.
+//! target role and permissions. Any authority may perform the replacement when
+//! its role has All, ManageAuthority, or the target-scoped ReplaceAuthority
+//! action. ProgramExec authorities must also prove that the configured external
+//! policy program approved the exact replacement.
 
 use no_padding::NoPadding;
 use pinocchio::{
@@ -22,10 +21,7 @@ use pinocchio::{
 };
 use swig_assertions::{check_self_owned, sol_assert_bytes_eq};
 use swig_state::{
-    action::{
-        all::All, manage_authority::ManageAuthority, replace_authority::ReplaceAuthority,
-        ActionLoader,
-    },
+    action::{all::All, manage_authority::ManageAuthority, replace_authority::ReplaceAuthority},
     authority::{
         ed25519::{ED25519Authority, Ed25519SessionAuthority},
         secp256k1::{compress, Secp256k1Authority, Secp256k1SessionAuthority},
@@ -147,7 +143,7 @@ pub fn replace_authority_v1(
     let swig = parts.state;
     let swig_roles = parts.roles;
 
-    let (acting_authority_type, has_scoped_permission) = {
+    let acting_authority_type = {
         let acting_role = Swig::get_mut_role(replace.args.acting_role_id, swig_roles)?
             .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
         let acting_authority_type = acting_role.authority.authority_type();
@@ -168,35 +164,16 @@ pub fn replace_authority_v1(
             )?;
         }
 
-        let has_scoped_permission = acting_role
-            .get_action::<ReplaceAuthority>(&replace.args.target_role_id.to_le_bytes())?
-            .is_some();
         let has_permission = acting_role.get_action::<All>(&[])?.is_some()
             || acting_role.get_action::<ManageAuthority>(&[])?.is_some()
-            || has_scoped_permission;
+            || acting_role
+                .get_action::<ReplaceAuthority>(&replace.args.target_role_id.to_le_bytes())?
+                .is_some();
         if !has_permission {
             return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
         }
-        // Root rotation by another role requires an explicit recovery grant.
-        if replace.args.target_role_id == 0
-            && replace.args.acting_role_id != 0
-            && !has_scoped_permission
-        {
-            return Err(SwigAuthenticateError::PermissionDeniedCannotUpdateRootAuthority.into());
-        }
-        (acting_authority_type, has_scoped_permission)
+        acting_authority_type
     };
-
-    if replace.args.acting_role_id != 0
-        && replace.args.acting_role_id != replace.args.target_role_id
-        && !has_scoped_permission
-    {
-        let target_role = Swig::get_mut_role(replace.args.target_role_id, swig_roles)?
-            .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
-        if ActionLoader::find_action::<ReplaceAuthority>(target_role.actions)?.is_some() {
-            return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
-        }
-    }
 
     let program_exec_proof = if acting_authority_type == AuthorityType::ProgramExec {
         let swig_wallet_address = all_accounts

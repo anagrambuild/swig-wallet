@@ -12,10 +12,7 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
-    action::{
-        all::All, manage_authority::ManageAuthority, replace_authority::ReplaceAuthority, Action,
-        ActionLoader,
-    },
+    action::{all::All, manage_authority::ManageAuthority, Action, ActionLoader},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::Swig,
@@ -29,7 +26,7 @@ use crate::{
         accounts::{Context, UpdateAuthorityV1Accounts},
         SwigInstruction,
     },
-    util::{ensure_admin_remains, reject_recovery_grants},
+    util::{ensure_admin_remains, reject_root_recovery_grants},
 };
 
 /// Calculates the actual number of actions in the provided actions data.
@@ -476,8 +473,8 @@ fn find_role_action_offsets(
 /// `role_id`, growing the Swig account and preserving the rent-claimer tail.
 ///
 /// This is the shared, tail-preserving realloc + append used both by
-/// UpdateAuthorityV1's AddActions path and by CreateSubAccountV2's auto-grant
-/// of the creator's `SubAccountV2All` action. Callers must have already
+/// UpdateAuthorityV1's AddActions path and by CreateSubAccountV2's auto-grant of
+/// the creator's `SubAccountV2All` action. Callers must have already
 /// authenticated and authorized the mutation; this function performs no
 /// permission checks.
 pub(crate) fn append_actions_to_role(
@@ -824,20 +821,13 @@ pub fn update_authority_v1(
             (current_size, auth_offset, act_offset)
         };
 
-        if update_authority_v1.args.acting_role_id != 0 {
-            // Root owns recovery grants and the permissions of every recovery
-            // role, including roles with indirect replacement scopes.
-            let current_actions =
-                &swig_roles[actions_offset..actions_offset + current_actions_size];
-            if ActionLoader::find_action::<ReplaceAuthority>(current_actions)?.is_some() {
-                return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
-            }
-            if matches!(
+        if update_authority_v1.args.acting_role_id != 0
+            && matches!(
                 operation,
                 AuthorityUpdateOperation::ReplaceAll | AuthorityUpdateOperation::AddActions
-            ) {
-                reject_recovery_grants(update_authority_v1.get_actions_data()?)?;
-            }
+            )
+        {
+            reject_root_recovery_grants(update_authority_v1.get_actions_data()?)?;
         }
 
         let prealloc_size_diff = match operation {
@@ -847,8 +837,7 @@ pub fn update_authority_v1(
             },
             AuthorityUpdateOperation::AddActions => {
                 let new_actions = update_authority_v1.get_actions_data()?;
-                new_actions.len() as i64 // Adding to existing, so just the new
-                                         // size
+                new_actions.len() as i64 // Adding to existing, so just the new size
             },
             AuthorityUpdateOperation::RemoveActionsByType => {
                 // For remove operations, we need to calculate how much will be removed
@@ -1022,6 +1011,7 @@ pub fn update_authority_v1(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use swig_state::{
         action::{all::All, manage_authority::ManageAuthority, Action, Actionable},
         authority::{ed25519::ED25519Authority, AuthorityType},
@@ -1029,8 +1019,6 @@ mod tests {
         tail::{rent_claimer, SavedTail},
         IntoBytes, TransmutableMut,
     };
-
-    use super::*;
 
     #[test]
     fn from_instruction_bytes_rejects_short_actions_payload() {

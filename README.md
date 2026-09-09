@@ -14,28 +14,14 @@
 
 ## Authority management and recovery
 
-`All` grants unrestricted signing and administration of ordinary roles.
-`ManageAuthority` grants administration without unrestricted signing. Both
-permissions retain the existing prohibition on removing root (role 0).
-Only root may update its own permissions. Another role may replace root's
-signer only with an explicit `ReplaceAuthority(0)` permission.
+Only root (role 0) may grant `ReplaceAuthority(0)`, whether through
+`AddAuthorityV1` or the `AddActions` / `ReplaceAll` operations of
+`UpdateAuthorityV1`. Grants targeting non-root roles retain their existing
+administrative permission checks. Only root may update its own permissions.
 
-Root controls recovery delegation: only root may add `ReplaceAuthority`
-permissions or use `UpdateAuthorityV1` to change a role that holds them. This rule
-applies to every replacement scope, including scopes targeting another recovery
-role. Replacing another recovery role's signer requires root or the matching
-`ReplaceAuthority(role_id)` permission. A recovery role retains its existing
-permission to rotate its own signer. ProgramExec replacements still require
-proof of the exact approved replacement.
-
-An explicitly granted `SubAccountV2Create` still permits a recovery role to
-create a child and receive its automatic `SubAccountV2All` permission.
-
-Existing `ReplaceAuthority` grants remain valid after upgrade. Review those
-grants before upgrading: the stored role format does not record who granted a
-permission. Root may revoke and reissue recovery roles as needed. Root can still
-restrict its own permissions subject to the existing last-administrator guard,
-and authority managers retain their ability to remove non-root roles.
+These restrictions apply when granting permissions or updating root; existing
+recovery execution, signer replacement, and non-root role management stay the
+same. Existing recovery grants remain valid after upgrade.
 
 ## Audit
 

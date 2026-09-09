@@ -23,6 +23,7 @@ use swig_state::{
         all::All,
         manage_authority::ManageAuthority,
         program_scope::{NumericType, ProgramScope},
+        replace_authority::ReplaceAuthority,
         Action, ActionLoader, Permission,
     },
     authority::AuthorityType,
@@ -35,10 +36,10 @@ use swig_state::{
 
 use crate::error::SwigError;
 
-/// Reject recovery grants in an incoming add/update action payload.
+/// Reject grants targeting root in a non-root caller's add/update payload.
 /// Instruction action boundaries are normalized when stored, so scan by header
 /// lengths here. Stored actions still use the stricter ActionLoader decoder.
-pub(crate) fn reject_recovery_grants(mut actions: &[u8]) -> ProgramResult {
+pub(crate) fn reject_root_recovery_grants(mut actions: &[u8]) -> ProgramResult {
     while !actions.is_empty() {
         let header = actions
             .get(..Action::LEN)
@@ -47,12 +48,15 @@ pub(crate) fn reject_recovery_grants(mut actions: &[u8]) -> ProgramResult {
         let end = Action::LEN
             .checked_add(action.length() as usize)
             .ok_or(ProgramError::InvalidInstructionData)?;
-        actions = actions
-            .get(end..)
+        let action_data = actions
+            .get(Action::LEN..end)
             .ok_or(ProgramError::InvalidInstructionData)?;
-        if action.permission()? == Permission::ReplaceAuthority {
+        if action.permission()? == Permission::ReplaceAuthority
+            && unsafe { ReplaceAuthority::load_unchecked(action_data)? }.role_id == 0
+        {
             return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
         }
+        actions = &actions[end..];
     }
     Ok(())
 }
