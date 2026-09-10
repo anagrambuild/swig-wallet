@@ -7,15 +7,16 @@ mod common;
 use common::*;
 use litesvm_token::spl_token;
 use solana_sdk::{
-    instruction::{AccountMeta, Instruction},
+    instruction::{AccountMeta, Instruction, InstructionError},
     message::{v0, VersionedMessage},
     program_pack::Pack,
     pubkey::Pubkey,
     signature::{Keypair, Signature},
     signer::Signer,
     sysvar::rent::Rent,
-    transaction::VersionedTransaction,
+    transaction::{TransactionError, VersionedTransaction},
 };
+use swig::actions::toggle_sub_account_v1::ToggleSubAccountV1Args;
 use swig_interface::{
     AuthorityConfig, ClientAction, CloseSubAccountV1Instruction, CloseSwigV1Instruction,
     CreateSubAccountInstruction, SignV2Instruction, ToggleSubAccountInstruction,
@@ -936,6 +937,50 @@ fn test_sub_account_sign() {
         recipient_balance,
         1_000_000 + transfer_amount,
         "Recipient's balance didn't increase by the correct amount"
+    );
+}
+
+#[test_log::test]
+fn test_toggle_sub_account_rejects_noncanonical_enabled_without_mutation() {
+    let mut context = setup_test_context().unwrap();
+    context.svm.warp_to_slot(1);
+    let (swig_key, _root_authority, authority, id) =
+        setup_test_with_sub_account_authority(&mut context).unwrap();
+    let role_id = 1;
+    let sub_account = create_sub_account(&mut context, &swig_key, &authority, role_id, id).unwrap();
+    let mut instruction = ToggleSubAccountInstruction::new_with_ed25519_authority(
+        swig_key,
+        authority.pubkey(),
+        authority.pubkey(),
+        sub_account,
+        role_id,
+        role_id,
+        false,
+    )
+    .unwrap();
+    instruction.data[core::mem::offset_of!(ToggleSubAccountV1Args, enabled)] = u8::MAX;
+
+    let swig_before = context.svm.get_account(&swig_key).unwrap();
+    let sub_account_before = context.svm.get_account(&sub_account).unwrap();
+    let message = v0::Message::try_compile(
+        &authority.pubkey(),
+        &[instruction],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let transaction =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&authority]).unwrap();
+    let failure = context.svm.send_transaction(transaction).unwrap_err();
+
+    assert_eq!(
+        failure.err,
+        TransactionError::InstructionError(0, InstructionError::InvalidInstructionData)
+    );
+    assert_eq!(context.svm.get_account(&swig_key).unwrap(), swig_before);
+    assert_eq!(
+        context.svm.get_account(&sub_account).unwrap(),
+        sub_account_before
     );
 }
 
