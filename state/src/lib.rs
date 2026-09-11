@@ -68,8 +68,9 @@ pub enum AccountClassification {
     SwigTokenAccount {
         /// The raw token amount at the previous snapshot.
         balance: u64,
-        /// Raw native-reserve field, interpreted only during verification.
-        native_reserve: u64,
+        /// Raw reserve captured for WSOL and validated after each CPI.
+        /// Other token accounts keep `None` and amount-only accounting.
+        native_reserve: Option<u64>,
         /// Amount spent from this account during this transaction
         spent: u64,
     },

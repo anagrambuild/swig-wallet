@@ -56,14 +56,16 @@ use crate::{
 pub const INSTRUCTION_SYSVAR_ACCOUNT: Pubkey =
     from_str("Sysvar1nstructions1111111111111111111111111");
 
-const TOKEN_BALANCE_RANGE: core::ops::Range<usize> = 64..72;
+/// Exclude range for token account balance field (bytes 64-72)
+const TOKEN_BALANCE_EXCLUDE_RANGE: core::ops::Range<usize> = 64..72;
+
+// Only the reserve payload is mutable. The COption tag stays protected.
 const TOKEN_NATIVE_TAG_RANGE: core::ops::Range<usize> = 109..113;
 const TOKEN_NATIVE_RESERVE_RANGE: core::ops::Range<usize> = 113..121;
 const WSOL_MINT: Pubkey = from_str("So11111111111111111111111111111111111111112");
-// These fields are recorded separately. Verification decides which changes
-// are permitted; the native option tag and all other metadata stay hashed.
-const TOKEN_SNAPSHOT_EXCLUDE_RANGES: &[core::ops::Range<usize>] =
-    &[TOKEN_BALANCE_RANGE, TOKEN_NATIVE_RESERVE_RANGE];
+const TOKEN_EXCLUDE_RANGES: &[core::ops::Range<usize>] = &[TOKEN_BALANCE_EXCLUDE_RANGE];
+const WSOL_EXCLUDE_RANGES: &[core::ops::Range<usize>] =
+    &[TOKEN_BALANCE_EXCLUDE_RANGE, TOKEN_NATIVE_RESERVE_RANGE];
 
 /// Exclude ranges for the mutable portion of a stake account.
 ///
@@ -94,6 +96,7 @@ const STAKE_DELEGATION_EXCLUDE_RANGE: core::ops::Range<usize> = 124..200;
 const TOKEN_ACCOUNT_BASE_DATA_LEN: usize = 165;
 const TOKEN_MINT_RANGE: core::ops::Range<usize> = 0..32;
 const TOKEN_AUTHORITY_RANGE: core::ops::Range<usize> = 32..64;
+const TOKEN_BALANCE_RANGE: core::ops::Range<usize> = 64..72;
 const TOKEN_STATE_INDEX: usize = 108;
 
 /// Stake account field ranges
@@ -331,12 +334,21 @@ pub fn sign_v2(
             },
             AccountClassification::SwigTokenAccount { native_reserve, .. } => {
                 let data = unsafe { account.borrow_data_unchecked() };
-                *native_reserve = u64::from_le_bytes(
-                    data[TOKEN_NATIVE_RESERVE_RANGE]
-                        .try_into()
-                        .map_err(|_| SwigError::AccountDataModifiedUnexpectedly)?,
-                );
-                let hash = hash_except(data, account.owner(), TOKEN_SNAPSHOT_EXCLUDE_RANGES);
+                // Identify WSOL and record its raw reserve before CPI. Reserve
+                // validation and balance accounting happen during verification.
+                let exclude_ranges = if account.owner() == &SPL_TOKEN_ID
+                    && data.get(TOKEN_MINT_RANGE) == Some(WSOL_MINT.as_slice())
+                {
+                    *native_reserve = Some(u64::from_le_bytes(
+                        data[TOKEN_NATIVE_RESERVE_RANGE]
+                            .try_into()
+                            .map_err(|_| SwigError::AccountDataModifiedUnexpectedly)?,
+                    ));
+                    WSOL_EXCLUDE_RANGES
+                } else {
+                    TOKEN_EXCLUDE_RANGES
+                };
+                let hash = hash_except(data, account.owner(), exclude_ranges);
                 Some(hash)
             },
             AccountClassification::SwigStakeAccount { .. } => {
@@ -426,49 +438,35 @@ pub fn sign_v2(
                         let data = unsafe { account.borrow_data_unchecked() };
 
                         // Preserve the separate, permission-gated close path.
-                        if data.is_empty() || account.lamports() == 0 {
+                        if native_reserve.is_some() && (data.is_empty() || account.lamports() == 0)
+                        {
                             continue;
                         }
-                        if data.len() < TOKEN_ACCOUNT_BASE_DATA_LEN {
-                            return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+                        if data.len() < TOKEN_BALANCE_RANGE.end {
+                            continue;
                         }
 
-                        // Bind classification to the original owner, mint, native
-                        // tag and metadata before interpreting the mutable fields.
-                        let current_hash =
-                            hash_except(data, account.owner(), TOKEN_SNAPSHOT_EXCLUDE_RANGES);
-                        let snapshot_hash =
-                            unsafe { account_snapshots[account_index].assume_init_ref() };
-                        if *snapshot_hash != current_hash {
-                            return Err(SwigError::AccountDataModifiedUnexpectedly.into());
-                        }
-
-                        let current_amount = u64::from_le_bytes(
-                            data[TOKEN_BALANCE_RANGE]
+                        let current_amount = u64::from_le_bytes(unsafe {
+                            data.get_unchecked(TOKEN_BALANCE_RANGE)
                                 .try_into()
-                                .map_err(|_| SwigError::AccountDataModifiedUnexpectedly)?,
-                        );
-                        let current_reserve = u64::from_le_bytes(
-                            data[TOKEN_NATIVE_RESERVE_RANGE]
-                                .try_into()
-                                .map_err(|_| SwigError::AccountDataModifiedUnexpectedly)?,
-                        );
+                                .unwrap_or([0; 8])
+                        });
                         let mut previous = *balance;
                         let mut current = current_amount;
 
-                        if account.owner() == &SPL_TOKEN_ID && data[TOKEN_MINT_RANGE] == WSOL_MINT {
+                        if let Some(previous_reserve) = native_reserve {
                             let reserve = read_wsol_reserve(account.owner(), data)?;
-                            if reserve != *native_reserve {
+                            if reserve != *previous_reserve {
                                 let required = pinocchio::sysvars::rent::Rent::get()?
                                     .minimum_balance(TOKEN_ACCOUNT_BASE_DATA_LEN);
-                                validate_wsol_reserve_change(*native_reserve, reserve, required)?;
+                                validate_wsol_reserve_change(*previous_reserve, reserve, required)?;
                             }
-                            previous = wsol_accounted_balance(*balance, *native_reserve)?;
+                            // A SyncNative rent refresh changes amount and reserve
+                            // together. Charge debits in the same units before and
+                            // after CPI, including when a swap also runs in that CPI.
+                            previous = wsol_accounted_balance(*balance, *previous_reserve)?;
                             current = wsol_accounted_balance(current, reserve)?;
-                        } else if current_reserve != *native_reserve {
-                            // Other SPL tokens and Token-2022 retain their
-                            // amount-only mutation policy.
-                            return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+                            *previous_reserve = reserve;
                         }
 
                         if current < previous {
@@ -476,7 +474,6 @@ pub fn sign_v2(
                         }
 
                         *balance = current_amount;
-                        *native_reserve = current_reserve;
                     },
                     AccountClassification::SwigStakeAccount {
                         state: _,
@@ -657,7 +654,11 @@ pub fn sign_v2(
 
                 continue;
             },
-            AccountClassification::SwigTokenAccount { spent, .. } => {
+            AccountClassification::SwigTokenAccount {
+                spent,
+                native_reserve,
+                ..
+            } => {
                 let account_info = unsafe { all_accounts.get_unchecked(index) };
                 let data = unsafe { &account_info.borrow_data_unchecked() };
 
@@ -679,6 +680,19 @@ pub fn sign_v2(
 
                 if data.len() < TOKEN_ACCOUNT_BASE_DATA_LEN {
                     return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+                }
+
+                if account_info.is_writable() {
+                    let exclude_ranges = if native_reserve.is_some() {
+                        WSOL_EXCLUDE_RANGES
+                    } else {
+                        TOKEN_EXCLUDE_RANGES
+                    };
+                    let current_hash = hash_except(data, account_info.owner(), exclude_ranges);
+                    let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
+                    if *snapshot_hash != current_hash {
+                        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+                    }
                 }
 
                 let mint = unsafe { data.get_unchecked(TOKEN_MINT_RANGE) };

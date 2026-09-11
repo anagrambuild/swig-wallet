@@ -284,8 +284,8 @@ fn non_native_reserve_payloads_remain_immutable() {
         let mut account = fixture.context.svm.get_account(&fixture.source).unwrap();
         account.owner = owner;
         account.data[0..32].copy_from_slice(Pubkey::new_unique().as_ref());
-        account.data[109..113].copy_from_slice(&[0; 4]); // COption::None
-                                                         // Keep the ignored payload nonzero: capture must not interpret it as WSOL.
+        // COption::None with a nonzero ignored payload remains a non-native token.
+        account.data[109..113].copy_from_slice(&[0; 4]);
         fixture
             .context
             .svm
@@ -326,7 +326,7 @@ fn arbitrary_wsol_reserve_refresh_is_rejected() {
         .get_account(&fixture.source)
         .unwrap()
         .data;
-    // Preserve amount + reserve and backing, but choose neither the old reserve
+    // Preserve amount + reserve, but choose neither the old reserve
     // nor the current rent minimum.
     data[64..72].copy_from_slice(&(INITIAL_AMOUNT + 1).to_le_bytes());
     data[113..121].copy_from_slice(&(fixture.old_reserve - 1).to_le_bytes());
@@ -456,6 +456,11 @@ fn assert_compact_sync_transfers(total: u64) {
     ];
     let result = fixture.send_compact_sequence(instructions);
     let metadata = if total <= LIMIT {
+        let metadata = result.unwrap();
+        println!(
+            "WSOL_COMPACT_TRANSFERS_CU {}",
+            metadata.compute_units_consumed
+        );
         assert_eq!(fixture.remaining(), LIMIT - total);
         assert_eq!(fixture.source_state().is_native, COption::Some(required));
         assert_eq!(
@@ -473,7 +478,7 @@ fn assert_compact_sync_transfers(total: u64) {
                 .amount,
             total
         );
-        result.unwrap()
+        metadata
     } else {
         let error = result.unwrap_err();
         assert_eq!(
