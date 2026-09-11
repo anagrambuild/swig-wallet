@@ -25,6 +25,9 @@ pub mod instructions {
 
     /// Compose ordinary WSOL synchronization and transfer in one caller CPI.
     pub const SYNC_NATIVE_AND_TRANSFER: [u8; 8] = *b"syncxfer";
+
+    /// Controlled account-data mutation for SignV2 integrity rejection tests.
+    pub const WRITE_ACCOUNT_DATA: [u8; 8] = *b"writeacc";
 }
 
 /// State account data format:
@@ -52,6 +55,15 @@ pub fn process_instruction(
         },
         instructions::SYNC_NATIVE_AND_TRANSFER => {
             process_sync_native_and_transfer(accounts, remaining_data)
+        },
+        instructions::WRITE_ACCOUNT_DATA => {
+            let account = accounts.first().ok_or(ProgramError::NotEnoughAccountKeys)?;
+            let mut data = account.try_borrow_mut_data()?;
+            if data.len() != remaining_data.len() {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            data.copy_from_slice(remaining_data);
+            Ok(())
         },
         instructions::INVALID_DISCRIMINATOR => {
             process_invalid_instruction(accounts, remaining_data)

@@ -202,6 +202,137 @@ impl Fixture {
         [self.source, self.destination, self.wallet, self.swig]
             .map(|key| self.context.svm.get_account(&key))
     }
+
+    /// Replace the token processor only for controlled failure injection. All
+    /// SyncNative and transfer success tests use LiteSVM's actual Token program.
+    fn write_source_data(
+        &mut self,
+        data: &[u8],
+    ) -> Result<TransactionMetadata, Box<FailedTransactionMetadata>> {
+        let owner = self.context.svm.get_account(&self.source).unwrap().owner;
+        self.context
+            .svm
+            .add_program_from_file(owner, "../target/deploy/test_program_authority.so")
+            .unwrap();
+        self.send(Instruction {
+            program_id: owner,
+            accounts: vec![AccountMeta::new(self.source, false)],
+            data: [b"writeacc".as_slice(), data].concat(),
+        })
+    }
+
+    fn assert_data_write_rejected(&mut self, data: &[u8]) {
+        let before = self.snapshot();
+        let owner = before[0].as_ref().unwrap().owner;
+        let error = self.write_source_data(data).unwrap_err();
+        assert!(
+            error
+                .meta
+                .logs
+                .contains(&format!("Program {owner} success")),
+            "the injected mutation must succeed before Swig rejects it: {:?}",
+            error.meta.logs
+        );
+        assert_eq!(
+            error.err,
+            TransactionError::InstructionError(
+                0,
+                InstructionError::Custom(SwigError::AccountDataModifiedUnexpectedly as u32)
+            )
+        );
+        assert_eq!(self.snapshot(), before);
+    }
+}
+
+#[test]
+fn non_native_reserve_payloads_remain_immutable() {
+    let token_2022 = Pubkey::from_str_const("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+    for owner in [spl_token::ID, token_2022] {
+        let mut fixture = Fixture::new();
+        let mut account = fixture.context.svm.get_account(&fixture.source).unwrap();
+        account.owner = owner;
+        account.data[0..32].copy_from_slice(Pubkey::new_unique().as_ref());
+        account.data[109..113].copy_from_slice(&[0; 4]); // COption::None
+                                                         // Keep the ignored payload nonzero: capture must not interpret it as WSOL.
+        fixture
+            .context
+            .svm
+            .set_account(fixture.source, account.clone())
+            .unwrap();
+        fixture.write_source_data(&account.data).unwrap();
+        assert_eq!(fixture.remaining(), LIMIT);
+
+        account.data[113..121].copy_from_slice(&(fixture.old_reserve - 1).to_le_bytes());
+        fixture.assert_data_write_rejected(&account.data);
+    }
+}
+
+#[test]
+fn native_tag_and_metadata_changes_cannot_reclassify_a_snapshot() {
+    // The boundaries around both excluded fields remain protected, including
+    // the full native option tag and the delegated amount immediately after it.
+    for offset in [0, 31, 32, 63, 72, 108, 109, 110, 111, 112, 121, 164] {
+        let mut fixture = Fixture::new();
+        let mut data = fixture
+            .context
+            .svm
+            .get_account(&fixture.source)
+            .unwrap()
+            .data;
+        data[offset] ^= 1;
+        fixture.assert_data_write_rejected(&data);
+    }
+}
+
+#[test]
+fn arbitrary_wsol_reserve_refresh_is_rejected() {
+    let mut fixture = Fixture::new();
+    fixture.reduce_rent();
+    let mut data = fixture
+        .context
+        .svm
+        .get_account(&fixture.source)
+        .unwrap()
+        .data;
+    // Preserve amount + reserve and backing, but choose neither the old reserve
+    // nor the current rent minimum.
+    data[64..72].copy_from_slice(&(INITIAL_AMOUNT + 1).to_le_bytes());
+    data[113..121].copy_from_slice(&(fixture.old_reserve - 1).to_le_bytes());
+    fixture.assert_data_write_rejected(&data);
+}
+
+#[test]
+fn verification_checks_the_original_wsol_backing() {
+    let mut fixture = Fixture::new();
+    let mut account = fixture.context.svm.get_account(&fixture.source).unwrap();
+    let repaired_data = account.data.clone();
+    account.data[64..72].copy_from_slice(&(INITIAL_AMOUNT + 1).to_le_bytes());
+    fixture
+        .context
+        .svm
+        .set_account(fixture.source, account)
+        .unwrap();
+    // Snapshotting permits the CPI to run, but repairing the account cannot
+    // bypass verification of the captured amount, reserve and lamports.
+    fixture.assert_data_write_rejected(&repaired_data);
+}
+
+#[test]
+fn sync_native_on_an_outer_authoritys_wsol_account_succeeds() {
+    let mut fixture = Fixture::new();
+    let mut account = fixture.context.svm.get_account(&fixture.source).unwrap();
+    account.data[32..64].copy_from_slice(fixture.authority.pubkey().as_ref());
+    fixture
+        .context
+        .svm
+        .set_account(fixture.source, account.clone())
+        .unwrap();
+    let required = fixture.reduce_rent();
+    let sync = spl_token::instruction::sync_native(&spl_token::ID, &fixture.source).unwrap();
+    fixture.send(sync).unwrap();
+    assert_eq!(fixture.source_state().is_native, COption::Some(required));
+    assert_eq!(fixture.source_state().amount, account.lamports - required);
+    assert_eq!(fixture.remaining(), LIMIT);
 }
 
 #[test]

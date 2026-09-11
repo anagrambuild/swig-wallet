@@ -66,11 +66,12 @@ pub enum AccountClassification {
     SwigWalletAddress,
     /// A Swig token account with its token balance
     SwigTokenAccount {
-        /// The token balance, including the stored rent reserve for WSOL.
+        /// The raw token amount at the previous snapshot.
         balance: u64,
-        /// Runtime-only reserve validated by SignV2 before its first CPI.
-        /// Other token accounts retain the amount-only integrity policy.
-        native_reserve: Option<u64>,
+        /// Raw native-reserve field, interpreted only during verification.
+        native_reserve: u64,
+        /// Lamports backing the previous amount and reserve snapshot.
+        lamports: u64,
         /// Amount spent from this account during this transaction
         spent: u64,
     },
