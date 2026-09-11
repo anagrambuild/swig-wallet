@@ -329,18 +329,13 @@ pub fn sign_v2(
                 let hash = hash_except(&data, account.owner(), NO_EXCLUDE_RANGES);
                 Some(hash)
             },
-            AccountClassification::SwigTokenAccount {
-                native_reserve,
-                lamports,
-                ..
-            } => {
+            AccountClassification::SwigTokenAccount { native_reserve, .. } => {
                 let data = unsafe { account.borrow_data_unchecked() };
                 *native_reserve = u64::from_le_bytes(
                     data[TOKEN_NATIVE_RESERVE_RANGE]
                         .try_into()
                         .map_err(|_| SwigError::AccountDataModifiedUnexpectedly)?,
                 );
-                *lamports = account.lamports();
                 let hash = hash_except(data, account.owner(), TOKEN_SNAPSHOT_EXCLUDE_RANGES);
                 Some(hash)
             },
@@ -426,7 +421,6 @@ pub fn sign_v2(
                     AccountClassification::SwigTokenAccount {
                         balance,
                         native_reserve,
-                        lamports,
                         spent,
                     } => {
                         let data = unsafe { account.borrow_data_unchecked() };
@@ -469,9 +463,8 @@ pub fn sign_v2(
                                     .minimum_balance(TOKEN_ACCOUNT_BASE_DATA_LEN);
                                 validate_wsol_reserve_change(*native_reserve, reserve, required)?;
                             }
-                            previous =
-                                wsol_accounted_balance(*balance, *native_reserve, *lamports)?;
-                            current = wsol_accounted_balance(current, reserve, account.lamports())?;
+                            previous = wsol_accounted_balance(*balance, *native_reserve)?;
+                            current = wsol_accounted_balance(current, reserve)?;
                         } else if current_reserve != *native_reserve {
                             // Other SPL tokens and Token-2022 retain their
                             // amount-only mutation policy.
@@ -484,7 +477,6 @@ pub fn sign_v2(
 
                         *balance = current_amount;
                         *native_reserve = current_reserve;
-                        *lamports = account.lamports();
                     },
                     AccountClassification::SwigStakeAccount {
                         state: _,
@@ -1095,15 +1087,10 @@ fn validate_wsol_reserve_change(before: u64, after: u64, required: u64) -> Progr
     Ok(())
 }
 
-fn wsol_accounted_balance(amount: u64, reserve: u64, lamports: u64) -> Result<u64, ProgramError> {
-    let accounted = amount
+fn wsol_accounted_balance(amount: u64, reserve: u64) -> Result<u64, ProgramError> {
+    amount
         .checked_add(reserve)
-        .ok_or(SwigError::AccountDataModifiedUnexpectedly)?;
-    // Unsynchronized SOL deposits can leave additional unaccounted lamports.
-    if accounted > lamports {
-        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
-    }
-    Ok(accounted)
+        .ok_or(SwigError::AccountDataModifiedUnexpectedly.into())
 }
 
 #[cfg(test)]
@@ -1167,14 +1154,11 @@ mod wsol_rent_tests {
     }
 
     #[test]
-    fn accounted_native_balance_is_backed_and_reserve_neutral() {
-        let lamports = 1_002_039_280;
-        let before = wsol_accounted_balance(1_000_000_000, 2_039_280, lamports).unwrap();
-        let after = wsol_accounted_balance(1_000_183_711, 1_855_569, lamports).unwrap();
+    fn accounted_native_balance_is_reserve_neutral_and_checked() {
+        let before = wsol_accounted_balance(1_000_000_000, 2_039_280).unwrap();
+        let after = wsol_accounted_balance(1_000_183_711, 1_855_569).unwrap();
         assert_eq!(before, after);
-        // Additional SOL can be present before SyncNative accounts for it.
-        assert_eq!(wsol_accounted_balance(10, 20, 40).unwrap(), 30);
-        assert!(wsol_accounted_balance(10, 20, 29).is_err());
-        assert!(wsol_accounted_balance(u64::MAX, 1, u64::MAX).is_err());
+        assert_eq!(wsol_accounted_balance(10, 20).unwrap(), 30);
+        assert!(wsol_accounted_balance(u64::MAX, 1).is_err());
     }
 }

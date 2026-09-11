@@ -334,19 +334,25 @@ fn arbitrary_wsol_reserve_refresh_is_rejected() {
 }
 
 #[test]
-fn verification_checks_the_original_wsol_backing() {
-    let mut fixture = Fixture::new();
-    let mut account = fixture.context.svm.get_account(&fixture.source).unwrap();
-    let repaired_data = account.data.clone();
-    account.data[64..72].copy_from_slice(&(INITIAL_AMOUNT + 1).to_le_bytes());
-    fixture
-        .context
-        .svm
-        .set_account(fixture.source, account)
-        .unwrap();
-    // Snapshotting permits the CPI to run, but repairing the account cannot
-    // bypass verification of the captured amount, reserve and lamports.
-    fixture.assert_data_write_rejected(&repaired_data);
+fn verification_rejects_wsol_amount_plus_reserve_overflow() {
+    for overflow_before_cpi in [true, false] {
+        let mut fixture = Fixture::new();
+        let mut account = fixture.context.svm.get_account(&fixture.source).unwrap();
+        let valid_data = account.data.clone();
+        let mut overflowing_data = valid_data.clone();
+        overflowing_data[64..72].copy_from_slice(&u64::MAX.to_le_bytes());
+        if overflow_before_cpi {
+            account.data = overflowing_data;
+            fixture
+                .context
+                .svm
+                .set_account(fixture.source, account)
+                .unwrap();
+            fixture.assert_data_write_rejected(&valid_data);
+        } else {
+            fixture.assert_data_write_rejected(&overflowing_data);
+        }
+    }
 }
 
 #[test]

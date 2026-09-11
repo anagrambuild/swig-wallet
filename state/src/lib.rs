@@ -70,8 +70,6 @@ pub enum AccountClassification {
         balance: u64,
         /// Raw native-reserve field, interpreted only during verification.
         native_reserve: u64,
-        /// Lamports backing the previous amount and reserve snapshot.
-        lamports: u64,
         /// Amount spent from this account during this transaction
         spent: u64,
     },
