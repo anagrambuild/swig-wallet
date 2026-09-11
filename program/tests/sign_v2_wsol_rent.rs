@@ -20,15 +20,16 @@ use solana_sdk::{
     signer::Signer,
     transaction::{TransactionError, VersionedTransaction},
 };
+use swig::actions::sign_v2::SignV2Args;
 use swig_error::SwigError;
-use swig_interface::{AuthorityConfig, ClientAction, SignV2Instruction};
+use swig_interface::{compact_instructions, AuthorityConfig, ClientAction, SignV2Instruction};
 use swig_state::{
     action::{
         close_swig_authority::CloseSwigAuthority, program_all::ProgramAll, token_limit::TokenLimit,
     },
     authority::AuthorityType,
     swig::{swig_wallet_address_seeds, SwigWithRoles},
-    SwigAuthenticateError,
+    IntoBytes, SwigAuthenticateError,
 };
 
 const INITIAL_AMOUNT: u64 = 1_000_000_000;
@@ -139,6 +140,37 @@ impl Fixture {
             1,
         )
         .unwrap();
+        self.send_sign_instruction(ix)
+    }
+
+    fn send_compact_sequence(
+        &mut self,
+        inner: Vec<Instruction>,
+    ) -> Result<TransactionMetadata, Box<FailedTransactionMetadata>> {
+        // The interface and SDK wrap each inner instruction separately. Exercise
+        // the handler's multi-CPI format using the production compact encoder,
+        // retaining the builder's account contract and Ed25519 authority payload.
+        let mut ix = SignV2Instruction::new_ed25519(
+            self.swig,
+            self.wallet,
+            self.authority.pubkey(),
+            inner[0].clone(),
+            1,
+        )
+        .unwrap();
+        let authority_index = *ix.data.last().unwrap();
+        let (accounts, instructions) = compact_instructions(self.swig, ix.accounts, inner);
+        let payload = instructions.into_bytes();
+        let args = SignV2Args::new(1, payload.len() as u16);
+        ix.accounts = accounts;
+        ix.data = [args.into_bytes().unwrap(), &payload, &[authority_index]].concat();
+        self.send_sign_instruction(ix)
+    }
+
+    fn send_sign_instruction(
+        &mut self,
+        ix: Instruction,
+    ) -> Result<TransactionMetadata, Box<FailedTransactionMetadata>> {
         let message = v0::Message::try_compile(
             &self.context.default_payer.pubkey(),
             &[ix],
@@ -405,6 +437,70 @@ fn sync_native_and_transfer_in_one_cpi_charge_the_transfer_amount() {
             .amount,
         LIMIT
     );
+}
+
+fn assert_compact_sync_transfers(total: u64) {
+    let mut fixture = Fixture::new();
+    let required = fixture.reduce_rent();
+    let before = fixture.snapshot();
+    let instructions = vec![
+        spl_token::instruction::sync_native(&spl_token::ID, &fixture.source).unwrap(),
+        fixture.transfer(LIMIT / 2),
+        fixture.transfer(total - LIMIT / 2),
+    ];
+    let result = fixture.send_compact_sequence(instructions);
+    let metadata = if total <= LIMIT {
+        assert_eq!(fixture.remaining(), LIMIT - total);
+        assert_eq!(fixture.source_state().is_native, COption::Some(required));
+        assert_eq!(
+            fixture.source_state().amount,
+            INITIAL_AMOUNT + fixture.old_reserve - required - total
+        );
+        let destination = fixture
+            .context
+            .svm
+            .get_account(&fixture.destination)
+            .unwrap();
+        assert_eq!(
+            spl_token::state::Account::unpack(&destination.data)
+                .unwrap()
+                .amount,
+            total
+        );
+        result.unwrap()
+    } else {
+        let error = result.unwrap_err();
+        assert_eq!(
+            error.err,
+            TransactionError::InstructionError(
+                0,
+                InstructionError::Custom(
+                    SwigAuthenticateError::PermissionDeniedInsufficientBalance as u32
+                )
+            )
+        );
+        assert_eq!(fixture.snapshot(), before);
+        error.meta
+    };
+    let token_success = format!("Program {} success", spl_token::ID);
+    assert_eq!(
+        metadata
+            .logs
+            .iter()
+            .filter(|line| **line == token_success)
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn sync_native_and_separate_compact_transfers_share_one_limit() {
+    assert_compact_sync_transfers(LIMIT);
+}
+
+#[test]
+fn sync_native_and_separate_compact_transfers_over_limit_roll_back() {
+    assert_compact_sync_transfers(LIMIT + 1);
 }
 
 fn assert_sync_transfer_rejected(

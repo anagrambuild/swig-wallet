@@ -689,15 +689,6 @@ pub fn sign_v2(
                     return Err(SwigError::AccountDataModifiedUnexpectedly.into());
                 }
 
-                if account_info.is_writable() {
-                    let current_hash =
-                        hash_except(data, account_info.owner(), TOKEN_SNAPSHOT_EXCLUDE_RANGES);
-                    let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
-                    if *snapshot_hash != current_hash {
-                        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
-                    }
-                }
-
                 let mint = unsafe { data.get_unchecked(TOKEN_MINT_RANGE) };
                 let state = unsafe { *data.get_unchecked(TOKEN_STATE_INDEX) };
                 let authority = unsafe { data.get_unchecked(TOKEN_AUTHORITY_RANGE) };
