@@ -190,7 +190,9 @@ fn test_token_transfer_performance_comparison_v2() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3777);
+    // SignV2 token overhead with fee snapshots is 3,825 CU locally and 3,858 in CI.
+    // Keep a small margin above the measured cost in supported build environments.
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3900);
 }
 
 #[test_log::test]
@@ -310,5 +312,7 @@ fn test_sol_transfer_performance_comparison_v2() {
         account_difference
     );
 
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3331);
+    // SignV2 SOL overhead with fee snapshots is 3,462 CU locally.
+    // Retain the parent refactor's allowance for the measured CI helper-call cost.
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3550);
 }
