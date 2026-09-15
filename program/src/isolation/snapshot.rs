@@ -27,6 +27,7 @@ pub struct IsolationGuard<'a> {
     pub(super) accounts: &'a [AccountInfo],
     pub(super) signers: Snapshots<SignerSnapshot, MAX_PROTECTED_SIGNERS>,
     pub(super) creations: Snapshots<CreationSnapshot, MAX_CREATIONS>,
+    pub(super) creation_overflow: bool,
     pub(super) tokens: Snapshots<TokenSnapshot, MAX_PROTECTED_TOKENS>,
     pub(super) frozen: Snapshots<FrozenSnapshot, MAX_FROZEN>,
 }
@@ -106,6 +107,7 @@ impl<'a> IsolationGuard<'a> {
             accounts: all_accounts,
             signers: Snapshots::new(),
             creations: Snapshots::new(),
+            creation_overflow: false,
             tokens: Snapshots::new(),
             frozen: Snapshots::new(),
         };
@@ -167,6 +169,12 @@ impl<'a> IsolationGuard<'a> {
                 .iter()
                 .any(|previous| all_accounts[previous.index as usize].key() == account.key())
             {
+                return Ok(());
+            }
+            // A System account may only receive SOL, so exhausting rent scratch
+            // is relevant only if validation needs a personal spending allowance.
+            if guard.creations.as_slice().len() == MAX_CREATIONS {
+                guard.creation_overflow = true;
                 return Ok(());
             }
             return guard.creations.push(CreationSnapshot {

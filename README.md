@@ -45,6 +45,9 @@ another program. Its contribution is the final rent requirement minus its
 pre-existing lamports. This supports nested and idempotent ATA creation, including
 prefunded ATAs, and new account keypairs signing their own creation. Existing
 accounts' deposits and funding above rent do not increase the allowed decrease.
+Rent accounting captures up to eight candidate destinations. If that capacity is
+exceeded, transactions that preserve personal signer balances remain supported;
+transactions that need the personal rent-funding allowance are rejected.
 
 This is a check of final state. The sum of signers' net decreases is bounded by
 the sum of eligible creation rent; it does not attribute each rent payment to a
@@ -69,6 +72,17 @@ spendable balance. This policy does not authorize mutations of confidential
 balances or other extension payloads.
 The transfer-fee tests use the real Token-2022 program bundled with pinned
 LiteSVM and the production signing instruction builders.
+
+## Authority management and recovery
+
+Only root (role 0) may grant `ReplaceAuthority(0)`, whether through
+`AddAuthorityV1` or the `AddActions` / `ReplaceAll` operations of
+`UpdateAuthorityV1`. Grants targeting non-root roles retain their existing
+administrative permission checks. Only root may update its own permissions.
+
+These restrictions apply when granting permissions or updating root; existing
+recovery execution, signer replacement, and non-root role management stay the
+same. Existing recovery grants remain valid after upgrade.
 
 ## Audit
 

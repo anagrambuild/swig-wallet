@@ -26,6 +26,7 @@ use crate::{
         accounts::{AddAuthorityV1Accounts, Context},
         SwigInstruction,
     },
+    util::reject_root_recovery_grants,
 };
 
 /// Struct representing the complete add authority instruction data.
@@ -222,6 +223,10 @@ pub fn add_authority_v1(
 
         if all.is_none() && manage_authority.is_none() {
             return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
+        }
+        // Only root may appoint a recovery authority for root.
+        if add_authority_v1.args.acting_role_id != 0 {
+            reject_root_recovery_grants(add_authority_v1.actions)?;
         }
         ActionLoader::validate_v2_actions(add_authority_v1.actions, swig.sub_account_counter)?;
         let new_authority_length = authority_type_to_length(&new_authority_type)?;
