@@ -26,7 +26,7 @@ use crate::{
         accounts::{Context, UpdateAuthorityV1Accounts},
         SwigInstruction,
     },
-    util::ensure_admin_remains,
+    util::{ensure_admin_remains, reject_root_recovery_grants},
 };
 
 /// Calculates the actual number of actions in the provided actions data.
@@ -778,6 +778,13 @@ pub fn update_authority_v1(
             return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
         }
 
+        // Delegated management does not include changing the root's permissions.
+        if update_authority_v1.args.authority_to_update_id == 0
+            && update_authority_v1.args.acting_role_id != 0
+        {
+            return Err(SwigAuthenticateError::PermissionDeniedCannotUpdateRootAuthority.into());
+        }
+
         // Verify the authority to update exists and calculate offsets.
         let (current_actions_size, authority_offset, actions_offset) = {
             let mut cursor = 0usize;
@@ -813,6 +820,15 @@ pub fn update_authority_v1(
             }
             (current_size, auth_offset, act_offset)
         };
+
+        if update_authority_v1.args.acting_role_id != 0
+            && matches!(
+                operation,
+                AuthorityUpdateOperation::ReplaceAll | AuthorityUpdateOperation::AddActions
+            )
+        {
+            reject_root_recovery_grants(update_authority_v1.get_actions_data()?)?;
+        }
 
         let prealloc_size_diff = match operation {
             AuthorityUpdateOperation::ReplaceAll => {

@@ -25,6 +25,17 @@ pin, run the WSOL regressions and all feature suites. The bundled program is a
 reproducible test dependency; its pin does not assert identity with future
 mainnet deployments.
 
+## Authority management and recovery
+
+Only root (role 0) may grant `ReplaceAuthority(0)`, whether through
+`AddAuthorityV1` or the `AddActions` / `ReplaceAll` operations of
+`UpdateAuthorityV1`. Grants targeting non-root roles retain their existing
+administrative permission checks. Only root may update its own permissions.
+
+These restrictions apply when granting permissions or updating root; existing
+recovery execution, signer replacement, and non-root role management stay the
+same. Existing recovery grants remain valid after upgrade.
+
 ## Audit
 
 Swig has been independently auditted by Accretion with plans to undergo additional audits. A copy of the audit report can be shared upon request.
