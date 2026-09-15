@@ -29,6 +29,7 @@ solana-security-txt = "=1.1.1"
 default-env = "=0.1.1"
 
 [target.'cfg(not(target_arch = "bpf"))'.dev-dependencies]
+spl-token-2022-interface = "=2.1.0"
 solana-sdk = "3.0.0"
 rand = "0.9.0"
 swig-interface = { path = "../interface" }

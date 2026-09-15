@@ -6,6 +6,8 @@
 //! - Token transfer operations
 //! The utilities are optimized for performance and safety.
 
+pub(crate) mod token_integrity;
+
 use std::mem::MaybeUninit;
 
 use pinocchio::{

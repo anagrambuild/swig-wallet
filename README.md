@@ -36,8 +36,7 @@ there is no new wire format or stored wallet state.
 Validation protects personal token balances, lamports, program ownership, token
 owner/delegate/close authority, and the existing supported authority-bearing
 account layouts. Incoming SOL and tokens are permitted, including legacy WSOL
-`SyncNative` reserve refreshes. Token-2022 extension bytes remain immutable;
-transfer-fee bookkeeping support is a separate change.
+`SyncNative` reserve refreshes and the Token-2022 fee bookkeeping described below.
 Personal SOL wrapping is not an allowed spending exception.
 
 The exception for personal SOL decreases is **new-account rent**: an initially
@@ -53,6 +52,23 @@ particular signer or prove how a signature was used inside a nested CPI. A
 forwarded signer retains ordinary Solana signer privileges. Unknown programs'
 authority semantics are not inferred. Strict purpose-limited co-signing would
 require a separate execution or authorization design.
+
+## Token-2022 extension compatibility
+
+SignV2's restricted token checks and the outer-signer isolation guard allow the
+`TransferFeeAmount.withheld_amount` payload to change during a CPI. Transfer fees
+can accumulate on a destination or be collected without treating those changes
+as account tampering. The extension location is captured before execution; its
+type, length, and all other protected account bytes remain immutable.
+
+Wallet spending limits continue to use the ordinary token amount, which already
+includes transfer fees in outgoing debits. For these Token-2022 accounts,
+outer-signer token amounts and lamports must still not decrease. Withheld fees
+are controlled by the mint's fee authority and are not added to the holder's
+spendable balance. This policy does not authorize mutations of confidential
+balances or other extension payloads.
+The transfer-fee tests use the real Token-2022 program bundled with pinned
+LiteSVM and the production signing instruction builders.
 
 ## Audit
 
