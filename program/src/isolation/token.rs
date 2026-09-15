@@ -9,7 +9,7 @@ use pinocchio::{
 use pinocchio_pubkey::from_str;
 
 use super::snapshot::{IsolationGuard, SignerSnapshot};
-use crate::{error::SwigError, util::token_integrity::hash_with_transfer_fee};
+use crate::{error::SwigError, util::hash_except};
 
 pub(super) const TOKEN_ACCOUNT_BASE_DATA_LEN: usize = 165;
 pub(super) const TOKEN_MINT_BASE_LEN: usize = 82;
@@ -162,13 +162,7 @@ pub(super) fn validate_token_accounts(
             return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
         }
         if let Some(previous_hash) = before.tail_hash {
-            let tail = hash_with_transfer_fee(
-                &data[TOKEN_ACCOUNT_BASE_DATA_LEN..],
-                owner,
-                &[],
-                before.tail_fee_offset,
-            )
-            .map_err(|_| SwigError::PermissionDeniedAuthorityExternalAssetChange)?;
+            let tail = hash_except(&data[TOKEN_ACCOUNT_BASE_DATA_LEN..], owner, &[]);
             if tail != previous_hash {
                 return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
             }

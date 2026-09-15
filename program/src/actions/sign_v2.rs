@@ -51,10 +51,7 @@ use crate::{
         SwigInstruction,
     },
     isolation::IsolationGuard,
-    util::{
-        hash_except,
-        token_integrity::{hash_with_transfer_fee, transfer_fee_amount_offset},
-    },
+    util::hash_except,
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
 };
 // use swig_instructions::InstructionIterator;
@@ -347,9 +344,6 @@ pub fn sign_v2(
     const UNINIT_HASH: MaybeUninit<[u8; 32]> = MaybeUninit::uninit();
     let mut account_snapshots: [MaybeUninit<[u8; 32]>; MAX_ACCOUNT_SNAPSHOTS] =
         [UNINIT_HASH; MAX_ACCOUNT_SNAPSHOTS];
-    // Offsets are selected once from pre-CPI extension metadata.
-    const UNINIT_FEE_OFFSET: MaybeUninit<Option<u16>> = MaybeUninit::uninit();
-    let mut token_fee_offsets = [UNINIT_FEE_OFFSET; MAX_ACCOUNT_SNAPSHOTS];
 
     let mut total_sol_spent: u64 = 0;
 
@@ -405,13 +399,7 @@ pub fn sign_v2(
                 } else {
                     TOKEN_EXCLUDE_RANGES
                 };
-                let fee_offset = transfer_fee_amount_offset(data, account.owner())?;
-                token_fee_offsets
-                    .get_mut(index)
-                    .ok_or(SwigError::InvalidAccountsLength)?
-                    .write(fee_offset);
-                let hash =
-                    hash_with_transfer_fee(data, account.owner(), exclude_ranges, fee_offset)?;
+                let hash = hash_except(data, account.owner(), exclude_ranges);
                 Some(hash)
             },
             AccountClassification::SwigStakeAccount { .. } => {
@@ -763,14 +751,7 @@ pub fn sign_v2(
                     } else {
                         TOKEN_EXCLUDE_RANGES
                     };
-                    let current_hash = hash_with_transfer_fee(
-                        data,
-                        account_info.owner(),
-                        exclude_ranges,
-                        // Every writable SwigTokenAccount saved this offset with its hash.
-                        unsafe { *token_fee_offsets[index].assume_init_ref() },
-                    )
-                    .map_err(|_| SwigError::AccountDataModifiedUnexpectedly)?;
+                    let current_hash = hash_except(data, account_info.owner(), exclude_ranges);
                     let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
                     if *snapshot_hash != current_hash {
                         return Err(SwigError::AccountDataModifiedUnexpectedly.into());

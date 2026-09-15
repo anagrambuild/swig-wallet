@@ -14,13 +14,7 @@ use super::{
     },
     MAX_CREATIONS, MAX_FROZEN, MAX_PROTECTED_SIGNERS, MAX_PROTECTED_TOKENS,
 };
-use crate::{
-    error::SwigError,
-    util::{
-        hash_except,
-        token_integrity::{hash_with_transfer_fee, transfer_fee_amount_offset},
-    },
-};
+use crate::{error::SwigError, util::hash_except};
 
 /// Bounded, transaction-local scratch; this is not serialized account state.
 pub struct IsolationGuard<'a> {
@@ -53,8 +47,6 @@ pub(super) struct TokenSnapshot {
     pub data_len: u16,
     pub rest: [u8; 157],
     pub tail_hash: Option<[u8; 32]>,
-    // Offset captured before CPI, relative to the extension tail.
-    pub tail_fee_offset: Option<u16>,
 }
 
 #[derive(Clone, Copy)]
@@ -229,20 +221,14 @@ impl<'a> IsolationGuard<'a> {
         rest[..64].copy_from_slice(&data[..64]);
         rest[64..].copy_from_slice(&data[72..165]);
         let data_len = u16::try_from(data.len()).map_err(|_| SwigError::InvalidAccountsLength)?;
-        let (tail_hash, tail_fee_offset) = if data.len() > TOKEN_ACCOUNT_BASE_DATA_LEN {
-            let fee_offset = transfer_fee_amount_offset(data, owner)?
-                .map(|offset| offset - TOKEN_ACCOUNT_BASE_DATA_LEN as u16);
-            (
-                Some(hash_with_transfer_fee(
-                    &data[TOKEN_ACCOUNT_BASE_DATA_LEN..],
-                    owner,
-                    &[],
-                    fee_offset,
-                )?),
-                fee_offset,
-            )
+        let tail_hash = if data.len() > TOKEN_ACCOUNT_BASE_DATA_LEN {
+            Some(hash_except(
+                &data[TOKEN_ACCOUNT_BASE_DATA_LEN..],
+                owner,
+                &[],
+            ))
         } else {
-            (None, None)
+            None
         };
         guard.tokens.push(TokenSnapshot {
             index: index as u8,
@@ -252,7 +238,6 @@ impl<'a> IsolationGuard<'a> {
             data_len,
             rest,
             tail_hash,
-            tail_fee_offset,
         })
     }
 }
