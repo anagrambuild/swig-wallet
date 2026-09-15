@@ -54,6 +54,17 @@ forwarded signer retains ordinary Solana signer privileges. Unknown programs'
 authority semantics are not inferred. Strict purpose-limited co-signing would
 require a separate execution or authorization design.
 
+## Authority management and recovery
+
+Only root (role 0) may grant `ReplaceAuthority(0)`, whether through
+`AddAuthorityV1` or the `AddActions` / `ReplaceAll` operations of
+`UpdateAuthorityV1`. Grants targeting non-root roles retain their existing
+administrative permission checks. Only root may update its own permissions.
+
+These restrictions apply when granting permissions or updating root; existing
+recovery execution, signer replacement, and non-root role management stay the
+same. Existing recovery grants remain valid after upgrade.
+
 ## Audit
 
 Swig has been independently auditted by Accretion with plans to undergo additional audits. A copy of the audit report can be shared upon request.
