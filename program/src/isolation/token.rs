@@ -8,7 +8,7 @@ use pinocchio::{
 };
 use pinocchio_pubkey::from_str;
 
-use super::snapshot::{IsolationGuard, SignerSnapshot};
+use super::snapshot::{IsolationGuard, SignerSnapshot, TokenSnapshot};
 use crate::{error::SwigError, util::hash_except};
 
 pub(super) const TOKEN_ACCOUNT_BASE_DATA_LEN: usize = 165;
@@ -130,79 +130,99 @@ pub(super) fn token_owner_is_any_signer_or_multisig(
     false
 }
 
-/// Verifies protected token metadata stays intact and token value and lamports
-/// do not decrease.
-#[inline(always)]
-pub(super) fn validate_token_accounts(
-    guard: &IsolationGuard,
-    all_accounts: &[AccountInfo],
-) -> ProgramResult {
-    for before in guard.tokens.as_slice() {
-        let account = unsafe { all_accounts.get_unchecked(before.index as usize) };
-        if account.data_len() < TOKEN_ACCOUNT_BASE_DATA_LEN {
-            return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
-        }
-        let owner = account.owner();
-        if (owner != &crate::SPL_TOKEN_ID && owner != &crate::SPL_TOKEN_2022_ID)
-            || (owner == &crate::SPL_TOKEN_ID) != before.is_legacy
-        {
-            return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
-        }
-        let data = unsafe { account.borrow_data_unchecked() };
-        let rest = &before.rest;
-        let is_wsol = before.is_legacy && data[..32] == WSOL_MINT;
-        let metadata_matches = if is_wsol {
-            data[72..TOKEN_NATIVE_RESERVE_RANGE.start] == rest[64..TOKEN_REST_RESERVE_RANGE.start]
-                && data[TOKEN_NATIVE_RESERVE_RANGE.end..TOKEN_ACCOUNT_BASE_DATA_LEN]
-                    == rest[TOKEN_REST_RESERVE_RANGE.end..]
-        } else {
-            data[72..TOKEN_ACCOUNT_BASE_DATA_LEN] == rest[64..]
-        };
-        if data.len() != before.data_len as usize || data[..64] != rest[..64] || !metadata_matches {
-            return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
-        }
-        if let Some(previous_hash) = before.tail_hash {
-            let tail = hash_except(&data[TOKEN_ACCOUNT_BASE_DATA_LEN..], owner, &[]);
-            if tail != previous_hash {
-                return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
-            }
-        }
-        let mut amount = [0u8; 8];
-        amount.copy_from_slice(&data[TOKEN_AMOUNT_OFF..TOKEN_AMOUNT_OFF + 8]);
-        let mut balance = u64::from_le_bytes(amount);
-        let mut previous = before.amount;
-        if is_wsol {
-            if data.len() != TOKEN_ACCOUNT_BASE_DATA_LEN
-                || data[TOKEN_STATE_OFF] != 1
-                || data[TOKEN_NATIVE_TAG_RANGE] != [1, 0, 0, 0]
+impl IsolationGuard<'_> {
+    /// Preserve token identity/control and require non-decreasing personal value.
+    #[inline(never)]
+    pub(super) fn validate_token_accounts(&self) -> ProgramResult {
+        for before in self.tokens.as_slice() {
+            let account = &self.accounts[before.index as usize];
+
+            // Preserve the owning token program and the account's data shape.
+            let owner = account.owner();
+            let expected_owner = if before.is_legacy {
+                &crate::SPL_TOKEN_ID
+            } else {
+                &crate::SPL_TOKEN_2022_ID
+            };
+            if owner != expected_owner
+                || account.data_len() != before.data_len as usize
+                || account.data_len() < TOKEN_ACCOUNT_BASE_DATA_LEN
             {
                 return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
             }
-            let previous_reserve = u64::from_le_bytes(
-                rest[TOKEN_REST_RESERVE_RANGE]
-                    .try_into()
-                    .map_err(|_| SwigError::PermissionDeniedAuthorityExternalAssetChange)?,
-            );
-            let reserve = u64::from_le_bytes(
-                data[TOKEN_NATIVE_RESERVE_RANGE]
-                    .try_into()
-                    .map_err(|_| SwigError::PermissionDeniedAuthorityExternalAssetChange)?,
-            );
-            if reserve != previous_reserve
-                && reserve != Rent::get()?.minimum_balance(TOKEN_ACCOUNT_BASE_DATA_LEN)
-            {
+            let data = unsafe { account.borrow_data_unchecked() };
+
+            // Preserve identity and authorities. The WSOL reserve has its own rule below.
+            let rest = &before.rest;
+            let is_wsol = before.is_legacy && rest[..32] == WSOL_MINT;
+            let metadata_matches = if is_wsol {
+                data[72..TOKEN_NATIVE_RESERVE_RANGE.start]
+                    == rest[64..TOKEN_REST_RESERVE_RANGE.start]
+                    && data[TOKEN_NATIVE_RESERVE_RANGE.end..TOKEN_ACCOUNT_BASE_DATA_LEN]
+                        == rest[TOKEN_REST_RESERVE_RANGE.end..]
+            } else {
+                data[72..TOKEN_ACCOUNT_BASE_DATA_LEN] == rest[64..]
+            };
+            if data[..64] != rest[..64] || !metadata_matches {
                 return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
             }
-            previous = previous
-                .checked_add(previous_reserve)
-                .ok_or(SwigError::PermissionDeniedAuthorityExternalAssetChange)?;
-            balance = balance
-                .checked_add(reserve)
-                .ok_or(SwigError::PermissionDeniedAuthorityExternalAssetChange)?;
+            if let Some(previous_hash) = before.tail_hash {
+                let tail = hash_except(&data[TOKEN_ACCOUNT_BASE_DATA_LEN..], owner, &[]);
+                if tail != previous_hash {
+                    return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+                }
+            }
+
+            // Ordinary token amounts cannot decrease. WSOL also accounts for its reserve.
+            let mut amount = [0u8; 8];
+            amount.copy_from_slice(&data[TOKEN_AMOUNT_OFF..TOKEN_AMOUNT_OFF + 8]);
+            let amount = u64::from_le_bytes(amount);
+            if is_wsol {
+                validate_wsol_value(before, data, amount)?;
+            } else if amount < before.amount {
+                return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+            }
+            if account.lamports() < before.lamports {
+                return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+            }
         }
-        if balance < previous || account.lamports() < before.lamports {
-            return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
-        }
+        Ok(())
+    }
+}
+
+/// Permit canonical SyncNative reserve refreshes without reducing total WSOL value.
+#[inline(never)]
+fn validate_wsol_value(before: &TokenSnapshot, data: &[u8], amount: u64) -> ProgramResult {
+    if data.len() != TOKEN_ACCOUNT_BASE_DATA_LEN
+        || data[TOKEN_STATE_OFF] != 1
+        || data[TOKEN_NATIVE_TAG_RANGE] != [1, 0, 0, 0]
+    {
+        return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+    }
+    let previous_reserve = u64::from_le_bytes(
+        before.rest[TOKEN_REST_RESERVE_RANGE]
+            .try_into()
+            .map_err(|_| SwigError::PermissionDeniedAuthorityExternalAssetChange)?,
+    );
+    let reserve = u64::from_le_bytes(
+        data[TOKEN_NATIVE_RESERVE_RANGE]
+            .try_into()
+            .map_err(|_| SwigError::PermissionDeniedAuthorityExternalAssetChange)?,
+    );
+    if reserve != previous_reserve
+        && reserve != Rent::get()?.minimum_balance(TOKEN_ACCOUNT_BASE_DATA_LEN)
+    {
+        return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+    }
+    let previous_value = before
+        .amount
+        .checked_add(previous_reserve)
+        .ok_or(SwigError::PermissionDeniedAuthorityExternalAssetChange)?;
+    let current_value = amount
+        .checked_add(reserve)
+        .ok_or(SwigError::PermissionDeniedAuthorityExternalAssetChange)?;
+    if current_value < previous_value {
+        return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
     }
     Ok(())
 }

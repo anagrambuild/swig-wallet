@@ -75,22 +75,21 @@ pub(super) fn signer_controls_frozen_account(
     false
 }
 
-/// Requires unchanged account data and program ownership, with no decrease in lamports.
-#[inline(always)]
-pub(super) fn validate_frozen_accounts(
-    guard: &IsolationGuard,
-    all_accounts: &[AccountInfo],
-) -> ProgramResult {
-    for before in guard.frozen.as_slice() {
-        let account = unsafe { all_accounts.get_unchecked(before.index as usize) };
-        if account.lamports() < before.lamports {
-            return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+impl IsolationGuard<'_> {
+    /// Preserve complete account data and program ownership, allowing SOL credits.
+    #[inline(never)]
+    pub(super) fn validate_frozen_accounts(&self) -> ProgramResult {
+        for before in self.frozen.as_slice() {
+            let account = &self.accounts[before.index as usize];
+            if account.lamports() < before.lamports {
+                return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+            }
+            let data = unsafe { account.borrow_data_unchecked() };
+            let hash = hash_except(data, account.owner(), &[]);
+            if hash != before.hash {
+                return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
+            }
         }
-        let data = unsafe { account.borrow_data_unchecked() };
-        let hash = hash_except(data, account.owner(), &[]);
-        if hash != before.hash {
-            return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
-        }
+        Ok(())
     }
-    Ok(())
 }

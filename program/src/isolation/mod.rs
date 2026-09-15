@@ -16,7 +16,7 @@ mod tests;
 
 pub use snapshot::IsolationGuard;
 
-use pinocchio::{account_info::AccountInfo, ProgramResult};
+use pinocchio::ProgramResult;
 
 const MAX_PROTECTED_TOKENS: usize = 4;
 const MAX_PROTECTED_SIGNERS: usize = 64;
@@ -29,17 +29,8 @@ impl IsolationGuard<'_> {
     /// accounts' rent deficits; existing token/SOL accounts cannot absorb spend.
     #[inline(always)]
     pub fn validate(&self) -> ProgramResult {
-        let all_accounts = self.accounts;
-        funding::validate_signer_balances(self, all_accounts)?;
-        if !self.tokens.as_slice().is_empty() || !self.frozen.as_slice().is_empty() {
-            self.validate_account_data(all_accounts)?;
-        }
-        Ok(())
-    }
-
-    #[inline(never)]
-    fn validate_account_data(&self, all_accounts: &[AccountInfo]) -> ProgramResult {
-        token::validate_token_accounts(self, all_accounts)?;
-        frozen::validate_frozen_accounts(self, all_accounts)
+        self.validate_signer_accounts()?;
+        self.validate_token_accounts()?;
+        self.validate_frozen_accounts()
     }
 }

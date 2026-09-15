@@ -246,8 +246,8 @@ fn test_token_transfer_with_program_scope_v2() {
         account_difference
     );
     // With pinned LiteSVM 0.11/p-token, a direct transfer costs 76 CU and
-    // SignV2 with explicit isolation snapshots costs 6,231 CU locally. Keep a
-    // budget above the measured 6,155 CU overhead for supported build environments.
+    // SignV2 with explicit isolation snapshots costs 6,287 CU locally. Keep a
+    // budget above the measured 6,211 CU overhead for supported build environments.
     assert!(swig_transfer_cu - regular_transfer_cu <= 6300);
 }
 
