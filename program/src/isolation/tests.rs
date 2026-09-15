@@ -1,7 +1,7 @@
 use super::*;
 use crate::{error::SwigError, SYSTEM_PROGRAM_ID};
 use litesvm_token::spl_token::state::{Account as TokenAccount, AccountState, Multisig};
-use pinocchio::entrypoint::deserialize;
+use pinocchio::{account_info::AccountInfo, entrypoint::deserialize};
 use solana_sdk::{account::Account, program_option::COption, program_pack::Pack, pubkey::Pubkey};
 use spl_token_2022_interface::{
     extension::{
@@ -132,6 +132,15 @@ fn snapshots_cover_extended_mints_and_multisig_token_owners() {
             assert_eq!(
                 guard.validate(),
                 Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into())
+            );
+            // Restore the token balance, then check the frozen-account phase.
+            accounts[3].try_borrow_mut_data().unwrap()[64..72]
+                .copy_from_slice(&100u64.to_le_bytes());
+            *accounts[1].try_borrow_mut_lamports().unwrap() -= 1;
+            assert_eq!(
+                guard.validate(),
+                Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into()),
+                "mint account lamports cannot decrease"
             );
         },
     );

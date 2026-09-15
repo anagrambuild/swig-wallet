@@ -190,7 +190,7 @@ fn test_token_transfer_performance_comparison_v2() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    // The combined guard/fee implementation measured 3,789 CU overhead in CI.
+    // Isolation validation with fee snapshots measures 3,825 CU overhead locally.
     // Keep a small margin for the supported build environments.
     assert!(swig_transfer_cu - regular_transfer_cu <= 3850);
 }
@@ -312,7 +312,7 @@ fn test_sol_transfer_performance_comparison_v2() {
         account_difference
     );
 
-    // Explicit snapshots measured 3,389 CU overhead locally; the combined
-    // guard/fee implementation measured 3,451 in CI. Keep a small margin.
+    // Isolation validation with fee snapshots measures 3,462 CU overhead locally.
+    // Keep a small margin for the supported build environments.
     assert!(swig_transfer_cu - regular_transfer_cu <= 3500);
 }
