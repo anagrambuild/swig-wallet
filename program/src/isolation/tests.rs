@@ -1,8 +1,15 @@
 use super::*;
 use crate::{error::SwigError, SYSTEM_PROGRAM_ID};
-use litesvm_token::spl_token::state::{Account as TokenAccount, AccountState, Mint, Multisig};
+use litesvm_token::spl_token::state::{Account as TokenAccount, AccountState, Multisig};
 use pinocchio::{account_info::AccountInfo, entrypoint::deserialize};
 use solana_sdk::{account::Account, program_option::COption, program_pack::Pack, pubkey::Pubkey};
+use spl_token_2022_interface::{
+    extension::{
+        transfer_fee::TransferFeeConfig, BaseStateWithExtensionsMut, ExtensionType,
+        StateWithExtensionsMut,
+    },
+    state::Mint,
+};
 use std::mem::MaybeUninit;
 
 // Build ordinary account states using the pinned loader layout. The backing
@@ -45,19 +52,27 @@ fn account(owner: [u8; 32], data: Vec<u8>) -> Account {
 }
 
 #[test]
-fn snapshots_cover_mints_and_multisig_token_owners() {
+fn snapshots_cover_extended_mints_and_multisig_token_owners() {
     let signer = Pubkey::new_unique();
     let multisig_key = Pubkey::new_unique();
-    let mut mint_data = vec![0; Mint::LEN];
-    Mint::pack(
-        Mint {
-            mint_authority: COption::Some(signer),
-            is_initialized: true,
-            ..Default::default()
-        },
-        &mut mint_data,
-    )
-    .unwrap();
+    let mut mint_data =
+        vec![
+            0;
+            ExtensionType::try_calculate_account_len::<Mint>(&[ExtensionType::TransferFeeConfig])
+                .unwrap()
+        ];
+    let mut mint = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut mint_data).unwrap();
+    mint.init_extension::<TransferFeeConfig>(false).unwrap();
+    mint.base = Mint {
+        mint_authority: COption::Some(signer),
+        is_initialized: true,
+        ..Default::default()
+    };
+    mint.pack_base();
+    mint.init_account_type().unwrap();
+    // The real layout pads the base mint to 165 before the account-type byte.
+    assert_eq!(mint_data[82], 0);
+    assert_eq!(mint_data[165], 1);
     let mut multisig_data = vec![0; Multisig::LEN];
     Multisig::pack(
         Multisig {
@@ -86,7 +101,7 @@ fn snapshots_cover_mints_and_multisig_token_owners() {
             (signer, account(SYSTEM_PROGRAM_ID, vec![]), true),
             (
                 Pubkey::new_unique(),
-                account(crate::SPL_TOKEN_ID, mint_data),
+                account(crate::SPL_TOKEN_2022_ID, mint_data),
                 false,
             ),
             (

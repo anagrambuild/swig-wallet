@@ -9,7 +9,7 @@ use pinocchio::{
 use pinocchio_pubkey::from_str;
 
 use super::snapshot::{IsolationGuard, SignerSnapshot, TokenSnapshot};
-use crate::{error::SwigError, util::hash_except};
+use crate::{error::SwigError, util::token_integrity::hash_with_transfer_fee};
 
 pub(super) const TOKEN_ACCOUNT_BASE_DATA_LEN: usize = 165;
 pub(super) const TOKEN_MINT_BASE_LEN: usize = 82;
@@ -167,7 +167,13 @@ impl IsolationGuard<'_> {
                 return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
             }
             if let Some(previous_hash) = before.tail_hash {
-                let tail = hash_except(&data[TOKEN_ACCOUNT_BASE_DATA_LEN..], owner, &[]);
+                let tail = hash_with_transfer_fee(
+                    &data[TOKEN_ACCOUNT_BASE_DATA_LEN..],
+                    owner,
+                    &[],
+                    before.tail_fee_offset,
+                )
+                .map_err(|_| SwigError::PermissionDeniedAuthorityExternalAssetChange)?;
                 if tail != previous_hash {
                     return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
                 }
