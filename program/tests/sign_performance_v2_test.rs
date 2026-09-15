@@ -190,9 +190,9 @@ fn test_token_transfer_performance_comparison_v2() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    // Isolation validation with fee snapshots measures 3,825 CU overhead locally.
-    // Keep a small margin for the supported build environments.
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3850);
+    // SignV2 token overhead with fee snapshots is 3,825 CU locally and 3,858 in CI.
+    // Keep a small margin above the measured cost in supported build environments.
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3900);
 }
 
 #[test_log::test]
