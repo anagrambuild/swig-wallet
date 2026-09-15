@@ -190,9 +190,7 @@ fn test_token_transfer_performance_comparison_v2() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    // Direct isolation validation measures 3,803 CU overhead locally.
-    // Keep a small margin for the supported build environments.
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3850);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3777);
 }
 
 #[test_log::test]
@@ -312,7 +310,5 @@ fn test_sol_transfer_performance_comparison_v2() {
         account_difference
     );
 
-    // SignV2 SOL overhead is 3,444 CU locally and 3,502 CU in CI.
-    // Allow the measured helper-call cost with a small build-environment margin.
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3550);
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3331);
 }

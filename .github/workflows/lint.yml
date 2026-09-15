@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, "codex/**"]
+    branches: [main]
 
 env:
   RUST_VERSION: 1.91.0
