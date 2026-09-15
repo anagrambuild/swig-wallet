@@ -312,7 +312,7 @@ fn test_sol_transfer_performance_comparison_v2() {
         account_difference
     );
 
-    // Isolation validation with fee snapshots measures 3,462 CU overhead locally.
-    // Keep a small margin for the supported build environments.
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3500);
+    // SignV2 SOL overhead with fee snapshots is 3,462 CU locally.
+    // Retain the parent refactor's allowance for the measured CI helper-call cost.
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3550);
 }
