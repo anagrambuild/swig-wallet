@@ -1044,6 +1044,78 @@ fn test_sign_transfers_from_asset_pda() {
 }
 
 #[test]
+fn test_sign_many_sol_recipients_preserves_personal_balances() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, _root, creator, id) = setup_v2(&mut context).unwrap();
+    let (state_pda, asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+    context.svm.airdrop(&asset_pda, 1_000_000_000).unwrap();
+    let recipients: Vec<_> = (0..9).map(|_| Pubkey::new_unique()).collect();
+    for recipient in &recipients {
+        context.svm.airdrop(recipient, 1_000_000).unwrap();
+    }
+    let amount = 1_000;
+    for spend_personal in [false, true] {
+        let creator_before = context.svm.get_account(&creator.pubkey()).unwrap();
+        let asset_before = context.svm.get_account(&asset_pda).unwrap();
+        let recipients_before: Vec<_> = recipients
+            .iter()
+            .map(|recipient| context.svm.get_account(recipient).unwrap())
+            .collect();
+        let mut inner: Vec<_> = recipients
+            .iter()
+            .map(|recipient| {
+                solana_system_interface::instruction::transfer(&asset_pda, recipient, amount)
+            })
+            .collect();
+        if spend_personal {
+            inner.push(solana_system_interface::instruction::transfer(
+                &creator.pubkey(),
+                &recipients[0],
+                1,
+            ));
+        }
+        let ix = SubAccountSignV2Instruction::new_with_ed25519_authority(
+            swig_key,
+            state_pda,
+            asset_pda,
+            creator.pubkey(),
+            CREATOR_ROLE_ID,
+            0,
+            inner,
+        )
+        .unwrap();
+        // A separate fee payer keeps the authority's balance assertion exact.
+        let result = send_admin(&mut context, &creator, ix);
+        if spend_personal {
+            assert_eq!(
+                result,
+                Err(TransactionError::InstructionError(
+                    0,
+                    InstructionError::Custom(SwigError::InvalidAccountsLength as u32)
+                ))
+            );
+            assert_eq!(context.svm.get_account(&asset_pda).unwrap(), asset_before);
+        } else {
+            result.unwrap();
+            assert_eq!(
+                context.svm.get_account(&asset_pda).unwrap().lamports,
+                asset_before.lamports - amount * recipients.len() as u64
+            );
+        }
+        assert_eq!(
+            context.svm.get_account(&creator.pubkey()).unwrap(),
+            creator_before
+        );
+        for (recipient, mut before) in recipients.iter().zip(recipients_before) {
+            if !spend_personal {
+                before.lamports += amount;
+            }
+            assert_eq!(context.svm.get_account(recipient).unwrap(), before);
+        }
+    }
+}
+
+#[test]
 fn test_sign_rejects_excess_sol_in_new_ata() {
     let mut context = setup_test_context().unwrap();
     let (swig_key, _root, creator, id) = setup_v2(&mut context).unwrap();

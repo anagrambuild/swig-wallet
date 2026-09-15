@@ -46,6 +46,9 @@ another program. Its contribution is the final rent requirement minus its
 pre-existing lamports. This supports nested and idempotent ATA creation, including
 prefunded ATAs, and new account keypairs signing their own creation. Existing
 accounts' deposits and funding above rent do not increase the allowed decrease.
+Rent accounting captures up to eight candidate destinations. If that capacity is
+exceeded, transactions that preserve personal signer balances remain supported;
+transactions that need the personal rent-funding allowance are rejected.
 
 This is a check of final state. The sum of signers' net decreases is bounded by
 the sum of eligible creation rent; it does not attribute each rent payment to a

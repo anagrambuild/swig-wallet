@@ -36,6 +36,9 @@ impl IsolationGuard<'_> {
     // Rent calculation is needed only when an outer signer's SOL decreased.
     #[inline(never)]
     fn validate_creation_rent(&self, total_decrease: u64) -> ProgramResult {
+        if self.creation_overflow {
+            return Err(SwigError::InvalidAccountsLength.into());
+        }
         let rent = Rent::get()?;
         let mut allowed_rent = 0u64;
         for before in self.creations.as_slice() {
