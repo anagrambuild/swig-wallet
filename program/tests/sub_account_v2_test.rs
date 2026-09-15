@@ -10,7 +10,7 @@ use common::{
 };
 use litesvm_token::spl_token;
 use solana_sdk::{
-    instruction::InstructionError,
+    instruction::{AccountMeta, Instruction, InstructionError},
     message::{v0, VersionedMessage},
     program_pack::Pack,
     pubkey::Pubkey,
@@ -1041,6 +1041,145 @@ fn test_sign_transfers_from_asset_pda() {
         .unwrap()
         .lamports;
     assert_eq!(recipient_balance, amount);
+}
+
+#[test]
+fn test_sign_many_sol_recipients_preserves_personal_balances() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, _root, creator, id) = setup_v2(&mut context).unwrap();
+    let (state_pda, asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+    context.svm.airdrop(&asset_pda, 1_000_000_000).unwrap();
+    let recipients: Vec<_> = (0..9).map(|_| Pubkey::new_unique()).collect();
+    for recipient in &recipients {
+        context.svm.airdrop(recipient, 1_000_000).unwrap();
+    }
+    let amount = 1_000;
+    for spend_personal in [false, true] {
+        let creator_before = context.svm.get_account(&creator.pubkey()).unwrap();
+        let asset_before = context.svm.get_account(&asset_pda).unwrap();
+        let recipients_before: Vec<_> = recipients
+            .iter()
+            .map(|recipient| context.svm.get_account(recipient).unwrap())
+            .collect();
+        let mut inner: Vec<_> = recipients
+            .iter()
+            .map(|recipient| {
+                solana_system_interface::instruction::transfer(&asset_pda, recipient, amount)
+            })
+            .collect();
+        if spend_personal {
+            inner.push(solana_system_interface::instruction::transfer(
+                &creator.pubkey(),
+                &recipients[0],
+                1,
+            ));
+        }
+        let ix = SubAccountSignV2Instruction::new_with_ed25519_authority(
+            swig_key,
+            state_pda,
+            asset_pda,
+            creator.pubkey(),
+            CREATOR_ROLE_ID,
+            0,
+            inner,
+        )
+        .unwrap();
+        // A separate fee payer keeps the authority's balance assertion exact.
+        let result = send_admin(&mut context, &creator, ix);
+        if spend_personal {
+            assert_eq!(
+                result,
+                Err(TransactionError::InstructionError(
+                    0,
+                    InstructionError::Custom(SwigError::InvalidAccountsLength as u32)
+                ))
+            );
+            assert_eq!(context.svm.get_account(&asset_pda).unwrap(), asset_before);
+        } else {
+            result.unwrap();
+            assert_eq!(
+                context.svm.get_account(&asset_pda).unwrap().lamports,
+                asset_before.lamports - amount * recipients.len() as u64
+            );
+        }
+        assert_eq!(
+            context.svm.get_account(&creator.pubkey()).unwrap(),
+            creator_before
+        );
+        for (recipient, mut before) in recipients.iter().zip(recipients_before) {
+            if !spend_personal {
+                before.lamports += amount;
+            }
+            assert_eq!(context.svm.get_account(recipient).unwrap(), before);
+        }
+    }
+}
+
+#[test]
+fn test_sign_rejects_excess_sol_in_new_ata() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, _root, creator, id) = setup_v2(&mut context).unwrap();
+    let (state_pda, asset_pda) = create_v2(&mut context, &swig_key, &creator, &id, 0).unwrap();
+    let attacker = Keypair::new();
+    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let associated_token_program_id = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        .parse::<Pubkey>()
+        .unwrap();
+    let attacker_ata = Pubkey::find_program_address(
+        &[
+            &attacker.pubkey().to_bytes(),
+            &spl_token::id().to_bytes(),
+            &mint.to_bytes(),
+        ],
+        &associated_token_program_id,
+    )
+    .0;
+    let create_ata = Instruction {
+        program_id: associated_token_program_id,
+        accounts: vec![
+            AccountMeta::new(creator.pubkey(), true),
+            AccountMeta::new(attacker_ata, false),
+            AccountMeta::new_readonly(attacker.pubkey(), false),
+            AccountMeta::new_readonly(mint, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            AccountMeta::new_readonly(spl_token::id(), false),
+        ],
+        data: vec![],
+    };
+    let fund_ata = solana_system_interface::instruction::transfer(
+        &creator.pubkey(),
+        &attacker_ata,
+        500_000_000,
+    );
+    let ix = SubAccountSignV2Instruction::new_with_ed25519_authority(
+        swig_key,
+        state_pda,
+        asset_pda,
+        creator.pubkey(),
+        CREATOR_ROLE_ID,
+        0,
+        vec![create_ata, fund_ata],
+    )
+    .unwrap();
+    let message = v0::Message::try_compile(
+        &creator.pubkey(),
+        &[ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&creator]).unwrap();
+    let err = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(
+        err.err,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(
+                SwigError::PermissionDeniedAuthorityExternalAssetChange as u32
+            )
+        )
+    );
+    assert!(context.svm.get_account(&attacker_ata).is_none());
 }
 
 /// Creating a V2 sub-account appends `SubAccountV2All { id }` to the creator's

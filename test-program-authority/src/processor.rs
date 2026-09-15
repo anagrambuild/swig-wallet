@@ -5,7 +5,7 @@ use solana_program::{
     entrypoint::ProgramResult,
     instruction::{AccountMeta, Instruction},
     msg,
-    program::invoke,
+    program::{invoke, invoke_signed},
     program_error::ProgramError,
     pubkey::Pubkey,
 };
@@ -34,6 +34,12 @@ pub mod instructions {
 
     /// Compose ordinary WSOL synchronization and transfer in one caller CPI.
     pub const SYNC_NATIVE_AND_TRANSFER: [u8; 8] = *b"syncxfer";
+
+    /// Create an idempotent ATA through one or two protocol CPI levels.
+    pub const CREATE_NESTED_ATA: [u8; 8] = *b"nestdata";
+
+    /// Synchronize both WSOL accounts, then transfer through a vault or pool.
+    pub const SYNC_BOTH_NATIVE_AND_TRANSFER: [u8; 8] = *b"syncboth";
 }
 
 /// State account data format:
@@ -41,7 +47,7 @@ pub mod instructions {
 pub const STATE_SIZE: usize = 1;
 
 pub fn process_instruction(
-    _program_id: &Pubkey,
+    program_id: &Pubkey,
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
@@ -71,11 +77,58 @@ pub fn process_instruction(
         instructions::SYNC_NATIVE_AND_TRANSFER => {
             process_sync_native_and_transfer(accounts, remaining_data)
         },
+        instructions::SYNC_BOTH_NATIVE_AND_TRANSFER => {
+            process_sync_both_native_and_transfer(program_id, accounts, remaining_data)
+        },
+        instructions::CREATE_NESTED_ATA => {
+            process_create_nested_ata(program_id, accounts, remaining_data)
+        },
         instructions::INVALID_DISCRIMINATOR => {
             process_invalid_instruction(accounts, remaining_data)
         },
         _ => Err(ProgramError::InvalidInstructionData),
     }
+}
+
+/// A positive composition fixture: forward account-creation rent through a
+/// protocol CPI, optionally recursing once before the actual ATA program.
+fn process_create_nested_ata(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    depth: &[u8],
+) -> ProgramResult {
+    if accounts.len() != 8 || depth.len() != 1 || depth[0] > 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let ata_program = Pubkey::from_str_const("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+    if accounts[6].key != &ata_program || accounts[7].key != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    let (target, count, data) = if depth[0] == 0 {
+        (ata_program, 6, vec![1]) // ATA CreateIdempotent
+    } else {
+        let mut data = instructions::CREATE_NESTED_ATA.to_vec();
+        data.push(0);
+        (*program_id, 8, data)
+    };
+    let metas = accounts[..count]
+        .iter()
+        .map(|account| {
+            if account.is_writable {
+                AccountMeta::new(*account.key, account.is_signer)
+            } else {
+                AccountMeta::new_readonly(*account.key, account.is_signer)
+            }
+        })
+        .collect();
+    invoke(
+        &Instruction {
+            program_id: target,
+            accounts: metas,
+            data,
+        },
+        accounts,
+    )
 }
 
 /// Accounts: writable source and destination WSOL accounts, signing token
@@ -111,6 +164,52 @@ fn process_sync_native_and_transfer(accounts: &[AccountInfo], amount: &[u8]) -> 
         },
         accounts,
     )
+}
+
+/// Use real Token CPIs for both SyncNative calls and the transfer. The pool
+/// authority is a fixture PDA so incoming vault transfers need no personal debit.
+fn process_sync_both_native_and_transfer(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    amount: &[u8],
+) -> ProgramResult {
+    if accounts.len() != 4 || amount.len() != 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let token_program = Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    if accounts[3].key != &token_program || !accounts[3].executable {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    for account in &accounts[..2] {
+        invoke(
+            &Instruction {
+                program_id: token_program,
+                accounts: vec![AccountMeta::new(*account.key, false)],
+                data: vec![17], // SPL TokenInstruction::SyncNative
+            },
+            accounts,
+        )?;
+    }
+    let mut data = vec![3]; // SPL TokenInstruction::Transfer
+    data.extend_from_slice(amount);
+    let transfer = Instruction {
+        program_id: token_program,
+        accounts: vec![
+            AccountMeta::new(*accounts[0].key, false),
+            AccountMeta::new(*accounts[1].key, false),
+            AccountMeta::new_readonly(*accounts[2].key, true),
+        ],
+        data,
+    };
+    if accounts[2].is_signer {
+        invoke(&transfer, accounts)
+    } else {
+        let (pool_authority, bump) = Pubkey::find_program_address(&[b"pool"], program_id);
+        if accounts[2].key != &pool_authority {
+            return Err(ProgramError::MissingRequiredSignature);
+        }
+        invoke_signed(&transfer, accounts, &[&[b"pool", &[bump]]])
+    }
 }
 
 fn process_invoke_swig_non_sign(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
