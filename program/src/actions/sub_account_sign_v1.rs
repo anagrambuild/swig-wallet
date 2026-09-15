@@ -25,7 +25,7 @@ use crate::{
         accounts::{Context, SubAccountSignV1Accounts},
         SwigInstruction,
     },
-    util::{capture_authority_isolation, verify_authority_isolation},
+    isolation::IsolationGuard,
     AccountClassification,
 };
 
@@ -200,7 +200,12 @@ pub fn sub_account_sign_v1(
     let sub_account_bump = sub_account.bump;
     let sub_account_role_id = sub_account.role_id;
     let sub_account_swig_id = sub_account.swig_id;
-    let isolation = capture_authority_isolation(all_accounts, ctx.accounts.sub_account.key())?;
+    let mut isolation = IsolationGuard::new(all_accounts, ctx.accounts.sub_account.key())?;
+    for (index, account) in all_accounts.iter().enumerate() {
+        if account.is_writable() && account.key() != ctx.accounts.sub_account.key() {
+            isolation.snapshot(index)?;
+        }
+    }
     let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,
@@ -227,9 +232,7 @@ pub fn sub_account_sign_v1(
         }
     }
 
-    if let Some(guard) = isolation.as_ref() {
-        verify_authority_isolation(guard, all_accounts)?;
-    }
+    isolation.validate()?;
 
     // Check that the sub-account maintains sufficient lamports for rent exemption
     // Ensure the account has some minimum balance for rent exemption

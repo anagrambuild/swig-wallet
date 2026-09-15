@@ -9,6 +9,7 @@
 pub mod actions;
 pub mod error;
 pub mod instruction;
+pub mod isolation;
 pub mod util;
 use core::mem::MaybeUninit;
 

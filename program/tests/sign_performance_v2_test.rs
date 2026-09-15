@@ -310,5 +310,7 @@ fn test_sol_transfer_performance_comparison_v2() {
         account_difference
     );
 
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3331);
+    // Explicit signer snapshots cost 3,550 CU with pinned LiteSVM (150 CU direct).
+    // Keep a small budget above the measured 3,400 CU overhead.
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3450);
 }
