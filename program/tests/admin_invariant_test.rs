@@ -252,7 +252,7 @@ fn delegates_cannot_remove_roots_last_admin_action() -> Result<()> {
                 "set root admin action",
             )?;
             for update in [
-                // Growth also verifies that rejection rolls back rent and realloc.
+                // A rejected growth request must leave rent and account size unchanged.
                 UpdateAuthorityData::ReplaceAll(vec![
                     ClientAction::SolLimit(SolLimit { amount: 1 }),
                     ClientAction::Program(Program {
@@ -280,13 +280,13 @@ fn delegates_cannot_remove_roots_last_admin_action() -> Result<()> {
                 assert_eq!(context.svm.get_account(&swig).unwrap(), before);
             }
         }
-        // Removing one admin action is allowed while the other remains.
+        // Root may remove one of its own admin actions while the other remains.
         require_success(
             send_update(
                 &mut context,
                 swig,
-                &delegate,
-                1,
+                &root,
+                0,
                 0,
                 UpdateAuthorityData::AddActions(vec![ClientAction::All(All {})]),
             )?,
@@ -296,8 +296,8 @@ fn delegates_cannot_remove_roots_last_admin_action() -> Result<()> {
             send_update(
                 &mut context,
                 swig,
-                &delegate,
-                1,
+                &root,
+                0,
                 0,
                 UpdateAuthorityData::RemoveActionsByType(vec![Permission::ManageAuthority as u8]),
             )?,
@@ -312,7 +312,7 @@ fn delegates_cannot_remove_roots_last_admin_action() -> Result<()> {
 }
 
 #[test_log::test]
-fn delegates_can_restore_root_after_self_downgrade() -> Result<()> {
+fn delegates_cannot_restore_root_after_self_downgrade() -> Result<()> {
     for action in [
         ClientAction::All(All {}),
         ClientAction::ManageAuthority(ManageAuthority {}),
@@ -320,51 +320,39 @@ fn delegates_can_restore_root_after_self_downgrade() -> Result<()> {
         let (mut context, swig, root) = setup_root()?;
         let delegate = Keypair::new();
         add_ed25519_role(&mut context, &swig, &root, &delegate, vec![action])?;
-        for restore in [
+        require_success(
+            send_update(
+                &mut context,
+                swig,
+                &root,
+                0,
+                0,
+                UpdateAuthorityData::ReplaceAll(vec![ClientAction::SolLimit(SolLimit {
+                    amount: 1,
+                })]),
+            )?,
+            "root self-downgrade",
+        )?;
+        for update in [
+            UpdateAuthorityData::ReplaceAll(vec![ClientAction::SolLimit(SolLimit { amount: 2 })]),
             UpdateAuthorityData::ReplaceAll(vec![ClientAction::All(All {})]),
             UpdateAuthorityData::AddActions(vec![ClientAction::ManageAuthority(
                 ManageAuthority {},
             )]),
         ] {
-            require_success(
-                send_update(
-                    &mut context,
-                    swig,
-                    &root,
+            let before = context.svm.get_account(&swig).unwrap();
+            let failure = send_update(&mut context, swig, &delegate, 1, 0, update)?.unwrap_err();
+            assert_eq!(
+                failure.err,
+                TransactionError::InstructionError(
                     0,
-                    0,
-                    UpdateAuthorityData::ReplaceAll(vec![ClientAction::SolLimit(SolLimit {
-                        amount: 1,
-                    })]),
-                )?,
-                "root self-downgrade",
-            )?;
-            for update in [
-                UpdateAuthorityData::ReplaceAll(vec![ClientAction::SolLimit(SolLimit {
-                    amount: 2,
-                })]),
-                restore,
-            ] {
-                require_success(
-                    send_update(&mut context, swig, &delegate, 1, 0, update)?,
-                    "update restricted root",
-                )?;
-            }
+                    InstructionError::Custom(
+                        SwigAuthenticateError::PermissionDeniedCannotUpdateRootAuthority as u32
+                    )
+                )
+            );
+            assert_eq!(context.svm.get_account(&swig).unwrap(), before);
         }
-        require_success(
-            send_remove(&mut context, swig, &root, 0, 1)?,
-            "restored root revokes delegate",
-        )?;
-        let account = context.svm.get_account(&swig).unwrap();
-        let state = SwigWithRoles::from_bytes(&account.data).unwrap();
-        assert!(state.get_role(1).unwrap().is_none());
-        assert!(state
-            .get_role(0)
-            .unwrap()
-            .unwrap()
-            .get_action::<ManageAuthority>(&[])
-            .unwrap()
-            .is_some());
     }
     Ok(())
 }

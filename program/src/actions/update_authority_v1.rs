@@ -26,7 +26,7 @@ use crate::{
         accounts::{Context, UpdateAuthorityV1Accounts},
         SwigInstruction,
     },
-    util::ensure_admin_remains,
+    util::{ensure_admin_remains, reject_root_recovery_grants},
 };
 
 /// Calculates the actual number of actions in the provided actions data.
@@ -722,7 +722,6 @@ pub fn update_authority_v1(
 
     let operation = update_authority_v1.get_operation()?;
     let mut account_len: usize;
-    let mut root_had_admin = false;
     let (
         saved_tail,
         role_count,
@@ -779,6 +778,13 @@ pub fn update_authority_v1(
             return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
         }
 
+        // Delegated management does not include changing the root's permissions.
+        if update_authority_v1.args.authority_to_update_id == 0
+            && update_authority_v1.args.acting_role_id != 0
+        {
+            return Err(SwigAuthenticateError::PermissionDeniedCannotUpdateRootAuthority.into());
+        }
+
         // Verify the authority to update exists and calculate offsets.
         let (current_actions_size, authority_offset, actions_offset) = {
             let mut cursor = 0usize;
@@ -815,12 +821,13 @@ pub fn update_authority_v1(
             (current_size, auth_offset, act_offset)
         };
 
-        if update_authority_v1.args.authority_to_update_id == 0
-            && update_authority_v1.args.acting_role_id != 0
+        if update_authority_v1.args.acting_role_id != 0
+            && matches!(
+                operation,
+                AuthorityUpdateOperation::ReplaceAll | AuthorityUpdateOperation::AddActions
+            )
         {
-            let root_actions = &swig_roles[actions_offset..actions_offset + current_actions_size];
-            root_had_admin = ActionLoader::find_action::<All>(root_actions)?.is_some()
-                || ActionLoader::find_action::<ManageAuthority>(root_actions)?.is_some();
+            reject_root_recovery_grants(update_authority_v1.get_actions_data()?)?;
         }
 
         let prealloc_size_diff = match operation {
@@ -966,17 +973,8 @@ pub fn update_authority_v1(
         .checked_add_signed(size_diff as isize)
         .ok_or(ProgramError::InvalidAccountData)?;
     let updated_roles = swig_roles
-        .get_mut(..updated_roles_len)
+        .get(..updated_roles_len)
         .ok_or(ProgramError::InvalidAccountData)?;
-    if root_had_admin {
-        let root = Swig::get_mut_role(0, updated_roles)?
-            .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
-        if root.get_action::<All>(&[])?.is_none()
-            && root.get_action::<ManageAuthority>(&[])?.is_none()
-        {
-            return Err(SwigAuthenticateError::PermissionDeniedCannotUpdateRootAuthority.into());
-        }
-    }
     ensure_admin_remains(updated_roles, role_count)?;
 
     if size_diff < 0 {

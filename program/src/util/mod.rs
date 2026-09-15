@@ -23,6 +23,7 @@ use swig_state::{
         all::All,
         manage_authority::ManageAuthority,
         program_scope::{NumericType, ProgramScope},
+        replace_authority::ReplaceAuthority,
         Action, ActionLoader, Permission,
     },
     authority::AuthorityType,
@@ -30,10 +31,35 @@ use swig_state::{
     read_numeric_field,
     role::{Position, RoleMut},
     swig::{Swig, SwigWithRoles},
-    Transmutable,
+    SwigAuthenticateError, Transmutable,
 };
 
 use crate::error::SwigError;
+
+/// Reject grants targeting root in a non-root caller's add/update payload.
+/// Instruction action boundaries are normalized when stored, so scan by header
+/// lengths here. Stored actions still use the stricter ActionLoader decoder.
+pub(crate) fn reject_root_recovery_grants(mut actions: &[u8]) -> ProgramResult {
+    while !actions.is_empty() {
+        let header = actions
+            .get(..Action::LEN)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        let action = unsafe { Action::load_unchecked(header)? };
+        let end = Action::LEN
+            .checked_add(action.length() as usize)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        let action_data = actions
+            .get(Action::LEN..end)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        if action.permission()? == Permission::ReplaceAuthority
+            && unsafe { ReplaceAuthority::load_unchecked(action_data)? }.role_id == 0
+        {
+            return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
+        }
+        actions = &actions[end..];
+    }
+    Ok(())
+}
 
 /// Ensures the current role buffer still contains an administrator.
 pub(crate) fn ensure_admin_remains(roles: &[u8], role_count: u16) -> Result<(), ProgramError> {

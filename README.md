@@ -12,11 +12,29 @@
 3. Run the tests covering `ProgramScope` with `cargo build-sbf --features=program_scope_test && cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=program_scope_test`
 4. Run the tests covering Stake actions by running `cargo build-sbf --features=stake_tests && cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=stake_tests`
 
-## Root administration
+The program and Rust SDK tests share exact workspace pins for `litesvm` and
+`litesvm-token` at `0.11.0`. `LiteSVM::new()` enables the p-token feature and loads
+the bundled Token program at `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA` for all
+tests. The WSOL rent tests use that same program; no separate Token binary is
+committed or loaded by those tests. Keep `Cargo.lock` to preserve the dependency
+checksums.
 
-Only root may remove its last `All` or `ManageAuthority` permission. Other
-administrators may restore root's admin permissions. Every update still requires
-at least one administrator to remain in the wallet.
+LiteSVM 0.11 includes the `SyncNative` reserve-refresh behavior and stricter rent
+checks. Test setup must fund new accounts to the rent minimum. After changing the
+pin, run the WSOL regressions and all feature suites. The bundled program is a
+reproducible test dependency; its pin does not assert identity with future
+mainnet deployments.
+
+## Authority management and recovery
+
+Only root (role 0) may grant `ReplaceAuthority(0)`, whether through
+`AddAuthorityV1` or the `AddActions` / `ReplaceAll` operations of
+`UpdateAuthorityV1`. Grants targeting non-root roles retain their existing
+administrative permission checks. Only root may update its own permissions.
+
+These restrictions apply when granting permissions or updating root; existing
+recovery execution, signer replacement, and non-root role management stay the
+same. Existing recovery grants remain valid after upgrade.
 
 ## Audit
 
