@@ -243,7 +243,8 @@ pub fn sub_account_sign_v2(
         authorize_scoped_v2(&role, Permission::SubAccountV2Sign, sign.args.subacc_id)?;
         swig_id
     };
-    let mut isolation = IsolationGuard::new(all_accounts, ctx.accounts.sub_account.key())?;
+    let mut isolation = IsolationGuard::new(all_accounts);
+    isolation.capture_signers(ctx.accounts.sub_account.key())?;
     for (index, account) in all_accounts.iter().enumerate() {
         if account.is_writable() && account.key() != ctx.accounts.sub_account.key() {
             isolation.snapshot(index)?;

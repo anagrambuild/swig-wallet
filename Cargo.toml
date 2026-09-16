@@ -19,8 +19,8 @@ authors = ["SWIG Team"]
 documentation = "https://build.onswig.com"
 
 [workspace.dependencies]
-litesvm = { version = "=0.11.0", features = ["precompiles"] }
-litesvm-token = "=0.11.0"
+litesvm = { version = "=0.16.0", features = ["precompiles"] }
+litesvm-token = "=0.16.0"
 
 [workspace.lints.rust]
 unused_imports = "allow"

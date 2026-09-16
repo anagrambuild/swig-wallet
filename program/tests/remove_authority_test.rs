@@ -7,6 +7,7 @@ mod common;
 
 use common::*;
 use solana_sdk::{
+    clock::Clock,
     message::{v0, VersionedMessage},
     signature::Keypair,
     signer::Signer,
@@ -273,7 +274,7 @@ fn test_secp256k1_root_remove_authority() {
         swig_key,
         context.default_payer.pubkey(),
         signing_fn,
-        0, // current slot (same as working test)
+        context.svm.get_sysvar::<Clock>().slot,
         1, // counter = 1 (first transaction, same as working test)
         0, // role_id of the primary wallet
         AuthorityConfig {

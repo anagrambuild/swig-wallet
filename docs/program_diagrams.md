@@ -647,11 +647,11 @@ deduplicated account indexes to minimize transaction size.
 ## Build and Test
 
 ```
-Build:   cargo build-sbf
+Build:   cargo build-sbf --arch v3 --tools-version v1.53
          Outputs: target/deploy/swig.so
          build.rs auto-generates idl.json via shank
 
-Test:    cargo build-sbf && cargo nextest run --config-file nextest.toml \
+Test:    cargo build-sbf --arch v3 --tools-version v1.53 && cargo nextest run --config-file nextest.toml \
            --profile ci --all --workspace --no-fail-fast
 
          Feature-gated tests:

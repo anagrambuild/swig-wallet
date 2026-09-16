@@ -174,7 +174,15 @@ fn process_sign_v2(
     data: &[u8],
 ) -> ProgramResult {
     let account_ctx = SignV2Accounts::context(accounts)?;
-    sign_v2(account_ctx, accounts, data, account_classification)
+    // Keep integrity-hash scratch separate from sign_v2's isolation guard.
+    let mut account_snapshots = [core::mem::MaybeUninit::uninit(); MAX_ACCOUNT_SNAPSHOTS];
+    sign_v2(
+        account_ctx,
+        accounts,
+        data,
+        account_classification,
+        &mut account_snapshots,
+    )
 }
 
 /// Processes an AddAuthorityV1 instruction.

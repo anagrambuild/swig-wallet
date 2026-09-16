@@ -19,6 +19,7 @@ use litesvm_token::spl_token;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
     account::Account,
+    clock::Clock,
     instruction::InstructionError,
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
@@ -386,7 +387,7 @@ fn c3_secp256k1_authority_can_set() {
         swig_pubkey,
         context.default_payer.pubkey(),
         signing_fn,
-        0, // current_slot
+        context.svm.get_sysvar::<Clock>().slot,
         next_counter,
         0, // role_id
         claimer.to_bytes(),
@@ -431,7 +432,7 @@ fn c6_secp256r1_authority_can_set() {
         swig_pubkey,
         context.default_payer.pubkey(),
         authority_fn,
-        0, // current_slot
+        context.svm.get_sysvar::<Clock>().slot,
         1, // counter
         0, // role_id
         claimer.to_bytes(),
