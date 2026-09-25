@@ -20,6 +20,9 @@ pub mod instructions {
     /// Invalid discriminator for testing failures
     pub const INVALID_DISCRIMINATOR: [u8; 8] = [9, 9, 9, 9, 9, 9, 9, 9];
 
+    /// Mutate a field owned by this test program for ProgramScope regressions.
+    pub const WRITE_U64: [u8; 8] = *b"writeu64";
+
     /// Generic proof discriminator used by ReplaceAuthority tests.
     pub const REPLACE_AUTHORITY_PROOF_V1: [u8; 8] = *b"rplauth1";
 
@@ -61,6 +64,21 @@ pub fn process_instruction(
     let remaining_data = &instruction_data[8..];
 
     match discriminator {
+        instructions::WRITE_U64 => {
+            if accounts.len() != 1 || remaining_data.len() != 16 || accounts[0].owner != program_id
+            {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let offset = u64::from_le_bytes(remaining_data[..8].try_into().unwrap()) as usize;
+            let end = offset
+                .checked_add(8)
+                .ok_or(ProgramError::InvalidInstructionData)?;
+            let mut data = accounts[0].try_borrow_mut_data()?;
+            data.get_mut(offset..end)
+                .ok_or(ProgramError::InvalidAccountData)?
+                .copy_from_slice(&remaining_data[8..]);
+            Ok(())
+        },
         instructions::TEST_TOKEN_TRANSFER => process_test_token_transfer(accounts, remaining_data),
         instructions::REPLACE_AUTHORITY_PROOF_V1 => {
             process_replace_authority_proof(accounts, remaining_data)

@@ -56,6 +56,14 @@ forwarded signer retains ordinary Solana signer privileges. Unknown programs'
 authority semantics are not inferred. Strict purpose-limited co-signing would
 require a separate execution or authorization design.
 
+## ProgramScope spending
+
+ProgramScope snapshots are selected after authentication from the requested
+role's actions. The same role and field supply the pre-CPI balance, post-CPI
+balance, integrity checks, and limit consumption. Other roles cannot supply a
+baseline, and an unreadable acting-role field is an error rather than a skipped
+accounting step.
+
 ## Token-2022 extension compatibility
 
 SignV2's restricted token checks and the outer-signer isolation guard allow the
