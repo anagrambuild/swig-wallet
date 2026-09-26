@@ -362,10 +362,6 @@ pub fn sign_v2(
             continue;
         }
 
-        if matches!(account_classifier, AccountClassification::None) {
-            isolation.snapshot(index)?;
-        }
-
         let hash = match account_classifier {
             AccountClassification::ThisSwigV2 { .. } => {
                 // For ThisSwigV2 accounts, hash the entire account data and owner to ensure no
@@ -421,7 +417,7 @@ pub fn sign_v2(
                 let hash = hash_except(&data, account.owner(), &exclude_ranges);
                 Some(hash)
             },
-            AccountClassification::ProgramScope { .. } => {
+            AccountClassification::None => {
                 let data = unsafe { account.borrow_data_unchecked() };
                 // For program scope, we need to get the actual program scope to know what to
                 // exclude, and include owner in hash
@@ -432,13 +428,21 @@ pub fn sign_v2(
                     let start = program_scope.balance_field_start as usize;
                     let end = program_scope.balance_field_end as usize;
                     if start < end && end <= data.len() {
+                        // Both snapshots and enforcement use this authenticated role.
+                        *account_classifier = AccountClassification::ProgramScope {
+                            balance: program_scope.read_account_balance(data)?,
+                            spent: 0,
+                        };
                         let exclude_ranges = [start..end];
                         let hash = hash_except(&data, account.owner(), &exclude_ranges);
                         Some(hash)
                     } else {
-                        None
+                        return Err(SwigError::InvalidProgramScopeBalanceFields.into());
                     }
                 } else {
+                    // Scoped accounts already have role-specific integrity checks.
+                    // Capture only accounts outside the acting role's scope.
+                    isolation.snapshot(index)?;
                     None
                 }
             },
@@ -594,24 +598,20 @@ pub fn sign_v2(
                         // summing would double-count it against the limit.
                         *spent = spent.saturating_add(lamports_spent.max(stake_spent));
                     },
-                    AccountClassification::ProgramScope {
-                        role_index: _,
-                        balance,
-                        spent,
-                    } => {
+                    AccountClassification::ProgramScope { balance, spent } => {
                         let account_key = account.key();
                         let Some(program_scope) = RoleMut::get_action_mut::<ProgramScope>(
                             role.actions,
                             account_key.as_ref(),
                         )?
                         else {
-                            continue;
+                            return Err(
+                                SwigAuthenticateError::PermissionDeniedMissingPermission.into()
+                            );
                         };
 
                         let data = unsafe { account.borrow_data_unchecked() };
-                        let Ok(current) = program_scope.read_account_balance(data) else {
-                            continue;
-                        };
+                        let current = program_scope.read_account_balance(data)?;
 
                         if current < *balance {
                             *spent = spent.saturating_add(*balance - current);

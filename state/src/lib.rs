@@ -87,10 +87,8 @@ pub enum AccountClassification {
         /// Amount staked/unstaked during this transaction
         spent: u64,
     },
-    /// A program scope account with role information
+    /// A program scope account classified from the authenticated role
     ProgramScope {
-        /// Index of the role associated with this scope
-        role_index: u8,
         /// Balance in the program scope
         balance: u128,
         /// Amount spent from this program scope during this transaction
