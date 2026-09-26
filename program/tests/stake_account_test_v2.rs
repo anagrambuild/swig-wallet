@@ -43,7 +43,8 @@ struct TestContext {
 
 impl TestContext {
     fn new() -> Self {
-        let client = RpcClient::new(LOCALHOST);
+        let rpc_url = std::env::var("SWIG_TEST_RPC_URL").unwrap_or_else(|_| LOCALHOST.to_owned());
+        let client = RpcClient::new(rpc_url);
         client
             .get_health()
             .expect("stake tests require the externally managed test validator");

@@ -116,7 +116,8 @@ fn snapshots_cover_extended_mints_and_multisig_token_owners() {
             ),
         ],
         |accounts| {
-            let mut guard = IsolationGuard::new(accounts, &[9; 32]).unwrap();
+            let mut guard = IsolationGuard::new(accounts);
+            guard.capture_signers(&[9; 32]).unwrap();
             for index in 0..accounts.len() {
                 guard.snapshot(index).unwrap();
             }
@@ -147,6 +148,28 @@ fn snapshots_cover_extended_mints_and_multisig_token_owners() {
 }
 
 #[test]
+fn signer_baseline_is_captured_after_guard_allocation() {
+    let mut signer = account(SYSTEM_PROGRAM_ID, vec![]);
+    signer.lamports = 0;
+    with_accounts(&[(Pubkey::new_unique(), signer, true)], |accounts| {
+        let mut guard = IsolationGuard::new(accounts);
+        // Allocation may precede authentication; the baseline must not.
+        *accounts[0].try_borrow_mut_lamports().unwrap() = 10_000_000;
+        guard.capture_signers(&[9; 32]).unwrap();
+        guard.snapshot(0).unwrap();
+        assert_eq!(guard.validate(), Ok(()));
+
+        // This is an existing funded signer at capture time, so its System
+        // ownership must remain protected even though it was empty at new().
+        unsafe { accounts[0].assign(&crate::SPL_TOKEN_ID) };
+        assert_eq!(
+            guard.validate(),
+            Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into())
+        );
+    });
+}
+
+#[test]
 fn existing_signer_keeps_system_ownership_while_receiving_sol() {
     with_accounts(
         &[(
@@ -155,7 +178,8 @@ fn existing_signer_keeps_system_ownership_while_receiving_sol() {
             true,
         )],
         |accounts| {
-            let mut guard = IsolationGuard::new(accounts, &[9; 32]).unwrap();
+            let mut guard = IsolationGuard::new(accounts);
+            guard.capture_signers(&[9; 32]).unwrap();
             guard.snapshot(0).unwrap();
             *accounts[0].try_borrow_mut_lamports().unwrap() += 1;
             assert_eq!(guard.validate(), Ok(()));
@@ -190,7 +214,8 @@ fn zero_signers_need_no_asset_snapshots_and_limits_fail_closed() {
         })
         .collect();
     with_accounts(&states, |accounts| {
-        let mut guard = IsolationGuard::new(accounts, &[9; 32]).unwrap();
+        let mut guard = IsolationGuard::new(accounts);
+        guard.capture_signers(&[9; 32]).unwrap();
         for index in 0..accounts.len() {
             guard.snapshot(index).unwrap();
         }
@@ -209,7 +234,8 @@ fn zero_signers_need_no_asset_snapshots_and_limits_fail_closed() {
         ),
     );
     with_accounts(&states, |accounts| {
-        let mut guard = IsolationGuard::new(accounts, &[9; 32]).unwrap();
+        let mut guard = IsolationGuard::new(accounts);
+        guard.capture_signers(&[9; 32]).unwrap();
         for index in 0..accounts.len() - 1 {
             guard.snapshot(index).unwrap();
         }

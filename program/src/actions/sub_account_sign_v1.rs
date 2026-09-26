@@ -200,7 +200,8 @@ pub fn sub_account_sign_v1(
     let sub_account_bump = sub_account.bump;
     let sub_account_role_id = sub_account.role_id;
     let sub_account_swig_id = sub_account.swig_id;
-    let mut isolation = IsolationGuard::new(all_accounts, ctx.accounts.sub_account.key())?;
+    let mut isolation = IsolationGuard::new(all_accounts);
+    isolation.capture_signers(ctx.accounts.sub_account.key())?;
     for (index, account) in all_accounts.iter().enumerate() {
         if account.is_writable() && account.key() != ctx.accounts.sub_account.key() {
             isolation.snapshot(index)?;

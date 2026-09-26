@@ -112,7 +112,7 @@ fn test_secp256k1_basic_signing_v2() {
     );
 
     // Sign the transaction
-    let current_slot = 0; // Using 0 since LiteSVM doesn't expose get_slot
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
     let signing_fn = |payload: &[u8]| -> [u8; 65] {
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&payload[..32]);
@@ -640,7 +640,7 @@ fn test_secp256k1_add_ed25519_authority_v2() {
         swig_key,
         context.default_payer.pubkey(),
         signing_fn,
-        0, // current slot
+        context.svm.get_sysvar::<Clock>().slot,
         1, // counter = 1 (first transaction)
         0, // role_id of the primary wallet
         AuthorityConfig {

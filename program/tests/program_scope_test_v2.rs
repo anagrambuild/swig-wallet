@@ -245,10 +245,13 @@ fn test_token_transfer_with_program_scope_v2() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    // With pinned LiteSVM 0.11/p-token, a direct transfer costs 76 CU.
-    // SignV2 overhead with fee snapshots is 6,324 CU locally. Allow the
-    // 106 CU build-environment difference measured by the parent PR in CI.
+    // Preserve the existing overhead ceiling and bound total SignV2 cost by
+    // main ff2929b (SBPF v1, platform-tools v1.53, LiteSVM 0.16).
     assert!(swig_transfer_cu - regular_transfer_cu <= 6450);
+    assert!(
+        swig_transfer_cu <= 6_408,
+        "ProgramScope SignV2 consumed {swig_transfer_cu} CU, exceeding the main baseline of 6408 CU"
+    );
 }
 
 /// Helper function to perform token transfers through the swig using SignV2

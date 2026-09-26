@@ -114,7 +114,7 @@ const TOKEN_ACCOUNT_INITIALIZED_STATE: u8 = 1;
 const NO_EXCLUDE_RANGES: &[core::ops::Range<usize>] = &[];
 
 /// Maximum number of accounts that can have pre-CPI snapshot hashes.
-const MAX_ACCOUNT_SNAPSHOTS: usize = 100;
+pub(super) const MAX_ACCOUNT_SNAPSHOTS: usize = 100;
 
 const SYSTEM_TRANSFER_DISCRIMINATOR: u32 = 2;
 const SYSTEM_CREATE_ACCOUNT_DISCRIMINATOR: u32 = 0;
@@ -228,15 +228,17 @@ impl<'a> SignV2<'a> {
 /// * `all_accounts` - All accounts involved in the transaction
 /// * `data` - Raw signing instruction data
 /// * `account_classifiers` - Classifications for involved accounts
+/// * `account_snapshots` - Uninitialized integrity hashes owned by the dispatch frame
 ///
 /// # Returns
 /// * `ProgramResult` - Success or error status
-#[inline(always)]
+#[inline(never)]
 pub fn sign_v2(
     ctx: Context<SignV2Accounts>,
     all_accounts: &[AccountInfo],
     data: &[u8],
     account_classifiers: &mut [AccountClassification],
+    account_snapshots: &mut [MaybeUninit<[u8; 32]>; MAX_ACCOUNT_SNAPSHOTS],
 ) -> ProgramResult {
     if !matches!(
         account_classifiers[0],
@@ -284,7 +286,8 @@ pub fn sign_v2(
     }
     // Intentionally no restricted keys: SignV2 forwards existing outer signer
     // bits in compact CPI metas in addition to the Swig wallet PDA signer.
-    let mut isolation = IsolationGuard::new(all_accounts, ctx.accounts.swig_wallet_address.key())?;
+    let mut isolation = IsolationGuard::new(all_accounts);
+    isolation.capture_signers(ctx.accounts.swig_wallet_address.key())?;
     let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,
@@ -344,10 +347,7 @@ pub fn sign_v2(
     // Snapshot hashes are the pre-CPI integrity baseline for writable accounts.
     // SignV2 permits specific balance fields to change, then verifies the rest
     // of each protected account is unchanged after CPI execution.
-    const UNINIT_HASH: MaybeUninit<[u8; 32]> = MaybeUninit::uninit();
-    let mut account_snapshots: [MaybeUninit<[u8; 32]>; MAX_ACCOUNT_SNAPSHOTS] =
-        [UNINIT_HASH; MAX_ACCOUNT_SNAPSHOTS];
-    // Offsets are selected once from pre-CPI extension metadata.
+    // Fee offsets are selected once from pre-CPI extension metadata.
     const UNINIT_FEE_OFFSET: MaybeUninit<Option<u16>> = MaybeUninit::uninit();
     let mut token_fee_offsets = [UNINIT_FEE_OFFSET; MAX_ACCOUNT_SNAPSHOTS];
 

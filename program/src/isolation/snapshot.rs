@@ -2,9 +2,7 @@
 
 use std::mem::MaybeUninit;
 
-use pinocchio::{
-    account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, ProgramResult,
-};
+use pinocchio::{account_info::AccountInfo, pubkey::Pubkey, ProgramResult};
 
 use super::{
     frozen::any_signer_controls_frozen,
@@ -99,18 +97,26 @@ impl<T: Copy, const N: usize> Snapshots<T, N> {
 }
 
 impl<'a> IsolationGuard<'a> {
-    /// Capture outer signers before execution. The wallet PDA is covered by
-    /// Swig's permission checks, not personal-asset isolation.
-    #[inline(never)]
-    pub fn new(all_accounts: &'a [AccountInfo], pda: &Pubkey) -> Result<Self, ProgramError> {
-        let mut guard = Self {
+    /// Allocate empty scratch in the caller's frame. After authentication, call
+    /// `capture_signers` before adding snapshots or executing any CPI.
+    #[inline(always)]
+    pub fn new(all_accounts: &'a [AccountInfo]) -> Self {
+        Self {
             accounts: all_accounts,
             signers: Snapshots::new(),
             creations: Snapshots::new(),
             creation_overflow: false,
             tokens: Snapshots::new(),
             frozen: Snapshots::new(),
-        };
+        }
+    }
+
+    /// Capture outer signers once, after authentication and before any CPI.
+    /// The wallet PDA is covered by Swig's permission checks.
+    #[inline(always)]
+    pub fn capture_signers(&mut self, pda: &Pubkey) -> ProgramResult {
+        let all_accounts = self.accounts;
+        let guard = self;
         for (index, account) in all_accounts.iter().enumerate() {
             if !account.is_signer() || account.key() == pda {
                 continue;
@@ -136,7 +142,7 @@ impl<'a> IsolationGuard<'a> {
                     && account.data_len() == 0,
             })?;
         }
-        Ok(guard)
+        Ok(())
     }
 
     /// Snapshot one writable account before any CPI. Call once per account,

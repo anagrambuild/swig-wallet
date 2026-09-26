@@ -1,7 +1,8 @@
 //! Protect outer signers' personal assets across Swig-authorized CPIs.
 //!
-//! Construct an `IsolationGuard`, add the relevant account snapshots before the
-//! first CPI, then pass the guard by reference and call `validate` after execution.
+//! Construct an empty `IsolationGuard`, call `capture_signers` after authentication,
+//! and add the relevant account snapshots before the first CPI. Pass the guard by
+//! reference and call `validate` after execution.
 //! The guard retains its account list so validation uses the captured accounts.
 //! Snapshots are bounded local scratch; they add no serialized state, instruction
 //! fields, or heap allocations.

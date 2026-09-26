@@ -647,17 +647,17 @@ deduplicated account indexes to minimize transaction size.
 ## Build and Test
 
 ```
-Build:   cargo build-sbf
+Build:   cargo build-sbf --arch v3 --tools-version v1.53
          Outputs: target/deploy/swig.so
          build.rs auto-generates idl.json via shank
 
-Test:    cargo build-sbf && cargo nextest run --config-file nextest.toml \
+Test:    cargo build-sbf --arch v3 --tools-version v1.53 && cargo nextest run --config-file nextest.toml \
            --profile ci --all --workspace --no-fail-fast
 
          Feature-gated tests:
            --features=program_scope_test   (ProgramScope coverage)
            --features=stake_tests          (Stake action coverage)
 
-Toolchain: Rust 1.84.0 (via rust-toolchain.toml)
-           Agave toolchain >= 2.2.1
+Toolchain: Rust 1.96.1 (via rust-toolchain.toml)
+           Agave 4.2.2 (matches CI)
 ```
