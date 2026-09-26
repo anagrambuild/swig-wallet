@@ -658,6 +658,6 @@ Test:    cargo build-sbf --arch v3 --tools-version v1.53 && cargo nextest run --
            --features=program_scope_test   (ProgramScope coverage)
            --features=stake_tests          (Stake action coverage)
 
-Toolchain: Rust 1.84.0 (via rust-toolchain.toml)
-           Agave toolchain >= 2.2.1
+Toolchain: Rust 1.96.1 (via rust-toolchain.toml)
+           Agave 4.2.2 (matches CI)
 ```
