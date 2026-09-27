@@ -67,7 +67,7 @@ const TOKEN_BALANCE_EXCLUDE_RANGE: core::ops::Range<usize> = 64..72;
 
 // Only the reserve payload is mutable. The COption tag stays protected.
 const TOKEN_NATIVE_RESERVE_RANGE: core::ops::Range<usize> = 113..121;
-const WSOL_MINT: Pubkey = from_str("So11111111111111111111111111111111111111112");
+pub(super) const WSOL_MINT: Pubkey = from_str("So11111111111111111111111111111111111111112");
 const TOKEN_EXCLUDE_RANGES: &[core::ops::Range<usize>] = &[TOKEN_BALANCE_EXCLUDE_RANGE];
 const WSOL_EXCLUDE_RANGES: &[core::ops::Range<usize>] =
     &[TOKEN_BALANCE_EXCLUDE_RANGE, TOKEN_NATIVE_RESERVE_RANGE];
@@ -519,9 +519,14 @@ pub fn sign_v2(
                     } => {
                         let data = unsafe { account.borrow_data_unchecked() };
 
-                        // Preserve the separate, permission-gated close path.
+                        // Closing WSOL releases every lamport, even deposits not
+                        // yet reflected in the token amount by SyncNative.
                         if native_reserve.is_some() && (data.is_empty() || account.lamports() == 0)
                         {
+                            *spent = spent
+                                .checked_add(*balance)
+                                .ok_or(SwigError::AccountDataModifiedUnexpectedly)?;
+                            *balance = 0;
                             continue;
                         }
                         if data.len() < TOKEN_BALANCE_RANGE.end {
@@ -740,7 +745,7 @@ pub fn sign_v2(
                 // The on-chain token program resizes closed accounts to zero bytes,
                 // while its native test processor retains zeroed data. Both forms
                 // drain the account's lamports and assign it to the system program.
-                if data.is_empty() || account_info.lamports() == 0 {
+                let mint = if data.is_empty() || account_info.lamports() == 0 {
                     let has_close_permission =
                         RoleMut::get_action_mut::<CloseSwigAuthority>(actions, &[])?.is_some();
                     if !has_close_permission {
@@ -750,47 +755,55 @@ pub fn sign_v2(
                         return Err(SwigError::AccountDataModifiedUnexpectedly.into());
                     }
 
-                    continue;
-                }
-
-                if data.len() < TOKEN_ACCOUNT_BASE_DATA_LEN {
-                    return Err(SwigError::AccountDataModifiedUnexpectedly.into());
-                }
-
-                if account_info.is_writable() {
-                    let exclude_ranges = if native_reserve.is_some() {
-                        WSOL_EXCLUDE_RANGES
-                    } else {
-                        TOKEN_EXCLUDE_RANGES
-                    };
-                    let current_hash = hash_with_transfer_fee(
-                        data,
-                        account_info.owner(),
-                        exclude_ranges,
-                        // Every writable SwigTokenAccount saved this offset with its hash.
-                        unsafe { *token_fee_offsets[index].assume_init_ref() },
-                    )
-                    .map_err(|_| SwigError::AccountDataModifiedUnexpectedly)?;
-                    let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
-                    if *snapshot_hash != current_hash {
+                    if native_reserve.is_none() {
+                        continue;
+                    }
+                    // Identity was validated before CPI; closed data has no mint.
+                    WSOL_MINT.as_slice()
+                } else {
+                    if data.len() < TOKEN_ACCOUNT_BASE_DATA_LEN {
                         return Err(SwigError::AccountDataModifiedUnexpectedly.into());
                     }
-                }
 
-                let mint = unsafe { data.get_unchecked(TOKEN_MINT_RANGE) };
-                let state = unsafe { *data.get_unchecked(TOKEN_STATE_INDEX) };
-                let authority = unsafe { data.get_unchecked(TOKEN_AUTHORITY_RANGE) };
+                    if account_info.is_writable() {
+                        let exclude_ranges = if native_reserve.is_some() {
+                            WSOL_EXCLUDE_RANGES
+                        } else {
+                            TOKEN_EXCLUDE_RANGES
+                        };
+                        let current_hash = hash_with_transfer_fee(
+                            data,
+                            account_info.owner(),
+                            exclude_ranges,
+                            // Every writable SwigTokenAccount saved this offset with its hash.
+                            unsafe { *token_fee_offsets[index].assume_init_ref() },
+                        )
+                        .map_err(|_| SwigError::AccountDataModifiedUnexpectedly)?;
+                        let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
+                        if *snapshot_hash != current_hash {
+                            return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+                        }
+                    }
 
-                if authority != ctx.accounts.swig_wallet_address.key() {
-                    return Err(
-                        SwigAuthenticateError::PermissionDeniedTokenAccountAuthorityNotSwig.into(),
-                    );
-                }
-                if state != TOKEN_ACCOUNT_INITIALIZED_STATE {
-                    return Err(
-                        SwigAuthenticateError::PermissionDeniedTokenAccountNotInitialized.into(),
-                    );
-                }
+                    let mint = unsafe { data.get_unchecked(TOKEN_MINT_RANGE) };
+                    let state = unsafe { *data.get_unchecked(TOKEN_STATE_INDEX) };
+                    let authority = unsafe { data.get_unchecked(TOKEN_AUTHORITY_RANGE) };
+
+                    if authority != ctx.accounts.swig_wallet_address.key() {
+                        return Err(
+                            SwigAuthenticateError::PermissionDeniedTokenAccountAuthorityNotSwig
+                                .into(),
+                        );
+                    }
+                    if state != TOKEN_ACCOUNT_INITIALIZED_STATE {
+                        return Err(
+                            SwigAuthenticateError::PermissionDeniedTokenAccountNotInitialized
+                                .into(),
+                        );
+                    }
+
+                    mint
+                };
 
                 let total_token_spent = *spent;
                 if total_token_spent == 0 {
@@ -957,7 +970,7 @@ pub fn sign_v2(
 /// The reserve exception is limited to the legacy Token program's native mint.
 /// Check every byte of the option tag; the pinned zero-copy token accessor only
 /// inspects its first byte and is not a canonical option decoder.
-fn read_wsol_reserve(owner: &Pubkey, data: &[u8]) -> Result<u64, ProgramError> {
+pub(super) fn read_wsol_reserve(owner: &Pubkey, data: &[u8]) -> Result<u64, ProgramError> {
     if owner != &SPL_TOKEN_ID
         || data.len() != TOKEN_ACCOUNT_BASE_DATA_LEN
         || data[TOKEN_MINT_RANGE] != WSOL_MINT
@@ -982,15 +995,19 @@ fn validate_wsol_reserve_change(before: u64, after: u64, required: u64) -> Progr
     Ok(())
 }
 
-fn wsol_accounted_balance(amount: u64, reserve: u64, lamports: u64) -> Result<u64, ProgramError> {
+pub(super) fn wsol_accounted_balance(
+    amount: u64,
+    reserve: u64,
+    lamports: u64,
+) -> Result<u64, ProgramError> {
     let accounted = amount
         .checked_add(reserve)
         .ok_or(SwigError::AccountDataModifiedUnexpectedly)?;
-    // Unsynchronized SOL deposits can leave additional unaccounted lamports.
+    // Validate token bookkeeping, but include unsynchronized SOL in spending.
     if accounted > lamports {
         return Err(SwigError::AccountDataModifiedUnexpectedly.into());
     }
-    Ok(accounted)
+    Ok(lamports)
 }
 
 fn assert_wallet_address_invariants(wallet: &AccountInfo) -> ProgramResult {
@@ -1083,7 +1100,7 @@ fn has_sol_destination_limits(actions_data: &[u8]) -> Result<bool, ProgramError>
 }
 
 /// Checks if the role has token destination limits configured for a mint.
-fn has_token_destination_limits(
+pub(super) fn has_token_destination_limits(
     actions_data: &[u8],
     token_mint: &[u8],
 ) -> Result<bool, ProgramError> {
@@ -1328,7 +1345,7 @@ mod wsol_rent_tests {
         let after = wsol_accounted_balance(1_000_183_711, 1_855_569, lamports).unwrap();
         assert_eq!(before, after);
         // Additional SOL can be present before SyncNative accounts for it.
-        assert_eq!(wsol_accounted_balance(10, 20, 40).unwrap(), 30);
+        assert_eq!(wsol_accounted_balance(10, 20, 40).unwrap(), 40);
         assert!(wsol_accounted_balance(10, 20, 29).is_err());
         assert!(wsol_accounted_balance(u64::MAX, 1, u64::MAX).is_err());
     }
