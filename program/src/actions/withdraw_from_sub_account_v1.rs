@@ -110,6 +110,7 @@ pub fn withdraw_from_sub_account_v1(
     data: &[u8],
     account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
+    return Err(ProgramError::InvalidInstructionData);
     // Verify that the swig account is owned by our program and sub_account is
     // system owned
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;

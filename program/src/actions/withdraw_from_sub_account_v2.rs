@@ -100,6 +100,7 @@ pub fn withdraw_from_sub_account_v2(
     data: &[u8],
     _account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
+    return Err(ProgramError::InvalidInstructionData);
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     check_system_owner(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
     check_system_owner(
