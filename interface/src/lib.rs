@@ -679,7 +679,7 @@ impl SignV2Instruction {
             AccountMeta::new_readonly(authority, true),
         ];
         let (mut accounts, ixs) =
-            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+            compact_instructions(swig_wallet_address, accounts, vec![inner_instruction]);
         for account in &mut accounts {
             if transaction_signers
                 .iter()
@@ -743,7 +743,8 @@ impl SignV2Instruction {
             }
         }
 
-        let (mut accounts, ixs) = compact_instructions(swig_account, accounts, inner_instructions);
+        let (mut accounts, ixs) =
+            compact_instructions(swig_wallet_address, accounts, inner_instructions);
 
         // Add instructions sysvar AFTER compact_instructions to ensure stable index
         let instruction_sysvar_index = accounts.len() as u8;
@@ -786,7 +787,7 @@ impl SignV2Instruction {
         ];
 
         let (mut accounts, ixs) =
-            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+            compact_instructions(swig_wallet_address, accounts, vec![inner_instruction]);
 
         let instruction_sysvar_index = accounts.len() as u8;
         accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
@@ -852,7 +853,7 @@ impl SignV2Instruction {
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
         let (mut accounts, ixs) =
-            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+            compact_instructions(swig_wallet_address, accounts, vec![inner_instruction]);
         for account in &mut accounts {
             if transaction_signers
                 .iter()
@@ -947,7 +948,7 @@ impl SignV2Instruction {
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
         let (mut accounts, ixs) =
-            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+            compact_instructions(swig_wallet_address, accounts, vec![inner_instruction]);
         for account in &mut accounts {
             if transaction_signers
                 .iter()

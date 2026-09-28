@@ -39,12 +39,12 @@ fn generic_program_exec_sign_v2_keeps_original_inner_instructions() {
             vec![
                 Instruction {
                     program_id: first_program,
-                    accounts: vec![AccountMeta::new(destination, false)],
+                    accounts: vec![AccountMeta::new_readonly(destination, false)],
                     data: vec![10, 11],
                 },
                 Instruction {
                     program_id: second_program,
-                    accounts: vec![AccountMeta::new_readonly(destination, false)],
+                    accounts: vec![AccountMeta::new(destination, false)],
                     data: vec![12],
                 },
             ],
@@ -56,10 +56,17 @@ fn generic_program_exec_sign_v2_keeps_original_inner_instructions() {
     assert_eq!(instructions[0].program_id, TEST_PROGRAM_ID);
     let sign = &instructions[1];
     assert_eq!(sign.program_id, program_id());
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&swig_id), &program_id()).0;
+    let wallet =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
     assert!(sign
         .accounts
         .iter()
-        .any(|account| account.pubkey == destination));
+        .any(|account| account.pubkey == wallet && !account.is_signer));
+    assert!(sign
+        .accounts
+        .iter()
+        .any(|account| account.pubkey == destination && account.is_writable));
     assert!(sign
         .accounts
         .iter()
@@ -94,9 +101,30 @@ fn generic_program_exec_sign_v2_keeps_original_inner_instructions() {
 #[test_log::test]
 fn test_program_exec_sign_with_preceding_instruction() {
     let mut context = setup_test_context().unwrap();
+    context
+        .svm
+        .add_program_from_file(
+            TEST_PROGRAM_ID,
+            "../target/deploy/test_program_authority.so",
+        )
+        .unwrap();
     let swig_id = [42u8; 32];
     let ed25519_authority = Keypair::new();
     let root_role_id = 0;
+    let state_account = Pubkey::new_unique();
+    context
+        .svm
+        .set_account(
+            state_account,
+            solana_sdk::account::Account {
+                lamports: 1_000_000,
+                data: vec![0],
+                owner: TEST_PROGRAM_ID,
+                executable: false,
+                rent_epoch: 0,
+            },
+        )
+        .unwrap();
 
     // Create Swig wallet with Ed25519 root authority
     let (swig_key, _, _) = create_swig_ed25519(&mut context, &ed25519_authority, swig_id).unwrap();
@@ -126,6 +154,8 @@ fn test_program_exec_sign_with_preceding_instruction() {
                 accounts: vec![
                     AccountMeta::new_readonly(swig_key_for_closure, false), // config
                     AccountMeta::new_readonly(swig_wallet_for_closure, false), // wallet
+                    AccountMeta::new_readonly(state_account, false),
+                    AccountMeta::new_readonly(program_id(), false),
                 ],
                 data: VALID_DISCRIMINATOR.to_vec(),
             }
@@ -176,13 +206,62 @@ fn test_program_exec_sign_with_preceding_instruction() {
         "Should have 2 roles (root + program exec)"
     );
 
-    println!("✓ Successfully added ProgramExec authority");
-    println!("  - Total roles: {}", swig_data.state.roles);
+    let recipient = Pubkey::new_unique();
+    let rent = context.svm.minimum_balance_for_rent_exemption(0);
+    context.svm.airdrop(&recipient, rent).unwrap();
+    let first =
+        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient, 1000);
+    let second =
+        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient, 2000);
+    let mut sign_builder =
+        SwigInstructionBuilder::new(swig_id, Box::new(program_exec_role), payer, 1);
+    let sign_ixs = sign_builder
+        .sign_v2_instruction(vec![first, second], None)
+        .unwrap();
+    let msg =
+        v0::Message::try_compile(&payer, &sign_ixs, &[], context.svm.latest_blockhash()).unwrap();
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&context.default_payer])
+        .unwrap();
+    context.svm.send_transaction(tx).unwrap();
+    assert_eq!(
+        context.svm.get_account(&recipient).unwrap().lamports,
+        rent + 3000
+    );
 
-    // Note: To actually test signing with ProgramExec, the TEST_PROGRAM would
-    // need to be deployed and executed. This test verifies that the
-    // authority can be added and the authority data is correctly generated
-    // with the closure-based function pattern.
+    let invalid_role =
+        ProgramExecClientRole::new(TEST_PROGRAM_ID, VALID_DISCRIMINATOR.to_vec(), move || {
+            Instruction {
+                program_id: TEST_PROGRAM_ID,
+                accounts: vec![
+                    AccountMeta::new_readonly(swig_key, false),
+                    AccountMeta::new_readonly(swig_wallet_address, false),
+                    AccountMeta::new_readonly(state_account, false),
+                    AccountMeta::new_readonly(program_id(), false),
+                ],
+                data: vec![9; 8],
+            }
+        });
+    let mut invalid_builder =
+        SwigInstructionBuilder::new(swig_id, Box::new(invalid_role), payer, 1);
+    let invalid_ixs = invalid_builder
+        .sign_v2_instruction(
+            vec![solana_system_interface::instruction::transfer(
+                &swig_wallet_address,
+                &recipient,
+                1000,
+            )],
+            None,
+        )
+        .unwrap();
+    let msg = v0::Message::try_compile(&payer, &invalid_ixs, &[], context.svm.latest_blockhash())
+        .unwrap();
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&context.default_payer])
+        .unwrap();
+    assert!(context.svm.send_transaction(tx).is_err());
+    assert_eq!(
+        context.svm.get_account(&recipient).unwrap().lamports,
+        rent + 3000
+    );
 }
 
 #[test_log::test]

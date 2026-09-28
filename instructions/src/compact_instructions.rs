@@ -52,6 +52,8 @@ mod inner {
                 }
                 let account_index = hashmap.get(&ix_account.pubkey);
                 if let Some(index) = account_index {
+                    accounts[*index].is_writable |= ix_account.is_writable;
+                    accounts[*index].is_signer |= ix_account.is_signer;
                     accts.push(*index as u8);
                 } else {
                     let idx = accounts.len();
@@ -115,6 +117,8 @@ mod inner {
                 }
                 let account_index = hashmap.get(&ix_account.pubkey);
                 if let Some(index) = account_index {
+                    accounts[*index].is_writable |= ix_account.is_writable;
+                    accounts[*index].is_signer |= ix_account.is_signer;
                     accts.push(*index as u8);
                 } else {
                     let idx = accounts.len();
