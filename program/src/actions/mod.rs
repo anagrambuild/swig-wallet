@@ -6,6 +6,8 @@
 //! instruction's business logic.
 
 pub mod add_authority_v1;
+pub mod close_sub_account_v1;
+pub mod close_sub_account_v2;
 pub mod close_swig_v1;
 pub mod close_token_account_v1;
 pub mod create_session_v1;
@@ -17,6 +19,7 @@ pub mod remove_authority_v1;
 pub mod replace_authority_v1;
 pub mod set_rent_claimer_v1;
 pub mod sign_v2;
+pub(crate) mod sub_account_lifecycle;
 pub mod sub_account_sign_v1;
 pub mod sub_account_sign_v2;
 pub mod toggle_sub_account_v1;
@@ -28,28 +31,31 @@ pub mod withdraw_from_sub_account_v2;
 
 use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
-
-use swig_assertions::{check_self_owned, find_self_pda};
+use swig_assertions::{
+    check_self_owned, check_stack_height, check_top_level_or_signer, find_self_pda,
+};
 use swig_state::{
     swig::{swig_account_seeds, Swig},
     Discriminator, Transmutable,
 };
 
 use self::{
-    add_authority_v1::*, close_swig_v1::*, close_token_account_v1::*, create_session_v1::*,
-    create_sub_account_v1::*, create_sub_account_v2::*, create_v1::*,
-    migrate_to_wallet_address_v1::*, remove_authority_v1::*, replace_authority_v1::*,
-    set_rent_claimer_v1::*, sign_v2::*, sub_account_sign_v1::*, sub_account_sign_v2::*,
-    toggle_sub_account_v1::*, toggle_sub_account_v2::*, transfer_assets_v1::*,
-    update_authority_v1::*, withdraw_from_sub_account_v1::*, withdraw_from_sub_account_v2::*,
+    add_authority_v1::*, close_sub_account_v1::*, close_sub_account_v2::*, close_swig_v1::*,
+    close_token_account_v1::*, create_session_v1::*, create_sub_account_v1::*,
+    create_sub_account_v2::*, create_v1::*, migrate_to_wallet_address_v1::*,
+    remove_authority_v1::*, replace_authority_v1::*, set_rent_claimer_v1::*, sign_v2::*,
+    sub_account_sign_v1::*, sub_account_sign_v2::*, toggle_sub_account_v1::*,
+    toggle_sub_account_v2::*, transfer_assets_v1::*, update_authority_v1::*,
+    withdraw_from_sub_account_v1::*, withdraw_from_sub_account_v2::*,
 };
 use crate::{
     error::SwigError,
     instruction::{
         accounts::{
-            AddAuthorityV1Accounts, CloseSwigV1Accounts, CloseTokenAccountV1Accounts,
-            CreateSessionV1Accounts, CreateSubAccountV1Accounts, CreateSubAccountV2Accounts,
-            CreateV1Accounts, MigrateToWalletAddressV1Accounts, RemoveAuthorityV1Accounts,
+            AddAuthorityV1Accounts, CloseSubAccountV1Accounts, CloseSubAccountV2Accounts,
+            CloseSwigV1Accounts, CloseTokenAccountV1Accounts, CreateSessionV1Accounts,
+            CreateSubAccountV1Accounts, CreateSubAccountV2Accounts, CreateV1Accounts,
+            MigrateToWalletAddressV1Accounts, RemoveAuthorityV1Accounts,
             ReplaceAuthorityV1Accounts, SetRentClaimerV1Accounts, SignV2Accounts,
             SubAccountSignV1Accounts, SubAccountSignV2Accounts, ToggleSubAccountV1Accounts,
             ToggleSubAccountV2Accounts, TransferAssetsV1Accounts, UpdateAuthorityV1Accounts,
@@ -59,6 +65,10 @@ use crate::{
     },
     AccountClassification,
 };
+
+// TODO: Remove once authorized cpi signer has migrated their app
+const AUTHORIZED_CPI_SIGNER: [u8; 32] =
+    pinocchio_pubkey::pubkey!("X4o2kSLzqEQjnAzhq3L3BW92aawMV2n2F37EXd2GMpy");
 
 /// Main entry point for processing Swig wallet instructions.
 ///
@@ -84,6 +94,18 @@ pub fn process_action(
     }
     let discriminator = unsafe { *(data.get_unchecked(..2).as_ptr() as *const u16) };
     let ix = SwigInstruction::from_primitive(discriminator);
+    // Sign instructions stay CPI-blocked. Everything else allows one authorized
+    // signer until that app migrates off inbound CPI.
+    if matches!(
+        ix,
+        SwigInstruction::SignV2
+            | SwigInstruction::SubAccountSignV1
+            | SwigInstruction::SubAccountSignV2
+    ) {
+        check_stack_height(1, SwigError::Cpi)?;
+    } else {
+        check_top_level_or_signer(accounts, &AUTHORIZED_CPI_SIGNER, SwigError::Cpi)?;
+    }
     // V1 sub-account PDAs share the parent config's id, not its address. Reject
     // alternate configs, including ones created before canonical creation was
     // enforced, on every V1 sub-account path without adding a PDA search to ordinary
@@ -94,6 +116,7 @@ pub fn process_action(
             | SwigInstruction::WithdrawFromSubAccountV1
             | SwigInstruction::SubAccountSignV1
             | SwigInstruction::ToggleSubAccountV1
+            | SwigInstruction::CloseSubAccountV1
     ) {
         let account = accounts.first().ok_or(SwigError::InvalidAccountsLength)?;
         check_self_owned(account, SwigError::OwnerMismatchSwigAccount)?;
@@ -148,6 +171,8 @@ pub fn process_action(
             process_transfer_assets_v1(accounts, account_classification, data)
         },
         SwigInstruction::CloseTokenAccountV1 => process_close_token_account_v1(accounts, data),
+        SwigInstruction::CloseSubAccountV1 => process_close_sub_account_v1(accounts, data),
+        SwigInstruction::CloseSubAccountV2 => process_close_sub_account_v2(accounts, data),
         SwigInstruction::CloseSwigV1 => process_close_swig_v1(accounts, data),
         SwigInstruction::ReplaceAuthorityV1 => process_replace_authority_v1(accounts, data),
         SwigInstruction::SetRentClaimerV1 => process_set_rent_claimer_v1(accounts, data),
@@ -183,7 +208,15 @@ fn process_sign_v2(
     data: &[u8],
 ) -> ProgramResult {
     let account_ctx = SignV2Accounts::context(accounts)?;
-    sign_v2(account_ctx, accounts, data, account_classification)
+    // Keep integrity-hash scratch separate from sign_v2's isolation guard.
+    let mut account_snapshots = [core::mem::MaybeUninit::uninit(); MAX_ACCOUNT_SNAPSHOTS];
+    sign_v2(
+        account_ctx,
+        accounts,
+        data,
+        account_classification,
+        &mut account_snapshots,
+    )
 }
 
 /// Processes an AddAuthorityV1 instruction.
@@ -230,6 +263,15 @@ fn process_create_session_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramRe
 fn process_create_sub_account_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = CreateSubAccountV1Accounts::context(accounts)?;
     create_sub_account_v1(account_ctx, data, accounts)
+}
+
+/// Processes a CloseSubAccountV1 instruction.
+///
+/// Closes a disabled V1 sub-account and updates the parent's active-child
+/// count.
+fn process_close_sub_account_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = CloseSubAccountV1Accounts::context(accounts)?;
+    close_sub_account_v1(account_ctx, data, accounts)
 }
 
 /// Processes a WithdrawFromSubAccountV1 instruction.
@@ -326,6 +368,12 @@ fn process_close_token_account_v1(accounts: &[AccountInfo], data: &[u8]) -> Prog
 fn process_close_swig_v1(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let account_ctx = CloseSwigV1Accounts::context(accounts)?;
     close_swig_v1(account_ctx, accounts, data)
+}
+
+/// Processes a CloseSubAccountV2 instruction.
+fn process_close_sub_account_v2(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let account_ctx = CloseSubAccountV2Accounts::context(accounts)?;
+    close_sub_account_v2(account_ctx, data, accounts)
 }
 
 /// Processes a SetRentClaimerV1 instruction.

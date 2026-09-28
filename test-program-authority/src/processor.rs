@@ -5,7 +5,7 @@ use solana_program::{
     entrypoint::ProgramResult,
     instruction::{AccountMeta, Instruction},
     msg,
-    program::invoke,
+    program::{invoke, invoke_signed},
     program_error::ProgramError,
     pubkey::Pubkey,
 };
@@ -20,11 +20,29 @@ pub mod instructions {
     /// Invalid discriminator for testing failures
     pub const INVALID_DISCRIMINATOR: [u8; 8] = [9, 9, 9, 9, 9, 9, 9, 9];
 
+    /// Mutate a field owned by this test program for ProgramScope regressions.
+    pub const WRITE_U64: [u8; 8] = *b"writeu64";
+
     /// Generic proof discriminator used by ReplaceAuthority tests.
     pub const REPLACE_AUTHORITY_PROOF_V1: [u8; 8] = *b"rplauth1";
 
+    /// CPI System::Assign against the first account (wallet PDA).
+    pub const MUTATE_WALLET_ASSIGN: [u8; 8] = [10, 10, 10, 10, 10, 10, 10, 10];
+
+    /// CPI System::Allocate against the first account (wallet PDA).
+    pub const MUTATE_WALLET_ALLOCATE: [u8; 8] = [11, 11, 11, 11, 11, 11, 11, 11];
+
+    /// CPI into a non-sign Swig instruction.
+    pub const INVOKE_SWIG_NON_SIGN: [u8; 8] = *b"swigcpi1";
+
     /// Compose ordinary WSOL synchronization and transfer in one caller CPI.
     pub const SYNC_NATIVE_AND_TRANSFER: [u8; 8] = *b"syncxfer";
+
+    /// Create an idempotent ATA through one or two protocol CPI levels.
+    pub const CREATE_NESTED_ATA: [u8; 8] = *b"nestdata";
+
+    /// Synchronize both WSOL accounts, then transfer through a vault or pool.
+    pub const SYNC_BOTH_NATIVE_AND_TRANSFER: [u8; 8] = *b"syncboth";
 }
 
 /// State account data format:
@@ -32,7 +50,7 @@ pub mod instructions {
 pub const STATE_SIZE: usize = 1;
 
 pub fn process_instruction(
-    _program_id: &Pubkey,
+    program_id: &Pubkey,
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
@@ -46,18 +64,89 @@ pub fn process_instruction(
     let remaining_data = &instruction_data[8..];
 
     match discriminator {
+        instructions::WRITE_U64 => {
+            if accounts.len() != 1 || remaining_data.len() != 16 || accounts[0].owner != program_id
+            {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let offset = u64::from_le_bytes(remaining_data[..8].try_into().unwrap()) as usize;
+            let end = offset
+                .checked_add(8)
+                .ok_or(ProgramError::InvalidInstructionData)?;
+            let mut data = accounts[0].try_borrow_mut_data()?;
+            data.get_mut(offset..end)
+                .ok_or(ProgramError::InvalidAccountData)?
+                .copy_from_slice(&remaining_data[8..]);
+            Ok(())
+        },
         instructions::TEST_TOKEN_TRANSFER => process_test_token_transfer(accounts, remaining_data),
         instructions::REPLACE_AUTHORITY_PROOF_V1 => {
             process_replace_authority_proof(accounts, remaining_data)
         },
+        instructions::MUTATE_WALLET_ASSIGN => {
+            process_mutate_wallet_assign(accounts, remaining_data)
+        },
+        instructions::MUTATE_WALLET_ALLOCATE => {
+            process_mutate_wallet_allocate(accounts, remaining_data)
+        },
+        instructions::INVOKE_SWIG_NON_SIGN => {
+            process_invoke_swig_non_sign(accounts, remaining_data)
+        },
         instructions::SYNC_NATIVE_AND_TRANSFER => {
             process_sync_native_and_transfer(accounts, remaining_data)
+        },
+        instructions::SYNC_BOTH_NATIVE_AND_TRANSFER => {
+            process_sync_both_native_and_transfer(program_id, accounts, remaining_data)
+        },
+        instructions::CREATE_NESTED_ATA => {
+            process_create_nested_ata(program_id, accounts, remaining_data)
         },
         instructions::INVALID_DISCRIMINATOR => {
             process_invalid_instruction(accounts, remaining_data)
         },
         _ => Err(ProgramError::InvalidInstructionData),
     }
+}
+
+/// A positive composition fixture: forward account-creation rent through a
+/// protocol CPI, optionally recursing once before the actual ATA program.
+fn process_create_nested_ata(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    depth: &[u8],
+) -> ProgramResult {
+    if accounts.len() != 8 || depth.len() != 1 || depth[0] > 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let ata_program = Pubkey::from_str_const("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+    if accounts[6].key != &ata_program || accounts[7].key != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    let (target, count, data) = if depth[0] == 0 {
+        (ata_program, 6, vec![1]) // ATA CreateIdempotent
+    } else {
+        let mut data = instructions::CREATE_NESTED_ATA.to_vec();
+        data.push(0);
+        (*program_id, 8, data)
+    };
+    let metas = accounts[..count]
+        .iter()
+        .map(|account| {
+            if account.is_writable {
+                AccountMeta::new(*account.key, account.is_signer)
+            } else {
+                AccountMeta::new_readonly(*account.key, account.is_signer)
+            }
+        })
+        .collect();
+    invoke(
+        &Instruction {
+            program_id: target,
+            accounts: metas,
+            data,
+        },
+        accounts,
+    )
 }
 
 /// Accounts: writable source and destination WSOL accounts, signing token
@@ -93,6 +182,76 @@ fn process_sync_native_and_transfer(accounts: &[AccountInfo], amount: &[u8]) -> 
         },
         accounts,
     )
+}
+
+/// Use real Token CPIs for both SyncNative calls and the transfer. The pool
+/// authority is a fixture PDA so incoming vault transfers need no personal debit.
+fn process_sync_both_native_and_transfer(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    amount: &[u8],
+) -> ProgramResult {
+    if accounts.len() != 4 || amount.len() != 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let token_program = Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    if accounts[3].key != &token_program || !accounts[3].executable {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    for account in &accounts[..2] {
+        invoke(
+            &Instruction {
+                program_id: token_program,
+                accounts: vec![AccountMeta::new(*account.key, false)],
+                data: vec![17], // SPL TokenInstruction::SyncNative
+            },
+            accounts,
+        )?;
+    }
+    let mut data = vec![3]; // SPL TokenInstruction::Transfer
+    data.extend_from_slice(amount);
+    let transfer = Instruction {
+        program_id: token_program,
+        accounts: vec![
+            AccountMeta::new(*accounts[0].key, false),
+            AccountMeta::new(*accounts[1].key, false),
+            AccountMeta::new_readonly(*accounts[2].key, true),
+        ],
+        data,
+    };
+    if accounts[2].is_signer {
+        invoke(&transfer, accounts)
+    } else {
+        let (pool_authority, bump) = Pubkey::find_program_address(&[b"pool"], program_id);
+        if accounts[2].key != &pool_authority {
+            return Err(ProgramError::MissingRequiredSignature);
+        }
+        invoke_signed(&transfer, accounts, &[&[b"pool", &[bump]]])
+    }
+}
+
+fn process_invoke_swig_non_sign(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    let (swig_program, inner_accounts) = accounts
+        .split_first()
+        .ok_or(ProgramError::NotEnoughAccountKeys)?;
+    if inner_accounts.is_empty() {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let inner_instruction = Instruction {
+        program_id: *swig_program.key,
+        accounts: inner_accounts
+            .iter()
+            .map(|account| AccountMeta {
+                pubkey: *account.key,
+                is_signer: account.is_signer,
+                is_writable: account.is_writable,
+            })
+            .collect(),
+        data: data.to_vec(),
+    };
+
+    invoke(&inner_instruction, accounts)
 }
 
 /// Process test token transfer - calls swig via CPI
@@ -144,6 +303,40 @@ fn process_replace_authority_proof(accounts: &[AccountInfo], _data: &[u8]) -> Pr
     Ok(())
 }
 
+fn process_mutate_wallet_assign(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    if accounts.is_empty() || data.len() < 32 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+    let wallet = &accounts[0];
+    let mut ix_data = vec![1, 0, 0, 0];
+    ix_data.extend_from_slice(&data[..32]);
+    invoke(
+        &Instruction {
+            program_id: Pubkey::from([0u8; 32]),
+            accounts: vec![AccountMeta::new(*wallet.key, true)],
+            data: ix_data,
+        },
+        &[wallet.clone()],
+    )
+}
+
+fn process_mutate_wallet_allocate(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    if accounts.is_empty() || data.len() < 8 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+    let wallet = &accounts[0];
+    let mut ix_data = vec![8, 0, 0, 0];
+    ix_data.extend_from_slice(&data[..8]);
+    invoke(
+        &Instruction {
+            program_id: Pubkey::from([0u8; 32]),
+            accounts: vec![AccountMeta::new(*wallet.key, true)],
+            data: ix_data,
+        },
+        &[wallet.clone()],
+    )
+}
+
 /// Process invalid instruction - for testing failure cases
 fn process_invalid_instruction(accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     // Same as test_token_transfer but with invalid discriminator
@@ -159,6 +352,7 @@ mod tests {
         assert_eq!(instructions::TEST_TOKEN_TRANSFER.len(), 8);
         assert_eq!(instructions::INVALID_DISCRIMINATOR.len(), 8);
         assert_eq!(instructions::REPLACE_AUTHORITY_PROOF_V1, *b"rplauth1");
+        assert_eq!(instructions::INVOKE_SWIG_NON_SIGN, *b"swigcpi1");
         assert_ne!(
             instructions::TEST_TOKEN_TRANSFER,
             instructions::INVALID_DISCRIMINATOR

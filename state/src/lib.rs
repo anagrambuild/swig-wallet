@@ -87,10 +87,8 @@ pub enum AccountClassification {
         /// Amount staked/unstaked during this transaction
         spent: u64,
     },
-    /// A program scope account with role information
+    /// A program scope account classified from the authenticated role
     ProgramScope {
-        /// Index of the role associated with this scope
-        role_index: u8,
         /// Balance in the program scope
         balance: u128,
         /// Amount spent from this program scope during this transaction
@@ -127,6 +125,12 @@ pub enum SwigStateError {
     /// A role may not hold two scoped V2 sub-account actions for the same
     /// `(permission type, subacc_id)`, nor two create markers.
     DuplicateV2SubAccountAction,
+    /// A scoped V2 sub-account action must target an id below the wallet's
+    /// current monotonic sub-account counter.
+    SubAccountV2PermissionTargetDoesNotExist,
+    /// A role may not hold the same non-repeatable permission type more than
+    /// once.
+    DuplicateNonRepeatableAction,
 }
 
 /// Error types related to authentication operations.

@@ -1326,35 +1326,31 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_secp256r1_instruction_data_cross_instruction_reference() {
-        let mut instruction_data = Vec::new();
-
-        // Number of signature sets (1 byte) and padding (1 byte)
-        instruction_data.push(1u8); // Number of signature sets
-        instruction_data.push(0u8); // Padding
-
-        // Signature offsets with cross-instruction reference
-        instruction_data.extend_from_slice(&16u16.to_le_bytes()); // signature_offset
-        instruction_data.extend_from_slice(&1u16.to_le_bytes()); // signature_instruction_index (different instruction)
-        instruction_data.extend_from_slice(&80u16.to_le_bytes()); // public_key_offset
-        instruction_data.extend_from_slice(&0u16.to_le_bytes()); // public_key_instruction_index
-        instruction_data.extend_from_slice(&113u16.to_le_bytes()); // message_data_offset
-        instruction_data.extend_from_slice(&32u16.to_le_bytes()); // message_data_size
-        instruction_data.extend_from_slice(&0u16.to_le_bytes()); // message_instruction_index
-
+    fn test_verify_secp256r1_instruction_data_rejects_each_cross_instruction_reference() {
         let test_pubkey = [0x02; 33];
         let test_message_hash = [0xAB; 32];
+        let test_signature = [0xCD; 64];
+        let instruction_data = create_test_secp256r1_instruction_data(
+            &test_message_hash,
+            &test_signature,
+            &test_pubkey,
+        );
 
-        let result =
-            verify_secp256r1_instruction_data(&instruction_data, &test_pubkey, &test_message_hash);
-        assert!(
-            result.is_err(),
-            "Verification should fail with cross-instruction reference"
-        );
-        assert_eq!(
-            result.unwrap_err(),
-            SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into()
-        );
+        for (field_name, field_offset) in [
+            ("signature_instruction_index", 2_usize),
+            ("public_key_instruction_index", 6),
+            ("message_instruction_index", 12),
+        ] {
+            let mut candidate = instruction_data.clone();
+            let field_start = SIGNATURE_OFFSETS_START + field_offset;
+            candidate[field_start..field_start + 2].copy_from_slice(&0_u16.to_le_bytes());
+
+            assert_eq!(
+                verify_secp256r1_instruction_data(&candidate, &test_pubkey, &test_message_hash,),
+                Err(SwigAuthenticateError::PermissionDeniedSecp256r1InvalidInstruction.into()),
+                "accepted cross-instruction {field_name}",
+            );
+        }
     }
 
     #[test]

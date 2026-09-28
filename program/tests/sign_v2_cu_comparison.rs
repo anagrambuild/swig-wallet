@@ -41,6 +41,21 @@ fn compare_sign_v2_role_compute_units() {
         "CU_COMPARE token_limit_destination {}",
         token_limit_destination
     );
+
+    // Main ff2929b built for SBPF v1 with platform-tools v1.53, measured on
+    // LiteSVM 0.16. Keep the v3 migration within those existing SignV2 costs.
+    for (path, actual, baseline) in [
+        ("All", all, 3_618),
+        ("SOL limit", sol_limit, 5_116),
+        ("SOL destination limit", sol_limit_destination, 5_834),
+        ("Token limit", token_limit, 6_281),
+        ("Token destination limit", token_limit_destination, 7_199),
+    ] {
+        assert!(
+            actual <= baseline,
+            "SignV2 {path} consumed {actual} CU, exceeding the main baseline of {baseline} CU"
+        );
+    }
 }
 
 fn sign_with_all_role_cu() -> u64 {
