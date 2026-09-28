@@ -99,6 +99,10 @@ impl<'a> ToggleSubAccountV1<'a> {
             return Err(SwigError::InvalidInstructionDataTooShort.into());
         }
 
+        if data[core::mem::offset_of!(ToggleSubAccountV1Args, enabled)] > 1 {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+
         // Split the data into args and the rest (authority payload)
         let (args_data, authority_payload) = data.split_at(ToggleSubAccountV1Args::LEN);
 
@@ -243,4 +247,49 @@ pub fn authenticate_authority(
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_instruction_bytes_accepts_only_canonical_enabled_values() {
+        #[repr(C, align(8))]
+        struct AlignedData([u8; ToggleSubAccountV1Args::LEN + 2]);
+
+        let args = ToggleSubAccountV1Args::new(7, 3, false);
+        let mut data = AlignedData([0; ToggleSubAccountV1Args::LEN + 2]);
+        data.0[..ToggleSubAccountV1Args::LEN].copy_from_slice(args.into_bytes().unwrap());
+        data.0[ToggleSubAccountV1Args::LEN..].copy_from_slice(&[9, 8]);
+
+        for enabled in 0..=u8::MAX {
+            data.0[core::mem::offset_of!(ToggleSubAccountV1Args, enabled)] = enabled;
+            let result = ToggleSubAccountV1::from_instruction_bytes(&data.0);
+            match enabled {
+                0 | 1 => {
+                    let parsed = result.unwrap();
+                    assert_eq!(parsed.args.enabled, enabled == 1);
+                    assert_eq!(parsed.args.role_id, 7);
+                    assert_eq!(parsed.args.auth_role_id, 3);
+                    assert_eq!(parsed.authority_payload, &[9, 8]);
+                    assert_eq!(parsed.data_payload, &data.0[..ToggleSubAccountV1Args::LEN]);
+                },
+                _ => assert!(matches!(result, Err(ProgramError::InvalidInstructionData))),
+            }
+        }
+    }
+
+    #[test]
+    fn from_instruction_bytes_rejects_short_data() {
+        let args = ToggleSubAccountV1Args::new(7, 3, false);
+        let data = args.into_bytes().unwrap();
+        for len in 0..ToggleSubAccountV1Args::LEN {
+            assert!(matches!(
+                ToggleSubAccountV1::from_instruction_bytes(&data[..len]),
+                Err(ProgramError::Custom(code))
+                    if code == SwigError::InvalidInstructionDataTooShort as u32
+            ));
+        }
+    }
 }

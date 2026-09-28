@@ -29,6 +29,7 @@ use swig_state::{
 };
 
 use crate::{
+    actions::sub_account_lifecycle::adjust_active_count,
     error::SwigError,
     instruction::{
         accounts::{Context, CreateSubAccountV1Accounts},
@@ -148,63 +149,43 @@ pub fn create_sub_account_v1(
     // Parse the instruction data
     let create_sub_account = CreateSubAccountV1::from_instruction_bytes(data)?;
 
-    // Verify the swig account data
-    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
-        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
-    }
-
-    // Split the swig account data to get the header and roles.
-    let parts = Swig::split_parts_mut(swig_account_data)?;
-    let swig = parts.state;
-    let swig_roles = parts.roles;
-
-    // Get the role using the role_id from the instruction
-    let role_opt = Swig::get_mut_role(create_sub_account.args.role_id, swig_roles)?;
-    if role_opt.is_none() {
-        return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-    }
-    let role = role_opt.unwrap();
-    // Authenticate the authority
-    let clock = Clock::get()?;
-    let slot = clock.slot;
-    // Authenticate based on authority type (session-based or not)
-    if role.authority.session_based() {
-        role.authority.authenticate_session(
-            &all_accounts,
-            create_sub_account.authority_payload,
-            create_sub_account.data_payload,
-            slot,
-        )?;
-    } else {
-        role.authority.authenticate(
-            &all_accounts,
-            create_sub_account.authority_payload,
-            create_sub_account.data_payload,
-            slot,
-        )?;
-    }
-    // Check if the role has the required permissions (All or SubAccount)
-    let has_all_permission = {
-        let all_action = RoleMut::get_action_mut::<All>(role.actions, &[])?;
-        all_action.is_some()
+    // Authenticate and authorize under a scoped borrow. The count tail may
+    // realloc the Swig below, so no references into account data cross it.
+    let swig_id = {
+        let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+        if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8
+        {
+            return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+        }
+        let parts = Swig::split_parts_mut(swig_account_data)?;
+        let role = Swig::get_mut_role(create_sub_account.args.role_id, parts.roles)?
+            .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
+        let slot = Clock::get()?.slot;
+        if role.authority.session_based() {
+            role.authority.authenticate_session(
+                all_accounts,
+                create_sub_account.authority_payload,
+                create_sub_account.data_payload,
+                slot,
+            )?;
+        } else {
+            role.authority.authenticate(
+                all_accounts,
+                create_sub_account.authority_payload,
+                create_sub_account.data_payload,
+                slot,
+            )?;
+        }
+        if RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?.is_none() {
+            return Err(SwigError::AuthorityCannotCreateSubAccount.into());
+        }
+        parts.state.id
     };
-
-    let has_sub_account_permission = {
-        let sub_account_action = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?;
-        sub_account_action.is_some()
-    };
-
-    // Even if role has `All` action, it must have a `SubAccount` action before it
-    // can create a `SubAccount`
-    if !has_sub_account_permission {
-        return Err(SwigError::AuthorityCannotCreateSubAccount.into());
-    }
     // Derive the sub-account address using the authority index as seed (keeping PDA
     // for deterministic addressing)
     let role_id_bytes = create_sub_account.args.role_id.to_le_bytes();
     let bump_byte = [create_sub_account.args.sub_account_bump];
-    let sub_account_seeds = sub_account_seeds_with_bump(&swig.id, &role_id_bytes, &bump_byte);
+    let sub_account_seeds = sub_account_seeds_with_bump(&swig_id, &role_id_bytes, &bump_byte);
     // Check that sub_account passed in matches derived address
     let bump = check_self_pda(
         &sub_account_seeds,
@@ -238,17 +219,22 @@ pub fn create_sub_account_v1(
         .invoke()?;
     }
 
-    // Update the SubAccount action to store all sub-account metadata
-    if let Some(sub_account_action_mut) = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?
-    {
-        sub_account_action_mut
-            .sub_account
-            .copy_from_slice(ctx.accounts.sub_account.key().as_ref());
-        sub_account_action_mut.bump = create_sub_account.args.sub_account_bump;
-        sub_account_action_mut.enabled = true; // Default to enabled
-        sub_account_action_mut.role_id = create_sub_account.args.role_id;
-        sub_account_action_mut.swig_id = swig.id;
-    }
+    adjust_active_count(ctx.accounts.swig, ctx.accounts.payer, 1)?;
+
+    // Re-borrow after the possible count-tail realloc and populate the V1 action.
+    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+    let parts = Swig::split_parts_mut(swig_account_data)?;
+    let role = Swig::get_mut_role(create_sub_account.args.role_id, parts.roles)?
+        .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
+    let sub_account_action_mut = RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?
+        .ok_or(SwigError::AuthorityCannotCreateSubAccount)?;
+    sub_account_action_mut
+        .sub_account
+        .copy_from_slice(ctx.accounts.sub_account.key().as_ref());
+    sub_account_action_mut.bump = create_sub_account.args.sub_account_bump;
+    sub_account_action_mut.enabled = true;
+    sub_account_action_mut.role_id = create_sub_account.args.role_id;
+    sub_account_action_mut.swig_id = swig_id;
 
     Ok(())
 }

@@ -80,7 +80,7 @@ fn test_token_transfer_with_program_scope() {
             target_account: swig_ata,
             numeric_type: 2,
             limit: Some(1000),
-            window: Some(0),
+            window: None,
             balance_field_start: Some(64),
             balance_field_end: Some(72),
         },

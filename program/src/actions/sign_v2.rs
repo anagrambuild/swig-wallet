@@ -38,7 +38,9 @@ use swig_state::{
         Action, Permission,
     },
     role::RoleMut,
-    swig::{swig_account_signer, swig_wallet_address_signer, Swig},
+    swig::{
+        swig_account_signer, swig_wallet_address_seeds_with_bump, swig_wallet_address_signer, Swig,
+    },
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -48,7 +50,11 @@ use crate::{
         accounts::{Context, SignV2Accounts},
         SwigInstruction,
     },
-    util::hash_except,
+    isolation::IsolationGuard,
+    util::{
+        hash_except,
+        token_integrity::{hash_with_transfer_fee, transfer_fee_amount_offset},
+    },
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
 };
 // use swig_instructions::InstructionIterator;
@@ -108,10 +114,20 @@ const TOKEN_ACCOUNT_INITIALIZED_STATE: u8 = 1;
 const NO_EXCLUDE_RANGES: &[core::ops::Range<usize>] = &[];
 
 /// Maximum number of accounts that can have pre-CPI snapshot hashes.
-const MAX_ACCOUNT_SNAPSHOTS: usize = 100;
+pub(super) const MAX_ACCOUNT_SNAPSHOTS: usize = 100;
 
 const SYSTEM_TRANSFER_DISCRIMINATOR: u32 = 2;
+const SYSTEM_CREATE_ACCOUNT_DISCRIMINATOR: u32 = 0;
+const SYSTEM_ASSIGN_DISCRIMINATOR: u32 = 1;
+const SYSTEM_CREATE_ACCOUNT_WITH_SEED_DISCRIMINATOR: u32 = 3;
+const SYSTEM_INITIALIZE_NONCE_DISCRIMINATOR: u32 = 6;
+const SYSTEM_ALLOCATE_DISCRIMINATOR: u32 = 8;
+const SYSTEM_ALLOCATE_WITH_SEED_DISCRIMINATOR: u32 = 9;
+const SYSTEM_ASSIGN_WITH_SEED_DISCRIMINATOR: u32 = 10;
+const SYSTEM_TRANSFER_WITH_SEED_DISCRIMINATOR: u32 = 11;
+const SYSTEM_UPGRADE_NONCE_DISCRIMINATOR: u32 = 12;
 const SYSTEM_TRANSFER_DATA_LEN: usize = 12;
+const WALLET_ADDRESS_DATA_LEN: usize = 0;
 const TOKEN_TRANSFER_DISCRIMINATOR: u8 = 3;
 const TOKEN_TRANSFER_CHECKED_DISCRIMINATOR: u8 = 12;
 const TOKEN_TRANSFER_DATA_LEN: usize = 9;
@@ -212,18 +228,18 @@ impl<'a> SignV2<'a> {
 /// * `all_accounts` - All accounts involved in the transaction
 /// * `data` - Raw signing instruction data
 /// * `account_classifiers` - Classifications for involved accounts
+/// * `account_snapshots` - Uninitialized integrity hashes owned by the dispatch frame
 ///
 /// # Returns
 /// * `ProgramResult` - Success or error status
-#[inline(always)]
+#[inline(never)]
 pub fn sign_v2(
     ctx: Context<SignV2Accounts>,
     all_accounts: &[AccountInfo],
     data: &[u8],
     account_classifiers: &mut [AccountClassification],
+    account_snapshots: &mut [MaybeUninit<[u8; 32]>; MAX_ACCOUNT_SNAPSHOTS],
 ) -> ProgramResult {
-    check_stack_height(1, SwigError::Cpi)?;
-
     if !matches!(
         account_classifiers[0],
         AccountClassification::ThisSwigV2 { .. }
@@ -270,6 +286,8 @@ pub fn sign_v2(
     }
     // Intentionally no restricted keys: SignV2 forwards existing outer signer
     // bits in compact CPI metas in addition to the Swig wallet PDA signer.
+    let mut isolation = IsolationGuard::new(all_accounts);
+    isolation.capture_signers(ctx.accounts.swig_wallet_address.key())?;
     let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,
@@ -286,14 +304,37 @@ pub fn sign_v2(
         || RoleMut::get_action_mut::<AllButManageAuthority>(role.actions, &[])?.is_some();
 
     if has_unrestricted_sign_permission {
+        for (index, account) in all_accounts.iter().enumerate() {
+            if !account.is_writable() {
+                continue;
+            }
+            if index < account_classifiers.len()
+                && !matches!(account_classifiers[index], AccountClassification::None)
+            {
+                continue;
+            }
+            isolation.snapshot(index)?;
+        }
         for ix in ix_iter {
             let instruction = ix.map_err(|_| SwigError::InstructionExecutionError)?;
+            let check_shape = wallet_shape_can_change(&instruction);
+            if check_shape {
+                reject_wallet_address_shape_mutation(
+                    &instruction,
+                    ctx.accounts.swig_wallet_address.key(),
+                )?;
+            }
             instruction.execute(
                 all_accounts,
                 ctx.accounts.swig_wallet_address.key(),
                 &[signer.into()],
             )?;
+            if check_shape {
+                assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
+            }
         }
+
+        isolation.validate()?;
 
         return Ok(());
     }
@@ -302,13 +343,13 @@ pub fn sign_v2(
         RoleMut::get_action_mut::<ProgramAll>(role.actions, &[])?.is_some();
     let has_program_curated_permission = !has_program_all_permission
         && RoleMut::get_action_mut::<ProgramCurated>(role.actions, &[])?.is_some();
-
+    let mut check_wallet_shape = false;
     // Snapshot hashes are the pre-CPI integrity baseline for writable accounts.
     // SignV2 permits specific balance fields to change, then verifies the rest
     // of each protected account is unchanged after CPI execution.
-    const UNINIT_HASH: MaybeUninit<[u8; 32]> = MaybeUninit::uninit();
-    let mut account_snapshots: [MaybeUninit<[u8; 32]>; MAX_ACCOUNT_SNAPSHOTS] =
-        [UNINIT_HASH; MAX_ACCOUNT_SNAPSHOTS];
+    // Fee offsets are selected once from pre-CPI extension metadata.
+    const UNINIT_FEE_OFFSET: MaybeUninit<Option<u16>> = MaybeUninit::uninit();
+    let mut token_fee_offsets = [UNINIT_FEE_OFFSET; MAX_ACCOUNT_SNAPSHOTS];
 
     let mut total_sol_spent: u64 = 0;
 
@@ -330,6 +371,11 @@ pub fn sign_v2(
                 let data = unsafe { account.borrow_data_unchecked() };
                 let hash = hash_except(&data, account.owner(), NO_EXCLUDE_RANGES);
                 Some(hash)
+            },
+            AccountClassification::SwigWalletAddress => {
+                // Owner and data_len are enforced by the gated H-04 checks.
+                // Hashing an always-empty system account is redundant on this path.
+                None
             },
             AccountClassification::SwigTokenAccount {
                 balance,
@@ -355,7 +401,13 @@ pub fn sign_v2(
                 } else {
                     TOKEN_EXCLUDE_RANGES
                 };
-                let hash = hash_except(data, account.owner(), exclude_ranges);
+                let fee_offset = transfer_fee_amount_offset(data, account.owner())?;
+                token_fee_offsets
+                    .get_mut(index)
+                    .ok_or(SwigError::InvalidAccountsLength)?
+                    .write(fee_offset);
+                let hash =
+                    hash_with_transfer_fee(data, account.owner(), exclude_ranges, fee_offset)?;
                 Some(hash)
             },
             AccountClassification::SwigStakeAccount { .. } => {
@@ -365,7 +417,7 @@ pub fn sign_v2(
                 let hash = hash_except(&data, account.owner(), &exclude_ranges);
                 Some(hash)
             },
-            AccountClassification::ProgramScope { .. } => {
+            AccountClassification::None => {
                 let data = unsafe { account.borrow_data_unchecked() };
                 // For program scope, we need to get the actual program scope to know what to
                 // exclude, and include owner in hash
@@ -376,13 +428,21 @@ pub fn sign_v2(
                     let start = program_scope.balance_field_start as usize;
                     let end = program_scope.balance_field_end as usize;
                     if start < end && end <= data.len() {
+                        // Both snapshots and enforcement use this authenticated role.
+                        *account_classifier = AccountClassification::ProgramScope {
+                            balance: program_scope.read_account_balance(data)?,
+                            spent: 0,
+                        };
                         let exclude_ranges = [start..end];
                         let hash = hash_except(&data, account.owner(), &exclude_ranges);
                         Some(hash)
                     } else {
-                        None
+                        return Err(SwigError::InvalidProgramScopeBalanceFields.into());
                     }
                 } else {
+                    // Scoped accounts already have role-specific integrity checks.
+                    // Capture only accounts outside the acting role's scope.
+                    isolation.snapshot(index)?;
                     None
                 }
             },
@@ -412,6 +472,21 @@ pub fn sign_v2(
                 if !has_permission {
                     return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                 }
+            }
+
+            if wallet_shape_can_change(&instruction) {
+                if !check_wallet_shape {
+                    check_self_pda(
+                        &swig_wallet_address_seeds_with_bump(ctx.accounts.swig.key().as_ref(), &b),
+                        ctx.accounts.swig_wallet_address.key(),
+                        SwigError::InvalidSeedSwigAccount,
+                    )?;
+                    check_wallet_shape = true;
+                }
+                reject_wallet_address_shape_mutation(
+                    &instruction,
+                    ctx.accounts.swig_wallet_address.key(),
+                )?;
             }
 
             let swig_wallet_address_balance_before = ctx.accounts.swig_wallet_address.lamports();
@@ -523,24 +598,20 @@ pub fn sign_v2(
                         // summing would double-count it against the limit.
                         *spent = spent.saturating_add(lamports_spent.max(stake_spent));
                     },
-                    AccountClassification::ProgramScope {
-                        role_index: _,
-                        balance,
-                        spent,
-                    } => {
+                    AccountClassification::ProgramScope { balance, spent } => {
                         let account_key = account.key();
                         let Some(program_scope) = RoleMut::get_action_mut::<ProgramScope>(
                             role.actions,
                             account_key.as_ref(),
                         )?
                         else {
-                            continue;
+                            return Err(
+                                SwigAuthenticateError::PermissionDeniedMissingPermission.into()
+                            );
                         };
 
                         let data = unsafe { account.borrow_data_unchecked() };
-                        let Ok(current) = program_scope.read_account_balance(data) else {
-                            continue;
-                        };
+                        let current = program_scope.read_account_balance(data)?;
 
                         if current < *balance {
                             *spent = spent.saturating_add(*balance - current);
@@ -580,8 +651,8 @@ pub fn sign_v2(
                 }
 
                 let swig_wallet_balance = ctx.accounts.swig_wallet_address.lamports();
-                let swig_wallet_rent_exempt_minimum = pinocchio::sysvars::rent::Rent::get()?
-                    .minimum_balance(ctx.accounts.swig_wallet_address.data_len());
+                let swig_wallet_rent_exempt_minimum =
+                    pinocchio::sysvars::rent::Rent::get()?.minimum_balance(WALLET_ADDRESS_DATA_LEN);
                 if swig_wallet_balance < swig_wallet_rent_exempt_minimum {
                     return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
                 }
@@ -692,7 +763,14 @@ pub fn sign_v2(
                     } else {
                         TOKEN_EXCLUDE_RANGES
                     };
-                    let current_hash = hash_except(data, account_info.owner(), exclude_ranges);
+                    let current_hash = hash_with_transfer_fee(
+                        data,
+                        account_info.owner(),
+                        exclude_ranges,
+                        // Every writable SwigTokenAccount saved this offset with its hash.
+                        unsafe { *token_fee_offsets[index].assume_init_ref() },
+                    )
+                    .map_err(|_| SwigError::AccountDataModifiedUnexpectedly)?;
                     let snapshot_hash = unsafe { account_snapshots[index].assume_init_ref() };
                     if *snapshot_hash != current_hash {
                         return Err(SwigError::AccountDataModifiedUnexpectedly.into());
@@ -828,6 +906,9 @@ pub fn sign_v2(
 
                 return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
             },
+            AccountClassification::SwigWalletAddress => {
+                continue;
+            },
             AccountClassification::ProgramScope { spent, .. } => {
                 let account_info = unsafe { all_accounts.get_unchecked(index) };
                 let Some(program_scope) =
@@ -863,6 +944,109 @@ pub fn sign_v2(
             },
             _ => {},
         }
+    }
+
+    if check_wallet_shape {
+        assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
+    }
+
+    isolation.validate()?;
+    Ok(())
+}
+
+/// The reserve exception is limited to the legacy Token program's native mint.
+/// Check every byte of the option tag; the pinned zero-copy token accessor only
+/// inspects its first byte and is not a canonical option decoder.
+fn read_wsol_reserve(owner: &Pubkey, data: &[u8]) -> Result<u64, ProgramError> {
+    if owner != &SPL_TOKEN_ID
+        || data.len() != TOKEN_ACCOUNT_BASE_DATA_LEN
+        || data[TOKEN_MINT_RANGE] != WSOL_MINT
+        || data[TOKEN_STATE_INDEX] != TOKEN_ACCOUNT_INITIALIZED_STATE
+        || data[109..113] != [1, 0, 0, 0]
+    {
+        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+    }
+    Ok(u64::from_le_bytes(
+        data[TOKEN_NATIVE_RESERVE_RANGE]
+            .try_into()
+            .map_err(|_| SwigError::AccountDataModifiedUnexpectedly)?,
+    ))
+}
+
+fn validate_wsol_reserve_change(before: u64, after: u64, required: u64) -> ProgramResult {
+    // Accounts need not be synchronized in every transaction. If a refresh did
+    // occur, accept only the network's current minimum, in either direction.
+    if after != before && after != required {
+        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+    }
+    Ok(())
+}
+
+fn wsol_accounted_balance(amount: u64, reserve: u64, lamports: u64) -> Result<u64, ProgramError> {
+    let accounted = amount
+        .checked_add(reserve)
+        .ok_or(SwigError::AccountDataModifiedUnexpectedly)?;
+    // Unsynchronized SOL deposits can leave additional unaccounted lamports.
+    if accounted > lamports {
+        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+    }
+    Ok(accounted)
+}
+
+fn assert_wallet_address_invariants(wallet: &AccountInfo) -> ProgramResult {
+    check_system_owner(wallet, SwigError::WalletAddressInvariantViolation)?;
+    check_zero_data(wallet, SwigError::WalletAddressInvariantViolation)?;
+    Ok(())
+}
+
+fn wallet_shape_can_change(instruction: &swig_compact_instructions::InstructionHolder) -> bool {
+    if *instruction.program_id == SYSTEM_PROGRAM_ID {
+        if instruction.data.len() < 4 {
+            return true;
+        }
+        let discriminator = u32::from_le_bytes([
+            instruction.data[0],
+            instruction.data[1],
+            instruction.data[2],
+            instruction.data[3],
+        ]);
+        return discriminator != SYSTEM_TRANSFER_DISCRIMINATOR
+            && discriminator != SYSTEM_TRANSFER_WITH_SEED_DISCRIMINATOR;
+    }
+    *instruction.program_id != SPL_TOKEN_ID && *instruction.program_id != SPL_TOKEN_2022_ID
+}
+
+fn reject_wallet_address_shape_mutation(
+    instruction: &swig_compact_instructions::InstructionHolder,
+    wallet: &Pubkey,
+) -> ProgramResult {
+    if *instruction.program_id != SYSTEM_PROGRAM_ID || instruction.data.len() < 4 {
+        return Ok(());
+    }
+
+    let discriminator = u32::from_le_bytes([
+        instruction.data[0],
+        instruction.data[1],
+        instruction.data[2],
+        instruction.data[3],
+    ]);
+    let target_index = match discriminator {
+        SYSTEM_CREATE_ACCOUNT_DISCRIMINATOR | SYSTEM_CREATE_ACCOUNT_WITH_SEED_DISCRIMINATOR => 1,
+        SYSTEM_ASSIGN_DISCRIMINATOR
+        | SYSTEM_INITIALIZE_NONCE_DISCRIMINATOR
+        | SYSTEM_ALLOCATE_DISCRIMINATOR
+        | SYSTEM_ALLOCATE_WITH_SEED_DISCRIMINATOR
+        | SYSTEM_ASSIGN_WITH_SEED_DISCRIMINATOR
+        | SYSTEM_UPGRADE_NONCE_DISCRIMINATOR => 0,
+        _ => return Ok(()),
+    };
+
+    if instruction
+        .accounts
+        .get(target_index)
+        .is_some_and(|account| account.pubkey == wallet)
+    {
+        return Err(SwigError::WalletAddressInvariantViolation.into());
     }
 
     Ok(())
@@ -1075,45 +1259,6 @@ where
     }
 
     Ok(())
-}
-
-/// The reserve exception is limited to the legacy Token program's native mint.
-/// Check every byte of the option tag; the pinned zero-copy token accessor only
-/// inspects its first byte and is not a canonical option decoder.
-fn read_wsol_reserve(owner: &Pubkey, data: &[u8]) -> Result<u64, ProgramError> {
-    if owner != &SPL_TOKEN_ID
-        || data.len() != TOKEN_ACCOUNT_BASE_DATA_LEN
-        || data[TOKEN_MINT_RANGE] != WSOL_MINT
-        || data[TOKEN_STATE_INDEX] != TOKEN_ACCOUNT_INITIALIZED_STATE
-        || data[109..113] != [1, 0, 0, 0]
-    {
-        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
-    }
-    Ok(u64::from_le_bytes(
-        data[TOKEN_NATIVE_RESERVE_RANGE]
-            .try_into()
-            .map_err(|_| SwigError::AccountDataModifiedUnexpectedly)?,
-    ))
-}
-
-fn validate_wsol_reserve_change(before: u64, after: u64, required: u64) -> ProgramResult {
-    // Accounts need not be synchronized in every transaction. If a refresh did
-    // occur, accept only the network's current minimum, in either direction.
-    if after != before && after != required {
-        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
-    }
-    Ok(())
-}
-
-fn wsol_accounted_balance(amount: u64, reserve: u64, lamports: u64) -> Result<u64, ProgramError> {
-    let accounted = amount
-        .checked_add(reserve)
-        .ok_or(SwigError::AccountDataModifiedUnexpectedly)?;
-    // Unsynchronized SOL deposits can leave additional unaccounted lamports.
-    if accounted > lamports {
-        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
-    }
-    Ok(accounted)
 }
 
 #[cfg(test)]

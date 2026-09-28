@@ -27,6 +27,7 @@ use crate::{
         accounts::{Context, SubAccountSignV2Accounts},
         SwigInstruction,
     },
+    isolation::IsolationGuard,
     AccountClassification,
 };
 
@@ -199,7 +200,6 @@ pub fn sub_account_sign_v2(
     data: &[u8],
     _account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
-    check_stack_height(1, SwigError::Cpi)?;
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     check_system_owner(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
 
@@ -243,6 +243,13 @@ pub fn sub_account_sign_v2(
         authorize_scoped_v2(&role, Permission::SubAccountV2Sign, sign.args.subacc_id)?;
         swig_id
     };
+    let mut isolation = IsolationGuard::new(all_accounts);
+    isolation.capture_signers(ctx.accounts.sub_account.key())?;
+    for (index, account) in all_accounts.iter().enumerate() {
+        if account.is_writable() && account.key() != ctx.accounts.sub_account.key() {
+            isolation.snapshot(index)?;
+        }
+    }
 
     // Validate the state account and obtain the asset bump for signing.
     let asset_bump = validate_v2_state(
@@ -275,6 +282,8 @@ pub fn sub_account_sign_v2(
             return Err(SwigError::InstructionExecutionError.into());
         }
     }
+
+    isolation.validate()?;
 
     // Ensure the asset account remains rent-exempt.
     let account_data = unsafe { ctx.accounts.sub_account.borrow_data_unchecked() };

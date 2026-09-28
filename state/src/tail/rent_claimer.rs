@@ -5,9 +5,8 @@ use core::convert::TryInto;
 
 use pinocchio::program_error::ProgramError;
 
-use crate::{
-    tail::{read_first_of, TailDescriptor, TailHeader, TailKind, TailReadError, TAIL_HEADER_LEN},
-    SwigStateError,
+use crate::tail::{
+    read_first_of, TailDescriptor, TailHeader, TailKind, TailReadError, TAIL_HEADER_LEN,
 };
 
 pub const VERSION: u8 = 1;
@@ -49,26 +48,10 @@ pub fn read(tail_data: &[u8]) -> Result<Option<&[u8; 32]>, ProgramError> {
 
 /// Strict parser for the swig trailing region.
 ///
-/// The v1 storage contract allows exactly two shapes:
-/// - empty tail (unset): `[]`
-/// - exactly one rent-claimer entry (`ENTRY_LEN` bytes)
-///
-/// Any other length, or a malformed entry, is rejected with `InvalidRentClaimerLayout`.
+/// Validates the complete heterogeneous tail and returns its rent claimer.
 pub fn read_strict(tail_data: &[u8]) -> Result<Option<&[u8; 32]>, ProgramError> {
-    if tail_data.is_empty() {
-        return Ok(None);
-    }
-    if tail_data.len() != ENTRY_LEN {
-        return Err(SwigStateError::InvalidRentClaimerLayout.into());
-    }
-
-    let (entry, consumed) = RentClaimerEntry::read(tail_data)?;
-    if consumed != ENTRY_LEN || entry.header.version != VERSION || entry.header.payload != [0u8; 4]
-    {
-        return Err(SwigStateError::InvalidRentClaimerLayout.into());
-    }
-
-    Ok(Some(entry.claimer))
+    super::validate_strict(tail_data)?;
+    read(tail_data)
 }
 
 /// Serializes a rent-claimer tail entry ready to append to the account buffer.
@@ -187,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn read_strict_rejects_tail_len_other_than_empty_or_single_entry() {
+    fn read_strict_rejects_duplicate_rent_entries() {
         let claimer = [99u8; VALUE_LEN];
         let mut tail = Vec::new();
         tail.extend_from_slice(&entry(&claimer));

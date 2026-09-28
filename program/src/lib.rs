@@ -7,8 +7,9 @@
 //! accounts.
 
 pub mod actions;
-mod error;
+pub mod error;
 pub mod instruction;
+pub mod isolation;
 pub mod util;
 use core::mem::MaybeUninit;
 
@@ -28,14 +29,8 @@ use pinocchio::{
 use pinocchio_pubkey::{declare_id, pubkey};
 use swig_compact_instructions::MAX_ACCOUNTS;
 use swig_state::{
-    action::{
-        program_scope::{NumericType, ProgramScope},
-        Action, Actionable, Permission,
-    },
-    swig::{Swig, SwigWithRoles},
-    AccountClassification, Discriminator, StakeAccountState, Transmutable,
+    swig::Swig, AccountClassification, Discriminator, StakeAccountState, Transmutable,
 };
-use util::{read_program_scope_account_balance, ProgramScopeCache};
 #[cfg(not(feature = "no-entrypoint"))]
 use {default_env::default_env, solana_security_txt::security_txt};
 
@@ -49,6 +44,8 @@ const SPL_TOKEN_2022_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXE
 const STAKING_ID: Pubkey = pubkey!("Stake11111111111111111111111111111111111111");
 /// Program ID for the Solana System program
 const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111");
+const VOTE_PROGRAM_ID: Pubkey = pubkey!("Vote111111111111111111111111111111111111111");
+const BPF_LOADER_UPGRADEABLE_ID: Pubkey = pubkey!("BPFLoaderUpgradeab1e11111111111111111111111");
 
 pinocchio::default_allocator!();
 pinocchio::default_panic_handler!();
@@ -186,9 +183,11 @@ const _: () = {
 /// exact. A V1 account misreads as V2 when `reserved_lamports % 2^32` lands in
 /// `1..=255`. The previous check was wrong for `reserved_lamports <= 255`,
 /// including `0`, which is the more likely V1 state; this narrows the common
-/// case at the cost of a wrap-around band around every 2^32 lamports. The only
-/// caller, `close_token_account_v1`, tries the other authority as a fallback,
-/// so a misread costs an extra comparison rather than correctness.
+/// case at the cost of a wrap-around band around every 2^32 lamports. Callers
+/// must therefore preserve their own semantic safety boundary. For example,
+/// `set_rent_claimer_v1` derives the canonical wallet PDA without trusting the
+/// overlaid bump, while `close_token_account_v1` tries the other authority as a
+/// fallback.
 ///
 /// # Safety
 ///
@@ -265,24 +264,13 @@ unsafe fn execute(
 
     match acc {
         MaybeAccount::Account(account) => {
-            let classification =
-                classify_account(0, &account, accounts, account_classification, None)?;
+            let classification = classify_account(0, &account, accounts, account_classification)?;
             account_classification[0].write(classification);
             accounts[0].write(account);
         },
         MaybeAccount::Duplicated(_) => return Err(SwigError::InvalidAccountsLength.into()),
     }
     let mut index: usize = 1;
-
-    let first_account = accounts[0].assume_init_ref();
-    // Non-Swig first accounts are valid for instructions that do not use the
-    // SignV2 account layout, so absence of a cache is not an error here.
-    let program_scope_cache = if is_swig_config_account(first_account) {
-        let data = first_account.borrow_data_unchecked();
-        ProgramScopeCache::load_from_swig(data)
-    } else {
-        None
-    };
 
     let remaining_accounts =
         usize::try_from(ctx.remaining()).map_err(|_| SwigError::InvalidAccountsLength)?;
@@ -291,32 +279,22 @@ unsafe fn execute(
         .ok_or(SwigError::InvalidAccountsLength)?;
     validate_account_capacity(end, accounts.len(), account_classification.len())?;
 
-    // Process the remaining known account count using the program-scope cache.
+    // Process the remaining known account count.
     for _ in 0..remaining_accounts {
         let acc = ctx
             .next_account()
             .map_err(|_| SwigError::InvalidAccountsLength)?;
         let (account, classification) = match acc {
             MaybeAccount::Account(account) => {
-                let classification = classify_account(
-                    index,
-                    &account,
-                    accounts,
-                    account_classification,
-                    program_scope_cache.as_ref(),
-                )?;
+                let classification =
+                    classify_account(index, &account, accounts, account_classification)?;
                 (account, classification)
             },
             MaybeAccount::Duplicated(account_index) => {
                 let account_index = validated_duplicate_account_index(account_index, index)?;
                 let account = accounts[account_index].assume_init_ref().clone();
-                let classification = classify_account(
-                    index,
-                    &account,
-                    accounts,
-                    account_classification,
-                    program_scope_cache.as_ref(),
-                )?;
+                let classification =
+                    classify_account(index, &account, accounts, account_classification)?;
                 (account, classification)
             },
         };
@@ -342,7 +320,7 @@ unsafe fn execute(
 ///   checking)
 /// - Stake accounts (with validation of withdrawer authority)
 /// - Token accounts (SPL Token and Token-2022)
-/// - Program-scoped accounts (using the program scope cache)
+/// ProgramScope classification is deferred to SignV2 after role authentication.
 ///
 /// # Safety
 /// This function uses unsafe code for performance optimization. Callers must
@@ -355,7 +333,6 @@ unsafe fn execute(
 /// * `index` - Index of the account in the account list
 /// * `account` - The account to classify
 /// * `accounts` - Array of all accounts in the instruction
-/// * `program_scope_cache` - Optional cache of program scope information
 ///
 /// # Returns
 /// * `Result<AccountClassification, ProgramError>` - The account classification
@@ -366,7 +343,6 @@ unsafe fn classify_account(
     account: &AccountInfo,
     accounts: &[MaybeUninit<AccountInfo>],
     account_classifications: &[MaybeUninit<AccountClassification>],
-    program_scope_cache: Option<&ProgramScopeCache>,
 ) -> Result<AccountClassification, ProgramError> {
     match account.owner() {
         &crate::ID => {
@@ -389,11 +365,6 @@ unsafe fn classify_account(
         },
         &SYSTEM_PROGRAM_ID if index == 1 => {
             let first_account = accounts.get_unchecked(0).assume_init_ref();
-
-            // When the account is a Swig account, it's safe to assume the
-            // account directly after will be the SwigWalletAddress. This is validated
-            // further down in instructions relevant to the account structure via signer
-            // seeds.
             if is_swig_config_account(first_account) {
                 return Ok(AccountClassification::SwigWalletAddress);
             }
@@ -500,27 +471,7 @@ unsafe fn classify_account(
                 spent: 0,
             })
         },
-        _ => {
-            if index == 0 {
-                return Ok(AccountClassification::None);
-            }
-
-            let Some(cache) = program_scope_cache else {
-                return Ok(AccountClassification::None);
-            };
-            let Some((role_id, program_scope)) = cache.find_program_scope(account.key().as_ref())
-            else {
-                return Ok(AccountClassification::None);
-            };
-
-            let data = account.borrow_data_unchecked();
-            let balance = read_program_scope_account_balance(data, &program_scope)?;
-            Ok(AccountClassification::ProgramScope {
-                role_index: role_id,
-                balance,
-                spent: 0,
-            })
-        },
+        _ => Ok(AccountClassification::None),
     }
 }
 

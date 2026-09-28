@@ -20,4 +20,4 @@ program_scope_test = []
 solana-program = "3.0.0"
 
 [dev-dependencies]
-solana-program-test = "3.1.11"
+solana-program-test = "4.2.2"
