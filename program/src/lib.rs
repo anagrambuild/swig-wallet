@@ -508,8 +508,7 @@ unsafe fn classify_account(
             let Some(cache) = program_scope_cache else {
                 return Ok(AccountClassification::None);
             };
-            let Some((role_id, _)) = cache.find_program_scope(account.key().as_ref())
-            else {
+            let Some((role_id, _)) = cache.find_program_scope(account.key().as_ref()) else {
                 return Ok(AccountClassification::None);
             };
 
