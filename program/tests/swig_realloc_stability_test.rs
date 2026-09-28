@@ -63,10 +63,14 @@ fn create_v2(
     subacc_id: u32,
 ) {
     let id_le = subacc_id.to_le_bytes();
-    let (state_pda, state_bump) =
-        Pubkey::find_program_address(&sub_account_v2_state_seeds(id, &id_le), &program_id());
-    let (asset_pda, asset_bump) =
-        Pubkey::find_program_address(&sub_account_v2_asset_seeds(id, &id_le), &program_id());
+    let (state_pda, state_bump) = Pubkey::find_program_address(
+        &sub_account_v2_state_seeds(swig.as_ref(), &id_le),
+        &program_id(),
+    );
+    let (asset_pda, asset_bump) = Pubkey::find_program_address(
+        &sub_account_v2_asset_seeds(swig.as_ref(), &id_le),
+        &program_id(),
+    );
     let ix = CreateSubAccountV2Instruction::new_with_ed25519_authority(
         *swig,
         signer.pubkey(),
@@ -74,8 +78,6 @@ fn create_v2(
         state_pda,
         asset_pda,
         role,
-        state_bump,
-        asset_bump,
     )
     .unwrap();
     let msg =

@@ -554,11 +554,11 @@ impl SwigInstructionBuilder {
     pub fn sub_account_v2_pdas(&self, subacc_id: u32) -> (Pubkey, Pubkey) {
         let id_le = subacc_id.to_le_bytes();
         let (state, _) = Pubkey::find_program_address(
-            &sub_account_v2_state_seeds(&self.swig_id, &id_le),
+            &sub_account_v2_state_seeds(self.swig_account.as_ref(), &id_le),
             &swig_interface::program_id(),
         );
         let (asset, _) = Pubkey::find_program_address(
-            &sub_account_v2_asset_seeds(&self.swig_id, &id_le),
+            &sub_account_v2_asset_seeds(self.swig_account.as_ref(), &id_le),
             &swig_interface::program_id(),
         );
         (state, asset)
@@ -566,13 +566,11 @@ impl SwigInstructionBuilder {
 
     /// Creates instructions to create a V2 sub-account for the given id (the
     /// next value of the on-chain counter). The caller supplies the derived
-    /// state/asset PDAs and their bumps.
+    /// state/asset PDAs; the program derives and stores their canonical bumps.
     pub fn create_sub_account_v2(
         &self,
         sub_account_state: Pubkey,
         sub_account: Pubkey,
-        state_bump: u8,
-        asset_bump: u8,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         self.client_role.create_sub_account_v2_instruction(
@@ -581,8 +579,6 @@ impl SwigInstructionBuilder {
             self.role_id,
             sub_account_state,
             sub_account,
-            state_bump,
-            asset_bump,
             current_slot,
         )
     }

@@ -144,8 +144,6 @@ pub trait ClientRole {
         _role_id: u32,
         _sub_account_state: Pubkey,
         _sub_account: Pubkey,
-        _state_bump: u8,
-        _asset_bump: u8,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         Err(SwigError::InterfaceError(
@@ -499,8 +497,6 @@ impl ClientRole for Ed25519ClientRole {
         role_id: u32,
         sub_account_state: Pubkey,
         sub_account: Pubkey,
-        state_bump: u8,
-        asset_bump: u8,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         Ok(vec![
@@ -511,8 +507,6 @@ impl ClientRole for Ed25519ClientRole {
                 sub_account_state,
                 sub_account,
                 role_id,
-                state_bump,
-                asset_bump,
             )?,
         ])
     }
@@ -989,8 +983,6 @@ impl ClientRole for Secp256k1ClientRole {
         role_id: u32,
         sub_account_state: Pubkey,
         sub_account: Pubkey,
-        state_bump: u8,
-        asset_bump: u8,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
@@ -1005,8 +997,6 @@ impl ClientRole for Secp256k1ClientRole {
                 sub_account_state,
                 sub_account,
                 role_id,
-                state_bump,
-                asset_bump,
             )?,
         ])
     }
@@ -1525,8 +1515,6 @@ impl ClientRole for Secp256r1ClientRole {
         role_id: u32,
         sub_account_state: Pubkey,
         sub_account: Pubkey,
-        state_bump: u8,
-        asset_bump: u8,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
@@ -1540,8 +1528,6 @@ impl ClientRole for Secp256r1ClientRole {
             sub_account_state,
             sub_account,
             role_id,
-            state_bump,
-            asset_bump,
             &self.authority,
         )?)
     }
@@ -1992,8 +1978,6 @@ impl ClientRole for Ed25519SessionClientRole {
         role_id: u32,
         sub_account_state: Pubkey,
         sub_account: Pubkey,
-        state_bump: u8,
-        asset_bump: u8,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let session_key = Pubkey::new_from_array(self.session_authority.session_key);
@@ -2005,8 +1989,6 @@ impl ClientRole for Ed25519SessionClientRole {
                 sub_account_state,
                 sub_account,
                 role_id,
-                state_bump,
-                asset_bump,
             )?,
         ])
     }
@@ -2472,8 +2454,6 @@ impl ClientRole for Secp256k1SessionClientRole {
         role_id: u32,
         sub_account_state: Pubkey,
         sub_account: Pubkey,
-        state_bump: u8,
-        asset_bump: u8,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let session_key = Pubkey::new_from_array(self.session_authority.session_key);
@@ -2485,8 +2465,6 @@ impl ClientRole for Secp256k1SessionClientRole {
                 sub_account_state,
                 sub_account,
                 role_id,
-                state_bump,
-                asset_bump,
             )?,
         ])
     }
@@ -2957,8 +2935,6 @@ impl ClientRole for Secp256r1SessionClientRole {
         role_id: u32,
         sub_account_state: Pubkey,
         sub_account: Pubkey,
-        state_bump: u8,
-        asset_bump: u8,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let session_key = Pubkey::new_from_array(self.session_authority.session_key);
@@ -2970,8 +2946,6 @@ impl ClientRole for Secp256r1SessionClientRole {
                 sub_account_state,
                 sub_account,
                 role_id,
-                state_bump,
-                asset_bump,
             )?,
         ])
     }

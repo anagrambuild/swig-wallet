@@ -99,13 +99,23 @@ fn odometer(context: &SwigTestContext, swig_key: &Pubkey, role_id: u32, r1: bool
 }
 
 fn v2_state_pda(id: &[u8; 32], subacc_id: u32) -> (Pubkey, u8) {
+    let (swig_address, _) =
+        Pubkey::find_program_address(&swig_state::swig::swig_account_seeds(id), &program_id());
     let id_le = subacc_id.to_le_bytes();
-    Pubkey::find_program_address(&sub_account_v2_state_seeds(id, &id_le), &program_id())
+    Pubkey::find_program_address(
+        &sub_account_v2_state_seeds(swig_address.as_ref(), &id_le),
+        &program_id(),
+    )
 }
 
 fn v2_asset_pda(id: &[u8; 32], subacc_id: u32) -> (Pubkey, u8) {
+    let (swig_address, _) =
+        Pubkey::find_program_address(&swig_state::swig::swig_account_seeds(id), &program_id());
     let id_le = subacc_id.to_le_bytes();
-    Pubkey::find_program_address(&sub_account_v2_asset_seeds(id, &id_le), &program_id())
+    Pubkey::find_program_address(
+        &sub_account_v2_asset_seeds(swig_address.as_ref(), &id_le),
+        &program_id(),
+    )
 }
 
 fn send(
@@ -177,8 +187,6 @@ fn setup(
         state_pda,
         asset_pda,
         CREATOR_ROLE_ID,
-        state_bump,
-        asset_bump,
     )
     .unwrap();
     send(context, &creator, vec![create_ix]).unwrap();

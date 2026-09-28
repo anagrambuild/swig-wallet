@@ -31,7 +31,13 @@ pub mod withdraw_from_sub_account_v2;
 
 use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
-use swig_assertions::{check_stack_height, check_top_level_or_signers};
+use swig_assertions::{
+    check_self_owned, check_stack_height, check_top_level_or_signers, find_self_pda,
+};
+use swig_state::{
+    swig::{swig_account_seeds, Swig},
+    Discriminator, Transmutable,
+};
 
 use self::{
     add_authority_v1::*, close_sub_account_v1::*, close_sub_account_v2::*, close_swig_v1::*,
@@ -101,6 +107,45 @@ pub fn process_action(
         check_stack_height(1, SwigError::Cpi)?;
     } else {
         check_top_level_or_signers(accounts, &AUTHORIZED_CPI_SIGNERS, SwigError::Cpi)?;
+    }
+    // V1 sub-accounts share the parent ID, so reject preexisting alternate
+    // configs. V2 binds its PDAs to the actual config address and needs no
+    // canonical-parent search. All sub-account paths consume config account 0.
+    let requires_canonical_config = matches!(
+        ix,
+        SwigInstruction::CreateSubAccountV1
+            | SwigInstruction::WithdrawFromSubAccountV1
+            | SwigInstruction::SubAccountSignV1
+            | SwigInstruction::ToggleSubAccountV1
+            | SwigInstruction::CloseSubAccountV1
+    );
+    if requires_canonical_config
+        || matches!(
+            ix,
+            SwigInstruction::CreateSubAccountV2
+                | SwigInstruction::WithdrawFromSubAccountV2
+                | SwigInstruction::SubAccountSignV2
+                | SwigInstruction::ToggleSubAccountV2
+                | SwigInstruction::CloseSubAccountV2
+        )
+    {
+        let account = accounts.first().ok_or(SwigError::InvalidAccountsLength)?;
+        check_self_owned(account, SwigError::OwnerMismatchSwigAccount)?;
+        let data = account.try_borrow_data()?;
+        if data.len() < Swig::LEN || data[0] != Discriminator::SwigConfigAccount as u8 {
+            return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+        }
+        if requires_canonical_config {
+            let swig = unsafe { Swig::load_unchecked(&data[..Swig::LEN])? };
+            let bump = find_self_pda(
+                &swig_account_seeds(&swig.id),
+                account.key(),
+                SwigError::InvalidSeedSwigAccount,
+            )?;
+            if swig.bump != bump {
+                return Err(SwigError::InvalidSeedSwigAccount.into());
+            }
+        }
     }
     match ix {
         SwigInstruction::CreateV1 => process_create_v1(accounts, data),
