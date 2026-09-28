@@ -708,16 +708,42 @@ impl SignV2Instruction {
         inner_instruction: Instruction,
         role_id: u32,
     ) -> anyhow::Result<Vec<Instruction>> {
+        Self::new_program_exec_with_instructions(
+            swig_account,
+            swig_wallet_address,
+            payer,
+            preceding_instruction,
+            vec![inner_instruction],
+            role_id,
+            &[],
+        )
+    }
+
+    /// Builds one SignV2 instruction containing all requested inner
+    /// instructions.
+    pub fn new_program_exec_with_instructions(
+        swig_account: Pubkey,
+        swig_wallet_address: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        inner_instructions: Vec<Instruction>,
+        role_id: u32,
+        transaction_signers: &[Pubkey],
+    ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
 
-        let accounts = vec![
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(swig_wallet_address, false),
             AccountMeta::new(payer, true),
         ];
+        for signer in transaction_signers {
+            if *signer != payer {
+                accounts.push(AccountMeta::new_readonly(*signer, true));
+            }
+        }
 
-        let (mut accounts, ixs) =
-            compact_instructions(swig_account, accounts, vec![inner_instruction]);
+        let (mut accounts, ixs) = compact_instructions(swig_account, accounts, inner_instructions);
 
         // Add instructions sysvar AFTER compact_instructions to ensure stable index
         let instruction_sysvar_index = accounts.len() as u8;

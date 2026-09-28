@@ -3544,44 +3544,22 @@ where
         _current_slot: Option<u64>,
         transaction_signers: &[Pubkey],
     ) -> Result<Vec<Instruction>, SwigError> {
-        // Build the inner instruction using compact_instructions
-        let base_accounts = vec![
-            solana_program::instruction::AccountMeta::new(swig_account, false),
-            solana_program::instruction::AccountMeta::new(swig_wallet_address, false),
-        ];
-
-        // Add transaction signers as readonly signers
-        let mut accounts_with_signers = base_accounts;
-        for signer in transaction_signers {
-            accounts_with_signers.push(solana_program::instruction::AccountMeta::new_readonly(
-                *signer, true,
-            ));
-        }
-
-        let (_, compact_ixs) =
-            swig_interface::compact_instructions(swig_account, accounts_with_signers, instructions);
-
-        let inner_instruction = solana_program::instruction::Instruction {
-            program_id: swig_interface::program_id(),
-            accounts: vec![],
-            data: compact_ixs.into_bytes(),
-        };
-
         // Get the preceding instruction from the function
         let preceding_instruction = (self.preceding_instruction_fn)();
 
-        // Determine payer from transaction_signers (first signer is typically the
-        // payer)
-        let payer = transaction_signers.first().copied().unwrap_or(swig_account);
+        let payer = transaction_signers.first().copied().ok_or_else(|| {
+            SwigError::InterfaceError("ProgramExec SignV2 requires a transaction signer".into())
+        })?;
 
         // Use SignV2 with ProgramExec
-        SignV2Instruction::new_program_exec(
+        SignV2Instruction::new_program_exec_with_instructions(
             swig_account,
             swig_wallet_address,
             payer,
             preceding_instruction,
-            inner_instruction,
+            instructions,
             role_id,
+            transaction_signers,
         )
         .map_err(|e| SwigError::InterfaceError(e.to_string()))
     }

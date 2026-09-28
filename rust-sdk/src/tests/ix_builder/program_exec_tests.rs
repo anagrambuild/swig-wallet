@@ -19,6 +19,78 @@ const TEST_PROGRAM_ID: Pubkey =
     solana_program::pubkey!("BXAu5ZWHnGun2XZjUZ9nqwiZ5dNVmofPGYdMC4rx4qLV");
 const VALID_DISCRIMINATOR: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
+#[test]
+fn generic_program_exec_sign_v2_keeps_original_inner_instructions() {
+    let payer = Pubkey::new_unique();
+    let swig_id = [42; 32];
+    let first_program = Pubkey::new_unique();
+    let second_program = Pubkey::new_unique();
+    let destination = Pubkey::new_unique();
+    let role = ProgramExecClientRole::new(TEST_PROGRAM_ID, VALID_DISCRIMINATOR.to_vec(), || {
+        Instruction {
+            program_id: TEST_PROGRAM_ID,
+            accounts: vec![],
+            data: VALID_DISCRIMINATOR.to_vec(),
+        }
+    });
+    let mut builder = SwigInstructionBuilder::new(swig_id, Box::new(role), payer, 1);
+    let instructions = builder
+        .sign_v2_instruction(
+            vec![
+                Instruction {
+                    program_id: first_program,
+                    accounts: vec![AccountMeta::new(destination, false)],
+                    data: vec![10, 11],
+                },
+                Instruction {
+                    program_id: second_program,
+                    accounts: vec![AccountMeta::new_readonly(destination, false)],
+                    data: vec![12],
+                },
+            ],
+            None,
+        )
+        .unwrap();
+
+    assert_eq!(instructions.len(), 2);
+    assert_eq!(instructions[0].program_id, TEST_PROGRAM_ID);
+    let sign = &instructions[1];
+    assert_eq!(sign.program_id, program_id());
+    assert!(sign
+        .accounts
+        .iter()
+        .any(|account| account.pubkey == destination));
+    assert!(sign
+        .accounts
+        .iter()
+        .any(|account| account.pubkey == payer && account.is_signer));
+    assert!(!sign
+        .accounts
+        .iter()
+        .any(|account| account.pubkey == program_id()));
+
+    let args_len = core::mem::size_of::<swig_interface::swig::actions::sign_v2::SignV2Args>();
+    let compact = &sign.data[args_len..];
+    assert_eq!(compact[0], 2);
+    let first_program_index = compact[1] as usize;
+    assert_eq!(sign.accounts[first_program_index].pubkey, first_program);
+    let first_account_count = compact[2] as usize;
+    let first_data_len_offset = 3 + first_account_count;
+    let first_data_len = u16::from_le_bytes([
+        compact[first_data_len_offset],
+        compact[first_data_len_offset + 1],
+    ]) as usize;
+    assert_eq!(
+        &compact[first_data_len_offset + 2..first_data_len_offset + 2 + first_data_len],
+        &[10, 11]
+    );
+    let second_offset = first_data_len_offset + 2 + first_data_len;
+    let second_program_index = compact[second_offset] as usize;
+    assert_eq!(sign.accounts[second_program_index].pubkey, second_program);
+    assert_eq!(compact[second_offset + 1], 1);
+    assert_eq!(&compact[second_offset + 5..second_offset + 6], &[12]);
+}
+
 #[test_log::test]
 fn test_program_exec_sign_with_preceding_instruction() {
     let mut context = setup_test_context().unwrap();
