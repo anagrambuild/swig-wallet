@@ -23,7 +23,7 @@ use swig_state::{
         program::Program,
         program_all::ProgramAll,
         program_curated::ProgramCurated,
-        program_scope::{NumericType, ProgramScope, ProgramScopeType},
+        program_scope::{NumericType, ProgramScope},
         sol_destination_limit::SolDestinationLimit,
         sol_limit::SolLimit,
         sol_recurring_destination_limit::SolRecurringDestinationLimit,
@@ -386,9 +386,6 @@ pub fn sign_v2(
                     find_program_scope(role.actions, account.key(), account.owner())?
                         .ok_or(SwigAuthenticateError::PermissionDeniedMissingPermission)?;
                 *balance = unsafe { read_program_scope_account_balance(data, program_scope)? };
-                if program_scope.scope_type == ProgramScopeType::Basic as u64 {
-                    continue;
-                }
                 let start = program_scope.balance_field_start as usize;
                 let end = program_scope.balance_field_end as usize;
                 if start >= end || end > data.len() {

@@ -378,6 +378,68 @@ fn program_scope_uses_acting_owner_scope_for_balance_baseline() {
         context.svm.get_account(&swig).unwrap().data,
         swig_before.data
     );
+
+    // A Basic scope with an explicit balance field still needs an initialized
+    // integrity snapshot for the final post-CPI comparison.
+    let basic_authority = Keypair::new();
+    context
+        .svm
+        .airdrop(&basic_authority.pubkey(), 10_000_000_000)
+        .unwrap();
+    let mut basic_scope = ProgramScope::new_basic(spl_token::ID.to_bytes(), source.to_bytes());
+    basic_scope.set_balance_field_indices(64, 72).unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: basic_authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::Program(Program {
+                program_id: spl_token::ID.to_bytes(),
+            }),
+            ClientAction::ProgramScope(basic_scope),
+        ],
+    )
+    .unwrap();
+    let transfer =
+        spl_token::instruction::transfer(&spl_token::ID, &source, &destination, &wallet, &[], 10)
+            .unwrap();
+    let sign = SignV2Instruction::new_ed25519(
+        swig,
+        wallet,
+        basic_authority.pubkey(),
+        transfer,
+        3,
+    )
+    .unwrap();
+    let message = v0::Message::try_compile(
+        &basic_authority.pubkey(),
+        &[sign],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let transaction =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&basic_authority])
+            .unwrap();
+    context.svm.send_transaction(transaction).unwrap();
+    let source_after = context.svm.get_account(&source).unwrap();
+    let destination_after = context.svm.get_account(&destination).unwrap();
+    assert_eq!(
+        spl_token::state::Account::unpack(&source_after.data)
+            .unwrap()
+            .amount,
+        990
+    );
+    assert_eq!(
+        spl_token::state::Account::unpack(&destination_after.data)
+            .unwrap()
+            .amount,
+        10
+    );
 }
 
 /// Helper function to perform token transfers through the swig using SignV2
