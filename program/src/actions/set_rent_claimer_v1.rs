@@ -9,7 +9,7 @@ use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
     action::{all::All, close_swig_authority::CloseSwigAuthority},
-    swig::{swig_wallet_address_seeds_with_bump, Swig},
+    swig::{swig_wallet_address_seeds, Swig},
     tail::rent_claimer,
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
@@ -98,17 +98,16 @@ pub fn set_rent_claimer_v1(
     if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
+    crate::require_swig_v2(swig_account_data)?;
     let old_len = swig_account_data.len();
 
     {
         let parts = Swig::split_parts_mut(swig_account_data)?;
-        let swig = parts.state;
 
-        let wallet_bump = [swig.wallet_bump];
-        let wallet_address = pinocchio::pubkey::create_program_address(
-            &swig_wallet_address_seeds_with_bump(ctx.accounts.swig.key().as_ref(), &wallet_bump),
+        let (wallet_address, _) = pinocchio::pubkey::find_program_address(
+            &swig_wallet_address_seeds(ctx.accounts.swig.key().as_ref()),
             &crate::ID,
-        )?;
+        );
         if set_ix.args.rent_claimer == wallet_address {
             return Err(SwigError::InvalidRentClaimerValue.into());
         }

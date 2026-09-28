@@ -17,9 +17,9 @@ use solana_sdk::{
 };
 use swig_error::SwigError;
 use swig_interface::{
-    AuthorityConfig, ClientAction, CreateInstruction, CreateSubAccountInstruction,
-    SignV2Instruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
-    WithdrawFromSubAccountInstruction,
+    AuthorityConfig, ClientAction, CloseSubAccountV1Instruction, CreateInstruction,
+    CreateSubAccountInstruction, SignV2Instruction, SubAccountSignInstruction,
+    ToggleSubAccountInstruction, WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
     action::{all::All, sub_account::SubAccount},
@@ -514,5 +514,70 @@ fn ordinary_sign_v2_still_accepts_preexisting_alternate_config() {
     assert_eq!(
         f.context.svm.get_balance(&f.alternate_wallet).unwrap(),
         before - 1
+    );
+}
+
+#[test]
+fn alternate_cannot_close_v1_subaccount() {
+    let mut f = Fixture::new(true);
+    let disable = ToggleSubAccountInstruction::new_with_ed25519_authority(
+        f.canonical,
+        f.root.pubkey(),
+        f.root.pubkey(),
+        f.child,
+        0,
+        0,
+        false,
+    )
+    .unwrap();
+    send(&mut f.context, &f.root, disable).unwrap();
+    // The alternate mirrors the disabled action and live-child counter, but has
+    // its own root and destination wallet, as a pre-upgrade attacker could have.
+    f.seed_preupgrade_alternate();
+    let attack = CloseSubAccountV1Instruction::new_with_ed25519_authority(
+        f.alternate,
+        f.attacker.pubkey(),
+        f.child,
+        f.alternate_wallet,
+        None,
+        f.attacker.pubkey(),
+        0,
+        0,
+    )
+    .unwrap();
+    assert_rejected_unchanged(
+        &mut f.context,
+        &f.attacker,
+        attack,
+        SwigError::InvalidSeedSwigAccount,
+        f.canonical,
+    );
+    let valid = CloseSubAccountV1Instruction::new_with_ed25519_authority(
+        f.canonical,
+        f.root.pubkey(),
+        f.child,
+        f.canonical_wallet,
+        None,
+        f.root.pubkey(),
+        0,
+        0,
+    )
+    .unwrap();
+    let wallet_before = f
+        .context
+        .svm
+        .get_account(&f.canonical_wallet)
+        .unwrap()
+        .lamports;
+    let child_before = f.context.svm.get_account(&f.child).unwrap().lamports;
+    send(&mut f.context, &f.root, valid).unwrap();
+    assert!(f.context.svm.get_account(&f.child).is_none());
+    assert_eq!(
+        f.context
+            .svm
+            .get_account(&f.canonical_wallet)
+            .unwrap()
+            .lamports,
+        wallet_before + child_before
     );
 }

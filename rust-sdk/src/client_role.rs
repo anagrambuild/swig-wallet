@@ -813,6 +813,7 @@ impl ClientRole for Secp256k1ClientRole {
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
 
         Ok(vec![
             CreateSubAccountInstruction::new_with_secp256k1_authority(
@@ -820,6 +821,7 @@ impl ClientRole for Secp256k1ClientRole {
                 payer,
                 &self.signing_fn,
                 current_slot,
+                new_odometer,
                 sub_account,
                 role_id,
                 sub_account_bump,
@@ -836,6 +838,7 @@ impl ClientRole for Secp256k1ClientRole {
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
 
         Ok(vec![
             SubAccountSignInstruction::new_with_secp256k1_authority(
@@ -843,6 +846,7 @@ impl ClientRole for Secp256k1ClientRole {
                 sub_account,
                 &self.signing_fn,
                 current_slot,
+                new_odometer,
                 role_id,
                 instructions,
             )?,
@@ -859,6 +863,7 @@ impl ClientRole for Secp256k1ClientRole {
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
 
         // Derive the swig wallet address
         let (swig_wallet_address, _) = Pubkey::find_program_address(
@@ -872,6 +877,7 @@ impl ClientRole for Secp256k1ClientRole {
                 payer,
                 &self.signing_fn,
                 current_slot,
+                new_odometer,
                 sub_account,
                 swig_wallet_address,
                 role_id,
@@ -893,6 +899,7 @@ impl ClientRole for Secp256k1ClientRole {
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
 
         // Derive the swig wallet address
         let (swig_wallet_address, _) = Pubkey::find_program_address(
@@ -906,6 +913,7 @@ impl ClientRole for Secp256k1ClientRole {
                 payer,
                 &self.signing_fn,
                 current_slot,
+                new_odometer,
                 sub_account,
                 swig_wallet_address,
                 sub_account_token,
@@ -928,6 +936,7 @@ impl ClientRole for Secp256k1ClientRole {
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
 
         Ok(vec![
             ToggleSubAccountInstruction::new_with_secp256k1_authority(
@@ -935,6 +944,7 @@ impl ClientRole for Secp256k1ClientRole {
                 payer,
                 &self.signing_fn,
                 current_slot,
+                new_odometer,
                 sub_account,
                 role_id,
                 auth_role_id,
@@ -3532,13 +3542,19 @@ where
             ));
         }
 
-        let (_, compact_ixs) =
-            swig_interface::compact_instructions(swig_account, accounts_with_signers, instructions);
+        let (_, compact_ixs) = swig_interface::compact_instructions(
+            swig_wallet_address,
+            accounts_with_signers,
+            instructions,
+        )
+        .map_err(|e| SwigError::InterfaceError(e.to_string()))?;
 
         let inner_instruction = solana_program::instruction::Instruction {
             program_id: swig_interface::program_id(),
             accounts: vec![],
-            data: compact_ixs.into_bytes(),
+            data: compact_ixs
+                .into_bytes()
+                .map_err(|e| SwigError::InterfaceError(e.to_string()))?,
         };
 
         // Get the preceding instruction from the function

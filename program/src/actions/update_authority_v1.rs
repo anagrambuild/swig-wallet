@@ -16,7 +16,7 @@ use swig_state::{
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::Swig,
-    tail::SavedTail,
+    tail::{active_sub_account_count, SavedTail},
     Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut,
 };
 
@@ -26,6 +26,7 @@ use crate::{
         accounts::{Context, UpdateAuthorityV1Accounts},
         SwigInstruction,
     },
+    util::{ensure_admin_remains, reject_root_recovery_grants},
 };
 
 /// Calculates the actual number of actions in the provided actions data.
@@ -289,12 +290,13 @@ fn perform_replace_all_operation(
     current_actions_size: usize,
     new_actions: &[u8],
     authority_to_update_id: u32,
+    sub_account_counter: u32,
 ) -> Result<i64, ProgramError> {
-    // Reject duplicate V2 sub-account scoped actions on the resulting role.
+    // Validate V2 sub-account actions on the resulting role.
     // ReplaceAll receives the role's full new action list, and AddActions routes
     // through here after concatenating existing + new actions, so both mutation
     // paths are covered by this single check.
-    ActionLoader::reject_duplicate_v2_scoped(new_actions)?;
+    ActionLoader::validate_v2_actions(new_actions, sub_account_counter)?;
 
     let new_actions_size = new_actions.len();
     let size_diff = new_actions_size as i64 - current_actions_size as i64;
@@ -413,6 +415,7 @@ fn perform_add_actions_operation(
     current_actions_size: usize,
     new_actions: &[u8],
     authority_to_update_id: u32,
+    sub_account_counter: u32,
 ) -> Result<i64, ProgramError> {
     // For add operation, we need to append new actions to existing ones
     let mut combined_actions = Vec::new();
@@ -433,6 +436,7 @@ fn perform_add_actions_operation(
         current_actions_size,
         &combined_actions,
         authority_to_update_id,
+        sub_account_counter,
     )
 }
 
@@ -480,12 +484,20 @@ pub(crate) fn append_actions_to_role(
     new_actions: &[u8],
 ) -> Result<(), ProgramError> {
     let mut account_len: usize;
-    let (saved_tail, current_roles_len, current_actions_size, authority_offset, actions_offset) = {
+    let (
+        saved_tail,
+        current_roles_len,
+        current_actions_size,
+        authority_offset,
+        actions_offset,
+        sub_account_counter,
+    ) = {
         let swig_account_data = unsafe { swig_account.borrow_mut_data_unchecked() };
         account_len = swig_account_data.len();
         if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
+        crate::require_swig_v2(swig_account_data)?;
         let parts = Swig::split_parts_mut(swig_account_data)?;
         let saved_tail = SavedTail::take(parts.tail)?;
         let swig = parts.state;
@@ -499,6 +511,7 @@ pub(crate) fn append_actions_to_role(
             current_actions_size,
             authority_offset,
             actions_offset,
+            swig.sub_account_counter,
         )
     };
 
@@ -547,6 +560,7 @@ pub(crate) fn append_actions_to_role(
         current_actions_size,
         new_actions,
         role_id,
+        sub_account_counter,
     )?;
 
     Ok(())
@@ -561,6 +575,7 @@ fn perform_remove_by_type_operation(
     current_actions_size: usize,
     remove_types: &[u8],
     authority_to_update_id: u32,
+    sub_account_counter: u32,
 ) -> Result<i64, ProgramError> {
     let mut filtered_actions = Vec::new();
     let mut cursor = 0;
@@ -607,6 +622,7 @@ fn perform_remove_by_type_operation(
         current_actions_size,
         &filtered_actions,
         authority_to_update_id,
+        sub_account_counter,
     )
 }
 
@@ -619,6 +635,7 @@ fn perform_remove_by_index_operation(
     current_actions_size: usize,
     remove_indices: &[u16],
     authority_to_update_id: u32,
+    sub_account_counter: u32,
 ) -> Result<i64, ProgramError> {
     let mut filtered_actions = Vec::new();
     let mut cursor = 0;
@@ -665,6 +682,7 @@ fn perform_remove_by_index_operation(
         current_actions_size,
         &filtered_actions,
         authority_to_update_id,
+        sub_account_counter,
     )
 }
 
@@ -706,14 +724,17 @@ pub fn update_authority_v1(
     let mut account_len: usize;
     let (
         saved_tail,
+        role_count,
         current_roles_len,
         current_actions_size,
         authority_offset,
         actions_offset,
         prealloc_size_diff,
+        sub_account_counter,
     ) = {
         let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
         account_len = swig_account_data.len();
+        crate::require_swig_v2(swig_account_data)?;
         if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
@@ -757,6 +778,13 @@ pub fn update_authority_v1(
             return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
         }
 
+        // Delegated management does not include changing the root's permissions.
+        if update_authority_v1.args.authority_to_update_id == 0
+            && update_authority_v1.args.acting_role_id != 0
+        {
+            return Err(SwigAuthenticateError::PermissionDeniedCannotUpdateRootAuthority.into());
+        }
+
         // Verify the authority to update exists and calculate offsets.
         let (current_actions_size, authority_offset, actions_offset) = {
             let mut cursor = 0usize;
@@ -793,6 +821,15 @@ pub fn update_authority_v1(
             (current_size, auth_offset, act_offset)
         };
 
+        if update_authority_v1.args.acting_role_id != 0
+            && matches!(
+                operation,
+                AuthorityUpdateOperation::ReplaceAll | AuthorityUpdateOperation::AddActions
+            )
+        {
+            reject_root_recovery_grants(update_authority_v1.get_actions_data()?)?;
+        }
+
         let prealloc_size_diff = match operation {
             AuthorityUpdateOperation::ReplaceAll => {
                 let new_actions = update_authority_v1.get_actions_data()?;
@@ -814,13 +851,26 @@ pub fn update_authority_v1(
             },
         };
 
+        // V1 child metadata lives inside its role action. Until the child close
+        // path tombstones that action, do not allow update operations that can
+        // replace or remove it. AddActions is structurally append-only and safe.
+        if operation != AuthorityUpdateOperation::AddActions
+            && active_sub_account_count::has_active_v1(
+                &swig_roles[actions_offset..actions_offset + current_actions_size],
+            )?
+        {
+            return Err(SwigError::ActiveV1SubAccountMustBeClosed.into());
+        }
+
         (
             saved_tail,
+            swig.roles,
             roles_len,
             current_actions_size,
             authority_offset,
             actions_offset,
             prealloc_size_diff,
+            swig.sub_account_counter,
         )
     };
 
@@ -873,6 +923,7 @@ pub fn update_authority_v1(
                 current_actions_size,
                 new_actions,
                 update_authority_v1.args.authority_to_update_id,
+                sub_account_counter,
             )?
         },
         AuthorityUpdateOperation::AddActions => {
@@ -885,6 +936,7 @@ pub fn update_authority_v1(
                 current_actions_size,
                 new_actions,
                 update_authority_v1.args.authority_to_update_id,
+                sub_account_counter,
             )?
         },
         AuthorityUpdateOperation::RemoveActionsByType => {
@@ -897,6 +949,7 @@ pub fn update_authority_v1(
                 current_actions_size,
                 remove_types,
                 update_authority_v1.args.authority_to_update_id,
+                sub_account_counter,
             )?
         },
         AuthorityUpdateOperation::RemoveActionsByIndex => {
@@ -909,9 +962,20 @@ pub fn update_authority_v1(
                 current_actions_size,
                 &remove_indices,
                 update_authority_v1.args.authority_to_update_id,
+                sub_account_counter,
             )?
         },
     };
+
+    // Validate the actual post-update state. Returning an error rolls the
+    // instruction back atomically.
+    let updated_roles_len = current_roles_len
+        .checked_add_signed(size_diff as isize)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    let updated_roles = swig_roles
+        .get(..updated_roles_len)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    ensure_admin_remains(updated_roles, role_count)?;
 
     if size_diff < 0 {
         let new_size = (account_len as i64 + size_diff) as usize;
@@ -1041,6 +1105,7 @@ mod tests {
                 actions_offset,
                 current_actions_size,
                 &grown_actions,
+                0,
                 0,
             )?;
             assert_eq!(applied, expected_diff);

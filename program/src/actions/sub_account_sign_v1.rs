@@ -25,7 +25,7 @@ use crate::{
         accounts::{Context, SubAccountSignV1Accounts},
         SwigInstruction,
     },
-    util::build_restricted_keys,
+    isolation::IsolationGuard,
     AccountClassification,
 };
 
@@ -135,7 +135,6 @@ pub fn sub_account_sign_v1(
     data: &[u8],
     account_classifiers: &[AccountClassification],
 ) -> ProgramResult {
-    check_stack_height(1, SwigError::Cpi)?;
     check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSubAccount)?;
     check_system_owner(ctx.accounts.sub_account, SwigError::OwnerMismatchSubAccount)?;
     let sign_v1 = SubAccountSignV1::from_instruction_bytes(data)?;
@@ -201,6 +200,13 @@ pub fn sub_account_sign_v1(
     let sub_account_bump = sub_account.bump;
     let sub_account_role_id = sub_account.role_id;
     let sub_account_swig_id = sub_account.swig_id;
+    let mut isolation = IsolationGuard::new(all_accounts);
+    isolation.capture_signers(ctx.accounts.sub_account.key())?;
+    for (index, account) in all_accounts.iter().enumerate() {
+        if account.is_writable() && account.key() != ctx.accounts.sub_account.key() {
+            isolation.snapshot(index)?;
+        }
+    }
     let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,
@@ -226,6 +232,8 @@ pub fn sub_account_sign_v1(
             return Err(SwigError::InstructionExecutionError.into());
         }
     }
+
+    isolation.validate()?;
 
     // Check that the sub-account maintains sufficient lamports for rent exemption
     // Ensure the account has some minimum balance for rent exemption

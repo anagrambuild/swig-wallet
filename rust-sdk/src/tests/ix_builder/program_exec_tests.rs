@@ -19,6 +19,46 @@ const TEST_PROGRAM_ID: Pubkey =
     solana_program::pubkey!("BXAu5ZWHnGun2XZjUZ9nqwiZ5dNVmofPGYdMC4rx4qLV");
 const VALID_DISCRIMINATOR: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
+#[test]
+fn test_program_exec_propagates_compact_account_limit() {
+    let program_exec_role =
+        ProgramExecClientRole::new(TEST_PROGRAM_ID, VALID_DISCRIMINATOR.to_vec(), || {
+            Instruction {
+                program_id: TEST_PROGRAM_ID,
+                accounts: Vec::new(),
+                data: VALID_DISCRIMINATOR.to_vec(),
+            }
+        });
+    let inner_instruction = Instruction {
+        program_id: Pubkey::new_unique(),
+        accounts: (0..250)
+            .map(|_| AccountMeta::new_readonly(Pubkey::new_unique(), false))
+            .collect(),
+        data: Vec::new(),
+    };
+
+    let error = program_exec_role
+        .sign_with_program_exec(
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Instruction {
+                program_id: TEST_PROGRAM_ID,
+                accounts: Vec::new(),
+                data: VALID_DISCRIMINATOR.to_vec(),
+            },
+            inner_instruction,
+            0,
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        SwigError::InterfaceError(message)
+            if message == "compact instruction account limit exceeded"
+    ));
+}
+
 #[test_log::test]
 fn test_program_exec_sign_with_preceding_instruction() {
     let mut context = setup_test_context().unwrap();

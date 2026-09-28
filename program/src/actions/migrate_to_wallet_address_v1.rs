@@ -12,10 +12,11 @@ use pinocchio::{
     sysvars::{clock::Clock, rent::Rent, Sysvar},
     ProgramResult,
 };
-use swig_assertions::{check_self_pda, check_system_owner, check_zero_data};
+use swig_assertions::{check_bytes_match, check_self_owned, check_system_owner, check_zero_data};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority},
-    swig::{swig_wallet_address_seeds_with_bump, Swig},
+    action::{all::All, manage_authority::ManageAuthority, Action, ActionLoader},
+    role::Position,
+    swig::{swig_wallet_address_seeds, Swig},
     Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable,
 };
 
@@ -143,6 +144,14 @@ pub fn migrate_to_wallet_address_v1(
     migrate_data: &[u8],
     all_accounts: &[AccountInfo],
 ) -> ProgramResult {
+    check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
+    check_bytes_match(
+        ctx.accounts.system_program.key(),
+        &pinocchio_system::ID,
+        32,
+        SwigError::InvalidSystemProgram,
+    )?;
+
     let migrate = MigrateToWalletAddressV1::from_instruction_bytes(migrate_data)?;
 
     let (old_swig_id, old_swig_bump, old_swig_roles, old_swig_role_counter) = {
@@ -157,16 +166,7 @@ pub fn migrate_to_wallet_address_v1(
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
 
-        // Check if this account is already migrated (has wallet_bump field)
-        // We can detect this by checking if reserved_lamports field is 0 and if the
-        // 41st byte (wallet_bump position) is non-zero
         let old_swig = unsafe { OldSwig::load_unchecked(&swig_data[..OldSwig::LEN])? };
-        let potential_wallet_bump = swig_data[40]; // Position where wallet_bump would be
-
-        if old_swig.reserved_lamports == 0 && potential_wallet_bump != 0 {
-            msg!("Account appears to already be migrated");
-            return Err(SwigError::StateError.into());
-        }
 
         (
             old_swig.id,
@@ -208,6 +208,59 @@ pub fn migrate_to_wallet_address_v1(
         }
     }
 
+    // Migration resets the overlaid V2 counter to zero while preserving every
+    // role. Reject any scoped V2 permission already stored on the V1 account so
+    // it cannot become a future grant after migration.
+    {
+        let swig_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
+        let parts = Swig::split_parts(swig_data)?;
+        let mut cursor = 0usize;
+        for _ in 0..old_swig_roles {
+            let position_end = cursor
+                .checked_add(Position::LEN)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            let position_bytes = parts
+                .roles
+                .get(cursor..position_end)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            let position = unsafe { Position::load_unchecked(position_bytes)? };
+            let boundary = position.boundary() as usize;
+            let actions_start = position_end
+                .checked_add(position.authority_length() as usize)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            let actions = parts
+                .roles
+                .get(actions_start..boundary)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            ActionLoader::validate_v2_actions(actions, 0)?;
+            cursor = boundary;
+        }
+    }
+
+    // The wallet-address PDA is canonical. Accepting any caller-selected valid
+    // bump would let a re-migration bind the Swig to a different signer PDA.
+    let (expected_wallet_address, canonical_wallet_bump) = pinocchio::pubkey::find_program_address(
+        &swig_wallet_address_seeds(ctx.accounts.swig.key().as_ref()),
+        &crate::ID,
+    );
+    if expected_wallet_address != *ctx.accounts.swig_wallet_address.key()
+        || migrate.args.wallet_address_bump != canonical_wallet_bump
+    {
+        return Err(SwigError::InvalidSeedSwigAccount.into());
+    }
+
+    // V2 stores the canonical wallet bump followed by three immutable zero
+    // padding bytes. Ignore bytes 44..48: they hold the mutable V2 sub-account
+    // counter. V1 stored one rent-reserve u64 across the full eight-byte window.
+    {
+        let swig_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
+        let current_swig = unsafe { Swig::load_unchecked(&swig_data[..Swig::LEN])? };
+        if current_swig.wallet_bump == canonical_wallet_bump && current_swig._padding == [0u8; 3] {
+            msg!("Swig account is already migrated");
+            return Err(SwigError::SwigAlreadyMigrated.into());
+        }
+    }
+
     // Validate wallet address account
     check_system_owner(
         ctx.accounts.swig_wallet_address,
@@ -218,18 +271,8 @@ pub fn migrate_to_wallet_address_v1(
         SwigError::AccountNotEmptySwigAccount,
     )?;
 
-    // Validate the wallet address PDA
-    let wallet_address_bump = check_self_pda(
-        &swig_wallet_address_seeds_with_bump(
-            ctx.accounts.swig.key().as_ref(),
-            &[migrate.args.wallet_address_bump],
-        ),
-        ctx.accounts.swig_wallet_address.key(),
-        SwigError::InvalidSeedSwigAccount,
-    )?;
-
     // Create the new Swig structure with wallet_bump
-    let new_swig = Swig::new(old_swig_id, old_swig_bump, wallet_address_bump);
+    let new_swig = Swig::new(old_swig_id, old_swig_bump, canonical_wallet_bump);
 
     // Ensure the role counter and roles count are preserved
     let mut new_swig_with_preserved_data = new_swig;
