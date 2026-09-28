@@ -32,7 +32,7 @@ pub mod withdraw_from_sub_account_v2;
 use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
 use swig_assertions::{
-    check_self_owned, check_stack_height, check_top_level_or_signer, find_self_pda,
+    check_self_owned, check_stack_height, check_top_level_or_signers, find_self_pda,
 };
 use swig_state::{
     swig::{swig_account_seeds, Swig},
@@ -66,9 +66,11 @@ use crate::{
     AccountClassification,
 };
 
-// TODO: Remove once authorized cpi signer has migrated their app
-const AUTHORIZED_CPI_SIGNER: [u8; 32] =
-    pinocchio_pubkey::pubkey!("X4o2kSLzqEQjnAzhq3L3BW92aawMV2n2F37EXd2GMpy");
+// TODO: Remove once authorized CPI signers have migrated their apps.
+const AUTHORIZED_CPI_SIGNERS: [[u8; 32]; 2] = [
+    pinocchio_pubkey::pubkey!("X4o2kSLzqEQjnAzhq3L3BW92aawMV2n2F37EXd2GMpy"),
+    pinocchio_pubkey::pubkey!("HSrst4iSVPLuKtV8qzmFDLkHTNhKPf5rjg5D8tL6KVCX"),
+];
 
 /// Main entry point for processing Swig wallet instructions.
 ///
@@ -94,8 +96,8 @@ pub fn process_action(
     }
     let discriminator = unsafe { *(data.get_unchecked(..2).as_ptr() as *const u16) };
     let ix = SwigInstruction::from_primitive(discriminator);
-    // Sign instructions stay CPI-blocked. Everything else allows one authorized
-    // signer until that app migrates off inbound CPI.
+    // Sign instructions stay CPI-blocked. Everything else requires an authorized
+    // signer for inbound CPI until those apps migrate.
     if matches!(
         ix,
         SwigInstruction::SignV2
@@ -104,7 +106,7 @@ pub fn process_action(
     ) {
         check_stack_height(1, SwigError::Cpi)?;
     } else {
-        check_top_level_or_signer(accounts, &AUTHORIZED_CPI_SIGNER, SwigError::Cpi)?;
+        check_top_level_or_signers(accounts, &AUTHORIZED_CPI_SIGNERS, SwigError::Cpi)?;
     }
     // V1 sub-accounts share the parent ID, so reject preexisting alternate
     // configs. V2 binds its PDAs to the actual config address and needs no
