@@ -90,8 +90,13 @@ impl<'a> InstructionHolder<'a> {
             && unsafe { self.accounts.get_unchecked(0).pubkey == swig_key }
         {
             // Check if the "from" account (swig_key) is system-owned or program-owned
-            let from_account_index = unsafe { *self.indexes.get_unchecked(0) };
-            let from_account = unsafe { all_accounts.get_unchecked(from_account_index) };
+            let from_account_index = *self
+                .indexes
+                .first()
+                .ok_or(ProgramError::NotEnoughAccountKeys)?;
+            let from_account = all_accounts
+                .get(from_account_index)
+                .ok_or(ProgramError::NotEnoughAccountKeys)?;
 
             if from_account.owner() == &pinocchio_system::ID {
                 // For system-owned PDAs (new swig_wallet_address accounts),
@@ -111,13 +116,16 @@ impl<'a> InstructionHolder<'a> {
                         .try_into()
                         .map_err(|_| ProgramError::InvalidInstructionData)?,
                 );
+                let account2 = all_accounts
+                    .get(
+                        *self
+                            .indexes
+                            .get(1)
+                            .ok_or(ProgramError::NotEnoughAccountKeys)?,
+                    )
+                    .ok_or(ProgramError::NotEnoughAccountKeys)?;
                 unsafe {
-                    let index = self.indexes.get_unchecked(0);
-                    let index2 = self.indexes.get_unchecked(1);
-                    let account1 = all_accounts.get_unchecked(*index);
-                    let account2 = all_accounts.get_unchecked(*index2);
-
-                    *account1.borrow_mut_lamports_unchecked() -= amount;
+                    *from_account.borrow_mut_lamports_unchecked() -= amount;
                     *account2.borrow_mut_lamports_unchecked() += amount;
                 }
             }
@@ -298,6 +306,41 @@ fn max_accounts_in_payload(data: &[u8]) -> Result<usize, InstructionError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_transfer_rejects_short_execution_accounts() {
+        let swig_key = [1; 32];
+        let program_id = pinocchio_system::ID;
+        let scratch = Rc::new(RefCell::new(InstructionScratch {
+            accounts: Vec::new(),
+            cpi_accounts: Vec::new(),
+            indexes: Vec::new(),
+        }));
+        let holder = InstructionHolder {
+            program_id: &program_id,
+            cpi_accounts: Vec::new(),
+            indexes: vec![0, 1],
+            accounts: vec![
+                AccountMeta {
+                    pubkey: &swig_key,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: &swig_key,
+                    is_signer: false,
+                    is_writable: true,
+                },
+            ],
+            data: &[2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+            uses_swig_signer: false,
+            scratch,
+        };
+        assert!(matches!(
+            holder.execute(&[], &swig_key, &[]),
+            Err(ProgramError::NotEnoughAccountKeys)
+        ));
+    }
 
     #[test]
     fn compact_payload_accepts_101_account_entries_and_rejects_255() {
