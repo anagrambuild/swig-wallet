@@ -144,11 +144,11 @@ impl Fixture {
             },
             SigningPath::SubAccountV2 => {
                 let (state, state_bump) = Pubkey::find_program_address(
-                    &sub_account_v2_state_seeds(&swig_id, &0u32.to_le_bytes()),
+                    &sub_account_v2_state_seeds(swig.as_ref(), &0u32.to_le_bytes()),
                     &program_id(),
                 );
                 let (vault, asset_bump) = Pubkey::find_program_address(
-                    &sub_account_v2_asset_seeds(&swig_id, &0u32.to_le_bytes()),
+                    &sub_account_v2_asset_seeds(swig.as_ref(), &0u32.to_le_bytes()),
                     &program_id(),
                 );
                 let ix = CreateSubAccountV2Instruction::new_with_ed25519_authority(
@@ -158,8 +158,6 @@ impl Fixture {
                     state,
                     vault,
                     1,
-                    state_bump,
-                    asset_bump,
                 )
                 .unwrap();
                 fixture.send_instruction(ix).unwrap();

@@ -41,15 +41,19 @@ use swig_state::{
 // ---- helpers ----------------------------------------------------------------
 
 fn v2_state_pda(id: &[u8; 32], subacc_id: u32) -> (Pubkey, u8) {
+    let (swig_address, _) =
+        Pubkey::find_program_address(&swig_state::swig::swig_account_seeds(id), &program_id());
     Pubkey::find_program_address(
-        &sub_account_v2_state_seeds(id, &subacc_id.to_le_bytes()),
+        &sub_account_v2_state_seeds(swig_address.as_ref(), &subacc_id.to_le_bytes()),
         &program_id(),
     )
 }
 
 fn v2_asset_pda(id: &[u8; 32], subacc_id: u32) -> (Pubkey, u8) {
+    let (swig_address, _) =
+        Pubkey::find_program_address(&swig_state::swig::swig_account_seeds(id), &program_id());
     Pubkey::find_program_address(
-        &sub_account_v2_asset_seeds(id, &subacc_id.to_le_bytes()),
+        &sub_account_v2_asset_seeds(swig_address.as_ref(), &subacc_id.to_le_bytes()),
         &program_id(),
     )
 }
@@ -112,8 +116,6 @@ fn setup(context: &mut SwigTestContext) -> (Pubkey, Keypair, [u8; 32], Keypair, 
         state_pda,
         asset_pda,
         creator_role,
-        state_bump,
-        asset_bump,
     )
     .unwrap();
     send(context, &creator, ix).unwrap();
@@ -375,8 +377,6 @@ fn test_all_scope_is_id_scoped() {
         state1,
         asset1,
         creator_role,
-        sb1,
-        ab1,
     )
     .unwrap();
     send(&mut context, &creator, create1).unwrap();

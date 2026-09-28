@@ -103,7 +103,7 @@ pub fn close_sub_account_v2(
     )?;
     let close = CloseSubAccountV2::from_instruction_bytes(data)?;
 
-    let (swig_id, configured_rent_claimer) = {
+    let configured_rent_claimer = {
         let swig_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
         if swig_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
@@ -117,20 +117,21 @@ pub fn close_sub_account_v2(
             close.authority_payload,
             close.data_payload,
         )?;
-        (
-            parts.state.id,
-            rent_claimer::read_strict(parts.tail)?.copied(),
-        )
+        rent_claimer::read_strict(parts.tail)?.copied()
     };
 
+    let swig_address = ctx.accounts.swig.key();
     let (state_bump, asset_bump) = {
         let state_data = unsafe { ctx.accounts.sub_account_state.borrow_data_unchecked() };
+        if state_data.len() != SubAccountV2::LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
         let state = unsafe { SubAccountV2::load_unchecked(state_data)? };
         state.check_discriminator()?;
         if state.is_enabled()? {
             return Err(SwigError::SubAccountMustBeDisabled.into());
         }
-        if state.swig_id != swig_id {
+        if state.swig_address != *swig_address {
             return Err(SwigError::InvalidSwigSubAccountV2SwigIdMismatch.into());
         }
         if state.subacc_id != close.args.subacc_id {
@@ -146,12 +147,12 @@ pub fn close_sub_account_v2(
     let state_bump_seed = [state_bump];
     let asset_bump_seed = [asset_bump];
     check_self_pda(
-        &sub_account_v2_state_seeds_with_bump(&swig_id, &id_le, &state_bump_seed),
+        &sub_account_v2_state_seeds_with_bump(swig_address, &id_le, &state_bump_seed),
         ctx.accounts.sub_account_state.key(),
         SwigError::InvalidSeedSubAccountV2,
     )?;
     check_self_pda(
-        &sub_account_v2_asset_seeds_with_bump(&swig_id, &id_le, &asset_bump_seed),
+        &sub_account_v2_asset_seeds_with_bump(swig_address, &id_le, &asset_bump_seed),
         ctx.accounts.sub_account.key(),
         SwigError::InvalidSeedSubAccountV2,
     )?;
@@ -188,7 +189,7 @@ pub fn close_sub_account_v2(
         let asset_rent =
             asset_lamports.min(rent.minimum_balance(ctx.accounts.sub_account.data_len()));
         let asset_operational = asset_lamports.saturating_sub(asset_rent);
-        let signer = sub_account_v2_asset_signer(&swig_id, &id_le, &asset_bump_seed);
+        let signer = sub_account_v2_asset_signer(swig_address, &id_le, &asset_bump_seed);
         if rent_destination.key() == ctx.accounts.swig_wallet_address.key() {
             pinocchio_system::instructions::Transfer {
                 from: ctx.accounts.sub_account,

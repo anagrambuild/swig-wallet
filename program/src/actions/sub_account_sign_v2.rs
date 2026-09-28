@@ -94,14 +94,17 @@ pub(crate) fn authorize_scoped_v2(
 pub(crate) fn validate_v2_state(
     state_account: &AccountInfo,
     asset_account: &AccountInfo,
-    swig_id: &[u8; 32],
+    swig_address: &[u8; 32],
     subacc_id: u32,
 ) -> Result<u8, ProgramError> {
     check_self_owned(state_account, SwigError::OwnerMismatchSubAccountV2State)?;
     let state_data = unsafe { state_account.borrow_data_unchecked() };
+    if state_data.len() != SubAccountV2::LEN {
+        return Err(ProgramError::InvalidAccountData);
+    }
     let state = unsafe { SubAccountV2::load_unchecked(state_data)? };
     state.check_discriminator()?;
-    if &state.swig_id != swig_id {
+    if &state.swig_address != swig_address {
         return Err(SwigError::InvalidSwigSubAccountV2SwigIdMismatch.into());
     }
     if state.subacc_id != subacc_id {
@@ -113,7 +116,7 @@ pub(crate) fn validate_v2_state(
     // Bind the state account to its canonical PDA address.
     let id_le = subacc_id.to_le_bytes();
     let bump = [state.bump];
-    let seeds = sub_account_v2_state_seeds_with_bump(swig_id, &id_le, &bump);
+    let seeds = sub_account_v2_state_seeds_with_bump(swig_address, &id_le, &bump);
     check_self_pda(
         &seeds,
         state_account.key(),
@@ -205,7 +208,7 @@ pub fn sub_account_sign_v2(
 
     let sign = SubAccountSignV2::from_instruction_bytes(data)?;
 
-    let swig_id = {
+    let swig_address = {
         let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
         if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8
         {
@@ -215,9 +218,8 @@ pub fn sub_account_sign_v2(
         // before the split, which needs the buffer mutably.
         crate::require_swig_v2(swig_account_data)?;
         let parts = Swig::split_parts_mut(swig_account_data)?;
-        let swig = parts.state;
         let swig_roles = parts.roles;
-        let swig_id = swig.id;
+        let swig_address = *ctx.accounts.swig.key();
 
         let role_opt = Swig::get_mut_role(sign.args.role_id, swig_roles)?;
         if role_opt.is_none() {
@@ -241,7 +243,7 @@ pub fn sub_account_sign_v2(
             )?;
         }
         authorize_scoped_v2(&role, Permission::SubAccountV2Sign, sign.args.subacc_id)?;
-        swig_id
+        swig_address
     };
     let mut isolation = IsolationGuard::new(all_accounts);
     isolation.capture_signers(ctx.accounts.sub_account.key())?;
@@ -255,7 +257,7 @@ pub fn sub_account_sign_v2(
     let asset_bump = validate_v2_state(
         ctx.accounts.sub_account_state,
         ctx.accounts.sub_account,
-        &swig_id,
+        &swig_address,
         sign.args.subacc_id,
     )?;
 
@@ -269,7 +271,7 @@ pub fn sub_account_sign_v2(
     )?;
     let id_le = sign.args.subacc_id.to_le_bytes();
     let bump_byte = [asset_bump];
-    let seeds = sub_account_v2_asset_signer(&swig_id, &id_le, &bump_byte);
+    let seeds = sub_account_v2_asset_signer(&swig_address, &id_le, &bump_byte);
     let signer = seeds.as_slice();
     for ix in ix_iter {
         if let Ok(instruction) = ix {

@@ -61,13 +61,23 @@ fn role_id_of(context: &SwigTestContext, swig: &Pubkey, authority: &Pubkey) -> u
 }
 
 fn v2_state_pda(id: &[u8; 32], subacc_id: u32) -> (Pubkey, u8) {
+    let (swig_address, _) =
+        Pubkey::find_program_address(&swig_state::swig::swig_account_seeds(id), &program_id());
     let id_le = subacc_id.to_le_bytes();
-    Pubkey::find_program_address(&sub_account_v2_state_seeds(id, &id_le), &program_id())
+    Pubkey::find_program_address(
+        &sub_account_v2_state_seeds(swig_address.as_ref(), &id_le),
+        &program_id(),
+    )
 }
 
 fn v2_asset_pda(id: &[u8; 32], subacc_id: u32) -> (Pubkey, u8) {
+    let (swig_address, _) =
+        Pubkey::find_program_address(&swig_state::swig::swig_account_seeds(id), &program_id());
     let id_le = subacc_id.to_le_bytes();
-    Pubkey::find_program_address(&sub_account_v2_asset_seeds(id, &id_le), &program_id())
+    Pubkey::find_program_address(
+        &sub_account_v2_asset_seeds(swig_address.as_ref(), &id_le),
+        &program_id(),
+    )
 }
 
 fn send(
@@ -181,8 +191,6 @@ fn setup_v2_with_sub_account(
         state_pda,
         asset_pda,
         creator_role,
-        state_bump,
-        asset_bump,
     )
     .unwrap();
     send(context, &creator, ix).unwrap();
@@ -243,8 +251,6 @@ fn test_create_sub_account_v2_rejects_v1_swig() {
         state_pda,
         asset_pda,
         creator_role,
-        state_bump,
-        asset_bump,
     )
     .unwrap();
 
@@ -273,8 +279,6 @@ fn test_create_sub_account_v2_does_not_corrupt_a_v1_header() {
         state_pda,
         asset_pda,
         creator_role,
-        state_bump,
-        asset_bump,
     )
     .unwrap();
     assert_rejected_as_v1(send(&mut context, &creator, ix), "CreateSubAccountV2");
@@ -475,8 +479,6 @@ fn test_sub_account_counter_does_not_flip_swig_to_v1() {
             state,
             asset,
             creator_role,
-            state_bump,
-            asset_bump,
         )
         .unwrap();
         send(&mut context, &creator, ix).unwrap();

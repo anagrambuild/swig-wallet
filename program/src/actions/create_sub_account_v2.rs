@@ -22,8 +22,7 @@ use swig_state::{
     action::{sub_account_v2::SubAccountV2Create, Action, Permission},
     sub_account_v2::SubAccountV2,
     swig::{
-        sub_account_v2_asset_seeds_with_bump, sub_account_v2_state_seeds_with_bump,
-        sub_account_v2_state_signer, Swig,
+        sub_account_v2_asset_seeds, sub_account_v2_state_seeds, sub_account_v2_state_signer, Swig,
     },
     Discriminator, IntoBytes, Transmutable, TransmutableMut,
 };
@@ -47,22 +46,17 @@ pub struct CreateSubAccountV2Args {
     _padding1: u16,
     /// Role creating (and initially granted access to) the sub-account
     pub role_id: u32,
-    /// Bump for the program-owned state PDA
-    pub state_bump: u8,
-    /// Bump for the system-owned asset PDA
-    pub asset_bump: u8,
-    _padding2: [u8; 6],
+    /// Reserved; PDA bumps are derived by the program, not supplied by callers.
+    _padding2: [u8; 8],
 }
 
 impl CreateSubAccountV2Args {
-    pub fn new(role_id: u32, state_bump: u8, asset_bump: u8) -> Self {
+    pub fn new(role_id: u32) -> Self {
         Self {
             discriminator: SwigInstruction::CreateSubAccountV2,
             _padding1: 0,
             role_id,
-            state_bump,
-            asset_bump,
-            _padding2: [0; 6],
+            _padding2: [0; 8],
         }
     }
 }
@@ -91,6 +85,9 @@ impl<'a> CreateSubAccountV2<'a> {
         }
         let (args_data, authority_payload) = data.split_at(CreateSubAccountV2Args::LEN);
         let args = unsafe { CreateSubAccountV2Args::load_unchecked(args_data)? };
+        if args._padding1 != 0 || args._padding2 != [0; 8] {
+            return Err(ProgramError::InvalidInstructionData);
+        }
         Ok(Self {
             args,
             authority_payload,
@@ -139,7 +136,7 @@ pub fn create_sub_account_v2(
     let create = CreateSubAccountV2::from_instruction_bytes(data)?;
 
     // Authenticate, authorize creation, and draw a fresh id under one borrow.
-    let (new_id, swig_id) = {
+    let new_id = {
         let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
         if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8
         {
@@ -181,24 +178,20 @@ pub fn create_sub_account_v2(
 
         // Draw a fresh sub-account id. It is consumed after the active-count
         // tail has been materialized, outside this account-data borrow.
-        let new_id = swig.sub_account_counter;
-
-        (new_id, swig.id)
+        swig.sub_account_counter
     };
 
-    // Verify both PDAs match the provided bumps.
+    // Bind both PDAs to the actual config address and choose their canonical
+    // bumps on-chain. Store the bumps for fixed-cost runtime validation/signing.
+    let swig_address = ctx.accounts.swig.key();
     let id_le = new_id.to_le_bytes();
-    let state_bump = [create.args.state_bump];
-    let asset_bump = [create.args.asset_bump];
-    let state_seeds = sub_account_v2_state_seeds_with_bump(&swig_id, &id_le, &state_bump);
-    check_self_pda(
-        &state_seeds,
+    let state_bump = find_self_pda(
+        &sub_account_v2_state_seeds(swig_address, &id_le),
         ctx.accounts.sub_account_state.key(),
         SwigError::InvalidSeedSubAccountV2,
     )?;
-    let asset_seeds = sub_account_v2_asset_seeds_with_bump(&swig_id, &id_le, &asset_bump);
-    check_self_pda(
-        &asset_seeds,
+    let asset_bump = find_self_pda(
+        &sub_account_v2_asset_seeds(swig_address, &id_le),
         ctx.accounts.sub_account.key(),
         SwigError::InvalidSeedSubAccountV2,
     )?;
@@ -231,7 +224,8 @@ pub fn create_sub_account_v2(
         }
         .invoke()?;
     }
-    let state_signer = sub_account_v2_state_signer(&swig_id, &id_le, &state_bump);
+    let state_bump_seed = [state_bump];
+    let state_signer = sub_account_v2_state_signer(swig_address, &id_le, &state_bump_seed);
     let state_signers = [state_signer.as_slice().into()];
     Allocate {
         account: ctx.accounts.sub_account_state,
@@ -248,10 +242,10 @@ pub fn create_sub_account_v2(
     {
         let state_data = unsafe { ctx.accounts.sub_account_state.borrow_mut_data_unchecked() };
         let state = SubAccountV2::new(
-            create.args.state_bump,
-            create.args.asset_bump,
+            state_bump,
+            asset_bump,
             new_id,
-            swig_id,
+            *swig_address,
             *ctx.accounts.sub_account.key(),
         );
         state_data.copy_from_slice(state.into_bytes()?);

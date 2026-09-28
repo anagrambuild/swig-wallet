@@ -3684,8 +3684,6 @@ impl CreateSubAccountV2Instruction {
         sub_account_state: Pubkey,
         sub_account: Pubkey,
         role_id: u32,
-        state_bump: u8,
-        asset_bump: u8,
     ) -> anyhow::Result<Instruction> {
         let accounts = vec![
             AccountMeta::new(swig_account, false),
@@ -3695,7 +3693,7 @@ impl CreateSubAccountV2Instruction {
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
-        let args = CreateSubAccountV2Args::new(role_id, state_bump, asset_bump);
+        let args = CreateSubAccountV2Args::new(role_id);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -3716,8 +3714,6 @@ impl CreateSubAccountV2Instruction {
         sub_account_state: Pubkey,
         sub_account: Pubkey,
         role_id: u32,
-        state_bump: u8,
-        asset_bump: u8,
     ) -> anyhow::Result<Instruction>
     where
         F: FnMut(&[u8]) -> [u8; 65],
@@ -3729,7 +3725,7 @@ impl CreateSubAccountV2Instruction {
             AccountMeta::new(sub_account, false),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
-        let args = CreateSubAccountV2Args::new(role_id, state_bump, asset_bump);
+        let args = CreateSubAccountV2Args::new(role_id);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -3756,8 +3752,6 @@ impl CreateSubAccountV2Instruction {
         sub_account_state: Pubkey,
         sub_account: Pubkey,
         role_id: u32,
-        state_bump: u8,
-        asset_bump: u8,
         public_key: &[u8; 33],
     ) -> anyhow::Result<Vec<Instruction>>
     where
@@ -3771,7 +3765,7 @@ impl CreateSubAccountV2Instruction {
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
-        let args = CreateSubAccountV2Args::new(role_id, state_bump, asset_bump);
+        let args = CreateSubAccountV2Args::new(role_id);
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;

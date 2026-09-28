@@ -77,13 +77,23 @@ fn setup_v2(context: &mut SwigTestContext) -> anyhow::Result<(Pubkey, Keypair, K
 }
 
 fn v2_state_pda(id: &[u8; 32], subacc_id: u32) -> (Pubkey, u8) {
+    let (swig_address, _) =
+        Pubkey::find_program_address(&swig_state::swig::swig_account_seeds(id), &program_id());
     let id_le = subacc_id.to_le_bytes();
-    Pubkey::find_program_address(&sub_account_v2_state_seeds(id, &id_le), &program_id())
+    Pubkey::find_program_address(
+        &sub_account_v2_state_seeds(swig_address.as_ref(), &id_le),
+        &program_id(),
+    )
 }
 
 fn v2_asset_pda(id: &[u8; 32], subacc_id: u32) -> (Pubkey, u8) {
+    let (swig_address, _) =
+        Pubkey::find_program_address(&swig_state::swig::swig_account_seeds(id), &program_id());
     let id_le = subacc_id.to_le_bytes();
-    Pubkey::find_program_address(&sub_account_v2_asset_seeds(id, &id_le), &program_id())
+    Pubkey::find_program_address(
+        &sub_account_v2_asset_seeds(swig_address.as_ref(), &id_le),
+        &program_id(),
+    )
 }
 
 fn create_v2(
@@ -102,8 +112,6 @@ fn create_v2(
         state_pda,
         asset_pda,
         CREATOR_ROLE_ID,
-        state_bump,
-        asset_bump,
     )
     .map_err(|e| anyhow::anyhow!("build create v2: {:?}", e))?;
     send(context, creator, ix)?;
@@ -263,7 +271,7 @@ fn test_create_sub_account_v2_initializes_state_and_grants_creator() {
     let state = unsafe { SubAccountV2::load_unchecked(&state_acc.data).unwrap() };
     assert!(state.is_enabled().unwrap());
     assert_eq!(state.subacc_id, 0);
-    assert_eq!(state.swig_id, id);
+    assert_eq!(state.swig_address, swig_key.to_bytes());
     assert_eq!(state.sub_account, asset_pda.to_bytes());
 
     // Asset account is system-owned and rent-exempt.
@@ -999,8 +1007,6 @@ fn test_all_permission_cannot_create_sub_account_v2() {
         state_pda,
         asset_pda,
         1,
-        state_bump,
-        asset_bump,
     )
     .unwrap();
     assert!(
@@ -1302,8 +1308,6 @@ fn test_create_sub_account_v2_preserves_other_roles_and_permissions() {
         state_pda,
         asset_pda,
         3,
-        state_bump,
-        asset_bump,
     )
     .unwrap();
     send(&mut context, &role3, ix).unwrap();
@@ -1484,4 +1488,290 @@ fn test_v1_counter_overlay_cannot_authorize_future_scope_grants() {
     assert_eq!(after_swig.data, before_swig.data);
     assert_eq!(after_swig.lamports, before_swig.lamports);
     assert_eq!(before_payer.lamports - after_payer.lamports, 30_000);
+}
+
+// These checks exercise the full production builders and assert the exact
+// rejecting boundary plus rollback of every supplied account except tx fees.
+fn assert_v2_rejected_unchanged(
+    context: &mut SwigTestContext,
+    authority: &Keypair,
+    ix: Instruction,
+    error: InstructionError,
+) {
+    let before: Vec<_> = ix
+        .accounts
+        .iter()
+        .filter(|meta| meta.pubkey != context.default_payer.pubkey())
+        .map(|meta| (meta.pubkey, context.svm.get_account(&meta.pubkey)))
+        .collect();
+    assert_eq!(
+        send_admin(context, authority, ix),
+        Err(TransactionError::InstructionError(0, error))
+    );
+    for (key, account) in before {
+        assert_eq!(
+            context.svm.get_account(&key),
+            account,
+            "changed account {key}"
+        );
+    }
+}
+
+#[test]
+fn v2_creation_rejects_noncanonical_child_pdas_and_reserved_bytes() {
+    let mut context = setup_test_context().unwrap();
+    let (swig, _, creator, id) = setup_v2(&mut context).unwrap();
+    let (state, state_bump) = v2_state_pda(&id, 0);
+    let (asset, asset_bump) = v2_asset_pda(&id, 0);
+    let canonical = CreateSubAccountV2Instruction::new_with_ed25519_authority(
+        swig,
+        creator.pubkey(),
+        creator.pubkey(),
+        state,
+        asset,
+        CREATOR_ROLE_ID,
+    )
+    .unwrap();
+    for (index, seeds, canonical_bump) in [
+        (
+            2,
+            sub_account_v2_state_seeds(swig.as_ref(), &0u32.to_le_bytes()),
+            state_bump,
+        ),
+        (
+            3,
+            sub_account_v2_asset_seeds(swig.as_ref(), &0u32.to_le_bytes()),
+            asset_bump,
+        ),
+    ] {
+        let alternate = (0..canonical_bump)
+            .rev()
+            .find_map(|bump| {
+                Pubkey::create_program_address(
+                    &[seeds[0], seeds[1], seeds[2], &[bump]],
+                    &program_id(),
+                )
+                .ok()
+            })
+            .unwrap();
+        let mut ix = canonical.clone();
+        ix.accounts[index].pubkey = alternate;
+        assert_v2_rejected_unchanged(
+            &mut context,
+            &creator,
+            ix,
+            InstructionError::Custom(SwigError::InvalidSeedSubAccountV2 as u32),
+        );
+        assert_eq!(decode_counter(&context, &swig), 0);
+        assert!(context.svm.get_account(&state).is_none());
+        assert!(context.svm.get_account(&asset).is_none());
+    }
+    for offset in [2, 3, 8, 9, 10, 11, 12, 13, 14, 15] {
+        let mut ix = canonical.clone();
+        ix.data[offset] = 1;
+        assert_v2_rejected_unchanged(
+            &mut context,
+            &creator,
+            ix,
+            InstructionError::InvalidInstructionData,
+        );
+    }
+    send_admin(&mut context, &creator, canonical).unwrap();
+    let account = context.svm.get_account(&state).unwrap();
+    assert_eq!(account.data.len(), 72);
+    let child = unsafe { SubAccountV2::load_unchecked(&account.data).unwrap() };
+    assert_eq!(child.discriminator, 3);
+    assert_eq!(child.swig_address, swig.to_bytes());
+    assert_eq!((child.bump, child.asset_bump), (state_bump, asset_bump));
+    assert_eq!(decode_counter(&context, &swig), 1);
+}
+
+fn v2_runtime_instructions(
+    swig: Pubkey,
+    state: Pubkey,
+    asset: Pubkey,
+    wallet: Pubkey,
+    creator: Pubkey,
+    root: Pubkey,
+) -> [Instruction; 4] {
+    [
+        SubAccountSignV2Instruction::new_with_ed25519_authority(
+            swig,
+            state,
+            asset,
+            creator,
+            CREATOR_ROLE_ID,
+            0,
+            vec![solana_system_interface::instruction::transfer(
+                &asset, &wallet, 1,
+            )],
+        )
+        .unwrap(),
+        ToggleSubAccountV2Instruction::new_with_ed25519_authority(
+            swig,
+            creator,
+            creator,
+            state,
+            CREATOR_ROLE_ID,
+            0,
+            false,
+        )
+        .unwrap(),
+        WithdrawFromSubAccountV2Instruction::new_with_ed25519_authority(
+            swig,
+            creator,
+            creator,
+            state,
+            asset,
+            wallet,
+            CREATOR_ROLE_ID,
+            0,
+            1,
+        )
+        .unwrap(),
+        CloseSubAccountV2Instruction::new_with_ed25519_authority(
+            swig, root, state, asset, wallet, None, root, 0, 0,
+        )
+        .unwrap(),
+    ]
+}
+
+#[test]
+fn v2_children_reject_other_config_with_same_id_on_every_runtime_path() {
+    let mut context = setup_test_context().unwrap();
+    let (swig, root, creator, id) = setup_v2(&mut context).unwrap();
+    let (state, asset) = create_v2(&mut context, &swig, &creator, &id, 0).unwrap();
+    context.svm.airdrop(&asset, 1_000_000_000).unwrap();
+    let (_, bump) =
+        Pubkey::find_program_address(&swig_state::swig::swig_account_seeds(&id), &program_id());
+    let (alternate, alternate_bump) = (0..bump)
+        .rev()
+        .find_map(|b| {
+            Pubkey::create_program_address(
+                &swig_state::swig::swig_account_seeds_with_bump(&id, &[b]),
+                &program_id(),
+            )
+            .ok()
+            .map(|p| (p, b))
+        })
+        .unwrap();
+    let (wallet, wallet_bump) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(alternate.as_ref()),
+        &program_id(),
+    );
+    context.svm.airdrop(&wallet, 1_000_000).unwrap();
+    let mut parent = context.svm.get_account(&swig).unwrap();
+    parent.data[std::mem::offset_of!(Swig, bump)] = alternate_bump;
+    parent.data[std::mem::offset_of!(Swig, wallet_bump)] = wallet_bump;
+    // Retain valid roles and counter, isolating the exact-parent address check.
+    context.svm.set_account(alternate, parent).unwrap();
+    let state_before = context.svm.get_account(&state).unwrap();
+    let parent_before = context.svm.get_account(&swig).unwrap();
+    for (index, (ix, authority)) in v2_runtime_instructions(
+        alternate,
+        state,
+        asset,
+        wallet,
+        creator.pubkey(),
+        root.pubkey(),
+    )
+    .into_iter()
+    .zip([&creator, &creator, &creator, &root])
+    .enumerate()
+    {
+        let mut child = state_before.clone();
+        if index == 3 {
+            child.data[3] = 0;
+        }
+        context.svm.set_account(state, child).unwrap();
+        assert_v2_rejected_unchanged(
+            &mut context,
+            authority,
+            ix,
+            InstructionError::Custom(SwigError::InvalidSwigSubAccountV2SwigIdMismatch as u32),
+        );
+        assert_eq!(context.svm.get_account(&swig).unwrap(), parent_before);
+    }
+    // The preexisting alternate config can still create its own isolated V2 child.
+    let (own_state, _) = Pubkey::find_program_address(
+        &sub_account_v2_state_seeds(alternate.as_ref(), &1u32.to_le_bytes()),
+        &program_id(),
+    );
+    let (own_asset, _) = Pubkey::find_program_address(
+        &sub_account_v2_asset_seeds(alternate.as_ref(), &1u32.to_le_bytes()),
+        &program_id(),
+    );
+    assert_ne!(own_state, state);
+    assert_ne!(own_asset, asset);
+    let create = CreateSubAccountV2Instruction::new_with_ed25519_authority(
+        alternate,
+        creator.pubkey(),
+        creator.pubkey(),
+        own_state,
+        own_asset,
+        CREATOR_ROLE_ID,
+    )
+    .unwrap();
+    send_admin(&mut context, &creator, create).unwrap();
+    assert_eq!(context.svm.get_account(&swig).unwrap(), parent_before);
+}
+
+#[test]
+fn v2_runtime_rejects_legacy_and_malformed_child_state() {
+    let mut context = setup_test_context().unwrap();
+    let (swig, root, creator, id) = setup_v2(&mut context).unwrap();
+    let (state, asset) = create_v2(&mut context, &swig, &creator, &id, 0).unwrap();
+    context.svm.airdrop(&asset, 1_000_000_000).unwrap();
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let original = context.svm.get_account(&state).unwrap();
+    for len in [0, 71, 72, 73] {
+        for (ix, authority) in
+            v2_runtime_instructions(swig, state, asset, wallet, creator.pubkey(), root.pubkey())
+                .into_iter()
+                .zip([&creator, &creator, &creator, &root])
+        {
+            let mut child = original.clone();
+            child.data.resize(len, 0);
+            if len == 72 {
+                // Legacy generation used discriminator 2 and stored wallet ID.
+                child.data[0] = 2;
+                child.data[8..40].copy_from_slice(&id);
+            }
+            context.svm.set_account(state, child).unwrap();
+            assert_v2_rejected_unchanged(
+                &mut context,
+                authority,
+                ix,
+                InstructionError::InvalidAccountData,
+            );
+        }
+    }
+    context.svm.set_account(state, original).unwrap();
+    let toggle = ToggleSubAccountV2Instruction::new_with_ed25519_authority(
+        swig,
+        creator.pubkey(),
+        creator.pubkey(),
+        state,
+        CREATOR_ROLE_ID,
+        0,
+        false,
+    )
+    .unwrap();
+    send_admin(&mut context, &creator, toggle).unwrap();
+    let close = CloseSubAccountV2Instruction::new_with_ed25519_authority(
+        swig,
+        root.pubkey(),
+        state,
+        asset,
+        wallet,
+        None,
+        root.pubkey(),
+        0,
+        0,
+    )
+    .unwrap();
+    send_admin(&mut context, &root, close).unwrap();
+    assert!(context.svm.get_account(&state).is_none());
+    assert_eq!(decode_active_count(&context, &swig), 0);
 }

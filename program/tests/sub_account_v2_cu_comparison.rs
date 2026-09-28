@@ -71,16 +71,6 @@ fn compare_ed25519_sub_account_v2_compute_units() {
 
     for subacc_id in 0..=LAST_SUBACCOUNT_ID {
         let addresses = sub_account_addresses(&swig_id, subacc_id);
-        let state_bump = Pubkey::find_program_address(
-            &sub_account_v2_state_seeds(&swig_id, &subacc_id.to_le_bytes()),
-            &program_id(),
-        )
-        .1;
-        let asset_bump = Pubkey::find_program_address(
-            &sub_account_v2_asset_seeds(&swig_id, &subacc_id.to_le_bytes()),
-            &program_id(),
-        )
-        .1;
         let create = CreateSubAccountV2Instruction::new_with_ed25519_authority(
             swig,
             creator.pubkey(),
@@ -88,8 +78,6 @@ fn compare_ed25519_sub_account_v2_compute_units() {
             addresses.state,
             addresses.asset,
             CREATOR_ROLE_ID,
-            state_bump,
-            asset_bump,
         )
         .unwrap();
         let consumed = send(&mut context, &creator, create).compute_units_consumed;
@@ -166,15 +154,19 @@ fn compare_ed25519_sub_account_v2_compute_units() {
 }
 
 fn sub_account_addresses(swig_id: &[u8; 32], subacc_id: u32) -> SubAccountAddresses {
+    let (swig_address, _) = Pubkey::find_program_address(
+        &swig_state::swig::swig_account_seeds(swig_id),
+        &program_id(),
+    );
     let id = subacc_id.to_le_bytes();
     SubAccountAddresses {
         state: Pubkey::find_program_address(
-            &sub_account_v2_state_seeds(swig_id, &id),
+            &sub_account_v2_state_seeds(swig_address.as_ref(), &id),
             &program_id(),
         )
         .0,
         asset: Pubkey::find_program_address(
-            &sub_account_v2_asset_seeds(swig_id, &id),
+            &sub_account_v2_asset_seeds(swig_address.as_ref(), &id),
             &program_id(),
         )
         .0,
