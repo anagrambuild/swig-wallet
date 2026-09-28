@@ -83,7 +83,8 @@ enum ClosePath {
     Dedicated,
 }
 
-// Native token classification is deliberately disabled by this existing feature.
+// Native token classification is deliberately disabled by this existing
+// feature.
 #[cfg(not(feature = "program_scope_test"))]
 fn wsol_close_case(
     path: ClosePath,
@@ -133,8 +134,12 @@ fn wsol_close_case(
         });
     }
     add_role(&mut context, &swig, &root, &authority, actions);
-    // A configured claimer also proves SignV2 can't escape the budget by closing
-    // to another recipient. Dedicated close keeps its existing claimer check.
+    // Known rent-routing gap: SignV2 currently permits the direct/nested close
+    // to send rent to a destination other than the configured claimer. Keep
+    // that case in the WSOL budget matrix so the separate rent-claimer fix
+    // makes this test fail until its expected result is changed to rejection.
+    // A passing test here proves budget accounting, not valid rent routing.
+    // Dedicated close already enforces its matching claimer.
     let claimer = if matches!(path, ClosePath::Dedicated) {
         destination
     } else {
