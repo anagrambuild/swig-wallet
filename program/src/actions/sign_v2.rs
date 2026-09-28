@@ -563,8 +563,8 @@ pub fn sign_v2(
                 // 1. Verify writable Swig account data/owner did not change unexpectedly.
                 // 2. Verify the Swig wallet PDA remains rent-exempt after CPIs.
                 // 3. If SOL was spent, charge a general SOL limit when present.
-                // 4. If any SOL destination limits exist, every actual debit must be
-                //    parsed and charged to a matching destination limit.
+                // 4. If any SOL destination limits exist, every actual debit must be parsed and
+                //    charged to a matching destination limit.
                 // 5. If SOL was spent but neither a general nor destination limit applies,
                 //    reject the instruction.
                 let account_info = unsafe { all_accounts.get_unchecked(index) };
@@ -979,15 +979,15 @@ where
             continue;
         }
 
-        if instruction.accounts.len() < 2 {
+        if instruction.accounts().len() < 2 {
             continue;
         }
 
-        if instruction.accounts[0].pubkey != source_account_bytes {
+        if instruction.accounts()[0].pubkey != source_account_bytes {
             continue;
         }
 
-        let destination_pubkey = instruction.accounts[1].pubkey;
+        let destination_pubkey = instruction.accounts()[1].pubkey;
         let amount = u64::from_le_bytes([
             instruction.data[4],
             instruction.data[5],
@@ -1049,16 +1049,17 @@ where
             _ => continue,
         };
 
-        if instruction.data.len() < min_data_len || instruction.accounts.len() <= destination_index
+        if instruction.data.len() < min_data_len
+            || instruction.accounts().len() <= destination_index
         {
             continue;
         }
 
-        if instruction.accounts[0].pubkey != source_account_bytes {
+        if instruction.accounts()[0].pubkey != source_account_bytes {
             continue;
         }
 
-        let destination_pubkey = instruction.accounts[destination_index].pubkey;
+        let destination_pubkey = instruction.accounts()[destination_index].pubkey;
         let amount = u64::from_le_bytes([
             instruction.data[1],
             instruction.data[2],

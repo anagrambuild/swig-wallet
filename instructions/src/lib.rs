@@ -22,8 +22,6 @@ use pinocchio::{
 };
 
 pub const MAX_ACCOUNTS: usize = 254;
-/// Bound CPI scratch memory within the Solana program heap.
-pub const MAX_CPI_ACCOUNTS: usize = 100;
 /// Errors that can occur during instruction processing.
 #[repr(u32)]
 pub enum InstructionError {
@@ -51,9 +49,9 @@ impl From<InstructionError> for ProgramError {
 /// * `data` - Raw instruction data
 pub struct InstructionHolder<'a> {
     pub program_id: &'a Pubkey,
-    pub cpi_accounts: Vec<Account<'a>>,
-    pub indexes: Vec<usize>,
-    pub accounts: Vec<AccountMeta<'a>>,
+    cpi_accounts: Vec<Account<'a>>,
+    indexes: Vec<usize>,
+    accounts: Vec<AccountMeta<'a>>,
     pub data: &'a [u8],
     pub uses_swig_signer: bool,
     scratch: Rc<RefCell<InstructionScratch<'a>>>,
@@ -75,6 +73,10 @@ impl<'a> Drop for InstructionHolder<'a> {
 }
 
 impl<'a> InstructionHolder<'a> {
+    pub fn accounts(&self) -> &[AccountMeta<'a>] {
+        &self.accounts
+    }
+
     pub fn execute(
         &self,
         all_accounts: &[AccountInfo],
@@ -276,7 +278,7 @@ fn max_accounts_in_payload(data: &[u8]) -> Result<usize, InstructionError> {
             .get(cursor..cursor + 2)
             .ok_or(InstructionError::MissingData)?;
         let account_count = header[1] as usize;
-        if account_count > MAX_CPI_ACCOUNTS {
+        if account_count > MAX_ACCOUNTS {
             return Err(InstructionError::MissingAccountInfo);
         }
         max_accounts = max_accounts.max(account_count);
@@ -298,9 +300,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn compact_payload_rejects_cpi_above_scratch_account_limit() {
-        let mut payload = vec![1, 0, (MAX_CPI_ACCOUNTS + 1) as u8];
-        payload.extend(vec![0; MAX_CPI_ACCOUNTS + 1]);
+    fn compact_payload_accepts_101_account_entries_and_rejects_255() {
+        let mut payload = vec![1, 0, 101];
+        payload.extend(vec![0; 101]);
+        payload.extend([0, 0]);
+        assert!(matches!(max_accounts_in_payload(&payload), Ok(101)));
+
+        let mut payload = vec![1, 0, 255];
+        payload.extend(vec![0; 255]);
         payload.extend([0, 0]);
         assert!(matches!(
             max_accounts_in_payload(&payload),
@@ -361,7 +368,7 @@ where
         let (num_accounts, cursor) = self.read_u8()?;
         self.cursor = cursor;
         let num_accounts = num_accounts as usize;
-        if num_accounts > MAX_CPI_ACCOUNTS {
+        if num_accounts > MAX_ACCOUNTS {
             return Err(InstructionError::MissingAccountInfo);
         }
         let mut scratch = self.scratch.borrow_mut();

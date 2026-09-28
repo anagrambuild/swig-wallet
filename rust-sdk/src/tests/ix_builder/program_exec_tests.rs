@@ -226,9 +226,14 @@ fn test_program_exec_sign_with_preceding_instruction() {
         accounts: repeated_accounts,
         data: VALID_DISCRIMINATOR.to_vec(),
     };
-    // Each no-op CPI has 40 account entries. Reusing parser buffers keeps
-    // repeated CPIs within the on-chain bump heap.
-    let mut inner_instructions = vec![no_op; 8];
+    // A CPI with 101 repeated account entries is valid compact input. Parse it
+    // first so the same scratch allocation is reused by the following CPIs.
+    let mut large_no_op = no_op.clone();
+    large_no_op
+        .accounts
+        .extend((0..61).map(|_| AccountMeta::new_readonly(state_account, false)));
+    let mut inner_instructions = vec![large_no_op];
+    inner_instructions.extend(vec![no_op; 8]);
     inner_instructions.extend([first, second]);
     let mut sign_builder =
         SwigInstructionBuilder::new(swig_id, Box::new(program_exec_role), payer, 1);
