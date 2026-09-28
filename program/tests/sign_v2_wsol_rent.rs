@@ -829,12 +829,12 @@ fn wsol_close_without_permission_rolls_back() {
 }
 
 #[test]
-fn wsol_close_with_permission_returns_lamports_without_consuming_token_limit() {
+fn wsol_close_to_wallet_consumes_full_lamport_limit() {
     let mut fixture = Fixture::with_actions(vec![
         ClientAction::ProgramAll(ProgramAll),
         ClientAction::TokenLimit(TokenLimit {
             token_mint: spl_token::native_mint::ID.to_bytes(),
-            current_amount: LIMIT,
+            current_amount: INITIAL_AMOUNT + Rent::default().minimum_balance(165),
         }),
         ClientAction::CloseSwigAuthority(CloseSwigAuthority),
     ]);
@@ -878,7 +878,7 @@ fn wsol_close_with_permission_returns_lamports_without_consuming_token_limit() {
             .lamports,
         wallet_before + source_lamports
     );
-    assert_eq!(fixture.remaining(), LIMIT);
+    assert_eq!(fixture.remaining(), 0);
 }
 
 #[test]

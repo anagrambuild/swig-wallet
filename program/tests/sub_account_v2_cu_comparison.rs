@@ -259,17 +259,16 @@ fn send_toggle(
 }
 
 fn print_row(operation: &str, pair: ComputeUnitPair) {
-    assert!(
-        pair.last >= pair.first,
-        "{operation} unexpectedly used fewer compute units for subaccount 19"
-    );
-    let increase = pair.last - pair.first;
-    let percent = ((increase as f64 / pair.first as f64) * 100.0).round() as u64;
+    // Create derives two canonical PDAs, and the bump-search cost varies with
+    // the random Swig ID. Report the measured difference in either direction.
+    let direction = if pair.last >= pair.first { "+" } else { "-" };
+    let difference = pair.last.abs_diff(pair.first);
+    let percent = ((difference as f64 / pair.first as f64) * 100.0).round() as u64;
     println!(
-        "| {operation} | {} CU | {} CU | +{} / {percent}% |",
+        "| {operation} | {} CU | {} CU | {direction}{} / {direction}{percent}% |",
         with_thousands_separator(pair.first),
         with_thousands_separator(pair.last),
-        with_thousands_separator(increase),
+        with_thousands_separator(difference),
     );
 }
 

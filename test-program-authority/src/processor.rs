@@ -23,6 +23,9 @@ pub mod instructions {
     /// Mutate a field owned by this test program for ProgramScope regressions.
     pub const WRITE_U64: [u8; 8] = *b"writeu64";
 
+    /// Close a token account through an additional CPI boundary.
+    pub const CLOSE_TOKEN: [u8; 8] = *b"closetok";
+
     /// Generic proof discriminator used by ReplaceAuthority tests.
     pub const REPLACE_AUTHORITY_PROOF_V1: [u8; 8] = *b"rplauth1";
 
@@ -78,6 +81,21 @@ pub fn process_instruction(
                 .ok_or(ProgramError::InvalidAccountData)?
                 .copy_from_slice(&remaining_data[8..]);
             Ok(())
+        },
+        instructions::CLOSE_TOKEN => {
+            if accounts.len() != 4 || !remaining_data.is_empty() {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let close = Instruction {
+                program_id: *accounts[3].key,
+                accounts: vec![
+                    AccountMeta::new(*accounts[0].key, false),
+                    AccountMeta::new(*accounts[1].key, false),
+                    AccountMeta::new_readonly(*accounts[2].key, true),
+                ],
+                data: vec![9],
+            };
+            invoke(&close, accounts)
         },
         instructions::TEST_TOKEN_TRANSFER => process_test_token_transfer(accounts, remaining_data),
         instructions::REPLACE_AUTHORITY_PROOF_V1 => {
