@@ -228,7 +228,7 @@ fn find_program_scope<'a>(
 ///
 /// # Returns
 /// * `ProgramResult` - Success or error status
-#[inline(always)]
+#[inline(never)]
 pub fn sign_v2(
     ctx: Context<SignV2Accounts>,
     all_accounts: &[AccountInfo],
