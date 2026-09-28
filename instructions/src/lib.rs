@@ -8,7 +8,8 @@
 /// - Restricted key handling
 /// - Memory-efficient instruction processing
 mod compact_instructions;
-use core::{marker::PhantomData, mem::MaybeUninit};
+use core::{cell::RefCell, marker::PhantomData, mem};
+use std::rc::Rc;
 
 pub use compact_instructions::*;
 use pinocchio::{
@@ -48,28 +49,54 @@ impl From<InstructionError> for ProgramError {
 /// * `data` - Raw instruction data
 pub struct InstructionHolder<'a> {
     pub program_id: &'a Pubkey,
-    pub cpi_accounts: Vec<Account<'a>>,
-    pub indexes: &'a [usize],
-    pub accounts: &'a [AccountMeta<'a>],
+    cpi_accounts: Vec<Account<'a>>,
+    indexes: Vec<usize>,
+    accounts: Vec<AccountMeta<'a>>,
     pub data: &'a [u8],
     pub uses_swig_signer: bool,
+    scratch: Rc<RefCell<InstructionScratch<'a>>>,
+}
+
+struct InstructionScratch<'a> {
+    accounts: Vec<AccountMeta<'a>>,
+    cpi_accounts: Vec<Account<'a>>,
+    indexes: Vec<usize>,
+}
+
+impl<'a> Drop for InstructionHolder<'a> {
+    fn drop(&mut self) {
+        let mut scratch = self.scratch.borrow_mut();
+        scratch.accounts = mem::take(&mut self.accounts);
+        scratch.cpi_accounts = mem::take(&mut self.cpi_accounts);
+        scratch.indexes = mem::take(&mut self.indexes);
+    }
 }
 
 impl<'a> InstructionHolder<'a> {
+    pub fn accounts(&self) -> &[AccountMeta<'a>] {
+        &self.accounts
+    }
+
     pub fn execute(
-        &'a self,
-        all_accounts: &'a [AccountInfo],
-        swig_key: &'a Pubkey,
+        &self,
+        all_accounts: &[AccountInfo],
+        swig_key: &Pubkey,
         swig_signer: &[Signer],
     ) -> ProgramResult {
         if self.program_id == &pinocchio_system::ID
             && self.data.len() >= 12
+            && self.accounts.len() >= 2
             && unsafe { self.data.get_unchecked(0..4) == [2, 0, 0, 0] }
             && unsafe { self.accounts.get_unchecked(0).pubkey == swig_key }
         {
             // Check if the "from" account (swig_key) is system-owned or program-owned
-            let from_account_index = unsafe { *self.indexes.get_unchecked(0) };
-            let from_account = unsafe { all_accounts.get_unchecked(from_account_index) };
+            let from_account_index = *self
+                .indexes
+                .first()
+                .ok_or(ProgramError::NotEnoughAccountKeys)?;
+            let from_account = all_accounts
+                .get(from_account_index)
+                .ok_or(ProgramError::NotEnoughAccountKeys)?;
 
             if from_account.owner() == &pinocchio_system::ID {
                 // For system-owned PDAs (new swig_wallet_address accounts),
@@ -89,13 +116,16 @@ impl<'a> InstructionHolder<'a> {
                         .try_into()
                         .map_err(|_| ProgramError::InvalidInstructionData)?,
                 );
+                let account2 = all_accounts
+                    .get(
+                        *self
+                            .indexes
+                            .get(1)
+                            .ok_or(ProgramError::NotEnoughAccountKeys)?,
+                    )
+                    .ok_or(ProgramError::NotEnoughAccountKeys)?;
                 unsafe {
-                    let index = self.indexes.get_unchecked(0);
-                    let index2 = self.indexes.get_unchecked(1);
-                    let account1 = all_accounts.get_unchecked(*index);
-                    let account2 = all_accounts.get_unchecked(*index2);
-
-                    *account1.borrow_mut_lamports_unchecked() -= amount;
+                    *from_account.borrow_mut_lamports_unchecked() -= amount;
                     *account2.borrow_mut_lamports_unchecked() += amount;
                 }
             }
@@ -147,10 +177,10 @@ pub trait RestrictedKeys {
 }
 
 impl<'a> InstructionHolder<'a> {
-    pub fn borrow(&'a self) -> Instruction<'a, 'a, 'a, 'a> {
+    pub fn borrow(&self) -> Instruction<'a, '_, 'a, 'a> {
         Instruction {
             program_id: self.program_id,
-            accounts: self.accounts,
+            accounts: &self.accounts,
             data: self.data,
         }
     }
@@ -178,6 +208,7 @@ where
     remaining: usize,
     restricted_keys: RK,
     signer: &'a Pubkey,
+    scratch: Rc<RefCell<InstructionScratch<'a>>>,
     _phantom: PhantomData<P>,
 }
 
@@ -227,6 +258,13 @@ impl<'a> InstructionIterator<'a, &'a [AccountInfo], &'a [&'a Pubkey], &'a Accoun
             return Err(InstructionError::MissingInstructions);
         }
 
+        let max_accounts = max_accounts_in_payload(data)?;
+        let scratch = InstructionScratch {
+            accounts: Vec::with_capacity(max_accounts),
+            cpi_accounts: Vec::with_capacity(max_accounts),
+            indexes: Vec::with_capacity(max_accounts),
+        };
+
         Ok(Self {
             accounts,
             data,
@@ -234,8 +272,90 @@ impl<'a> InstructionIterator<'a, &'a [AccountInfo], &'a [&'a Pubkey], &'a Accoun
             remaining: unsafe { *data.get_unchecked(0) } as usize,
             restricted_keys,
             signer,
+            scratch: Rc::new(RefCell::new(scratch)),
             _phantom: PhantomData,
         })
+    }
+}
+
+fn max_accounts_in_payload(data: &[u8]) -> Result<usize, InstructionError> {
+    let mut cursor = 1usize;
+    let mut max_accounts = 0;
+    for _ in 0..data[0] {
+        let header = data
+            .get(cursor..cursor + 2)
+            .ok_or(InstructionError::MissingData)?;
+        let account_count = header[1] as usize;
+        if account_count > MAX_ACCOUNTS {
+            return Err(InstructionError::MissingAccountInfo);
+        }
+        max_accounts = max_accounts.max(account_count);
+        cursor += 2 + account_count;
+        let data_length = data
+            .get(cursor..cursor + 2)
+            .ok_or(InstructionError::MissingData)?;
+        let data_length = u16::from_le_bytes([data_length[0], data_length[1]]) as usize;
+        cursor += 2 + data_length;
+        if cursor > data.len() {
+            return Err(InstructionError::MissingData);
+        }
+    }
+    Ok(max_accounts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_transfer_rejects_short_execution_accounts() {
+        let swig_key = [1; 32];
+        let program_id = pinocchio_system::ID;
+        let scratch = Rc::new(RefCell::new(InstructionScratch {
+            accounts: Vec::new(),
+            cpi_accounts: Vec::new(),
+            indexes: Vec::new(),
+        }));
+        let holder = InstructionHolder {
+            program_id: &program_id,
+            cpi_accounts: Vec::new(),
+            indexes: vec![0, 1],
+            accounts: vec![
+                AccountMeta {
+                    pubkey: &swig_key,
+                    is_signer: false,
+                    is_writable: true,
+                },
+                AccountMeta {
+                    pubkey: &swig_key,
+                    is_signer: false,
+                    is_writable: true,
+                },
+            ],
+            data: &[2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+            uses_swig_signer: false,
+            scratch,
+        };
+        assert!(matches!(
+            holder.execute(&[], &swig_key, &[]),
+            Err(ProgramError::NotEnoughAccountKeys)
+        ));
+    }
+
+    #[test]
+    fn compact_payload_accepts_101_account_entries_and_rejects_255() {
+        let mut payload = vec![1, 0, 101];
+        payload.extend(vec![0; 101]);
+        payload.extend([0, 0]);
+        assert!(matches!(max_accounts_in_payload(&payload), Ok(101)));
+
+        let mut payload = vec![1, 0, 255];
+        payload.extend(vec![0; 255]);
+        payload.extend([0, 0]);
+        assert!(matches!(
+            max_accounts_in_payload(&payload),
+            Err(InstructionError::MissingAccountInfo)
+        ));
     }
 }
 
@@ -250,8 +370,16 @@ where
         if self.remaining == 0 {
             return None;
         }
+        if Rc::strong_count(&self.scratch) != 1 {
+            self.remaining = 0;
+            return Some(Err(InstructionError::MissingAccountInfo));
+        }
         self.remaining -= 1;
-        Some(self.parse_next_instruction())
+        let instruction = self.parse_next_instruction();
+        if instruction.is_err() {
+            self.remaining = 0;
+        }
+        Some(instruction)
     }
 }
 
@@ -283,24 +411,30 @@ where
         let (num_accounts, cursor) = self.read_u8()?;
         self.cursor = cursor;
         let num_accounts = num_accounts as usize;
-        const AM_UNINIT: MaybeUninit<AccountMeta> = MaybeUninit::uninit();
-        let mut accounts = [AM_UNINIT; MAX_ACCOUNTS];
-        let mut infos = Vec::with_capacity(num_accounts);
-        const INDEX_UNINIT: MaybeUninit<usize> = MaybeUninit::uninit();
-        let mut indexes = [INDEX_UNINIT; MAX_ACCOUNTS];
+        if num_accounts > MAX_ACCOUNTS {
+            return Err(InstructionError::MissingAccountInfo);
+        }
+        let mut scratch = self.scratch.borrow_mut();
+        let mut accounts = mem::take(&mut scratch.accounts);
+        let mut infos = mem::take(&mut scratch.cpi_accounts);
+        let mut indexes = mem::take(&mut scratch.indexes);
+        drop(scratch);
+        accounts.clear();
+        infos.clear();
+        indexes.clear();
         let mut uses_swig_signer = false;
-        for i in 0..num_accounts {
+        for _ in 0..num_accounts {
             let (pubkey_index, cursor) = self.read_u8()?;
             self.cursor = cursor;
             let account = self.accounts.get_account(pubkey_index as usize)?;
-            indexes[i].write(pubkey_index as usize);
+            indexes.push(pubkey_index as usize);
             let pubkey = account.pubkey();
             let is_signer = (pubkey == self.signer || account.signer())
                 && !self.restricted_keys.is_restricted(pubkey);
             if is_signer && pubkey == self.signer {
                 uses_swig_signer = true;
             }
-            accounts[i].write(AccountMeta {
+            accounts.push(AccountMeta {
                 pubkey,
                 is_signer,
                 is_writable: account.writable(),
@@ -317,10 +451,11 @@ where
         Ok(InstructionHolder {
             program_id,
             cpi_accounts: infos,
-            accounts: unsafe { core::slice::from_raw_parts(accounts.as_ptr() as _, num_accounts) },
-            indexes: unsafe { core::slice::from_raw_parts(indexes.as_ptr() as _, num_accounts) },
+            accounts,
+            indexes,
             data,
             uses_swig_signer,
+            scratch: Rc::clone(&self.scratch),
         })
     }
 
@@ -350,7 +485,7 @@ where
             return Err(InstructionError::MissingData);
         }
         let value_bytes = unsafe { self.data.get_unchecked(self.cursor..end) };
-        let value = unsafe { *(value_bytes.as_ptr() as *const u16) };
+        let value = u16::from_le_bytes([value_bytes[0], value_bytes[1]]);
         Ok((value, end))
     }
 

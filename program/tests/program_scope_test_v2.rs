@@ -245,7 +245,8 @@ fn test_token_transfer_with_program_scope_v2() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    // Budget for the pinned LiteSVM 0.11/p-token runtime with owner binding.
+    // Budget for the pinned LiteSVM 0.11/p-token runtime with owner binding
+    // and reusable CPI parser buffers (measured delta: 6256 CU).
     assert!(swig_transfer_cu - regular_transfer_cu <= 6400);
 }
 

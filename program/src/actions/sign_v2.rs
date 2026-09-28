@@ -320,8 +320,7 @@ pub fn sign_v2(
     // SignV2 permits specific balance fields to change, then verifies the rest
     // of each protected account is unchanged after CPI execution.
     const UNINIT_HASH: MaybeUninit<[u8; 32]> = MaybeUninit::uninit();
-    let mut account_snapshots: [MaybeUninit<[u8; 32]>; MAX_ACCOUNT_SNAPSHOTS] =
-        [UNINIT_HASH; MAX_ACCOUNT_SNAPSHOTS];
+    let mut account_snapshots = vec![UNINIT_HASH; all_accounts.len().min(MAX_ACCOUNT_SNAPSHOTS)];
 
     let mut total_sol_spent: u64 = 0;
 
@@ -983,15 +982,15 @@ where
             continue;
         }
 
-        if instruction.accounts.len() < 2 {
+        if instruction.accounts().len() < 2 {
             continue;
         }
 
-        if instruction.accounts[0].pubkey != source_account_bytes {
+        if instruction.accounts()[0].pubkey != source_account_bytes {
             continue;
         }
 
-        let destination_pubkey = instruction.accounts[1].pubkey;
+        let destination_pubkey = instruction.accounts()[1].pubkey;
         let amount = u64::from_le_bytes([
             instruction.data[4],
             instruction.data[5],
@@ -1053,16 +1052,17 @@ where
             _ => continue,
         };
 
-        if instruction.data.len() < min_data_len || instruction.accounts.len() <= destination_index
+        if instruction.data.len() < min_data_len
+            || instruction.accounts().len() <= destination_index
         {
             continue;
         }
 
-        if instruction.accounts[0].pubkey != source_account_bytes {
+        if instruction.accounts()[0].pubkey != source_account_bytes {
             continue;
         }
 
-        let destination_pubkey = instruction.accounts[destination_index].pubkey;
+        let destination_pubkey = instruction.accounts()[destination_index].pubkey;
         let amount = u64::from_le_bytes([
             instruction.data[1],
             instruction.data[2],
