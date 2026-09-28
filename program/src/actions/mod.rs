@@ -29,6 +29,12 @@ pub mod withdraw_from_sub_account_v2;
 use num_enum::FromPrimitive;
 use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
 
+use swig_assertions::{check_self_owned, find_self_pda};
+use swig_state::{
+    swig::{swig_account_seeds, Swig},
+    Discriminator, Transmutable,
+};
+
 use self::{
     add_authority_v1::*, close_swig_v1::*, close_token_account_v1::*, create_session_v1::*,
     create_sub_account_v1::*, create_sub_account_v2::*, create_v1::*,
@@ -38,6 +44,7 @@ use self::{
     update_authority_v1::*, withdraw_from_sub_account_v1::*, withdraw_from_sub_account_v2::*,
 };
 use crate::{
+    error::SwigError,
     instruction::{
         accounts::{
             AddAuthorityV1Accounts, CloseSwigV1Accounts, CloseTokenAccountV1Accounts,
@@ -77,6 +84,33 @@ pub fn process_action(
     }
     let discriminator = unsafe { *(data.get_unchecked(..2).as_ptr() as *const u16) };
     let ix = SwigInstruction::from_primitive(discriminator);
+    // V1 sub-account PDAs share the parent config's id, not its address. Reject
+    // alternate configs, including ones created before canonical creation was
+    // enforced, on every V1 sub-account path without adding a PDA search to ordinary
+    // wallet operations. The parent config is account 0 on all these paths.
+    if matches!(
+        ix,
+        SwigInstruction::CreateSubAccountV1
+            | SwigInstruction::WithdrawFromSubAccountV1
+            | SwigInstruction::SubAccountSignV1
+            | SwigInstruction::ToggleSubAccountV1
+    ) {
+        let account = accounts.first().ok_or(SwigError::InvalidAccountsLength)?;
+        check_self_owned(account, SwigError::OwnerMismatchSwigAccount)?;
+        let data = account.try_borrow_data()?;
+        if data.len() < Swig::LEN || data[0] != Discriminator::SwigConfigAccount as u8 {
+            return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+        }
+        let swig = unsafe { Swig::load_unchecked(&data[..Swig::LEN])? };
+        let bump = find_self_pda(
+            &swig_account_seeds(&swig.id),
+            account.key(),
+            SwigError::InvalidSeedSwigAccount,
+        )?;
+        if swig.bump != bump {
+            return Err(SwigError::InvalidSeedSwigAccount.into());
+        }
+    }
     match ix {
         SwigInstruction::CreateV1 => process_create_v1(accounts, data),
         SwigInstruction::DeprecatedSignV1 => {
