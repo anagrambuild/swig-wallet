@@ -8,7 +8,7 @@
 /// - Restricted key handling
 /// - Memory-efficient instruction processing
 mod compact_instructions;
-use core::{marker::PhantomData, mem::MaybeUninit};
+use core::marker::PhantomData;
 
 pub use compact_instructions::*;
 use pinocchio::{
@@ -49,21 +49,22 @@ impl From<InstructionError> for ProgramError {
 pub struct InstructionHolder<'a> {
     pub program_id: &'a Pubkey,
     pub cpi_accounts: Vec<Account<'a>>,
-    pub indexes: &'a [usize],
-    pub accounts: &'a [AccountMeta<'a>],
+    pub indexes: Vec<usize>,
+    pub accounts: Vec<AccountMeta<'a>>,
     pub data: &'a [u8],
     pub uses_swig_signer: bool,
 }
 
 impl<'a> InstructionHolder<'a> {
     pub fn execute(
-        &'a self,
-        all_accounts: &'a [AccountInfo],
-        swig_key: &'a Pubkey,
+        &self,
+        all_accounts: &[AccountInfo],
+        swig_key: &Pubkey,
         swig_signer: &[Signer],
     ) -> ProgramResult {
         if self.program_id == &pinocchio_system::ID
             && self.data.len() >= 12
+            && self.accounts.len() >= 2
             && unsafe { self.data.get_unchecked(0..4) == [2, 0, 0, 0] }
             && unsafe { self.accounts.get_unchecked(0).pubkey == swig_key }
         {
@@ -147,10 +148,10 @@ pub trait RestrictedKeys {
 }
 
 impl<'a> InstructionHolder<'a> {
-    pub fn borrow(&'a self) -> Instruction<'a, 'a, 'a, 'a> {
+    pub fn borrow(&self) -> Instruction<'a, '_, 'a, 'a> {
         Instruction {
             program_id: self.program_id,
-            accounts: self.accounts,
+            accounts: &self.accounts,
             data: self.data,
         }
     }
@@ -283,24 +284,25 @@ where
         let (num_accounts, cursor) = self.read_u8()?;
         self.cursor = cursor;
         let num_accounts = num_accounts as usize;
-        const AM_UNINIT: MaybeUninit<AccountMeta> = MaybeUninit::uninit();
-        let mut accounts = [AM_UNINIT; MAX_ACCOUNTS];
+        if num_accounts > MAX_ACCOUNTS {
+            return Err(InstructionError::MissingAccountInfo);
+        }
+        let mut accounts = Vec::with_capacity(num_accounts);
         let mut infos = Vec::with_capacity(num_accounts);
-        const INDEX_UNINIT: MaybeUninit<usize> = MaybeUninit::uninit();
-        let mut indexes = [INDEX_UNINIT; MAX_ACCOUNTS];
+        let mut indexes = Vec::with_capacity(num_accounts);
         let mut uses_swig_signer = false;
-        for i in 0..num_accounts {
+        for _ in 0..num_accounts {
             let (pubkey_index, cursor) = self.read_u8()?;
             self.cursor = cursor;
             let account = self.accounts.get_account(pubkey_index as usize)?;
-            indexes[i].write(pubkey_index as usize);
+            indexes.push(pubkey_index as usize);
             let pubkey = account.pubkey();
             let is_signer = (pubkey == self.signer || account.signer())
                 && !self.restricted_keys.is_restricted(pubkey);
             if is_signer && pubkey == self.signer {
                 uses_swig_signer = true;
             }
-            accounts[i].write(AccountMeta {
+            accounts.push(AccountMeta {
                 pubkey,
                 is_signer,
                 is_writable: account.writable(),
@@ -317,8 +319,8 @@ where
         Ok(InstructionHolder {
             program_id,
             cpi_accounts: infos,
-            accounts: unsafe { core::slice::from_raw_parts(accounts.as_ptr() as _, num_accounts) },
-            indexes: unsafe { core::slice::from_raw_parts(indexes.as_ptr() as _, num_accounts) },
+            accounts,
+            indexes,
             data,
             uses_swig_signer,
         })
@@ -350,7 +352,7 @@ where
             return Err(InstructionError::MissingData);
         }
         let value_bytes = unsafe { self.data.get_unchecked(self.cursor..end) };
-        let value = unsafe { *(value_bytes.as_ptr() as *const u16) };
+        let value = u16::from_le_bytes([value_bytes[0], value_bytes[1]]);
         Ok((value, end))
     }
 

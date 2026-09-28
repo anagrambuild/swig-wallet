@@ -9,6 +9,7 @@ use swig_interface::program_id;
 use swig_state::{
     authority::{programexec::ProgramExecAuthority, AuthorityType},
     swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
+    SwigAuthenticateError,
 };
 
 use super::*;
@@ -257,7 +258,16 @@ fn test_program_exec_sign_with_preceding_instruction() {
         .unwrap();
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&context.default_payer])
         .unwrap();
-    assert!(context.svm.send_transaction(tx).is_err());
+    let error = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(
+        error.err,
+        solana_sdk::transaction::TransactionError::InstructionError(
+            1,
+            solana_sdk::instruction::InstructionError::Custom(
+                SwigAuthenticateError::PermissionDeniedProgramExecInvalidInstructionData as u32,
+            ),
+        )
+    );
     assert_eq!(
         context.svm.get_account(&recipient).unwrap().lamports,
         rent + 3000
