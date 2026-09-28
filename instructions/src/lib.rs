@@ -8,7 +8,8 @@
 /// - Restricted key handling
 /// - Memory-efficient instruction processing
 mod compact_instructions;
-use core::marker::PhantomData;
+use core::{cell::RefCell, marker::PhantomData, mem};
+use std::rc::Rc;
 
 pub use compact_instructions::*;
 use pinocchio::{
@@ -21,6 +22,8 @@ use pinocchio::{
 };
 
 pub const MAX_ACCOUNTS: usize = 254;
+/// Bound CPI scratch memory within the Solana program heap.
+pub const MAX_CPI_ACCOUNTS: usize = 100;
 /// Errors that can occur during instruction processing.
 #[repr(u32)]
 pub enum InstructionError {
@@ -53,6 +56,22 @@ pub struct InstructionHolder<'a> {
     pub accounts: Vec<AccountMeta<'a>>,
     pub data: &'a [u8],
     pub uses_swig_signer: bool,
+    scratch: Rc<RefCell<InstructionScratch<'a>>>,
+}
+
+struct InstructionScratch<'a> {
+    accounts: Vec<AccountMeta<'a>>,
+    cpi_accounts: Vec<Account<'a>>,
+    indexes: Vec<usize>,
+}
+
+impl<'a> Drop for InstructionHolder<'a> {
+    fn drop(&mut self) {
+        let mut scratch = self.scratch.borrow_mut();
+        scratch.accounts = mem::take(&mut self.accounts);
+        scratch.cpi_accounts = mem::take(&mut self.cpi_accounts);
+        scratch.indexes = mem::take(&mut self.indexes);
+    }
 }
 
 impl<'a> InstructionHolder<'a> {
@@ -179,6 +198,7 @@ where
     remaining: usize,
     restricted_keys: RK,
     signer: &'a Pubkey,
+    scratch: Rc<RefCell<InstructionScratch<'a>>>,
     _phantom: PhantomData<P>,
 }
 
@@ -228,6 +248,13 @@ impl<'a> InstructionIterator<'a, &'a [AccountInfo], &'a [&'a Pubkey], &'a Accoun
             return Err(InstructionError::MissingInstructions);
         }
 
+        let max_accounts = max_accounts_in_payload(data)?;
+        let scratch = InstructionScratch {
+            accounts: Vec::with_capacity(max_accounts),
+            cpi_accounts: Vec::with_capacity(max_accounts),
+            indexes: Vec::with_capacity(max_accounts),
+        };
+
         Ok(Self {
             accounts,
             data,
@@ -235,8 +262,50 @@ impl<'a> InstructionIterator<'a, &'a [AccountInfo], &'a [&'a Pubkey], &'a Accoun
             remaining: unsafe { *data.get_unchecked(0) } as usize,
             restricted_keys,
             signer,
+            scratch: Rc::new(RefCell::new(scratch)),
             _phantom: PhantomData,
         })
+    }
+}
+
+fn max_accounts_in_payload(data: &[u8]) -> Result<usize, InstructionError> {
+    let mut cursor = 1usize;
+    let mut max_accounts = 0;
+    for _ in 0..data[0] {
+        let header = data
+            .get(cursor..cursor + 2)
+            .ok_or(InstructionError::MissingData)?;
+        let account_count = header[1] as usize;
+        if account_count > MAX_CPI_ACCOUNTS {
+            return Err(InstructionError::MissingAccountInfo);
+        }
+        max_accounts = max_accounts.max(account_count);
+        cursor += 2 + account_count;
+        let data_length = data
+            .get(cursor..cursor + 2)
+            .ok_or(InstructionError::MissingData)?;
+        let data_length = u16::from_le_bytes([data_length[0], data_length[1]]) as usize;
+        cursor += 2 + data_length;
+        if cursor > data.len() {
+            return Err(InstructionError::MissingData);
+        }
+    }
+    Ok(max_accounts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_payload_rejects_cpi_above_scratch_account_limit() {
+        let mut payload = vec![1, 0, (MAX_CPI_ACCOUNTS + 1) as u8];
+        payload.extend(vec![0; MAX_CPI_ACCOUNTS + 1]);
+        payload.extend([0, 0]);
+        assert!(matches!(
+            max_accounts_in_payload(&payload),
+            Err(InstructionError::MissingAccountInfo)
+        ));
     }
 }
 
@@ -251,8 +320,16 @@ where
         if self.remaining == 0 {
             return None;
         }
+        if Rc::strong_count(&self.scratch) != 1 {
+            self.remaining = 0;
+            return Some(Err(InstructionError::MissingAccountInfo));
+        }
         self.remaining -= 1;
-        Some(self.parse_next_instruction())
+        let instruction = self.parse_next_instruction();
+        if instruction.is_err() {
+            self.remaining = 0;
+        }
+        Some(instruction)
     }
 }
 
@@ -284,12 +361,17 @@ where
         let (num_accounts, cursor) = self.read_u8()?;
         self.cursor = cursor;
         let num_accounts = num_accounts as usize;
-        if num_accounts > MAX_ACCOUNTS {
+        if num_accounts > MAX_CPI_ACCOUNTS {
             return Err(InstructionError::MissingAccountInfo);
         }
-        let mut accounts = Vec::with_capacity(num_accounts);
-        let mut infos = Vec::with_capacity(num_accounts);
-        let mut indexes = Vec::with_capacity(num_accounts);
+        let mut scratch = self.scratch.borrow_mut();
+        let mut accounts = mem::take(&mut scratch.accounts);
+        let mut infos = mem::take(&mut scratch.cpi_accounts);
+        let mut indexes = mem::take(&mut scratch.indexes);
+        drop(scratch);
+        accounts.clear();
+        infos.clear();
+        indexes.clear();
         let mut uses_swig_signer = false;
         for _ in 0..num_accounts {
             let (pubkey_index, cursor) = self.read_u8()?;
@@ -323,6 +405,7 @@ where
             indexes,
             data,
             uses_swig_signer,
+            scratch: Rc::clone(&self.scratch),
         })
     }
 

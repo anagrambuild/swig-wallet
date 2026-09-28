@@ -214,10 +214,26 @@ fn test_program_exec_sign_with_preceding_instruction() {
         solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient, 1000);
     let second =
         solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient, 2000);
+    let mut repeated_accounts = vec![
+        AccountMeta::new_readonly(swig_key, false),
+        AccountMeta::new_readonly(swig_wallet_address, false),
+        AccountMeta::new_readonly(state_account, false),
+        AccountMeta::new_readonly(program_id(), false),
+    ];
+    repeated_accounts.extend((0..36).map(|_| AccountMeta::new_readonly(state_account, false)));
+    let no_op = Instruction {
+        program_id: TEST_PROGRAM_ID,
+        accounts: repeated_accounts,
+        data: VALID_DISCRIMINATOR.to_vec(),
+    };
+    // Each no-op CPI has 40 account entries. Reusing parser buffers keeps
+    // repeated CPIs within the on-chain bump heap.
+    let mut inner_instructions = vec![no_op; 8];
+    inner_instructions.extend([first, second]);
     let mut sign_builder =
         SwigInstructionBuilder::new(swig_id, Box::new(program_exec_role), payer, 1);
     let sign_ixs = sign_builder
-        .sign_v2_instruction(vec![first, second], None)
+        .sign_v2_instruction(inner_instructions, None)
         .unwrap();
     let msg =
         v0::Message::try_compile(&payer, &sign_ixs, &[], context.svm.latest_blockhash()).unwrap();
