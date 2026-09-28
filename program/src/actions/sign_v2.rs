@@ -23,7 +23,7 @@ use swig_state::{
         program::Program,
         program_all::ProgramAll,
         program_curated::ProgramCurated,
-        program_scope::{NumericType, ProgramScope},
+        program_scope::{NumericType, ProgramScope, ProgramScopeType},
         sol_destination_limit::SolDestinationLimit,
         sol_limit::SolLimit,
         sol_recurring_destination_limit::SolRecurringDestinationLimit,
@@ -48,7 +48,7 @@ use crate::{
         accounts::{Context, SignV2Accounts},
         SwigInstruction,
     },
-    util::hash_except,
+    util::{hash_except, read_program_scope_account_balance},
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
 };
 // use swig_instructions::InstructionIterator;
@@ -199,6 +199,19 @@ impl<'a> SignV2<'a> {
     }
 }
 
+/// Looks up the scope bound to the target account and its owner program.
+#[inline(never)]
+fn find_program_scope<'a>(
+    actions: &'a mut [u8],
+    target: &Pubkey,
+    owner_program: &Pubkey,
+) -> Result<Option<&'a mut ProgramScope>, ProgramError> {
+    let mut match_data = [0u8; 64];
+    match_data[..32].copy_from_slice(target);
+    match_data[32..].copy_from_slice(owner_program);
+    RoleMut::get_action_mut::<ProgramScope>(actions, &match_data)
+}
+
 /// Signs and executes a transaction using a Swig wallet authority.
 ///
 /// This function handles the complete flow of transaction signing:
@@ -216,18 +229,6 @@ impl<'a> SignV2<'a> {
 /// # Returns
 /// * `ProgramResult` - Success or error status
 #[inline(always)]
-#[inline(never)]
-fn find_program_scope<'a>(
-    actions: &'a mut [u8],
-    target: &Pubkey,
-    owner_program: &Pubkey,
-) -> Result<Option<&'a mut ProgramScope>, ProgramError> {
-    let mut match_data = [0u8; 64];
-    match_data[..32].copy_from_slice(target);
-    match_data[32..].copy_from_slice(owner_program);
-    RoleMut::get_action_mut::<ProgramScope>(actions, &match_data)
-}
-
 pub fn sign_v2(
     ctx: Context<SignV2Accounts>,
     all_accounts: &[AccountInfo],
@@ -377,13 +378,17 @@ pub fn sign_v2(
                 let hash = hash_except(&data, account.owner(), &exclude_ranges);
                 Some(hash)
             },
-            AccountClassification::ProgramScope { .. } => {
+            AccountClassification::ProgramScope { balance, .. } => {
                 let data = unsafe { account.borrow_data_unchecked() };
-                // For program scope, we need to get the actual program scope to know what to
-                // exclude, and include owner in hash
+                // Classification may have found a scope from another role. Always
+                // pair the acting role's baseline with its post-CPI balance.
                 let program_scope =
                     find_program_scope(role.actions, account.key(), account.owner())?
                         .ok_or(SwigAuthenticateError::PermissionDeniedMissingPermission)?;
+                *balance = unsafe { read_program_scope_account_balance(data, program_scope)? };
+                if program_scope.scope_type == ProgramScopeType::Basic as u64 {
+                    continue;
+                }
                 let start = program_scope.balance_field_start as usize;
                 let end = program_scope.balance_field_end as usize;
                 if start >= end || end > data.len() {

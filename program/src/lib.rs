@@ -35,7 +35,7 @@ use swig_state::{
     swig::{Swig, SwigWithRoles},
     AccountClassification, Discriminator, StakeAccountState, Transmutable,
 };
-use util::{read_program_scope_account_balance, ProgramScopeCache};
+use util::ProgramScopeCache;
 #[cfg(not(feature = "no-entrypoint"))]
 use {default_env::default_env, solana_security_txt::security_txt};
 
@@ -508,16 +508,16 @@ unsafe fn classify_account(
             let Some(cache) = program_scope_cache else {
                 return Ok(AccountClassification::None);
             };
-            let Some((role_id, program_scope)) = cache.find_program_scope(account.key().as_ref())
+            let Some((role_id, _)) = cache.find_program_scope(account.key().as_ref())
             else {
                 return Ok(AccountClassification::None);
             };
 
-            let data = account.borrow_data_unchecked();
-            let balance = read_program_scope_account_balance(data, &program_scope)?;
+            // The acting role is selected in SignV2, after classification. Its
+            // own scope determines the balance baseline before any CPI runs.
             Ok(AccountClassification::ProgramScope {
                 role_index: role_id,
-                balance,
+                balance: 0,
                 spent: 0,
             })
         },

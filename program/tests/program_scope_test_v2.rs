@@ -250,13 +250,15 @@ fn test_token_transfer_with_program_scope_v2() {
 }
 
 #[test_log::test]
-fn program_scope_rejects_target_owned_by_another_program() {
+fn program_scope_uses_acting_owner_scope_for_balance_baseline() {
     let mut context = setup_test_context().unwrap();
     let authority = Keypair::new();
+    let acting = Keypair::new();
     context
         .svm
         .airdrop(&authority.pubkey(), 10_000_000_000)
         .unwrap();
+    context.svm.airdrop(&acting.pubkey(), 10_000_000_000).unwrap();
     let recipient = Keypair::new();
     let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let id = rand::random::<[u8; 32]>();
@@ -290,8 +292,8 @@ fn program_scope_rejects_target_owned_by_another_program() {
         limit: 1000,
         window: 0,
         last_reset: 0,
-        balance_field_start: 64,
-        balance_field_end: 72,
+        balance_field_start: 76,
+        balance_field_end: 84,
     };
     add_authority_with_ed25519_root(
         &mut context,
@@ -309,6 +311,34 @@ fn program_scope_rejects_target_owned_by_another_program() {
         ],
     )
     .unwrap();
+    let acting_scope = ProgramScope {
+        program_id: spl_token::ID.to_bytes(),
+        target_account: source.to_bytes(),
+        scope_type: ProgramScopeType::Limit as u64,
+        numeric_type: NumericType::U64 as u64,
+        current_amount: 0,
+        limit: 50,
+        window: 0,
+        last_reset: 0,
+        balance_field_start: 64,
+        balance_field_end: 72,
+    };
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: acting.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::Program(Program {
+                program_id: spl_token::ID.to_bytes(),
+            }),
+            ClientAction::ProgramScope(acting_scope),
+        ],
+    )
+    .unwrap();
 
     let source_before = context.svm.get_account(&source).unwrap();
     let destination_before = context.svm.get_account(&destination).unwrap();
@@ -316,24 +346,23 @@ fn program_scope_rejects_target_owned_by_another_program() {
     let transfer =
         spl_token::instruction::transfer(&spl_token::ID, &source, &destination, &wallet, &[], 100)
             .unwrap();
-    let sign =
-        SignV2Instruction::new_ed25519(swig, wallet, authority.pubkey(), transfer, 1).unwrap();
+    let sign = SignV2Instruction::new_ed25519(swig, wallet, acting.pubkey(), transfer, 2).unwrap();
     let message = v0::Message::try_compile(
-        &authority.pubkey(),
+        &acting.pubkey(),
         &[sign],
         &[],
         context.svm.latest_blockhash(),
     )
     .unwrap();
     let transaction =
-        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&authority]).unwrap();
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&acting]).unwrap();
     let error = context.svm.send_transaction(transaction).unwrap_err();
     assert_eq!(
         error.err,
         TransactionError::InstructionError(
             0,
             InstructionError::Custom(
-                SwigAuthenticateError::PermissionDeniedMissingPermission as u32
+                SwigAuthenticateError::PermissionDeniedInsufficientBalance as u32
             ),
         )
     );
