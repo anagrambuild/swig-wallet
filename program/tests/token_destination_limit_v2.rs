@@ -443,7 +443,7 @@ fn test_token_destination_limit_rejects_second_unmatched_transfer_v2() {
         AccountMeta::new_readonly(second_authority.pubkey(), true),
     ];
     let (final_accounts, compact_ixs) = compact_instructions(
-        swig,
+        swig_wallet_address,
         initial_accounts,
         vec![allowed_transfer_ix, blocked_transfer_ix],
     );
@@ -797,7 +797,7 @@ fn test_token_destination_limit_rejects_transfer_checked_bypass_v2() {
         AccountMeta::new_readonly(second_authority.pubkey(), true),
     ];
     let (final_accounts, compact_ixs) = compact_instructions(
-        swig,
+        swig_wallet_address,
         initial_accounts,
         vec![allowed_transfer_ix, blocked_transfer_checked_ix],
     );

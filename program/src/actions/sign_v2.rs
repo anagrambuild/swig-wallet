@@ -307,8 +307,7 @@ pub fn sign_v2(
     // SignV2 permits specific balance fields to change, then verifies the rest
     // of each protected account is unchanged after CPI execution.
     const UNINIT_HASH: MaybeUninit<[u8; 32]> = MaybeUninit::uninit();
-    let mut account_snapshots: [MaybeUninit<[u8; 32]>; MAX_ACCOUNT_SNAPSHOTS] =
-        [UNINIT_HASH; MAX_ACCOUNT_SNAPSHOTS];
+    let mut account_snapshots = vec![UNINIT_HASH; all_accounts.len().min(MAX_ACCOUNT_SNAPSHOTS)];
 
     let mut total_sol_spent: u64 = 0;
 

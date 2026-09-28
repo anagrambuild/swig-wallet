@@ -222,7 +222,7 @@ fn test_sol_destination_limit_rejects_second_unmatched_transfer_v2() {
         AccountMeta::new_readonly(second_authority.pubkey(), true),
     ];
     let (final_accounts, compact_ixs) = compact_instructions(
-        swig,
+        swig_wallet_address,
         initial_accounts,
         vec![allowed_transfer_ix, blocked_transfer_ix],
     );
@@ -941,8 +941,11 @@ fn test_sol_destination_limit_cpi_enforcement_v2() {
         AccountMeta::new(funding_account.pubkey(), true),
     ];
 
-    let (final_accounts, compact_ixs) =
-        compact_instructions(swig, initial_accounts, vec![fund_swig_ix, withdraw_ix]);
+    let (final_accounts, compact_ixs) = compact_instructions(
+        swig_wallet_address,
+        initial_accounts,
+        vec![fund_swig_ix, withdraw_ix],
+    );
 
     let instruction_payload = compact_ixs.into_bytes();
 
