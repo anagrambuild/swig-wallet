@@ -78,13 +78,23 @@ fn setup_v2_with_extra_actions(
 }
 
 fn v2_state_pda(id: &[u8; 32], subacc_id: u32) -> (Pubkey, u8) {
+    let (swig_address, _) =
+        Pubkey::find_program_address(&swig_state::swig::swig_account_seeds(id), &program_id());
     let id_le = subacc_id.to_le_bytes();
-    Pubkey::find_program_address(&sub_account_v2_state_seeds(id, &id_le), &program_id())
+    Pubkey::find_program_address(
+        &sub_account_v2_state_seeds(swig_address.as_ref(), &id_le),
+        &program_id(),
+    )
 }
 
 fn v2_asset_pda(id: &[u8; 32], subacc_id: u32) -> (Pubkey, u8) {
+    let (swig_address, _) =
+        Pubkey::find_program_address(&swig_state::swig::swig_account_seeds(id), &program_id());
     let id_le = subacc_id.to_le_bytes();
-    Pubkey::find_program_address(&sub_account_v2_asset_seeds(id, &id_le), &program_id())
+    Pubkey::find_program_address(
+        &sub_account_v2_asset_seeds(swig_address.as_ref(), &id_le),
+        &program_id(),
+    )
 }
 
 fn create_v2(
@@ -103,8 +113,6 @@ fn create_v2(
         state_pda,
         asset_pda,
         CREATOR_ROLE_ID,
-        state_bump,
-        asset_bump,
     )
     .map_err(|e| anyhow::anyhow!("build create v2: {:?}", e))?;
     send(context, creator, ix)?;
@@ -216,7 +224,7 @@ fn test_create_sub_account_v2_initializes_state_and_grants_creator() {
     let state = unsafe { SubAccountV2::load_unchecked(&state_acc.data).unwrap() };
     assert!(state.is_enabled().unwrap());
     assert_eq!(state.subacc_id, 0);
-    assert_eq!(state.swig_id, id);
+    assert_eq!(state.swig_address, swig_key.to_bytes());
     assert_eq!(state.sub_account, asset_pda.to_bytes());
 
     // Asset account is system-owned and rent-exempt.
@@ -552,8 +560,6 @@ fn test_all_permission_cannot_create_sub_account_v2() {
         state_pda,
         asset_pda,
         1,
-        state_bump,
-        asset_bump,
     )
     .unwrap();
     assert!(
@@ -716,8 +722,6 @@ fn test_create_sub_account_v2_preserves_other_roles_and_permissions() {
         state_pda,
         asset_pda,
         3,
-        state_bump,
-        asset_bump,
     )
     .unwrap();
     send(&mut context, &role3, ix).unwrap();

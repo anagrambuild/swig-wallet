@@ -109,7 +109,7 @@ pub fn withdraw_from_sub_account_v2(
 
     let withdraw = WithdrawFromSubAccountV2::from_instruction_bytes(data)?;
 
-    let swig_id = {
+    let swig_address = {
         let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
         if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
@@ -120,7 +120,7 @@ pub fn withdraw_from_sub_account_v2(
         let parts = Swig::split_parts_mut(swig_account_data)?;
         let swig = parts.state;
         let swig_roles = parts.roles;
-        let swig_id = swig.id;
+        let swig_address = *ctx.accounts.swig.key();
 
         // Validate the destination is the canonical swig wallet address PDA.
         let wallet_bump = [swig.wallet_bump];
@@ -158,20 +158,20 @@ pub fn withdraw_from_sub_account_v2(
             Permission::SubAccountV2Withdraw,
             withdraw.args.subacc_id,
         )?;
-        swig_id
+        swig_address
     };
 
     // Validate the state account and bind the asset account.
     let asset_bump = validate_v2_state(
         ctx.accounts.sub_account_state,
         ctx.accounts.sub_account,
-        &swig_id,
+        &swig_address,
         withdraw.args.subacc_id,
     )?;
 
     let id_le = withdraw.args.subacc_id.to_le_bytes();
     let bump_byte = [asset_bump];
-    let seeds = sub_account_v2_asset_signer(&swig_id, &id_le, &bump_byte);
+    let seeds = sub_account_v2_asset_signer(&swig_address, &id_le, &bump_byte);
     let signer = seeds.as_slice();
     let amount = withdraw.args.amount;
 

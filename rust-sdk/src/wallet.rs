@@ -599,22 +599,20 @@ impl<'c> SwigWallet<'c> {
     /// transaction signature and the assigned sub-account id.
     pub fn create_sub_account_v2(&mut self) -> Result<(Signature, u32), SwigError> {
         let subacc_id = self.get_sub_account_v2_counter()?;
-        let swig_id = *self.instruction_builder.get_swig_id();
+        let swig_address = self.get_swig_account()?.to_bytes();
         let id_le = subacc_id.to_le_bytes();
-        let (sub_account_state, state_bump) = Pubkey::find_program_address(
-            &sub_account_v2_state_seeds(&swig_id, &id_le),
+        let (sub_account_state, _) = Pubkey::find_program_address(
+            &sub_account_v2_state_seeds(&swig_address, &id_le),
             &swig_interface::program_id(),
         );
-        let (sub_account, asset_bump) = Pubkey::find_program_address(
-            &sub_account_v2_asset_seeds(&swig_id, &id_le),
+        let (sub_account, _) = Pubkey::find_program_address(
+            &sub_account_v2_asset_seeds(&swig_address, &id_le),
             &swig_interface::program_id(),
         );
         let current_slot = self.get_current_slot()?;
         let instructions = self.instruction_builder.create_sub_account_v2(
             sub_account_state,
             sub_account,
-            state_bump,
-            asset_bump,
             Some(current_slot),
         )?;
         let msg = v0::Message::try_compile(
@@ -754,14 +752,14 @@ impl<'c> SwigWallet<'c> {
     /// Returns the V2 sub-account asset PDA for `subacc_id` if its state account
     /// is a valid, canonical program-owned V2 state account.
     pub fn get_sub_account_v2(&self, subacc_id: u32) -> Result<Option<Pubkey>, SwigError> {
-        let swig_id = *self.instruction_builder.get_swig_id();
+        let swig_address = self.get_swig_account()?.to_bytes();
         let id_le = subacc_id.to_le_bytes();
         let (sub_account_state, state_bump) = Pubkey::find_program_address(
-            &sub_account_v2_state_seeds(&swig_id, &id_le),
+            &sub_account_v2_state_seeds(&swig_address, &id_le),
             &swig_interface::program_id(),
         );
         let (asset, asset_bump) = Pubkey::find_program_address(
-            &sub_account_v2_asset_seeds(&swig_id, &id_le),
+            &sub_account_v2_asset_seeds(&swig_address, &id_le),
             &swig_interface::program_id(),
         );
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
@@ -791,7 +789,7 @@ impl<'c> SwigWallet<'c> {
         if state.bump != state_bump
             || state.asset_bump != asset_bump
             || state.subacc_id != subacc_id
-            || state.swig_id != swig_id
+            || state.swig_address != swig_address
             || state.sub_account != asset.to_bytes()
         {
             return Err(SwigError::InvalidSwigData);

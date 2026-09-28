@@ -154,7 +154,7 @@ pub enum SwigError {
     PermissionDeniedMissingSubAccountV2Permission,
     /// V2 sub-account state account owner mismatch
     OwnerMismatchSubAccountV2State,
-    /// V2 sub-account Swig ID mismatch
+    /// V2 sub-account parent Swig config address mismatch (legacy error name)
     InvalidSwigSubAccountV2SwigIdMismatch,
     /// V2 sub-account id mismatch between state and instruction
     InvalidSwigSubAccountV2IdMismatch,

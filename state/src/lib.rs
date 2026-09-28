@@ -22,6 +22,8 @@ pub use transmute::{IntoBytes, Transmutable, TransmutableMut};
 pub enum Discriminator {
     SwigConfigAccount = 1,
     SwigSubAccountV2 = 2,
+    /// V2 state whose parent is a Swig config address, rather than a wallet ID.
+    SwigSubAccountV2Address = 3,
     ClosedSwigAccount = 255,
 }
 
@@ -32,6 +34,7 @@ impl TryFrom<u8> for Discriminator {
         match discriminator {
             1 => Ok(Discriminator::SwigConfigAccount),
             2 => Ok(Discriminator::SwigSubAccountV2),
+            3 => Ok(Discriminator::SwigSubAccountV2Address),
             255 => Ok(Discriminator::ClosedSwigAccount),
             _ => Err(ProgramError::InvalidAccountData),
         }

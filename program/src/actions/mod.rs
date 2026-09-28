@@ -84,31 +84,41 @@ pub fn process_action(
     }
     let discriminator = unsafe { *(data.get_unchecked(..2).as_ptr() as *const u16) };
     let ix = SwigInstruction::from_primitive(discriminator);
-    // V1 sub-account PDAs share the parent config's id, not its address. Reject
-    // alternate configs, including ones created before canonical creation was
-    // enforced, on every V1 sub-account path without adding a PDA search to ordinary
-    // wallet operations. The parent config is account 0 on all these paths.
-    if matches!(
+    // V1 sub-accounts share the parent ID, so reject preexisting alternate
+    // configs. V2 binds its PDAs to the actual config address and needs no
+    // canonical-parent search. All sub-account paths consume config account 0.
+    let requires_canonical_config = matches!(
         ix,
         SwigInstruction::CreateSubAccountV1
             | SwigInstruction::WithdrawFromSubAccountV1
             | SwigInstruction::SubAccountSignV1
             | SwigInstruction::ToggleSubAccountV1
-    ) {
+    );
+    if requires_canonical_config
+        || matches!(
+            ix,
+            SwigInstruction::CreateSubAccountV2
+                | SwigInstruction::WithdrawFromSubAccountV2
+                | SwigInstruction::SubAccountSignV2
+                | SwigInstruction::ToggleSubAccountV2
+        )
+    {
         let account = accounts.first().ok_or(SwigError::InvalidAccountsLength)?;
         check_self_owned(account, SwigError::OwnerMismatchSwigAccount)?;
         let data = account.try_borrow_data()?;
         if data.len() < Swig::LEN || data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
-        let swig = unsafe { Swig::load_unchecked(&data[..Swig::LEN])? };
-        let bump = find_self_pda(
-            &swig_account_seeds(&swig.id),
-            account.key(),
-            SwigError::InvalidSeedSwigAccount,
-        )?;
-        if swig.bump != bump {
-            return Err(SwigError::InvalidSeedSwigAccount.into());
+        if requires_canonical_config {
+            let swig = unsafe { Swig::load_unchecked(&data[..Swig::LEN])? };
+            let bump = find_self_pda(
+                &swig_account_seeds(&swig.id),
+                account.key(),
+                SwigError::InvalidSeedSwigAccount,
+            )?;
+            if swig.bump != bump {
+                return Err(SwigError::InvalidSeedSwigAccount.into());
+            }
         }
     }
     match ix {

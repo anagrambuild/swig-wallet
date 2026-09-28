@@ -25,6 +25,27 @@ pin, run the WSOL regressions and all feature suites. The bundled program is a
 reproducible test dependency; its pin does not assert identity with future
 mainnet deployments.
 
+## V2 sub-account addresses
+
+V2 sub-accounts bind to the parent **Swig config public key**, rather than its
+wallet ID. Derive the state PDA from
+`["sub-account-v2-state-address", swig_config_pubkey, subacc_id_le_u32]` and the
+asset PDA from `["sub-account-v2-address", swig_config_pubkey, subacc_id_le_u32]`.
+Creation derives and validates both canonical PDAs on-chain and stores their
+bumps. Subsequent operations use the stored bumps without a canonical-parent
+PDA search.
+
+The state remains 72 bytes, with discriminator `3`, state and asset bumps at
+offsets 1 and 2, and the parent config public key at bytes 8–39. Legacy ID-based
+V2 state (discriminator `2`) is rejected; this change does not migrate it.
+The new seed namespaces also separate asset addresses from legacy V2 accounts.
+Program and V2 clients must be upgraded together.
+
+V2 creation builders no longer accept bump arguments. The instruction still
+has a 16-byte header, but bytes 8–15 are now reserved and must be zero, as must
+the padding at bytes 2–3. Callers supply the canonical PDA accounts; they cannot
+select the stored bumps. Existing fixture call sites use this updated contract.
+
 ## Audit
 
 Swig has been independently auditted by Accretion with plans to undergo additional audits. A copy of the audit report can be shared upon request.
