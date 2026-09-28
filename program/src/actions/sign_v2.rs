@@ -216,6 +216,18 @@ impl<'a> SignV2<'a> {
 /// # Returns
 /// * `ProgramResult` - Success or error status
 #[inline(always)]
+#[inline(never)]
+fn find_program_scope<'a>(
+    actions: &'a mut [u8],
+    target: &Pubkey,
+    owner_program: &Pubkey,
+) -> Result<Option<&'a mut ProgramScope>, ProgramError> {
+    let mut match_data = [0u8; 64];
+    match_data[..32].copy_from_slice(target);
+    match_data[32..].copy_from_slice(owner_program);
+    RoleMut::get_action_mut::<ProgramScope>(actions, &match_data)
+}
+
 pub fn sign_v2(
     ctx: Context<SignV2Accounts>,
     all_accounts: &[AccountInfo],
@@ -369,22 +381,16 @@ pub fn sign_v2(
                 let data = unsafe { account.borrow_data_unchecked() };
                 // For program scope, we need to get the actual program scope to know what to
                 // exclude, and include owner in hash
-                let account_key = unsafe { all_accounts.get_unchecked(index).key() };
-                if let Some(program_scope) =
-                    RoleMut::get_action_mut::<ProgramScope>(role.actions, account_key.as_ref())?
-                {
-                    let start = program_scope.balance_field_start as usize;
-                    let end = program_scope.balance_field_end as usize;
-                    if start < end && end <= data.len() {
-                        let exclude_ranges = [start..end];
-                        let hash = hash_except(&data, account.owner(), &exclude_ranges);
-                        Some(hash)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
+                let program_scope =
+                    find_program_scope(role.actions, account.key(), account.owner())?
+                        .ok_or(SwigAuthenticateError::PermissionDeniedMissingPermission)?;
+                let start = program_scope.balance_field_start as usize;
+                let end = program_scope.balance_field_end as usize;
+                if start >= end || end > data.len() {
+                    return Err(SwigError::InvalidProgramScopeBalanceFields.into());
                 }
+                let exclude_ranges = [start..end];
+                Some(hash_except(&data, account.owner(), &exclude_ranges))
             },
             _ => None,
         };
@@ -528,19 +534,14 @@ pub fn sign_v2(
                         balance,
                         spent,
                     } => {
-                        let account_key = account.key();
-                        let Some(program_scope) = RoleMut::get_action_mut::<ProgramScope>(
-                            role.actions,
-                            account_key.as_ref(),
-                        )?
-                        else {
-                            continue;
-                        };
+                        let program_scope =
+                            find_program_scope(role.actions, account.key(), account.owner())?
+                                .ok_or(SwigAuthenticateError::PermissionDeniedMissingPermission)?;
 
                         let data = unsafe { account.borrow_data_unchecked() };
-                        let Ok(current) = program_scope.read_account_balance(data) else {
-                            continue;
-                        };
+                        let current = program_scope
+                            .read_account_balance(data)
+                            .map_err(|_| SwigError::InvalidProgramScopeBalanceFields)?;
 
                         if current < *balance {
                             *spent = spent.saturating_add(*balance - current);
@@ -831,7 +832,7 @@ pub fn sign_v2(
             AccountClassification::ProgramScope { spent, .. } => {
                 let account_info = unsafe { all_accounts.get_unchecked(index) };
                 let Some(program_scope) =
-                    RoleMut::get_action_mut::<ProgramScope>(actions, account_info.key().as_ref())?
+                    find_program_scope(actions, account_info.key(), account_info.owner())?
                 else {
                     return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                 };

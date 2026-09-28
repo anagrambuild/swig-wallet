@@ -847,10 +847,11 @@ impl<'a> SwigWithRoles<'a> {
         Ok(None)
     }
 
-    /// Finds a program scope by target account.
+    /// Finds a program scope by target account and owner program.
     pub fn find_program_scope_by_target(
         &self,
         target_account: &[u8],
+        program_id: &[u8],
     ) -> Option<(u8, ProgramScope)> {
         for role_id in 0..self.state.role_counter {
             if let Ok(Some(role)) = self.get_role(role_id) {
@@ -886,7 +887,9 @@ impl<'a> SwigWithRoles<'a> {
                                     )
                                 };
 
-                                if program_scope.target_account == target_account {
+                                if program_scope.target_account == target_account
+                                    && program_scope.program_id == program_id
+                                {
                                     return Some((role_id as u8, program_scope));
                                 }
                             }
