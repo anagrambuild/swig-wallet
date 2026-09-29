@@ -9,6 +9,7 @@ use swig_interface::program_id;
 use swig_state::{
     authority::{programexec::ProgramExecAuthority, AuthorityType},
     swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
+    SwigAuthenticateError,
 };
 
 use super::*;
@@ -59,12 +60,121 @@ fn test_program_exec_propagates_compact_account_limit() {
     ));
 }
 
+#[test]
+fn program_exec_sign_v2_preserves_inner_instructions_and_transaction_signers() {
+    let swig = Pubkey::new_unique();
+    let wallet = Pubkey::new_unique();
+    let payer = Pubkey::new_unique();
+    let extra_signer = Pubkey::new_unique();
+    let first_program = Pubkey::new_unique();
+    let second_program = Pubkey::new_unique();
+    let role = ProgramExecClientRole::new(TEST_PROGRAM_ID, VALID_DISCRIMINATOR.to_vec(), || {
+        Instruction {
+            program_id: TEST_PROGRAM_ID,
+            accounts: vec![],
+            data: VALID_DISCRIMINATOR.to_vec(),
+        }
+    });
+    let instructions = crate::client_role::ClientRole::sign_v2_instruction(
+        &role,
+        swig,
+        wallet,
+        1,
+        vec![
+            Instruction {
+                program_id: first_program,
+                accounts: vec![AccountMeta::new_readonly(extra_signer, false)],
+                data: vec![10, 11],
+            },
+            Instruction {
+                program_id: second_program,
+                accounts: vec![],
+                data: vec![12],
+            },
+        ],
+        None,
+        &[payer, extra_signer],
+    )
+    .unwrap();
+
+    assert_eq!(instructions.len(), 4);
+    for (sign, program, data) in [
+        (&instructions[1], first_program, &[10, 11][..]),
+        (&instructions[3], second_program, &[12][..]),
+    ] {
+        assert_eq!(sign.program_id, program_id());
+        let compact = &sign.data
+            [core::mem::size_of::<swig_interface::swig::actions::sign_v2::SignV2Args>()..];
+        assert_eq!(compact[0], 1);
+        assert_eq!(sign.accounts[compact[1] as usize].pubkey, program);
+        let data_offset = 3 + compact[2] as usize;
+        let data_len =
+            u16::from_le_bytes([compact[data_offset], compact[data_offset + 1]]) as usize;
+        assert_eq!(&compact[data_offset + 2..data_offset + 2 + data_len], data);
+        assert!(sign
+            .accounts
+            .iter()
+            .any(|account| account.pubkey == payer && account.is_signer));
+    }
+    assert!(instructions[1]
+        .accounts
+        .iter()
+        .any(|account| account.pubkey == extra_signer && account.is_signer));
+    assert!(!instructions[1]
+        .accounts
+        .iter()
+        .any(|account| account.pubkey == program_id()));
+    assert_eq!(instructions[0].program_id, TEST_PROGRAM_ID);
+    assert_eq!(instructions[2].program_id, TEST_PROGRAM_ID);
+
+    let error = crate::client_role::ClientRole::sign_v2_instruction(
+        &role,
+        swig,
+        wallet,
+        1,
+        vec![Instruction {
+            program_id: first_program,
+            accounts: vec![],
+            data: vec![10],
+        }],
+        None,
+        &[],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        SwigError::InterfaceError(message)
+            if message == "ProgramExec SignV2 requires a transaction signer"
+    ));
+}
+
 #[test_log::test]
 fn test_program_exec_sign_with_preceding_instruction() {
     let mut context = setup_test_context().unwrap();
+    context
+        .svm
+        .add_program_from_file(
+            TEST_PROGRAM_ID,
+            "../target/deploy/test_program_authority.so",
+        )
+        .unwrap();
     let swig_id = [42u8; 32];
     let ed25519_authority = Keypair::new();
     let root_role_id = 0;
+    let state_account = Pubkey::new_unique();
+    context
+        .svm
+        .set_account(
+            state_account,
+            solana_sdk::account::Account {
+                lamports: 1_000_000,
+                data: vec![0],
+                owner: TEST_PROGRAM_ID,
+                executable: false,
+                rent_epoch: 0,
+            },
+        )
+        .unwrap();
 
     // Create Swig wallet with Ed25519 root authority
     let (swig_key, _, _) = create_swig_ed25519(&mut context, &ed25519_authority, swig_id).unwrap();
@@ -94,6 +204,8 @@ fn test_program_exec_sign_with_preceding_instruction() {
                 accounts: vec![
                     AccountMeta::new_readonly(swig_key_for_closure, false), // config
                     AccountMeta::new_readonly(swig_wallet_for_closure, false), // wallet
+                    AccountMeta::new_readonly(state_account, false),
+                    AccountMeta::new_readonly(program_id(), false),
                 ],
                 data: VALID_DISCRIMINATOR.to_vec(),
             }
@@ -147,10 +259,94 @@ fn test_program_exec_sign_with_preceding_instruction() {
     println!("✓ Successfully added ProgramExec authority");
     println!("  - Total roles: {}", swig_data.state.roles);
 
-    // Note: To actually test signing with ProgramExec, the TEST_PROGRAM would
-    // need to be deployed and executed. This test verifies that the
-    // authority can be added and the authority data is correctly generated
-    // with the closure-based function pattern.
+    let recipient = Pubkey::new_unique();
+    let rent = context.svm.minimum_balance_for_rent_exemption(0);
+    context.svm.airdrop(&recipient, rent).unwrap();
+    let mut sign_builder =
+        SwigInstructionBuilder::new(swig_id, Box::new(program_exec_role), payer, 1);
+    let sign_ixs = sign_builder
+        .sign_v2_instruction(
+            vec![
+                solana_system_interface::instruction::transfer(
+                    &swig_wallet_address,
+                    &recipient,
+                    1000,
+                ),
+                solana_system_interface::instruction::transfer(
+                    &swig_wallet_address,
+                    &recipient,
+                    2000,
+                ),
+            ],
+            None,
+        )
+        .unwrap();
+    assert_eq!(sign_ixs.len(), 4);
+    assert_eq!(sign_ixs[0].program_id, TEST_PROGRAM_ID);
+    assert_eq!(sign_ixs[1].program_id, program_id());
+    assert_eq!(sign_ixs[2].program_id, TEST_PROGRAM_ID);
+    assert_eq!(sign_ixs[3].program_id, program_id());
+    assert!(sign_ixs[1]
+        .accounts
+        .iter()
+        .any(|account| account.pubkey == payer && account.is_signer));
+    assert!(sign_ixs[3]
+        .accounts
+        .iter()
+        .any(|account| account.pubkey == recipient && account.is_writable));
+    let msg =
+        v0::Message::try_compile(&payer, &sign_ixs, &[], context.svm.latest_blockhash()).unwrap();
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&context.default_payer])
+        .unwrap();
+    context.svm.send_transaction(tx).unwrap();
+    assert_eq!(
+        context.svm.get_account(&recipient).unwrap().lamports,
+        rent + 3000
+    );
+
+    let invalid_role =
+        ProgramExecClientRole::new(TEST_PROGRAM_ID, VALID_DISCRIMINATOR.to_vec(), move || {
+            Instruction {
+                program_id: TEST_PROGRAM_ID,
+                accounts: vec![
+                    AccountMeta::new_readonly(swig_key, false),
+                    AccountMeta::new_readonly(swig_wallet_address, false),
+                    AccountMeta::new_readonly(state_account, false),
+                    AccountMeta::new_readonly(program_id(), false),
+                ],
+                data: vec![9; 8],
+            }
+        });
+    let mut invalid_builder =
+        SwigInstructionBuilder::new(swig_id, Box::new(invalid_role), payer, 1);
+    let invalid_ixs = invalid_builder
+        .sign_v2_instruction(
+            vec![solana_system_interface::instruction::transfer(
+                &swig_wallet_address,
+                &recipient,
+                1000,
+            )],
+            None,
+        )
+        .unwrap();
+    let msg = v0::Message::try_compile(&payer, &invalid_ixs, &[], context.svm.latest_blockhash())
+        .unwrap();
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&context.default_payer])
+        .unwrap();
+    let error = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(
+        error.err,
+        solana_sdk::transaction::TransactionError::InstructionError(
+            1,
+            solana_sdk::instruction::InstructionError::Custom(
+                SwigAuthenticateError::PermissionDeniedProgramExecInvalidInstructionData as u32,
+            ),
+        )
+    );
+    assert_eq!(
+        context.svm.get_account(&recipient).unwrap().lamports,
+        rent + 3000
+    );
 }
 
 #[test_log::test]
