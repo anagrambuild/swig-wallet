@@ -14,9 +14,9 @@ This directory contains GitHub Actions workflows for automating build, test, and
 This workflow builds and tests the Solana program and other Rust components:
 
 - Triggered on pushes to `main` and pull requests to `main`
-- Uses Rust version specified in `rust-toolchain.toml` (currently 1.82.0)
-- Installs Solana tools (version 1.18.4)
-- Builds the Solana program using `cargo build-sbf`
+- Uses Rust version specified in `rust-toolchain.toml` (currently 1.96.1)
+- Installs Agave tools (version 4.2.2)
+- Builds the Solana program using `cargo-build-sbf` 4.0.0 with `--arch v3 --tools-version v1.53`
 - Runs all Rust tests with `cargo nextest`
 - Runs Solana program tests with `cargo test-sbf`
 - Generates JUnit test reports for easy visualization of test results
@@ -26,7 +26,7 @@ This workflow builds and tests the Solana program and other Rust components:
 This workflow performs code quality checks:
 
 - Triggered on pushes to `main` and pull requests to `main`
-- Uses Rust version specified in `rust-toolchain.toml` (currently 1.82.0)
+- Uses Rust version specified in `rust-toolchain.toml` (currently 1.96.1)
 - Checks code formatting with `cargo fmt`
 - Runs Clippy linting with `cargo clippy`
 
@@ -34,8 +34,8 @@ This workflow performs code quality checks:
 
 The workflows use environment variables to make configuration easier:
 
-- `RUST_VERSION`: The Rust toolchain version (currently 1.82.0)
-- `SOLANA_VERSION`: The Solana tools version (currently 2.1.0)
+- `RUST_VERSION`: The Rust toolchain version (currently 1.96.1)
+- `SOLANA_VERSION`: The Agave tools version (currently 4.2.2)
 
 To update these versions, simply modify the environment variables at the top of each workflow file.
 

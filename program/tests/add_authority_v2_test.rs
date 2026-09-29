@@ -15,7 +15,12 @@ use common::*;
 use solana_sdk::{signature::Keypair, signer::Signer};
 use swig_interface::{AuthorityConfig, ClientAction};
 use swig_state::{
-    action::manage_authority::ManageAuthority, authority::AuthorityType, swig::SwigWithRoles,
+    action::{
+        manage_authority::ManageAuthority,
+        program_scope::{NumericType, ProgramScope, ProgramScopeType},
+    },
+    authority::AuthorityType,
+    swig::SwigWithRoles,
 };
 
 #[test_log::test]
@@ -281,6 +286,27 @@ fn test_recurring_action_layout_validation() {
     );
     assert!(result.is_ok(), "Valid SOL recurring limit should succeed");
 
+    // Should fail - window is 0
+    let result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::SolRecurringLimit(SolRecurringLimit {
+            recurring_amount: 500,
+            window: 0,
+            last_reset: 0,
+            current_amount: 500,
+        })],
+    );
+    assert!(
+        result.is_err(),
+        "SOL recurring limit with zero window should fail"
+    );
+
     // Should fail - current doesn't equal limit
     let result = add_authority_with_ed25519_root(
         &mut context,
@@ -346,6 +372,28 @@ fn test_recurring_action_layout_validation() {
     );
     assert!(result.is_ok(), "Valid token recurring limit should succeed");
 
+    // Should fail - window is 0
+    let result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::TokenRecurringLimit(TokenRecurringLimit {
+            token_mint: mint_pubkey.to_bytes(),
+            window: 0,
+            limit: 500,
+            current: 500,
+            last_reset: 0,
+        })],
+    );
+    assert!(
+        result.is_err(),
+        "Token recurring limit with zero window should fail"
+    );
+
     // Should fail - current doesn't equal limit
     let result = add_authority_with_ed25519_root(
         &mut context,
@@ -410,6 +458,54 @@ fn test_recurring_action_layout_validation() {
         })],
     );
     assert!(result.is_ok(), "Valid stake recurring limit should succeed");
+
+    // Should fail - window is 0
+    let result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::StakeRecurringLimit(StakeRecurringLimit {
+            recurring_amount: 500,
+            window: 0,
+            last_reset: 0,
+            current_amount: 500,
+        })],
+    );
+    assert!(
+        result.is_err(),
+        "Stake recurring limit with zero window should fail"
+    );
+
+    // Should fail - recurring program scope window is 0
+    let result = add_authority_with_ed25519_root(
+        &mut context,
+        &swig_key,
+        &swig_authority,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: second_authority.pubkey().as_ref(),
+        },
+        vec![ClientAction::ProgramScope(ProgramScope {
+            current_amount: 0,
+            limit: 500,
+            window: 0,
+            last_reset: 0,
+            program_id: [1; 32],
+            target_account: [2; 32],
+            scope_type: ProgramScopeType::RecurringLimit as u64,
+            numeric_type: NumericType::U64 as u64,
+            balance_field_start: 0,
+            balance_field_end: 0,
+        })],
+    );
+    assert!(
+        result.is_err(),
+        "Recurring program scope with zero window should fail"
+    );
 
     // Should fail - current doesn't equal limit
     let result = add_authority_with_ed25519_root(

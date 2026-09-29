@@ -34,7 +34,10 @@ fn create_v2_setup<'a>(swig_wallet: &mut SwigWallet<'a>, secondary: &'a Keypair)
         .unwrap();
     let (_sig, subacc_id) = swig_wallet.create_sub_account_v2().unwrap();
     let (asset, _) = Pubkey::find_program_address(
-        &sub_account_v2_asset_seeds(swig_wallet.get_swig_id(), &subacc_id.to_le_bytes()),
+        &sub_account_v2_asset_seeds(
+            swig_wallet.get_swig_account().unwrap().as_ref(),
+            &subacc_id.to_le_bytes(),
+        ),
         &swig_interface::program_id(),
     );
     (subacc_id, asset)
@@ -84,7 +87,7 @@ fn test_v2_lookup_rejects_prefunded_uninitialized_state() {
     let mut swig_wallet = create_test_wallet(litesvm, &main_authority);
     let id_le = 0u32.to_le_bytes();
     let (state, _) = Pubkey::find_program_address(
-        &sub_account_v2_state_seeds(swig_wallet.get_swig_id(), &id_le),
+        &sub_account_v2_state_seeds(swig_wallet.get_swig_account().unwrap().as_ref(), &id_le),
         &swig_interface::program_id(),
     );
     swig_wallet
@@ -114,7 +117,10 @@ fn test_v2_lookup_rejects_invalid_enabled_byte() {
     let secondary = Keypair::new();
     let (subacc_id, _asset) = create_v2_setup(&mut swig_wallet, &secondary);
     let (state, _) = Pubkey::find_program_address(
-        &sub_account_v2_state_seeds(swig_wallet.get_swig_id(), &subacc_id.to_le_bytes()),
+        &sub_account_v2_state_seeds(
+            swig_wallet.get_swig_account().unwrap().as_ref(),
+            &subacc_id.to_le_bytes(),
+        ),
         &swig_interface::program_id(),
     );
 

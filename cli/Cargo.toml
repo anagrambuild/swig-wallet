@@ -25,7 +25,7 @@ bs58 = "0.5.1"
 hex = "0.4.3"
 swig-sdk = { path = "../rust-sdk" }
 openssl = { version = "0.10", features = ["vendored"] }
-solana-sdk = "3.0.0"
+solana-sdk = "4.0.1"
 solana-secp256r1-program = "3.0.0"
 solana-system-interface = { version = "3.1.0", features = ["bincode"] }
 

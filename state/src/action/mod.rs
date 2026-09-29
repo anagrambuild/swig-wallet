@@ -215,6 +215,42 @@ impl TryFrom<&[u8]> for Permission {
     }
 }
 
+impl Permission {
+    fn is_repeatable(self) -> bool {
+        match self {
+            Permission::None => true,
+            Permission::SolLimit => SolLimit::REPEATABLE,
+            Permission::SolRecurringLimit => SolRecurringLimit::REPEATABLE,
+            Permission::Program => Program::REPEATABLE,
+            Permission::ProgramScope => ProgramScope::REPEATABLE,
+            Permission::TokenLimit => TokenLimit::REPEATABLE,
+            Permission::TokenRecurringLimit => TokenRecurringLimit::REPEATABLE,
+            Permission::All => All::REPEATABLE,
+            Permission::ManageAuthority => ManageAuthority::REPEATABLE,
+            Permission::SubAccount => SubAccount::REPEATABLE,
+            Permission::StakeLimit => StakeLimit::REPEATABLE,
+            Permission::StakeRecurringLimit => StakeRecurringLimit::REPEATABLE,
+            Permission::StakeAll => StakeAll::REPEATABLE,
+            Permission::ProgramAll => ProgramAll::REPEATABLE,
+            Permission::ProgramCurated => ProgramCurated::REPEATABLE,
+            Permission::AllButManageAuthority => AllButManageAuthority::REPEATABLE,
+            Permission::SolDestinationLimit => SolDestinationLimit::REPEATABLE,
+            Permission::SolRecurringDestinationLimit => SolRecurringDestinationLimit::REPEATABLE,
+            Permission::TokenDestinationLimit => TokenDestinationLimit::REPEATABLE,
+            Permission::TokenRecurringDestinationLimit => {
+                TokenRecurringDestinationLimit::REPEATABLE
+            },
+            Permission::CloseSwigAuthority => CloseSwigAuthority::REPEATABLE,
+            Permission::ReplaceAuthority => ReplaceAuthority::REPEATABLE,
+            Permission::SubAccountV2Create => SubAccountV2Create::REPEATABLE,
+            Permission::SubAccountV2All => SubAccountV2All::REPEATABLE,
+            Permission::SubAccountV2Sign => SubAccountV2Sign::REPEATABLE,
+            Permission::SubAccountV2Withdraw => SubAccountV2Withdraw::REPEATABLE,
+            Permission::SubAccountV2Toggle => SubAccountV2Toggle::REPEATABLE,
+        }
+    }
+}
+
 /// Trait for types that can be used as action data.
 ///
 /// This trait defines the interface for action-specific data structures,
@@ -236,19 +272,19 @@ pub trait Actionable<'a>: Transmutable + TransmutableMut {
     }
 }
 
-/// Returns a deduplication key for a V2 sub-account action, or `None` for any
-/// non-V2 permission (which is intentionally not deduplicated).
+/// Returns a validation key for a V2 sub-account action, or `None` for any
+/// non-V2 permission (which is intentionally not validated here).
 ///
 /// The scoped permissions key on `(type, subacc_id)`; the create marker keys on
 /// its type with a fixed id so a second marker collides.
-fn v2_dedup_key(permission: Permission, data: &[u8]) -> Option<(u16, u32)> {
+fn v2_validation_key(permission: Permission, data: &[u8]) -> Option<(u16, u32)> {
     match permission {
         Permission::SubAccountV2Create => Some((permission as u16, 0)),
         Permission::SubAccountV2All
         | Permission::SubAccountV2Sign
         | Permission::SubAccountV2Withdraw
         | Permission::SubAccountV2Toggle => {
-            if data.len() >= 4 {
+            if data.len() == SubAccountV2All::LEN {
                 let id = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
                 Some((permission as u16, id))
             } else {
@@ -300,22 +336,28 @@ impl ActionLoader {
         }
     }
 
-    /// Rejects duplicate V2 sub-account scoped actions within a role's full
-    /// action buffer.
+    /// Validates constraints that require a role's full action buffer.
     ///
-    /// A role may hold at most one scoped V2 action per `(permission type,
-    /// subacc_id)` and at most one `SubAccountV2Create` marker. Only the five V2
-    /// permission types are deduplicated here; all other actions (including V1
-    /// `SubAccount` and repeatable destination limits) are left untouched to
-    /// preserve existing behavior.
+    /// Non-repeatable permission types may appear at most once. Repeatable
+    /// permissions retain their action-specific matching semantics.
+    ///
+    /// Each scoped action must target an existing sub-account id (strictly less
+    /// than `sub_account_counter`). A role may also hold at most one scoped V2
+    /// action per `(permission type, subacc_id)` and at most one
+    /// `SubAccountV2Create` marker.
     ///
     /// `actions_data` is walked sequentially by `[header][data]`, matching how
     /// `calculate_num_actions` reads the same buffer.
-    pub fn reject_duplicate_v2_scoped(actions_data: &[u8]) -> Result<(), ProgramError> {
+    pub fn validate_v2_actions(
+        actions_data: &[u8],
+        sub_account_counter: u32,
+    ) -> Result<(), ProgramError> {
         // Single forward pass collecting one packed `(type, subacc_id)` key per
         // V2 action, then sort + adjacent-compare. Roles are capped at 255
         // actions by `calculate_num_actions`, so this vector stays small.
         let mut keys: alloc::vec::Vec<u64> = alloc::vec::Vec::new();
+        let mut non_repeatable_permissions = 0u32;
+        let mut has_duplicate_non_repeatable = false;
         let mut cursor = 0;
         while cursor + Action::LEN <= actions_data.len() {
             let header =
@@ -328,9 +370,22 @@ impl ActionLoader {
                 return Err(ProgramError::InvalidInstructionData);
             }
 
+            let permission = header.permission()?;
+            if !permission.is_repeatable() {
+                let permission_bit = 1u32
+                    .checked_shl(permission as u32)
+                    .ok_or(ProgramError::InvalidInstructionData)?;
+                if non_repeatable_permissions & permission_bit != 0 {
+                    has_duplicate_non_repeatable = true;
+                }
+                non_repeatable_permissions |= permission_bit;
+            }
             if let Some((ty, id)) =
-                v2_dedup_key(header.permission()?, &actions_data[data_start..data_end])
+                v2_validation_key(permission, &actions_data[data_start..data_end])
             {
+                if permission != Permission::SubAccountV2Create && id >= sub_account_counter {
+                    return Err(SwigStateError::SubAccountV2PermissionTargetDoesNotExist.into());
+                }
                 keys.push(((ty as u64) << 32) | id as u64);
             }
 
@@ -343,6 +398,9 @@ impl ActionLoader {
                 return Err(SwigStateError::DuplicateV2SubAccountAction.into());
             }
         }
+        if has_duplicate_non_repeatable {
+            return Err(SwigStateError::DuplicateNonRepeatableAction.into());
+        }
         Ok(())
     }
 
@@ -353,14 +411,149 @@ impl ActionLoader {
         let mut cursor = 0;
 
         while cursor < bytes.len() {
-            let action = unsafe { Action::load_unchecked(&bytes[cursor..cursor + Action::LEN])? };
-            if action.permission() == Ok(T::TYPE) {
-                return Ok(Some(unsafe {
-                    T::load_unchecked(&bytes[cursor..cursor + action.length() as usize])?
-                }));
+            let data_start = cursor
+                .checked_add(Action::LEN)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            let header = bytes
+                .get(cursor..data_start)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            let action = unsafe { Action::load_unchecked(header)? };
+            let data_end = data_start
+                .checked_add(action.length() as usize)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            let action_data = bytes
+                .get(data_start..data_end)
+                .ok_or(ProgramError::InvalidAccountData)?;
+
+            // Actions are contiguous, so the boundary must be the exact start
+            // of the next header. This also guarantees forward progress.
+            if action.boundary() as usize != data_end {
+                return Err(ProgramError::InvalidAccountData);
             }
-            cursor = action.boundary() as usize;
+
+            if action.permission()? == T::TYPE {
+                return Ok(Some(unsafe { T::load_unchecked(action_data)? }));
+            }
+            cursor = data_end;
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nonrepeatable_permissions_fit_deduplication_bitmap() {
+        for value in 0..=u16::MAX {
+            let Ok(permission) = Permission::try_from(value) else {
+                continue;
+            };
+            if !permission.is_repeatable() {
+                assert!(
+                    (permission as u32) < u32::BITS,
+                    "{permission:?} exceeds the non-repeatable permission bitmap; expand it before adding this permission",
+                );
+            }
+        }
+    }
+
+    #[repr(C, align(8))]
+    struct AlignedBytes<const N: usize>([u8; N]);
+
+    fn write_header<const N: usize>(bytes: &mut AlignedBytes<N>, offset: usize, action: &Action) {
+        bytes.0[offset..offset + Action::LEN]
+            .copy_from_slice(action.into_bytes().expect("serialize action header"));
+    }
+
+    #[test]
+    fn find_action_rejects_truncated_header() {
+        let bytes = AlignedBytes([0; Action::LEN - 1]);
+
+        for len in 1..Action::LEN {
+            assert!(matches!(
+                ActionLoader::find_action::<All>(&bytes.0[..len]),
+                Err(ProgramError::InvalidAccountData)
+            ));
+        }
+    }
+
+    #[test]
+    fn find_action_loads_data_after_header() {
+        const DATA_END: usize = Action::LEN + SolLimit::LEN;
+        let mut bytes = AlignedBytes([0; DATA_END]);
+        let amount = 42_u64;
+        let header = Action::new(Permission::SolLimit, SolLimit::LEN as u16, DATA_END as u32);
+        write_header(&mut bytes, 0, &header);
+        bytes.0[Action::LEN..DATA_END].copy_from_slice(&amount.to_le_bytes());
+
+        let action = ActionLoader::find_action::<SolLimit>(&bytes.0)
+            .expect("valid action data")
+            .expect("SolLimit action");
+
+        assert_eq!(action.amount, amount);
+    }
+
+    #[test]
+    fn find_action_rejects_truncated_data() {
+        let mut bytes = AlignedBytes([0; Action::LEN]);
+        let header = Action::new(
+            Permission::SolLimit,
+            SolLimit::LEN as u16,
+            (Action::LEN + SolLimit::LEN) as u32,
+        );
+        write_header(&mut bytes, 0, &header);
+
+        assert!(matches!(
+            ActionLoader::find_action::<SolLimit>(&bytes.0),
+            Err(ProgramError::InvalidAccountData)
+        ));
+    }
+
+    #[test]
+    fn find_action_rejects_non_advancing_boundary() {
+        let mut bytes = AlignedBytes([0; Action::LEN]);
+        let header = Action::new(Permission::All, All::LEN as u16, 0);
+        write_header(&mut bytes, 0, &header);
+
+        assert!(matches!(
+            ActionLoader::find_action::<All>(&bytes.0),
+            Err(ProgramError::InvalidAccountData)
+        ));
+    }
+
+    #[test]
+    fn find_action_rejects_boundary_inside_action_data() {
+        const DATA_END: usize = Action::LEN + Program::LEN;
+        let mut bytes = AlignedBytes([0; DATA_END]);
+        let program_header =
+            Action::new(Permission::Program, Program::LEN as u16, Action::LEN as u32);
+        write_header(&mut bytes, 0, &program_header);
+
+        let embedded_all = Action::new(Permission::All, All::LEN as u16, DATA_END as u32);
+        write_header(&mut bytes, Action::LEN, &embedded_all);
+
+        assert!(matches!(
+            ActionLoader::find_action::<All>(&bytes.0),
+            Err(ProgramError::InvalidAccountData)
+        ));
+    }
+
+    #[test]
+    fn find_action_follows_valid_boundaries() {
+        const FIRST_END: usize = Action::LEN + SolLimit::LEN;
+        const SECOND_END: usize = FIRST_END + Action::LEN;
+        let mut bytes = AlignedBytes([0; SECOND_END]);
+        let sol_limit = Action::new(Permission::SolLimit, SolLimit::LEN as u16, FIRST_END as u32);
+        write_header(&mut bytes, 0, &sol_limit);
+        bytes.0[Action::LEN..FIRST_END].copy_from_slice(&42_u64.to_le_bytes());
+
+        let all = Action::new(Permission::All, All::LEN as u16, SECOND_END as u32);
+        write_header(&mut bytes, FIRST_END, &all);
+
+        assert!(ActionLoader::find_action::<All>(&bytes.0)
+            .expect("valid action data")
+            .is_some());
     }
 }

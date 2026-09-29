@@ -98,68 +98,83 @@ pub fn sub_account_signer<'a>(
     ]
 }
 
-/// Generates the seeds for a V2 sub-account state account.
+/// Generates seeds for V2 state bound to the parent config public key.
+/// The address-specific namespace excludes legacy ID-derived state.
 ///
 /// `id_le` is the little-endian `subacc_id`. It is typed as a fixed 4-byte
 /// array so a wrong-length seed is a compile error rather than a silently
 /// different PDA.
 #[inline(always)]
-pub fn sub_account_v2_state_seeds<'a>(swig_id: &'a [u8], id_le: &'a [u8; 4]) -> [&'a [u8]; 3] {
-    [b"sub-account-v2-state".as_ref(), swig_id, id_le]
+pub fn sub_account_v2_state_seeds<'a>(swig_address: &'a [u8], id_le: &'a [u8; 4]) -> [&'a [u8]; 3] {
+    [
+        b"sub-account-v2-state-address".as_ref(),
+        swig_address,
+        id_le,
+    ]
 }
 
 /// Generates the seeds for a V2 sub-account state account with bump seed.
 #[inline(always)]
 pub fn sub_account_v2_state_seeds_with_bump<'a>(
-    swig_id: &'a [u8],
+    swig_address: &'a [u8],
     id_le: &'a [u8; 4],
     bump: &'a [u8; 1],
 ) -> [&'a [u8]; 4] {
-    [b"sub-account-v2-state".as_ref(), swig_id, id_le, bump]
+    [
+        b"sub-account-v2-state-address".as_ref(),
+        swig_address,
+        id_le,
+        bump,
+    ]
 }
 
 /// Creates a signer seeds array for a V2 sub-account state account.
 pub fn sub_account_v2_state_signer<'a>(
-    swig_id: &'a [u8],
+    swig_address: &'a [u8],
     id_le: &'a [u8; 4],
     bump: &'a [u8; 1],
 ) -> [Seed<'a>; 4] {
     [
-        b"sub-account-v2-state".as_ref().into(),
-        swig_id.into(),
+        b"sub-account-v2-state-address".as_ref().into(),
+        swig_address.into(),
         id_le.as_ref().into(),
         bump.as_ref().into(),
     ]
 }
 
-/// Generates the seeds for a V2 sub-account asset account.
+/// Generates seeds for a V2 asset account bound to the parent config public key.
 ///
 /// `id_le` is the little-endian `subacc_id`, typed as a fixed 4-byte array for
 /// the same reason as [`sub_account_v2_state_seeds`].
 #[inline(always)]
-pub fn sub_account_v2_asset_seeds<'a>(swig_id: &'a [u8], id_le: &'a [u8; 4]) -> [&'a [u8]; 3] {
-    [b"sub-account-v2".as_ref(), swig_id, id_le]
+pub fn sub_account_v2_asset_seeds<'a>(swig_address: &'a [u8], id_le: &'a [u8; 4]) -> [&'a [u8]; 3] {
+    [b"sub-account-v2-address".as_ref(), swig_address, id_le]
 }
 
 /// Generates the seeds for a V2 sub-account asset account with bump seed.
 #[inline(always)]
 pub fn sub_account_v2_asset_seeds_with_bump<'a>(
-    swig_id: &'a [u8],
+    swig_address: &'a [u8],
     id_le: &'a [u8; 4],
     bump: &'a [u8; 1],
 ) -> [&'a [u8]; 4] {
-    [b"sub-account-v2".as_ref(), swig_id, id_le, bump]
+    [
+        b"sub-account-v2-address".as_ref(),
+        swig_address,
+        id_le,
+        bump,
+    ]
 }
 
 /// Creates a signer seeds array for a V2 sub-account asset account.
 pub fn sub_account_v2_asset_signer<'a>(
-    swig_id: &'a [u8],
+    swig_address: &'a [u8],
     id_le: &'a [u8; 4],
     bump: &'a [u8; 1],
 ) -> [Seed<'a>; 4] {
     [
-        b"sub-account-v2".as_ref().into(),
-        swig_id.into(),
+        b"sub-account-v2-address".as_ref().into(),
+        swig_address.into(),
         id_le.as_ref().into(),
         bump.as_ref().into(),
     ]
@@ -352,8 +367,6 @@ impl<'a> SwigBuilder<'a> {
     ) -> Result<(), ProgramError> {
         // Calculate the actual number of actions from the actions data
         let num_actions = Self::calculate_num_actions(actions_data)?;
-        // Reject duplicate V2 sub-account scoped actions within this role.
-        ActionLoader::reject_duplicate_v2_scoped(actions_data)?;
 
         // check number of roles and iterate to last boundary
         let mut cursor = 0;
@@ -442,8 +455,6 @@ impl<'a> SwigBuilder<'a> {
         position.id = self.swig.role_counter;
         cursor += Position::LEN;
         cursor += authority_length;
-        // V2 scoped duplicates are rejected above; general action dedup (SWI-450)
-        // is still TODO.
         let mut action_cursor = 0;
         let actions_start_cursor_pos = cursor;
         for _i in 0..num_actions {

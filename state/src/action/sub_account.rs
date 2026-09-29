@@ -11,6 +11,10 @@ use swig_assertions::sol_assert_bytes_eq;
 use super::{Actionable, Permission};
 use crate::{IntoBytes, Transmutable, TransmutableMut};
 
+/// Tombstone written after a V1 sub-account is closed. Unlike the all-zero
+/// creation marker, this value cannot be reused by `CreateSubAccountV1`.
+pub const CLOSED_SUB_ACCOUNT: [u8; 32] = [u8::MAX; 32];
+
 /// Represents permission to manage a sub-account.
 ///
 /// This struct tracks a sub-account's metadata and manages permissions
