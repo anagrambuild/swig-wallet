@@ -51,11 +51,9 @@ macro_rules! sol_assert_return {
   ($func_name:ident, $return_type:ty, $($param:ident: $type:ty),* $(,)? | $check:expr) => {
       #[inline(always)]
       pub fn $func_name<E: Into<ProgramError>>($($param: $type,)* error: E) -> Result<$return_type, ProgramError> {
-          if $check.is_some() {
-              Ok($check.unwrap())
-          } else {
-            //need this branch to avoid the msg when we run into
-              Err(error.into())
+          match $check {
+              Some(value) => Ok(value),
+              None => Err(error.into()),
           }
       }
   };
@@ -148,6 +146,13 @@ sol_assert!(check_zero_lamports, account: &AccountInfo |
 
 sol_assert!(check_stack_height, expected: u64 |
       get_stack_height(expected)
+);
+
+sol_assert!(check_top_level_or_signers, accounts: &[AccountInfo], signers: &[[u8; 32]] |
+    get_stack_height(1)
+        || accounts.iter().any(|account| {
+            account.is_signer() && signers.contains(account.key())
+        })
 );
 
 sol_assert!(check_zero_data, account: &AccountInfo |

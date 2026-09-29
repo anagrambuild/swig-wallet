@@ -71,16 +71,6 @@ fn compare_ed25519_sub_account_v2_compute_units() {
 
     for subacc_id in 0..=LAST_SUBACCOUNT_ID {
         let addresses = sub_account_addresses(&swig_id, subacc_id);
-        let state_bump = Pubkey::find_program_address(
-            &sub_account_v2_state_seeds(&swig_id, &subacc_id.to_le_bytes()),
-            &program_id(),
-        )
-        .1;
-        let asset_bump = Pubkey::find_program_address(
-            &sub_account_v2_asset_seeds(&swig_id, &subacc_id.to_le_bytes()),
-            &program_id(),
-        )
-        .1;
         let create = CreateSubAccountV2Instruction::new_with_ed25519_authority(
             swig,
             creator.pubkey(),
@@ -88,8 +78,6 @@ fn compare_ed25519_sub_account_v2_compute_units() {
             addresses.state,
             addresses.asset,
             CREATOR_ROLE_ID,
-            state_bump,
-            asset_bump,
         )
         .unwrap();
         let consumed = send(&mut context, &creator, create).compute_units_consumed;
@@ -166,15 +154,19 @@ fn compare_ed25519_sub_account_v2_compute_units() {
 }
 
 fn sub_account_addresses(swig_id: &[u8; 32], subacc_id: u32) -> SubAccountAddresses {
+    let (swig_address, _) = Pubkey::find_program_address(
+        &swig_state::swig::swig_account_seeds(swig_id),
+        &program_id(),
+    );
     let id = subacc_id.to_le_bytes();
     SubAccountAddresses {
         state: Pubkey::find_program_address(
-            &sub_account_v2_state_seeds(swig_id, &id),
+            &sub_account_v2_state_seeds(swig_address.as_ref(), &id),
             &program_id(),
         )
         .0,
         asset: Pubkey::find_program_address(
-            &sub_account_v2_asset_seeds(swig_id, &id),
+            &sub_account_v2_asset_seeds(swig_address.as_ref(), &id),
             &program_id(),
         )
         .0,
@@ -267,17 +259,16 @@ fn send_toggle(
 }
 
 fn print_row(operation: &str, pair: ComputeUnitPair) {
-    assert!(
-        pair.last >= pair.first,
-        "{operation} unexpectedly used fewer compute units for subaccount 19"
-    );
-    let increase = pair.last - pair.first;
-    let percent = ((increase as f64 / pair.first as f64) * 100.0).round() as u64;
+    // Create derives two canonical PDAs, and the bump-search cost varies with
+    // the random Swig ID. Report the measured difference in either direction.
+    let direction = if pair.last >= pair.first { "+" } else { "-" };
+    let difference = pair.last.abs_diff(pair.first);
+    let percent = ((difference as f64 / pair.first as f64) * 100.0).round() as u64;
     println!(
-        "| {operation} | {} CU | {} CU | +{} / {percent}% |",
+        "| {operation} | {} CU | {} CU | {direction}{} / {direction}{percent}% |",
         with_thousands_separator(pair.first),
         with_thousands_separator(pair.last),
-        with_thousands_separator(increase),
+        with_thousands_separator(difference),
     );
 }
 

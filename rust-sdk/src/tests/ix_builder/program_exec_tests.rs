@@ -21,12 +21,53 @@ const TEST_PROGRAM_ID: Pubkey =
 const VALID_DISCRIMINATOR: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
 #[test]
-fn generic_program_exec_sign_v2_keeps_original_inner_instructions() {
+fn test_program_exec_propagates_compact_account_limit() {
+    let program_exec_role =
+        ProgramExecClientRole::new(TEST_PROGRAM_ID, VALID_DISCRIMINATOR.to_vec(), || {
+            Instruction {
+                program_id: TEST_PROGRAM_ID,
+                accounts: Vec::new(),
+                data: VALID_DISCRIMINATOR.to_vec(),
+            }
+        });
+    let inner_instruction = Instruction {
+        program_id: Pubkey::new_unique(),
+        accounts: (0..250)
+            .map(|_| AccountMeta::new_readonly(Pubkey::new_unique(), false))
+            .collect(),
+        data: Vec::new(),
+    };
+
+    let error = program_exec_role
+        .sign_with_program_exec(
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Instruction {
+                program_id: TEST_PROGRAM_ID,
+                accounts: Vec::new(),
+                data: VALID_DISCRIMINATOR.to_vec(),
+            },
+            inner_instruction,
+            0,
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        SwigError::InterfaceError(message)
+            if message == "compact instruction account limit exceeded"
+    ));
+}
+
+#[test]
+fn program_exec_sign_v2_preserves_inner_instructions_and_transaction_signers() {
+    let swig = Pubkey::new_unique();
+    let wallet = Pubkey::new_unique();
     let payer = Pubkey::new_unique();
-    let swig_id = [42; 32];
+    let extra_signer = Pubkey::new_unique();
     let first_program = Pubkey::new_unique();
     let second_program = Pubkey::new_unique();
-    let destination = Pubkey::new_unique();
     let role = ProgramExecClientRole::new(TEST_PROGRAM_ID, VALID_DISCRIMINATOR.to_vec(), || {
         Instruction {
             program_id: TEST_PROGRAM_ID,
@@ -34,69 +75,77 @@ fn generic_program_exec_sign_v2_keeps_original_inner_instructions() {
             data: VALID_DISCRIMINATOR.to_vec(),
         }
     });
-    let mut builder = SwigInstructionBuilder::new(swig_id, Box::new(role), payer, 1);
-    let instructions = builder
-        .sign_v2_instruction(
-            vec![
-                Instruction {
-                    program_id: first_program,
-                    accounts: vec![AccountMeta::new_readonly(destination, false)],
-                    data: vec![10, 11],
-                },
-                Instruction {
-                    program_id: second_program,
-                    accounts: vec![AccountMeta::new(destination, false)],
-                    data: vec![12],
-                },
-            ],
-            None,
-        )
-        .unwrap();
+    let instructions = crate::client_role::ClientRole::sign_v2_instruction(
+        &role,
+        swig,
+        wallet,
+        1,
+        vec![
+            Instruction {
+                program_id: first_program,
+                accounts: vec![AccountMeta::new_readonly(extra_signer, false)],
+                data: vec![10, 11],
+            },
+            Instruction {
+                program_id: second_program,
+                accounts: vec![],
+                data: vec![12],
+            },
+        ],
+        None,
+        &[payer, extra_signer],
+    )
+    .unwrap();
 
-    assert_eq!(instructions.len(), 2);
-    assert_eq!(instructions[0].program_id, TEST_PROGRAM_ID);
-    let sign = &instructions[1];
-    assert_eq!(sign.program_id, program_id());
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&swig_id), &program_id()).0;
-    let wallet =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
-    assert!(sign
+    assert_eq!(instructions.len(), 4);
+    for (sign, program, data) in [
+        (&instructions[1], first_program, &[10, 11][..]),
+        (&instructions[3], second_program, &[12][..]),
+    ] {
+        assert_eq!(sign.program_id, program_id());
+        let compact = &sign.data
+            [core::mem::size_of::<swig_interface::swig::actions::sign_v2::SignV2Args>()..];
+        assert_eq!(compact[0], 1);
+        assert_eq!(sign.accounts[compact[1] as usize].pubkey, program);
+        let data_offset = 3 + compact[2] as usize;
+        let data_len =
+            u16::from_le_bytes([compact[data_offset], compact[data_offset + 1]]) as usize;
+        assert_eq!(&compact[data_offset + 2..data_offset + 2 + data_len], data);
+        assert!(sign
+            .accounts
+            .iter()
+            .any(|account| account.pubkey == payer && account.is_signer));
+    }
+    assert!(instructions[1]
         .accounts
         .iter()
-        .any(|account| account.pubkey == wallet && !account.is_signer));
-    assert!(sign
-        .accounts
-        .iter()
-        .any(|account| account.pubkey == destination && account.is_writable));
-    assert!(sign
-        .accounts
-        .iter()
-        .any(|account| account.pubkey == payer && account.is_signer));
-    assert!(!sign
+        .any(|account| account.pubkey == extra_signer && account.is_signer));
+    assert!(!instructions[1]
         .accounts
         .iter()
         .any(|account| account.pubkey == program_id()));
+    assert_eq!(instructions[0].program_id, TEST_PROGRAM_ID);
+    assert_eq!(instructions[2].program_id, TEST_PROGRAM_ID);
 
-    let args_len = core::mem::size_of::<swig_interface::swig::actions::sign_v2::SignV2Args>();
-    let compact = &sign.data[args_len..];
-    assert_eq!(compact[0], 2);
-    let first_program_index = compact[1] as usize;
-    assert_eq!(sign.accounts[first_program_index].pubkey, first_program);
-    let first_account_count = compact[2] as usize;
-    let first_data_len_offset = 3 + first_account_count;
-    let first_data_len = u16::from_le_bytes([
-        compact[first_data_len_offset],
-        compact[first_data_len_offset + 1],
-    ]) as usize;
-    assert_eq!(
-        &compact[first_data_len_offset + 2..first_data_len_offset + 2 + first_data_len],
-        &[10, 11]
-    );
-    let second_offset = first_data_len_offset + 2 + first_data_len;
-    let second_program_index = compact[second_offset] as usize;
-    assert_eq!(sign.accounts[second_program_index].pubkey, second_program);
-    assert_eq!(compact[second_offset + 1], 1);
-    assert_eq!(&compact[second_offset + 5..second_offset + 6], &[12]);
+    let error = crate::client_role::ClientRole::sign_v2_instruction(
+        &role,
+        swig,
+        wallet,
+        1,
+        vec![Instruction {
+            program_id: first_program,
+            accounts: vec![],
+            data: vec![10],
+        }],
+        None,
+        &[],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        SwigError::InterfaceError(message)
+            if message == "ProgramExec SignV2 requires a transaction signer"
+    ));
 }
 
 #[test_log::test]
@@ -207,39 +256,44 @@ fn test_program_exec_sign_with_preceding_instruction() {
         "Should have 2 roles (root + program exec)"
     );
 
+    println!("✓ Successfully added ProgramExec authority");
+    println!("  - Total roles: {}", swig_data.state.roles);
+
     let recipient = Pubkey::new_unique();
     let rent = context.svm.minimum_balance_for_rent_exemption(0);
     context.svm.airdrop(&recipient, rent).unwrap();
-    let first =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient, 1000);
-    let second =
-        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient, 2000);
-    let mut repeated_accounts = vec![
-        AccountMeta::new_readonly(swig_key, false),
-        AccountMeta::new_readonly(swig_wallet_address, false),
-        AccountMeta::new_readonly(state_account, false),
-        AccountMeta::new_readonly(program_id(), false),
-    ];
-    repeated_accounts.extend((0..36).map(|_| AccountMeta::new_readonly(state_account, false)));
-    let no_op = Instruction {
-        program_id: TEST_PROGRAM_ID,
-        accounts: repeated_accounts,
-        data: VALID_DISCRIMINATOR.to_vec(),
-    };
-    // A CPI with 101 repeated account entries is valid compact input. Parse it
-    // first so the same scratch allocation is reused by the following CPIs.
-    let mut large_no_op = no_op.clone();
-    large_no_op
-        .accounts
-        .extend((0..61).map(|_| AccountMeta::new_readonly(state_account, false)));
-    let mut inner_instructions = vec![large_no_op];
-    inner_instructions.extend(vec![no_op; 8]);
-    inner_instructions.extend([first, second]);
     let mut sign_builder =
         SwigInstructionBuilder::new(swig_id, Box::new(program_exec_role), payer, 1);
     let sign_ixs = sign_builder
-        .sign_v2_instruction(inner_instructions, None)
+        .sign_v2_instruction(
+            vec![
+                solana_system_interface::instruction::transfer(
+                    &swig_wallet_address,
+                    &recipient,
+                    1000,
+                ),
+                solana_system_interface::instruction::transfer(
+                    &swig_wallet_address,
+                    &recipient,
+                    2000,
+                ),
+            ],
+            None,
+        )
         .unwrap();
+    assert_eq!(sign_ixs.len(), 4);
+    assert_eq!(sign_ixs[0].program_id, TEST_PROGRAM_ID);
+    assert_eq!(sign_ixs[1].program_id, program_id());
+    assert_eq!(sign_ixs[2].program_id, TEST_PROGRAM_ID);
+    assert_eq!(sign_ixs[3].program_id, program_id());
+    assert!(sign_ixs[1]
+        .accounts
+        .iter()
+        .any(|account| account.pubkey == payer && account.is_signer));
+    assert!(sign_ixs[3]
+        .accounts
+        .iter()
+        .any(|account| account.pubkey == recipient && account.is_writable));
     let msg =
         v0::Message::try_compile(&payer, &sign_ixs, &[], context.svm.latest_blockhash()).unwrap();
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&context.default_payer])

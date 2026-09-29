@@ -12,6 +12,7 @@ use common::*;
 use litesvm_token::spl_token;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
+    clock::Clock,
     message::{v0, VersionedMessage},
     program_pack::Pack,
     pubkey::Pubkey,
@@ -726,7 +727,7 @@ fn test_close_token_account_secp256k1() {
         swig_pubkey,
         swig_wallet_address,
         signing_fn,
-        0, // current_slot
+        context.svm.get_sysvar::<Clock>().slot,
         next_counter,
         destination.pubkey(),
         spl_token::ID,
@@ -835,7 +836,7 @@ fn test_close_token_account_secp256r1() {
         swig_pubkey,
         swig_wallet_address,
         authority_fn,
-        0, // current_slot
+        context.svm.get_sysvar::<Clock>().slot,
         1,
         destination.pubkey(),
         spl_token::ID,

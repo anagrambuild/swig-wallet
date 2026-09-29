@@ -9,13 +9,13 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_system::instructions::CreateAccount;
-use swig_assertions::{check_self_pda, check_system_owner, check_zero_data};
+use swig_assertions::{check_self_pda, check_system_owner, check_zero_data, find_self_pda};
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, ActionLoader, Actionable},
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::{
-        swig_account_seeds_with_bump, swig_account_signer, swig_wallet_address_seeds_with_bump,
+        swig_account_seeds, swig_account_signer, swig_wallet_address_seeds_with_bump,
         swig_wallet_address_signer, Swig, SwigBuilder,
     },
     IntoBytes, Transmutable,
@@ -150,11 +150,14 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
     check_zero_data(ctx.accounts.swig, SwigError::AccountNotEmptySwigAccount)?;
 
     let create_v1 = CreateV1::from_instruction_bytes(create)?;
-    let bump = check_self_pda(
-        &swig_account_seeds_with_bump(&create_v1.args.id, &[create_v1.args.bump]),
+    let bump = find_self_pda(
+        &swig_account_seeds(&create_v1.args.id),
         ctx.accounts.swig.key(),
         SwigError::InvalidSeedSwigAccount,
     )?;
+    if create_v1.args.bump != bump {
+        return Err(SwigError::InvalidSeedSwigAccount.into());
+    }
 
     // Validate swig wallet address account
     check_system_owner(
@@ -191,6 +194,8 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
         msg!("Root authority type must had one of the following actions: ManageAuthority or All");
         return Err(SwigError::InvalidAuthorityType.into());
     }
+    // A newly created Swig has not issued any V2 sub-account ids yet.
+    ActionLoader::validate_v2_actions(create_v1.actions, 0)?;
     let authority_type = AuthorityType::try_from(create_v1.args.authority_type)?;
     let authority_length = authority_type_to_length(&authority_type)?;
     let account_size = core::alloc::Layout::from_size_align(

@@ -245,9 +245,13 @@ fn test_token_transfer_with_program_scope_v2() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    // Budget for the pinned LiteSVM 0.11/p-token runtime with reusable CPI
-    // parser buffers (measured delta: 6106 CU).
-    assert!(swig_transfer_cu - regular_transfer_cu <= 6200);
+    // Preserve the existing overhead ceiling and bound total SignV2 cost by
+    // main ff2929b (SBPF v1, platform-tools v1.53, LiteSVM 0.16).
+    assert!(swig_transfer_cu - regular_transfer_cu <= 6450);
+    assert!(
+        swig_transfer_cu <= 6_408,
+        "ProgramScope SignV2 consumed {swig_transfer_cu} CU, exceeding the main baseline of 6408 CU"
+    );
 }
 
 /// Helper function to perform token transfers through the swig using SignV2
@@ -933,9 +937,10 @@ fn test_program_scope_token_limit_cpi_enforcement_v2() {
         swig_wallet_address,
         initial_accounts,
         vec![fund_swig_ix, withdraw_ix],
-    );
+    )
+    .unwrap();
 
-    let instruction_payload = compact_ixs.into_bytes();
+    let instruction_payload = compact_ixs.into_bytes().unwrap();
 
     // Prepare the `sign_v2` instruction manually
     let sign_args = SignV2Args::new(1, instruction_payload.len() as u16); // Role ID 1 for limited_authority
@@ -1076,7 +1081,14 @@ fn test_program_scope_balance_underflow_check_v2() {
     )
     .unwrap();
 
-    // Mint initial tokens to the external funding account
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &swig_wallet_ata,
+        500,
+    )
+    .unwrap();
     mint_to(
         &mut context.svm,
         &mint_pubkey,
@@ -1118,47 +1130,29 @@ fn test_program_scope_balance_underflow_check_v2() {
     )
     .unwrap();
 
-    // CPI 1: Fund the swig wallet ATA with tokens (deposit from external account)
-    let funding_amount = 500;
-    let funding_ix = spl_token::instruction::transfer(
-        &spl_token::ID,
-        &external_funding_ata,
-        &swig_wallet_ata,
-        &external_funding_account.pubkey(),
-        &[],
-        funding_amount,
-    )
-    .unwrap();
-
-    // CPI 2: Withdraw tokens from swig wallet ATA (should be properly tracked now)
-    // In V2, the authority is swig_wallet_address
+    // Withdraw only. Personal token deposits must be sibling ixs, not inner SignV2.
     let withdrawal_amount = 100;
     let withdrawal_ix = spl_token::instruction::transfer(
         &spl_token::ID,
         &swig_wallet_ata,
         &external_funding_ata,
-        &swig_wallet_address, // V2: swig_wallet_address signs for this withdrawal
+        &swig_wallet_address,
         &[],
         withdrawal_amount,
     )
     .unwrap();
 
-    // Compact the instructions for SignV2
     let initial_accounts = vec![
         AccountMeta::new(swig, false),
         AccountMeta::new(swig_wallet_address, false),
         AccountMeta::new_readonly(swig_authority.pubkey(), true),
         AccountMeta::new(external_funding_ata, false),
         AccountMeta::new(swig_wallet_ata, false),
-        AccountMeta::new_readonly(external_funding_account.pubkey(), true),
         AccountMeta::new_readonly(spl_token::ID, false),
     ];
-    let (final_accounts, compact_ixs) = compact_instructions(
-        swig_wallet_address,
-        initial_accounts,
-        vec![funding_ix, withdrawal_ix],
-    );
-    let instruction_payload = compact_ixs.into_bytes();
+    let (final_accounts, compact_ixs) =
+        compact_instructions(swig_wallet_address, initial_accounts, vec![withdrawal_ix]).unwrap();
+    let instruction_payload = compact_ixs.into_bytes().unwrap();
 
     // Prepare the sign_v2 instruction
     let sign_args = SignV2Args::new(1, instruction_payload.len() as u16);
@@ -1183,11 +1177,7 @@ fn test_program_scope_balance_underflow_check_v2() {
     .unwrap();
     let tx = VersionedTransaction::try_new(
         VersionedMessage::V0(message),
-        &[
-            &context.default_payer,
-            &swig_authority,
-            &external_funding_account,
-        ],
+        &[&context.default_payer, &swig_authority],
     )
     .unwrap();
     let result = context.svm.send_transaction(tx);

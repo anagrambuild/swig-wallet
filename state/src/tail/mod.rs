@@ -22,8 +22,9 @@
 //!
 //! The 8-byte typed header is what makes the tail extensible: a new tail feature
 //! (e.g. an auth lock) gets its own [`TailKind`] and a sibling module here, with
-//! no changes to `swig.rs`. v1 ships a single tail type — [`rent_claimer`].
+//! no changes to `swig.rs`.
 
+pub mod active_sub_account_count;
 pub mod rent_claimer;
 
 use crate::SwigStateError;
@@ -123,6 +124,7 @@ pub struct UnknownTailEntry<'a> {
 /// A parsed tail entry, dispatching to known concrete types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnyTailEntry<'a> {
+    ActiveSubAccountCount(active_sub_account_count::ActiveSubAccountCountEntry<'a>),
     RentClaimer(rent_claimer::RentClaimerEntry<'a>),
     Unknown(UnknownTailEntry<'a>),
 }
@@ -132,6 +134,11 @@ impl<'a> AnyTailEntry<'a> {
     pub fn read(buf: &'a [u8]) -> Result<(Self, usize), TailReadError> {
         let header = TailHeader::parse(buf)?;
         match TailKind::from_u8(header.kind) {
+            Some(TailKind::ActiveSubAccountCount) => {
+                let (entry, consumed) =
+                    active_sub_account_count::ActiveSubAccountCountEntry::read(buf)?;
+                Ok((Self::ActiveSubAccountCount(entry), consumed))
+            },
             Some(TailKind::RentClaimer) => {
                 let (entry, consumed) = rent_claimer::RentClaimerEntry::read(buf)?;
                 Ok((Self::RentClaimer(entry), consumed))
@@ -191,6 +198,8 @@ pub fn read_first_of<'a, T: TailDescriptor<'a>>(
 pub enum TailKind {
     /// A single immutable rent-claimer pubkey ([`rent_claimer`]).
     RentClaimer = 1,
+    /// Number of live V1 and V2 sub-accounts.
+    ActiveSubAccountCount = 2,
 }
 
 impl TailKind {
@@ -198,6 +207,9 @@ impl TailKind {
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {
             x if x == TailKind::RentClaimer as u8 => Some(TailKind::RentClaimer),
+            x if x == TailKind::ActiveSubAccountCount as u8 => {
+                Some(TailKind::ActiveSubAccountCount)
+            },
             _ => None,
         }
     }
@@ -208,7 +220,44 @@ impl TailKind {
 }
 
 /// The largest tail any current tail type can produce. Used to allocate a scratch buffer for realloc handlers.
-pub const MAX_TAIL_LEN: usize = rent_claimer::ENTRY_LEN;
+pub const MAX_TAIL_LEN: usize = rent_claimer::ENTRY_LEN + active_sub_account_count::ENTRY_LEN;
+
+/// Validates the complete tail. Each known kind may occur at most once;
+/// unknown kinds, malformed versions, and non-zero reserved bytes fail closed.
+pub fn validate_strict(mut tail_data: &[u8]) -> Result<(), ProgramError> {
+    let mut seen_rent_claimer = false;
+    let mut seen_active_count = false;
+
+    while !tail_data.is_empty() {
+        let (entry, consumed) = AnyTailEntry::read(tail_data)?;
+        match entry {
+            AnyTailEntry::RentClaimer(entry) => {
+                if seen_rent_claimer
+                    || entry.header.version != rent_claimer::VERSION
+                    || entry.header.payload != [0u8; 4]
+                {
+                    return Err(SwigStateError::InvalidRentClaimerLayout.into());
+                }
+                seen_rent_claimer = true;
+            },
+            AnyTailEntry::ActiveSubAccountCount(entry) => {
+                if seen_active_count
+                    || entry.header.version != active_sub_account_count::VERSION
+                    || entry.header.payload != [0u8; 4]
+                    || !entry.reserved_is_zero()
+                {
+                    return Err(SwigStateError::InvalidRentClaimerLayout.into());
+                }
+                seen_active_count = true;
+            },
+            AnyTailEntry::Unknown(_) => {
+                return Err(SwigStateError::InvalidRentClaimerLayout.into());
+            },
+        }
+        tail_data = &tail_data[consumed..];
+    }
+    Ok(())
+}
 
 /// A stack copy of the account tail, captured before a roles realloc so it can
 /// be restored afterwards. Used to store the tail before and after a roles realloc.
@@ -220,10 +269,7 @@ pub struct SavedTail {
 impl SavedTail {
     /// Copies the tail (the bytes after `roles_end`) onto the stack.
     pub fn take(tail_data: &[u8]) -> Result<Self, ProgramError> {
-        // Enforce the v1 tail contract before carrying bytes across a realloc:
-        // empty, or exactly one well-formed rent-claimer entry. This guarantees
-        // `len <= MAX_TAIL_LEN`, so the copy below stays in bounds.
-        rent_claimer::read_strict(tail_data)?;
+        validate_strict(tail_data)?;
         let len = tail_data.len();
         let mut bytes = [0u8; MAX_TAIL_LEN];
         bytes[..len].copy_from_slice(tail_data);
@@ -268,7 +314,10 @@ impl SavedTail {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tail::rent_claimer::{self, ENTRY_LEN};
+    use crate::tail::{
+        active_sub_account_count,
+        rent_claimer::{self, ENTRY_LEN},
+    };
 
     fn assert_invalid_layout(tail: &[u8]) {
         match SavedTail::take(tail) {
@@ -313,6 +362,25 @@ mod tests {
     }
 
     #[test]
+    fn take_accepts_both_known_entries_in_either_order() {
+        let claimer = [123u8; 32];
+        let rent_entry = rent_claimer::entry(&claimer);
+        let count_entry = active_sub_account_count::entry(7);
+
+        for tail in [
+            [rent_entry.as_slice(), count_entry.as_slice()].concat(),
+            [count_entry.as_slice(), rent_entry.as_slice()].concat(),
+        ] {
+            let saved = SavedTail::take(&tail).expect("both known entries are valid");
+            assert_eq!(saved.len(), MAX_TAIL_LEN);
+
+            let mut account = vec![0u8; 8 + MAX_TAIL_LEN];
+            saved.restore(&mut account).expect("restore");
+            assert_eq!(&account[8..], tail.as_slice());
+        }
+    }
+
+    #[test]
     fn take_rejects_non_empty_all_zero_tail() {
         for len in [1usize, 8, 39, 40] {
             assert_invalid_layout(&vec![0u8; len]);
@@ -340,6 +408,13 @@ mod tests {
     fn take_rejects_two_entries() {
         let mut tail = rent_claimer::entry(&[1u8; 32]).to_vec();
         tail.extend_from_slice(&rent_claimer::entry(&[2u8; 32]));
+        assert_invalid_layout(&tail);
+    }
+
+    #[test]
+    fn take_rejects_duplicate_active_count_entries() {
+        let mut tail = active_sub_account_count::entry(1).to_vec();
+        tail.extend_from_slice(&active_sub_account_count::entry(2));
         assert_invalid_layout(&tail);
     }
 }

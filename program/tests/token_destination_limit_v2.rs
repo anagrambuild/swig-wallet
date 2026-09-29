@@ -446,8 +446,9 @@ fn test_token_destination_limit_rejects_second_unmatched_transfer_v2() {
         swig_wallet_address,
         initial_accounts,
         vec![allowed_transfer_ix, blocked_transfer_ix],
-    );
-    let instruction_payload = compact_ixs.into_bytes();
+    )
+    .unwrap();
+    let instruction_payload = compact_ixs.into_bytes().unwrap();
     let sign_args = SignV2Args::new(1, instruction_payload.len() as u16);
     let mut sign_ix_data = Vec::new();
     sign_ix_data.extend_from_slice(sign_args.into_bytes().unwrap());
@@ -800,8 +801,9 @@ fn test_token_destination_limit_rejects_transfer_checked_bypass_v2() {
         swig_wallet_address,
         initial_accounts,
         vec![allowed_transfer_ix, blocked_transfer_checked_ix],
-    );
-    let instruction_payload = compact_ixs.into_bytes();
+    )
+    .unwrap();
+    let instruction_payload = compact_ixs.into_bytes().unwrap();
     let sign_args = SignV2Args::new(1, instruction_payload.len() as u16);
     let mut sign_ix_data = Vec::new();
     sign_ix_data.extend_from_slice(sign_args.into_bytes().unwrap());

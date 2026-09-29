@@ -303,8 +303,9 @@ fn sign_v2_rejects_closed_token_account_reallocated_with_short_data() {
         swig_wallet_address,
         initial_accounts,
         vec![close_ix, refund_ix, allocate_ix],
-    );
-    let instruction_payload = compact_ixs.into_bytes();
+    )
+    .unwrap();
+    let instruction_payload = compact_ixs.into_bytes().unwrap();
     let args = SignV2Args::new(1, instruction_payload.len() as u16);
     let sign_ix = Instruction {
         program_id: program_id(),
