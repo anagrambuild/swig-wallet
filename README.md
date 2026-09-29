@@ -97,7 +97,12 @@ same. Existing recovery grants remain valid after upgrade.
 
 ## Audit
 
-Swig has been independently auditted by Accretion with plans to undergo additional audits. A copy of the audit report can be shared upon request.
+Published security assessments:
+
+- [Accretion — Swig audit (2025)](audits/2025-accretion-anagram-swig-audit-A25ANA2.pdf)
+- [Halborn — Swig Wallet Assessment, executive summary (August 2026)](audits/2026-halborn-swig-wallet-assessment-executive-summary.pdf)
+
+Each report identifies its assessed commits and remediation scope.
 
 ## License
 
