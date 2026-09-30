@@ -197,7 +197,7 @@ impl Permission {
     ///
     /// For recurring limits, current_amount/current is set to the recurring
     /// amount/limit, and last_reset is always set to 0 upon initialization.
-    pub fn to_client_actions(permissions: Vec<Permission>) -> Vec<ClientAction> {
+    pub fn to_client_actions(permissions: Vec<Permission>) -> Result<Vec<ClientAction>, SwigError> {
         let mut actions = Vec::new();
         for permission in permissions {
             match permission {
@@ -323,7 +323,7 @@ impl Permission {
                         },
                         (None, Some(limit)) => (ProgramScopeType::Limit as u64, 0, limit),
                         (None, None) => (ProgramScopeType::Basic as u64, 0, 0),
-                        (Some(_), None) => (ProgramScopeType::Basic as u64, 0, 0),
+                        (Some(_), None) => return Err(SwigError::InvalidProgramScope),
                     };
 
                     actions.push(ClientAction::ProgramScope(ProgramScope {
@@ -388,7 +388,7 @@ impl Permission {
                 },
             }
         }
-        actions
+        Ok(actions)
     }
 
     /// Converts a Role reference to a vector of Permission types
@@ -779,17 +779,17 @@ pub enum UpdateAuthorityData {
 use swig_interface::UpdateAuthorityData as InterfaceUpdateAuthorityData;
 
 impl UpdateAuthorityData {
-    pub fn to_interface_data(&self) -> InterfaceUpdateAuthorityData {
-        match self {
+    pub fn to_interface_data(&self) -> Result<InterfaceUpdateAuthorityData, SwigError> {
+        Ok(match self {
             UpdateAuthorityData::ReplaceAll(permissions) => {
                 InterfaceUpdateAuthorityData::ReplaceAll(Permission::to_client_actions(
                     permissions.clone(),
-                ))
+                )?)
             },
             UpdateAuthorityData::AddActions(permissions) => {
                 InterfaceUpdateAuthorityData::AddActions(Permission::to_client_actions(
                     permissions.clone(),
-                ))
+                )?)
             },
             UpdateAuthorityData::RemoveActionsByType(action_types) => {
                 let action_types_vec = action_types
@@ -801,6 +801,6 @@ impl UpdateAuthorityData {
             UpdateAuthorityData::RemoveActionsByIndex(indices) => {
                 InterfaceUpdateAuthorityData::RemoveActionsByIndex(indices.clone())
             },
-        }
+        })
     }
 }
