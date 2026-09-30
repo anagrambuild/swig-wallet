@@ -15,14 +15,22 @@ use pinocchio::{
 use swig_assertions::check_self_owned;
 use swig_state::{
     action::{
-        all::All, close_swig_authority::CloseSwigAuthority, manage_authority::ManageAuthority,
+        all::All, all_but_manage_authority::AllButManageAuthority,
+        close_swig_authority::CloseSwigAuthority, manage_authority::ManageAuthority,
+        token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
+        token_recurring_destination_limit::TokenRecurringDestinationLimit,
+        token_recurring_limit::TokenRecurringLimit,
     },
+    role::RoleMut,
     swig::{swig_account_signer, swig_wallet_address_seeds, swig_wallet_address_signer, Swig},
     tail::rent_claimer,
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
 use crate::{
+    actions::sign_v2::{
+        has_token_destination_limits, read_wsol_reserve, wsol_accounted_balance, WSOL_MINT,
+    },
     error::SwigError,
     instruction::{
         accounts::{CloseTokenAccountV1Accounts, Context},
@@ -147,11 +155,13 @@ pub fn close_token_account_v1(
         )?;
     }
 
-    // Check permissions: must have All, ManageAuthority, or CloseSwigAuthority
-    let has_all = role.get_action::<All>(&[])?.is_some();
-    let has_manage = role.get_action::<ManageAuthority>(&[])?.is_some();
-    let has_close = role.get_action::<CloseSwigAuthority>(&[])?.is_some();
-    if !has_all && !has_manage && !has_close {
+    // Unrestricted asset permissions also authorize closing token accounts.
+    let has_all = RoleMut::get_action_mut::<All>(role.actions, &[])?.is_some();
+    let has_all_but_manage =
+        RoleMut::get_action_mut::<AllButManageAuthority>(role.actions, &[])?.is_some();
+    let has_manage = RoleMut::get_action_mut::<ManageAuthority>(role.actions, &[])?.is_some();
+    let has_close = RoleMut::get_action_mut::<CloseSwigAuthority>(role.actions, &[])?.is_some();
+    if !has_all && !has_all_but_manage && !has_manage && !has_close {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
     if let Some(claimer) = rent_claimer::read_strict(Swig::split_parts(swig_account_data)?.tail)? {
@@ -202,7 +212,9 @@ pub fn close_token_account_v1(
     let swig_bump_bytes = [swig_bump];
     let swig_seeds = swig_account_signer(&swig_id, &swig_bump_bytes);
 
-    // Process each token account
+    let unrestricted_spend = has_all || has_all_but_manage;
+    // Validate every source and consume bounded WSOL spend before the first CPI.
+    // A later error rolls back authentication and every permission update.
     for token_account in &accounts[token_account_offset..] {
         // Verify token account is owned by the token program
         let token_account_owner = token_account.owner();
@@ -231,8 +243,55 @@ pub fn close_token_account_v1(
             return Err(SwigError::InvalidSwigTokenAccountOwner.into());
         }
 
-        // Determine which authority to use for signing
-        let use_wallet_as_signer = (is_v2 && use_expected) || (!is_v2 && use_fallback);
+        if token_program_id == &SPL_TOKEN_ID && token_data.get(..32) == Some(WSOL_MINT.as_slice()) {
+            let reserve = read_wsol_reserve(token_program_id, token_data)?;
+            let amount = u64::from_le_bytes(token_data[64..72].try_into().unwrap());
+            let spent = wsol_accounted_balance(amount, reserve, token_account.lamports())?;
+            if !unrestricted_spend {
+                let general_limit = if let Some(limit) =
+                    RoleMut::get_action_mut::<TokenLimit>(role.actions, &WSOL_MINT)?
+                {
+                    limit.run(spent)?;
+                    true
+                } else if let Some(limit) =
+                    RoleMut::get_action_mut::<TokenRecurringLimit>(role.actions, &WSOL_MINT)?
+                {
+                    limit.run(spent, current_slot)?;
+                    true
+                } else {
+                    false
+                };
+                let destination_limit = has_token_destination_limits(role.actions, &WSOL_MINT)?;
+                if destination_limit {
+                    let mut key = [0u8; 64];
+                    key[..32].copy_from_slice(&WSOL_MINT);
+                    key[32..].copy_from_slice(ctx.accounts.destination.key());
+                    if let Some(limit) = RoleMut::get_action_mut::<TokenRecurringDestinationLimit>(
+                        role.actions,
+                        &key,
+                    )? {
+                        limit.run(spent, current_slot)?;
+                    } else if let Some(limit) =
+                        RoleMut::get_action_mut::<TokenDestinationLimit>(role.actions, &key)?
+                    {
+                        limit.run(spent)?;
+                    } else {
+                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+                    }
+                }
+                if !general_limit && !destination_limit {
+                    return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+                }
+            }
+        }
+    }
+
+    for token_account in &accounts[token_account_offset..] {
+        let token_data = unsafe { token_account.borrow_data_unchecked() };
+        let token_authority = token_data
+            .get(32..64)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        let use_wallet_as_signer = token_authority == ctx.accounts.swig_wallet_address.key();
 
         // Close the token account via CPI using TokenClose utility
         let token_close = TokenClose {

@@ -1,10 +1,10 @@
 //! Utility functions and types for the Swig wallet program.
 //!
 //! This module provides helper functionality for common operations such as:
-//! - Program scope caching and lookup
-//! - Account balance reading
 //! - Token transfer operations
 //! The utilities are optimized for performance and safety.
+
+pub(crate) mod token_integrity;
 
 use std::mem::MaybeUninit;
 
@@ -20,208 +20,73 @@ use pinocchio::{
 };
 use swig_state::{
     action::{
-        program_scope::{NumericType, ProgramScope},
-        Action, Permission,
+        all::All, manage_authority::ManageAuthority, replace_authority::ReplaceAuthority, Action,
+        ActionLoader, Permission,
     },
     authority::AuthorityType,
-    constants::PROGRAM_SCOPE_BYTE_SIZE,
-    read_numeric_field,
-    role::RoleMut,
-    swig::{Swig, SwigWithRoles},
-    Transmutable,
+    role::{Position, RoleMut},
+    swig::Swig,
+    SwigAuthenticateError, Transmutable,
 };
 
 use crate::error::SwigError;
 
-/// Cache for program scope information to optimize lookups.
-///
-/// This struct maintains a mapping of target account public keys to their
-/// associated role IDs and program scope data. It helps avoid repeated
-/// parsing of program scope data from the Swig account.
-pub(crate) struct ProgramScopeCache {
-    /// Maps target account pubkey to (role_id, raw program scope bytes)
-    scopes: Vec<([u8; 32], (u8, [u8; PROGRAM_SCOPE_BYTE_SIZE]))>,
+/// Reject grants targeting root in a non-root caller's add/update payload.
+/// Instruction action boundaries are normalized when stored, so scan by header
+/// lengths here. Stored actions still use the stricter ActionLoader decoder.
+pub(crate) fn reject_root_recovery_grants(mut actions: &[u8]) -> ProgramResult {
+    while !actions.is_empty() {
+        let header = actions
+            .get(..Action::LEN)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        let action = unsafe { Action::load_unchecked(header)? };
+        let end = Action::LEN
+            .checked_add(action.length() as usize)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        let action_data = actions
+            .get(Action::LEN..end)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        if action.permission()? == Permission::ReplaceAuthority
+            && unsafe { ReplaceAuthority::load_unchecked(action_data)? }.role_id == 0
+        {
+            return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
+        }
+        actions = &actions[end..];
+    }
+    Ok(())
 }
 
-impl ProgramScopeCache {
-    /// Creates a new empty program scope cache.
-    ///
-    /// Initializes with a reasonable capacity to avoid frequent reallocations.
-    pub(crate) fn new() -> Self {
-        Self {
-            scopes: Vec::with_capacity(16), // Reasonable initial capacity
+/// Ensures the current role buffer still contains an administrator.
+pub(crate) fn ensure_admin_remains(roles: &[u8], role_count: u16) -> Result<(), ProgramError> {
+    let mut cursor = 0usize;
+    for _ in 0..role_count {
+        let position_end = cursor
+            .checked_add(Position::LEN)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        let position = unsafe {
+            Position::load_unchecked(
+                roles
+                    .get(cursor..position_end)
+                    .ok_or(ProgramError::InvalidAccountData)?,
+            )?
+        };
+        let actions_start = position_end
+            .checked_add(position.authority_length() as usize)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        let boundary = position.boundary() as usize;
+        let actions = roles
+            .get(actions_start..boundary)
+            .ok_or(ProgramError::InvalidAccountData)?;
+
+        if ActionLoader::find_action::<All>(actions)?.is_some()
+            || ActionLoader::find_action::<ManageAuthority>(actions)?.is_some()
+        {
+            return Ok(());
         }
+        cursor = boundary;
     }
 
-    /// Loads program scope information from a Swig account's data.
-    ///
-    /// This function parses the Swig account data to extract all program
-    /// scope actions and builds a cache for efficient lookup.
-    ///
-    /// # Arguments
-    /// * `data` - Raw Swig account data
-    ///
-    /// # Returns
-    /// * `Option<Self>` - The populated cache if successful, None if data is
-    ///   invalid
-    pub(crate) fn load_from_swig(data: &[u8]) -> Option<Self> {
-        if data.len() < Swig::LEN {
-            return None;
-        }
-
-        let swig_with_roles = SwigWithRoles::from_bytes(data).ok()?;
-        let mut cache = Self::new();
-
-        // Iterate through all roles and their program scopes
-        for role_id in 0..swig_with_roles.state.role_counter {
-            if let Ok(Some(role)) = swig_with_roles.get_role(role_id) {
-                let mut cursor = 0;
-                while cursor < role.actions.len() {
-                    if cursor + Action::LEN > role.actions.len() {
-                        break;
-                    }
-
-                    // Load the action header
-                    if let Ok(action_header) = unsafe {
-                        Action::load_unchecked(&role.actions[cursor..cursor + Action::LEN])
-                    } {
-                        cursor += Action::LEN;
-
-                        let action_len = action_header.length() as usize;
-                        if cursor + action_len > role.actions.len() {
-                            break;
-                        }
-
-                        // Try to load as ProgramScope
-                        if action_header.permission().ok() == Some(Permission::ProgramScope) {
-                            let action_data = &role.actions[cursor..cursor + action_len];
-                            if action_data.len() == PROGRAM_SCOPE_BYTE_SIZE {
-                                // Size of ProgramScope
-                                // Store in cache using target account as key
-                                let program_scope = unsafe {
-                                    // SAFETY: We've verified the length matches exactly
-                                    let mut scope_bytes = [0u8; PROGRAM_SCOPE_BYTE_SIZE];
-                                    core::ptr::copy_nonoverlapping(
-                                        action_data.as_ptr(),
-                                        scope_bytes.as_mut_ptr(),
-                                        PROGRAM_SCOPE_BYTE_SIZE,
-                                    );
-                                    let program_scope: ProgramScope =
-                                        core::mem::transmute(scope_bytes);
-                                    program_scope
-                                };
-
-                                let mut target_account = [0u8; 32];
-                                target_account.copy_from_slice(&program_scope.target_account);
-
-                                // Store raw bytes
-                                let scope_bytes = unsafe {
-                                    core::mem::transmute::<
-                                        ProgramScope,
-                                        [u8; PROGRAM_SCOPE_BYTE_SIZE],
-                                    >(program_scope)
-                                };
-                                cache
-                                    .scopes
-                                    .push((target_account, (role_id as u8, scope_bytes)));
-                            }
-                        }
-
-                        cursor += action_len;
-                    } else {
-                        break;
-                    }
-                }
-            }
-        }
-
-        Some(cache)
-    }
-
-    /// Finds program scope information for a target account.
-    ///
-    /// # Arguments
-    /// * `target_account` - Public key of the target account to look up
-    ///
-    /// # Returns
-    /// * `Option<(u8, ProgramScope)>` - Role ID and program scope if found
-    pub(crate) fn find_program_scope(&self, target_account: &[u8]) -> Option<(u8, ProgramScope)> {
-        self.scopes
-            .iter()
-            .find(|(key, _)| key == target_account)
-            .map(|(_, (role_id, scope_bytes))| {
-                // SAFETY: We know these bytes represent a valid ProgramScope since we stored
-                // them that way
-                let program_scope = unsafe {
-                    core::mem::transmute::<[u8; PROGRAM_SCOPE_BYTE_SIZE], ProgramScope>(
-                        *scope_bytes,
-                    )
-                };
-                (*role_id, program_scope)
-            })
-    }
-}
-
-/// Reads a numeric balance from an account's data based on a `ProgramScope`
-/// configuration.
-///
-/// This function extracts a numeric value (balance) from the raw data of an
-/// account according to the field positions and numeric type specified in the
-/// `ProgramScope`. It supports reading different size integers (u8, u32, u64,
-/// u128) and handles byte order assembly for little-endian representation.
-///
-/// # Arguments
-/// * `data` - The raw account data to read from
-/// * `program_scope` - The ProgramScope containing balance field specifications
-///
-/// # Returns
-/// * `Result<u128, ProgramError>` - The account balance as u128 or an error if
-///   reading fails
-///
-/// # Errors
-/// Returns `SwigError::InvalidProgramScopeBalanceFields` if:
-/// * The balance field range is invalid
-/// * The account data doesn't have enough bytes
-/// * The specified numeric type doesn't match the field width
-///
-/// # Safety
-/// This function uses unchecked memory access for performance and assumes the
-/// caller has verified the `data` parameter contains valid account data.
-#[inline(always)]
-pub unsafe fn read_program_scope_account_balance(
-    data: &[u8],
-    program_scope: &ProgramScope,
-) -> Result<u128, ProgramError> {
-    // For Basic scope, return 0
-    if program_scope.scope_type == 0 {
-        return Ok(0);
-    }
-
-    // Check if we can read the balance directly from data
-    let start = program_scope.balance_field_start as usize;
-    let end = program_scope.balance_field_end as usize;
-    // Index out of bounds check & return error
-    if data.len() < end {
-        return Err(SwigError::InvalidProgramScopeBalanceFields.into());
-    }
-
-    // Handle Possible NumericType fields
-    let error = SwigError::InvalidProgramScopeBalanceFields.into();
-    match program_scope.numeric_type as u8 {
-        numeric_type if numeric_type == NumericType::U8 as u8 => {
-            read_numeric_field!(data, start, end, u8, 1, error)
-        },
-        numeric_type if numeric_type == NumericType::U32 as u8 => {
-            read_numeric_field!(data, start, end, u32, 4, error)
-        },
-        numeric_type if numeric_type == NumericType::U64 as u8 => {
-            read_numeric_field!(data, start, end, u64, 8, error)
-        },
-        numeric_type if numeric_type == NumericType::U128 as u8 => {
-            read_numeric_field!(data, start, end, u128, 16, error)
-        },
-        _ => Err(SwigError::InvalidProgramScopeBalanceFields.into()),
-    }
+    Err(SwigError::NoAdminAuthorityWouldRemain.into())
 }
 
 /// Uninitialized byte constant for token transfer operations

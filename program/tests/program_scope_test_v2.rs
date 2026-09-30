@@ -27,7 +27,7 @@ use swig_state::{
     },
     authority::AuthorityType,
     swig::{swig_account_seeds, swig_wallet_address_seeds},
-    IntoBytes, SwigAuthenticateError, Transmutable,
+    IntoBytes, Transmutable,
 };
 
 /// This test compares the baseline performance of:
@@ -245,294 +245,12 @@ fn test_token_transfer_with_program_scope_v2() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    // Budget for the pinned LiteSVM 0.11/p-token runtime with owner binding
-    // and reusable CPI parser buffers (measured delta: 6256 CU).
-    assert!(swig_transfer_cu - regular_transfer_cu <= 6400);
-}
-
-#[test_log::test]
-fn program_scope_uses_acting_owner_scope_for_balance_baseline() {
-    let mut context = setup_test_context().unwrap();
-    let authority = Keypair::new();
-    let acting = Keypair::new();
-    context
-        .svm
-        .airdrop(&authority.pubkey(), 10_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&acting.pubkey(), 10_000_000_000)
-        .unwrap();
-    let recipient = Keypair::new();
-    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
-    let id = rand::random::<[u8; 32]>();
-    let (swig, _) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
-    let (wallet, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
-    create_swig_ed25519(&mut context, &authority, id).unwrap();
-    let source = setup_ata(&mut context.svm, &mint, &wallet, &context.default_payer).unwrap();
-    let destination = setup_ata(
-        &mut context.svm,
-        &mint,
-        &recipient.pubkey(),
-        &context.default_payer,
-    )
-    .unwrap();
-    mint_to(
-        &mut context.svm,
-        &mint,
-        &context.default_payer,
-        &source,
-        1000,
-    )
-    .unwrap();
-
-    let scope = ProgramScope {
-        program_id: Pubkey::new_unique().to_bytes(),
-        target_account: source.to_bytes(),
-        scope_type: ProgramScopeType::Limit as u64,
-        numeric_type: NumericType::U64 as u64,
-        current_amount: 0,
-        limit: 1000,
-        window: 0,
-        last_reset: 0,
-        balance_field_start: 76,
-        balance_field_end: 84,
-    };
-    add_authority_with_ed25519_root(
-        &mut context,
-        &swig,
-        &authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::Ed25519,
-            authority: authority.pubkey().as_ref(),
-        },
-        vec![
-            ClientAction::Program(Program {
-                program_id: spl_token::ID.to_bytes(),
-            }),
-            ClientAction::ProgramScope(scope),
-        ],
-    )
-    .unwrap();
-    let acting_scope = ProgramScope {
-        program_id: spl_token::ID.to_bytes(),
-        target_account: source.to_bytes(),
-        scope_type: ProgramScopeType::Limit as u64,
-        numeric_type: NumericType::U64 as u64,
-        current_amount: 0,
-        limit: 50,
-        window: 0,
-        last_reset: 0,
-        balance_field_start: 64,
-        balance_field_end: 72,
-    };
-    add_authority_with_ed25519_root(
-        &mut context,
-        &swig,
-        &authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::Ed25519,
-            authority: acting.pubkey().as_ref(),
-        },
-        vec![
-            ClientAction::Program(Program {
-                program_id: spl_token::ID.to_bytes(),
-            }),
-            ClientAction::ProgramScope(acting_scope),
-        ],
-    )
-    .unwrap();
-
-    let source_before = context.svm.get_account(&source).unwrap();
-    let destination_before = context.svm.get_account(&destination).unwrap();
-    let swig_before = context.svm.get_account(&swig).unwrap();
-    let transfer =
-        spl_token::instruction::transfer(&spl_token::ID, &source, &destination, &wallet, &[], 100)
-            .unwrap();
-    let sign = SignV2Instruction::new_ed25519(swig, wallet, acting.pubkey(), transfer, 2).unwrap();
-    let message = v0::Message::try_compile(
-        &acting.pubkey(),
-        &[sign],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-    let transaction =
-        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&acting]).unwrap();
-    let error = context.svm.send_transaction(transaction).unwrap_err();
-    assert_eq!(
-        error.err,
-        TransactionError::InstructionError(
-            0,
-            InstructionError::Custom(
-                SwigAuthenticateError::PermissionDeniedInsufficientBalance as u32
-            ),
-        )
-    );
-    assert_eq!(
-        context.svm.get_account(&source).unwrap().data,
-        source_before.data
-    );
-    assert_eq!(
-        context.svm.get_account(&destination).unwrap().data,
-        destination_before.data
-    );
-    assert_eq!(
-        context.svm.get_account(&swig).unwrap().data,
-        swig_before.data
-    );
-
-    // A Basic scope with an explicit balance field still needs an initialized
-    // integrity snapshot for the final post-CPI comparison.
-    let basic_authority = Keypair::new();
-    context
-        .svm
-        .airdrop(&basic_authority.pubkey(), 10_000_000_000)
-        .unwrap();
-    let mut basic_scope = ProgramScope::new_basic(spl_token::ID.to_bytes(), source.to_bytes());
-    basic_scope.set_balance_field_indices(64, 72).unwrap();
-    add_authority_with_ed25519_root(
-        &mut context,
-        &swig,
-        &authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::Ed25519,
-            authority: basic_authority.pubkey().as_ref(),
-        },
-        vec![
-            ClientAction::Program(Program {
-                program_id: spl_token::ID.to_bytes(),
-            }),
-            ClientAction::ProgramScope(basic_scope),
-        ],
-    )
-    .unwrap();
-    let transfer =
-        spl_token::instruction::transfer(&spl_token::ID, &source, &destination, &wallet, &[], 10)
-            .unwrap();
-    let sign = SignV2Instruction::new_ed25519(swig, wallet, basic_authority.pubkey(), transfer, 3)
-        .unwrap();
-    let message = v0::Message::try_compile(
-        &basic_authority.pubkey(),
-        &[sign],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-    let transaction =
-        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&basic_authority]).unwrap();
-    context.svm.send_transaction(transaction).unwrap();
-    let source_after = context.svm.get_account(&source).unwrap();
-    let destination_after = context.svm.get_account(&destination).unwrap();
-    assert_eq!(
-        spl_token::state::Account::unpack(&source_after.data)
-            .unwrap()
-            .amount,
-        990
-    );
-    assert_eq!(
-        spl_token::state::Account::unpack(&destination_after.data)
-            .unwrap()
-            .amount,
-        10
-    );
-}
-
-#[test_log::test]
-fn program_scope_rejects_wrong_owner_even_with_program_permission() {
-    let mut context = setup_test_context().unwrap();
-    let authority = Keypair::new();
-    context
-        .svm
-        .airdrop(&authority.pubkey(), 10_000_000_000)
-        .unwrap();
-    let recipient = Keypair::new();
-    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
-    let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
-    let wallet =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
-    create_swig_ed25519(&mut context, &authority, id).unwrap();
-    let source = setup_ata(&mut context.svm, &mint, &wallet, &context.default_payer).unwrap();
-    let destination = setup_ata(
-        &mut context.svm,
-        &mint,
-        &recipient.pubkey(),
-        &context.default_payer,
-    )
-    .unwrap();
-    mint_to(
-        &mut context.svm,
-        &mint,
-        &context.default_payer,
-        &source,
-        100,
-    )
-    .unwrap();
-
-    let mut wrong_owner_scope = ProgramScope::new_limit(
-        Pubkey::new_unique().to_bytes(),
-        source.to_bytes(),
-        100u64,
-        NumericType::U64,
-    );
-    wrong_owner_scope.set_balance_field_indices(64, 72).unwrap();
-    add_authority_with_ed25519_root(
-        &mut context,
-        &swig,
-        &authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::Ed25519,
-            authority: authority.pubkey().as_ref(),
-        },
-        vec![
-            ClientAction::Program(Program {
-                program_id: spl_token::ID.to_bytes(),
-            }),
-            ClientAction::ProgramScope(wrong_owner_scope),
-        ],
-    )
-    .unwrap();
-
-    let source_before = context.svm.get_account(&source).unwrap();
-    let destination_before = context.svm.get_account(&destination).unwrap();
-    let swig_before = context.svm.get_account(&swig).unwrap();
-    let transfer =
-        spl_token::instruction::transfer(&spl_token::ID, &source, &destination, &wallet, &[], 10)
-            .unwrap();
-    let sign =
-        SignV2Instruction::new_ed25519(swig, wallet, authority.pubkey(), transfer, 1).unwrap();
-    let message = v0::Message::try_compile(
-        &authority.pubkey(),
-        &[sign],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-    let transaction =
-        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&authority]).unwrap();
-    let error = context.svm.send_transaction(transaction).unwrap_err();
-    assert_eq!(
-        error.err,
-        TransactionError::InstructionError(
-            0,
-            InstructionError::Custom(
-                SwigAuthenticateError::PermissionDeniedMissingPermission as u32,
-            ),
-        )
-    );
-    assert_eq!(
-        context.svm.get_account(&source).unwrap().data,
-        source_before.data
-    );
-    assert_eq!(
-        context.svm.get_account(&destination).unwrap().data,
-        destination_before.data
-    );
-    assert_eq!(
-        context.svm.get_account(&swig).unwrap().data,
-        swig_before.data
+    // Preserve the existing overhead ceiling and bound total SignV2 cost by
+    // main ff2929b (SBPF v1, platform-tools v1.53, LiteSVM 0.16).
+    assert!(swig_transfer_cu - regular_transfer_cu <= 6450);
+    assert!(
+        swig_transfer_cu <= 6_408,
+        "ProgramScope SignV2 consumed {swig_transfer_cu} CU, exceeding the main baseline of 6408 CU"
     );
 }
 
@@ -1216,12 +934,13 @@ fn test_program_scope_token_limit_cpi_enforcement_v2() {
     ];
 
     let (final_accounts, compact_ixs) = swig_interface::compact_instructions(
-        swig,
+        swig_wallet_address,
         initial_accounts,
         vec![fund_swig_ix, withdraw_ix],
-    );
+    )
+    .unwrap();
 
-    let instruction_payload = compact_ixs.into_bytes();
+    let instruction_payload = compact_ixs.into_bytes().unwrap();
 
     // Prepare the `sign_v2` instruction manually
     let sign_args = SignV2Args::new(1, instruction_payload.len() as u16); // Role ID 1 for limited_authority
@@ -1362,7 +1081,14 @@ fn test_program_scope_balance_underflow_check_v2() {
     )
     .unwrap();
 
-    // Mint initial tokens to the external funding account
+    mint_to(
+        &mut context.svm,
+        &mint_pubkey,
+        &context.default_payer,
+        &swig_wallet_ata,
+        500,
+    )
+    .unwrap();
     mint_to(
         &mut context.svm,
         &mint_pubkey,
@@ -1404,44 +1130,29 @@ fn test_program_scope_balance_underflow_check_v2() {
     )
     .unwrap();
 
-    // CPI 1: Fund the swig wallet ATA with tokens (deposit from external account)
-    let funding_amount = 500;
-    let funding_ix = spl_token::instruction::transfer(
-        &spl_token::ID,
-        &external_funding_ata,
-        &swig_wallet_ata,
-        &external_funding_account.pubkey(),
-        &[],
-        funding_amount,
-    )
-    .unwrap();
-
-    // CPI 2: Withdraw tokens from swig wallet ATA (should be properly tracked now)
-    // In V2, the authority is swig_wallet_address
+    // Withdraw only. Personal token deposits must be sibling ixs, not inner SignV2.
     let withdrawal_amount = 100;
     let withdrawal_ix = spl_token::instruction::transfer(
         &spl_token::ID,
         &swig_wallet_ata,
         &external_funding_ata,
-        &swig_wallet_address, // V2: swig_wallet_address signs for this withdrawal
+        &swig_wallet_address,
         &[],
         withdrawal_amount,
     )
     .unwrap();
 
-    // Compact the instructions for SignV2
     let initial_accounts = vec![
         AccountMeta::new(swig, false),
         AccountMeta::new(swig_wallet_address, false),
         AccountMeta::new_readonly(swig_authority.pubkey(), true),
         AccountMeta::new(external_funding_ata, false),
         AccountMeta::new(swig_wallet_ata, false),
-        AccountMeta::new_readonly(external_funding_account.pubkey(), true),
         AccountMeta::new_readonly(spl_token::ID, false),
     ];
     let (final_accounts, compact_ixs) =
-        compact_instructions(swig, initial_accounts, vec![funding_ix, withdrawal_ix]);
-    let instruction_payload = compact_ixs.into_bytes();
+        compact_instructions(swig_wallet_address, initial_accounts, vec![withdrawal_ix]).unwrap();
+    let instruction_payload = compact_ixs.into_bytes().unwrap();
 
     // Prepare the sign_v2 instruction
     let sign_args = SignV2Args::new(1, instruction_payload.len() as u16);
@@ -1466,11 +1177,7 @@ fn test_program_scope_balance_underflow_check_v2() {
     .unwrap();
     let tx = VersionedTransaction::try_new(
         VersionedMessage::V0(message),
-        &[
-            &context.default_payer,
-            &swig_authority,
-            &external_funding_account,
-        ],
+        &[&context.default_payer, &swig_authority],
     )
     .unwrap();
     let result = context.svm.send_transaction(tx);

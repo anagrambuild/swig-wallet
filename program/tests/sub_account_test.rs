@@ -7,31 +7,68 @@ mod common;
 use common::*;
 use litesvm_token::spl_token;
 use solana_sdk::{
-    instruction::{AccountMeta, Instruction},
+    instruction::{AccountMeta, Instruction, InstructionError},
     message::{v0, VersionedMessage},
     program_pack::Pack,
     pubkey::Pubkey,
     signature::{Keypair, Signature},
     signer::Signer,
     sysvar::rent::Rent,
-    transaction::VersionedTransaction,
+    transaction::{TransactionError, VersionedTransaction},
 };
+use swig::actions::toggle_sub_account_v1::ToggleSubAccountV1Args;
 use swig_interface::{
-    AuthorityConfig, ClientAction, CreateSubAccountInstruction, SignV2Instruction,
-    ToggleSubAccountInstruction, WithdrawFromSubAccountInstruction,
+    AuthorityConfig, ClientAction, CloseSubAccountV1Instruction, CloseSwigV1Instruction,
+    CreateSubAccountInstruction, SignV2Instruction, ToggleSubAccountInstruction,
+    WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
     action::{
         all::All,
         manage_authority::ManageAuthority,
         sol_limit::SolLimit,
-        sub_account::{self, SubAccount},
+        sub_account::{self, SubAccount, CLOSED_SUB_ACCOUNT},
         Action, Permission,
     },
     authority::AuthorityType,
-    swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
+    swig::{sub_account_seeds, swig_account_seeds, swig_wallet_address_seeds, Swig, SwigWithRoles},
+    tail::active_sub_account_count,
     IntoBytes, Transmutable, TransmutableMut,
 };
+
+fn send_single(
+    context: &mut SwigTestContext,
+    payer: &Keypair,
+    ix: Instruction,
+) -> anyhow::Result<()> {
+    let message =
+        v0::Message::try_compile(&payer.pubkey(), &[ix], &[], context.svm.latest_blockhash())?;
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[payer])?;
+    context
+        .svm
+        .send_transaction(tx)
+        .map(|_| ())
+        .map_err(|e| anyhow::anyhow!("transaction failed: {e:?}"))
+}
+
+fn active_sub_account_count(context: &SwigTestContext, swig: &Pubkey) -> u32 {
+    let data = context.svm.get_account(swig).unwrap().data;
+    let parts = swig_state::swig::Swig::split_parts(&data).unwrap();
+    active_sub_account_count::read(parts.tail).unwrap().unwrap()
+}
+
+fn strip_active_count_tail(context: &mut SwigTestContext, swig: &Pubkey) {
+    let count = active_sub_account_count(context, swig);
+    let mut account = context.svm.get_account(swig).unwrap();
+    let parts = swig_state::swig::Swig::split_parts(&account.data).unwrap();
+    assert!(parts
+        .tail
+        .ends_with(&active_sub_account_count::entry(count)));
+    account
+        .data
+        .truncate(account.data.len() - active_sub_account_count::ENTRY_LEN);
+    context.svm.set_account(*swig, account).unwrap();
+}
 
 // Helper function to set up a test with a root authority and a sub-account
 // authority
@@ -192,6 +229,101 @@ fn test_create_sub_account() {
     );
 }
 
+#[test_log::test]
+fn test_close_v2_swig_rejects_existing_sub_account_v1() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, child_authority, id) =
+        setup_test_with_sub_account_authority(&mut context).unwrap();
+    create_sub_account(&mut context, &swig_key, &child_authority, 1, id).unwrap();
+
+    let account = context.svm.get_account(&swig_key).unwrap();
+    let parts = swig_state::swig::Swig::split_parts(&account.data).unwrap();
+    assert_eq!(active_sub_account_count::read(parts.tail).unwrap(), Some(1));
+
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+    let destination = Keypair::new();
+    context.svm.airdrop(&destination.pubkey(), 0).unwrap();
+    let close = CloseSwigV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        wallet,
+        root.pubkey(),
+        destination.pubkey(),
+        0,
+    )
+    .unwrap();
+    let message = v0::Message::try_compile(
+        &root.pubkey(),
+        &[close],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let transaction =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&root]).unwrap();
+    assert!(context.svm.send_transaction(transaction).is_err());
+    assert_eq!(
+        context.svm.get_account(&swig_key).unwrap().data[0],
+        swig_state::Discriminator::SwigConfigAccount as u8
+    );
+}
+
+#[test_log::test]
+fn test_close_v1_swig_skips_v2_active_child_guard() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, child_authority, id) =
+        setup_test_with_sub_account_authority(&mut context).unwrap();
+    let (wallet, wallet_bump) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
+    // Model an unmigrated V1 header while preserving the canonical low-byte
+    // bump so the legacy parent-close signing path remains usable. The upper
+    // word is non-zero and would be misread as sub_account_counter == 1 if the
+    // V1 bytes were trusted as a V2 header.
+    let reserved_lamports = (1u64 << 32) | (1u64 << 8) | u64::from(wallet_bump);
+    let mut swig_account = context.svm.get_account(&swig_key).unwrap();
+    swig_account.data[Swig::LEN - 8..Swig::LEN].copy_from_slice(&reserved_lamports.to_le_bytes());
+    context.svm.set_account(swig_key, swig_account).unwrap();
+
+    create_sub_account(&mut context, &swig_key, &child_authority, 1, id).unwrap();
+
+    // V1 child creation still records a count for a future migration, but the
+    // V2-only parent-close guard must not parse or enforce it on a V1 Swig.
+    let account = context.svm.get_account(&swig_key).unwrap();
+    let parts = Swig::split_parts(&account.data).unwrap();
+    assert_eq!(active_sub_account_count::read(parts.tail).unwrap(), Some(1));
+
+    let destination = Keypair::new();
+    context.svm.airdrop(&destination.pubkey(), 0).unwrap();
+    let close = CloseSwigV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        wallet,
+        root.pubkey(),
+        destination.pubkey(),
+        0,
+    )
+    .unwrap();
+    let message = v0::Message::try_compile(
+        &root.pubkey(),
+        &[close],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let transaction =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&root]).unwrap();
+
+    assert!(
+        context.svm.send_transaction(transaction).is_ok(),
+        "V1 parent close must retain legacy behavior"
+    );
+    let closed = context.svm.get_account(&swig_key).unwrap();
+    assert_eq!(
+        closed.data,
+        vec![swig_state::Discriminator::ClosedSwigAccount as u8]
+    );
+}
+
 // Test the withdrawal from a sub-account back to the main swig account
 #[test_log::test]
 fn test_withdraw_sol_from_sub_account() {
@@ -265,6 +397,357 @@ fn test_withdraw_sol_from_sub_account() {
 }
 
 #[test_log::test]
+fn test_close_sub_account_v1_sweeps_lamports_and_unblocks_parent_close() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, child_authority, id) =
+        setup_test_with_sub_account_authority(&mut context).unwrap();
+    let child_role_id = 1;
+    let sub_account =
+        create_sub_account(&mut context, &swig_key, &child_authority, child_role_id, id).unwrap();
+    context.svm.airdrop(&sub_account, 1_000_000_000).unwrap();
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+    let destination = Keypair::new();
+    context.svm.airdrop(&destination.pubkey(), 0).unwrap();
+
+    let close_parent = CloseSwigV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        wallet,
+        root.pubkey(),
+        destination.pubkey(),
+        0,
+    )
+    .unwrap();
+    assert!(send_single(&mut context, &root, close_parent.clone()).is_err());
+    assert_eq!(active_sub_account_count(&context, &swig_key), 1);
+
+    let close_enabled = CloseSubAccountV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        root.pubkey(),
+        sub_account,
+        wallet,
+        None,
+        root.pubkey(),
+        0,
+        child_role_id,
+    )
+    .unwrap();
+    assert!(send_single(&mut context, &root, close_enabled).is_err());
+    context.svm.expire_blockhash();
+
+    toggle_sub_account(
+        &mut context,
+        &swig_key,
+        &sub_account,
+        &root,
+        child_role_id,
+        0,
+        false,
+    )
+    .unwrap();
+    let arbitrary_destination = Keypair::new();
+    context
+        .svm
+        .airdrop(
+            &arbitrary_destination.pubkey(),
+            context.svm.minimum_balance_for_rent_exemption(0),
+        )
+        .unwrap();
+    let redirect_without_claimer = CloseSubAccountV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        root.pubkey(),
+        sub_account,
+        wallet,
+        Some(arbitrary_destination.pubkey()),
+        root.pubkey(),
+        0,
+        child_role_id,
+    )
+    .unwrap();
+    assert!(send_single(&mut context, &root, redirect_without_claimer).is_err());
+    context.svm.expire_blockhash();
+
+    let wallet_before = context.svm.get_account(&wallet).unwrap().lamports;
+    let child_lamports = context.svm.get_account(&sub_account).unwrap().lamports;
+    let close_child = CloseSubAccountV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        root.pubkey(),
+        sub_account,
+        wallet,
+        None,
+        root.pubkey(),
+        0,
+        child_role_id,
+    )
+    .unwrap();
+    assert_eq!(close_child.accounts[4].pubkey, program_id());
+    assert!(!close_child.accounts[4].is_writable);
+    send_single(&mut context, &root, close_child).unwrap();
+    assert!(context.svm.get_account(&sub_account).is_none());
+    assert_eq!(active_sub_account_count(&context, &swig_key), 0);
+    assert_eq!(
+        context.svm.get_account(&wallet).unwrap().lamports,
+        wallet_before + child_lamports
+    );
+
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let roles = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let child_role = roles.get_role(child_role_id).unwrap().unwrap();
+    let child_action = child_role
+        .get_action::<SubAccount>(&CLOSED_SUB_ACCOUNT)
+        .unwrap();
+    assert!(child_action.is_some(), "V1 action must retain a tombstone");
+
+    let wallet_lamports = context.svm.get_account(&wallet).unwrap().lamports;
+    let drain = solana_system_interface::instruction::transfer(
+        &wallet,
+        &destination.pubkey(),
+        wallet_lamports,
+    );
+    let sign = SignV2Instruction::new_ed25519(swig_key, wallet, root.pubkey(), drain, 0).unwrap();
+    send_single(&mut context, &root, sign).unwrap();
+    context.svm.expire_blockhash();
+    send_single(&mut context, &root, close_parent).unwrap();
+    assert_eq!(
+        context.svm.get_account(&swig_key).unwrap().data[0],
+        swig_state::Discriminator::ClosedSwigAccount as u8
+    );
+}
+
+#[test_log::test]
+fn test_close_sub_account_v1_refunds_only_rent_to_configured_claimer() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, child_authority, id) =
+        setup_test_with_sub_account_authority(&mut context).unwrap();
+    let child_role_id = 1;
+    let sub_account =
+        create_sub_account(&mut context, &swig_key, &child_authority, child_role_id, id).unwrap();
+    let operational_lamports = 1_000_000_000;
+    context
+        .svm
+        .airdrop(&sub_account, operational_lamports)
+        .unwrap();
+
+    let claimer = Keypair::new();
+    context
+        .svm
+        .airdrop(
+            &claimer.pubkey(),
+            context.svm.minimum_balance_for_rent_exemption(0),
+        )
+        .unwrap();
+    set_rent_claimer_with_ed25519(&mut context, &swig_key, &root, 0, claimer.pubkey()).unwrap();
+    toggle_sub_account(
+        &mut context,
+        &swig_key,
+        &sub_account,
+        &root,
+        child_role_id,
+        0,
+        false,
+    )
+    .unwrap();
+
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+    let wallet_before = context.svm.get_account(&wallet).unwrap().lamports;
+    let claimer_before = context.svm.get_account(&claimer.pubkey()).unwrap().lamports;
+    let child_lamports = context.svm.get_account(&sub_account).unwrap().lamports;
+    let rent_lamports = Rent::default().minimum_balance(0).min(child_lamports);
+    let close_child = CloseSubAccountV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        root.pubkey(),
+        sub_account,
+        wallet,
+        Some(claimer.pubkey()),
+        root.pubkey(),
+        0,
+        child_role_id,
+    )
+    .unwrap();
+    send_single(&mut context, &root, close_child).unwrap();
+
+    assert!(context.svm.get_account(&sub_account).is_none());
+    assert_eq!(
+        context.svm.get_account(&wallet).unwrap().lamports,
+        wallet_before + child_lamports - rent_lamports
+    );
+    assert_eq!(
+        context.svm.get_account(&claimer.pubkey()).unwrap().lamports,
+        claimer_before + rent_lamports
+    );
+}
+
+#[test_log::test]
+fn test_close_sub_account_v1_rejects_omitted_or_wrong_rent_claimer() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, child_authority, id) =
+        setup_test_with_sub_account_authority(&mut context).unwrap();
+    let child_role_id = 1;
+    let sub_account =
+        create_sub_account(&mut context, &swig_key, &child_authority, child_role_id, id).unwrap();
+    let claimer = Keypair::new();
+    let wrong_claimer = Keypair::new();
+    context
+        .svm
+        .airdrop(
+            &claimer.pubkey(),
+            context.svm.minimum_balance_for_rent_exemption(0),
+        )
+        .unwrap();
+    context
+        .svm
+        .airdrop(
+            &wrong_claimer.pubkey(),
+            context.svm.minimum_balance_for_rent_exemption(0),
+        )
+        .unwrap();
+    set_rent_claimer_with_ed25519(&mut context, &swig_key, &root, 0, claimer.pubkey()).unwrap();
+    toggle_sub_account(
+        &mut context,
+        &swig_key,
+        &sub_account,
+        &root,
+        child_role_id,
+        0,
+        false,
+    )
+    .unwrap();
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+
+    let wrong_destination = CloseSubAccountV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        root.pubkey(),
+        sub_account,
+        wallet,
+        Some(wrong_claimer.pubkey()),
+        root.pubkey(),
+        0,
+        child_role_id,
+    )
+    .unwrap();
+    assert!(send_single(&mut context, &root, wrong_destination).is_err());
+    assert!(context.svm.get_account(&sub_account).is_some());
+    assert_eq!(active_sub_account_count(&context, &swig_key), 1);
+
+    context.svm.expire_blockhash();
+    let omitted_destination = CloseSubAccountV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        root.pubkey(),
+        sub_account,
+        wallet,
+        None,
+        root.pubkey(),
+        0,
+        child_role_id,
+    )
+    .unwrap();
+    assert_eq!(omitted_destination.accounts[4].pubkey, program_id());
+    assert!(send_single(&mut context, &root, omitted_destination).is_err());
+    assert!(context.svm.get_account(&sub_account).is_some());
+    assert_eq!(active_sub_account_count(&context, &swig_key), 1);
+}
+
+#[test_log::test]
+fn test_close_sub_account_v1_requires_migrated_parent() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, child_authority, id) =
+        setup_test_with_sub_account_authority(&mut context).unwrap();
+    let child_role_id = 1;
+    let sub_account =
+        create_sub_account(&mut context, &swig_key, &child_authority, child_role_id, id).unwrap();
+    toggle_sub_account(
+        &mut context,
+        &swig_key,
+        &sub_account,
+        &root,
+        child_role_id,
+        0,
+        false,
+    )
+    .unwrap();
+
+    let mut swig_account = context.svm.get_account(&swig_key).unwrap();
+    swig_account.data[Swig::LEN - 8..Swig::LEN].copy_from_slice(&1_614_720u64.to_le_bytes());
+    context.svm.set_account(swig_key, swig_account).unwrap();
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+    let close_child = CloseSubAccountV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        root.pubkey(),
+        sub_account,
+        wallet,
+        None,
+        root.pubkey(),
+        0,
+        child_role_id,
+    )
+    .unwrap();
+
+    assert!(send_single(&mut context, &root, close_child).is_err());
+    assert!(context.svm.get_account(&sub_account).is_some());
+}
+
+#[test_log::test]
+fn test_close_legacy_v1_sub_account_materializes_active_count() {
+    let mut context = setup_test_context().unwrap();
+    let (swig_key, root, child_authority, id) =
+        setup_test_with_sub_account_authority(&mut context).unwrap();
+    let child_role_id = 1;
+    let child =
+        create_sub_account(&mut context, &swig_key, &child_authority, child_role_id, id).unwrap();
+    strip_active_count_tail(&mut context, &swig_key);
+
+    let legacy_account = context.svm.get_account(&swig_key).unwrap();
+    let legacy_parts = swig_state::swig::Swig::split_parts(&legacy_account.data).unwrap();
+    assert_eq!(
+        active_sub_account_count::read(legacy_parts.tail).unwrap(),
+        None
+    );
+
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+    let destination = Keypair::new();
+    context.svm.airdrop(&destination.pubkey(), 0).unwrap();
+    let close_parent = CloseSwigV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        wallet,
+        root.pubkey(),
+        destination.pubkey(),
+        0,
+    )
+    .unwrap();
+    assert!(send_single(&mut context, &root, close_parent).is_err());
+    context.svm.expire_blockhash();
+
+    toggle_sub_account(
+        &mut context,
+        &swig_key,
+        &child,
+        &root,
+        child_role_id,
+        0,
+        false,
+    )
+    .unwrap();
+    let close_child = CloseSubAccountV1Instruction::new_with_ed25519_authority(
+        swig_key,
+        root.pubkey(),
+        child,
+        wallet,
+        Some(wallet),
+        root.pubkey(),
+        0,
+        child_role_id,
+    )
+    .unwrap();
+    send_single(&mut context, &root, close_child).unwrap();
+
+    assert_eq!(active_sub_account_count(&context, &swig_key), 0);
+}
+
+#[test_log::test]
 fn test_root_withdraw_scans_all_allocated_role_ids() {
     let mut context = setup_test_context().unwrap();
     let root_authority = Keypair::new();
@@ -322,14 +805,22 @@ fn test_root_withdraw_scans_all_allocated_role_ids() {
     )
     .unwrap();
     context.svm.airdrop(&sub_account, 5_000_000_000).unwrap();
-    remove_authority_with_ed25519_root(&mut context, &swig_key, &root_authority, creator_role_id)
-        .unwrap();
+    assert!(
+        remove_authority_with_ed25519_root(
+            &mut context,
+            &swig_key,
+            &root_authority,
+            creator_role_id,
+        )
+        .is_err(),
+        "a role holding live V1 child metadata must be closed before removal"
+    );
 
     let swig_account = context.svm.get_account(&swig_key).unwrap();
     let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
-    assert_eq!(swig.state.roles, 1);
+    assert_eq!(swig.state.roles, 2);
     assert_eq!(swig.state.role_counter, 12);
-    assert!(swig.get_role(creator_role_id).unwrap().is_none());
+    assert!(swig.get_role(creator_role_id).unwrap().is_some());
 
     // The next unallocated role ID must remain outside the scan and fail closed.
     let unallocated_role_id = swig.state.role_counter;
@@ -446,6 +937,50 @@ fn test_sub_account_sign() {
         recipient_balance,
         1_000_000 + transfer_amount,
         "Recipient's balance didn't increase by the correct amount"
+    );
+}
+
+#[test_log::test]
+fn test_toggle_sub_account_rejects_noncanonical_enabled_without_mutation() {
+    let mut context = setup_test_context().unwrap();
+    context.svm.warp_to_slot(1);
+    let (swig_key, _root_authority, authority, id) =
+        setup_test_with_sub_account_authority(&mut context).unwrap();
+    let role_id = 1;
+    let sub_account = create_sub_account(&mut context, &swig_key, &authority, role_id, id).unwrap();
+    let mut instruction = ToggleSubAccountInstruction::new_with_ed25519_authority(
+        swig_key,
+        authority.pubkey(),
+        authority.pubkey(),
+        sub_account,
+        role_id,
+        role_id,
+        false,
+    )
+    .unwrap();
+    instruction.data[core::mem::offset_of!(ToggleSubAccountV1Args, enabled)] = u8::MAX;
+
+    let swig_before = context.svm.get_account(&swig_key).unwrap();
+    let sub_account_before = context.svm.get_account(&sub_account).unwrap();
+    let message = v0::Message::try_compile(
+        &authority.pubkey(),
+        &[instruction],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let transaction =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&authority]).unwrap();
+    let failure = context.svm.send_transaction(transaction).unwrap_err();
+
+    assert_eq!(
+        failure.err,
+        TransactionError::InstructionError(0, InstructionError::InvalidInstructionData)
+    );
+    assert_eq!(context.svm.get_account(&swig_key).unwrap(), swig_before);
+    assert_eq!(
+        context.svm.get_account(&sub_account).unwrap(),
+        sub_account_before
     );
 }
 

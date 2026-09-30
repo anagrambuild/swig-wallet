@@ -12,18 +12,25 @@ use common::*;
 use litesvm_token::spl_token;
 use solana_compute_budget_interface::ComputeBudgetInstruction;
 use solana_sdk::{
+    clock::Clock,
+    instruction::InstructionError,
     message::{v0, VersionedMessage},
     program_pack::Pack,
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    transaction::VersionedTransaction,
+    transaction::{TransactionError, VersionedTransaction},
 };
+use swig::error::SwigError;
 use swig_interface::{AuthorityConfig, ClientAction, CloseTokenAccountV1Instruction};
 use swig_state::{
-    action::{manage_authority::ManageAuthority, sol_limit::SolLimit},
+    action::{
+        all_but_manage_authority::AllButManageAuthority, manage_authority::ManageAuthority,
+        sol_limit::SolLimit,
+    },
     authority::{secp256k1::Secp256k1Authority, secp256r1::Secp256r1Authority, AuthorityType},
     swig::{swig_wallet_address_seeds, SwigWithRoles},
+    SwigAuthenticateError,
 };
 
 /// Happy path: Close an empty token account with Ed25519 authority
@@ -533,11 +540,125 @@ fn test_close_token_account_permission_denied() {
     let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &limited_authority])
         .unwrap();
 
-    let result = context.svm.send_transaction(tx);
-    assert!(
-        result.is_err(),
-        "Transaction should fail when authority lacks All or ManageAuthority permission"
+    let error = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(
+                SwigAuthenticateError::PermissionDeniedMissingPermission as u32
+            )
+        )
     );
+}
+
+#[test_log::test]
+fn test_close_token_account_with_all_but_manage_authority_respects_rent_claimer() {
+    for pinned_claimer in [false, true] {
+        let mut context = setup_test_context().unwrap();
+        let root = Keypair::new();
+        let authority = Keypair::new();
+        let (swig, _) = create_swig_ed25519(&mut context, &root, rand::random()).unwrap();
+        let (wallet, _) =
+            Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+        context.svm.airdrop(&authority.pubkey(), 1_000_000).unwrap();
+        add_authority_with_ed25519_root(
+            &mut context,
+            &swig,
+            &root,
+            AuthorityConfig {
+                authority_type: AuthorityType::Ed25519,
+                authority: authority.pubkey().as_ref(),
+            },
+            vec![ClientAction::AllButManageAuthority(
+                AllButManageAuthority {},
+            )],
+        )
+        .unwrap();
+
+        let destination = Pubkey::new_unique();
+        context.svm.airdrop(&destination, 1_000_000).unwrap();
+        if pinned_claimer {
+            set_rent_claimer_with_ed25519(&mut context, &swig, &root, 0, destination).unwrap();
+        }
+        let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+        let token = setup_ata(&mut context.svm, &mint, &wallet, &context.default_payer).unwrap();
+        let token_before = context.svm.get_account(&token).unwrap();
+        let swig_before = context.svm.get_account(&swig).unwrap();
+        let destination_before = context.svm.get_account(&destination).unwrap();
+        let close = CloseTokenAccountV1Instruction::new_with_ed25519_authority(
+            swig,
+            wallet,
+            authority.pubkey(),
+            destination,
+            spl_token::ID,
+            vec![token],
+            1,
+        )
+        .unwrap();
+
+        if pinned_claimer {
+            let wrong_destination = Pubkey::new_unique();
+            context.svm.airdrop(&wrong_destination, 1_000_000).unwrap();
+            let wrong_before = context.svm.get_account(&wrong_destination).unwrap();
+            let mut wrong_close = close.clone();
+            wrong_close.accounts[2].pubkey = wrong_destination;
+            let message = VersionedMessage::V0(
+                v0::Message::try_compile(
+                    &context.default_payer.pubkey(),
+                    &[wrong_close],
+                    &[],
+                    context.svm.latest_blockhash(),
+                )
+                .unwrap(),
+            );
+            let tx = VersionedTransaction::try_new(message, &[&context.default_payer, &authority])
+                .unwrap();
+            let error = context.svm.send_transaction(tx).unwrap_err();
+            assert_eq!(
+                error.err,
+                TransactionError::InstructionError(
+                    0,
+                    InstructionError::Custom(SwigError::InvalidRentClaimerDestination as u32)
+                )
+            );
+            assert_eq!(context.svm.get_account(&token).unwrap(), token_before);
+            assert_eq!(context.svm.get_account(&swig).unwrap(), swig_before);
+            assert_eq!(
+                context.svm.get_account(&destination).unwrap(),
+                destination_before
+            );
+            assert_eq!(
+                context.svm.get_account(&wrong_destination).unwrap(),
+                wrong_before
+            );
+        }
+
+        let message = VersionedMessage::V0(
+            v0::Message::try_compile(
+                &context.default_payer.pubkey(),
+                &[close],
+                &[],
+                context.svm.latest_blockhash(),
+            )
+            .unwrap(),
+        );
+        let tx =
+            VersionedTransaction::try_new(message, &[&context.default_payer, &authority]).unwrap();
+        context.svm.send_transaction(tx).unwrap();
+        assert_eq!(
+            context
+                .svm
+                .get_account(&token)
+                .map_or(0, |account| account.lamports),
+            0
+        );
+        assert_eq!(
+            context.svm.get_account(&destination).unwrap().lamports,
+            destination_before.lamports + token_before.lamports
+        );
+        assert_eq!(context.svm.get_account(&swig).unwrap(), swig_before);
+    }
 }
 
 /// Test closing token account with ManageAuthority permission (not All)
@@ -726,7 +847,7 @@ fn test_close_token_account_secp256k1() {
         swig_pubkey,
         swig_wallet_address,
         signing_fn,
-        0, // current_slot
+        context.svm.get_sysvar::<Clock>().slot,
         next_counter,
         destination.pubkey(),
         spl_token::ID,
@@ -835,7 +956,7 @@ fn test_close_token_account_secp256r1() {
         swig_pubkey,
         swig_wallet_address,
         authority_fn,
-        0, // current_slot
+        context.svm.get_sysvar::<Clock>().slot,
         1,
         destination.pubkey(),
         spl_token::ID,

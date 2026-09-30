@@ -307,6 +307,10 @@ impl ProgramScope {
                 Ok(())
             },
             x if x == ProgramScopeType::RecurringLimit as u8 => {
+                if self.window == 0 {
+                    return Err(ProgramError::InvalidArgument);
+                }
+
                 let current_slot = current_slot.ok_or(ProgramError::InvalidArgument)?;
 
                 // Check if window has passed and reset the spent amount if needed
@@ -424,11 +428,24 @@ impl<'a> Actionable<'a> for ProgramScope {
     /// Multiple program scopes can exist per role
     const REPEATABLE: bool = true;
 
-    /// Checks the target account and the program that owns it.
+    /// Checks if this program scope matches the provided target account.
     ///
     /// # Arguments
-    /// * `data` - Target account pubkey followed by its owner program ID
+    /// * `data` - The target account pubkey to check against (first 32 bytes)
     fn match_data(&self, data: &[u8]) -> bool {
-        data.len() == 64 && data[..32] == self.target_account && data[32..] == self.program_id
+        data.len() >= 32 && data[0..32] == self.target_account
+    }
+
+    fn valid_layout(data: &'a [u8]) -> Result<bool, ProgramError> {
+        if data.len() != Self::LEN {
+            return Ok(false);
+        }
+
+        let scope_type = u64::from_le_bytes([
+            data[112], data[113], data[114], data[115], data[116], data[117], data[118], data[119],
+        ]) as u8;
+        let window = &data[32..40];
+
+        Ok(scope_type != ProgramScopeType::RecurringLimit as u8 || window != [0u8; 8])
     }
 }

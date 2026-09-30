@@ -144,7 +144,8 @@ pub enum SwigError {
     RentClaimerAlreadySet,
     /// Rent claimer pubkey is invalid
     InvalidRentClaimerValue,
-    /// Destination does not match configured rent claimer
+    /// Close destination is invalid or does not match the configured rent
+    /// claimer
     InvalidRentClaimerDestination,
     /// V2 sub-account instruction data is too short
     InvalidSwigCreateSubAccountV2InstructionDataTooShort,
@@ -154,7 +155,7 @@ pub enum SwigError {
     PermissionDeniedMissingSubAccountV2Permission,
     /// V2 sub-account state account owner mismatch
     OwnerMismatchSubAccountV2State,
-    /// V2 sub-account Swig ID mismatch
+    /// V2 sub-account parent Swig config address mismatch (legacy error name)
     InvalidSwigSubAccountV2SwigIdMismatch,
     /// V2 sub-account id mismatch between state and instruction
     InvalidSwigSubAccountV2IdMismatch,
@@ -164,6 +165,24 @@ pub enum SwigError {
     InvalidSeedSubAccountV2,
     /// Replacement signer must differ from the target role's current signer
     ReplaceAuthoritySameSigner,
+    /// SignV2 wallet-address PDA owner or data length violated the invariant
+    WalletAddressInvariantViolation,
+    /// Parent Swig cannot close while any V2 sub-account remains active
+    ActiveSubAccountsRemain,
+    /// Active sub-account count would underflow
+    ActiveSubAccountCountUnderflow,
+    /// A sub-account must be disabled before it can be closed
+    SubAccountMustBeDisabled,
+    /// A role containing a live V1 sub-account cannot be removed or rewritten
+    ActiveV1SubAccountMustBeClosed,
+    /// Swig account has already migrated to the wallet-address layout
+    SwigAlreadyMigrated,
+    /// Inner CPIs modified the authenticating authority's personal SOL or token
+    /// accounts in a way that is not explained by ATA/account creation
+    PermissionDeniedAuthorityExternalAssetChange,
+    /// The authority mutation would leave the Swig without an `All` or
+    /// `ManageAuthority` role.
+    NoAdminAuthorityWouldRemain,
 }
 
 /// Implements conversion from SwigError to ProgramError.

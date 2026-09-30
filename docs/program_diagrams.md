@@ -601,7 +601,9 @@ deduplicated account indexes to minimize transaction size.
 │  ├──────────────────────────────────────────────────────────────────┤ │
 │  │ CPI Safety                                                       │ │
 │  │                                                                  │ │
-│  │  - Stack height check: SignV2 must be top-level (not via CPI)    │ │
+│  │  - Stack height check: SignV2 / SubAccountSign must be top-level │ │
+│  │  - Non-sign instructions are direct-only unless an exact         │ │
+│  │    authorized CPI signer is forwarded with signer privilege      │ │
 │  │  - ProgramExec cannot delegate to the Swig program itself        │ │
 │  │  - Post-execution SHA256 integrity verification on all           │ │
 │  │    classified accounts (detects unauthorized data changes)        │ │
@@ -635,7 +637,7 @@ deduplicated account indexes to minimize transaction size.
 │                                                                       │
 │  0-46       SwigError             General program/account errors       │
 │  1000-1007  SwigStateError        Account/state data validation        │
-│  2000-2002  InstructionError      Compact instruction parsing          │
+│  2000-2003  InstructionError      Compact instruction parsing          │
 │  3000-3039  SwigAuthenticateError Authentication + permission checks  │
 └───────────────────────────────────────────────────────────────────────┘
 ```
@@ -645,17 +647,17 @@ deduplicated account indexes to minimize transaction size.
 ## Build and Test
 
 ```
-Build:   cargo build-sbf
+Build:   cargo build-sbf --arch v3 --tools-version v1.53
          Outputs: target/deploy/swig.so
          build.rs auto-generates idl.json via shank
 
-Test:    cargo build-sbf && cargo nextest run --config-file nextest.toml \
+Test:    cargo build-sbf --arch v3 --tools-version v1.53 && cargo nextest run --config-file nextest.toml \
            --profile ci --all --workspace --no-fail-fast
 
          Feature-gated tests:
            --features=program_scope_test   (ProgramScope coverage)
            --features=stake_tests          (Stake action coverage)
 
-Toolchain: Rust 1.84.0 (via rust-toolchain.toml)
-           Agave toolchain >= 2.2.1
+Toolchain: Rust 1.96.1 (via rust-toolchain.toml)
+           Agave 4.2.2 (matches CI)
 ```

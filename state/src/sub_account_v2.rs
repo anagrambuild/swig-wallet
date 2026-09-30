@@ -8,7 +8,7 @@ use crate::{Discriminator, IntoBytes, Transmutable, TransmutableMut};
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct SubAccountV2 {
-    /// Account type discriminator (`Discriminator::SwigSubAccountV2`)
+    /// Account type discriminator (`Discriminator::SwigSubAccountV2Address`)
     pub discriminator: u8,
     /// State PDA bump seed
     pub bump: u8,
@@ -18,15 +18,15 @@ pub struct SubAccountV2 {
     pub enabled: u8,
     /// Sub-account identifier, drawn from the Swig header counter
     pub subacc_id: u32,
-    /// ID of the parent Swig account
-    pub swig_id: [u8; 32],
+    /// Public key of the parent Swig config account
+    pub swig_address: [u8; 32],
     /// Asset PDA pubkey (cached so it need not be re-derived on each op)
     pub sub_account: [u8; 32],
 }
 
 impl Transmutable for SubAccountV2 {
     /// 1 (discriminator) + 1 (bump) + 1 (asset_bump) + 1 (enabled) + 4
-    /// (subacc_id) + 32 (swig_id) + 32 (sub_account) = 72
+    /// (subacc_id) + 32 (swig_address) + 32 (sub_account) = 72
     const LEN: usize = 72;
 }
 
@@ -44,16 +44,16 @@ impl SubAccountV2 {
         bump: u8,
         asset_bump: u8,
         subacc_id: u32,
-        swig_id: [u8; 32],
+        swig_address: [u8; 32],
         sub_account: [u8; 32],
     ) -> Self {
         Self {
-            discriminator: Discriminator::SwigSubAccountV2 as u8,
+            discriminator: Discriminator::SwigSubAccountV2Address as u8,
             bump,
             asset_bump,
             enabled: 1,
             subacc_id,
-            swig_id,
+            swig_address,
             sub_account,
         }
     }
@@ -62,7 +62,7 @@ impl SubAccountV2 {
     /// not a V2 sub-account state account.
     pub fn check_discriminator(&self) -> Result<(), ProgramError> {
         match Discriminator::try_from(self.discriminator)? {
-            Discriminator::SwigSubAccountV2 => Ok(()),
+            Discriminator::SwigSubAccountV2Address => Ok(()),
             _ => Err(ProgramError::InvalidAccountData),
         }
     }
@@ -97,7 +97,10 @@ mod tests {
     #[test]
     fn test_sub_account_v2_roundtrip() {
         let state = SubAccountV2::new(254, 253, 7, [3u8; 32], [4u8; 32]);
-        assert_eq!(state.discriminator, Discriminator::SwigSubAccountV2 as u8);
+        assert_eq!(
+            state.discriminator,
+            Discriminator::SwigSubAccountV2Address as u8
+        );
         assert_eq!(state.enabled, 1);
         assert!(state.is_enabled().unwrap());
         assert_eq!(state.subacc_id, 7);
@@ -109,7 +112,7 @@ mod tests {
         assert_eq!(loaded.bump, 254);
         assert_eq!(loaded.asset_bump, 253);
         assert_eq!(loaded.subacc_id, 7);
-        assert_eq!(loaded.swig_id, [3u8; 32]);
+        assert_eq!(loaded.swig_address, [3u8; 32]);
         assert_eq!(loaded.sub_account, [4u8; 32]);
         loaded.check_discriminator().unwrap();
     }

@@ -115,9 +115,8 @@ pub fn toggle_sub_account_v2(
     // the split, which needs the buffer mutably.
     crate::require_swig_v2(swig_account_data)?;
     let parts = Swig::split_parts_mut(swig_account_data)?;
-    let swig = parts.state;
     let swig_roles = parts.roles;
-    let swig_id = swig.id;
+    let swig_address = *ctx.accounts.swig.key();
 
     // Authenticate the acting role and require a scoped toggle permission.
     let role_opt = Swig::get_mut_role(toggle.args.auth_role_id, swig_roles)?;
@@ -147,10 +146,13 @@ pub fn toggle_sub_account_v2(
 
     // Load and bind the state account, then flip enabled.
     let state_data = unsafe { ctx.accounts.sub_account_state.borrow_mut_data_unchecked() };
+    if state_data.len() != SubAccountV2::LEN {
+        return Err(ProgramError::InvalidAccountData);
+    }
     let state = unsafe { SubAccountV2::load_mut_unchecked(state_data)? };
     state.check_discriminator()?;
     state.is_enabled()?;
-    if state.swig_id != swig_id {
+    if state.swig_address != swig_address {
         return Err(SwigError::InvalidSwigSubAccountV2SwigIdMismatch.into());
     }
     if state.subacc_id != toggle.args.subacc_id {
@@ -159,7 +161,7 @@ pub fn toggle_sub_account_v2(
     // Bind the account to its canonical PDA address using the stored bump.
     let id_le = toggle.args.subacc_id.to_le_bytes();
     let bump = [state.bump];
-    let seeds = sub_account_v2_state_seeds_with_bump(&swig_id, &id_le, &bump);
+    let seeds = sub_account_v2_state_seeds_with_bump(&swig_address, &id_le, &bump);
     check_self_pda(
         &seeds,
         ctx.accounts.sub_account_state.key(),
