@@ -155,11 +155,13 @@ pub fn close_token_account_v1(
         )?;
     }
 
-    // Check permissions: must have All, ManageAuthority, or CloseSwigAuthority
+    // Unrestricted asset permissions also authorize closing token accounts.
     let has_all = RoleMut::get_action_mut::<All>(role.actions, &[])?.is_some();
+    let has_all_but_manage =
+        RoleMut::get_action_mut::<AllButManageAuthority>(role.actions, &[])?.is_some();
     let has_manage = RoleMut::get_action_mut::<ManageAuthority>(role.actions, &[])?.is_some();
     let has_close = RoleMut::get_action_mut::<CloseSwigAuthority>(role.actions, &[])?.is_some();
-    if !has_all && !has_manage && !has_close {
+    if !has_all && !has_all_but_manage && !has_manage && !has_close {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
     if let Some(claimer) = rent_claimer::read_strict(Swig::split_parts(swig_account_data)?.tail)? {
@@ -210,8 +212,7 @@ pub fn close_token_account_v1(
     let swig_bump_bytes = [swig_bump];
     let swig_seeds = swig_account_signer(&swig_id, &swig_bump_bytes);
 
-    let unrestricted_spend =
-        has_all || RoleMut::get_action_mut::<AllButManageAuthority>(role.actions, &[])?.is_some();
+    let unrestricted_spend = has_all || has_all_but_manage;
     // Validate every source and consume bounded WSOL spend before the first CPI.
     // A later error rolls back authentication and every permission update.
     for token_account in &accounts[token_account_offset..] {

@@ -3144,7 +3144,8 @@ impl CloseTokenAccountV1Instruction {
     /// # Arguments
     /// * `swig_account` - The swig wallet account
     /// * `swig_wallet_address` - The swig wallet address PDA
-    /// * `authority` - The authority with All or ManageAuthority permission
+    /// * `authority` - The authority with All, AllButManageAuthority,
+    ///   ManageAuthority, or CloseSwigAuthority permission
     /// * `token_account` - The token account to close (must have zero balance)
     /// * `destination` - Where to send the rent
     /// * `token_program` - SPL Token or Token-2022 program
