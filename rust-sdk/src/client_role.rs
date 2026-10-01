@@ -3508,9 +3508,8 @@ where
     }
 
     fn increment_odometer(&mut self) -> Result<(), SwigError> {
-        Err(SwigError::InterfaceError(
-            "ProgramExec authority does not use odometer".to_string(),
-        ))
+        // ProgramExec has no counter to advance after a successful transaction.
+        Ok(())
     }
 
     fn update_odometer(&mut self, _odometer: u32) -> Result<(), SwigError> {
@@ -3544,7 +3543,12 @@ where
                 role_id,
             )
             .map_err(|e| SwigError::InterfaceError(e.to_string()))?;
-            for account in &mut pair[1].accounts {
+            let sign_instruction = pair.get_mut(1).ok_or_else(|| {
+                SwigError::InterfaceError(
+                    "ProgramExec SignV2 is missing its signing instruction".into(),
+                )
+            })?;
+            for account in &mut sign_instruction.accounts {
                 if transaction_signers.contains(&account.pubkey) {
                     account.is_signer = true;
                 }

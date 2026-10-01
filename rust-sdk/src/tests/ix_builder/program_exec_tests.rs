@@ -149,7 +149,7 @@ fn program_exec_sign_v2_preserves_inner_instructions_and_transaction_signers() {
 }
 
 #[test_log::test]
-fn test_program_exec_sign_with_preceding_instruction() {
+fn test_program_exec_sign_with_preceding_instruction() -> anyhow::Result<()> {
     let mut context = setup_test_context().unwrap();
     context
         .svm
@@ -347,6 +347,46 @@ fn test_program_exec_sign_with_preceding_instruction() {
         context.svm.get_account(&recipient).unwrap().lamports,
         rent + 3000
     );
+
+    let wallet_role =
+        ProgramExecClientRole::new(TEST_PROGRAM_ID, VALID_DISCRIMINATOR.to_vec(), move || {
+            Instruction {
+                program_id: TEST_PROGRAM_ID,
+                accounts: vec![
+                    AccountMeta::new_readonly(swig_key, false),
+                    AccountMeta::new_readonly(swig_wallet_address, false),
+                    AccountMeta::new_readonly(state_account, false),
+                    AccountMeta::new_readonly(program_id(), false),
+                ],
+                data: VALID_DISCRIMINATOR.to_vec(),
+            }
+        });
+    let mut wallet = crate::SwigWallet::new(
+        swig_id,
+        Box::new(wallet_role),
+        &context.default_payer,
+        "http://unused.invalid".to_string(),
+        None,
+        context.svm,
+    )?;
+    let signature = wallet.sign_v2(
+        vec![solana_system_interface::instruction::transfer(
+            &swig_wallet_address,
+            &recipient,
+            4000,
+        )],
+        None,
+    )?;
+    assert_ne!(signature, solana_sdk::signature::Signature::default());
+    assert_eq!(
+        wallet
+            .litesvm()
+            .get_account(&recipient)
+            .ok_or_else(|| anyhow::anyhow!("recipient account missing"))?
+            .lamports,
+        rent + 7000
+    );
+    Ok(())
 }
 
 #[test_log::test]
