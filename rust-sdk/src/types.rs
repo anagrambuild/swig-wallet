@@ -561,10 +561,10 @@ impl Permission {
             });
         }
 
-        // Check for ProgramScope permission
-        if let Some(action) =
-            swig_state::role::Role::get_action::<ProgramScope>(role, &spl_token::ID.to_bytes())
-                .map_err(|_| SwigError::InvalidSwigData)?
+        // ProgramScope is repeatable and matches target accounts, not program IDs.
+        for action in role
+            .get_all_actions_of_type::<ProgramScope>()
+            .map_err(|_| SwigError::InvalidSwigData)?
         {
             permissions.push(Permission::ProgramScope {
                 program_id: Pubkey::new_from_array(action.program_id),
