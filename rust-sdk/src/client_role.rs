@@ -3508,9 +3508,8 @@ where
     }
 
     fn increment_odometer(&mut self) -> Result<(), SwigError> {
-        Err(SwigError::InterfaceError(
-            "ProgramExec authority does not use odometer".to_string(),
-        ))
+        // ProgramExec has no counter to advance after a successful transaction.
+        Ok(())
     }
 
     fn update_odometer(&mut self, _odometer: u32) -> Result<(), SwigError> {
@@ -3528,51 +3527,34 @@ where
         _current_slot: Option<u64>,
         transaction_signers: &[Pubkey],
     ) -> Result<Vec<Instruction>, SwigError> {
-        // Build the inner instruction using compact_instructions
-        let base_accounts = vec![
-            solana_program::instruction::AccountMeta::new(swig_account, false),
-            solana_program::instruction::AccountMeta::new(swig_wallet_address, false),
-        ];
+        let payer = transaction_signers.first().copied().ok_or_else(|| {
+            SwigError::InterfaceError("ProgramExec SignV2 requires a transaction signer".into())
+        })?;
 
-        // Add transaction signers as readonly signers
-        let mut accounts_with_signers = base_accounts;
-        for signer in transaction_signers {
-            accounts_with_signers.push(solana_program::instruction::AccountMeta::new_readonly(
-                *signer, true,
-            ));
+        let mut result = Vec::with_capacity(instructions.len() * 2);
+        for instruction in instructions {
+            // ProgramExec authenticates the instruction immediately before each SignV2.
+            let mut pair = SignV2Instruction::new_program_exec(
+                swig_account,
+                swig_wallet_address,
+                payer,
+                (self.preceding_instruction_fn)(),
+                instruction,
+                role_id,
+            )
+            .map_err(|e| SwigError::InterfaceError(e.to_string()))?;
+            let sign_instruction = pair.get_mut(1).ok_or_else(|| {
+                SwigError::InterfaceError(
+                    "ProgramExec SignV2 is missing its signing instruction".into(),
+                )
+            })?;
+            for account in &mut sign_instruction.accounts {
+                if transaction_signers.contains(&account.pubkey) {
+                    account.is_signer = true;
+                }
+            }
+            result.extend(pair);
         }
-
-        let (_, compact_ixs) = swig_interface::compact_instructions(
-            swig_wallet_address,
-            accounts_with_signers,
-            instructions,
-        )
-        .map_err(|e| SwigError::InterfaceError(e.to_string()))?;
-
-        let inner_instruction = solana_program::instruction::Instruction {
-            program_id: swig_interface::program_id(),
-            accounts: vec![],
-            data: compact_ixs
-                .into_bytes()
-                .map_err(|e| SwigError::InterfaceError(e.to_string()))?,
-        };
-
-        // Get the preceding instruction from the function
-        let preceding_instruction = (self.preceding_instruction_fn)();
-
-        // Determine payer from transaction_signers (first signer is typically the
-        // payer)
-        let payer = transaction_signers.first().copied().unwrap_or(swig_account);
-
-        // Use SignV2 with ProgramExec
-        SignV2Instruction::new_program_exec(
-            swig_account,
-            swig_wallet_address,
-            payer,
-            preceding_instruction,
-            inner_instruction,
-            role_id,
-        )
-        .map_err(|e| SwigError::InterfaceError(e.to_string()))
+        Ok(result)
     }
 }
