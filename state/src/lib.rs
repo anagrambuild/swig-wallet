@@ -69,6 +69,8 @@ pub enum AccountClassification {
     SwigWalletAddress,
     /// A Swig token account with its token balance
     SwigTokenAccount {
+        /// Pre-CPI mint identity, retained when a token account is closed.
+        mint: [u8; 32],
         /// Token amount, or actual lamports (including rent) for WSOL.
         balance: u64,
         /// Runtime-only reserve validated by SignV2 before its first CPI.
