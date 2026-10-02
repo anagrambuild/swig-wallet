@@ -517,6 +517,7 @@ pub fn sign_v2(
                         balance,
                         native_reserve,
                         spent,
+                        ..
                     } => {
                         let data = unsafe { account.borrow_data_unchecked() };
 
@@ -738,6 +739,7 @@ pub fn sign_v2(
             AccountClassification::SwigTokenAccount {
                 spent,
                 native_reserve,
+                mint: original_mint,
                 ..
             } => {
                 let account_info = unsafe { all_accounts.get_unchecked(index) };
@@ -756,11 +758,9 @@ pub fn sign_v2(
                         return Err(SwigError::AccountDataModifiedUnexpectedly.into());
                     }
 
-                    if native_reserve.is_none() {
-                        continue;
-                    }
-                    // Identity was validated before CPI; closed data has no mint.
-                    WSOL_MINT.as_slice()
+                    // Closing erases mint data but does not erase earlier debits.
+                    // Use the pre-CPI identity for every token spending policy.
+                    original_mint.as_slice()
                 } else {
                     if data.len() < TOKEN_ACCOUNT_BASE_DATA_LEN {
                         return Err(SwigError::AccountDataModifiedUnexpectedly.into());

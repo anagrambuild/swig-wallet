@@ -212,8 +212,8 @@ pub(crate) unsafe fn is_swig_v2(data: &[u8]) -> bool {
 /// Rejects a pre-wallet-address (V1) Swig account.
 ///
 /// The V2-only instructions require the migrated generation. Testing
-/// `wallet_bump != 0` on its own is not enough: on a V1 account that byte is the
-/// low byte of `reserved_lamports`, which a rent-carrying balance leaves
+/// `wallet_bump != 0` on its own is not enough: on a V1 account that byte is
+/// the low byte of `reserved_lamports`, which a rent-carrying balance leaves
 /// non-zero, so such a check accepts nearly every real V1 account. Route the
 /// decision through [`is_swig_v2`] so every caller shares one definition.
 ///
@@ -462,6 +462,9 @@ unsafe fn classify_account(
             }
 
             Ok(AccountClassification::SwigTokenAccount {
+                mint: data[..32]
+                    .try_into()
+                    .map_err(|_| ProgramError::InvalidAccountData)?,
                 balance: u64::from_le_bytes(
                     data.get_unchecked(64..72)
                         .try_into()
