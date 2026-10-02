@@ -59,7 +59,7 @@ impl CreateProgramExecSessionAuthority {
 }
 
 impl Transmutable for CreateProgramExecSessionAuthority {
-    const LEN: usize = core::mem::size_of::<ProgramExecSessionAuthority>();
+    const LEN: usize = core::mem::size_of::<Self>();
 }
 
 impl IntoBytes for CreateProgramExecSessionAuthority {
@@ -142,12 +142,19 @@ impl Authority for ProgramExecSessionAuthority {
     const SESSION_BASED: bool = true;
 
     fn set_into_bytes(create_data: &[u8], bytes: &mut [u8]) -> Result<(), ProgramError> {
-        let create = unsafe { CreateProgramExecSessionAuthority::load_unchecked(create_data)? };
-        let authority = unsafe { ProgramExecSessionAuthority::load_mut_unchecked(bytes)? };
-
-        if create_data.len() != Self::LEN {
+        // Accept the former padded creation encoding without reading beyond
+        // the creation object. Stored session authorities retain their size.
+        if (create_data.len() != CreateProgramExecSessionAuthority::LEN
+            && create_data.len() != Self::LEN)
+            || bytes.len() != Self::LEN
+        {
             return Err(SwigStateError::InvalidRoleData.into());
         }
+        let create = unsafe {
+            CreateProgramExecSessionAuthority::load_unchecked(
+                &create_data[..CreateProgramExecSessionAuthority::LEN],
+            )?
+        };
 
         let prefix_len = create_data[32] as usize;
         if prefix_len > MAX_INSTRUCTION_PREFIX_LEN {
@@ -155,6 +162,7 @@ impl Authority for ProgramExecSessionAuthority {
         }
         let create_data_program_id = &create_data[..32];
         assert_program_exec_cant_be_swig(create_data_program_id)?;
+        let authority = unsafe { ProgramExecSessionAuthority::load_mut_unchecked(bytes)? };
         authority.program_id = create.program_id;
         authority.instruction_prefix = create.instruction_prefix;
         authority.instruction_prefix_len = create.instruction_prefix_len;
