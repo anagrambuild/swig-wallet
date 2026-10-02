@@ -22,7 +22,7 @@ use swig_state::{
     IntoBytes, Transmutable,
 };
 
-fn creation_payload(padded: bool) -> Vec<u8> {
+fn creation_payload(reserved: u8) -> Vec<u8> {
     let input = CreateProgramExecSessionAuthority::new(
         [9; 32],
         40,
@@ -31,10 +31,8 @@ fn creation_payload(padded: bool) -> Vec<u8> {
         240,
     );
     let mut bytes = input.into_bytes().unwrap().to_vec();
-    assert_eq!(bytes.len(), 120);
-    if padded {
-        bytes.extend_from_slice(&[0; 8]);
-    }
+    assert_eq!(bytes.len(), 128);
+    bytes[120..128].fill(reserved);
     bytes
 }
 
@@ -59,8 +57,8 @@ fn check_stored_session(role: &Role, input: &[u8]) {
 }
 
 #[test]
-fn create_accepts_both_session_encodings_and_preserves_stored_layout() {
-    for padded in [false, true] {
+fn create_accepts_reserved_session_bytes_and_preserves_stored_layout() {
+    for reserved in [0, 0xff] {
         let mut context = setup_test_context().unwrap();
         let id = rand::random::<[u8; 32]>();
         let (config, bump) = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id());
@@ -68,7 +66,7 @@ fn create_accepts_both_session_encodings_and_preserves_stored_layout() {
             &swig_wallet_address_seeds(config.as_ref()),
             &program_id(),
         );
-        let input = creation_payload(padded);
+        let input = creation_payload(reserved);
         let create = CreateInstruction::new(
             config,
             bump,
@@ -102,12 +100,12 @@ fn create_accepts_both_session_encodings_and_preserves_stored_layout() {
 }
 
 #[test]
-fn add_accepts_both_session_encodings_and_preserves_next_role_offset() {
-    for padded in [false, true] {
+fn add_accepts_reserved_session_bytes_and_preserves_next_role_offset() {
+    for reserved in [0, 0xff] {
         let mut context = setup_test_context().unwrap();
         let root = Keypair::new();
         let (config, _) = create_swig_ed25519(&mut context, &root, rand::random()).unwrap();
-        let input = creation_payload(padded);
+        let input = creation_payload(reserved);
         add_authority_with_ed25519_root(
             &mut context,
             &config,
