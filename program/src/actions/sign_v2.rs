@@ -1036,10 +1036,6 @@ fn wallet_shape_can_change(instruction: &swig_compact_instructions::InstructionH
     *instruction.program_id != SPL_TOKEN_ID
 }
 
-#[cfg(test)]
-#[path = "../../tests/unit/sign_v2_wallet_shape.rs"]
-mod wallet_shape_tests;
-
 fn reject_wallet_address_shape_mutation(
     instruction: &swig_compact_instructions::InstructionHolder,
     wallet: &Pubkey,
@@ -1288,6 +1284,8 @@ where
 #[cfg(test)]
 mod wsol_rent_tests {
     use super::*;
+
+    include!("../../tests/unit/sign_v2_wallet_shape.rs");
 
     fn native_data() -> [u8; TOKEN_ACCOUNT_BASE_DATA_LEN] {
         let mut data = [0; TOKEN_ACCOUNT_BASE_DATA_LEN];
