@@ -525,12 +525,17 @@ pub(crate) fn append_actions_to_role(
                 .pad_to_align()
                 .size();
 
+        let previous_len = account_len;
         swig_account.realloc(aligned_size, false)?;
         account_len = aligned_size;
 
-        let cost = Rent::get()?.minimum_balance(aligned_size);
         let current_lamports = unsafe { *swig_account.borrow_lamports_unchecked() };
-        let additional_cost = cost.saturating_sub(current_lamports);
+        let additional_cost = crate::util::rent::growth_cost(
+            &Rent::get()?,
+            current_lamports,
+            previous_len,
+            aligned_size,
+        );
         if additional_cost > 0 {
             Transfer {
                 from: payer,
@@ -883,13 +888,18 @@ pub fn update_authority_v1(
                 .pad_to_align()
                 .size();
 
+        let previous_len = account_len;
         ctx.accounts.swig.realloc(aligned_size, false)?;
         account_len = aligned_size;
 
-        let cost = Rent::get()?.minimum_balance(aligned_size);
         let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
 
-        let additional_cost = cost.saturating_sub(current_lamports);
+        let additional_cost = crate::util::rent::growth_cost(
+            &Rent::get()?,
+            current_lamports,
+            previous_len,
+            aligned_size,
+        );
 
         if additional_cost > 0 {
             Transfer {

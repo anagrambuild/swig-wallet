@@ -235,7 +235,9 @@ pub fn remove_authority_v1(
     let rent = Rent::get()?;
     let old_rent_lamports = rent.minimum_balance(data_len);
     let new_rent_lamports = rent.minimum_balance(new_size);
-    let diff = old_rent_lamports - new_rent_lamports;
+    let diff = old_rent_lamports
+        .saturating_sub(new_rent_lamports)
+        .min(swig_lamports.saturating_sub(new_rent_lamports));
     unsafe {
         *ctx.accounts.swig.borrow_mut_lamports_unchecked() = swig_lamports - diff;
         *ctx.accounts.payer.borrow_mut_lamports_unchecked() = ctx.accounts.payer.lamports() + diff;
