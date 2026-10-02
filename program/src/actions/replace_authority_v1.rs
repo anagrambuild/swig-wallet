@@ -3,7 +3,8 @@
 //! This instruction replaces one signer with another while preserving the
 //! target role and permissions. Any authority may perform the replacement when
 //! its role has All, ManageAuthority, or the target-scoped ReplaceAuthority
-//! action. ProgramExec authorities must also prove that the configured external
+//! action. Non-root callers replacing root must have ReplaceAuthority(0).
+//! ProgramExec authorities must also prove that the configured external
 //! policy program approved the exact replacement.
 
 use no_padding::NoPadding;
@@ -164,11 +165,17 @@ pub fn replace_authority_v1(
             )?;
         }
 
-        let has_permission = acting_role.get_action::<All>(&[])?.is_some()
-            || acting_role.get_action::<ManageAuthority>(&[])?.is_some()
-            || acting_role
-                .get_action::<ReplaceAuthority>(&replace.args.target_role_id.to_le_bytes())?
-                .is_some();
+        let scoped_replacement = acting_role
+            .get_action::<ReplaceAuthority>(&replace.args.target_role_id.to_le_bytes())?
+            .is_some();
+        let has_permission = if replace.args.target_role_id == 0 && replace.args.acting_role_id != 0
+        {
+            scoped_replacement
+        } else {
+            scoped_replacement
+                || acting_role.get_action::<All>(&[])?.is_some()
+                || acting_role.get_action::<ManageAuthority>(&[])?.is_some()
+        };
         if !has_permission {
             return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
         }

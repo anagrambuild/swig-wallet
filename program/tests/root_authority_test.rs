@@ -143,6 +143,82 @@ fn delegated_managers_cannot_update_root_with_any_operation() {
 }
 
 #[test]
+fn delegated_managers_cannot_replace_root_without_its_recovery_scope() {
+    for action in [
+        ClientAction::All(All {}),
+        ClientAction::ManageAuthority(ManageAuthority {}),
+        ClientAction::ReplaceAuthority(ReplaceAuthority::new(1)),
+    ] {
+        let (mut context, swig, root, manager) = setup_manager(action);
+        let replacement = Keypair::new();
+        let instruction = ReplaceAuthorityInstruction::new_with_ed25519_authority(
+            swig,
+            manager.pubkey(),
+            1,
+            0,
+            replacement.pubkey().as_ref(),
+        )
+        .unwrap();
+        assert_rejected_unchanged(
+            &mut context,
+            swig,
+            &manager,
+            instruction,
+            SwigAuthenticateError::PermissionDeniedMissingPermission,
+        );
+
+        let revoke = RemoveAuthorityInstruction::new_with_ed25519_authority(
+            swig,
+            context.default_payer.pubkey(),
+            root.pubkey(),
+            0,
+            1,
+        )
+        .unwrap();
+        send(&mut context, &root, revoke).unwrap();
+        let account = context.svm.get_account(&swig).unwrap();
+        let state = SwigWithRoles::from_bytes(&account.data).unwrap();
+        assert!(state.get_role(1).unwrap().is_none());
+        assert_eq!(
+            state
+                .get_role(0)
+                .unwrap()
+                .unwrap()
+                .authority
+                .identity()
+                .unwrap(),
+            root.pubkey().as_ref(),
+        );
+    }
+}
+
+#[test]
+fn root_can_replace_its_own_signer_and_preserve_permissions() {
+    let (mut context, swig, root, _) = setup_manager(ClientAction::All(All {}));
+    let replacement = Keypair::new();
+    let before = context.svm.get_account(&swig).unwrap();
+    let before_state = SwigWithRoles::from_bytes(&before.data).unwrap();
+    let before_actions = before_state.get_role(0).unwrap().unwrap().actions.to_vec();
+    let instruction = ReplaceAuthorityInstruction::new_with_ed25519_authority(
+        swig,
+        root.pubkey(),
+        0,
+        0,
+        replacement.pubkey().as_ref(),
+    )
+    .unwrap();
+    send(&mut context, &root, instruction).unwrap();
+    let account = context.svm.get_account(&swig).unwrap();
+    let state = SwigWithRoles::from_bytes(&account.data).unwrap();
+    let role = state.get_role(0).unwrap().unwrap();
+    assert_eq!(
+        role.authority.identity().unwrap(),
+        replacement.pubkey().as_ref()
+    );
+    assert_eq!(role.actions, before_actions);
+}
+
+#[test]
 fn root_can_update_its_own_permissions_with_every_operation() {
     let (mut context, swig, root, _) = setup_manager(ClientAction::All(All {}));
     for operation in [
