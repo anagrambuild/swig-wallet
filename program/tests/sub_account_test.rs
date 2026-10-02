@@ -67,6 +67,11 @@ fn strip_active_count_tail(context: &mut SwigTestContext, swig: &Pubkey) {
     account
         .data
         .truncate(account.data.len() - active_sub_account_count::ENTRY_LEN);
+    // A real legacy V1 account holds exactly the rent for its data length.
+    // Keep the harness faithful: drop the lamports that backed the removed
+    // tail entry so no configuration SOL remains.
+    let rent = context.svm.get_sysvar::<solana_sdk::sysvar::rent::Rent>();
+    account.lamports = rent.minimum_balance(account.data.len());
     context.svm.set_account(*swig, account).unwrap();
 }
 
