@@ -1,9 +1,10 @@
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
-    program_id, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
-    CreateSessionInstruction, CreateSubAccountInstruction, RemoveAuthorityInstruction,
-    SignV2Instruction, SubAccountSignInstruction, ToggleSubAccountInstruction,
-    UpdateAuthorityData as InterfaceUpdateAuthorityData, WithdrawFromSubAccountInstruction,
+    program_id, AddAuthorityInstruction, AuthorityConfig, AuthorityRentAccounts, ClientAction,
+    CreateInstruction, CreateSessionInstruction, CreateSubAccountInstruction,
+    RemoveAuthorityInstruction, SignV2Instruction, SubAccountSignInstruction,
+    ToggleSubAccountInstruction, UpdateAuthorityData as InterfaceUpdateAuthorityData,
+    WithdrawFromSubAccountInstruction,
 };
 use swig_state::{
     authority::{
@@ -199,13 +200,26 @@ impl SwigInstructionBuilder {
         authority_to_remove_id: u32,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        self.client_role.remove_authority_instruction(
-            self.swig_account,
-            self.payer,
-            self.role_id,
-            authority_to_remove_id,
-            current_slot,
-        )
+        self.remove_authority_with_rent_claimer(authority_to_remove_id, current_slot, None)
+    }
+
+    pub fn remove_authority_with_rent_claimer(
+        &mut self,
+        authority_to_remove_id: u32,
+        current_slot: Option<u64>,
+        rent_claimer: Option<Pubkey>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.client_role
+            .remove_authority_instruction_with_rent_claimer(
+                self.swig_account,
+                AuthorityRentAccounts {
+                    payer: self.payer,
+                    rent_claimer,
+                },
+                self.role_id,
+                authority_to_remove_id,
+                current_slot,
+            )
     }
 
     /// Creates instructions to replace an existing authority with a new one
@@ -227,14 +241,34 @@ impl SwigInstructionBuilder {
         current_slot: Option<u64>,
         update_data: UpdateAuthorityData,
     ) -> Result<Vec<Instruction>, SwigError> {
-        let update_authority_instructions = self.client_role.update_authority_instruction(
-            self.swig_account,
-            self.payer,
-            self.role_id,
+        self.update_authority_with_rent_claimer(
             authority_to_replace_id,
-            update_data.to_interface_data(),
             current_slot,
-        )?;
+            update_data,
+            None,
+        )
+    }
+
+    pub fn update_authority_with_rent_claimer(
+        &mut self,
+        authority_to_replace_id: u32,
+        current_slot: Option<u64>,
+        update_data: UpdateAuthorityData,
+        rent_claimer: Option<Pubkey>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let update_authority_instructions = self
+            .client_role
+            .update_authority_instruction_with_rent_claimer(
+                self.swig_account,
+                AuthorityRentAccounts {
+                    payer: self.payer,
+                    rent_claimer,
+                },
+                self.role_id,
+                authority_to_replace_id,
+                update_data.to_interface_data(),
+                current_slot,
+            )?;
 
         Ok(update_authority_instructions)
     }

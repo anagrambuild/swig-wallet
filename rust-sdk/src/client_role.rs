@@ -1,11 +1,11 @@
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
-    AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateSessionInstruction,
-    CreateSubAccountInstruction, CreateSubAccountV2Instruction, RemoveAuthorityInstruction,
-    SetRentClaimerV1Instruction, SignV2Instruction, SubAccountSignInstruction,
-    SubAccountSignV2Instruction, ToggleSubAccountInstruction, ToggleSubAccountV2Instruction,
-    UpdateAuthorityData, UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,
-    WithdrawFromSubAccountV2Instruction,
+    AddAuthorityInstruction, AuthorityConfig, AuthorityRentAccounts, ClientAction,
+    CreateSessionInstruction, CreateSubAccountInstruction, CreateSubAccountV2Instruction,
+    RemoveAuthorityInstruction, SetRentClaimerV1Instruction, SignV2Instruction,
+    SubAccountSignInstruction, SubAccountSignV2Instruction, ToggleSubAccountInstruction,
+    ToggleSubAccountV2Instruction, UpdateAuthorityData, UpdateAuthorityInstruction,
+    WithdrawFromSubAccountInstruction, WithdrawFromSubAccountV2Instruction,
 };
 use swig_state::{
     authority::{
@@ -42,6 +42,31 @@ pub trait ClientRole {
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError>;
 
+    fn remove_authority_instruction_with_rent_claimer(
+        &self,
+        swig_account: Pubkey,
+        payer: AuthorityRentAccounts,
+        role_id: u32,
+        authority_to_remove_id: u32,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        if payer
+            .rent_claimer
+            .is_some_and(|claimer| claimer != payer.payer)
+        {
+            return Err(SwigError::InterfaceError(
+                "Client role does not support a separate rent claimer".to_owned(),
+            ));
+        }
+        self.remove_authority_instruction(
+            swig_account,
+            payer.payer,
+            role_id,
+            authority_to_remove_id,
+            current_slot,
+        )
+    }
+
     /// Creates an update authority instruction
     fn update_authority_instruction(
         &self,
@@ -52,6 +77,33 @@ pub trait ClientRole {
         update_data: UpdateAuthorityData,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError>;
+
+    fn update_authority_instruction_with_rent_claimer(
+        &self,
+        swig_account: Pubkey,
+        payer: AuthorityRentAccounts,
+        role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        if payer
+            .rent_claimer
+            .is_some_and(|claimer| claimer != payer.payer)
+        {
+            return Err(SwigError::InterfaceError(
+                "Client role does not support a separate rent claimer".to_owned(),
+            ));
+        }
+        self.update_authority_instruction(
+            swig_account,
+            payer.payer,
+            role_id,
+            authority_to_update_id,
+            update_data,
+            current_slot,
+        )
+    }
 
     /// Creates a create session instruction
     fn create_session_instruction(
@@ -295,6 +347,23 @@ impl ClientRole for Ed25519ClientRole {
         payer: Pubkey,
         role_id: u32,
         authority_to_remove_id: u32,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.remove_authority_instruction_with_rent_claimer(
+            swig_account,
+            payer.into(),
+            role_id,
+            authority_to_remove_id,
+            current_slot,
+        )
+    }
+
+    fn remove_authority_instruction_with_rent_claimer(
+        &self,
+        swig_account: Pubkey,
+        payer: AuthorityRentAccounts,
+        role_id: u32,
+        authority_to_remove_id: u32,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         Ok(vec![
@@ -312,6 +381,25 @@ impl ClientRole for Ed25519ClientRole {
         &self,
         swig_account: Pubkey,
         payer: Pubkey,
+        role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.update_authority_instruction_with_rent_claimer(
+            swig_account,
+            payer.into(),
+            role_id,
+            authority_to_update_id,
+            update_data,
+            current_slot,
+        )
+    }
+
+    fn update_authority_instruction_with_rent_claimer(
+        &self,
+        swig_account: Pubkey,
+        payer: AuthorityRentAccounts,
         role_id: u32,
         authority_to_update_id: u32,
         update_data: UpdateAuthorityData,
@@ -736,6 +824,23 @@ impl ClientRole for Secp256k1ClientRole {
         authority_to_remove_id: u32,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
+        self.remove_authority_instruction_with_rent_claimer(
+            swig_account,
+            payer.into(),
+            role_id,
+            authority_to_remove_id,
+            current_slot,
+        )
+    }
+
+    fn remove_authority_instruction_with_rent_claimer(
+        &self,
+        swig_account: Pubkey,
+        payer: AuthorityRentAccounts,
+        role_id: u32,
+        authority_to_remove_id: u32,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
         let new_odometer = self.odometer.wrapping_add(1);
 
@@ -756,6 +861,25 @@ impl ClientRole for Secp256k1ClientRole {
         &self,
         swig_account: Pubkey,
         payer: Pubkey,
+        role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.update_authority_instruction_with_rent_claimer(
+            swig_account,
+            payer.into(),
+            role_id,
+            authority_to_update_id,
+            update_data,
+            current_slot,
+        )
+    }
+
+    fn update_authority_instruction_with_rent_claimer(
+        &self,
+        swig_account: Pubkey,
+        payer: AuthorityRentAccounts,
         role_id: u32,
         authority_to_update_id: u32,
         update_data: UpdateAuthorityData,
@@ -1262,6 +1386,23 @@ impl ClientRole for Secp256r1ClientRole {
         authority_to_remove_id: u32,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
+        self.remove_authority_instruction_with_rent_claimer(
+            swig_account,
+            payer.into(),
+            role_id,
+            authority_to_remove_id,
+            current_slot,
+        )
+    }
+
+    fn remove_authority_instruction_with_rent_claimer(
+        &self,
+        swig_account: Pubkey,
+        payer: AuthorityRentAccounts,
+        role_id: u32,
+        authority_to_remove_id: u32,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
         let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
         let new_odometer = self.odometer.wrapping_add(1);
 
@@ -1283,6 +1424,25 @@ impl ClientRole for Secp256r1ClientRole {
         &self,
         swig_account: Pubkey,
         payer: Pubkey,
+        role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.update_authority_instruction_with_rent_claimer(
+            swig_account,
+            payer.into(),
+            role_id,
+            authority_to_update_id,
+            update_data,
+            current_slot,
+        )
+    }
+
+    fn update_authority_instruction_with_rent_claimer(
+        &self,
+        swig_account: Pubkey,
+        payer: AuthorityRentAccounts,
         role_id: u32,
         authority_to_update_id: u32,
         update_data: UpdateAuthorityData,
@@ -1759,6 +1919,23 @@ impl ClientRole for Ed25519SessionClientRole {
         payer: Pubkey,
         role_id: u32,
         authority_to_remove_id: u32,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.remove_authority_instruction_with_rent_claimer(
+            swig_account,
+            payer.into(),
+            role_id,
+            authority_to_remove_id,
+            current_slot,
+        )
+    }
+
+    fn remove_authority_instruction_with_rent_claimer(
+        &self,
+        swig_account: Pubkey,
+        payer: AuthorityRentAccounts,
+        role_id: u32,
+        authority_to_remove_id: u32,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         // Session authorities sign as Ed25519 with the session_key
@@ -1779,6 +1956,25 @@ impl ClientRole for Ed25519SessionClientRole {
         &self,
         swig_account: Pubkey,
         payer: Pubkey,
+        role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.update_authority_instruction_with_rent_claimer(
+            swig_account,
+            payer.into(),
+            role_id,
+            authority_to_update_id,
+            update_data,
+            current_slot,
+        )
+    }
+
+    fn update_authority_instruction_with_rent_claimer(
+        &self,
+        swig_account: Pubkey,
+        payer: AuthorityRentAccounts,
         role_id: u32,
         authority_to_update_id: u32,
         update_data: UpdateAuthorityData,
@@ -2223,6 +2419,23 @@ impl ClientRole for Secp256k1SessionClientRole {
         payer: Pubkey,
         role_id: u32,
         authority_to_remove_id: u32,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.remove_authority_instruction_with_rent_claimer(
+            swig_account,
+            payer.into(),
+            role_id,
+            authority_to_remove_id,
+            current_slot,
+        )
+    }
+
+    fn remove_authority_instruction_with_rent_claimer(
+        &self,
+        swig_account: Pubkey,
+        payer: AuthorityRentAccounts,
+        role_id: u32,
+        authority_to_remove_id: u32,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         // Session authorities sign as Ed25519 with the session_key
@@ -2243,6 +2456,25 @@ impl ClientRole for Secp256k1SessionClientRole {
         &self,
         swig_account: Pubkey,
         payer: Pubkey,
+        role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.update_authority_instruction_with_rent_claimer(
+            swig_account,
+            payer.into(),
+            role_id,
+            authority_to_update_id,
+            update_data,
+            current_slot,
+        )
+    }
+
+    fn update_authority_instruction_with_rent_claimer(
+        &self,
+        swig_account: Pubkey,
+        payer: AuthorityRentAccounts,
         role_id: u32,
         authority_to_update_id: u32,
         update_data: UpdateAuthorityData,
@@ -2702,6 +2934,23 @@ impl ClientRole for Secp256r1SessionClientRole {
         payer: Pubkey,
         role_id: u32,
         authority_to_remove_id: u32,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.remove_authority_instruction_with_rent_claimer(
+            swig_account,
+            payer.into(),
+            role_id,
+            authority_to_remove_id,
+            current_slot,
+        )
+    }
+
+    fn remove_authority_instruction_with_rent_claimer(
+        &self,
+        swig_account: Pubkey,
+        payer: AuthorityRentAccounts,
+        role_id: u32,
+        authority_to_remove_id: u32,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         // Session authorities sign as Ed25519 with the session_key
@@ -2722,6 +2971,25 @@ impl ClientRole for Secp256r1SessionClientRole {
         &self,
         swig_account: Pubkey,
         payer: Pubkey,
+        role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.update_authority_instruction_with_rent_claimer(
+            swig_account,
+            payer.into(),
+            role_id,
+            authority_to_update_id,
+            update_data,
+            current_slot,
+        )
+    }
+
+    fn update_authority_instruction_with_rent_claimer(
+        &self,
+        swig_account: Pubkey,
+        payer: AuthorityRentAccounts,
         role_id: u32,
         authority_to_update_id: u32,
         update_data: UpdateAuthorityData,
@@ -3287,6 +3555,25 @@ where
         role_id: u32,
         authority_to_update_id: u32,
         update_data: UpdateAuthorityData,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.update_authority_instruction_with_rent_claimer(
+            swig_account,
+            payer.into(),
+            role_id,
+            authority_to_update_id,
+            update_data,
+            current_slot,
+        )
+    }
+
+    fn update_authority_instruction_with_rent_claimer(
+        &self,
+        swig_account: Pubkey,
+        payer: AuthorityRentAccounts,
+        role_id: u32,
+        authority_to_update_id: u32,
+        update_data: UpdateAuthorityData,
         _current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
         let preceding_instruction = (self.preceding_instruction_fn)();
@@ -3306,6 +3593,23 @@ where
         &self,
         swig_account: Pubkey,
         payer: Pubkey,
+        role_id: u32,
+        authority_to_remove_id: u32,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        self.remove_authority_instruction_with_rent_claimer(
+            swig_account,
+            payer.into(),
+            role_id,
+            authority_to_remove_id,
+            current_slot,
+        )
+    }
+
+    fn remove_authority_instruction_with_rent_claimer(
+        &self,
+        swig_account: Pubkey,
+        payer: AuthorityRentAccounts,
         role_id: u32,
         authority_to_remove_id: u32,
         _current_slot: Option<u64>,

@@ -129,9 +129,9 @@ pub(crate) fn adjust_active_count(
         .ok_or(ProgramError::InvalidAccountData)?;
     swig_account.resize(new_len)?;
 
-    let required_lamports = Rent::get()?.minimum_balance(new_len);
     let current_lamports = swig_account.lamports();
-    let additional_lamports = required_lamports.saturating_sub(current_lamports);
+    let additional_lamports =
+        crate::util::rent::growth_cost(&Rent::get()?, current_lamports, old_len, new_len);
     if additional_lamports > 0 {
         Transfer {
             from: payer,
