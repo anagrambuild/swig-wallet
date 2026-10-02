@@ -5,11 +5,12 @@ mod common;
 use common::*;
 use solana_sdk::{
     account::Account,
+    instruction::{AccountMeta, InstructionError},
     message::{v0, VersionedMessage},
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    transaction::VersionedTransaction,
+    transaction::{TransactionError, VersionedTransaction},
 };
 use spl_token_2022_interface::{
     extension::{BaseStateWithExtensionsMut, StateWithExtensionsMut},
@@ -17,8 +18,10 @@ use spl_token_2022_interface::{
 };
 use swig_interface::{AuthorityConfig, ClientAction, SignV2Instruction};
 use swig_state::{
-    action::program_curated::ProgramCurated, authority::AuthorityType,
+    action::{program_curated::ProgramCurated, sol_limit::SolLimit},
+    authority::AuthorityType,
     swig::swig_wallet_address_seeds,
+    SwigAuthenticateError,
 };
 
 #[test]
@@ -57,6 +60,18 @@ fn curated_permission_admits_real_token2022_and_stake_cpis() {
     )
     .unwrap();
 
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: delegate.pubkey().as_ref(),
+        },
+        vec![ClientAction::SolLimit(SolLimit { amount: 0 })],
+    )
+    .unwrap();
+
     let mint_key = Pubkey::new_unique();
     let mut mint_data = vec![0; 82];
     let mut mint = StateWithExtensionsMut::<Mint>::unpack_uninitialized(&mut mint_data).unwrap();
@@ -79,7 +94,7 @@ fn curated_permission_admits_real_token2022_and_stake_cpis() {
         )
         .unwrap();
 
-    for cpi in [
+    for mut cpi in [
         spl_token_2022_interface::instruction::get_account_data_size(
             &spl_token_2022_interface::ID,
             &mint_key,
@@ -89,6 +104,38 @@ fn curated_permission_admits_real_token2022_and_stake_cpis() {
         solana_stake_interface::instruction::get_minimum_delegation(),
     ] {
         let invoked_program = cpi.program_id;
+        // Including the wallet activates SignV2's program-permission boundary.
+        // Both queries tolerate this extra read-only account and change no funds.
+        cpi.accounts.push(AccountMeta::new_readonly(wallet, true));
+        let before_config = context.svm.get_account(&swig).unwrap();
+        let before_wallet = context.svm.get_account(&wallet).unwrap();
+        let denied =
+            SignV2Instruction::new_ed25519(swig, wallet, delegate.pubkey(), cpi.clone(), 2)
+                .unwrap();
+        let message = v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[denied],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap();
+        let tx = VersionedTransaction::try_new(
+            VersionedMessage::V0(message),
+            &[&context.default_payer, &delegate],
+        )
+        .unwrap();
+        let error = context.svm.send_transaction(tx).unwrap_err();
+        assert_eq!(
+            error.err,
+            TransactionError::InstructionError(
+                0,
+                InstructionError::Custom(
+                    SwigAuthenticateError::PermissionDeniedMissingPermission as u32
+                )
+            )
+        );
+        assert_eq!(context.svm.get_account(&swig).unwrap(), before_config);
+        assert_eq!(context.svm.get_account(&wallet).unwrap(), before_wallet);
         let instruction =
             SignV2Instruction::new_ed25519(swig, wallet, delegate.pubkey(), cpi, 1).unwrap();
         let message = v0::Message::try_compile(
