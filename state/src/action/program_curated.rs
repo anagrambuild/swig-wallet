@@ -12,26 +12,10 @@ use crate::{IntoBytes, Transmutable, TransmutableMut};
 
 /// Curated program IDs that are commonly used and considered safe
 const CURATED_PROGRAMS: &[[u8; 32]] = &[
-    // System Program (11111111111111111111111111111111)
-    [
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0,
-    ],
-    // SPL Token Program (TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA)
-    [
-        6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133,
-        237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
-    ],
-    // SPL Token 2022 Program (TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb)
-    [
-        6, 221, 246, 225, 238, 117, 143, 222, 138, 60, 137, 215, 166, 35, 250, 133, 224, 81, 209,
-        114, 91, 157, 99, 29, 94, 145, 213, 104, 233, 4, 16, 238,
-    ],
-    // Staking Program (Stake11111111111111111111111111111111111111)
-    [
-        6, 161, 216, 23, 145, 55, 84, 42, 152, 52, 55, 189, 254, 42, 122, 178, 85, 86, 165, 18, 7,
-        142, 233, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ],
+    pinocchio_pubkey::pubkey!("11111111111111111111111111111111"),
+    pinocchio_pubkey::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+    pinocchio_pubkey::pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"),
+    pinocchio_pubkey::pubkey!("Stake11111111111111111111111111111111111111"),
 ];
 
 /// Represents permission to interact with curated programs.
