@@ -987,10 +987,15 @@ pub fn update_authority_v1(
 
         ctx.accounts.swig.resize(aligned_size)?;
 
-        let cost = Rent::get()?.minimum_balance(aligned_size);
+        let rent = Rent::get()?;
+        let cost = rent.minimum_balance(aligned_size);
         let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
 
-        let additional_cost = current_lamports.saturating_sub(cost);
+        // Refund only the reserve released by shrinking, preserving wallet SOL.
+        let additional_cost = rent
+            .minimum_balance(account_len)
+            .saturating_sub(cost)
+            .min(current_lamports.saturating_sub(cost));
 
         if additional_cost > 0 {
             unsafe {
