@@ -132,8 +132,7 @@ pub fn close_swig_v1(
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
 
-    // The active-child close guard applies only to migrated V2 Swigs. V1
-    // parents retain their legacy close behavior and are not parsed here.
+    // Retain either parent version while a live child still depends on it.
     if active_count_for_close(swig_account_data)? != 0 {
         return Err(SwigError::ActiveSubAccountsRemain.into());
     }
