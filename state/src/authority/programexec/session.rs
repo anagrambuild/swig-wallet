@@ -29,6 +29,8 @@ pub struct CreateProgramExecSessionAuthority {
     pub session_key: [u8; 32],
     /// Maximum duration a session can be valid for
     pub max_session_length: u64,
+    /// Reserved for future creation fields; initialized to zero.
+    _reserved: [u8; 8],
 }
 
 impl CreateProgramExecSessionAuthority {
@@ -54,12 +56,13 @@ impl CreateProgramExecSessionAuthority {
             _padding: [0; 7],
             session_key,
             max_session_length,
+            _reserved: [0; 8],
         }
     }
 }
 
 impl Transmutable for CreateProgramExecSessionAuthority {
-    const LEN: usize = core::mem::size_of::<ProgramExecSessionAuthority>();
+    const LEN: usize = core::mem::size_of::<Self>();
 }
 
 impl IntoBytes for CreateProgramExecSessionAuthority {
@@ -142,12 +145,10 @@ impl Authority for ProgramExecSessionAuthority {
     const SESSION_BASED: bool = true;
 
     fn set_into_bytes(create_data: &[u8], bytes: &mut [u8]) -> Result<(), ProgramError> {
-        let create = unsafe { CreateProgramExecSessionAuthority::load_unchecked(create_data)? };
-        let authority = unsafe { ProgramExecSessionAuthority::load_mut_unchecked(bytes)? };
-
-        if create_data.len() != Self::LEN {
+        if create_data.len() != CreateProgramExecSessionAuthority::LEN || bytes.len() != Self::LEN {
             return Err(SwigStateError::InvalidRoleData.into());
         }
+        let create = unsafe { CreateProgramExecSessionAuthority::load_unchecked(create_data)? };
 
         let prefix_len = create_data[32] as usize;
         if prefix_len > MAX_INSTRUCTION_PREFIX_LEN {
@@ -155,6 +156,7 @@ impl Authority for ProgramExecSessionAuthority {
         }
         let create_data_program_id = &create_data[..32];
         assert_program_exec_cant_be_swig(create_data_program_id)?;
+        let authority = unsafe { ProgramExecSessionAuthority::load_mut_unchecked(bytes)? };
         authority.program_id = create.program_id;
         authority.instruction_prefix = create.instruction_prefix;
         authority.instruction_prefix_len = create.instruction_prefix_len;
