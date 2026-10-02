@@ -228,7 +228,8 @@ impl<'a> SignV2<'a> {
 /// * `all_accounts` - All accounts involved in the transaction
 /// * `data` - Raw signing instruction data
 /// * `account_classifiers` - Classifications for involved accounts
-/// * `account_snapshots` - Uninitialized integrity hashes owned by the dispatch frame
+/// * `account_snapshots` - Uninitialized integrity hashes owned by the dispatch
+///   frame
 ///
 /// # Returns
 /// * `ProgramResult` - Success or error status
@@ -640,8 +641,8 @@ pub fn sign_v2(
                 // 1. Verify writable Swig account data/owner did not change unexpectedly.
                 // 2. Verify the Swig wallet PDA remains rent-exempt after CPIs.
                 // 3. If SOL was spent, charge a general SOL limit when present.
-                // 4. If any SOL destination limits exist, every actual debit must be
-                //    parsed and charged to a matching destination limit.
+                // 4. If any SOL destination limits exist, every actual debit must be parsed and
+                //    charged to a matching destination limit.
                 // 5. If SOL was spent but neither a general nor destination limit applies,
                 //    reject the instruction.
                 let account_info = unsafe { all_accounts.get_unchecked(index) };
@@ -1030,8 +1031,14 @@ fn wallet_shape_can_change(instruction: &swig_compact_instructions::InstructionH
         return discriminator != SYSTEM_TRANSFER_DISCRIMINATOR
             && discriminator != SYSTEM_TRANSFER_WITH_SEED_DISCRIMINATOR;
     }
-    *instruction.program_id != SPL_TOKEN_ID && *instruction.program_id != SPL_TOKEN_2022_ID
+    // Token-2022 can invoke transfer hooks with additional wallet accounts.
+    // Its immediate program ID cannot prove that owner/data remain unchanged.
+    *instruction.program_id != SPL_TOKEN_ID
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/sign_v2_wallet_shape.rs"]
+mod wallet_shape_tests;
 
 fn reject_wallet_address_shape_mutation(
     instruction: &swig_compact_instructions::InstructionHolder,
