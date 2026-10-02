@@ -16,7 +16,7 @@ use swig_state::{
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::Swig,
-    tail::{active_sub_account_count, SavedTail},
+    tail::{active_sub_account_count, rent_claimer, SavedTail},
     Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut,
 };
 
@@ -729,6 +729,7 @@ pub fn update_authority_v1(
     let mut account_len: usize;
     let (
         saved_tail,
+        refund_destination,
         role_count,
         current_roles_len,
         current_actions_size,
@@ -856,6 +857,19 @@ pub fn update_authority_v1(
             },
         };
 
+        let refund_destination = if operation == AuthorityUpdateOperation::AddActions
+            || (operation == AuthorityUpdateOperation::ReplaceAll && prealloc_size_diff >= 0)
+        {
+            ctx.accounts.payer
+        } else {
+            crate::util::rent::refund_destination(
+                rent_claimer::read_strict(parts.tail)?,
+                ctx.accounts.swig,
+                ctx.accounts.payer,
+                all_accounts,
+            )?
+        };
+
         // V1 child metadata lives inside its role action. Until the child close
         // path tombstones that action, do not allow update operations that can
         // replace or remove it. AddActions is structurally append-only and safe.
@@ -869,6 +883,7 @@ pub fn update_authority_v1(
 
         (
             saved_tail,
+            refund_destination,
             swig.roles,
             roles_len,
             current_actions_size,
@@ -1011,8 +1026,10 @@ pub fn update_authority_v1(
             unsafe {
                 *ctx.accounts.swig.borrow_mut_lamports_unchecked() =
                     current_lamports - additional_cost;
-                *ctx.accounts.payer.borrow_mut_lamports_unchecked() =
-                    ctx.accounts.payer.lamports() + additional_cost;
+                *refund_destination.borrow_mut_lamports_unchecked() = refund_destination
+                    .lamports()
+                    .checked_add(additional_cost)
+                    .ok_or(ProgramError::ArithmeticOverflow)?;
             };
         }
     }

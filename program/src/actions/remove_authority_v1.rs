@@ -13,7 +13,7 @@ use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
     swig::{Swig, SwigBuilder},
-    tail::{active_sub_account_count, SavedTail},
+    tail::{active_sub_account_count, rent_claimer, SavedTail},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -159,7 +159,7 @@ pub fn remove_authority_v1(
     let swig_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
     // All validation and processing as a closure to avoid borrowing
     // swig_account_data for too long
-    let (saved_tail, removed) = {
+    let (saved_tail, removed, refund_destination) = {
         if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
@@ -204,6 +204,13 @@ pub fn remove_authority_v1(
             }
         }
 
+        let refund_destination = crate::util::rent::refund_destination(
+            rent_claimer::read_strict(parts.tail)?,
+            ctx.accounts.swig,
+            ctx.accounts.payer,
+            all_accounts,
+        )?;
+
         // Get the role to remove
         {
             let role_to_remove =
@@ -227,7 +234,7 @@ pub fn remove_authority_v1(
             .get(..removed.0)
             .ok_or(ProgramError::InvalidAccountData)?;
         ensure_admin_remains(remaining_roles, swig_builder.swig.roles)?;
-        (saved_tail, removed)
+        (saved_tail, removed, refund_destination)
     };
     // realloc the account
 
@@ -240,7 +247,10 @@ pub fn remove_authority_v1(
         .min(swig_lamports.saturating_sub(new_rent_lamports));
     unsafe {
         *ctx.accounts.swig.borrow_mut_lamports_unchecked() = swig_lamports - diff;
-        *ctx.accounts.payer.borrow_mut_lamports_unchecked() = ctx.accounts.payer.lamports() + diff;
+        *refund_destination.borrow_mut_lamports_unchecked() = refund_destination
+            .lamports()
+            .checked_add(diff)
+            .ok_or(ProgramError::ArithmeticOverflow)?;
     };
     ctx.accounts.swig.realloc(new_size, false)?;
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
