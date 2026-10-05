@@ -239,6 +239,33 @@ fn creation_rejects_foreign_owned_account_without_mutation() {
     assert_eq!(context.svm.get_account(&config).unwrap(), before);
 }
 
+/// An already created (live) Swig is program-owned and carries data, so a
+/// second creation attempt at the same address must be rejected without
+/// touching the existing wallet state.
+#[test]
+fn creation_rejects_recreation_of_live_swig_without_mutation() {
+    let (mut context, root) = creation_context();
+    let id = [48; 32];
+    let (config, bump, wallet, wallet_bump) = pdas_for(&id);
+
+    let ix = create_instruction(config, bump, wallet, wallet_bump, &root, id);
+    send(&mut context, &root, ix.clone()).unwrap();
+
+    let created = context.svm.get_account(&config).unwrap();
+    assert_eq!(created.owner, program_id());
+    let swig = SwigWithRoles::from_bytes(&created.data).unwrap();
+    assert_eq!(swig.state.roles, 1);
+
+    assert_eq!(
+        send(&mut context, &root, ix),
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(SwigError::OwnerMismatchSwigAccount as u32)
+        ))
+    );
+    assert_eq!(context.svm.get_account(&config).unwrap(), created);
+}
+
 /// A closed Swig remains owned by this program with a one-byte closed
 /// discriminator, so its address can never be re-created as a new wallet.
 #[test]
