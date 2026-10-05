@@ -84,7 +84,10 @@ fn create_instruction(
 fn creation_context() -> (SwigTestContext, Keypair) {
     let mut context = setup_test_context().unwrap();
     let root = Keypair::new();
-    context.svm.airdrop(&root.pubkey(), 100_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&root.pubkey(), 100_000_000_000)
+        .unwrap();
     (context, root)
 }
 
