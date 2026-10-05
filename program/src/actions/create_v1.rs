@@ -9,7 +9,9 @@ use pinocchio::{
     ProgramResult,
 };
 use pinocchio_system::instructions::{Allocate, Assign, Transfer};
-use swig_assertions::{check_self_pda, check_system_owner, check_zero_data, find_self_pda};
+use swig_assertions::{
+    check_self_pda, check_system_owner, check_writable_signer, check_zero_data, find_self_pda,
+};
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority, ActionLoader, Actionable},
     authority::{authority_type_to_length, AuthorityType},
@@ -146,6 +148,11 @@ impl<'a> CreateV1<'a> {
 /// * `ProgramResult` - Success or error status
 #[inline(always)]
 pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult {
+    // The payer must always be a writable signer. When both PDAs are already
+    // funded to rent exemption, every system CPI here either is skipped or only
+    // needs the Swig PDA's signature, so nothing else enforces the payer's
+    // flags. The account context metadata alone is not validated at runtime.
+    check_writable_signer(ctx.accounts.payer, SwigError::PayerMustBeWritableSigner)?;
     check_system_owner(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     check_zero_data(ctx.accounts.swig, SwigError::AccountNotEmptySwigAccount)?;
 

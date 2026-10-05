@@ -50,6 +50,29 @@ fn send(
     })
 }
 
+/// Sends with only the fee payer's signature, for instructions whose account
+/// list marks the authority/payer as a non-signer.
+fn send_without_payer_signature(
+    context: &mut SwigTestContext,
+    ix: Instruction,
+) -> Result<(), TransactionError> {
+    context.svm.expire_blockhash();
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[ix],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
+    context.svm.send_transaction(tx).map(|_| ()).map_err(|e| {
+        eprintln!("{}", e.meta.pretty_logs());
+        e.err
+    })
+}
+
 fn pdas_for(id: &[u8; 32]) -> (Pubkey, u8, Pubkey, u8) {
     let (config, bump) = Pubkey::find_program_address(&swig_account_seeds(id), &program_id());
     let (wallet, wallet_bump) =
@@ -89,6 +112,92 @@ fn creation_context() -> (SwigTestContext, Keypair) {
         .airdrop(&root.pubkey(), 100_000_000_000)
         .unwrap();
     (context, root)
+}
+
+/// Rewrites the payer's account metas to simulate a client that omits the
+/// payer's signer and/or writable flags.
+fn with_payer_flags(ix: &Instruction, payer: &Pubkey, writable: bool, signer: bool) -> Instruction {
+    let mut ix = ix.clone();
+    for meta in ix.accounts.iter_mut() {
+        if meta.pubkey == *payer {
+            meta.is_writable = writable;
+            meta.is_signer = signer;
+        }
+    }
+    ix
+}
+
+/// Fully pre-funds both the config and the wallet-address PDA so creation
+/// performs no rent top-up and no system CPI needs the payer's signature.
+fn fully_prefund(context: &mut SwigTestContext, config: &Pubkey, wallet: &Pubkey) {
+    context.svm.airdrop(config, 1_000_000_000).unwrap();
+    context
+        .svm
+        .airdrop(wallet, context.svm.minimum_balance_for_rent_exemption(0))
+        .unwrap();
+}
+
+fn assert_payer_flags_rejected(
+    context: &mut SwigTestContext,
+    authority: &Keypair,
+    ix: Instruction,
+    payer_signs: bool,
+    config: &Pubkey,
+    wallet: &Pubkey,
+) {
+    let before_config = context.svm.get_account(config).unwrap();
+    let before_wallet = context.svm.get_account(wallet).unwrap();
+    let result = if payer_signs {
+        send(context, authority, ix)
+    } else {
+        send_without_payer_signature(context, ix)
+    };
+    assert_eq!(
+        result,
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(SwigError::PayerMustBeWritableSigner as u32)
+        ))
+    );
+    assert_eq!(context.svm.get_account(config).unwrap(), before_config);
+    assert_eq!(context.svm.get_account(wallet).unwrap(), before_wallet);
+}
+
+/// With both PDAs fully pre-funded, no system CPI needs the payer's
+/// signature, so a client could otherwise omit the signer flag and create a
+/// wallet without the payer ever consenting to (or being charged for) rent.
+#[test]
+fn creation_rejects_non_signer_payer_when_fully_prefunded() {
+    let (mut context, root) = creation_context();
+    let id = [49; 32];
+    let (config, bump, wallet, wallet_bump) = pdas_for(&id);
+    fully_prefund(&mut context, &config, &wallet);
+
+    let ix = with_payer_flags(
+        &create_instruction(config, bump, wallet, wallet_bump, &root, id),
+        &root.pubkey(),
+        true,
+        false,
+    );
+    assert_payer_flags_rejected(&mut context, &root, ix, false, &config, &wallet);
+}
+
+/// A signer payer that is not writable must be rejected as well: writable is
+/// required whenever a rent top-up becomes necessary.
+#[test]
+fn creation_rejects_read_only_payer_when_fully_prefunded() {
+    let (mut context, root) = creation_context();
+    let id = [50; 32];
+    let (config, bump, wallet, wallet_bump) = pdas_for(&id);
+    fully_prefund(&mut context, &config, &wallet);
+
+    let ix = with_payer_flags(
+        &create_instruction(config, bump, wallet, wallet_bump, &root, id),
+        &root.pubkey(),
+        false,
+        true,
+    );
+    assert_payer_flags_rejected(&mut context, &root, ix, true, &config, &wallet);
 }
 
 /// A config PDA pre-funded via a plain SOL transfer (empty data, system owned)
