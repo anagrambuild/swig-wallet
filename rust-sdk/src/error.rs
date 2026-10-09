@@ -2,6 +2,9 @@ use thiserror::Error;
 /// Errors that can occur when using the Swig wallet SDK
 #[derive(Error, Debug)]
 pub enum SwigError {
+    #[error(transparent)]
+    Reservation(#[from] swig_interface::reservation::ReservationError),
+
     /// Indicates that an invalid authority type was provided
     #[error("Invalid authority type provided")]
     InvalidAuthorityType,

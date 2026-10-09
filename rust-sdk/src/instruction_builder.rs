@@ -12,7 +12,7 @@ use swig_state::{
     },
     swig::{
         sub_account_seeds, sub_account_v2_asset_seeds, sub_account_v2_state_seeds,
-        swig_account_seeds, swig_wallet_address_seeds,
+        swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles,
     },
     IntoBytes,
 };
@@ -20,7 +20,7 @@ use swig_state::{
 use crate::{
     client_role::ClientRole,
     error::SwigError,
-    types::{Permission as ClientPermission, UpdateAuthorityData},
+    types::{CurrentRole, Permission as ClientPermission, UpdateAuthorityData},
 };
 
 /// A builder for creating and managing Swig wallet instructions.
@@ -39,6 +39,7 @@ pub struct SwigInstructionBuilder {
     payer: Pubkey,
     /// The role id of the wallet
     role_id: u32,
+    reserved_create: Option<Instruction>,
 }
 
 impl SwigInstructionBuilder {
@@ -69,7 +70,30 @@ impl SwigInstructionBuilder {
             client_role,
             payer,
             role_id,
+            reserved_create: None,
         }
+    }
+
+    /// Binds all subsequent operations to the reserved config address. The
+    /// role may be a current, rotated authority when reopening an active wallet.
+    pub fn from_reservation(
+        reservation: swig_interface::reservation::ReservationV1,
+        client_role: Box<dyn ClientRole>,
+        payer: Pubkey,
+        role_id: u32,
+    ) -> Result<Self, SwigError> {
+        if reservation.package_bytes.get(1..33) != Some(program_id().as_ref()) {
+            return Err(swig_interface::reservation::ReservationError::WrongProgram.into());
+        }
+        let (create, addresses) = reservation.create_instruction(payer)?;
+        Ok(Self {
+            swig_id: addresses.commitment,
+            swig_account: addresses.swig_address,
+            client_role,
+            payer,
+            role_id,
+            reserved_create: Some(create),
+        })
     }
 
     /// Creates an instruction to initialize a new Swig account
@@ -83,6 +107,11 @@ impl SwigInstructionBuilder {
     /// Returns a `Result` containing the `Instruction` for creating a Swig
     /// account or a `SwigError`
     pub fn build_swig_account(&self) -> Result<Instruction, SwigError> {
+        if let Some(create) = &self.reserved_create {
+            let mut create = create.clone();
+            create.accounts[1].pubkey = self.payer;
+            return Ok(create);
+        }
         let program_id = program_id();
         let (swig_account, swig_bump_seed) =
             Pubkey::find_program_address(&swig_account_seeds(&self.swig_id), &program_id);
@@ -376,6 +405,29 @@ impl SwigInstructionBuilder {
         self.role_id = role_id;
         self.client_role = client_role;
         Ok(())
+    }
+
+    /// Resolves the current signer from stored roles and synchronizes its replay
+    /// counter. Both legacy and reserved wallets use this initialization path.
+    pub(crate) fn load_current_role(&mut self, data: &[u8]) -> Result<CurrentRole, SwigError> {
+        let swig = SwigWithRoles::from_bytes(data).map_err(|_| SwigError::InvalidSwigData)?;
+        if swig.state.id != self.swig_id {
+            return Err(SwigError::InvalidSwigData);
+        }
+        let authority = self.client_role.authority_bytes()?;
+        let role_id = swig
+            .lookup_role_id(&authority)
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .ok_or(SwigError::AuthorityNotFound)?;
+        let role = swig
+            .get_role(role_id)
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .ok_or(SwigError::AuthorityNotFound)?;
+        if let Some(odometer) = role.authority.signature_odometer() {
+            self.client_role.update_odometer(odometer)?;
+        }
+        self.role_id = role_id;
+        Ok(CurrentRole::from_role(role_id, &role))
     }
 
     /// Updates the fee payer for the Swig instruction builder

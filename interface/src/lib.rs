@@ -1,5 +1,6 @@
 mod authority;
 mod replace_authority;
+pub mod reservation;
 
 pub use replace_authority::ReplaceAuthorityInstruction;
 use solana_sdk::{

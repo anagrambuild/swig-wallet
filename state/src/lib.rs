@@ -8,6 +8,7 @@ use pinocchio::program_error::ProgramError;
 pub mod action;
 pub mod authority;
 pub mod constants;
+pub mod reservation;
 pub mod role;
 pub mod sub_account_v2;
 pub mod swig;

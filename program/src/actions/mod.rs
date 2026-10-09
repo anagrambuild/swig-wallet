@@ -10,6 +10,7 @@ pub mod close_sub_account_v1;
 pub mod close_sub_account_v2;
 pub mod close_swig_v1;
 pub mod close_token_account_v1;
+pub mod create_reserved_v1;
 pub mod create_session_v1;
 pub mod create_sub_account_v1;
 pub mod create_sub_account_v2;
@@ -53,9 +54,9 @@ use crate::{
     instruction::{
         accounts::{
             AddAuthorityV1Accounts, CloseSubAccountV1Accounts, CloseSubAccountV2Accounts,
-            CloseSwigV1Accounts, CloseTokenAccountV1Accounts, CreateSessionV1Accounts,
-            CreateSubAccountV1Accounts, CreateSubAccountV2Accounts, CreateV1Accounts,
-            MigrateToWalletAddressV1Accounts, RemoveAuthorityV1Accounts,
+            CloseSwigV1Accounts, CloseTokenAccountV1Accounts, CreateReservedV1Accounts,
+            CreateSessionV1Accounts, CreateSubAccountV1Accounts, CreateSubAccountV2Accounts,
+            CreateV1Accounts, MigrateToWalletAddressV1Accounts, RemoveAuthorityV1Accounts,
             ReplaceAuthorityV1Accounts, SetRentClaimerV1Accounts, SignV2Accounts,
             SubAccountSignV1Accounts, SubAccountSignV2Accounts, ToggleSubAccountV1Accounts,
             ToggleSubAccountV2Accounts, TransferAssetsV1Accounts, UpdateAuthorityV1Accounts,
@@ -149,6 +150,10 @@ pub fn process_action(
     }
     match ix {
         SwigInstruction::CreateV1 => process_create_v1(accounts, data),
+        SwigInstruction::CreateReservedV1 => create_reserved_v1::create_reserved_v1(
+            CreateReservedV1Accounts::context(accounts)?,
+            data,
+        ),
         SwigInstruction::DeprecatedSignV1 => {
             msg!(
                 "DEPRECATED. Use SignV2 instead. https://build.onswig.com/examples/v2_features \
