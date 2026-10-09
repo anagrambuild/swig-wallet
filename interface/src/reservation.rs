@@ -4,7 +4,6 @@
 //! activate. Deriving an address does not check deployment support or create an
 //! account.
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use openssl::{
     bn::BigNumContext,
@@ -15,7 +14,6 @@ use solana_sdk::{hash::hashv, pubkey::Pubkey};
 use swig_state::{authority::AuthorityType, swig::swig_wallet_address_seeds};
 
 const DOMAIN: &[u8] = b"swig-reserved-v1";
-const JSON_TAG: &str = "swig-reservation-v1";
 const HEADER_LEN: usize = 67;
 
 #[derive(Debug, thiserror::Error)]
@@ -28,8 +26,6 @@ pub enum ReservationError {
     InvalidPackage,
     #[error("reservation program ID differs from the expected program")]
     WrongProgram,
-    #[error("invalid reservation JSON envelope or noncanonical base64url")]
-    InvalidEnvelope,
     #[error("could not derive a canonical reservation PDA")]
     AddressDerivationFailed,
     #[error("public key validation failed")]
@@ -106,6 +102,8 @@ impl ReservationV1 {
     /// Imports exactly one canonical package for a caller-selected program.
     /// Normalization is only for constructor input; serialized packages must
     /// already have the exact V1 lengths, authority tags, and compressed keys.
+    /// Compare the derived wallet address with the originally verified address
+    /// before accepting a restored package.
     pub fn from_bytes(bytes: &[u8], expected_program_id: Pubkey) -> Result<Self, ReservationError> {
         if !matches!(bytes.len(), 99 | 100) || bytes[0] != 1 {
             return Err(ReservationError::InvalidPackage);
@@ -158,30 +156,6 @@ impl ReservationV1 {
             wallet_address,
             wallet_bump,
         })
-    }
-
-    /// Exports the two-element JSON envelope; JSON formatting is never hashed.
-    pub fn to_json(&self) -> Result<String, ReservationError> {
-        serde_json::to_string(&(JSON_TAG, URL_SAFE_NO_PAD.encode(&self.package_bytes)))
-            .map_err(|_| ReservationError::InvalidEnvelope)
-    }
-
-    /// Imports the envelope, rejecting padding, alternate alphabets, and unused
-    /// nonzero base64 bits. Callers should compare the derived wallet address
-    /// with the address they originally verified before accepting a backup.
-    pub fn from_json(json: &str, expected_program_id: Pubkey) -> Result<Self, ReservationError> {
-        let (tag, encoded): (String, String) =
-            serde_json::from_str(json).map_err(|_| ReservationError::InvalidEnvelope)?;
-        if tag != JSON_TAG || !matches!(encoded.len(), 132 | 134) {
-            return Err(ReservationError::InvalidEnvelope);
-        }
-        let bytes = URL_SAFE_NO_PAD
-            .decode(&encoded)
-            .map_err(|_| ReservationError::InvalidEnvelope)?;
-        if URL_SAFE_NO_PAD.encode(&bytes) != encoded {
-            return Err(ReservationError::InvalidEnvelope);
-        }
-        Self::from_bytes(&bytes, expected_program_id)
     }
 }
 

@@ -1,4 +1,3 @@
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use openssl::{
     bn::BigNumContext,
     ec::{EcGroup, EcPoint, PointConversionForm},
@@ -51,12 +50,10 @@ fn design_vectors_match_bytes_commitments_and_canonical_addresses(
             ReservationV1::from_bytes(package.as_bytes(), PROGRAM)?,
             package
         );
-        let json = package.to_json()?;
         assert_eq!(
-            json.len(),
-            if vector.authority_type == 1 { 158 } else { 160 }
+            package.as_bytes().len(),
+            if vector.authority_type == 1 { 99 } else { 100 }
         );
-        assert_eq!(ReservationV1::from_json(&json, PROGRAM)?, package);
         let legacy =
             Pubkey::find_program_address(&swig_account_seeds(&addresses.commitment), &PROGRAM);
         assert_ne!(addresses.swig_address, legacy.0);
@@ -318,48 +315,5 @@ fn commitment_binds_program_salt_owner_and_type() -> Result<(), Box<dyn std::err
         k1.addresses()?.wallet_address,
         r1.addresses()?.wallet_address
     );
-    Ok(())
-}
-
-#[test]
-fn json_import_is_strict_but_formatting_does_not_change_the_package(
-) -> Result<(), Box<dyn std::error::Error>> {
-    let package = ReservationV1::new(PROGRAM, AuthorityType::Ed25519, &ED_KEY, Default::default())?;
-    let encoded = URL_SAFE_NO_PAD.encode(package.as_bytes());
-    let formatted = format!("[\n  \"\\u0073wig-reservation-v1\",\n  \"{encoded}\"\n]");
-    assert_eq!(ReservationV1::from_json(&formatted, PROGRAM)?, package);
-    for json in [
-        "null".to_owned(),
-        "[]".to_owned(),
-        "[1,2]".to_owned(),
-        format!("[\"swig-reservation-v1\",\"{encoded}\",0]"),
-        format!("[\"swig-reservation-v2\",\"{encoded}\"]"),
-        format!("[\"swig-reservation-v1\",\"{encoded}=\"]"),
-        format!("{{\"tag\":\"swig-reservation-v1\",\"data\":\"{encoded}\"}}"),
-        format!("[\"swig-reservation-v1\",\"{encoded}\"] true"),
-        format!("[\"swig-reservation-v1\",\"+{}\"]", &encoded[1..]),
-    ] {
-        assert!(matches!(
-            ReservationV1::from_json(&json, PROGRAM),
-            Err(ReservationError::InvalidEnvelope)
-        ));
-    }
-    assert!(matches!(
-        ReservationV1::from_json(&package.to_json()?, Pubkey::new_from_array([9; 32])),
-        Err(ReservationError::WrongProgram)
-    ));
-    // A 100-byte package has unused base64 bits in its last character.
-    let vectors: Vec<ReferenceVector> =
-        serde_json::from_str(include_str!("data/reservation-v1.json"))?;
-    for vector in vectors.into_iter().filter(|v| v.authority_type != 1) {
-        let mut encoded = URL_SAFE_NO_PAD.encode(hex::decode(vector.package_hex)?);
-        encoded.pop();
-        encoded.push('B');
-        let json = serde_json::to_string(&("swig-reservation-v1", encoded))?;
-        assert!(matches!(
-            ReservationV1::from_json(&json, PROGRAM),
-            Err(ReservationError::InvalidEnvelope)
-        ));
-    }
     Ok(())
 }

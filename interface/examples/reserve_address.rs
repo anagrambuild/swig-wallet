@@ -17,8 +17,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ReservationAddressOptions::default(),
     )?;
     let addresses = reservation.addresses()?;
-    let backup = reservation.to_json()?;
-    let restored = ReservationV1::from_json(&backup, program_id)?;
+    let backup = reservation.as_bytes().to_vec();
+    let restored = ReservationV1::from_bytes(&backup, program_id)?;
     if restored.addresses()?.wallet_address != addresses.wallet_address {
         return Err("restored reservation differs from the verified address".into());
     }
@@ -27,6 +27,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Proposed V1 address (activation is not implemented): {}",
         addresses.wallet_address
     );
-    println!("Activation package backup: {backup}");
+    println!("Activation package: {} bytes", backup.len());
     Ok(())
 }
