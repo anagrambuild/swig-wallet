@@ -364,4 +364,12 @@ pub enum SwigInstruction {
     #[account(5, writable, optional, name="rent_claimer_destination", desc="the configured rent claimer; omit when unset")]
     #[account(6, name="system_program", desc="the system program")]
     CloseSubAccountV2 = 23,
+
+    /// Activates a reserved wallet from its canonical binary package.
+    /// Data is opcode:u16 LE followed by the 99/100-byte package.
+    #[account(0, writable, name="swig", desc="the reserved config PDA")]
+    #[account(1, writable, signer, name="payer", desc="the external rent payer")]
+    #[account(2, writable, name="swig_wallet_address", desc="the deposit PDA")]
+    #[account(3, name="system_program", desc="the system program")]
+    CreateReservedV1 = 24,
 }

@@ -39,6 +39,7 @@ pub struct SwigInstructionBuilder {
     payer: Pubkey,
     /// The role id of the wallet
     role_id: u32,
+    reservation: Option<swig_interface::reservation::ReservationV1>,
 }
 
 impl SwigInstructionBuilder {
@@ -69,7 +70,30 @@ impl SwigInstructionBuilder {
             client_role,
             payer,
             role_id,
+            reservation: None,
         }
+    }
+
+    /// Binds all subsequent operations to the reserved config address. The
+    /// role may be a current, rotated authority when reopening an active wallet.
+    pub fn from_reservation(
+        reservation: swig_interface::reservation::ReservationV1,
+        client_role: Box<dyn ClientRole>,
+        payer: Pubkey,
+        role_id: u32,
+    ) -> Result<Self, SwigError> {
+        if reservation.package_bytes.get(1..33) != Some(program_id().as_ref()) {
+            return Err(swig_interface::reservation::ReservationError::WrongProgram.into());
+        }
+        let addresses = reservation.addresses()?;
+        Ok(Self {
+            swig_id: addresses.commitment,
+            swig_account: addresses.swig_address,
+            client_role,
+            payer,
+            role_id,
+            reservation: Some(reservation),
+        })
     }
 
     /// Creates an instruction to initialize a new Swig account
@@ -83,6 +107,9 @@ impl SwigInstructionBuilder {
     /// Returns a `Result` containing the `Instruction` for creating a Swig
     /// account or a `SwigError`
     pub fn build_swig_account(&self) -> Result<Instruction, SwigError> {
+        if let Some(reservation) = &self.reservation {
+            return Ok(reservation.create_instruction(self.payer)?);
+        }
         let program_id = program_id();
         let (swig_account, swig_bump_seed) =
             Pubkey::find_program_address(&swig_account_seeds(&self.swig_id), &program_id);

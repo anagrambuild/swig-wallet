@@ -210,6 +210,88 @@ impl<'c> SwigWallet<'c> {
         }
     }
 
+    /// Activates a reservation (or safely retries it) and opens the wallet
+    /// using its current authority. Only the external fee payer signs activation.
+    pub fn from_reservation(
+        reservation: swig_interface::reservation::ReservationV1,
+        mut client_role: Box<dyn ClientRole>,
+        fee_payer: &'c Keypair,
+        rpc_url: String,
+        authority_keypair: Option<&'c Keypair>,
+        #[cfg(all(feature = "rust_sdk_test", test))] mut litesvm: LiteSVM,
+    ) -> Result<Self, SwigError> {
+        if reservation.package_bytes.get(1..33) != Some(swig_interface::program_id().as_ref()) {
+            return Err(swig_interface::reservation::ReservationError::WrongProgram.into());
+        }
+        let addresses = reservation.addresses()?;
+        let rpc_client = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed());
+        let create = reservation.create_instruction(fee_payer.pubkey())?;
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let blockhash = rpc_client.get_latest_blockhash()?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let blockhash = litesvm.latest_blockhash();
+        let instructions = [
+            solana_compute_budget_interface::ComputeBudgetInstruction::set_compute_unit_limit(
+                600_000,
+            ),
+            create,
+        ];
+        let message = v0::Message::try_compile(&fee_payer.pubkey(), &instructions, &[], blockhash)?;
+        let transaction =
+            VersionedTransaction::try_new(VersionedMessage::V0(message), &[fee_payer])?;
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        rpc_client.send_and_confirm_transaction(&transaction)?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        litesvm.send_transaction(transaction).map_err(|error| {
+            SwigError::TransactionFailedWithLogs {
+                error: error.err.to_string(),
+                logs: error.meta.logs,
+            }
+        })?;
+
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let account = rpc_client.get_account(&addresses.swig_address)?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let account = litesvm
+            .get_account(&addresses.swig_address)
+            .ok_or(SwigError::SwigDataNotFound)?;
+        if account.owner != swig_interface::program_id() {
+            return Err(SwigError::InvalidSwigData);
+        }
+        let stored =
+            SwigWithRoles::from_bytes(&account.data).map_err(|_| SwigError::InvalidSwigData)?;
+        if stored.state.id != addresses.commitment {
+            return Err(SwigError::InvalidSwigData);
+        }
+        let role_id = stored
+            .lookup_role_id(&client_role.authority_bytes()?)
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .ok_or(SwigError::AuthorityNotFound)?;
+        let role = stored
+            .get_role(role_id)
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .ok_or(SwigError::AuthorityNotFound)?;
+        if let Some(odometer) = role.authority.signature_odometer() {
+            client_role.update_odometer(odometer)?;
+        }
+        let current_role = build_current_role(role_id, &role);
+        let instruction_builder = SwigInstructionBuilder::from_reservation(
+            reservation,
+            client_role,
+            fee_payer.pubkey(),
+            role_id,
+        )?;
+        Ok(Self {
+            instruction_builder,
+            rpc_client,
+            fee_payer,
+            authority_keypair,
+            current_role,
+            #[cfg(all(feature = "rust_sdk_test", test))]
+            litesvm,
+        })
+    }
+
     /// Adds a new authority to the wallet with specified permissions
     ///
     /// # Arguments

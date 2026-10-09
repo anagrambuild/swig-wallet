@@ -954,6 +954,48 @@
         "type": "u8",
         "value": 23
       }
+    },
+    {
+      "name": "CreateReservedV1",
+      "accounts": [
+        {
+          "name": "swig",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the reserved config PDA"
+          ]
+        },
+        {
+          "name": "payer",
+          "isMut": true,
+          "isSigner": true,
+          "docs": [
+            "the external rent payer"
+          ]
+        },
+        {
+          "name": "swigWalletAddress",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the deposit PDA"
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "the system program"
+          ]
+        }
+      ],
+      "args": [],
+      "discriminant": {
+        "type": "u8",
+        "value": 24
+      }
     }
   ],
   "metadata": {

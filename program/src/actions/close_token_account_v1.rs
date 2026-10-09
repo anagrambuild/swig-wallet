@@ -210,7 +210,10 @@ pub fn close_token_account_v1(
     let wallet_seeds =
         swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &wallet_bump_bytes);
     let swig_bump_bytes = [swig_bump];
-    let swig_seeds = swig_account_signer(&swig_id, &swig_bump_bytes);
+    let mut swig_seeds = swig_account_signer(&swig_id, &swig_bump_bytes);
+    swig_seeds[0] =
+        swig_state::swig::swig_config_seed_prefix(ctx.accounts.swig.key(), &swig_id, swig_bump)?
+            .into();
 
     let unrestricted_spend = has_all || has_all_but_manage;
     // Validate every source and consume bounded WSOL spend before the first CPI.

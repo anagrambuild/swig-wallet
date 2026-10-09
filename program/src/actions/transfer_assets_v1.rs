@@ -304,15 +304,12 @@ pub fn transfer_assets_v1(
         )?;
     }
 
-    // Create signer seeds for the swig account.
-    //
-    // The swig state PDA was derived with seeds [b"swig", swig.id, bump], so to
-    // sign as it via CPI we must reuse `swig.id` (the random 32-byte id stored
-    // in the account struct) — NOT the PDA's pubkey. Matches the convention in
-    // create_v1.rs:220 and close_token_account_v1.rs:197.
     let bump = [swig.bump];
     let swig_id = swig.id;
-    let swig_signer = swig_account_signer(&swig_id, &bump);
+    let mut swig_signer = swig_account_signer(&swig_id, &bump);
+    swig_signer[0] =
+        swig_state::swig::swig_config_seed_prefix(ctx.accounts.swig.key(), &swig_id, swig.bump)?
+            .into();
 
     // Transfer SOL from swig to swig wallet address
     let swig_lamports = ctx.accounts.swig.lamports();

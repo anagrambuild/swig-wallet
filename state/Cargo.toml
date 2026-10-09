@@ -12,6 +12,8 @@ pinocchio-pubkey = { version = "0.3" }
 swig-assertions = { path = "../assertions" }
 no-padding = { path = "../no-padding" }
 libsecp256k1 = { version = "0.7.2", default-features = false }
+solana-curve25519 = "3.1.11"
+p256 = { version = "0.13.2", default-features = false, features = ["arithmetic"] }
 
 [target.'cfg(not(feature = "static_syscalls"))'.dependencies]
 murmur3 = "0.5.2"

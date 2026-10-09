@@ -40,18 +40,21 @@ fn design_vectors_match_bytes_commitments_and_canonical_addresses(
         let key = hex::decode(vector.public_key_hex)?;
         let package = ReservationV1::new(PROGRAM, authority, &key, Default::default())?;
         let addresses = package.addresses()?;
-        assert_eq!(hex::encode(package.as_bytes()), vector.package_hex);
+        assert_eq!(
+            hex::encode(package.package_bytes.as_slice()),
+            vector.package_hex
+        );
         assert_eq!(hex::encode(addresses.commitment), vector.commitment_hex);
         assert_eq!(addresses.swig_address.to_string(), vector.config);
         assert_eq!(addresses.swig_bump, vector.config_bump);
         assert_eq!(addresses.wallet_address.to_string(), vector.deposit);
         assert_eq!(addresses.wallet_bump, vector.deposit_bump);
         assert_eq!(
-            ReservationV1::from_bytes(package.as_bytes(), PROGRAM)?,
+            ReservationV1::from_bytes(package.package_bytes.as_slice(), PROGRAM)?,
             package
         );
         assert_eq!(
-            package.as_bytes().len(),
+            package.package_bytes.as_slice().len(),
             if vector.authority_type == 1 { 99 } else { 100 }
         );
         let legacy =
@@ -74,7 +77,7 @@ fn account_indices_and_custom_salts_have_the_exact_mapping(
         )?;
         let mut salt = [0; 32];
         salt[28..].copy_from_slice(&index.to_le_bytes());
-        assert_eq!(&package.as_bytes()[33..65], &salt);
+        assert_eq!(&package.package_bytes.as_slice()[33..65], &salt);
         assert_eq!(
             package,
             ReservationV1::new(
@@ -101,9 +104,9 @@ fn account_indices_and_custom_salts_have_the_exact_mapping(
         &ED_KEY,
         ReservationAddressOptions::Salt(salt),
     )?;
-    assert_eq!(&package.as_bytes()[33..65], &salt);
+    assert_eq!(&package.package_bytes.as_slice()[33..65], &salt);
     assert_eq!(
-        ReservationV1::from_bytes(package.as_bytes(), PROGRAM)?,
+        ReservationV1::from_bytes(package.package_bytes.as_slice(), PROGRAM)?,
         package
     );
     Ok(())
@@ -138,7 +141,7 @@ fn sec1_encodings_normalize_to_the_same_package() -> Result<(), Box<dyn std::err
             );
         }
         // Imports must already be canonical, even when constructors accept SEC1.
-        let expanded = [&expected.as_bytes()[..67], &uncompressed].concat();
+        let expanded = [&expected.package_bytes.as_slice()[..67], &uncompressed].concat();
         assert!(matches!(
             ReservationV1::from_bytes(&expanded, PROGRAM),
             Err(ReservationError::InvalidPackage)
@@ -193,7 +196,9 @@ fn malformed_packages_are_rejected_at_the_encoding_boundary(
         // Parsing operates on bytes, without an alignment requirement.
         let unaligned = [&[0], bytes.as_slice()].concat();
         assert_eq!(
-            ReservationV1::from_bytes(&unaligned[1..], PROGRAM)?.as_bytes(),
+            ReservationV1::from_bytes(&unaligned[1..], PROGRAM)?
+                .package_bytes
+                .as_slice(),
             bytes
         );
     }
@@ -263,7 +268,7 @@ fn unsupported_owners_and_invalid_keys_are_rejected() -> Result<(), Box<dyn std:
             bytes.extend_from_slice(&key);
             assert!(matches!(
                 ReservationV1::from_bytes(&bytes, PROGRAM),
-                Err(ReservationError::InvalidPublicKey)
+                Err(ReservationError::InvalidPackage)
             ));
         }
     }
@@ -315,5 +320,51 @@ fn commitment_binds_program_salt_owner_and_type() -> Result<(), Box<dyn std::err
         k1.addresses()?.wallet_address,
         r1.addresses()?.wallet_address
     );
+    Ok(())
+}
+
+#[test]
+fn activation_builder_matches_idl_account_contract_and_validates_public_bytes(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let reservation =
+        ReservationV1::new(PROGRAM, AuthorityType::Ed25519, &ED_KEY, Default::default())?;
+    let payer = Pubkey::new_unique();
+    let ix = reservation.create_instruction(payer)?;
+    let a = reservation.addresses()?;
+    assert_eq!(ix.data[..2], 24u16.to_le_bytes());
+    assert_eq!(ix.data[2..], reservation.package_bytes);
+    assert_eq!(
+        ix.accounts.iter().map(|m| m.pubkey).collect::<Vec<_>>(),
+        vec![
+            a.swig_address,
+            payer,
+            a.wallet_address,
+            solana_system_interface::program::ID
+        ]
+    );
+    let idl: serde_json::Value = serde_json::from_str(include_str!("../../program/idl.json"))?;
+    let entry = idl["instructions"]
+        .as_array()
+        .ok_or("instructions missing")?
+        .iter()
+        .find(|i| i["name"] == "CreateReservedV1")
+        .ok_or("activation missing from IDL")?;
+    assert_eq!(entry["discriminant"]["value"], 24);
+    let accounts = entry["accounts"].as_array().ok_or("accounts missing")?;
+    assert_eq!(accounts.len(), ix.accounts.len());
+    for (idl, meta) in accounts.iter().zip(&ix.accounts) {
+        assert_eq!(idl["isMut"], meta.is_writable);
+        assert_eq!(idl["isSigner"], meta.is_signer);
+    }
+    let mut malformed = reservation;
+    malformed.package_bytes.push(0);
+    assert!(matches!(
+        malformed.create_instruction(payer),
+        Err(ReservationError::InvalidPackage)
+    ));
+    assert!(matches!(
+        malformed.addresses(),
+        Err(ReservationError::InvalidPackage)
+    ));
     Ok(())
 }

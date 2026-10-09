@@ -17,16 +17,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ReservationAddressOptions::default(),
     )?;
     let addresses = reservation.addresses()?;
-    let backup = reservation.as_bytes().to_vec();
+    let backup = reservation.package_bytes.clone();
     let restored = ReservationV1::from_bytes(&backup, program_id)?;
     if restored.addresses()?.wallet_address != addresses.wallet_address {
         return Err("restored reservation differs from the verified address".into());
     }
 
-    println!(
-        "Proposed V1 address (activation is not implemented): {}",
-        addresses.wallet_address
-    );
+    println!("Reserved wallet address: {}", addresses.wallet_address);
+    let payer = Pubkey::new_unique();
+    let create = restored.create_instruction(payer)?;
     println!("Activation package: {} bytes", backup.len());
+    println!(
+        "CreateReservedV1: {} instruction bytes, {} accounts; external payer signs",
+        create.data.len(),
+        create.accounts.len()
+    );
+    // Submit this instruction with a 600,000-unit compute budget, or use
+    // SwigWallet::from_reservation, which supplies the budget and transaction.
+
     Ok(())
 }
