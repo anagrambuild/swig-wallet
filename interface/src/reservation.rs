@@ -145,10 +145,15 @@ impl ReservationV1 {
         })
     }
 
-    /// Builds `CreateReservedV1`: only the external payer signs. The program
+    /// Builds `CreateReservedV1` and returns its validated addresses so callers
+    /// can open the wallet without repeating validation or PDA derivation.
+    /// Only the external payer signs. The program
     /// fixes role zero to this owner with `All`; callers cannot inject actions.
     /// Set a transaction compute budget of 600,000 units for P-256 validation.
-    pub fn create_instruction(&self, payer: Pubkey) -> Result<Instruction, ReservationError> {
+    pub fn create_instruction(
+        &self,
+        payer: Pubkey,
+    ) -> Result<(Instruction, ReservationAddresses), ReservationError> {
         let addresses = self.addresses()?;
         let program_id = Pubkey::new_from_array(
             self.package_bytes[1..33]
@@ -159,7 +164,7 @@ impl ReservationV1 {
             .to_le_bytes()
             .to_vec();
         data.extend_from_slice(&self.package_bytes);
-        Ok(Instruction {
+        let instruction = Instruction {
             program_id,
             accounts: vec![
                 AccountMeta::new(addresses.swig_address, false),
@@ -168,6 +173,7 @@ impl ReservationV1 {
                 AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             ],
             data,
-        })
+        };
+        Ok((instruction, addresses))
     }
 }

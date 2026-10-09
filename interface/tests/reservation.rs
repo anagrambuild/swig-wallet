@@ -329,8 +329,8 @@ fn activation_builder_matches_idl_account_contract_and_validates_public_bytes(
     let reservation =
         ReservationV1::new(PROGRAM, AuthorityType::Ed25519, &ED_KEY, Default::default())?;
     let payer = Pubkey::new_unique();
-    let ix = reservation.create_instruction(payer)?;
-    let a = reservation.addresses()?;
+    let (ix, a) = reservation.create_instruction(payer)?;
+    assert_eq!(a, reservation.addresses()?);
     assert_eq!(ix.data[..2], 24u16.to_le_bytes());
     assert_eq!(ix.data[2..], reservation.package_bytes);
     assert_eq!(

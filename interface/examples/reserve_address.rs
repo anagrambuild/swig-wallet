@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Reserved wallet address: {}", addresses.wallet_address);
     let payer = Pubkey::new_unique();
-    let create = restored.create_instruction(payer)?;
+    let (create, _) = restored.create_instruction(payer)?;
     println!("Activation package: {} bytes", backup.len());
     println!(
         "CreateReservedV1: {} instruction bytes, {} accounts; external payer signs",

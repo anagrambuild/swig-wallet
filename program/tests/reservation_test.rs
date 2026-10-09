@@ -96,7 +96,7 @@ fn reservation_activates_all_direct_owners_without_owner_signature() {
         )
         .unwrap();
         let addresses = reservation.addresses().unwrap();
-        let instruction = reservation
+        let (instruction, _) = reservation
             .create_instruction(context.default_payer.pubkey())
             .unwrap();
         assert_eq!(instruction.data[..2], 24u16.to_le_bytes());
@@ -172,7 +172,7 @@ fn reservation_preserves_prefunding_and_only_charges_rent_shortfall() {
                 .airdrop(&addresses.wallet_address, funding)
                 .unwrap();
         }
-        let ix = reservation.create_instruction(payer.pubkey()).unwrap();
+        let (ix, _) = reservation.create_instruction(payer.pubkey()).unwrap();
         let before = context.svm.get_account(&payer.pubkey()).unwrap().lamports;
         send(&mut context, &[ix], &[&payer]).unwrap();
         let config = context.svm.get_account(&addresses.swig_address).unwrap();
@@ -197,7 +197,7 @@ fn reservation_retry_preserves_rotated_owner_and_rent_claimer_then_close_is_perm
     let replacement = Keypair::new();
     let reservation = ed_reservation(&original);
     let addresses = reservation.addresses().unwrap();
-    let create = reservation
+    let (create, _) = reservation
         .create_instruction(context.default_payer.pubkey())
         .unwrap();
     send(&mut context, std::slice::from_ref(&create), &[]).unwrap();
@@ -322,7 +322,7 @@ fn reservation_signs_with_ed25519_and_both_secp_curves_and_retry_preserves_odome
         )
         .unwrap();
         let a = reservation.addresses().unwrap();
-        let create = reservation
+        let (create, _) = reservation
             .create_instruction(context.default_payer.pubkey())
             .unwrap();
         send(&mut context, std::slice::from_ref(&create), &[]).unwrap();
@@ -445,7 +445,7 @@ fn reservation_rejects_invalid_account_contracts_without_changing_prefunded_acco
             .svm
             .airdrop(&a.wallet_address, 1_000_000_000)
             .unwrap();
-        let mut ix = reservation.create_instruction(payer.pubkey()).unwrap();
+        let (mut ix, _) = reservation.create_instruction(payer.pubkey()).unwrap();
         let mut signers = vec![&payer];
         let expected = match case {
             0 => {
@@ -545,7 +545,7 @@ fn reservation_rejects_malformed_packages_before_account_creation() {
     let mut context = setup_test_context().unwrap();
     let reservation = ed_reservation(&owner);
     let a = reservation.addresses().unwrap();
-    let base = reservation
+    let (base, _) = reservation
         .create_instruction(context.default_payer.pubkey())
         .unwrap();
     let mut cases = Vec::new();
@@ -619,7 +619,7 @@ fn reservation_rejects_off_curve_secp_keys_on_chain() {
         )
         .unwrap();
         let a = reservation.addresses().unwrap();
-        let base = reservation
+        let (base, _) = reservation
             .create_instruction(context.default_payer.pubkey())
             .unwrap();
         for malformed in [
@@ -659,7 +659,7 @@ fn reservation_and_legacy_create_cannot_initialize_each_others_namespaces() {
     let root = Keypair::new();
     let reservation = ed_reservation(&root);
     let a = reservation.addresses().unwrap();
-    let create = reservation
+    let (create, _) = reservation
         .create_instruction(context.default_payer.pubkey())
         .unwrap();
     let (legacy, bump) =
@@ -710,7 +710,7 @@ fn reservation_retry_rejects_corrupt_immutable_state_and_malformed_tails() {
         let mut context = setup_test_context().unwrap();
         let reservation = ed_reservation(&Keypair::new());
         let a = reservation.addresses().unwrap();
-        let create = reservation
+        let (create, _) = reservation
             .create_instruction(context.default_payer.pubkey())
             .unwrap();
         send(&mut context, std::slice::from_ref(&create), &[]).unwrap();
@@ -746,7 +746,7 @@ fn reservation_insufficient_payer_funds_does_not_allocate_or_top_up() {
     context.svm.airdrop(&payer.pubkey(), 1_000_000).unwrap();
     let reservation = ed_reservation(&Keypair::new());
     let a = reservation.addresses().unwrap();
-    let create = reservation.create_instruction(payer.pubkey()).unwrap();
+    let (create, _) = reservation.create_instruction(payer.pubkey()).unwrap();
     let before = context.svm.get_account(&payer.pubkey()).unwrap();
     assert_eq!(
         send(&mut context, &[create], &[&payer]).unwrap_err(),
@@ -772,7 +772,7 @@ fn reservation_uses_v2_subaccounts_and_cannot_access_legacy_v1_children() {
     let reservation = ed_reservation(&owner);
     let a = reservation.addresses().unwrap();
     let payer = context.default_payer.pubkey();
-    let activate = reservation.create_instruction(payer).unwrap();
+    let (activate, _) = reservation.create_instruction(payer).unwrap();
     send(&mut context, std::slice::from_ref(&activate), &[]).unwrap();
     let state = Pubkey::find_program_address(
         &sub_account_v2_state_seeds(a.swig_address.as_ref(), &0u32.to_le_bytes()),
@@ -923,7 +923,7 @@ fn reservation_recovers_config_owned_tokens_and_closes_their_accounts() {
     let reservation = ed_reservation(&owner);
     let a = reservation.addresses().unwrap();
     let payer = context.default_payer.pubkey();
-    let create = reservation.create_instruction(payer).unwrap();
+    let (create, _) = reservation.create_instruction(payer).unwrap();
     send(&mut context, &[create], &[]).unwrap();
     let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let source = setup_ata(

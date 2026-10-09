@@ -49,7 +49,7 @@ use crate::{
     client_role::ClientRole,
     error::SwigError,
     instruction_builder::SwigInstructionBuilder,
-    types::{Permission, UpdateAuthorityData},
+    types::{CurrentRole, Permission, UpdateAuthorityData},
     RecurringConfig,
 };
 
@@ -92,7 +92,7 @@ impl<'c> SwigWallet<'c> {
     /// `SwigError`
     pub fn new(
         swig_id: [u8; 32],
-        mut client_role: Box<dyn ClientRole>,
+        client_role: Box<dyn ClientRole>,
         fee_payer: &'c Keypair,
         rpc_url: String,
         authority_keypair: Option<&'c Keypair>,
@@ -144,15 +144,12 @@ impl<'c> SwigWallet<'c> {
             let swig_data = litesvm.get_account(&swig_account).unwrap().data;
 
             let swig_with_roles =
-                SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
+                SwigWithRoles::from_bytes(&swig_data).map_err(|_| SwigError::InvalidSwigData)?;
             let role = swig_with_roles
                 .get_role(0)
-                .map_err(|_| SwigError::AuthorityNotFound)?;
-            let current_role = if let Some(role) = role {
-                build_current_role(0, &role)
-            } else {
-                return Err(SwigError::AuthorityNotFound);
-            };
+                .map_err(|_| SwigError::AuthorityNotFound)?
+                .ok_or(SwigError::AuthorityNotFound)?;
+            let current_role = CurrentRole::from_role(0, &role);
 
             Ok(Self {
                 instruction_builder,
@@ -170,33 +167,9 @@ impl<'c> SwigWallet<'c> {
             #[cfg(all(feature = "rust_sdk_test", test))]
             let swig_data = swig_data.unwrap().data;
 
-            let swig_with_roles =
-                SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
-
-            let authority_bytes = client_role.authority_bytes()?;
-            let role_id = swig_with_roles
-                .lookup_role_id(authority_bytes.as_ref())
-                .map_err(|_| SwigError::AuthorityNotFound)?
-                .ok_or(SwigError::AuthorityNotFound)?;
-
-            // Get the role to verify it exists and has the correct type
-            let role = swig_with_roles
-                .get_role(role_id)
-                .map_err(|_| SwigError::AuthorityNotFound)?;
-
-            // Extract the role data for storage and update odometer if needed
-            let current_role = if let Some(role) = &role {
-                // Update odometer if this is a Secp256k1 authority
-                if let Some(odometer) = role.authority.signature_odometer() {
-                    client_role.update_odometer(odometer)?;
-                }
-                build_current_role(role_id, role)
-            } else {
-                return Err(SwigError::AuthorityNotFound);
-            };
-
-            let instruction_builder =
-                SwigInstructionBuilder::new(swig_id, client_role, fee_payer.pubkey(), role_id);
+            let mut instruction_builder =
+                SwigInstructionBuilder::new(swig_id, client_role, fee_payer.pubkey(), 0);
+            let current_role = instruction_builder.load_current_role(&swig_data)?;
 
             Ok(Self {
                 instruction_builder,
@@ -214,18 +187,21 @@ impl<'c> SwigWallet<'c> {
     /// using its current authority. Only the external fee payer signs activation.
     pub fn from_reservation(
         reservation: swig_interface::reservation::ReservationV1,
-        mut client_role: Box<dyn ClientRole>,
+        client_role: Box<dyn ClientRole>,
         fee_payer: &'c Keypair,
         rpc_url: String,
         authority_keypair: Option<&'c Keypair>,
         #[cfg(all(feature = "rust_sdk_test", test))] mut litesvm: LiteSVM,
     ) -> Result<Self, SwigError> {
-        if reservation.package_bytes.get(1..33) != Some(swig_interface::program_id().as_ref()) {
-            return Err(swig_interface::reservation::ReservationError::WrongProgram.into());
-        }
-        let addresses = reservation.addresses()?;
+        let mut instruction_builder = SwigInstructionBuilder::from_reservation(
+            reservation,
+            client_role,
+            fee_payer.pubkey(),
+            0,
+        )?;
+        let swig_account = instruction_builder.get_swig_account()?;
         let rpc_client = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed());
-        let create = reservation.create_instruction(fee_payer.pubkey())?;
+        let create = instruction_builder.build_swig_account()?;
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
         let blockhash = rpc_client.get_latest_blockhash()?;
         #[cfg(all(feature = "rust_sdk_test", test))]
@@ -250,37 +226,15 @@ impl<'c> SwigWallet<'c> {
         })?;
 
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        let account = rpc_client.get_account(&addresses.swig_address)?;
+        let account = rpc_client.get_account(&swig_account)?;
         #[cfg(all(feature = "rust_sdk_test", test))]
         let account = litesvm
-            .get_account(&addresses.swig_address)
+            .get_account(&swig_account)
             .ok_or(SwigError::SwigDataNotFound)?;
         if account.owner != swig_interface::program_id() {
             return Err(SwigError::InvalidSwigData);
         }
-        let stored =
-            SwigWithRoles::from_bytes(&account.data).map_err(|_| SwigError::InvalidSwigData)?;
-        if stored.state.id != addresses.commitment {
-            return Err(SwigError::InvalidSwigData);
-        }
-        let role_id = stored
-            .lookup_role_id(&client_role.authority_bytes()?)
-            .map_err(|_| SwigError::InvalidSwigData)?
-            .ok_or(SwigError::AuthorityNotFound)?;
-        let role = stored
-            .get_role(role_id)
-            .map_err(|_| SwigError::InvalidSwigData)?
-            .ok_or(SwigError::AuthorityNotFound)?;
-        if let Some(odometer) = role.authority.signature_odometer() {
-            client_role.update_odometer(odometer)?;
-        }
-        let current_role = build_current_role(role_id, &role);
-        let instruction_builder = SwigInstructionBuilder::from_reservation(
-            reservation,
-            client_role,
-            fee_payer.pubkey(),
-            role_id,
-        )?;
+        let current_role = instruction_builder.load_current_role(&account.data)?;
         Ok(Self {
             instruction_builder,
             rpc_client,
@@ -1429,7 +1383,7 @@ impl<'c> SwigWallet<'c> {
             .map_err(|_| SwigError::AuthorityNotFound)?;
 
         if let Some(role) = role {
-            self.current_role = build_current_role(role_id, &role);
+            self.current_role = CurrentRole::from_role(role_id, &role);
         } else {
             return Err(SwigError::AuthorityNotFound);
         }
@@ -2123,17 +2077,6 @@ impl<'c> SwigWallet<'c> {
         } else {
             Err(SwigError::AuthorityNotFound)
         }
-    }
-}
-
-// Helper to build CurrentRole from a Role and role_id
-fn build_current_role(role_id: u32, role: &Role) -> crate::types::CurrentRole {
-    crate::types::CurrentRole {
-        role_id,
-        authority_type: role.authority.authority_type(),
-        authority_identity: role.authority.identity().unwrap_or_default().to_vec(),
-        permissions: crate::types::Permission::from_role(role).unwrap_or_default(),
-        session_based: role.authority.session_based(),
     }
 }
 
