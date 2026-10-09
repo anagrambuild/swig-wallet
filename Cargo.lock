@@ -10289,13 +10289,20 @@ name = "swig-interface"
 version = "3.0.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bytemuck",
+ "curve25519-dalek 4.1.3",
+ "hex",
+ "openssl",
+ "serde",
+ "serde_json",
  "solana-sdk",
  "solana-secp256r1-program",
  "solana-system-interface 3.2.0",
  "swig",
  "swig-compact-instructions",
  "swig-state",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

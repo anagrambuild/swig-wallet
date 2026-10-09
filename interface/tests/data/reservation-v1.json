@@ -1,0 +1,32 @@
+[
+  {
+    "authorityType": 1,
+    "publicKeyHex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+    "packageHex": "010d0ce942e1e7c506e218df0d7df1c52fafdc3529e48d674d1db24c75b54cccbe00000000000000000000000000000000000000000000000000000000000000000100d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+    "commitmentHex": "d5d1ec55a8375b0bc8ef5d3018161d1c0fbb228f6135760dd1b14780e3cb8008",
+    "config": "2u2Z9kvnKMUpRqyHcQVwGof2t9qFfRKQndqj4sAdSDqf",
+    "configBump": 254,
+    "deposit": "4hmA6rsePvAiscQX5WySk8YzY1hNiciXD3GTmuVySZ8B",
+    "depositBump": 253
+  },
+  {
+    "authorityType": 3,
+    "publicKeyHex": "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+    "packageHex": "010d0ce942e1e7c506e218df0d7df1c52fafdc3529e48d674d1db24c75b54cccbe000000000000000000000000000000000000000000000000000000000000000003000279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+    "commitmentHex": "0409616d43413cd2181c0e01c87a65716120f0770fa29859dcabb26c2284ce06",
+    "config": "BJjaBdFUF1dZ7MrKWyY48rCw2SWn5xccrJ4oVuiVjkJd",
+    "configBump": 253,
+    "deposit": "3wL4ZVpP8BdvpCJuZ3euf7WPnfmjCbRr4AvHSLAS88n4",
+    "depositBump": 254
+  },
+  {
+    "authorityType": 5,
+    "publicKeyHex": "036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+    "packageHex": "010d0ce942e1e7c506e218df0d7df1c52fafdc3529e48d674d1db24c75b54cccbe00000000000000000000000000000000000000000000000000000000000000000500036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+    "commitmentHex": "65310c1589117fe95260d48086530feeba7f40bd2f10ddf7157d23abb0489e82",
+    "config": "4dFEykJhgoEyvZyymnvKqUDKEU8YHmQrf3EwbfNQ4Mkm",
+    "configBump": 255,
+    "deposit": "4qBexjMB23Z9ttkGF8x4ECfC9W7tSn6NBP8GJyLjx2uw",
+    "depositBump": 255
+  }
+]
