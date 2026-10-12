@@ -44,23 +44,6 @@ pub fn swig_account_signer<'a>(id: &'a [u8], bump: &'a [u8; 1]) -> [Seed<'a>; 3]
     ]
 }
 
-/// Selects the config namespace from the actual account address before a CPI
-/// signs for assets held directly by a config (including unsolicited deposits).
-pub fn swig_config_seed_prefix(
-    config: &[u8; 32],
-    id: &[u8; 32],
-    bump: u8,
-) -> Result<&'static [u8], ProgramError> {
-    for prefix in [b"swig".as_slice(), crate::reservation::DOMAIN] {
-        if pinocchio::pubkey::create_program_address(&[prefix, id, &[bump]], &swig_assertions::ID)
-            .is_ok_and(|address| address == *config)
-        {
-            return Ok(prefix);
-        }
-    }
-    Err(ProgramError::InvalidSeeds)
-}
-
 /// Generates the seeds for a Swig wallet address account.
 #[inline(always)]
 pub fn swig_wallet_address_seeds(swig_key: &[u8]) -> [&[u8]; 2] {
@@ -113,6 +96,28 @@ pub fn sub_account_signer<'a>(
         role_id.into(),
         bump.as_ref().into(),
     ]
+}
+
+/// Selects config signing seeds for `TransferAssetsV1` and
+/// `CloseTokenAccountV1`, which can recover or close token accounts owned by the
+/// config itself, including unsolicited deposits. Existing configs use `swig`;
+/// reserved configs use `swig-reserved-v1`. Their stored headers have the same
+/// layout, so match the actual address to select the correct prefix.
+/// This is for config-owned token operations, not V1 sub-account signing:
+/// reserved configs cannot use V1 sub-accounts.
+pub fn swig_config_seed_prefix(
+    config: &[u8; 32],
+    id: &[u8; 32],
+    bump: u8,
+) -> Result<&'static [u8], ProgramError> {
+    for prefix in [b"swig".as_slice(), crate::reservation::DOMAIN] {
+        if pinocchio::pubkey::create_program_address(&[prefix, id, &[bump]], &swig_assertions::ID)
+            .is_ok_and(|address| address == *config)
+        {
+            return Ok(prefix);
+        }
+    }
+    Err(ProgramError::InvalidSeeds)
 }
 
 /// Generates seeds for V2 state bound to the parent config public key.
