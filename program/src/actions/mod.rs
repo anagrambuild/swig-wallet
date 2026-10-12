@@ -109,9 +109,12 @@ pub fn process_action(
     } else {
         check_top_level_or_signers(accounts, &AUTHORIZED_CPI_SIGNERS, SwigError::Cpi)?;
     }
-    // V1 sub-accounts share the parent ID, so reject preexisting alternate
-    // configs. V2 binds its PDAs to the actual config address and needs no
-    // canonical-parent search. All sub-account paths consume config account 0.
+    // V1 sub-account PDAs use ["sub-account", swig.id, role_id], so only
+    // canonical ["swig", swig.id] configs may access them. Alternate and
+    // reserved configs are intentionally rejected: configs with the same
+    // stored ID would otherwise share V1 child addresses.
+    // Reserved wallets must use V2 sub-accounts, whose PDAs bind to the actual
+    // config address. All sub-account paths consume config account 0.
     let requires_canonical_config = matches!(
         ix,
         SwigInstruction::CreateSubAccountV1
