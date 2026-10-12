@@ -28,6 +28,7 @@ use swig_interface::{
 use swig_state::{
     action::all::All,
     authority::AuthorityType,
+    reservation::HEADER_LEN,
     swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
 };
 
@@ -591,6 +592,49 @@ fn reservation_rejects_malformed_packages_before_account_creation() {
         );
         assert!(context.svm.get_account(&a.swig_address).is_none());
         assert!(context.svm.get_account(&a.wallet_address).is_none());
+    }
+}
+
+#[test]
+fn reservation_address_is_bound_to_initial_authority() {
+    let mut context = setup_test_context().unwrap();
+    let owner = Keypair::new_from_array([71; 32]);
+    let other_owner = Keypair::new_from_array([72; 32]);
+    let payer = Keypair::new();
+    let reservation = ed_reservation(&owner);
+    let (mut create, addresses) = reservation.create_instruction(payer.pubkey()).unwrap();
+    let other_addresses = ed_reservation(&other_owner).addresses().unwrap();
+    assert_ne!(addresses.swig_address, other_addresses.swig_address);
+    assert_ne!(addresses.wallet_address, other_addresses.wallet_address);
+
+    context.svm.airdrop(&payer.pubkey(), 20_000_000).unwrap();
+    context
+        .svm
+        .airdrop(&addresses.swig_address, 1_000_000)
+        .unwrap();
+    context
+        .svm
+        .airdrop(&addresses.wallet_address, 1_000_000)
+        .unwrap();
+    let before = [
+        payer.pubkey(),
+        addresses.swig_address,
+        addresses.wallet_address,
+    ]
+    .map(|key| (key, context.svm.get_account(&key).unwrap()));
+
+    // Only the valid initial public key changes; the supplied config and
+    // deposit accounts still belong to the original authority's reservation.
+    create.data[2 + HEADER_LEN..].copy_from_slice(other_owner.pubkey().as_ref());
+    assert_eq!(
+        send(&mut context, &[create], &[&payer]).unwrap_err(),
+        TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(SwigError::InvalidSeedSwigAccount as u32),
+        )
+    );
+    for (key, account) in before {
+        assert_eq!(context.svm.get_account(&key).unwrap(), account);
     }
 }
 
