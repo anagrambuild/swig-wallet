@@ -15,7 +15,8 @@ use swig_state::{
     reservation::{validate_package, DOMAIN, HEADER_LEN},
     role::Position,
     swig::{swig_wallet_address_seeds, Swig, SwigBuilder},
-    tail, Discriminator, IntoBytes, Transmutable,
+    tail::{config_seed_prefix, TAIL_HEADER_LEN},
+    Discriminator, IntoBytes, Transmutable,
 };
 
 use crate::{
@@ -61,18 +62,20 @@ pub fn create_reserved_v1(ctx: Context<CreateReservedV1Accounts>, data: &[u8]) -
 
     let all = Action::new(Permission::All, 0, Action::LEN as u32);
     let actions = all.into_bytes()?;
-    let account_size = Swig::LEN
+    let roles_end = Swig::LEN
         + Position::LEN
         + authority_type_to_length(&initial_authority_type)?
         + Action::LEN;
+    let account_size = roles_end + TAIL_HEADER_LEN + DOMAIN.len();
     initialize_accounts(&ctx.accounts, &state, account_size)?;
 
     let mut bytes = config.try_borrow_mut_data()?;
-    SwigBuilder::create(&mut bytes, state)?.add_role(
+    SwigBuilder::create(&mut bytes[..roles_end], state)?.add_role(
         initial_authority_type,
         initial_authority,
         actions,
-    )
+    )?;
+    config_seed_prefix::write(&mut bytes[roles_end..], DOMAIN)
 }
 
 fn validate_accounts(accounts: &CreateReservedV1Accounts) -> ProgramResult {
@@ -113,11 +116,12 @@ fn validate_config(config: &AccountInfo, state: &Swig) -> ProgramResult {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
         let parts = Swig::split_parts(&bytes)?;
-        tail::validate_strict(parts.tail)?;
+        let prefix = config_seed_prefix::read(parts.tail)?;
         if parts.state.id != state.id
             || parts.state.bump != state.bump
             || parts.state.wallet_bump != state.wallet_bump
             || parts.state._padding != [0; 3]
+            || prefix != DOMAIN
         {
             return Err(ProgramError::InvalidAccountData);
         }

@@ -21,6 +21,7 @@ use swig_state::{
     authority::AuthorityType,
     role::RoleMut,
     swig::{swig_account_signer, swig_wallet_address_seeds_with_bump, Swig},
+    tail::config_seed_prefix,
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
@@ -197,8 +198,8 @@ impl<'a> TransferAssetsV1<'a> {
 /// This function:
 /// 1. Validates that the swig account has been migrated (has wallet_bump)
 /// 2. Authenticates the authority has All or ManageAuthority permissions
-/// 3. Transfers all SOL from swig account to swig wallet address
-/// 4. Transfers all SPL tokens from swig account to swig wallet address
+/// 3. Transfers all SPL tokens from swig account to swig wallet address
+/// 4. Transfers excess SOL from swig account to swig wallet address
 ///
 /// # Arguments
 /// * `ctx` - Account context containing swig, wallet address, payer accounts
@@ -306,27 +307,21 @@ pub fn transfer_assets_v1(
 
     let bump = [swig.bump];
     let swig_id = swig.id;
+    let prefix = config_seed_prefix::read(parts.tail)?;
+    check_self_pda(
+        &[prefix, &swig_id, &bump],
+        ctx.accounts.swig.key(),
+        ProgramError::InvalidSeeds,
+    )
+    .map_err(|_| ProgramError::InvalidSeeds)?;
     let mut swig_signer = swig_account_signer(&swig_id, &bump);
-    swig_signer[0] =
-        swig_state::swig::swig_config_seed_prefix(ctx.accounts.swig.key(), &swig_id, swig.bump)?
-            .into();
+    swig_signer[0] = prefix.into();
 
-    // Transfer SOL from swig to swig wallet address
+    // Calculate the native sweep before executing any transfers.
     let swig_lamports = ctx.accounts.swig.lamports();
     let rent = pinocchio::sysvars::rent::Rent::get()?;
     let swig_data_len = ctx.accounts.swig.data_len();
     let min_rent = rent.minimum_balance(swig_data_len);
-
-    if swig_lamports > min_rent {
-        let transfer_amount = swig_lamports - min_rent;
-        // Transfer SOL by directly manipulating lamports
-        unsafe {
-            *ctx.accounts.swig.borrow_mut_lamports_unchecked() -= transfer_amount;
-            *ctx.accounts
-                .swig_wallet_address
-                .borrow_mut_lamports_unchecked() += transfer_amount;
-        }
-    }
 
     // Transfer SPL tokens from the validated variadic account tail.
     for migration_accounts in spl_accounts.chunks_exact(SPL_MIGRATION_ACCOUNT_COUNT) {
@@ -355,6 +350,19 @@ pub fn transfer_assets_v1(
             amount,
         };
         token_transfer.invoke_signed(&[(&swig_signer).into()])?;
+    }
+
+    // Sweep SOL after token CPIs: those CPIs include the config but not the
+    // wallet, so a pending config debit would fail the CPI balance check.
+    if swig_lamports > min_rent {
+        let transfer_amount = swig_lamports - min_rent;
+        // Transfer SOL by directly manipulating lamports
+        unsafe {
+            *ctx.accounts.swig.borrow_mut_lamports_unchecked() -= transfer_amount;
+            *ctx.accounts
+                .swig_wallet_address
+                .borrow_mut_lamports_unchecked() += transfer_amount;
+        }
     }
 
     Ok(())

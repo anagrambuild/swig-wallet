@@ -23,7 +23,7 @@ use swig_state::{
     },
     role::RoleMut,
     swig::{swig_account_signer, swig_wallet_address_seeds, swig_wallet_address_signer, Swig},
-    tail::rent_claimer,
+    tail::{config_seed_prefix, rent_claimer},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
@@ -210,10 +210,15 @@ pub fn close_token_account_v1(
     let wallet_seeds =
         swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &wallet_bump_bytes);
     let swig_bump_bytes = [swig_bump];
+    let prefix = config_seed_prefix::read(Swig::split_parts(swig_account_data)?.tail)?;
+    swig_assertions::check_self_pda(
+        &[prefix, &swig_id, &swig_bump_bytes],
+        ctx.accounts.swig.key(),
+        ProgramError::InvalidSeeds,
+    )
+    .map_err(|_| ProgramError::InvalidSeeds)?;
     let mut swig_seeds = swig_account_signer(&swig_id, &swig_bump_bytes);
-    swig_seeds[0] =
-        swig_state::swig::swig_config_seed_prefix(ctx.accounts.swig.key(), &swig_id, swig_bump)?
-            .into();
+    swig_seeds[0] = prefix.into();
 
     let unrestricted_spend = has_all || has_all_but_manage;
     // Validate every source and consume bounded WSOL spend before the first CPI.

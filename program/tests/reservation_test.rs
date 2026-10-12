@@ -28,8 +28,9 @@ use swig_interface::{
 use swig_state::{
     action::all::All,
     authority::AuthorityType,
-    reservation::HEADER_LEN,
-    swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
+    reservation::{DOMAIN, HEADER_LEN},
+    swig::{swig_account_seeds, swig_wallet_address_seeds, Swig, SwigWithRoles},
+    tail::{config_seed_prefix, TAIL_HEADER_LEN},
 };
 
 fn send(
@@ -123,6 +124,9 @@ fn reservation_activates_all_direct_owners_without_owner_signature() {
         assert!(wallet.data.is_empty());
         let stored = SwigWithRoles::from_bytes(&account.data).unwrap();
         assert_eq!(stored.state.id, addresses.commitment);
+        let tail = Swig::split_parts(&account.data).unwrap().tail;
+        assert_eq!(tail.len(), TAIL_HEADER_LEN + DOMAIN.len());
+        assert_eq!(config_seed_prefix::read(tail).unwrap(), DOMAIN);
         assert_eq!(stored.state.roles, 1);
         assert_eq!(stored.state.role_counter, 1);
         assert_eq!(stored.state.sub_account_counter, 0);
@@ -784,6 +788,79 @@ fn reservation_retry_rejects_corrupt_immutable_state_and_malformed_tails() {
 }
 
 #[test]
+fn reservation_prefix_survives_role_growth_shrink_and_retry() {
+    let mut context = setup_test_context().unwrap();
+    let owner = Keypair::new();
+    let reservation = ed_reservation(&owner);
+    let a = reservation.addresses().unwrap();
+    let (create, _) = reservation
+        .create_instruction(context.default_payer.pubkey())
+        .unwrap();
+    send(&mut context, std::slice::from_ref(&create), &[]).unwrap();
+    let initial = context.svm.get_account(&a.swig_address).unwrap();
+    let prefix_tail = Swig::split_parts(&initial.data).unwrap().tail.to_vec();
+    let delegate = Keypair::new();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &a.swig_address,
+        &owner,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: delegate.pubkey().as_ref(),
+        },
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
+    let grown = context.svm.get_account(&a.swig_address).unwrap();
+    assert!(grown.data.len() > initial.data.len());
+    assert_eq!(Swig::split_parts(&grown.data).unwrap().tail, prefix_tail);
+    let remove = swig_interface::RemoveAuthorityInstruction::new_with_ed25519_authority(
+        a.swig_address,
+        context.default_payer.pubkey(),
+        owner.pubkey(),
+        0,
+        1,
+    )
+    .unwrap();
+    send(&mut context, &[remove], &[&owner]).unwrap();
+    let shrunk = context.svm.get_account(&a.swig_address).unwrap();
+    assert_eq!(shrunk.data.len(), initial.data.len());
+    assert_eq!(Swig::split_parts(&shrunk.data).unwrap().tail, prefix_tail);
+    send(&mut context, &[create], &[]).unwrap();
+    assert_eq!(context.svm.get_account(&a.swig_address).unwrap(), shrunk);
+}
+
+#[test]
+fn reservation_retry_requires_the_committed_prefix() {
+    let mut context = setup_test_context().unwrap();
+    let reservation = ed_reservation(&Keypair::new());
+    let a = reservation.addresses().unwrap();
+    let (create, _) = reservation
+        .create_instruction(context.default_payer.pubkey())
+        .unwrap();
+    send(&mut context, std::slice::from_ref(&create), &[]).unwrap();
+    let config = context.svm.get_account(&a.swig_address).unwrap();
+    let roles_end = Swig::roles_end_offset(&config.data).unwrap();
+    for missing in [false, true] {
+        let mut corrupted = config.clone();
+        if missing {
+            corrupted.data.truncate(roles_end);
+        } else {
+            corrupted.data[roles_end + TAIL_HEADER_LEN] ^= 1;
+        }
+        context
+            .svm
+            .set_account(a.swig_address, corrupted.clone())
+            .unwrap();
+        assert_eq!(
+            send(&mut context, std::slice::from_ref(&create), &[]).unwrap_err(),
+            TransactionError::InstructionError(1, InstructionError::InvalidAccountData)
+        );
+        assert_eq!(context.svm.get_account(&a.swig_address).unwrap(), corrupted);
+    }
+}
+
+#[test]
 fn reservation_insufficient_payer_funds_does_not_allocate_or_top_up() {
     let mut context = setup_test_context().unwrap();
     let payer = Keypair::new();
@@ -998,13 +1075,6 @@ fn reservation_recovers_config_owned_tokens_and_closes_their_accounts() {
         )],
     )
     .unwrap();
-    send(&mut context, &[migrate], &[&owner]).unwrap();
-    assert_eq!(
-        spl_token::state::Account::unpack(&context.svm.get_account(&destination).unwrap().data)
-            .unwrap()
-            .amount,
-        7
-    );
     let close = CloseTokenAccountV1Instruction::new_with_ed25519_authority(
         a.swig_address,
         a.wallet_address,
@@ -1015,6 +1085,70 @@ fn reservation_recovers_config_owned_tokens_and_closes_their_accounts() {
         0,
     )
     .unwrap();
+    // Reject malformed, missing, or mismatched prefixes before either CPI or
+    // the native SOL sweep. Fault injection starts from a real activated config.
+    context.svm.airdrop(&a.swig_address, 1_000_000).unwrap();
+    let config = context.svm.get_account(&a.swig_address).unwrap();
+    let roles_end = Swig::roles_end_offset(&config.data).unwrap();
+    let unchanged = [a.wallet_address, source, destination]
+        .map(|key| (key, context.svm.get_account(&key).unwrap()));
+    for case in 0..5 {
+        let mut corrupted = config.clone();
+        let expected = match case {
+            0 => {
+                corrupted.data.truncate(roles_end);
+                InstructionError::InvalidSeeds
+            },
+            1 => {
+                corrupted.data[roles_end + TAIL_HEADER_LEN] ^= 1;
+                InstructionError::InvalidSeeds
+            },
+            2 => {
+                corrupted.data[roles_end + 1] = 2;
+                InstructionError::Custom(
+                    swig_state::SwigStateError::InvalidRentClaimerLayout as u32,
+                )
+            },
+            3 => {
+                corrupted.data.extend_from_slice(&config.data[roles_end..]);
+                InstructionError::Custom(
+                    swig_state::SwigStateError::InvalidRentClaimerLayout as u32,
+                )
+            },
+            _ => {
+                corrupted.data.pop();
+                InstructionError::Custom(
+                    swig_state::SwigStateError::InvalidRentClaimerLayout as u32,
+                )
+            },
+        };
+        context
+            .svm
+            .set_account(a.swig_address, corrupted.clone())
+            .unwrap();
+        for instruction in [&migrate, &close] {
+            assert_eq!(
+                send(&mut context, std::slice::from_ref(instruction), &[&owner]).unwrap_err(),
+                TransactionError::InstructionError(1, expected.clone())
+            );
+            assert_eq!(context.svm.get_account(&a.swig_address).unwrap(), corrupted);
+            for (key, account) in &unchanged {
+                assert_eq!(&context.svm.get_account(key).unwrap(), account);
+            }
+        }
+    }
+    context.svm.set_account(a.swig_address, config).unwrap();
+    send(&mut context, &[migrate], &[&owner]).unwrap();
+    assert_eq!(
+        context.svm.get_account(&a.wallet_address).unwrap().lamports,
+        unchanged[0].1.lamports + 1_000_000
+    );
+    assert_eq!(
+        spl_token::state::Account::unpack(&context.svm.get_account(&destination).unwrap().data)
+            .unwrap()
+            .amount,
+        7
+    );
     send(&mut context, &[close], &[&owner]).unwrap();
     assert!(context.svm.get_account(&source).is_none());
 }
