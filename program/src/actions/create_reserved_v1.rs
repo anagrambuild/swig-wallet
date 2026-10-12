@@ -29,8 +29,14 @@ pub fn create_reserved_v1(ctx: Context<CreateReservedV1Accounts>, data: &[u8]) -
     let initial_authority_type = validate_package(package, &crate::ID)?;
     let (reservation_header, initial_authority) = package.split_at(HEADER_LEN);
 
-    // The header contains the version, program ID, salt, and authority type.
-    // Hashing it with the initial public key binds this address to the same
+    // Reservation header (67 bytes; offsets within the package):
+    //   [0]      version (u8)
+    //   [1..33]  program ID (32 bytes)
+    //   [33..65] salt (32 bytes)
+    //   [65..67] authority type (u16 LE)
+    // The initial public key follows at [67..]: 32 bytes for Ed25519,
+    // or 33 bytes for compressed k1/r1.
+    // Hashing the header with that public key binds this address to the same
     // authority installed as role zero below.
     let commitment =
         solana_sha256_hasher::hashv(&[DOMAIN, reservation_header, initial_authority]).to_bytes();
