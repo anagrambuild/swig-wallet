@@ -6,8 +6,8 @@ use solana_sdk::{
     pubkey::Pubkey,
 };
 use swig_state::{
-    authority::{public_key::canonical_public_key, AuthorityType},
-    reservation::{validate_package, DOMAIN, HEADER_LEN},
+    authority::AuthorityType,
+    reservation::{canonical_public_key, validate_package, DOMAIN, HEADER_LEN},
     swig::swig_wallet_address_seeds,
 };
 
