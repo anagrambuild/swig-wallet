@@ -10,7 +10,7 @@ use swig_assertions::{
 };
 use swig_state::{
     action::{Action, Permission},
-    authority::authority_type_to_length,
+    authority::{authority_type_to_length, AuthorityType},
     reservation::{validate_package, DOMAIN, HEADER_LEN},
     role::Position,
     swig::{swig_wallet_address_seeds, Swig, SwigBuilder},
@@ -23,10 +23,82 @@ use crate::{
 };
 
 pub fn create_reserved_v1(ctx: Context<CreateReservedV1Accounts>, data: &[u8]) -> ProgramResult {
+    let (authority_type, state) = validate(&ctx.accounts, data)?;
     let config = ctx.accounts.swig;
     let payer = ctx.accounts.payer;
     let wallet = ctx.accounts.swig_wallet_address;
-    let system = ctx.accounts.system_program;
+    if config.is_owned_by(&crate::ID) {
+        return Ok(());
+    }
+
+    let all = Action::new(Permission::All, 0, Action::LEN as u32);
+    let actions = all.into_bytes()?;
+    let account_size =
+        Swig::LEN + Position::LEN + authority_type_to_length(&authority_type)? + Action::LEN;
+    let rent = Rent::get()?;
+    let config_top_up = rent
+        .minimum_balance(account_size)
+        .saturating_sub(config.lamports());
+    let wallet_top_up = rent.minimum_balance(0).saturating_sub(wallet.lamports());
+    if payer.lamports()
+        < config_top_up
+            .checked_add(wallet_top_up)
+            .ok_or(ProgramError::ArithmeticOverflow)?
+    {
+        return Err(ProgramError::InsufficientFunds);
+    }
+
+    // All caller-controlled input is checked before funding, allocating or
+    // assigning. Top-ups preserve deposits sent to either PDA before activation.
+    if config_top_up > 0 {
+        Transfer {
+            from: payer,
+            to: config,
+            lamports: config_top_up,
+        }
+        .invoke()?;
+    }
+    let bump_seed = [state.bump];
+    let seeds = [
+        Seed::from(DOMAIN),
+        Seed::from(&state.id),
+        Seed::from(&bump_seed),
+    ];
+    let signers = [seeds.as_slice().into()];
+    Allocate {
+        account: config,
+        space: account_size as u64,
+    }
+    .invoke_signed(&signers)?;
+    Assign {
+        account: config,
+        owner: &crate::ID,
+    }
+    .invoke_signed(&signers)?;
+    if wallet_top_up > 0 {
+        Transfer {
+            from: payer,
+            to: wallet,
+            lamports: wallet_top_up,
+        }
+        .invoke()?;
+    }
+    let mut bytes = config.try_borrow_mut_data()?;
+    SwigBuilder::create(&mut bytes, state)?.add_role(
+        authority_type,
+        &data[2 + HEADER_LEN..],
+        actions,
+    )
+}
+
+fn validate(
+    accounts: &CreateReservedV1Accounts,
+    data: &[u8],
+) -> Result<(AuthorityType, Swig), ProgramError> {
+    let config = accounts.swig;
+    let payer = accounts.payer;
+    let wallet = accounts.swig_wallet_address;
+    let system = accounts.system_program;
     check_writable_signer(payer, SwigError::PayerMustBeWritableSigner)?;
     check_writable(config, ProgramError::InvalidAccountData)?;
     check_writable(wallet, ProgramError::InvalidAccountData)?;
@@ -78,67 +150,10 @@ pub fn create_reserved_v1(ctx: Context<CreateReservedV1Accounts>, data: &[u8]) -
         {
             return Err(ProgramError::InvalidAccountData);
         }
-        return Ok(());
-    }
-    check_system_owner(config, SwigError::OwnerMismatchSwigAccount)?;
-    check_zero_data(config, SwigError::AccountNotEmptySwigAccount)?;
-
-    let all = Action::new(Permission::All, 0, Action::LEN as u32);
-    let actions = all.into_bytes()?;
-    let account_size =
-        Swig::LEN + Position::LEN + authority_type_to_length(&authority_type)? + Action::LEN;
-    let rent = Rent::get()?;
-    let config_top_up = rent
-        .minimum_balance(account_size)
-        .saturating_sub(config.lamports());
-    let wallet_top_up = rent.minimum_balance(0).saturating_sub(wallet.lamports());
-    if payer.lamports()
-        < config_top_up
-            .checked_add(wallet_top_up)
-            .ok_or(ProgramError::ArithmeticOverflow)?
-    {
-        return Err(ProgramError::InsufficientFunds);
+    } else {
+        check_system_owner(config, SwigError::OwnerMismatchSwigAccount)?;
+        check_zero_data(config, SwigError::AccountNotEmptySwigAccount)?;
     }
 
-    // All caller-controlled input is checked before funding, allocating or
-    // assigning. Top-ups preserve deposits sent to either PDA before activation.
-    if config_top_up > 0 {
-        Transfer {
-            from: payer,
-            to: config,
-            lamports: config_top_up,
-        }
-        .invoke()?;
-    }
-    let bump_seed = [bump];
-    let seeds = [
-        Seed::from(DOMAIN),
-        Seed::from(&commitment),
-        Seed::from(&bump_seed),
-    ];
-    let signers = [seeds.as_slice().into()];
-    Allocate {
-        account: config,
-        space: account_size as u64,
-    }
-    .invoke_signed(&signers)?;
-    Assign {
-        account: config,
-        owner: &crate::ID,
-    }
-    .invoke_signed(&signers)?;
-    if wallet_top_up > 0 {
-        Transfer {
-            from: payer,
-            to: wallet,
-            lamports: wallet_top_up,
-        }
-        .invoke()?;
-    }
-    let mut bytes = config.try_borrow_mut_data()?;
-    SwigBuilder::create(&mut bytes, Swig::new(commitment, bump, wallet_bump))?.add_role(
-        authority_type,
-        &package[HEADER_LEN..],
-        actions,
-    )
+    Ok((authority_type, Swig::new(commitment, bump, wallet_bump)))
 }
