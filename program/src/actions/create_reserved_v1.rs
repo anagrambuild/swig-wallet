@@ -28,6 +28,8 @@ pub fn create_reserved_v1(ctx: Context<CreateReservedV1Accounts>, data: &[u8]) -
     let payer = ctx.accounts.payer;
     let wallet = ctx.accounts.swig_wallet_address;
     if config.is_owned_by(&crate::ID) {
+        // Validation confirmed this is the same active reservation. Treat retries
+        // as successful without resetting its authorities, counters, or other state.
         return Ok(());
     }
 
