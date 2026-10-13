@@ -28,7 +28,6 @@ strip = true
 
 [dev-dependencies]
 async-trait = "0.1"
-base64 = "0.22"
 
 [[test]]
 name = "surfpool"

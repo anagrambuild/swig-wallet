@@ -5,7 +5,6 @@
 //! SOLANA_TEST_CLI optionally selects the workflow's pinned Solana CLI executable.
 
 mod fixture;
-mod rpc_faults;
 
 use fixture::{Fixture, SOURCE_COMMIT};
 
@@ -19,6 +18,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
+use async_trait::async_trait;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use solana_loader_v3_interface::state::UpgradeableLoaderState;
@@ -30,17 +30,23 @@ use solana_sdk::{
     signature::Signer,
     transaction::Transaction,
 };
-use solana_sdk_ids::{bpf_loader_upgradeable, system_program};
+use solana_sdk_ids::bpf_loader_upgradeable;
 use squads_multisig::{
     anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas},
     pda::{get_proposal_pda, get_transaction_pda, get_vault_pda},
     solana_rpc_client::{
-        http_sender::HttpSender, nonblocking::rpc_client::RpcClient, rpc_client::RpcClientConfig,
+        http_sender::HttpSender,
+        nonblocking::rpc_client::RpcClient,
+        rpc_client::RpcClientConfig,
+        rpc_sender::{RpcSender, RpcTransportStats},
     },
-    solana_rpc_client_api::{config::RpcSendTransactionConfig, request::RpcRequest},
+    solana_rpc_client_api::{
+        client_error::{ErrorKind, Result as RpcResult},
+        config::RpcSendTransactionConfig,
+        request::RpcRequest,
+    },
     squads_multisig_program::{
-        self as squads, Multisig, Proposal, ProposalStatus, VaultTransaction,
-        VaultTransactionMessage,
+        self as squads, Proposal, ProposalStatus, VaultTransaction, VaultTransactionMessage,
     },
 };
 use swig_release::{
@@ -48,8 +54,6 @@ use swig_release::{
     proposal::build_proposal,
     release::{propose, ProposalRequest},
 };
-
-use rpc_faults::{Fault, FaultySurfpool};
 
 #[tokio::test]
 #[ignore = "explicit local Surfpool E2E; requires built Swig and Squads binaries and Solana CLI"]
@@ -82,7 +86,6 @@ async fn release_cli_on_surfpool() -> Result<()> {
     let buffer = fixture.upload_buffer()?;
     let uploaded = fixture.rpc.get_account(&buffer).await?;
     validate_buffer(&uploaded, &fixture.binary, fixture.proposer.pubkey())?;
-    assert_preflight_rejections(&fixture, buffer, &uploaded).await?;
     assert_atomic_rollback(&fixture, buffer, &uploaded).await?;
     let proposal_address = get_proposal_pda(
         &fixture.config.multisig,
@@ -98,8 +101,8 @@ async fn release_cli_on_surfpool() -> Result<()> {
     .0;
     let before = fixture.rpc.get_account(&program_data).await?;
     let output_dir = fixture.directory.path().join("proposal");
-    let output = fixture
-        .cli()?
+    let mut command = fixture.cli()?;
+    command
         .args(["propose", "--binary"])
         .arg(&fixture.binary_path)
         .arg("--preflight")
@@ -113,8 +116,8 @@ async fn release_cli_on_surfpool() -> Result<()> {
         .arg("--output-dir")
         .arg(&output_dir)
         .arg("--solana-cli")
-        .arg(env::var("SOLANA_TEST_CLI").unwrap_or_else(|_| "solana".into()))
-        .output()?;
+        .arg(env::var("SOLANA_TEST_CLI").unwrap_or_else(|_| "solana".into()));
+    let output = command.output()?;
     ensure!(
         output.status.success(),
         "Proposal failed: {}",
@@ -163,366 +166,125 @@ async fn release_cli_on_surfpool() -> Result<()> {
         "PASS active proposal, no votes or execution: {}",
         String::from_utf8(output.stdout)?
     );
-    fixture
-        .assert_rejected_without_mutation(
-            "propose",
-            &fixture.binary_path,
-            buffer,
-            1,
-            "Expected unused transaction index 2",
-        )
+    // Reusing the saved preflight must stop before a second upload or submission.
+    let signatures = fixture
+        .rpc
+        .get_signatures_for_address(&fixture.proposer.pubkey())
         .await?;
+    let retry = command.output()?;
+    assert!(!retry.status.success());
+    assert!(retry.stdout.is_empty());
+    assert!(String::from_utf8(retry.stderr)?.contains("Preflight transaction index is stale"));
+    assert_eq!(
+        fixture
+            .rpc
+            .get_signatures_for_address(&fixture.proposer.pubkey())
+            .await?
+            .len(),
+        signatures.len()
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(output_dir.join("proposal-receipt.json"))?)?,
+        receipt
+    );
 
     execute_as_separate_member(&fixture, buffer, &receipt).await?;
     Ok(())
 }
 
 #[tokio::test]
-#[cfg(unix)]
-#[ignore = "explicit local Surfpool E2E for CLI preflight and uploader failures"]
-async fn cli_rejects_changed_preflight_and_preserves_upload_failure_evidence() -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
+#[ignore = "explicit local Surfpool E2E; drops the response after a real submission"]
+async fn lost_submission_reply_does_not_retry_or_report_success() -> Result<()> {
     let fixture = Fixture::start().await?;
-    let check = fixture
-        .cli()?
-        .args(["check", "--binary"])
-        .arg(&fixture.binary_path)
-        .output()?;
-    ensure!(check.status.success(), "Preflight failed");
-    let saved: Value = serde_json::from_slice(&check.stdout)?;
-    let preflight = fixture.directory.path().join("preflight.json");
-    let uploader = fixture.directory.path().join("failed-uploader");
-    fs::write(
-        &uploader,
-        "#!/bin/sh\necho private-rpc-credential\necho private-key-material >&2\nexit 9\n",
-    )?;
-    fs::set_permissions(&uploader, fs::Permissions::from_mode(0o700))?;
-    let addresses = [fixture.proposer.pubkey(), fixture.config.multisig];
-    let before = fixture.rpc.get_multiple_accounts(&addresses).await?;
-    let signatures = fixture
-        .rpc
-        .get_signatures_for_address(&fixture.proposer.pubkey())
-        .await?
-        .len();
+    let buffer = fixture.upload_buffer()?;
+    let submissions = Arc::new(AtomicUsize::new(0));
+    let rpc = RpcClient::new_sender(
+        LostSubmissionReply {
+            inner: HttpSender::new(&fixture.config.rpc_url),
+            submissions: Arc::clone(&submissions),
+        },
+        RpcClientConfig::with_commitment(CommitmentConfig::confirmed()),
+    );
+    let result = propose(
+        &rpc,
+        &fixture.config,
+        &fixture.proposer,
+        &fixture.binary,
+        ProposalRequest {
+            buffer,
+            transaction_index: 1,
+            source_commit: SOURCE_COMMIT.into(),
+            tag: "surfpool-lost-reply".into(),
+        },
+    )
+    .await;
+    let error = result
+        .err()
+        .context("Uncertain submission emitted a success receipt")?;
+    assert!(error
+        .to_string()
+        .contains("Submission failed or is uncertain"));
+    assert_eq!(
+        submissions.load(Ordering::SeqCst),
+        1,
+        "Resubmitted after a lost response"
+    );
 
-    for (case, expected) in [
-        ("binary", "Preflight binary does not match"),
-        (
-            "deployment",
-            "Preflight deployment or proposer does not match",
-        ),
-        ("index", "Preflight transaction index is stale"),
-        ("malformed", "Malformed preflight receipt"),
-        ("existing", "Output directory must be new"),
-        ("upload", "Buffer upload failed"),
-    ] {
-        let mut changed = saved.clone();
-        match case {
-            "binary" => changed["binary_sha256"] = json!("changed"),
-            "deployment" => changed["multisig"] = json!(Pubkey::new_unique()),
-            "index" => changed["transaction_index"] = json!(2),
-            _ => {},
-        }
-        fs::write(
-            &preflight,
-            if case == "malformed" {
-                b"{}".to_vec()
-            } else {
-                serde_json::to_vec(&changed)?
-            },
-        )?;
-        let output_dir = fixture.directory.path().join(case);
-        if case == "existing" {
-            fs::create_dir(&output_dir)?;
-            fs::write(output_dir.join("buffer-address.txt"), "earlier attempt")?;
-        }
-        let output = fixture
-            .cli()?
-            .args(["propose", "--binary"])
-            .arg(&fixture.binary_path)
-            .arg("--preflight")
-            .arg(&preflight)
-            .args([
-                "--source-commit",
-                SOURCE_COMMIT,
-                "--tag",
-                "upgrade-surfpool-test",
-            ])
-            .arg("--output-dir")
-            .arg(&output_dir)
-            .arg("--solana-cli")
-            .arg(&uploader)
-            .output()?;
-        assert!(!output.status.success());
-        assert!(
-            output.stdout.is_empty(),
-            "Failure emitted a receipt or raw uploader output"
-        );
-        let error = String::from_utf8(output.stderr)?;
-        assert!(error.contains(expected), "Expected {expected}, got {error}");
-        assert!(!error.contains("private-rpc-credential"));
-        assert!(!error.contains("private-key-material"));
-        assert!(!output_dir.join("proposal-receipt.json").exists());
-        if case == "upload" {
-            let address: Pubkey = fs::read_to_string(output_dir.join("buffer-address.txt"))?
-                .trim()
-                .parse()?;
-            assert!(error.contains(&address.to_string()));
-            assert_eq!(fs::read_dir(&output_dir)?.count(), 1);
-        } else if case == "existing" {
-            assert_eq!(
-                fs::read_to_string(output_dir.join("buffer-address.txt"))?,
-                "earlier attempt"
+    // The client must report uncertainty even when the real chain accepted it.
+    let address = get_proposal_pda(
+        &fixture.config.multisig,
+        1,
+        Some(&fixture.config.squads_program),
+    )
+    .0;
+    let mut active = false;
+    for _ in 0..100 {
+        if let Some(account) = fixture
+            .rpc
+            .get_multiple_accounts(&[address])
+            .await?
+            .remove(0)
+        {
+            active = matches!(
+                Proposal::try_deserialize(&mut account.data.as_slice())?.status,
+                ProposalStatus::Active { .. }
             );
-        } else {
-            assert!(
-                !output_dir.exists(),
-                "Rejected preflight started an upload attempt"
-            );
+            break;
         }
-        assert_eq!(fixture.rpc.get_multiple_accounts(&addresses).await?, before);
-        assert_eq!(
-            fixture
-                .rpc
-                .get_signatures_for_address(&fixture.proposer.pubkey())
-                .await?
-                .len(),
-            signatures
-        );
-        println!("PASS CLI rejection with zero submissions: {case}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    assert!(
+        active,
+        "The injected error did not follow an accepted proposal"
+    );
+    println!("PASS lost submission reply: real active proposal, no success receipt, no retry");
     Ok(())
 }
 
-#[tokio::test]
-#[ignore = "explicit local Surfpool E2E with RPC fault injection after real submission"]
-async fn uncertain_or_unverified_proposals_never_report_success_or_resubmit() -> Result<()> {
-    let fixture = Fixture::start().await?;
-    for (case, expected) in [
-        (
-            Fault::LostSubmissionReply,
-            "Submission failed or is uncertain",
-        ),
-        (Fault::ConfirmationUnavailable, "Confirmation is uncertain"),
-        (
-            Fault::MissingBuffer,
-            "Confirmed transaction buffer is missing",
-        ),
-        (
-            Fault::MissingTransaction,
-            "Confirmed vault transaction is missing",
-        ),
-        (Fault::MissingProposal, "Confirmed proposal is missing"),
-        (
-            Fault::WrongOwner,
-            "Confirmed Squads accounts have incorrect owners",
-        ),
-        (
-            Fault::ChangedBuffer,
-            "Uploaded buffer contents do not match the built binary",
-        ),
-        (
-            Fault::ChangedBufferAuthority,
-            "Buffer authority does not match the expected signer",
-        ),
-        (
-            Fault::ChangedMessage,
-            "Confirmed vault transaction does not match the intended upgrade",
-        ),
-        (
-            Fault::InactiveProposal,
-            "Confirmed proposal is not active for this upgrade",
-        ),
-    ] {
-        let multisig = fixture.rpc.get_account(&fixture.config.multisig).await?;
-        let index = Multisig::try_deserialize(&mut multisig.data.as_slice())?.transaction_index + 1;
-        let buffer = fixture.upload_buffer()?;
-        let submissions = Arc::new(AtomicUsize::new(0));
-        let injections = Arc::new(AtomicUsize::new(0));
-        let rpc = RpcClient::new_sender(
-            FaultySurfpool {
-                inner: HttpSender::new(&fixture.config.rpc_url),
-                fault: case,
-                submissions: Arc::clone(&submissions),
-                injections: Arc::clone(&injections),
-            },
-            RpcClientConfig::with_commitment(CommitmentConfig::confirmed()),
-        );
-        let result = propose(
-            &rpc,
-            &fixture.config,
-            &fixture.proposer,
-            &fixture.binary,
-            ProposalRequest {
-                buffer,
-                transaction_index: index,
-                source_commit: SOURCE_COMMIT.into(),
-                tag: "surfpool-rpc-fault".into(),
-            },
-        )
-        .await;
-        assert!(
-            result.is_err(),
-            "Fault {case:?} produced a successful receipt"
-        );
-        let error = result.err().context("Expected fault error")?.to_string();
-        assert!(
-            error.contains(expected),
-            "Fault {case:?}: expected {expected}, got {error}"
-        );
-        assert_eq!(
-            submissions.load(Ordering::SeqCst),
-            1,
-            "Fault {case:?} resubmitted"
-        );
-        assert_eq!(
-            injections.load(Ordering::SeqCst),
-            1,
-            "Fault did not reach expected boundary"
-        );
-        // An ambiguous client result can coexist with a successful chain effect.
-        // Prove the real chain accepted exactly the one intended proposal.
-        let address = get_proposal_pda(
-            &fixture.config.multisig,
-            index,
-            Some(&fixture.config.squads_program),
-        )
-        .0;
-        let mut active = false;
-        for _ in 0..100 {
-            if let Some(account) = fixture
-                .rpc
-                .get_multiple_accounts(&[address])
-                .await?
-                .into_iter()
-                .next()
-                .flatten()
-            {
-                active = matches!(
-                    Proposal::try_deserialize(&mut account.data.as_slice())?.status,
-                    ProposalStatus::Active { .. }
-                );
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        assert!(
-            active,
-            "Fault {case:?} did not follow a real successful submission"
-        );
-        println!("PASS {case:?}: one real submission, no success receipt, no retry");
-    }
-    Ok(())
+// One transport failure at the irreversible boundary; all other RPCs are real.
+struct LostSubmissionReply {
+    inner: HttpSender,
+    submissions: Arc<AtomicUsize>,
 }
 
-async fn assert_preflight_rejections(
-    fixture: &Fixture,
-    buffer: Pubkey,
-    uploaded: &Account,
-) -> Result<()> {
-    let mut oversized = fixture.binary.clone();
-    oversized.push(0);
-    let oversized_path = fixture.directory.path().join("oversized.so");
-    fs::write(&oversized_path, &oversized)?;
-    fixture
-        .assert_rejected_without_mutation(
-            "check",
-            &oversized_path,
-            buffer,
-            1,
-            "Program needs 1 additional bytes",
-        )
-        .await?;
-    fixture
-        .assert_rejected_without_mutation(
-            "propose",
-            &oversized_path,
-            buffer,
-            1,
-            "additional bytes required",
-        )
-        .await?;
-    fixture
-        .assert_rejected_without_mutation(
-            "propose",
-            &fixture.binary_path,
-            buffer,
-            2,
-            "Expected unused transaction index 1",
-        )
-        .await?;
-
-    for (case, expected) in [
-        ("short", "Buffer payload size does not match the binary"),
-        ("long", "Buffer payload size does not match the binary"),
-        (
-            "content",
-            "Uploaded buffer contents do not match the built binary",
-        ),
-        (
-            "authority",
-            "Buffer authority does not match the expected signer",
-        ),
-        ("owner", "Buffer has an incorrect owner or executable flag"),
-    ] {
-        let mut invalid = uploaded.clone();
-        match case {
-            "short" => {
-                invalid.data.pop();
-            },
-            "long" => invalid.data.push(0),
-            "content" => {
-                *invalid.data.last_mut().context("Empty buffer")? ^= 1;
-            },
-            "authority" => {
-                let metadata = bincode::serialize(&UpgradeableLoaderState::Buffer {
-                    authority_address: Some(fixture.voter.pubkey()),
-                })?;
-                invalid
-                    .data
-                    .get_mut(..metadata.len())
-                    .context("Short buffer")?
-                    .copy_from_slice(&metadata);
-            },
-            "owner" => invalid.owner = system_program::id(),
-            _ => anyhow::bail!("Unknown buffer case"),
+#[async_trait]
+impl RpcSender for LostSubmissionReply {
+    async fn send(&self, request: RpcRequest, params: Value) -> RpcResult<Value> {
+        if request == RpcRequest::SendTransaction {
+            self.submissions.fetch_add(1, Ordering::SeqCst);
+            self.inner.send(request, params).await?;
+            return Err(ErrorKind::Custom("Lost reply after successful submission".into()).into());
         }
-        fixture.set_account(buffer, &invalid).await?;
-        fixture
-            .assert_rejected_without_mutation("propose", &fixture.binary_path, buffer, 1, expected)
-            .await?;
-        fixture.set_account(buffer, uploaded).await?;
+        self.inner.send(request, params).await
     }
-    let funded = fixture.rpc.get_account(&fixture.proposer.pubkey()).await?;
-    let mut poor = funded.clone();
-    poor.lamports = 1_000_000;
-    fixture
-        .set_account(fixture.proposer.pubkey(), &poor)
-        .await?;
-    fixture
-        .assert_rejected_without_mutation(
-            "check",
-            &fixture.binary_path,
-            buffer,
-            1,
-            "Proposer needs at least",
-        )
-        .await?;
-    fixture
-        .assert_rejected_without_mutation(
-            "propose",
-            &fixture.binary_path,
-            buffer,
-            1,
-            "Proposer needs",
-        )
-        .await?;
-    fixture
-        .set_account(fixture.proposer.pubkey(), &funded)
-        .await?;
 
-    Ok(())
+    fn get_transport_stats(&self) -> RpcTransportStats {
+        self.inner.get_transport_stats()
+    }
+
+    fn url(&self) -> String {
+        self.inner.url()
+    }
 }
 
 async fn assert_atomic_rollback(

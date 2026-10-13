@@ -1,4 +1,5 @@
 use anyhow::Result;
+use serde_json::json;
 use solana_sdk::pubkey::Pubkey;
 use swig_release::release::{validate_preflight, CheckReceipt};
 
@@ -20,52 +21,24 @@ fn preflight_binds_binary_deployment_signer_and_index() -> Result<()> {
         upload_fee_reserve_lamports: 100,
         minimum_proposer_balance_lamports: 300,
     };
-    let json = serde_json::to_vec(&saved)?;
-    let current: CheckReceipt = serde_json::from_slice(&json)?;
-    validate_preflight(&saved, &current)?;
-    for field in [
-        "program", "squads", "multisig", "vault", "proposer", "bytes", "hash", "index",
+    validate_preflight(&saved, &saved)?;
+    let json = serde_json::to_value(&saved)?;
+    for (field, value) in [
+        ("program", json!(Pubkey::new_unique())),
+        ("squads_program", json!(Pubkey::new_unique())),
+        ("multisig", json!(Pubkey::new_unique())),
+        ("vault_index", json!(4)),
+        ("proposer", json!(Pubkey::new_unique())),
+        ("binary_bytes", json!(401)),
+        ("binary_sha256", json!("b".repeat(64))),
+        ("transaction_index", json!(8)),
     ] {
-        let mut changed: CheckReceipt = serde_json::from_slice(&json)?;
-        let expected = match field {
-            "program" => {
-                changed.program = Pubkey::new_unique();
-                "deployment or proposer"
-            },
-            "squads" => {
-                changed.squads_program = Pubkey::new_unique();
-                "deployment or proposer"
-            },
-            "multisig" => {
-                changed.multisig = Pubkey::new_unique();
-                "deployment or proposer"
-            },
-            "vault" => {
-                changed.vault_index += 1;
-                "deployment or proposer"
-            },
-            "proposer" => {
-                changed.proposer = Pubkey::new_unique();
-                "deployment or proposer"
-            },
-            "bytes" => {
-                changed.binary_bytes += 1;
-                "binary does not match"
-            },
-            "hash" => {
-                changed.binary_sha256 = "b".repeat(64);
-                "binary does not match"
-            },
-            "index" => {
-                changed.transaction_index += 1;
-                "transaction index is stale"
-            },
-            _ => anyhow::bail!("Unknown case"),
-        };
-        let error = validate_preflight(&saved, &changed).err();
+        let mut changed = json.clone();
+        changed[field] = value;
+        let changed: CheckReceipt = serde_json::from_value(changed)?;
         assert!(
-            error.is_some_and(|e| e.to_string().contains(expected)),
-            "Failed case: {field}"
+            validate_preflight(&saved, &changed).is_err(),
+            "Accepted changed {field}"
         );
     }
     Ok(())

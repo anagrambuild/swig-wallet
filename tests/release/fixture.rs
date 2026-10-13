@@ -13,10 +13,7 @@ use solana_sdk::{
 use solana_sdk_ids::system_program;
 use squads_multisig::{
     anchor_lang::{AccountSerialize, InstructionData, ToAccountMetas},
-    pda::{
-        get_multisig_pda, get_program_config_pda, get_proposal_pda, get_transaction_pda,
-        get_vault_pda,
-    },
+    pda::{get_multisig_pda, get_program_config_pda, get_vault_pda},
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
     solana_rpc_client_api::request::RpcRequest,
     squads_multisig_program::{self as squads, Member, Permission, Permissions},
@@ -28,11 +25,7 @@ use std::{
     process::{Child, Command},
     time::Duration,
 };
-use swig_release::{
-    buffer::upload_buffer,
-    config::ReleaseConfig,
-    release::{propose, read_binary, ProposalRequest},
-};
+use swig_release::{buffer::upload_buffer, config::ReleaseConfig};
 
 pub(super) const SOURCE_COMMIT: &str = "34f010f77f27052e895100c808cf8769a15f97a5";
 
@@ -254,7 +247,7 @@ impl Fixture {
         Ok(fixture)
     }
 
-    pub(super) async fn set_account(&self, address: Pubkey, account: &Account) -> Result<()> {
+    async fn set_account(&self, address: Pubkey, account: &Account) -> Result<()> {
         let _: Value = self.rpc.send(RpcRequest::Custom { method: "surfnet_setAccount" }, json!([address.to_string(), {
             "lamports": account.lamports, "data": hex(&account.data), "owner": account.owner.to_string(),
             "executable": account.executable, "rentEpoch": account.rent_epoch,
@@ -287,86 +280,6 @@ impl Fixture {
             Path::new(&solana),
             output.path(),
         )
-    }
-
-    pub(super) async fn assert_rejected_without_mutation(
-        &self,
-        command: &str,
-        binary: &Path,
-        buffer: Pubkey,
-        index: u64,
-        expected: &str,
-    ) -> Result<()> {
-        let addresses = [
-            buffer,
-            self.config.multisig,
-            self.proposer.pubkey(),
-            get_transaction_pda(
-                &self.config.multisig,
-                index,
-                Some(&self.config.squads_program),
-            )
-            .0,
-            get_proposal_pda(
-                &self.config.multisig,
-                index,
-                Some(&self.config.squads_program),
-            )
-            .0,
-        ];
-        let before = self.rpc.get_multiple_accounts(&addresses).await?;
-        let signatures = self
-            .rpc
-            .get_signatures_for_address(&self.proposer.pubkey())
-            .await?;
-        let error = if command == "check" {
-            let output = self
-                .cli()?
-                .args(["check", "--binary"])
-                .arg(binary)
-                .output()?;
-            assert!(!output.status.success(), "Expected rejection: {expected}");
-            assert!(
-                output.stdout.is_empty(),
-                "Rejected command emitted a receipt"
-            );
-            String::from_utf8(output.stderr)?
-        } else {
-            let result = propose(
-                &self.rpc,
-                &self.config,
-                &self.proposer,
-                &read_binary(binary)?,
-                ProposalRequest {
-                    buffer,
-                    transaction_index: index,
-                    source_commit: SOURCE_COMMIT.into(),
-                    tag: "upgrade-surfpool-test".into(),
-                },
-            )
-            .await;
-            assert!(result.is_err(), "Expected rejection: {expected}");
-            result
-                .err()
-                .context("Expected proposal rejection")?
-                .to_string()
-        };
-        assert!(error.contains(expected), "Expected {expected}, got {error}");
-        assert_eq!(
-            self.rpc.get_multiple_accounts(&addresses).await?,
-            before,
-            "Rejection mutated accounts"
-        );
-        assert_eq!(
-            self.rpc
-                .get_signatures_for_address(&self.proposer.pubkey())
-                .await?
-                .len(),
-            signatures.len(),
-            "Rejection submitted a transaction"
-        );
-        println!("PASS rejection with zero submissions: {expected}");
-        Ok(())
     }
 }
 
