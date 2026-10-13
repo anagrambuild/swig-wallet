@@ -73,7 +73,8 @@ pub struct SwigWallet<'a> {
 }
 
 impl<'c> SwigWallet<'c> {
-    /// Creates a new SwigWallet instance or initializes an existing one
+    /// Creates or opens a legacy wallet using `["swig", swig_id]`.
+    /// Use [`Self::from_reservation`] for reserved wallets.
     ///
     /// # Arguments
     ///
@@ -183,8 +184,11 @@ impl<'c> SwigWallet<'c> {
         }
     }
 
-    /// Activates a reservation (or safely retries it) and opens the wallet
-    /// using its current authority. Only the external fee payer signs activation.
+    /// Opens an active reservation using its current authority without sending
+    /// a transaction. Missing or prefunded, uninitialized configs are activated
+    /// first; only the external fee payer signs that transaction. RPC failures
+    /// and invalid existing configs are returned instead of triggering
+    /// activation.
     pub fn from_reservation(
         reservation: swig_interface::reservation::ReservationV1,
         client_role: Box<dyn ClientRole>,
@@ -201,37 +205,63 @@ impl<'c> SwigWallet<'c> {
         )?;
         let swig_account = instruction_builder.get_swig_account()?;
         let rpc_client = RpcClient::new_with_commitment(rpc_url, CommitmentConfig::confirmed());
-        let create = instruction_builder.build_swig_account()?;
         #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        let blockhash = rpc_client.get_latest_blockhash()?;
+        let mut account = rpc_client
+            .get_account_with_commitment(&swig_account, CommitmentConfig::confirmed())?
+            .value;
         #[cfg(all(feature = "rust_sdk_test", test))]
-        let blockhash = litesvm.latest_blockhash();
-        let instructions = [
-            solana_compute_budget_interface::ComputeBudgetInstruction::set_compute_unit_limit(
-                600_000,
-            ),
-            create,
-        ];
-        let message = v0::Message::try_compile(&fee_payer.pubkey(), &instructions, &[], blockhash)?;
-        let transaction =
-            VersionedTransaction::try_new(VersionedMessage::V0(message), &[fee_payer])?;
-        #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        rpc_client.send_and_confirm_transaction(&transaction)?;
-        #[cfg(all(feature = "rust_sdk_test", test))]
-        litesvm.send_transaction(transaction).map_err(|error| {
-            SwigError::TransactionFailedWithLogs {
-                error: error.err.to_string(),
-                logs: error.meta.logs,
-            }
-        })?;
+        let mut account = litesvm.get_account(&swig_account);
+        let needs_activation = match account.as_ref() {
+            None => true,
+            Some(account) if account.owner == swig_interface::program_id() => false,
+            // A prefunded address is still uninitialized. Activation allocates
+            // its state while preserving the deposited lamports.
+            Some(account)
+                if account.owner == solana_system_interface::program::ID
+                    && account.data.is_empty()
+                    && !account.executable =>
+            {
+                true
+            },
+            Some(_) => return Err(SwigError::InvalidSwigData),
+        };
+        if needs_activation {
+            let create = instruction_builder.build_swig_account()?;
+            #[cfg(not(all(feature = "rust_sdk_test", test)))]
+            let blockhash = rpc_client.get_latest_blockhash()?;
+            #[cfg(all(feature = "rust_sdk_test", test))]
+            let blockhash = litesvm.latest_blockhash();
+            let instructions = [
+                solana_compute_budget_interface::ComputeBudgetInstruction::set_compute_unit_limit(
+                    600_000,
+                ),
+                create,
+            ];
+            let message =
+                v0::Message::try_compile(&fee_payer.pubkey(), &instructions, &[], blockhash)?;
+            let transaction =
+                VersionedTransaction::try_new(VersionedMessage::V0(message), &[fee_payer])?;
+            #[cfg(not(all(feature = "rust_sdk_test", test)))]
+            rpc_client.send_and_confirm_transaction(&transaction)?;
+            #[cfg(all(feature = "rust_sdk_test", test))]
+            litesvm.send_transaction(transaction).map_err(|error| {
+                SwigError::TransactionFailedWithLogs {
+                    error: error.err.to_string(),
+                    logs: error.meta.logs,
+                }
+            })?;
 
-        #[cfg(not(all(feature = "rust_sdk_test", test)))]
-        let account = rpc_client.get_account(&swig_account)?;
-        #[cfg(all(feature = "rust_sdk_test", test))]
-        let account = litesvm
-            .get_account(&swig_account)
-            .ok_or(SwigError::SwigDataNotFound)?;
-        if account.owner != swig_interface::program_id() {
+            #[cfg(not(all(feature = "rust_sdk_test", test)))]
+            {
+                account = Some(rpc_client.get_account(&swig_account)?);
+            }
+            #[cfg(all(feature = "rust_sdk_test", test))]
+            {
+                account = litesvm.get_account(&swig_account);
+            }
+        }
+        let account = account.ok_or(SwigError::SwigDataNotFound)?;
+        if account.owner != swig_interface::program_id() || account.executable {
             return Err(SwigError::InvalidSwigData);
         }
         let current_role = instruction_builder.load_current_role(&account.data)?;
@@ -872,7 +902,7 @@ impl<'c> SwigWallet<'c> {
         Ok(self.instruction_builder.swig_wallet_address())
     }
 
-    /// Returns the public key of the Swig account
+    /// Returns the actual config PDA for either legacy or reserved wallets.
     ///
     /// # Returns
     ///
@@ -1547,6 +1577,9 @@ impl<'c> SwigWallet<'c> {
     ///
     /// Returns a `Result` containing the sub account or a `SwigError`
     pub fn get_sub_account(&self) -> Result<Option<Pubkey>, SwigError> {
+        if self.instruction_builder.is_reserved() {
+            return Err(SwigError::ReservedWalletRequiresSubAccountV2);
+        }
         let (sub_account, sub_account_bump) = Pubkey::find_program_address(
             &sub_account_seeds(
                 self.instruction_builder.get_swig_id(),
@@ -1627,11 +1660,8 @@ impl<'c> SwigWallet<'c> {
         Ok(keypairs)
     }
 
-    /// Returns the swig id
-    ///
-    /// # Returns
-    ///
-    /// Returns a `Result` containing the swig id or a `SwigError`
+    /// Returns the stored legacy ID or reservation commitment, not a PDA.
+    /// Use [`Self::get_swig_account`] for this wallet's actual config address.
     pub fn get_swig_id(&self) -> &[u8; 32] {
         &self.instruction_builder.get_swig_id()
     }

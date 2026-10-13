@@ -29,6 +29,10 @@ pub enum SwigError {
     #[error("Invalid swig data")]
     InvalidSwigData,
 
+    /// Reserved wallets use address-bound V2 subaccounts only.
+    #[error("Reserved wallets do not support V1 subaccounts; use V2 subaccounts")]
+    ReservedWalletRequiresSubAccountV2,
+
     /// Authority not found
     #[error("Authority not found")]
     AuthorityNotFound,

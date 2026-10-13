@@ -1105,21 +1105,15 @@ fn reservation_recovers_config_owned_tokens_and_closes_their_accounts() {
             },
             2 => {
                 corrupted.data[roles_end + 1] = 2;
-                InstructionError::Custom(
-                    swig_state::SwigStateError::InvalidRentClaimerLayout as u32,
-                )
+                InstructionError::Custom(swig_state::SwigStateError::InvalidSeedPrefix as u32)
             },
             3 => {
                 corrupted.data.extend_from_slice(&config.data[roles_end..]);
-                InstructionError::Custom(
-                    swig_state::SwigStateError::InvalidRentClaimerLayout as u32,
-                )
+                InstructionError::Custom(swig_state::SwigStateError::InvalidSeedPrefix as u32)
             },
             _ => {
                 corrupted.data.pop();
-                InstructionError::Custom(
-                    swig_state::SwigStateError::InvalidRentClaimerLayout as u32,
-                )
+                InstructionError::Custom(swig_state::SwigStateError::InvalidSeedPrefix as u32)
             },
         };
         context

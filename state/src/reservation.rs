@@ -42,6 +42,10 @@ pub fn validate_package(
 /// Validates a direct owner and returns its canonical identity. Ed25519 uses
 /// the first 32 bytes; secp identities use all 33 bytes. Runtime authority
 /// storage (including odometers) remains owned by `Authority::set_into_bytes`.
+/// A reservation's first authority must be a direct signing key, so unlike
+/// CreateV1, Ed25519 PDA authorities are intentionally excluded here. Key
+/// validation does not prove possession of the private key; activation only
+/// requires the payer's signature.
 pub fn canonical_public_key(
     authority_type: AuthorityType,
     public_key: &[u8],

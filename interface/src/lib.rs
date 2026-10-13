@@ -206,6 +206,10 @@ pub fn program_id() -> Pubkey {
 
 pub const PROGRAM_ID: [u8; 32] = swig::ID;
 
+/// Derives a legacy config address using `["swig", id]`. A reserved commitment
+/// is also stored as an ID, but belongs to a different namespace: use the
+/// reservation's addresses, or `swig_state::swig::config_seeds` for account
+/// data.
 pub fn swig_key_bytes(id: &[u8; 32]) -> Pubkey {
     Pubkey::find_program_address(&swig_account_seeds(id), &program_id()).0
 }

@@ -11,7 +11,7 @@ use swig_state::{
         secp256r1::CreateSecp256r1SessionAuthority, AuthorityType,
     },
     swig::{
-        sub_account_seeds, sub_account_v2_asset_seeds, sub_account_v2_state_seeds,
+        config_seeds, sub_account_seeds, sub_account_v2_asset_seeds, sub_account_v2_state_seeds,
         swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles,
     },
     IntoBytes,
@@ -29,7 +29,7 @@ use crate::{
 /// Swig wallet, including initialization, authority management, and transaction
 /// signing.
 pub struct SwigInstructionBuilder {
-    /// The id of the Swig account
+    /// Legacy ID or reserved commitment; distinct from the config address.
     swig_id: [u8; 32],
     /// The public key of the Swig account
     swig_account: Pubkey,
@@ -43,7 +43,8 @@ pub struct SwigInstructionBuilder {
 }
 
 impl SwigInstructionBuilder {
-    /// Creates a new SwigInstructionBuilder instance
+    /// Creates a builder for a legacy wallet using `["swig", swig_id]`.
+    /// Use [`Self::from_reservation`] for reserved wallets.
     ///
     /// # Arguments
     ///
@@ -312,7 +313,9 @@ impl SwigInstructionBuilder {
         )
     }
 
-    /// Returns the public key of the Swig account
+    /// Returns the actual config PDA for either namespace, cached at
+    /// construction. Use this address to identify the wallet; its ID alone
+    /// is insufficient.
     ///
     /// # Returns
     ///
@@ -322,16 +325,17 @@ impl SwigInstructionBuilder {
         Ok(self.swig_account)
     }
 
-    /// Returns the swig id
-    ///
-    /// # Returns
-    ///
-    /// Returns the swig id as a `[u8; 32]`
+    /// Returns the stored config seed: a legacy ID or reserved commitment.
+    /// This is not the config address. Use [`Self::get_swig_account`] to
+    /// identify the wallet, including when two namespaces contain the same
+    /// ID bytes.
     pub fn get_swig_id(&self) -> &[u8; 32] {
         &self.swig_id
     }
 
-    /// Derives the Swig account public key from an ID
+    /// Derives a legacy config PDA using `["swig", id]` only.
+    /// Passing a reserved commitment derives a different wallet. Use
+    /// [`Self::get_swig_account`] for this builder's actual config address.
     ///
     /// # Arguments
     ///
@@ -361,11 +365,7 @@ impl SwigInstructionBuilder {
         .0
     }
 
-    /// Derives the Swig wallet address public key from an ID
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The 32-byte identifier used to derive the Swig wallet address
+    /// Derives the asset wallet PDA from this builder's actual config address.
     ///
     /// # Returns
     ///
@@ -376,6 +376,13 @@ impl SwigInstructionBuilder {
             &program_id(),
         )
         .0
+    }
+
+    /// Whether this builder uses a reserved config. The retained activation
+    /// instruction records that choice; no RPC lookup or separate flag is
+    /// needed.
+    pub fn is_reserved(&self) -> bool {
+        self.reserved_create.is_some()
     }
 
     /// Returns the current role ID of the Swig account
@@ -410,9 +417,24 @@ impl SwigInstructionBuilder {
     /// Resolves the current signer from stored roles and synchronizes its replay
     /// counter. Both legacy and reserved wallets use this initialization path.
     pub(crate) fn load_current_role(&mut self, data: &[u8]) -> Result<CurrentRole, SwigError> {
+        let seeds = config_seeds(data).map_err(|_| SwigError::InvalidSwigData)?;
+        let address = Pubkey::create_program_address(&seeds, &program_id())
+            .map_err(|_| SwigError::InvalidSwigData)?;
+        if address != self.swig_account {
+            return Err(SwigError::InvalidSwigData);
+        }
         let swig = SwigWithRoles::from_bytes(data).map_err(|_| SwigError::InvalidSwigData)?;
         if swig.state.id != self.swig_id {
             return Err(SwigError::InvalidSwigData);
+        }
+        if self.is_reserved() {
+            let (_, wallet_bump) = Pubkey::find_program_address(
+                &swig_wallet_address_seeds(self.swig_account.as_ref()),
+                &program_id(),
+            );
+            if swig.state.wallet_bump != wallet_bump || swig.state._padding != [0; 3] {
+                return Err(SwigError::InvalidSwigData);
+            }
         }
         let authority = self.client_role.authority_bytes()?;
         let role_id = swig
@@ -458,6 +480,9 @@ impl SwigInstructionBuilder {
         &self,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
+        if self.is_reserved() {
+            return Err(SwigError::ReservedWalletRequiresSubAccountV2);
+        }
         let role_id_bytes = self.role_id.to_le_bytes();
         let swig_id_bytes = self.swig_id;
         let (sub_account, sub_account_bump) = Pubkey::find_program_address(
@@ -490,6 +515,9 @@ impl SwigInstructionBuilder {
         instructions: Vec<Instruction>,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
+        if self.is_reserved() {
+            return Err(SwigError::ReservedWalletRequiresSubAccountV2);
+        }
         let role_id_bytes = self.role_id.to_le_bytes();
         let swig_id_bytes = self.swig_id;
         let (sub_account, _) = Pubkey::find_program_address(
@@ -523,6 +551,9 @@ impl SwigInstructionBuilder {
         amount: u64,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
+        if self.is_reserved() {
+            return Err(SwigError::ReservedWalletRequiresSubAccountV2);
+        }
         self.client_role.withdraw_from_sub_account_instruction(
             self.swig_account,
             self.payer,
@@ -558,6 +589,9 @@ impl SwigInstructionBuilder {
         amount: u64,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
+        if self.is_reserved() {
+            return Err(SwigError::ReservedWalletRequiresSubAccountV2);
+        }
         self.client_role
             .withdraw_token_from_sub_account_instruction(
                 self.swig_account,
@@ -591,6 +625,9 @@ impl SwigInstructionBuilder {
         enabled: bool,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
+        if self.is_reserved() {
+            return Err(SwigError::ReservedWalletRequiresSubAccountV2);
+        }
         self.client_role.toggle_sub_account_instruction(
             self.swig_account,
             self.payer,

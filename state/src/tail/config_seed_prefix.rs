@@ -44,7 +44,7 @@ pub fn write(buf: &mut [u8], prefix: &[u8]) -> Result<(), ProgramError> {
         || prefix.len() > MAX_PREFIX_LEN
         || buf.len() != TAIL_HEADER_LEN + prefix.len()
     {
-        return Err(ProgramError::InvalidAccountData);
+        return Err(crate::SwigStateError::InvalidSeedPrefix.into());
     }
     buf.fill(0);
     buf[0] = TailKind::ConfigSeedPrefix.as_u8();

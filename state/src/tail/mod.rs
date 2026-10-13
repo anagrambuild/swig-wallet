@@ -28,11 +28,14 @@ pub mod active_sub_account_count;
 pub mod config_seed_prefix;
 pub mod rent_claimer;
 
-use crate::SwigStateError;
 use core::convert::TryInto;
+
 use pinocchio::program_error::ProgramError;
 
-/// Length of every tail entry header: `[kind][version][value_len:u16][reserved:u8;4]`.
+use crate::SwigStateError;
+
+/// Length of every tail entry header:
+/// `[kind][version][value_len:u16][reserved:u8;4]`.
 pub const TAIL_HEADER_LEN: usize = 8;
 
 /// Structured view of the 8-byte header common to each tail entry.
@@ -82,11 +85,17 @@ pub enum TailReadError {
     InvalidKind { expected: u8, found: u8 },
     InvalidValueLen { expected: usize, found: usize },
     InvalidSeedPrefixLength(usize),
+    InvalidSeedPrefix,
 }
 
 impl From<TailReadError> for ProgramError {
-    fn from(_: TailReadError) -> Self {
-        SwigStateError::InvalidRentClaimerLayout.into()
+    fn from(error: TailReadError) -> Self {
+        match error {
+            TailReadError::InvalidSeedPrefixLength(_) | TailReadError::InvalidSeedPrefix => {
+                SwigStateError::InvalidSeedPrefix.into()
+            },
+            _ => SwigStateError::InvalidRentClaimerLayout.into(),
+        }
     }
 }
 
@@ -135,10 +144,10 @@ pub enum AnyTailEntry<'a> {
 impl<'a> AnyTailEntry<'a> {
     /// Reads the first entry from `buf`.
     pub fn read(buf: &'a [u8]) -> Result<(Self, usize), TailReadError> {
-        let header = TailHeader::parse(buf)?;
-        match TailKind::from_u8(header.kind) {
+        match buf.first().copied().and_then(TailKind::from_u8) {
             Some(TailKind::ConfigSeedPrefix) => {
-                let (entry, consumed) = config_seed_prefix::ConfigSeedPrefixEntry::read(buf)?;
+                let (entry, consumed) = config_seed_prefix::ConfigSeedPrefixEntry::read(buf)
+                    .map_err(|_| TailReadError::InvalidSeedPrefix)?;
                 Ok((Self::ConfigSeedPrefix(entry), consumed))
             },
             Some(TailKind::ActiveSubAccountCount) => {
@@ -151,6 +160,7 @@ impl<'a> AnyTailEntry<'a> {
                 Ok((Self::RentClaimer(entry), consumed))
             },
             None => {
+                let header = TailHeader::parse(buf)?;
                 let end = header.total_len()?;
                 if buf.len() < end {
                     return Err(TailReadError::TooShort);
@@ -249,7 +259,7 @@ pub fn validate_strict(mut tail_data: &[u8]) -> Result<(), ProgramError> {
                     || entry.header.version != config_seed_prefix::VERSION
                     || entry.header.payload != [0u8; 4]
                 {
-                    return Err(SwigStateError::InvalidRentClaimerLayout.into());
+                    return Err(SwigStateError::InvalidSeedPrefix.into());
                 }
                 seen_config_prefix = true;
             },

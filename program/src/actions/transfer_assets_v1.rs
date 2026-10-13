@@ -20,8 +20,7 @@ use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
     authority::AuthorityType,
     role::RoleMut,
-    swig::{swig_account_signer, swig_wallet_address_seeds_with_bump, Swig},
-    tail::config_seed_prefix,
+    swig::{swig_wallet_address_seeds_with_bump, Swig},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
@@ -31,7 +30,7 @@ use crate::{
         accounts::{Context, TransferAssetsV1Accounts},
         SwigInstruction,
     },
-    util::TokenTransfer,
+    util::{config_signer, TokenTransfer},
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID,
 };
 
@@ -305,17 +304,7 @@ pub fn transfer_assets_v1(
         )?;
     }
 
-    let bump = [swig.bump];
-    let swig_id = swig.id;
-    let prefix = config_seed_prefix::read(parts.tail)?;
-    check_self_pda(
-        &[prefix, &swig_id, &bump],
-        ctx.accounts.swig.key(),
-        ProgramError::InvalidSeeds,
-    )
-    .map_err(|_| ProgramError::InvalidSeeds)?;
-    let mut swig_signer = swig_account_signer(&swig_id, &bump);
-    swig_signer[0] = prefix.into();
+    let swig_signer = config_signer(swig_account_data, *ctx.accounts.swig.key())?;
 
     // Calculate the native sweep before executing any transfers.
     let swig_lamports = ctx.accounts.swig.lamports();
