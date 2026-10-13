@@ -25,10 +25,3 @@ tempfile = "3"
 
 [profile.release]
 strip = true
-
-[dev-dependencies]
-async-trait = "0.1"
-
-[[test]]
-name = "surfpool"
-path = "../../tests/release/surfpool.rs"
