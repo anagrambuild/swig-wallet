@@ -24,3 +24,12 @@ zeroize = "1"
 
 [profile.release]
 strip = true
+
+[dev-dependencies]
+async-trait = "0.1"
+base64 = "0.22"
+tempfile = "3"
+
+[[test]]
+name = "surfpool"
+path = "../../tests/release/surfpool.rs"
