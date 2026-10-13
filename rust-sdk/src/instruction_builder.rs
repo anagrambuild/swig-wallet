@@ -445,11 +445,12 @@ impl SwigInstructionBuilder {
             .get_role(role_id)
             .map_err(|_| SwigError::InvalidSwigData)?
             .ok_or(SwigError::AuthorityNotFound)?;
+        let current_role = CurrentRole::from_role(role_id, &role)?;
         if let Some(odometer) = role.authority.signature_odometer() {
             self.client_role.update_odometer(odometer)?;
         }
         self.role_id = role_id;
-        Ok(CurrentRole::from_role(role_id, &role))
+        Ok(current_role)
     }
 
     /// Updates the fee payer for the Swig instruction builder

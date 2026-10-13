@@ -341,7 +341,7 @@ fn reservation_namespace_is_distinct_and_rejects_v1_subaccount_builders() {
 
 #[test]
 fn reservation_open_rejects_invalid_existing_accounts_without_activation() {
-    use swig_state::{swig::Swig, tail::TAIL_HEADER_LEN};
+    use swig_state::{swig::Swig, tail::TAIL_HEADER_LEN, Transmutable};
     let (svm, payer) = setup_test_environment();
     let owner = Keypair::new();
     let reservation = ReservationV1::new(
@@ -389,7 +389,7 @@ fn reservation_open_rejects_invalid_existing_accounts_without_activation() {
         opened.get_sub_account(),
         Err(SwigError::ReservedWalletRequiresSubAccountV2)
     ));
-    for case in [0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] {
+    for case in [0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] {
         let mut corrupted = valid.clone();
         match case {
             0 => corrupted.owner = Pubkey::new_unique(),
@@ -403,7 +403,14 @@ fn reservation_open_rejects_invalid_existing_accounts_without_activation() {
             9 => corrupted.data.truncate(roles_end),
             10 => corrupted.data[roles_end + TAIL_HEADER_LEN] ^= 1,
             11 => corrupted.data[roles_end + 1] = 2,
-            _ => corrupted.data.extend_from_slice(&valid.data[roles_end..]),
+            12 => corrupted.data.extend_from_slice(&valid.data[roles_end..]),
+            _ => {
+                let action_offset = Swig::LEN
+                    + swig_state::role::Position::LEN
+                    + swig_state::authority::ed25519::ED25519Authority::LEN;
+                corrupted.data[action_offset..action_offset + 2]
+                    .copy_from_slice(&u16::MAX.to_le_bytes());
+            },
         }
         let mut svm = wallet.litesvm().clone();
         svm.set_account(addresses.swig_address, corrupted).unwrap();

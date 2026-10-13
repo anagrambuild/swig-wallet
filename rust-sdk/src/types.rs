@@ -768,14 +768,18 @@ pub struct CurrentRole {
 }
 
 impl CurrentRole {
-    pub(crate) fn from_role(role_id: u32, role: &Role) -> Self {
-        Self {
+    pub(crate) fn from_role(role_id: u32, role: &Role) -> Result<Self, SwigError> {
+        Ok(Self {
             role_id,
             authority_type: role.authority.authority_type(),
-            authority_identity: role.authority.identity().unwrap_or_default().to_vec(),
-            permissions: Permission::from_role(role).unwrap_or_default(),
+            authority_identity: role
+                .authority
+                .identity()
+                .map_err(|_| SwigError::InvalidSwigData)?
+                .to_vec(),
+            permissions: Permission::from_role(role)?,
             session_based: role.authority.session_based(),
-        }
+        })
     }
 }
 

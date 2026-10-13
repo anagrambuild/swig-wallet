@@ -150,7 +150,7 @@ impl<'c> SwigWallet<'c> {
                 .get_role(0)
                 .map_err(|_| SwigError::AuthorityNotFound)?
                 .ok_or(SwigError::AuthorityNotFound)?;
-            let current_role = CurrentRole::from_role(0, &role);
+            let current_role = CurrentRole::from_role(0, &role)?;
 
             Ok(Self {
                 instruction_builder,
@@ -1413,7 +1413,7 @@ impl<'c> SwigWallet<'c> {
             .map_err(|_| SwigError::AuthorityNotFound)?;
 
         if let Some(role) = role {
-            self.current_role = CurrentRole::from_role(role_id, &role);
+            self.current_role = CurrentRole::from_role(role_id, &role)?;
         } else {
             return Err(SwigError::AuthorityNotFound);
         }
