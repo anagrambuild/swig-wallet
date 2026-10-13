@@ -1,7 +1,7 @@
 use std::{fs, path::Path, time::Duration};
 
 use anyhow::{anyhow, ensure, Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use solana_loader_v3_interface::state::UpgradeableLoaderState;
 use solana_sdk::{
@@ -32,8 +32,13 @@ use crate::{
 // requirement, not a transfer or a priority fee charged to the proposer.
 const UPLOAD_FEE_RESERVE: u64 = 100_000_000;
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct CheckReceipt {
+    pub program: Pubkey,
+    pub squads_program: Pubkey,
+    pub multisig: Pubkey,
+    pub vault_index: u8,
+    pub proposer: Pubkey,
     pub binary_bytes: usize,
     pub binary_sha256: String,
     pub program_capacity_bytes: usize,
@@ -131,6 +136,11 @@ pub async fn check(
     ensure!(accounts.proposer_balance >= minimum_balance,
         "Proposer needs at least {minimum_balance} lamports for buffer/proposal rent and upload fee reserve; has {}", accounts.proposer_balance);
     Ok(CheckReceipt {
+        program: config.program,
+        squads_program: config.squads_program,
+        multisig: config.multisig,
+        vault_index: config.vault_index,
+        proposer: proposer.pubkey(),
         binary_bytes: binary.len(),
         binary_sha256: format!("{:x}", Sha256::digest(binary)),
         program_capacity_bytes: accounts.program_capacity,
@@ -141,6 +151,28 @@ pub async fn check(
         upload_fee_reserve_lamports: UPLOAD_FEE_RESERVE,
         minimum_proposer_balance_lamports: minimum_balance,
     })
+}
+
+/// Bind the saved preflight to this binary, deployment and still-unused index.
+pub fn validate_preflight(saved: &CheckReceipt, current: &CheckReceipt) -> Result<()> {
+    ensure!(
+        saved.program == current.program
+            && saved.squads_program == current.squads_program
+            && saved.multisig == current.multisig
+            && saved.vault_index == current.vault_index
+            && saved.proposer == current.proposer,
+        "Preflight deployment or proposer does not match the current configuration"
+    );
+    ensure!(
+        saved.binary_bytes == current.binary_bytes && saved.binary_sha256 == current.binary_sha256,
+        "Preflight binary does not match the current binary"
+    );
+    ensure!(
+        saved.transaction_index == current.transaction_index,
+        "Preflight transaction index is stale; expected unused index {}",
+        current.transaction_index
+    );
+    Ok(())
 }
 
 pub struct ProposalRequest {

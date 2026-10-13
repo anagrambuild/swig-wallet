@@ -25,10 +25,14 @@ use std::{
     env, fs,
     net::TcpListener,
     path::{Path, PathBuf},
-    process::{Child, Command, Output},
+    process::{Child, Command},
     time::Duration,
 };
-use swig_release::config::ReleaseConfig;
+use swig_release::{
+    buffer::upload_buffer,
+    config::ReleaseConfig,
+    release::{propose, read_binary, ProposalRequest},
+};
 
 pub(super) const SOURCE_COMMIT: &str = "34f010f77f27052e895100c808cf8769a15f97a5";
 
@@ -258,13 +262,7 @@ impl Fixture {
         Ok(())
     }
 
-    pub(super) fn cli(
-        &self,
-        command: &str,
-        binary: &Path,
-        buffer: Option<Pubkey>,
-        index: u64,
-    ) -> Result<Output> {
+    pub(super) fn cli(&self) -> Result<Command> {
         let mut cli = Command::new(env!("CARGO_BIN_EXE_swig-release"));
         cli.env_clear()
             .env("SOLANA_RPC_URL", &self.config.rpc_url)
@@ -275,63 +273,20 @@ impl Fixture {
             .env("SQUADS_PROGRAM_ID", self.config.squads_program.to_string())
             .env("SQUADS_MULTISIG_ADDRESS", self.config.multisig.to_string())
             .env("SQUADS_VAULT_INDEX", self.config.vault_index.to_string())
-            .env("SWIG_PROGRAM_ID", self.config.program.to_string())
-            .arg(command)
-            .arg("--binary")
-            .arg(binary);
-        if let Some(buffer) = buffer {
-            cli.args([
-                "--buffer",
-                &buffer.to_string(),
-                "--transaction-index",
-                &index.to_string(),
-                "--source-commit",
-                SOURCE_COMMIT,
-                "--tag",
-                "upgrade-surfpool-test",
-            ]);
-        }
-        Ok(cli.output()?)
+            .env("SWIG_PROGRAM_ID", self.config.program.to_string());
+        Ok(cli)
     }
 
     pub(super) fn upload_buffer(&self) -> Result<Pubkey> {
-        let buffer = Keypair::new();
-        let payer_path = self.directory.path().join("payer.json");
-        let buffer_path = self.directory.path().join("buffer.json");
-        fs::write(
-            &payer_path,
-            serde_json::to_vec(&self.proposer.to_bytes().as_slice())?,
-        )?;
-        fs::write(
-            &buffer_path,
-            serde_json::to_vec(&buffer.to_bytes().as_slice())?,
-        )?;
+        let output = tempfile::tempdir_in(self.directory.path())?;
         let solana = env::var("SOLANA_TEST_CLI").unwrap_or_else(|_| "solana".into());
-        let output = Command::new(solana)
-            .args(["program", "write-buffer"])
-            .arg(&self.binary_path)
-            .args([
-                "--url",
-                &self.config.rpc_url,
-                "--commitment",
-                "confirmed",
-                "--use-rpc",
-                "--max-sign-attempts",
-                "3",
-                "--max-len",
-                &self.binary.len().to_string(),
-            ])
-            .arg("--keypair")
-            .arg(&payer_path)
-            .arg("--buffer")
-            .arg(&buffer_path)
-            .output()?;
-        ensure!(
-            output.status.success(),
-            "Solana buffer upload failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(buffer.pubkey())
+        upload_buffer(
+            &self.config,
+            &self.proposer,
+            &self.binary,
+            Path::new(&solana),
+            output.path(),
+        )
     }
 
     pub(super) async fn assert_rejected_without_mutation(
@@ -364,18 +319,38 @@ impl Fixture {
             .rpc
             .get_signatures_for_address(&self.proposer.pubkey())
             .await?;
-        let output = self.cli(
-            command,
-            binary,
-            (command == "propose").then_some(buffer),
-            index,
-        )?;
-        assert!(!output.status.success(), "Expected rejection: {expected}");
-        assert!(
-            output.stdout.is_empty(),
-            "Rejected command emitted a receipt"
-        );
-        let error = String::from_utf8(output.stderr)?;
+        let error = if command == "check" {
+            let output = self
+                .cli()?
+                .args(["check", "--binary"])
+                .arg(binary)
+                .output()?;
+            assert!(!output.status.success(), "Expected rejection: {expected}");
+            assert!(
+                output.stdout.is_empty(),
+                "Rejected command emitted a receipt"
+            );
+            String::from_utf8(output.stderr)?
+        } else {
+            let result = propose(
+                &self.rpc,
+                &self.config,
+                &self.proposer,
+                &read_binary(binary)?,
+                ProposalRequest {
+                    buffer,
+                    transaction_index: index,
+                    source_commit: SOURCE_COMMIT.into(),
+                    tag: "upgrade-surfpool-test".into(),
+                },
+            )
+            .await;
+            assert!(result.is_err(), "Expected rejection: {expected}");
+            result
+                .err()
+                .context("Expected proposal rejection")?
+                .to_string()
+        };
         assert!(error.contains(expected), "Expected {expected}, got {error}");
         assert_eq!(
             self.rpc.get_multiple_accounts(&addresses).await?,

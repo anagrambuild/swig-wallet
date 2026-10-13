@@ -25,47 +25,49 @@ jobs:
       actions: read
     outputs:
       artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+      source_sha: ${{ steps.source.outputs.sha }}
+      release_tag: ${{ steps.source.outputs.tag }}
     steps:
-      - name: Require a fresh manual run from main
+      - name: Resolve latest main and require successful CI
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           test "$GITHUB_EVENT_NAME" = workflow_dispatch
           test "$GITHUB_REF" = refs/heads/main
           if [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
-            echo "::error::Reruns are disabled. Inspect the original tag, buffer and transaction before starting a new release run."
+            echo "::error::Reruns are disabled. Inspect the original release before starting another run."
             exit 1
           fi
-
-      - name: Require successful main CI for this exact commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
+          source_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Could not resolve a valid main commit."
+            exit 1
+          fi
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "tag=upgrade-${GITHUB_RUN_NUMBER}-${source_sha:0:12}" >> "$GITHUB_OUTPUT"
           for workflow in build-and-test.yml lint.yml; do
             passed=$(gh run list --repo "$GITHUB_REPOSITORY" \
-              --workflow "$workflow" --commit "$GITHUB_SHA" --branch main --event push \
+              --workflow "$workflow" --commit "$source_sha" --branch main --event push \
               --limit 1 --json status,conclusion \
               --jq '.[0] | .status == "completed" and .conclusion == "success"')
             if [ "$passed" != true ]; then
-              echo "::error::$workflow must pass on $GITHUB_SHA before proposing an upgrade."
+              echo "::error::$workflow must pass on latest main ($source_sha) before release."
               exit 1
             fi
           done
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ steps.source.outputs.sha }}
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f
         with:
           toolchain: ${{ env.RUST_VERSION }}
-          components: rustfmt, clippy
 
-      - name: Validate and build release CLI
-        run: |
-          cargo fmt --manifest-path tools/release/Cargo.toml --all -- --check
-          cargo clippy --manifest-path tools/release/Cargo.toml --locked --all-targets -- -D warnings
-          cargo test --manifest-path tools/release/Cargo.toml --locked
-          cargo build --manifest-path tools/release/Cargo.toml --locked --release
+      - name: Build release CLI
+        run: cargo build --manifest-path tools/release/Cargo.toml --locked --release
 
       - name: Install pinned SBF compiler
         run: cargo install cargo-build-sbf --version 4.0.0 --locked --force
@@ -83,7 +85,7 @@ jobs:
         id: artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-inputs-${{ github.sha }}
+          name: release-inputs-${{ steps.source.outputs.sha }}
           path: release-inputs/
           if-no-files-found: error
           retention-days: 30
@@ -100,6 +102,8 @@ jobs:
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+      RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -126,23 +130,15 @@ jobs:
           SQUADS_MULTISIG_ADDRESS: ${{ secrets.SQUADS_MULTISIG_ADDRESS }}
           SQUADS_VAULT_INDEX: ${{ secrets.SQUADS_VAULT_INDEX }}
           SWIG_PROGRAM_ID: ${{ secrets.SWIG_PROGRAM_ID }}
-        run: |
-          ./release-inputs/swig-release check --binary release-inputs/swig.so > preflight.json
-          echo "RELEASE_TAG=upgrade-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
+        run: ./release-inputs/swig-release check --binary release-inputs/swig.so > preflight.json
 
-      - name: Tag the validated commit and publish upgrade candidate
+      - name: Tag latest main and publish release candidate
         run: |
           gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
-            -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$GITHUB_SHA"
-          cat > release-notes.txt <<EOF
-          Swig upgrade candidate built from commit $GITHUB_SHA.
-
-          Proposal creation is pending. This release does not indicate that an on-chain upgrade has been approved or executed.
-
-          Workflow: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
-          EOF
+            -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$SOURCE_SHA"
           gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --verify-tag --prerelease --title "$RELEASE_TAG" --notes-file release-notes.txt \
+            --verify-tag --prerelease --title "$RELEASE_TAG" \
+            --notes "Upgrade candidate from $SOURCE_SHA. Proposal creation is pending; see this run's receipts." \
             release-inputs/swig.so release-inputs/swig.so.sha256 preflight.json
 
       - name: Upload buffer and create proposal
@@ -154,42 +150,16 @@ jobs:
           SQUADS_VAULT_INDEX: ${{ secrets.SQUADS_VAULT_INDEX }}
           SWIG_PROGRAM_ID: ${{ secrets.SWIG_PROGRAM_ID }}
         run: |
-          umask 077
-          proposer_file="$RUNNER_TEMP/swig-proposer.json"
-          buffer_file="$RUNNER_TEMP/swig-buffer.json"
-          upload_log="$RUNNER_TEMP/swig-upload.log"
-          trap 'rm -f "$proposer_file" "$buffer_file" "$upload_log"' EXIT
-          printf '%s' "$PROPOSER_KEYPAIR" > "$proposer_file"
-          solana-keygen new --no-bip39-passphrase --silent --outfile "$buffer_file" > /dev/null
-          buffer=$(solana-keygen pubkey "$buffer_file")
-          printf '%s\n' "$buffer" > buffer-address.txt
-          echo "Buffer: $buffer" >> "$GITHUB_STEP_SUMMARY"
-          binary_bytes=$(jq -er '.binary_bytes' preflight.json)
-          transaction_index=$(jq -er '.transaction_index' preflight.json)
-          if ! solana program write-buffer release-inputs/swig.so \
-            --url "$SOLANA_RPC_URL" --keypair "$proposer_file" \
-            --buffer "$buffer_file" --max-len "$binary_bytes" \
-            --use-rpc --commitment confirmed --max-sign-attempts 3 \
-            > "$upload_log" 2>&1; then
-            echo "::error::Buffer upload failed. Inspect buffer $buffer; the proposer retains authority for recovery."
-            exit 1
-          fi
           ./release-inputs/swig-release propose --binary release-inputs/swig.so \
-            --buffer "$buffer" --transaction-index "$transaction_index" \
-            --source-commit "$GITHUB_SHA" --tag "$RELEASE_TAG" > proposal-receipt.json
+            --preflight preflight.json --source-commit "$SOURCE_SHA" \
+            --tag "$RELEASE_TAG" --output-dir proposal
 
       - name: Publish confirmed proposal receipt
         run: |
-          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" proposal-receipt.json
-          cat > release-notes.txt <<EOF
-          Swig upgrade candidate built from commit $GITHUB_SHA.
-
-          The active Squads proposal and verified buffer are recorded in proposal-receipt.json. Multisig members must approve and execute the upgrade.
-
-          Workflow: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
-          EOF
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.txt
-          cat proposal-receipt.json >> "$GITHUB_STEP_SUMMARY"
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" proposal/proposal-receipt.json
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --notes "Upgrade candidate from $SOURCE_SHA. The active Squads proposal is in proposal-receipt.json; multisig members must approve and execute it."
+          cat proposal/proposal-receipt.json >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve public recovery information
         if: always()
@@ -198,7 +168,6 @@ jobs:
           name: upgrade-receipts-${{ github.run_id }}
           path: |
             preflight.json
-            buffer-address.txt
-            proposal-receipt.json
+            proposal/
           if-no-files-found: ignore
           retention-days: 90

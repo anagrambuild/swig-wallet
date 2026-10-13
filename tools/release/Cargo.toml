@@ -21,6 +21,7 @@ squads-multisig = { git = "https://github.com/Squads-Protocol/v4", rev = "af9415
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 url = "2"
 zeroize = "1"
+tempfile = "3"
 
 [profile.release]
 strip = true
@@ -28,7 +29,6 @@ strip = true
 [dev-dependencies]
 async-trait = "0.1"
 base64 = "0.22"
-tempfile = "3"
 
 [[test]]
 name = "surfpool"

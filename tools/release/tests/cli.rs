@@ -43,12 +43,14 @@ fn invalid_rpc_error_does_not_expose_credentials() -> Result<()> {
 }
 
 #[test]
-fn proposal_requires_a_fixed_transaction_index() -> Result<()> {
+fn proposal_requires_the_saved_preflight_and_receipt_directory() -> Result<()> {
     let output = Command::new(env!("CARGO_BIN_EXE_swig-release"))
         .env_clear()
         .args(["propose", "--binary", "swig.so"])
         .output()?;
     assert!(!output.status.success());
-    assert!(String::from_utf8(output.stderr)?.contains("--transaction-index"));
+    let error = String::from_utf8(output.stderr)?;
+    assert!(error.contains("--preflight"));
+    assert!(error.contains("--output-dir"));
     Ok(())
 }

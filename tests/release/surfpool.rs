@@ -10,7 +10,7 @@ mod rpc_faults;
 use fixture::{Fixture, SOURCE_COMMIT};
 
 use std::{
-    fs,
+    env, fs,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -55,7 +55,11 @@ use rpc_faults::{Fault, FaultySurfpool};
 #[ignore = "explicit local Surfpool E2E; requires built Swig and Squads binaries and Solana CLI"]
 async fn release_cli_on_surfpool() -> Result<()> {
     let fixture = Fixture::start().await?;
-    let check = fixture.cli("check", &fixture.binary_path, None, 0)?;
+    let check = fixture
+        .cli()?
+        .args(["check", "--binary"])
+        .arg(&fixture.binary_path)
+        .output()?;
     ensure!(
         check.status.success(),
         "Preflight failed: {}",
@@ -69,6 +73,8 @@ async fn release_cli_on_surfpool() -> Result<()> {
     );
     assert_eq!(receipt["transaction_index"], 1);
     assert_eq!(receipt["program_capacity_bytes"], fixture.binary.len());
+    let preflight = fixture.directory.path().join("preflight.json");
+    fs::write(&preflight, &check.stdout)?;
     println!(
         "PASS read-only preflight: {}",
         String::from_utf8(check.stdout)?
@@ -91,7 +97,24 @@ async fn release_cli_on_surfpool() -> Result<()> {
     )
     .0;
     let before = fixture.rpc.get_account(&program_data).await?;
-    let output = fixture.cli("propose", &fixture.binary_path, Some(buffer), 1)?;
+    let output_dir = fixture.directory.path().join("proposal");
+    let output = fixture
+        .cli()?
+        .args(["propose", "--binary"])
+        .arg(&fixture.binary_path)
+        .arg("--preflight")
+        .arg(&preflight)
+        .args([
+            "--source-commit",
+            SOURCE_COMMIT,
+            "--tag",
+            "upgrade-surfpool-test",
+        ])
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--solana-cli")
+        .arg(env::var("SOLANA_TEST_CLI").unwrap_or_else(|_| "solana".into()))
+        .output()?;
     ensure!(
         output.status.success(),
         "Proposal failed: {}",
@@ -104,7 +127,18 @@ async fn release_cli_on_surfpool() -> Result<()> {
         format!("{:x}", Sha256::digest(&fixture.binary))
     );
     assert_eq!(receipt["source_commit"], SOURCE_COMMIT);
-    assert_eq!(receipt["buffer"], buffer.to_string());
+    let buffer: Pubkey = receipt["buffer"]
+        .as_str()
+        .context("Missing buffer address")?
+        .parse()?;
+    assert_eq!(
+        fs::read_to_string(output_dir.join("buffer-address.txt"))?.trim(),
+        buffer.to_string()
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(output_dir.join("proposal-receipt.json"))?)?,
+        receipt
+    );
     let vault = get_vault_pda(
         &fixture.config.multisig,
         fixture.config.vault_index,
@@ -140,6 +174,124 @@ async fn release_cli_on_surfpool() -> Result<()> {
         .await?;
 
     execute_as_separate_member(&fixture, buffer, &receipt).await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[cfg(unix)]
+#[ignore = "explicit local Surfpool E2E for CLI preflight and uploader failures"]
+async fn cli_rejects_changed_preflight_and_preserves_upload_failure_evidence() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = Fixture::start().await?;
+    let check = fixture
+        .cli()?
+        .args(["check", "--binary"])
+        .arg(&fixture.binary_path)
+        .output()?;
+    ensure!(check.status.success(), "Preflight failed");
+    let saved: Value = serde_json::from_slice(&check.stdout)?;
+    let preflight = fixture.directory.path().join("preflight.json");
+    let uploader = fixture.directory.path().join("failed-uploader");
+    fs::write(
+        &uploader,
+        "#!/bin/sh\necho private-rpc-credential\necho private-key-material >&2\nexit 9\n",
+    )?;
+    fs::set_permissions(&uploader, fs::Permissions::from_mode(0o700))?;
+    let addresses = [fixture.proposer.pubkey(), fixture.config.multisig];
+    let before = fixture.rpc.get_multiple_accounts(&addresses).await?;
+    let signatures = fixture
+        .rpc
+        .get_signatures_for_address(&fixture.proposer.pubkey())
+        .await?
+        .len();
+
+    for (case, expected) in [
+        ("binary", "Preflight binary does not match"),
+        (
+            "deployment",
+            "Preflight deployment or proposer does not match",
+        ),
+        ("index", "Preflight transaction index is stale"),
+        ("malformed", "Malformed preflight receipt"),
+        ("existing", "Output directory must be new"),
+        ("upload", "Buffer upload failed"),
+    ] {
+        let mut changed = saved.clone();
+        match case {
+            "binary" => changed["binary_sha256"] = json!("changed"),
+            "deployment" => changed["multisig"] = json!(Pubkey::new_unique()),
+            "index" => changed["transaction_index"] = json!(2),
+            _ => {},
+        }
+        fs::write(
+            &preflight,
+            if case == "malformed" {
+                b"{}".to_vec()
+            } else {
+                serde_json::to_vec(&changed)?
+            },
+        )?;
+        let output_dir = fixture.directory.path().join(case);
+        if case == "existing" {
+            fs::create_dir(&output_dir)?;
+            fs::write(output_dir.join("buffer-address.txt"), "earlier attempt")?;
+        }
+        let output = fixture
+            .cli()?
+            .args(["propose", "--binary"])
+            .arg(&fixture.binary_path)
+            .arg("--preflight")
+            .arg(&preflight)
+            .args([
+                "--source-commit",
+                SOURCE_COMMIT,
+                "--tag",
+                "upgrade-surfpool-test",
+            ])
+            .arg("--output-dir")
+            .arg(&output_dir)
+            .arg("--solana-cli")
+            .arg(&uploader)
+            .output()?;
+        assert!(!output.status.success());
+        assert!(
+            output.stdout.is_empty(),
+            "Failure emitted a receipt or raw uploader output"
+        );
+        let error = String::from_utf8(output.stderr)?;
+        assert!(error.contains(expected), "Expected {expected}, got {error}");
+        assert!(!error.contains("private-rpc-credential"));
+        assert!(!error.contains("private-key-material"));
+        assert!(!output_dir.join("proposal-receipt.json").exists());
+        if case == "upload" {
+            let address: Pubkey = fs::read_to_string(output_dir.join("buffer-address.txt"))?
+                .trim()
+                .parse()?;
+            assert!(error.contains(&address.to_string()));
+            assert_eq!(fs::read_dir(&output_dir)?.count(), 1);
+        } else if case == "existing" {
+            assert_eq!(
+                fs::read_to_string(output_dir.join("buffer-address.txt"))?,
+                "earlier attempt"
+            );
+        } else {
+            assert!(
+                !output_dir.exists(),
+                "Rejected preflight started an upload attempt"
+            );
+        }
+        assert_eq!(fixture.rpc.get_multiple_accounts(&addresses).await?, before);
+        assert_eq!(
+            fixture
+                .rpc
+                .get_signatures_for_address(&fixture.proposer.pubkey())
+                .await?
+                .len(),
+            signatures
+        );
+        println!("PASS CLI rejection with zero submissions: {case}");
+    }
     Ok(())
 }
 
