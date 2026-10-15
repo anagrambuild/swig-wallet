@@ -106,8 +106,8 @@ fn writer_rejects_invalid_lengths_without_changing_destination() {
     for (len, prefix) in [
         (8, vec![]),
         (41, vec![1; 33]),
-        (23, DOMAIN.to_vec()),
-        (25, DOMAIN.to_vec()),
+        (TAIL_HEADER_LEN + DOMAIN.len() - 1, DOMAIN.to_vec()),
+        (TAIL_HEADER_LEN + DOMAIN.len() + 1, DOMAIN.to_vec()),
     ] {
         let mut bytes = vec![9; len];
         assert_eq!(

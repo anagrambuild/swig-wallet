@@ -7,7 +7,8 @@ use solana_curve25519::{
 
 use crate::authority::AuthorityType;
 
-pub const DOMAIN: &[u8] = b"swig-reserved-v1";
+/// "Reserve": the commitment domain and config PDA prefix.
+pub const DOMAIN: &[u8] = b"rsv";
 pub const HEADER_LEN: usize = 67;
 
 /// Both client import and activation accept exactly the same V1 wire format.

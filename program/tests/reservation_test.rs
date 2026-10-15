@@ -125,8 +125,8 @@ fn reservation_activates_all_direct_owners_without_owner_signature() {
         let stored = SwigWithRoles::from_bytes(&account.data).unwrap();
         assert_eq!(stored.state.id, addresses.commitment);
         let tail = Swig::split_parts(&account.data).unwrap().tail;
-        assert_eq!(tail.len(), TAIL_HEADER_LEN + DOMAIN.len());
-        assert_eq!(config_seed_prefix::read(tail).unwrap(), DOMAIN);
+        assert_eq!(tail.len(), 11);
+        assert_eq!(config_seed_prefix::read(tail).unwrap(), b"rsv");
         assert_eq!(stored.state.roles, 1);
         assert_eq!(stored.state.role_counter, 1);
         assert_eq!(stored.state.sub_account_counter, 0);
@@ -814,6 +814,39 @@ fn reservation_prefix_survives_role_growth_shrink_and_retry() {
     let grown = context.svm.get_account(&a.swig_address).unwrap();
     assert!(grown.data.len() > initial.data.len());
     assert_eq!(Swig::split_parts(&grown.data).unwrap().tail, prefix_tail);
+    for (operation, grows) in [
+        (
+            swig_interface::UpdateAuthorityData::AddActions(vec![
+                ClientAction::SubAccountV2Create(
+                    swig_state::action::sub_account_v2::SubAccountV2Create,
+                ),
+            ]),
+            true,
+        ),
+        (
+            swig_interface::UpdateAuthorityData::ReplaceAll(vec![ClientAction::All(All {})]),
+            false,
+        ),
+    ] {
+        let update = swig_interface::UpdateAuthorityInstruction::new_with_ed25519_authority(
+            a.swig_address,
+            context.default_payer.pubkey(),
+            owner.pubkey(),
+            0,
+            1,
+            operation,
+        )
+        .unwrap();
+        send(&mut context, &[update], &[&owner]).unwrap();
+        let updated = context.svm.get_account(&a.swig_address).unwrap();
+        assert_eq!(Swig::split_parts(&updated.data).unwrap().tail, prefix_tail);
+        if grows {
+            assert!(updated.data.len() > grown.data.len());
+        } else {
+            assert_eq!(updated.data.len(), grown.data.len());
+        }
+        send(&mut context, std::slice::from_ref(&create), &[]).unwrap();
+    }
     let remove = swig_interface::RemoveAuthorityInstruction::new_with_ed25519_authority(
         a.swig_address,
         context.default_payer.pubkey(),
