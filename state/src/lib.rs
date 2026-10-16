@@ -8,6 +8,7 @@ use pinocchio::program_error::ProgramError;
 pub mod action;
 pub mod authority;
 pub mod constants;
+pub mod reservation;
 pub mod role;
 pub mod sub_account_v2;
 pub mod swig;
@@ -134,6 +135,8 @@ pub enum SwigStateError {
     /// A role may not hold the same non-repeatable permission type more than
     /// once.
     DuplicateNonRepeatableAction,
+    /// Config seed prefix tail entry is malformed, duplicated, or unsupported.
+    InvalidSeedPrefix,
 }
 
 /// Error types related to authentication operations.

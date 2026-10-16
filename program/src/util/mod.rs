@@ -11,7 +11,7 @@ use std::mem::MaybeUninit;
 use pinocchio::{
     account_info::AccountInfo,
     cpi::invoke_signed,
-    instruction::{AccountMeta, Instruction, Signer},
+    instruction::{AccountMeta, Instruction, Seed, Signer},
     msg,
     program_error::ProgramError,
     pubkey::Pubkey,
@@ -30,6 +30,19 @@ use swig_state::{
 };
 
 use crate::error::SwigError;
+
+/// Loads and verifies the stored config seeds before a CPI signs for assets
+/// held directly by that config, including deposits received after migration.
+/// Both legacy and reserved configs use the shared state decoder.
+pub(crate) fn config_signer(
+    account_data: &[u8],
+    config_address: Pubkey,
+) -> Result<[Seed<'_>; 3], ProgramError> {
+    let seeds = swig_state::swig::config_seeds(account_data)?;
+    swig_assertions::check_self_pda(&seeds, &config_address, ProgramError::InvalidSeeds)
+        .map_err(|_| ProgramError::InvalidSeeds)?;
+    Ok(seeds.map(Seed::from))
+}
 
 /// Reject grants targeting root in a non-root caller's add/update payload.
 /// Instruction action boundaries are normalized when stored, so scan by header
