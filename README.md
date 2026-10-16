@@ -1,118 +1,202 @@
-# SWIG Solana Wallet Protocol
+<p align="center">
+  <img src="docs/assets/swig-logo.svg" alt="Swig" width="420">
+</p>
+
+# Swig
+
+Smart wallet infrastructure for programmable money movement.
+
+Swig gives fintechs, banks, and agents self-custodial wallets with granular onchain policies. Users hold their keys. Policies are enforced by the program itself, so there is no server in the path deciding what a wallet can do.
+
+This repository contains the Swig protocol: the onchain wallet program for Solana, along with the Rust SDK and CLI that sit on top of it.
+
+- Website: [onswig.com](https://onswig.com)
+- Docs: [build.onswig.com](https://build.onswig.com)
+- Developer portal: [dashboard.onswig.com](https://dashboard.onswig.com)
+- Program ID: `swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB`
+  - [Mainnet](https://explorer.solana.com/address/swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB)
+  - [Devnet](https://explorer.solana.com/address/swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB?cluster=devnet)
+
+## Why Swig
+
+Most wallets are a single key. Whoever holds it can do anything, and the only way to share access is to share the key. That works for one person moving their own funds. It does not work for a payroll app, a subscription service, a trading desk, or an AI agent that needs to spend on someone's behalf.
+
+Swig separates who can sign from what they are allowed to do. A wallet can have many signers, and each one gets its own set of permissions: which programs it can call, which tokens it can move, how much it can spend, and for how long. Those rules live onchain and are checked on every transaction. If the backend goes down or gets compromised, the rules still hold.
+
+## How it works
+
+A Swig wallet is made up of a config account that stores roles, and a wallet address that signs for normal execution.
+
+**Roles.** Each role pairs one authority with a list of actions it is allowed to take. Roles have a stable ID, so you can add, update, or remove them without touching the others.
+
+**Authorities.** A role can be controlled by:
+
+- Ed25519 keys (standard Solana keypairs)
+- secp256k1 keys (Ethereum style signers)
+- secp256r1 keys (passkeys)
+- Another program, for programmatic control
+
+Each key type also has a session variant for short lived, delegated access. Keys can be rotated and revoked onchain.
+
+**Actions.** Actions are the permissions attached to a role. They include:
+
+- Full access, or full access without authority management
+- SOL and token spend limits, with optional recurring windows
+- Limits scoped to a specific destination
+- Allowlists for specific programs
+- Program scoped balance tracking
+- Staking limits
+- Sub-account creation and management
+- Authority management and recovery
+
+**Sub-accounts.** A wallet can create sub-accounts that hold their own funds and sign on their own, under a role's control. They are useful for isolating balances per user, per strategy, or per agent.
+
+**Recovery.** Root can grant recovery permissions to other roles, so a lost key does not mean a lost wallet.
+
+## What you can build
+
+- **Automated and recurring payments.** Subscriptions with onchain spend limits and clear boundaries.
+- **Agentic wallets.** Give agents scoped authority: what they can spend, where, and for how long.
+- **Embedded consumer wallets.** No seed phrases and no gas prompts.
+- **High velocity trading.** Delegated session keys for market makers and solvers.
+- **Neobanks.** Programmable accounts with deterministic policies.
+
+## Repository layout
+
+| Directory | Crate | What it is |
+| --- | --- | --- |
+| `program` | `swig` | The onchain Solana program |
+| `state` | `swig-state` | Account layouts, authorities, and actions |
+| `interface` | `swig-interface` | Instruction builders for the program |
+| `instructions` | `swig-compact-instructions` | Compact instruction encoding |
+| `assertions` | `swig-assertions` | Assertion helpers used by the program |
+| `no-padding` | `no-padding` | Derive macro for padding free structs |
+| `rust-sdk` | `swig-sdk` | Rust SDK for building and sending Swig transactions |
+| `cli` | `swig-cli` | Command line tool for managing Swig wallets |
+| `docs` | | Rust SDK guides and program diagrams |
+| `audits` | | Published security assessments |
+
+## Products
+
+The program in this repo is the foundation. On top of it, Swig runs hosted products for teams that want to ship faster: a developer API, gasless transactions through a managed paymaster, zero-knowledge login, indexing, a dashboard, and more coming soon. There is a [free plan](https://onswig.com/pricing) to get started.
+
+### Embedded wallets
+
+Wallets your users never have to think about. Create self-custodial smart wallets directly in your app with passkey sign-in, sponsored gas, and onchain policies. No seed phrases required.
+
+- **Seamless onboarding.** Modular login options, including Swig social login, with passkey (r1) support out of the box.
+- **Sponsored gas.** Cover network fees on your users' behalf so they never need to hold SOL.
+- **Onchain policies.** Spend limits, program scopes, and session expiry per wallet, enforced by the Swig program and not your backend.
+- **Recovery and key rotation.** Add backup signers and guardians, and recover access onchain.
+
+[Learn more](https://onswig.com/embedded-wallets)
+
+### Server wallets
+
+Wallets your backend can drive. Create wallets, prepare transactions, and automate signing over REST or a server SDK. Built for teams managing wallet fleets from their backends.
+
+- **REST first.** Create wallets, prepare transactions, and read balances, roles, and token history.
+- **Automated signing.** Your server signs and broadcasts without user interaction, within the limits you define.
+- **Deny by default.** Spend limits, program scopes, and allowlists are enforced onchain before a signature exists.
+- **Sponsored execution.** Submit through the Swig paymaster so server wallets never need to hold SOL for gas.
+- **Secure requests.** Scope API keys with IP allowlists to control where transactions come from.
+
+[Learn more](https://onswig.com/server-wallets)
+
+### Policy engine
+
+Define who can do what with every wallet. Users always keep root authority and delegate to other authorities, such as a passkey, a session key, a server signer, or another program. Each authority is registered onchain and can be revoked at any time.
+
+- **Spend limits.** Cap token spend per transaction or per time window.
+- **Program scopes.** Allowlist the programs a role can touch. An agent can trade on one venue and nothing else.
+- **Session expiry.** Grant time boxed access with session keys that expire onchain.
+- **Recovery and rotation.** Add backup signers, rotate compromised keys, and recover access without seed phrases.
+
+[Learn more](https://onswig.com/policy-engine)
+
+### Zero-knowledge login with Swig IDP
+
+Swig IDP brings social sign-in to non-custodial smart wallets. Users log in with a social account, wallet, email, phone, or passkey, and a ZK circuit proves they are allowed to access their wallet. No seed phrases or passwords required.
+
+Most embedded wallet providers hold or shard signing keys on their own infrastructure and put the key back together for every wallet action. Swig takes that dependency out of signing:
+
+- **Proofs generated locally.** Proofs for user sessions are created on the client, backed by secure enclaves. There is no key reconstitution on third party servers.
+- **Secure enclaves.** Circuit material is isolated and encrypted across split enclaves, and is never exposed to your platform or to Swig.
+- **Encrypted transport.** Short lived auth tokens are HPKE encrypted to protect against replays.
+- **Verifiable sessions.** Only the user can establish a session, with strict callback logic on the client.
+
+Wallets created through Swig IDP get everything the protocol offers: policy bounded roles, session keys that expire onchain, gasless transactions through the paymaster, and passkey recovery. See [onswig.com/login-auth](https://onswig.com/login-auth) and the [IDP SDK docs](https://build.onswig.com/overview/idp-sdk) to get started.
+
+### Wallets for AI agents
+
+Give your agents programmable smart wallets with built in spend limits and session controls. The [Swig MCP server](https://github.com/anagrambuild/swig-ts/blob/main/packages/mcp-server/README.md) lets an agent create a wallet, set spending limits, manage authorities, transfer SOL, and run any onchain instruction, all without exposing a private key. Fees can be sponsored through the Swig paymaster.
+
+[Learn more](https://onswig.com/agents)
+
+## SDKs
+
+- **[TypeScript SDK](https://github.com/anagrambuild/swig-ts)** for working with the protocol from TypeScript and JavaScript.
+- **[Developer SDK](https://github.com/anagrambuild/swig-developer-sdk)** for the hosted Swig API, in TypeScript and Python. The API prepares wallet transactions, your app signs them, and Swig can sponsor the fees so your users never see a gas prompt.
+- **[Rust SDK](docs/rust-sdk/rust-sdk.md)** in this repo, for Rust services and tooling.
+
+Visit [onswig.com](https://onswig.com) to learn more, or reach out to talk about integrating smart wallets.
 
 ## Building
 
-1. Use the pinned host Rust 1.96.1 and install `cargo-build-sbf` 4.0.0 with `cargo install cargo-build-sbf --version 4.0.0 --locked`. Validator tests require Agave CLI 4.2.2, matching CI. Platform-tools supplies the separate SBF compiler.
-2. Run `cargo build-sbf --arch v3 --tools-version v1.53`. This outputs the program binary to `target/deploy/swig.so`.
+You need Rust 1.96.1 (pinned in `rust-toolchain.toml`) and `cargo-build-sbf` 4.0.0.
+
+```bash
+cargo install cargo-build-sbf --version 4.0.0 --locked
+cargo build-sbf --arch v3 --tools-version v1.53
+```
+
+The program binary is written to `target/deploy/swig.so`.
 
 ## Testing
 
-1. Install cargo-nextest, it's the better way to run tests. See [https://nexte.st/docs/installation/from-source/](https://nexte.st/docs/installation/from-source/) for more info.
-2. Run the general test suite with `cargo build-sbf --arch v3 --tools-version v1.53 && cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast`
-3. Run the tests covering `ProgramScope` with `cargo build-sbf --arch v3 --tools-version v1.53 --features=program_scope_test && cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=program_scope_test`
-4. Start the Agave 4.2.2 validator with `./validator.sh` in another terminal, then run the Stake suite with `cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=stake_tests --test-threads=1`. The tests use `http://127.0.0.1:8899` by default; set `SWIG_TEST_RPC_URL` when running an isolated validator on another port.
+Install [cargo-nextest](https://nexte.st/docs/installation/from-source/), then run the main suite:
 
-The program and Rust SDK tests share exact workspace pins for `litesvm` and
-`litesvm-token` at `0.16.0`. The lockfile selects Agave 4.2.2 and solana-sbpf 0.21.1
-for v3 execution. `LiteSVM::new()` uses its bundled mainnet feature set and loads
-the bundled Token program at `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA` for all
-tests. The WSOL rent tests use that same program; no separate Token binary is
-committed or loaded by those tests. Keep `Cargo.lock` to preserve the dependency
-checksums. Its initial clock reflects the bundled mainnet feature activations;
-sign test payloads with `get_sysvar::<Clock>().slot` instead of assuming slot zero.
+```bash
+cargo build-sbf --arch v3 --tools-version v1.53
+cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast
+```
 
-The bundled p-token program includes `SyncNative` reserve refreshes and rent
-checks. Test setup must fund new accounts to the rent minimum. After changing the
-pin, run the WSOL regressions and all feature suites. The bundled program is a
-reproducible test dependency; its pin does not assert identity with future
-mainnet deployments.
+To run the `ProgramScope` tests, build and test with the `program_scope_test` feature:
 
-## Isolation guard
+```bash
+cargo build-sbf --arch v3 --tools-version v1.53 --features=program_scope_test
+cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=program_scope_test
+```
 
-`IsolationGuard::new` allocates empty scratch. After authentication, call
-`capture_signers(pda)` once, then `snapshot(index)` for each relevant writable
-account before executing any CPI. Call `validate()` after execution. The guard
-retains the account list it captured. SignV2 and both sub-account signing paths
-use this lifecycle. The guard is bounded local scratch; there is no new wire
-format or stored wallet state.
+The stake tests need a local validator. They require Agave CLI 4.2.2, which matches CI. Start the validator with `./validator.sh` in another terminal, then run:
 
-Validation protects personal token balances, lamports, program ownership, token
-owner/delegate/close authority, and the existing supported authority-bearing
-account layouts. Incoming SOL and tokens are permitted, including legacy WSOL
-`SyncNative` reserve refreshes and the Token-2022 fee bookkeeping described below.
-Personal SOL wrapping is not an allowed spending exception.
+```bash
+cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast --features=stake_tests --test-threads=1
+```
 
-The exception for personal SOL decreases is **new-account rent**: an initially
-empty System account must become a rent-exempt, non-executable account owned by
-another program. Its contribution is the final rent requirement minus its
-pre-existing lamports. This supports nested and idempotent ATA creation, including
-prefunded ATAs, and new account keypairs signing their own creation. Existing
-accounts' deposits and funding above rent do not increase the allowed decrease.
-Rent accounting captures up to eight candidate destinations. If that capacity is
-exceeded, transactions that preserve personal signer balances remain supported;
-transactions that need the personal rent-funding allowance are rejected.
+The tests use `http://127.0.0.1:8899` by default. Set `SWIG_TEST_RPC_URL` to point at a validator on another port.
 
-This is a check of final state. The sum of signers' net decreases is bounded by
-the sum of eligible creation rent; it does not attribute each rent payment to a
-particular signer or prove how a signature was used inside a nested CPI. A
-forwarded signer retains ordinary Solana signer privileges. Unknown programs'
-authority semantics are not inferred. Strict purpose-limited co-signing would
-require a separate execution or authorization design.
+## Security
 
-## ProgramScope spending
+Published audits:
 
-ProgramScope snapshots are selected after authentication from the requested
-role's actions. The same role and field supply the pre-CPI balance, post-CPI
-balance, integrity checks, and limit consumption. Other roles cannot supply a
-baseline, and an unreadable acting-role field is an error rather than a skipped
-accounting step.
+- [Accretion, Swig audit (2025)](audits/2025-accretion-anagram-swig-audit-A25ANA2.pdf)
+- [Halborn, Swig Wallet Assessment executive summary (August 2026)](audits/2026-halborn-swig-wallet-assessment-executive-summary.pdf)
 
-## Token-2022 extension compatibility
+Each report lists the commits it covers and the scope of remediation.
 
-SignV2's restricted token checks and the outer-signer isolation guard allow the
-`TransferFeeAmount.withheld_amount` payload to change during a CPI. Transfer fees
-can accumulate on a destination or be collected without treating those changes
-as account tampering. The extension location is captured before execution; its
-type, length, and all other protected account bytes remain immutable.
+To report a vulnerability, see [SECURITY.md](SECURITY.md). Please do not open a public issue.
 
-Wallet spending limits continue to use the ordinary token amount, which already
-includes transfer fees in outgoing debits. For these Token-2022 accounts,
-outer-signer token amounts and lamports must still not decrease. Withheld fees
-are controlled by the mint's fee authority and are not added to the holder's
-spendable balance. This policy does not authorize mutations of confidential
-balances or other extension payloads.
-The transfer-fee tests use the real Token-2022 program bundled with pinned
-LiteSVM and the production signing instruction builders.
+## Community
 
-## Authority management and recovery
-
-Only root (role 0) may grant `ReplaceAuthority(0)`, whether through
-`AddAuthorityV1` or the `AddActions` / `ReplaceAll` operations of
-`UpdateAuthorityV1`. Grants targeting non-root roles retain their existing
-administrative permission checks. Only root may update its own permissions.
-
-These restrictions apply when granting permissions or updating root; existing
-recovery execution, signer replacement, and non-root role management stay the
-same. Existing recovery grants remain valid after upgrade.
-
-## Audit
-
-Published security assessments:
-
-- [Accretion — Swig audit (2025)](audits/2025-accretion-anagram-swig-audit-A25ANA2.pdf)
-- [Halborn — Swig Wallet Assessment, executive summary (August 2026)](audits/2026-halborn-swig-wallet-assessment-executive-summary.pdf)
-
-Each report identifies its assessed commits and remediation scope.
+- X: [@onswig](https://x.com/onswig)
+- Telegram: [t.me/onswig](https://t.me/onswig)
+- Blog: [blog.onswig.com](https://blog.onswig.com)
 
 ## License
 
 Copyright (C) 2025 Anagram Ltd.
 
-This software, Swig, is licensed under the GNU Affero General Public License v3.0.
+Swig is licensed under the GNU Affero General Public License v3.0. You can get a copy of the license at https://www.gnu.org/licenses/agpl-3.0.txt.
 
-You may obtain a copy of the License at:
-https://www.gnu.org/licenses/agpl-3.0.txt
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+Unless required by applicable law or agreed to in writing, software distributed under the license is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
