@@ -10,6 +10,8 @@ This repository contains the Swig protocol: the onchain wallet program for Solan
 - Docs: [build.onswig.com](https://build.onswig.com)
 - Dashboard: [dashboard.onswig.com](https://dashboard.onswig.com)
 - Program ID: `swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB`
+  - [Mainnet](https://explorer.solana.com/address/swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB)
+  - [Devnet](https://explorer.solana.com/address/swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB?cluster=devnet)
 
 ## Why Swig
 
