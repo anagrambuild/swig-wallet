@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use solana_sdk::commitment_config::CommitmentConfig;
 use squads_multisig::solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use swig_release::{
-    buffer::upload_buffer,
+    buffer::{upload_buffer, UploadProfile},
     config::{load_program_authority, load_proposer, DevnetConfig, ReleaseConfig},
     devnet::{self, DeploymentRequest, DevnetCheckReceipt},
     proposal::validate_release_identity,
@@ -122,7 +122,7 @@ async fn main() -> Result<()> {
             )?;
             let buffer = upload_buffer(
                 &config.rpc_url,
-                CommitmentConfig::confirmed(),
+                UploadProfile::Mainnet,
                 &proposer,
                 &binary,
                 &solana_cli,
@@ -206,7 +206,7 @@ async fn main() -> Result<()> {
             }
             let buffer = upload_buffer(
                 &config.rpc_url,
-                CommitmentConfig::finalized(),
+                UploadProfile::Devnet,
                 &authority,
                 &binary,
                 &solana_cli,

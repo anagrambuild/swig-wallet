@@ -91,7 +91,8 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Allow the uploader's 100 blockhash signing attempts to finish.
+    timeout-minutes: 120
     # Restrict this environment to main and configure its three secrets:
     # SOLANA_RPC_URL, PROGRAM_AUTHORITY_KEYPAIR (JSON array), SWIG_PROGRAM_ID.
     environment: swig-upgrade-devnet
