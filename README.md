@@ -67,7 +67,7 @@ Each key type also has a session variant for short lived, delegated access. Keys
 | `no-padding` | `no-padding` | Derive macro for padding free structs |
 | `rust-sdk` | `swig-sdk` | Rust SDK for building and sending Swig transactions |
 | `cli` | `swig-cli` | Command line tool for managing Swig wallets |
-| `docs` | | Rust SDK guides, program diagrams, and security notes |
+| `docs` | | Rust SDK guides and program diagrams |
 | `audits` | | Published security assessments |
 
 ## SDKs and services
@@ -78,7 +78,7 @@ The program in this repo is the foundation. Most teams build on one of these ins
 - **[Developer SDK](https://github.com/anagrambuild/swig-developer-sdk)** for the hosted Swig API, in TypeScript and Python. The API prepares wallet transactions, your app signs them, and Swig can sponsor the fees so your users never see a gas prompt.
 - **[Rust SDK](docs/rust-sdk/rust-sdk.md)** in this repo, for Rust services and tooling.
 
-Swig also offers hosted infrastructure for teams that want to ship faster: a developer API, gasless transactions through a managed paymaster, and a dashboard for managing API keys. Visit [onswig.com](https://onswig.com) to learn more, or reach out to talk about integrating smart wallets.
+Swig also offers hosted infrastructure for teams that want to ship faster: a developer API, gasless transactions through a managed paymaster, a dashboard, and more coming soon. Visit [onswig.com](https://onswig.com) to learn more, or reach out to talk about integrating smart wallets.
 
 ## Building
 
@@ -124,8 +124,6 @@ The program and Rust SDK tests pin `litesvm` and `litesvm-token` to `0.16.0`. Th
 The bundled p-token program includes `SyncNative` reserve refreshes and rent checks, so test setup must fund new accounts to the rent minimum. After changing the pin, run the WSOL regressions and every feature suite. The pin is there for reproducible tests and says nothing about future mainnet deployments.
 
 ## Security
-
-Details on the signing isolation guard, `ProgramScope` accounting, Token-2022 compatibility, and root authority rules are in [docs/program-security-notes.md](docs/program-security-notes.md).
 
 Published audits:
 
