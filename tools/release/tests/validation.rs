@@ -156,7 +156,7 @@ fn program_capacity_excludes_metadata_and_binds_authority() -> Result<()> {
         validate_program(key, &program, &program_data, Pubkey::new_unique())
             .err()
             .map(|error| error.to_string()),
-        Some("Program upgrade authority must be the configured Squads vault".into())
+        Some("Program upgrade authority does not match the expected authority".into())
     );
     program.data = bincode::serialize(&UpgradeableLoaderState::Program {
         programdata_address: Pubkey::new_unique(),

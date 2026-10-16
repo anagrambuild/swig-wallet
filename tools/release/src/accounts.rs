@@ -23,7 +23,7 @@ pub fn validate_program(
     program_key: Pubkey,
     program: &Account,
     program_data: &Account,
-    vault: Pubkey,
+    expected_authority: Pubkey,
 ) -> Result<usize> {
     ensure!(
         program.owner == bpf_loader_upgradeable::id() && program.executable,
@@ -49,16 +49,19 @@ pub fn validate_program(
     let state: UpgradeableLoaderState =
         bincode::deserialize(metadata).context("Malformed ProgramData metadata")?;
     ensure!(
-        matches!(state, UpgradeableLoaderState::ProgramData { upgrade_authority_address: Some(authority), .. } if authority == vault),
-        "Program upgrade authority must be the configured Squads vault"
+        matches!(state, UpgradeableLoaderState::ProgramData { upgrade_authority_address: Some(authority), .. } if authority == expected_authority),
+        "Program upgrade authority does not match the expected authority"
     );
     Ok(program_data.data.len() - metadata_size)
 }
 
 pub fn validate_capacity(binary_len: usize, capacity: usize) -> Result<()> {
-    ensure!(binary_len <= capacity,
-        "Program capacity is {capacity} bytes; binary needs {binary_len} bytes ({} additional bytes required)",
-        binary_len.saturating_sub(capacity));
+    ensure!(
+        binary_len <= capacity,
+        "Program capacity is {capacity} bytes; binary needs {binary_len} bytes ({} additional \
+         bytes required)",
+        binary_len.saturating_sub(capacity)
+    );
     Ok(())
 }
 

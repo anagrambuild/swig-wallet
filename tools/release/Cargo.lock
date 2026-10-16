@@ -4855,6 +4855,8 @@ name = "swig-release"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "base64 0.22.1",
  "bincode",
  "clap",
  "serde",
@@ -4863,6 +4865,7 @@ dependencies = [
  "solana-loader-v3-interface 3.0.0",
  "solana-sdk",
  "solana-sdk-ids",
+ "solana-system-interface",
  "squads-multisig",
  "tempfile",
  "tokio",
