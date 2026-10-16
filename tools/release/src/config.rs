@@ -15,14 +15,7 @@ pub struct ReleaseConfig {
 
 impl ReleaseConfig {
     pub fn from_env() -> Result<Self> {
-        let rpc_url =
-            env::var("SOLANA_RPC_URL").map_err(|_| anyhow!("SOLANA_RPC_URL is required"))?;
-        let parsed = url::Url::parse(&rpc_url)
-            .map_err(|_| anyhow!("SOLANA_RPC_URL must be an HTTP(S) URL"))?;
-        ensure!(
-            matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_some(),
-            "SOLANA_RPC_URL must be an HTTP(S) URL"
-        );
+        let rpc_url = load_rpc_url()?;
         let squads_program =
             env::var("SQUADS_PROGRAM_ID").map_err(|_| anyhow!("SQUADS_PROGRAM_ID is required"))?;
         let multisig = env::var("SQUADS_MULTISIG_ADDRESS")
@@ -44,6 +37,52 @@ impl ReleaseConfig {
                 .map_err(|_| anyhow!("SWIG_PROGRAM_ID must be a public key"))?,
         })
     }
+}
+
+// Deliberately no Debug: the RPC URL can contain credentials.
+pub struct DevnetConfig {
+    pub rpc_url: String,
+    pub program: Pubkey,
+}
+
+impl DevnetConfig {
+    pub fn from_env() -> Result<Self> {
+        let rpc_url = load_rpc_url()?;
+        let program =
+            env::var("SWIG_PROGRAM_ID").map_err(|_| anyhow!("SWIG_PROGRAM_ID is required"))?;
+        let program = Pubkey::from_str(&program)
+            .map_err(|_| anyhow!("SWIG_PROGRAM_ID must be a public key"))?;
+        ensure!(
+            program == solana_sdk::pubkey!("swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB"),
+            "SWIG_PROGRAM_ID must match the program ID declared by the Swig binary"
+        );
+        Ok(Self { rpc_url, program })
+    }
+}
+
+fn load_rpc_url() -> Result<String> {
+    let rpc_url = env::var("SOLANA_RPC_URL").map_err(|_| anyhow!("SOLANA_RPC_URL is required"))?;
+    let parsed =
+        url::Url::parse(&rpc_url).map_err(|_| anyhow!("SOLANA_RPC_URL must be an HTTP(S) URL"))?;
+    ensure!(
+        matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_some(),
+        "SOLANA_RPC_URL must be an HTTP(S) URL"
+    );
+    Ok(rpc_url)
+}
+
+pub fn load_program_authority() -> Result<Keypair> {
+    let secret = Zeroizing::new(
+        env::var("PROGRAM_AUTHORITY_KEYPAIR")
+            .map_err(|_| anyhow!("PROGRAM_AUTHORITY_KEYPAIR is required"))?,
+    );
+    let bytes =
+        Zeroizing::new(serde_json::from_str::<Vec<u8>>(&secret).map_err(|_| {
+            anyhow!("PROGRAM_AUTHORITY_KEYPAIR must be a Solana keypair JSON array")
+        })?);
+    Keypair::try_from(bytes.as_slice()).map_err(|_| {
+        anyhow!("PROGRAM_AUTHORITY_KEYPAIR must contain a valid 64-byte Solana keypair")
+    })
 }
 
 pub fn load_proposer() -> Result<Keypair> {

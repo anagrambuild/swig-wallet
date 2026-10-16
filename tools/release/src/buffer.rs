@@ -7,28 +7,28 @@ use std::{
 
 use anyhow::{ensure, Context, Result};
 use solana_sdk::{
+    commitment_config::CommitmentConfig,
     pubkey::Pubkey,
     signature::{Keypair, Signer},
 };
 use zeroize::Zeroizing;
 
-use crate::config::ReleaseConfig;
-
 /// Upload the already-validated bytes using the pinned Solana CLI. Only the
 /// public buffer address survives; temporary key files are removed on return.
 pub fn upload_buffer(
-    config: &ReleaseConfig,
-    proposer: &Keypair,
+    rpc_url: &str,
+    commitment: CommitmentConfig,
+    authority: &Keypair,
     binary: &[u8],
     solana_cli: &Path,
     output_dir: &Path,
 ) -> Result<Pubkey> {
     let private = tempfile::tempdir().context("Could not create private upload directory")?;
-    let mut proposer_file = tempfile::NamedTempFile::new_in(private.path())?;
+    let mut authority_file = tempfile::NamedTempFile::new_in(private.path())?;
     let mut buffer_file = tempfile::NamedTempFile::new_in(private.path())?;
     let buffer = Keypair::new();
-    proposer_file.write_all(&Zeroizing::new(serde_json::to_vec(
-        &proposer.to_bytes().as_slice(),
+    authority_file.write_all(&Zeroizing::new(serde_json::to_vec(
+        &authority.to_bytes().as_slice(),
     )?))?;
     buffer_file.write_all(&Zeroizing::new(serde_json::to_vec(
         &buffer.to_bytes().as_slice(),
@@ -50,9 +50,9 @@ pub fn upload_buffer(
         .arg(&binary_path)
         .args([
             "--url",
-            &config.rpc_url,
+            rpc_url,
             "--commitment",
-            "confirmed",
+            &commitment.commitment.to_string(),
             "--use-rpc",
             "--max-sign-attempts",
             "3",
@@ -60,10 +60,11 @@ pub fn upload_buffer(
             &binary.len().to_string(),
         ])
         .arg("--keypair")
-        .arg(proposer_file.path())
+        .arg(authority_file.path())
         .arg("--buffer")
         .arg(buffer_file.path())
         .env_remove("PROPOSER_KEYPAIR")
+        .env_remove("PROGRAM_AUTHORITY_KEYPAIR")
         .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN")
         .stdin(Stdio::null())
@@ -71,8 +72,11 @@ pub fn upload_buffer(
         .stderr(Stdio::null())
         .status()
         .context("Could not start Solana CLI; install the pinned version or set --solana-cli")?;
-    ensure!(status.success(),
-        "Buffer upload failed ({status}); inspect buffer {address}. The proposer retains authority for recovery");
+    ensure!(
+        status.success(),
+        "Buffer upload failed ({status}); inspect buffer {address}. The proposer retains \
+         authority for recovery"
+    );
     eprintln!("Buffer upload complete: address={address}");
     Ok(address)
 }

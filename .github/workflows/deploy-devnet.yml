@@ -64,6 +64,9 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
+      - name: Build release CLI
+        run: cargo build --manifest-path tools/release/Cargo.toml --locked --release
+
       - name: Install pinned SBF compiler
         run: cargo install cargo-build-sbf --version 4.0.0 --locked --force
 
@@ -71,9 +74,9 @@ jobs:
         run: |
           cargo build-sbf --arch v3 --tools-version v1.53 -- --locked
           mkdir release-inputs
-          cp target/deploy/swig.so tools/release/deploy-devnet.sh release-inputs/
+          cp target/deploy/swig.so tools/release/target/release/swig-release release-inputs/
           cd release-inputs
-          sha256sum swig.so deploy-devnet.sh > SHA256SUMS
+          sha256sum swig.so swig-release > SHA256SUMS
           sha256sum swig.so > swig.so.sha256
 
       - name: Save immutable build inputs
@@ -95,6 +98,10 @@ jobs:
     permissions:
       contents: write
       actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+      RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -104,28 +111,55 @@ jobs:
 
       - name: Verify build inputs
         working-directory: release-inputs
-        run: sha256sum --check SHA256SUMS
+        run: |
+          sha256sum --check SHA256SUMS
+          chmod 700 swig-release
 
       - name: Install pinned Solana CLI
         run: |
           sh -c "$(curl -sSfL "https://release.anza.xyz/v${SOLANA_VERSION}/install")"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
 
-      - name: Validate, publish and deploy directly to devnet
+      - name: Validate devnet deployment before tagging or uploading
         env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
-          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
           SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
           PROGRAM_AUTHORITY_KEYPAIR: ${{ secrets.PROGRAM_AUTHORITY_KEYPAIR }}
           SWIG_PROGRAM_ID: ${{ secrets.SWIG_PROGRAM_ID }}
-        run: bash release-inputs/deploy-devnet.sh
+        run: ./release-inputs/swig-release check-devnet --binary release-inputs/swig.so > preflight.json
+
+      - name: Tag latest main and publish release candidate
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$SOURCE_SHA"
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --prerelease --latest=false --title "$RELEASE_TAG" \
+            --notes "Devnet upgrade from $SOURCE_SHA. Deployment is pending; see this run's receipts." \
+            release-inputs/swig.so release-inputs/swig.so.sha256 preflight.json
+
+      - name: Upload buffer and deploy directly to devnet
+        env:
+          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+          PROGRAM_AUTHORITY_KEYPAIR: ${{ secrets.PROGRAM_AUTHORITY_KEYPAIR }}
+          SWIG_PROGRAM_ID: ${{ secrets.SWIG_PROGRAM_ID }}
+        run: |
+          ./release-inputs/swig-release deploy-devnet --binary release-inputs/swig.so \
+            --preflight preflight.json --source-commit "$SOURCE_SHA" \
+            --tag "$RELEASE_TAG" --output-dir deployment
+
+      - name: Publish finalized deployment receipt
+        run: |
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" deployment/deployment-receipt.json
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --notes "Deployed $SOURCE_SHA directly to devnet. The finalized on-chain binary matches swig.so; see deployment-receipt.json."
+          cat deployment/deployment-receipt.json >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve public deployment and recovery information
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: devnet-upgrade-receipts-${{ github.run_id }}
-          path: deployment/
+          path: |
+            preflight.json
+            deployment/
           if-no-files-found: ignore
           retention-days: 90
