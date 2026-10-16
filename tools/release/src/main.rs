@@ -53,7 +53,7 @@ enum Command {
         #[arg(long)]
         binary: PathBuf,
     },
-    /// Upload and execute a direct devnet upgrade with the program authority.
+    /// Expand ProgramData if needed, upload, and execute a direct devnet upgrade.
     DeployDevnet {
         #[arg(long)]
         binary: PathBuf,
@@ -162,8 +162,11 @@ async fn main() -> Result<()> {
             );
             let receipt = devnet::check(&rpc, &config, &authority, &binary).await?;
             eprintln!(
-                "Devnet preflight passed: bytes={} capacity={} authority={}",
-                receipt.binary_bytes, receipt.program_capacity_bytes, receipt.authority
+                "Devnet preflight passed: bytes={} capacity={} additional={} authority={}",
+                receipt.binary_bytes,
+                receipt.program_capacity_bytes,
+                receipt.additional_program_bytes,
+                receipt.authority
             );
             println!("{}", serde_json::to_string_pretty(&receipt)?);
         },
@@ -188,11 +191,19 @@ async fn main() -> Result<()> {
                 Duration::from_secs(30),
                 CommitmentConfig::finalized(),
             );
-            let current = devnet::check(&rpc, &config, &authority, &binary).await?;
-            devnet::validate_preflight(&saved, &current)?;
             fs::create_dir(&output_dir).context(
                 "Output directory must be new; inspect any earlier attempt before retrying",
             )?;
+            if let Some(extension) =
+                devnet::ensure_capacity(&rpc, &config, &authority, &binary, &saved, &output_dir)
+                    .await?
+            {
+                fs::write(
+                    output_dir.join("extension-receipt.json"),
+                    serde_json::to_string_pretty(&extension)?,
+                )
+                .context("Program expansion finalized, but could not save its receipt")?;
+            }
             let buffer = upload_buffer(
                 &config.rpc_url,
                 CommitmentConfig::finalized(),

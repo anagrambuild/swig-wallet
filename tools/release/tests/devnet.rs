@@ -33,6 +33,7 @@ use swig_release::{
 
 struct TestRpc {
     inner: MockSender,
+    genesis_hash: Value,
     account_reads: Mutex<VecDeque<Value>>,
     requests: Arc<Mutex<Vec<(RpcRequest, Value)>>>,
     fail_on: Option<RpcRequest>,
@@ -47,6 +48,9 @@ impl RpcSender for TestRpc {
             .push((request, params.clone()));
         if self.fail_on == Some(request) {
             return Err(std::io::Error::other("private-rpc-credential").into());
+        }
+        if request == RpcRequest::GetGenesisHash {
+            return Ok(self.genesis_hash.clone());
         }
         if request == RpcRequest::GetMultipleAccounts {
             return Ok(self
@@ -147,12 +151,13 @@ impl Fixture {
         mut mocks: Mocks,
         fail_on: Option<RpcRequest>,
     ) -> RpcClient {
-        mocks
-            .entry(RpcRequest::GetGenesisHash)
-            .or_insert(json!(DEVNET_GENESIS_HASH));
+        let genesis_hash = mocks
+            .remove(&RpcRequest::GetGenesisHash)
+            .unwrap_or(json!(DEVNET_GENESIS_HASH));
         RpcClient::new_sender(
             TestRpc {
                 inner: MockSender::new_with_mocks("succeeds", mocks),
+                genesis_hash,
                 account_reads: Mutex::new(account_reads.into()),
                 requests: self.requests.clone(),
                 fail_on,
@@ -200,6 +205,8 @@ async fn preflight_checks_devnet_program_authority_capacity_and_funding() -> Res
     assert_eq!(receipt.program, fixture.config.program);
     assert_eq!(receipt.authority, fixture.authority.pubkey());
     assert_eq!(receipt.program_capacity_bytes, fixture.binary.len() + 8);
+    assert_eq!(receipt.additional_program_bytes, 0);
+    assert_eq!(receipt.program_extension_rent_lamports, 0);
     assert_eq!(receipt.minimum_authority_balance_lamports, 100_000_020);
     assert!(!fixture
         .requests
@@ -234,20 +241,13 @@ async fn preflight_rejects_wrong_cluster_before_account_reads() -> Result<()> {
 }
 
 #[tokio::test]
-async fn preflight_rejects_invalid_authority_capacity_and_funding() -> Result<()> {
-    for scenario in ["authority", "capacity", "payer-owner", "payer-balance"] {
+async fn preflight_rejects_invalid_authority_and_funding() -> Result<()> {
+    for scenario in ["authority", "payer-owner", "payer-balance"] {
         let mut fixture = Fixture::new()?;
         let expected = match scenario {
             "authority" => {
                 fixture.authority = Keypair::new();
                 "Program upgrade authority does not match the expected authority"
-            },
-            "capacity" => {
-                fixture
-                    .data
-                    .data
-                    .truncate(UpgradeableLoaderState::size_of_programdata(0));
-                "Program capacity is 0 bytes"
             },
             "payer-owner" => {
                 fixture.payer.owner = Pubkey::new_unique();
@@ -508,10 +508,10 @@ async fn failed_uncertain_and_unverified_upgrades_keep_the_transaction_receipt()
             account_response(&[fixture.program.clone(), deployed_data])
         });
         let rpc = if scenario == "confirmation-timeout" {
-            mocks.insert(RpcRequest::GetGenesisHash, json!(DEVNET_GENESIS_HASH));
             RpcClient::new_sender(
                 TestRpc {
                     inner: MockSender::new_with_mocks("sig_not_found", mocks),
+                    genesis_hash: json!(DEVNET_GENESIS_HASH),
                     account_reads: Mutex::new(accounts.into()),
                     requests: fixture.requests.clone(),
                     fail_on,
@@ -572,5 +572,402 @@ fn deployed_binary_requires_exact_bytes_and_only_zero_padding() -> Result<()> {
             .to_string(),
         "Deployed program bytes do not match the release binary"
     );
+    Ok(())
+}
+
+#[test]
+fn expansion_rounds_the_shortfall_and_respects_the_total_account_limit() -> Result<()> {
+    // Capacity excludes the 45-byte ProgramData header; round the shortfall,
+    // not the binary size or the existing allocation.
+    for (binary, capacity, additional) in [
+        (0, 17, 0),
+        (16, 17, 0),
+        (17, 17, 0),
+        (18, 17, 10_240),
+        (10_257, 17, 10_240),
+        (10_258, 17, 20_480),
+        (10_485_715, 10_485_715, 0),
+        (10_485_715, 10_475_475, 10_240),
+    ] {
+        assert_eq!(
+            devnet::required_program_extension(binary, capacity)?,
+            additional
+        );
+    }
+    for (binary, capacity) in [
+        (10_485_715, 10_485_714), // Rounded extension would exceed the limit.
+        (10_485_716, 0),          // Header also counts toward the account limit.
+        (1, 10_485_716),
+        (usize::MAX, 17),
+        (17, usize::MAX),
+    ] {
+        assert!(devnet::required_program_extension(binary, capacity).is_err());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn preflight_budgets_expansion_rent_before_any_mutation() -> Result<()> {
+    for (data_balance, payer_balance, extension_rent, succeeds) in [
+        (7, 200_000_033, 13, true),
+        (7, 200_000_032, 13, false),
+        (20, 200_000_020, 0, true),
+        (21, 200_000_020, 0, true),
+    ] {
+        let mut fixture = Fixture::new()?;
+        let capacity = fixture.binary.len() + 8;
+        fixture.binary.resize(capacity + 1, 0);
+        fixture.data.lamports = data_balance;
+        fixture.payer.lamports = payer_balance;
+        let rpc = fixture.rpc(
+            vec![account_response(&[
+                fixture.program.clone(),
+                fixture.data.clone(),
+                fixture.payer.clone(),
+            ])],
+            Mocks::default(),
+            None,
+        );
+        let result =
+            devnet::check(&rpc, &fixture.config, &fixture.authority, &fixture.binary).await;
+        if succeeds {
+            let receipt = result?;
+            assert_eq!(receipt.program_capacity_bytes, capacity);
+            assert_eq!(receipt.additional_program_bytes, 10_240);
+            assert_eq!(receipt.program_extension_rent_lamports, extension_rent);
+            assert_eq!(
+                receipt.minimum_authority_balance_lamports,
+                200_000_020 + extension_rent
+            );
+        } else {
+            assert!(result
+                .err()
+                .context("expected rejection")?
+                .to_string()
+                .contains("200000033 lamports"));
+        }
+        let requests = fixture.requests.lock().unwrap();
+        let rent_sizes: Vec<_> = requests
+            .iter()
+            .filter(|(request, _)| *request == RpcRequest::GetMinimumBalanceForRentExemption)
+            .map(|(_, params)| params[0].clone())
+            .collect();
+        assert_eq!(
+            rent_sizes,
+            vec![
+                json!(UpgradeableLoaderState::size_of_buffer(fixture.binary.len())),
+                json!(UpgradeableLoaderState::size_of_programdata(
+                    capacity + 10_240
+                )),
+            ]
+        );
+        assert!(!requests
+            .iter()
+            .any(|(request, _)| *request == RpcRequest::SendTransaction));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn expansion_signs_rounded_extend_and_verifies_finalized_capacity() -> Result<()> {
+    let mut fixture = Fixture::new()?;
+    let capacity = fixture.binary.len() + 8;
+    fixture.binary.resize(capacity + 10_241, 0);
+    let before = account_response(&[
+        fixture.program.clone(),
+        fixture.data.clone(),
+        fixture.payer.clone(),
+    ]);
+    let mut expanded = fixture.data.clone();
+    expanded.data.resize(
+        UpgradeableLoaderState::size_of_programdata(capacity + 20_480),
+        0,
+    );
+    let rpc = fixture.rpc(
+        vec![
+            before.clone(),
+            before,
+            account_response(&[fixture.program.clone(), expanded, fixture.payer.clone()]),
+        ],
+        Mocks::default(),
+        None,
+    );
+    let saved = devnet::check(&rpc, &fixture.config, &fixture.authority, &fixture.binary).await?;
+    let output = tempfile::tempdir()?;
+    let receipt = devnet::ensure_capacity(
+        &rpc,
+        &fixture.config,
+        &fixture.authority,
+        &fixture.binary,
+        &saved,
+        output.path(),
+    )
+    .await?
+    .context("expected expansion")?;
+    assert_eq!(receipt.program, fixture.config.program);
+    assert_eq!(receipt.previous_capacity_bytes, capacity);
+    assert_eq!(receipt.additional_bytes, 20_480);
+    assert_eq!(receipt.program_capacity_bytes, capacity + 20_480);
+    assert_eq!(
+        fs::read_to_string(output.path().join("extension-signature.txt"))?.trim(),
+        receipt.signature
+    );
+    let requests = fixture.requests.lock().unwrap();
+    let sends: Vec<_> = requests
+        .iter()
+        .filter(|(request, _)| *request == RpcRequest::SendTransaction)
+        .collect();
+    assert_eq!(sends.len(), 1);
+    let params = &sends[0].1;
+    let transaction: Transaction =
+        bincode::deserialize(&STANDARD.decode(params[0].as_str().context("transaction")?)?)?;
+    transaction.verify()?;
+    assert_eq!(
+        transaction.message,
+        solana_sdk::message::Message::new_with_blockhash(
+            &[instruction::extend_program(
+                &fixture.config.program,
+                Some(&fixture.authority.pubkey()),
+                20_480
+            )],
+            Some(&fixture.authority.pubkey()),
+            &transaction.message.recent_blockhash,
+        )
+    );
+    assert_eq!(transaction.signatures.len(), 1);
+    assert_eq!(params[1]["skipPreflight"], false);
+    assert_eq!(params[1]["preflightCommitment"], "finalized");
+    assert!(requests
+        .iter()
+        .filter(|(request, _)| *request == RpcRequest::GetMultipleAccounts)
+        .all(|(_, params)| params[1]["commitment"] == "finalized"));
+    let send_index = requests
+        .iter()
+        .position(|(request, _)| *request == RpcRequest::SendTransaction)
+        .context("submission")?;
+    let confirmation_index = requests
+        .iter()
+        .rposition(|(request, _)| *request == RpcRequest::GetSignatureStatuses)
+        .context("confirmation")?;
+    let verification_index = requests
+        .iter()
+        .rposition(|(request, _)| *request == RpcRequest::GetMultipleAccounts)
+        .context("capacity verification")?;
+    assert!(send_index < confirmation_index && confirmation_index < verification_index);
+    Ok(())
+}
+
+#[tokio::test]
+async fn sufficient_or_concurrently_expanded_capacity_needs_no_transaction() -> Result<()> {
+    for (extra_binary_bytes, concurrent_extension) in [(0, 0), (8, 0), (9, 10_240)] {
+        let mut fixture = Fixture::new()?;
+        let capacity = fixture.binary.len() + 8;
+        fixture
+            .binary
+            .resize(fixture.binary.len() + extra_binary_bytes, 0);
+        let before = account_response(&[
+            fixture.program.clone(),
+            fixture.data.clone(),
+            fixture.payer.clone(),
+        ]);
+        fixture.data.data.resize(
+            UpgradeableLoaderState::size_of_programdata(capacity + concurrent_extension),
+            0,
+        );
+        let rpc = fixture.rpc(
+            vec![
+                before,
+                account_response(&[
+                    fixture.program.clone(),
+                    fixture.data.clone(),
+                    fixture.payer.clone(),
+                ]),
+            ],
+            Mocks::default(),
+            None,
+        );
+        let saved =
+            devnet::check(&rpc, &fixture.config, &fixture.authority, &fixture.binary).await?;
+        let output = tempfile::tempdir()?;
+        assert!(devnet::ensure_capacity(
+            &rpc,
+            &fixture.config,
+            &fixture.authority,
+            &fixture.binary,
+            &saved,
+            output.path()
+        )
+        .await?
+        .is_none());
+        assert_eq!(fs::read_dir(output.path())?.count(), 0);
+        assert!(!fixture
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(request, _)| *request == RpcRequest::SendTransaction));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn expansion_rechecks_authority_funding_and_preflight_before_submission() -> Result<()> {
+    for scenario in ["authority", "funding", "binary", "cluster"] {
+        let mut fixture = Fixture::new()?;
+        fixture.binary.resize(fixture.binary.len() + 9, 0);
+        let rpc = fixture.rpc(
+            vec![account_response(&[
+                fixture.program.clone(),
+                fixture.data.clone(),
+                fixture.payer.clone(),
+            ])],
+            Mocks::default(),
+            None,
+        );
+        let saved =
+            devnet::check(&rpc, &fixture.config, &fixture.authority, &fixture.binary).await?;
+        let mut mocks = Mocks::default();
+        let expected = match scenario {
+            "authority" => {
+                fixture.authority = Keypair::new();
+                "Program upgrade authority does not match"
+            },
+            "funding" => {
+                fixture.payer.lamports = 0;
+                "Program authority needs at least"
+            },
+            "binary" => {
+                fixture.binary.push(1);
+                "Preflight binary does not match"
+            },
+            _ => {
+                mocks.insert(
+                    RpcRequest::GetGenesisHash,
+                    json!(Pubkey::new_unique().to_string()),
+                );
+                "SOLANA_RPC_URL must point to Solana devnet"
+            },
+        };
+        let rpc = fixture.rpc(
+            vec![account_response(&[
+                fixture.program.clone(),
+                fixture.data.clone(),
+                fixture.payer.clone(),
+            ])],
+            mocks,
+            None,
+        );
+        let output = tempfile::tempdir()?;
+        let error = devnet::ensure_capacity(
+            &rpc,
+            &fixture.config,
+            &fixture.authority,
+            &fixture.binary,
+            &saved,
+            output.path(),
+        )
+        .await
+        .err()
+        .context("expected rejection")?;
+        assert!(
+            error.to_string().starts_with(expected),
+            "{scenario}: {error}"
+        );
+        assert_eq!(fs::read_dir(output.path())?.count(), 0);
+        assert!(!fixture
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(request, _)| *request == RpcRequest::SendTransaction));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn failed_or_unverified_expansion_preserves_its_signature_and_stops() -> Result<()> {
+    for scenario in [
+        "send-failure",
+        "onchain-failure",
+        "unchanged-capacity",
+        "changed-authority",
+        "spent-funds",
+    ] {
+        let mut fixture = Fixture::new()?;
+        fixture.binary.resize(fixture.binary.len() + 9, 0);
+        let before = account_response(&[
+            fixture.program.clone(),
+            fixture.data.clone(),
+            fixture.payer.clone(),
+        ]);
+        let mut expanded = fixture.data.clone();
+        expanded.data.resize(expanded.data.len() + 10_240, 0);
+        let mut mocks = Mocks::default();
+        let mut fail_on = None;
+        let expected = match scenario {
+            "send-failure" => {
+                fail_on = Some(RpcRequest::SendTransaction);
+                "Program expansion submission failed or is uncertain"
+            },
+            "onchain-failure" => {
+                mocks.insert(RpcRequest::GetSignatureStatuses, json!({"context":{"slot":50},"value":[{"slot":50,"confirmations":null,"err":"AccountNotFound","status":{"Err":"AccountNotFound"},"confirmationStatus":"finalized"}]}));
+                "failed on-chain"
+            },
+            "changed-authority" => {
+                let metadata = bincode::serialize(&UpgradeableLoaderState::ProgramData {
+                    slot: 50,
+                    upgrade_authority_address: Some(Pubkey::new_unique()),
+                })?;
+                expanded.data[..metadata.len()].copy_from_slice(&metadata);
+                "Program upgrade authority does not match"
+            },
+            "spent-funds" => {
+                fixture.payer.lamports = 0;
+                "Program authority needs at least"
+            },
+            _ => {
+                expanded = fixture.data.clone();
+                "allocated capacity is below the target"
+            },
+        };
+        let rpc = fixture.rpc(
+            vec![
+                before.clone(),
+                before,
+                account_response(&[fixture.program.clone(), expanded, fixture.payer.clone()]),
+            ],
+            mocks,
+            fail_on,
+        );
+        let saved =
+            devnet::check(&rpc, &fixture.config, &fixture.authority, &fixture.binary).await?;
+        let output = tempfile::tempdir()?;
+        let error = devnet::ensure_capacity(
+            &rpc,
+            &fixture.config,
+            &fixture.authority,
+            &fixture.binary,
+            &saved,
+            output.path(),
+        )
+        .await
+        .err()
+        .context("expected rejection")?
+        .to_string();
+        assert!(error.contains(expected), "{scenario}: {error}");
+        assert!(!error.contains("private-rpc-credential"));
+        assert!(output.path().join("extension-signature.txt").exists());
+        assert_eq!(fs::read_dir(output.path())?.count(), 1);
+        assert_eq!(
+            fixture
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(request, _)| *request == RpcRequest::SendTransaction)
+                .count(),
+            1
+        );
+    }
     Ok(())
 }

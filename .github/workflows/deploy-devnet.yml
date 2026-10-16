@@ -136,7 +136,7 @@ jobs:
             --notes "Devnet upgrade from $SOURCE_SHA. Deployment is pending; see this run's receipts." \
             release-inputs/swig.so release-inputs/swig.so.sha256 preflight.json
 
-      - name: Upload buffer and deploy directly to devnet
+      - name: Expand program if needed, upload buffer, and deploy to devnet
         env:
           SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
           PROGRAM_AUTHORITY_KEYPAIR: ${{ secrets.PROGRAM_AUTHORITY_KEYPAIR }}
@@ -148,7 +148,7 @@ jobs:
 
       - name: Publish finalized deployment receipt
         run: |
-          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" deployment/deployment-receipt.json
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" deployment/*.json
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
             --notes "Deployed $SOURCE_SHA directly to devnet. The finalized on-chain binary matches swig.so; see deployment-receipt.json."
           cat deployment/deployment-receipt.json >> "$GITHUB_STEP_SUMMARY"
