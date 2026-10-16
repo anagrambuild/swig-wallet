@@ -117,14 +117,6 @@ cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no
 
 The tests use `http://127.0.0.1:8899` by default. Set `SWIG_TEST_RPC_URL` to point at a validator on another port.
 
-### Test dependencies
-
-The program and Rust SDK tests pin `litesvm` and `litesvm-token` to `0.16.0`. The lockfile selects Agave 4.2.2 and solana-sbpf 0.21.1 for v3 execution, so keep `Cargo.lock` checked in.
-
-`LiteSVM::new()` uses its bundled mainnet feature set and loads the bundled Token program at `TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`. The WSOL rent tests use that same program. Its starting clock is not slot zero, so sign test payloads with `get_sysvar::<Clock>().slot`.
-
-The bundled p-token program includes `SyncNative` reserve refreshes and rent checks, so test setup must fund new accounts to the rent minimum. After changing the pin, run the WSOL regressions and every feature suite. The pin is there for reproducible tests and says nothing about future mainnet deployments.
-
 ## Security
 
 Published audits:
