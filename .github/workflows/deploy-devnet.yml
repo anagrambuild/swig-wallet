@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: swig-devnet-upgrade
+  group: swig-upgrade-devnet
   cancel-in-progress: false
 
 permissions:
@@ -91,7 +91,7 @@ jobs:
     timeout-minutes: 30
     # Restrict this environment to main and configure its three secrets:
     # SOLANA_RPC_URL, PROGRAM_AUTHORITY_KEYPAIR (JSON array), SWIG_PROGRAM_ID.
-    environment: swig-devnet
+    environment: swig-upgrade-devnet
     permissions:
       contents: write
       actions: read
