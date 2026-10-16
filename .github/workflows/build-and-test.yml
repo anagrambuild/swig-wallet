@@ -15,6 +15,18 @@ env:
   SCCACHE_CACHE_SIZE: 2G
 
 jobs:
+  devnet-deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Test devnet deployment guards and receipts
+        run: python3 -m unittest discover -s tools/release/tests -p 'test_devnet_deploy.py' -v
+
   build-and-test:
     runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
