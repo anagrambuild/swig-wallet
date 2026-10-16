@@ -65,7 +65,7 @@ pub fn upload_buffer(
         ]),
         UploadProfile::Devnet => command.args([
             "--commitment",
-            "finalized",
+            "confirmed",
             "--with-compute-unit-price",
             "100",
             "--max-sign-attempts",

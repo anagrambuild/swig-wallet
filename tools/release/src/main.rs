@@ -158,7 +158,7 @@ async fn main() -> Result<()> {
             let rpc = RpcClient::new_with_timeout_and_commitment(
                 config.rpc_url.clone(),
                 Duration::from_secs(30),
-                CommitmentConfig::finalized(),
+                CommitmentConfig::confirmed(),
             );
             let receipt = devnet::check(&rpc, &config, &authority, &binary).await?;
             eprintln!(
@@ -189,7 +189,7 @@ async fn main() -> Result<()> {
             let rpc = RpcClient::new_with_timeout_and_commitment(
                 config.rpc_url.clone(),
                 Duration::from_secs(30),
-                CommitmentConfig::finalized(),
+                CommitmentConfig::confirmed(),
             );
             fs::create_dir(&output_dir).context(
                 "Output directory must be new; inspect any earlier attempt before retrying",
@@ -202,7 +202,7 @@ async fn main() -> Result<()> {
                     output_dir.join("extension-receipt.json"),
                     serde_json::to_string_pretty(&extension)?,
                 )
-                .context("Program expansion finalized, but could not save its receipt")?;
+                .context("Program expansion confirmed, but could not save its receipt")?;
             }
             let buffer = upload_buffer(
                 &config.rpc_url,
@@ -227,10 +227,10 @@ async fn main() -> Result<()> {
             .await?;
             let json = serde_json::to_string_pretty(&receipt)?;
             fs::write(output_dir.join("deployment-receipt.json"), &json).context(
-                "Upgrade finalized, but could not save its receipt; inspect the logged signature",
+                "Upgrade confirmed, but could not save its receipt; inspect the logged signature",
             )?;
             eprintln!(
-                "Devnet upgrade finalized: program={} signature={}",
+                "Devnet upgrade confirmed: program={} signature={}",
                 receipt.program, receipt.signature
             );
             println!("{json}");

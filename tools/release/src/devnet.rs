@@ -216,7 +216,7 @@ pub async fn ensure_capacity(
         Some(&authority.pubkey()),
         current.additional_program_bytes,
     );
-    let signature = send_and_finalize(
+    let signature = send_and_confirm(
         rpc,
         authority,
         extend,
@@ -224,13 +224,13 @@ pub async fn ensure_capacity(
         output_dir,
     )
     .await?;
-    // Finalize separately from the upgrade and verify allocation and remaining
+    // Confirm separately from the upgrade and verify allocation and remaining
     // upload funds before creating a buffer.
     let expanded = check(rpc, config, authority, binary).await?;
     ensure!(
         expanded.program_capacity_bytes
             >= current.program_capacity_bytes + usize::try_from(current.additional_program_bytes)?,
-        "Program expansion {signature} finalized, but the allocated capacity is below the target"
+        "Program expansion {signature} confirmed, but the allocated capacity is below the target"
     );
     validate_capacity(binary.len(), expanded.program_capacity_bytes)?;
     Ok(Some(ProgramExtensionReceipt {
@@ -310,7 +310,7 @@ pub async fn deploy(
         &authority.pubkey(),
     );
     eprintln!("Devnet upgrade buffer={}", request.buffer);
-    let signature = send_and_finalize(
+    let signature = send_and_confirm(
         rpc,
         authority,
         upgrade,
@@ -322,7 +322,7 @@ pub async fn deploy(
         .get_multiple_accounts(&[config.program, program_data_address])
         .await
         .map_err(|_| {
-            anyhow!("Upgrade {signature} finalized, but could not read deployed accounts")
+            anyhow!("Upgrade {signature} confirmed, but could not read deployed accounts")
         })?;
     let mut accounts = fetched.into_iter();
     let program = accounts
@@ -350,13 +350,13 @@ pub async fn deploy(
 }
 
 // Both devnet mutations preserve the signed transaction identifier before
-// submission and require finalized confirmation before the next operation.
+// submission and wait for confirmed status before the next operation.
 enum DevnetTransaction {
     Extension,
     Upgrade,
 }
 
-async fn send_and_finalize(
+async fn send_and_confirm(
     rpc: &RpcClient,
     authority: &Keypair,
     instruction: Instruction,
@@ -388,7 +388,7 @@ async fn send_and_finalize(
             &transaction,
             RpcSendTransactionConfig {
                 skip_preflight: false,
-                preflight_commitment: Some(CommitmentConfig::finalized().commitment),
+                preflight_commitment: Some(CommitmentConfig::confirmed().commitment),
                 max_retries: Some(0),
                 ..RpcSendTransactionConfig::default()
             },
@@ -404,12 +404,12 @@ async fn send_and_finalize(
         returned == signature,
         "RPC returned an unexpected {operation} signature; inspect {signature}"
     );
-    let mut finalized = false;
+    let mut confirmed = false;
     for _ in 0..60 {
         match rpc
             .get_signature_status_with_commitment_and_history(
                 &signature,
-                CommitmentConfig::finalized(),
+                CommitmentConfig::confirmed(),
                 true,
             )
             .await
@@ -417,7 +417,7 @@ async fn send_and_finalize(
                 anyhow!("{operation} confirmation is uncertain; inspect transaction {signature}")
             })? {
             Some(Ok(())) => {
-                finalized = true;
+                confirmed = true;
                 break;
             },
             Some(Err(_)) => anyhow::bail!(
@@ -427,7 +427,7 @@ async fn send_and_finalize(
         }
     }
     ensure!(
-        finalized,
+        confirmed,
         "{operation} confirmation timed out; inspect transaction {signature} before retrying"
     );
     Ok(signature)
