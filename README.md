@@ -82,6 +82,19 @@ The program in this repo is the foundation. Most teams build on one of these ins
 
 Swig also offers hosted infrastructure for teams that want to ship faster: a developer API, gasless transactions through a managed paymaster, a dashboard, and more coming soon. Visit [onswig.com](https://onswig.com) to learn more, or reach out to talk about integrating smart wallets.
 
+### Zero-knowledge login with Swig IDP
+
+Swig zkLogin brings social sign-in to non-custodial smart wallets. Users log in with a social account, wallet, email, phone, or passkey, and a ZK circuit proves they are allowed to access their wallet. No seed phrases or passwords required.
+
+Most embedded wallet providers hold or shard signing keys on their own infrastructure and put the key back together for every wallet action. Swig takes that dependency out of signing:
+
+- **Proofs generated locally.** Proofs for user sessions are created on the client, backed by secure enclaves. There is no key reconstitution on third party servers.
+- **Secure enclaves.** Circuit material is isolated and encrypted across split enclaves, and is never exposed to your platform or to Swig.
+- **Encrypted transport.** Short lived auth tokens are HPKE encrypted to protect against replays.
+- **Verifiable sessions.** Only the user can establish a session, with strict callback logic on the client.
+
+Wallets created through Swig IDP get everything the protocol offers: policy bounded roles, session keys that expire onchain, gasless transactions through the paymaster, and passkey recovery. See [onswig.com/login-auth](https://onswig.com/login-auth) and the [IDP SDK docs](https://build.onswig.com/overview/idp-sdk) to get started.
+
 ## Building
 
 You need Rust 1.96.1 (pinned in `rust-toolchain.toml`) and `cargo-build-sbf` 4.0.0.
