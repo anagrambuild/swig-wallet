@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/swig-logo.svg" alt="Swig" width="420">
+</p>
+
 # Swig
 
 Smart wallet infrastructure for programmable money movement.
