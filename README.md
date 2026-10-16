@@ -78,7 +78,7 @@ Each key type also has a session variant for short lived, delegated access. Keys
 
 ## Products
 
-The program in this repo is the foundation. On top of it, Swig runs hosted products for teams that want to ship faster: a developer API, gasless transactions through a managed paymaster, a dashboard, and more coming soon. There is a [free plan](https://onswig.com/pricing) to get started.
+The program in this repo is the foundation. On top of it, Swig runs hosted products for teams that want to ship faster: a developer API, gasless transactions through a managed paymaster, zero-knowledge login, indexing, a dashboard, and more coming soon. There is a [free plan](https://onswig.com/pricing) to get started.
 
 ### Embedded wallets
 
@@ -116,7 +116,7 @@ Define who can do what with every wallet. Users always keep root authority and d
 
 ### Zero-knowledge login with Swig IDP
 
-Swig zkLogin brings social sign-in to non-custodial smart wallets. Users log in with a social account, wallet, email, phone, or passkey, and a ZK circuit proves they are allowed to access their wallet. No seed phrases or passwords required.
+Swig IDP brings social sign-in to non-custodial smart wallets. Users log in with a social account, wallet, email, phone, or passkey, and a ZK circuit proves they are allowed to access their wallet. No seed phrases or passwords required.
 
 Most embedded wallet providers hold or shard signing keys on their own infrastructure and put the key back together for every wallet action. Swig takes that dependency out of signing:
 
