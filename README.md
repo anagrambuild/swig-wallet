@@ -12,7 +12,7 @@ This repository contains the Swig protocol: the onchain wallet program for Solan
 
 - Website: [onswig.com](https://onswig.com)
 - Docs: [build.onswig.com](https://build.onswig.com)
-- Dashboard: [dashboard.onswig.com](https://dashboard.onswig.com)
+- Developer portal: [dashboard.onswig.com](https://dashboard.onswig.com)
 - Program ID: `swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB`
   - [Mainnet](https://explorer.solana.com/address/swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB)
   - [Devnet](https://explorer.solana.com/address/swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB?cluster=devnet)
@@ -76,15 +76,43 @@ Each key type also has a session variant for short lived, delegated access. Keys
 | `docs` | | Rust SDK guides and program diagrams |
 | `audits` | | Published security assessments |
 
-## SDKs and services
+## Products
 
-The program in this repo is the foundation. Most teams build on one of these instead of calling it directly.
+The program in this repo is the foundation. On top of it, Swig runs hosted products for teams that want to ship faster: a developer API, gasless transactions through a managed paymaster, a dashboard, and more coming soon. There is a [free plan](https://onswig.com/pricing) to get started.
 
-- **[TypeScript SDK](https://github.com/anagrambuild/swig-ts)** for working with the protocol from TypeScript and JavaScript.
-- **[Developer SDK](https://github.com/anagrambuild/swig-developer-sdk)** for the hosted Swig API, in TypeScript and Python. The API prepares wallet transactions, your app signs them, and Swig can sponsor the fees so your users never see a gas prompt.
-- **[Rust SDK](docs/rust-sdk/rust-sdk.md)** in this repo, for Rust services and tooling.
+### Embedded wallets
 
-Swig also offers hosted infrastructure for teams that want to ship faster: a developer API, gasless transactions through a managed paymaster, a dashboard, and more coming soon. Visit [onswig.com](https://onswig.com) to learn more, or reach out to talk about integrating smart wallets.
+Wallets your users never have to think about. Create self-custodial smart wallets directly in your app with passkey sign-in, sponsored gas, and onchain policies. No seed phrases required.
+
+- **Seamless onboarding.** Modular login options, including Swig social login, with passkey (r1) support out of the box.
+- **Sponsored gas.** Cover network fees on your users' behalf so they never need to hold SOL.
+- **Onchain policies.** Spend limits, program scopes, and session expiry per wallet, enforced by the Swig program and not your backend.
+- **Recovery and key rotation.** Add backup signers and guardians, and recover access onchain.
+
+[Learn more](https://onswig.com/embedded-wallets)
+
+### Server wallets
+
+Wallets your backend can drive. Create wallets, prepare transactions, and automate signing over REST or a server SDK. Built for teams managing wallet fleets from their backends.
+
+- **REST first.** Create wallets, prepare transactions, and read balances, roles, and token history.
+- **Automated signing.** Your server signs and broadcasts without user interaction, within the limits you define.
+- **Deny by default.** Spend limits, program scopes, and allowlists are enforced onchain before a signature exists.
+- **Sponsored execution.** Submit through the Swig paymaster so server wallets never need to hold SOL for gas.
+- **Secure requests.** Scope API keys with IP allowlists to control where transactions come from.
+
+[Learn more](https://onswig.com/server-wallets)
+
+### Policy engine
+
+Define who can do what with every wallet. Users always keep root authority and delegate to other authorities, such as a passkey, a session key, a server signer, or another program. Each authority is registered onchain and can be revoked at any time.
+
+- **Spend limits.** Cap token spend per transaction or per time window.
+- **Program scopes.** Allowlist the programs a role can touch. An agent can trade on one venue and nothing else.
+- **Session expiry.** Grant time boxed access with session keys that expire onchain.
+- **Recovery and rotation.** Add backup signers, rotate compromised keys, and recover access without seed phrases.
+
+[Learn more](https://onswig.com/policy-engine)
 
 ### Zero-knowledge login with Swig IDP
 
@@ -98,6 +126,20 @@ Most embedded wallet providers hold or shard signing keys on their own infrastru
 - **Verifiable sessions.** Only the user can establish a session, with strict callback logic on the client.
 
 Wallets created through Swig IDP get everything the protocol offers: policy bounded roles, session keys that expire onchain, gasless transactions through the paymaster, and passkey recovery. See [onswig.com/login-auth](https://onswig.com/login-auth) and the [IDP SDK docs](https://build.onswig.com/overview/idp-sdk) to get started.
+
+### Wallets for AI agents
+
+Give your agents programmable smart wallets with built in spend limits and session controls. The [Swig MCP server](https://github.com/anagrambuild/swig-ts/blob/main/packages/mcp-server/README.md) lets an agent create a wallet, set spending limits, manage authorities, transfer SOL, and run any onchain instruction, all without exposing a private key. Fees can be sponsored through the Swig paymaster.
+
+[Learn more](https://onswig.com/agents)
+
+## SDKs
+
+- **[TypeScript SDK](https://github.com/anagrambuild/swig-ts)** for working with the protocol from TypeScript and JavaScript.
+- **[Developer SDK](https://github.com/anagrambuild/swig-developer-sdk)** for the hosted Swig API, in TypeScript and Python. The API prepares wallet transactions, your app signs them, and Swig can sponsor the fees so your users never see a gas prompt.
+- **[Rust SDK](docs/rust-sdk/rust-sdk.md)** in this repo, for Rust services and tooling.
+
+Visit [onswig.com](https://onswig.com) to learn more, or reach out to talk about integrating smart wallets.
 
 ## Building
 
