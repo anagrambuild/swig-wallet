@@ -91,7 +91,8 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Allow the uploader's 100 blockhash signing attempts to finish.
+    timeout-minutes: 120
     # Restrict this environment to main and configure its three secrets:
     # SOLANA_RPC_URL, PROGRAM_AUTHORITY_KEYPAIR (JSON array), SWIG_PROGRAM_ID.
     environment: swig-upgrade-devnet
@@ -146,11 +147,11 @@ jobs:
             --preflight preflight.json --source-commit "$SOURCE_SHA" \
             --tag "$RELEASE_TAG" --output-dir deployment
 
-      - name: Publish finalized deployment receipt
+      - name: Publish confirmed deployment receipt
         run: |
           gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" deployment/*.json
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --notes "Deployed $SOURCE_SHA directly to devnet. The finalized on-chain binary matches swig.so; see deployment-receipt.json."
+            --notes "Deployed $SOURCE_SHA directly to devnet. The confirmed on-chain binary matches swig.so; see deployment-receipt.json."
           cat deployment/deployment-receipt.json >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve public deployment and recovery information

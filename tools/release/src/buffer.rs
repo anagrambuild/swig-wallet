@@ -7,17 +7,22 @@ use std::{
 
 use anyhow::{ensure, Context, Result};
 use solana_sdk::{
-    commitment_config::CommitmentConfig,
     pubkey::Pubkey,
     signature::{Keypair, Signer},
 };
 use zeroize::Zeroizing;
 
+#[derive(Clone, Copy)]
+pub enum UploadProfile {
+    Mainnet,
+    Devnet,
+}
+
 /// Upload the already-validated bytes using the pinned Solana CLI. Only the
 /// public buffer address survives; temporary key files are removed on return.
 pub fn upload_buffer(
     rpc_url: &str,
-    commitment: CommitmentConfig,
+    profile: UploadProfile,
     authority: &Keypair,
     binary: &[u8],
     solana_cli: &Path,
@@ -45,20 +50,30 @@ pub fn upload_buffer(
     eprintln!("Uploading buffer: address={address} bytes={}", binary.len());
     // Raw uploader output can contain the credential-bearing RPC URL. Emit our
     // own progress/errors; never forward or save that output.
-    let status = Command::new(solana_cli)
+    let mut command = Command::new(solana_cli);
+    command
         .args(["program", "write-buffer"])
         .arg(&binary_path)
-        .args([
-            "--url",
-            rpc_url,
+        .args(["--url", rpc_url, "--max-len", &binary.len().to_string()]);
+    match profile {
+        UploadProfile::Mainnet => command.args([
             "--commitment",
-            &commitment.commitment.to_string(),
+            "confirmed",
             "--use-rpc",
             "--max-sign-attempts",
             "3",
-            "--max-len",
-            &binary.len().to_string(),
-        ])
+        ]),
+        UploadProfile::Devnet => command.args([
+            "--commitment",
+            "confirmed",
+            "--with-compute-unit-price",
+            "100",
+            "--max-sign-attempts",
+            "100",
+            "--use-tpu-client",
+        ]),
+    };
+    let status = command
         .arg("--keypair")
         .arg(authority_file.path())
         .arg("--buffer")
@@ -74,7 +89,7 @@ pub fn upload_buffer(
         .context("Could not start Solana CLI; install the pinned version or set --solana-cli")?;
     ensure!(
         status.success(),
-        "Buffer upload failed ({status}); inspect buffer {address}. The proposer retains \
+        "Buffer upload failed ({status}); inspect buffer {address}. The signer retains \
          authority for recovery"
     );
     eprintln!("Buffer upload complete: address={address}");

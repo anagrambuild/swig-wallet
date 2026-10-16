@@ -154,6 +154,9 @@ impl Fixture {
         let genesis_hash = mocks
             .remove(&RpcRequest::GetGenesisHash)
             .unwrap_or(json!(DEVNET_GENESIS_HASH));
+        mocks.entry(RpcRequest::GetSignatureStatuses).or_insert_with(|| {
+            json!({"context":{"slot":50},"value":[{"slot":50,"confirmations":1,"err":null,"status":{"Ok":null},"confirmationStatus":"confirmed"}]})
+        });
         RpcClient::new_sender(
             TestRpc {
                 inner: MockSender::new_with_mocks("succeeds", mocks),
@@ -162,7 +165,7 @@ impl Fixture {
                 requests: self.requests.clone(),
                 fail_on,
             },
-            RpcClientConfig::with_commitment(CommitmentConfig::finalized()),
+            RpcClientConfig::with_commitment(CommitmentConfig::confirmed()),
         )
     }
 
@@ -326,8 +329,8 @@ async fn saved_preflight_binds_program_signer_binary_and_capacity() -> Result<()
     Ok(())
 }
 
-#[tokio::test]
-async fn deploy_signs_upgrade_directly_and_verifies_finalized_bytes() -> Result<()> {
+#[tokio::test(start_paused = true)]
+async fn deploy_signs_upgrade_directly_and_verifies_confirmed_bytes() -> Result<()> {
     let fixture = Fixture::new()?;
     let output = tempfile::tempdir()?;
     let rpc = fixture.rpc(
@@ -385,11 +388,23 @@ async fn deploy_signs_upgrade_directly_and_verifies_finalized_bytes() -> Result<
     );
     assert_eq!(transaction.signatures.len(), 1);
     assert_eq!(params[1]["skipPreflight"], false);
-    assert_eq!(params[1]["preflightCommitment"], "finalized");
+    assert_eq!(params[1]["preflightCommitment"], "confirmed");
     assert!(requests
         .iter()
         .filter(|(request, _)| *request == RpcRequest::GetMultipleAccounts)
-        .all(|(_, params)| params[1]["commitment"] == "finalized"));
+        .all(|(_, params)| params[1]["commitment"] == "confirmed"));
+    assert!(requests
+        .iter()
+        .filter(|(request, _)| *request == RpcRequest::GetLatestBlockhash)
+        .all(|(_, params)| params[0]["commitment"] == "confirmed"));
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|(request, _)| *request == RpcRequest::GetSignatureStatuses)
+            .count(),
+        1,
+        "A confirmed success must advance without waiting for finalization"
+    );
     Ok(())
 }
 
@@ -462,6 +477,7 @@ async fn failed_uncertain_and_unverified_upgrades_keep_the_transaction_receipt()
         "send-failure",
         "onchain-failure",
         "confirmation-timeout",
+        "processed-only",
         "wrong-binary",
         "read-failure",
         "changed-authority",
@@ -476,11 +492,15 @@ async fn failed_uncertain_and_unverified_upgrades_keep_the_transaction_receipt()
                 "Upgrade submission failed or is uncertain"
             },
             "onchain-failure" => {
-                mocks.insert(RpcRequest::GetSignatureStatuses, json!({"context":{"slot":50},"value":[{"slot":50,"confirmations":null,"err":"AccountNotFound","status":{"Err":"AccountNotFound"},"confirmationStatus":"finalized"}]}));
+                mocks.insert(RpcRequest::GetSignatureStatuses, json!({"context":{"slot":50},"value":[{"slot":50,"confirmations":1,"err":"AccountNotFound","status":{"Err":"AccountNotFound"},"confirmationStatus":"confirmed"}]}));
                 "failed on-chain"
             },
             "confirmation-timeout" => {
                 // Keep every status query pending while Tokio advances the clock.
+                "confirmation timed out"
+            },
+            "processed-only" => {
+                mocks.insert(RpcRequest::GetSignatureStatuses, json!({"context":{"slot":50},"value":[{"slot":50,"confirmations":0,"err":null,"status":{"Ok":null},"confirmationStatus":"processed"}]}));
                 "confirmation timed out"
             },
             "changed-authority" => {
@@ -507,7 +527,7 @@ async fn failed_uncertain_and_unverified_upgrades_keep_the_transaction_receipt()
         } else {
             account_response(&[fixture.program.clone(), deployed_data])
         });
-        let rpc = if scenario == "confirmation-timeout" {
+        let rpc = if matches!(scenario, "confirmation-timeout" | "processed-only") {
             RpcClient::new_sender(
                 TestRpc {
                     inner: MockSender::new_with_mocks("sig_not_found", mocks),
@@ -516,7 +536,7 @@ async fn failed_uncertain_and_unverified_upgrades_keep_the_transaction_receipt()
                     requests: fixture.requests.clone(),
                     fail_on,
                 },
-                RpcClientConfig::with_commitment(CommitmentConfig::finalized()),
+                RpcClientConfig::with_commitment(CommitmentConfig::confirmed()),
             )
         } else {
             fixture.rpc(accounts, mocks, fail_on)
@@ -545,6 +565,19 @@ async fn failed_uncertain_and_unverified_upgrades_keep_the_transaction_receipt()
         assert!(!error.contains("private-rpc-credential"));
         assert!(output.path().join("transaction-signature.txt").exists());
         assert_eq!(fs::read_dir(output.path())?.count(), 1);
+        if matches!(scenario, "confirmation-timeout" | "processed-only") {
+            assert_eq!(
+                fixture
+                    .requests
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|(request, _)| *request == RpcRequest::GetMultipleAccounts)
+                    .count(),
+                1,
+                "Unconfirmed transactions must not reach deployment verification"
+            );
+        }
     }
     Ok(())
 }
@@ -668,8 +701,8 @@ async fn preflight_budgets_expansion_rent_before_any_mutation() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn expansion_signs_rounded_extend_and_verifies_finalized_capacity() -> Result<()> {
+#[tokio::test(start_paused = true)]
+async fn expansion_signs_rounded_extend_and_verifies_confirmed_capacity() -> Result<()> {
     let mut fixture = Fixture::new()?;
     let capacity = fixture.binary.len() + 8;
     fixture.binary.resize(capacity + 10_241, 0);
@@ -736,11 +769,23 @@ async fn expansion_signs_rounded_extend_and_verifies_finalized_capacity() -> Res
     );
     assert_eq!(transaction.signatures.len(), 1);
     assert_eq!(params[1]["skipPreflight"], false);
-    assert_eq!(params[1]["preflightCommitment"], "finalized");
+    assert_eq!(params[1]["preflightCommitment"], "confirmed");
     assert!(requests
         .iter()
         .filter(|(request, _)| *request == RpcRequest::GetMultipleAccounts)
-        .all(|(_, params)| params[1]["commitment"] == "finalized"));
+        .all(|(_, params)| params[1]["commitment"] == "confirmed"));
+    assert!(requests
+        .iter()
+        .filter(|(request, _)| *request == RpcRequest::GetLatestBlockhash)
+        .all(|(_, params)| params[0]["commitment"] == "confirmed"));
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|(request, _)| *request == RpcRequest::GetSignatureStatuses)
+            .count(),
+        1,
+        "A confirmed success must advance without waiting for finalization"
+    );
     let send_index = requests
         .iter()
         .position(|(request, _)| *request == RpcRequest::SendTransaction)
@@ -910,7 +955,7 @@ async fn failed_or_unverified_expansion_preserves_its_signature_and_stops() -> R
                 "Program expansion submission failed or is uncertain"
             },
             "onchain-failure" => {
-                mocks.insert(RpcRequest::GetSignatureStatuses, json!({"context":{"slot":50},"value":[{"slot":50,"confirmations":null,"err":"AccountNotFound","status":{"Err":"AccountNotFound"},"confirmationStatus":"finalized"}]}));
+                mocks.insert(RpcRequest::GetSignatureStatuses, json!({"context":{"slot":50},"value":[{"slot":50,"confirmations":1,"err":"AccountNotFound","status":{"Err":"AccountNotFound"},"confirmationStatus":"confirmed"}]}));
                 "failed on-chain"
             },
             "changed-authority" => {

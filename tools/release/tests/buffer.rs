@@ -3,15 +3,16 @@
 use std::{fs, os::unix::fs::PermissionsExt};
 
 use anyhow::{Context, Result};
-use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Keypair};
-use swig_release::buffer::upload_buffer;
+use solana_sdk::{pubkey::Pubkey, signature::Keypair};
+use swig_release::buffer::{upload_buffer, UploadProfile};
 
 #[test]
 fn upload_owns_exact_bytes_private_files_cleanup_and_public_recovery() -> Result<()> {
-    for (exit_code, commitment) in [
-        (0, CommitmentConfig::confirmed()),
-        (0, CommitmentConfig::finalized()),
-        (9, CommitmentConfig::finalized()),
+    for (profile, commitment, transport, attempts, price, exit_code) in [
+        (UploadProfile::Mainnet, "confirmed", "rpc", 3, "none", 0),
+        (UploadProfile::Mainnet, "confirmed", "rpc", 3, "none", 9),
+        (UploadProfile::Devnet, "confirmed", "tpu", 100, "100", 0),
+        (UploadProfile::Devnet, "confirmed", "tpu", 100, "100", 9),
     ] {
         let directory = tempfile::tempdir()?;
         let script = directory.path().join("solana with spaces");
@@ -29,16 +30,29 @@ shift 3
 test -z "${{PROPOSER_KEYPAIR:-}}"
 test -z "${{PROGRAM_AUTHORITY_KEYPAIR:-}}"
 test -z "${{GH_TOKEN:-}}"
+test -z "${{GITHUB_TOKEN:-}}"
+observed_commitment=none
+observed_transport=none
+observed_attempts=none
+observed_price=none
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --keypair) payer=$2; shift 2 ;;
         --buffer) buffer=$2; shift 2 ;;
         --max-len) size=$2; shift 2 ;;
-        --commitment) test "$2" = {commitment}; shift 2 ;;
-        --use-rpc) shift ;;
-        *) shift 2 ;;
+        --url) test "$2" = https://rpc.invalid/private-rpc-credential; shift 2 ;;
+        --commitment) observed_commitment=$2; shift 2 ;;
+        --max-sign-attempts) observed_attempts=$2; shift 2 ;;
+        --with-compute-unit-price) observed_price=$2; shift 2 ;;
+        --use-rpc) test "$observed_transport" = none; observed_transport=rpc; shift ;;
+        --use-tpu-client) test "$observed_transport" = none; observed_transport=tpu; shift ;;
+        *) exit 99 ;;
     esac
 done
+test "$observed_commitment" = {commitment}
+test "$observed_transport" = {transport}
+test "$observed_attempts" = {attempts}
+test "$observed_price" = {price}
 test -s "$payer"
 test -s "$buffer"
 test "$size" = 7
@@ -47,7 +61,6 @@ printf '%s\n' "$binary" "$payer" "$buffer" > "${{0%/*}}/observed-paths"
 echo private-rpc-credential >&2
 exit {exit_code}
 "##,
-                commitment = commitment.commitment,
             ),
         )?;
         fs::set_permissions(&script, fs::Permissions::from_mode(0o700))?;
@@ -57,7 +70,7 @@ exit {exit_code}
         fs::create_dir(&output)?;
         let result = upload_buffer(
             "https://rpc.invalid/private-rpc-credential",
-            commitment,
+            profile,
             &Keypair::new(),
             binary,
             &script,
