@@ -122,6 +122,20 @@ class VerificationTests(unittest.TestCase):
         for artifact in self.artifacts.iterdir():
             self.assertNotIn(secret.encode(), artifact.read_bytes(), artifact.name)
 
+    def test_failed_or_malformed_export_never_writes_rpc_credentials(self):
+        secret = "rpc-test-credential"
+        self.env["SOLANA_RPC_URL"] = f"https://rpc.invalid/{secret}"
+        for failure in ("export_failure", "export_malformed"):
+            with self.subTest(failure=failure):
+                self.state[failure] = True
+                result = self.run_script("export")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.artifacts / "verification-transaction.base58").exists())
+                self.assertNotIn(secret, result.stdout + result.stderr)
+                for artifact in self.artifacts.iterdir():
+                    self.assertNotIn(secret.encode(), artifact.read_bytes(), artifact.name)
+                self.state[failure] = False
+
     def test_metadata_mismatch_rejects_before_rpc(self):
         for field, wrong in (("commit", "a" * 40), ("repository", "https://github.com/wrong/repo"),
                              ("build_args", ["--arch", "v1"]), ("executable_hash", "")):

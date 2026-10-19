@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Validate hashes and base58 bytes consistently across Linux and macOS locales.
+export LC_ALL=C
 
 # This image contains cargo-build-sbf 4.3.0 and platform-tools v1.57.
 build_image=solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd
@@ -8,7 +10,8 @@ mode=${1:?Usage: verification.sh build|check|export|submit DIRECTORY}
 directory=${2:?Release artifact directory is required}
 repository="https://github.com/${GITHUB_REPOSITORY:?Repository is required}"
 source_sha=${SOURCE_SHA:?Full release commit is required}
-[[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+test "${#source_sha}" = 40
+printf '%s\n' "$source_sha" | grep -Eq '^[0-9a-f]{40}$'
 test "$(solana-verify --version)" = "solana-verify $verify_version"
 
 if [ "$mode" = build ]; then
@@ -17,7 +20,8 @@ if [ "$mode" = build ]; then
   mkdir -p "$directory"
   cp target/deploy/swig.so "$directory/swig.so"
   executable_hash=$(solana-verify get-executable-hash "$directory/swig.so")
-  [[ "$executable_hash" =~ ^[0-9a-f]{64}$ ]]
+  test "${#executable_hash}" = 64
+  printf '%s\n' "$executable_hash" | grep -Eq '^[0-9a-f]{64}$'
   jq -n --arg repository "$repository" --arg commit "$source_sha" \
     --arg version "$verify_version" --arg image "$build_image" --arg hash "$executable_hash" \
     '{repository: $repository, commit: $commit, cli_version: $version,
@@ -69,13 +73,15 @@ slot=$(jq -er '.lastDeploySlot | select(type == "number" and . > 0)' "$directory
 if [ "$mode" = export ]; then
   # Export after the upgrade: the CLI records the live deployment slot in the
   # metadata. This only prepares unsigned bytes; Squads still approves/executes.
-  # The CLI prints its full RPC URL to stdout. Retain only the transaction;
+  # The CLI prints its full RPC URL before RPC requests that can fail. Keep
+  # stdout in memory until both the command and transaction validation succeed;
   # GitHub's console masking does not redact files uploaded as artifacts.
-  solana-verify export-pda-tx "$repository" --url "$SOLANA_RPC_URL" \
+  export_output=$(solana-verify export-pda-tx "$repository" --url "$SOLANA_RPC_URL" \
     --program-id "$SWIG_PROGRAM_ID" --uploader "$uploader" --commit-hash "$source_sha" \
-    --library-name swig --base-image "$build_image" --arch v3 --compute-unit-price 0 \
-    | tail -n 1 > "$directory/verification-transaction.base58"
-  grep -Eq '^[1-9A-HJ-NP-Za-km-z]+$' "$directory/verification-transaction.base58"
+    --library-name swig --base-image "$build_image" --arch v3 --compute-unit-price 0)
+  transaction=$(printf '%s\n' "$export_output" | tail -n 1)
+  printf '%s\n' "$transaction" | grep -Eq '^[1-9A-HJ-NP-Za-km-z]+$'
+  printf '%s\n' "$transaction" > "$directory/verification-transaction.base58"
   echo 'Import verification-transaction.base58 into Squads; approve and execute it before submit.'
   exit 0
 fi

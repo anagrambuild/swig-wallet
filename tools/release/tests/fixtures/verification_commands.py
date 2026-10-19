@@ -29,6 +29,10 @@ elif command == "solana-verify":
         print(state["onchain_hash"])
     elif args[0] == "export-pda-tx":
         print(f"Using connection url: {os.environ['SOLANA_RPC_URL']}")
+        if state.get("export_failure"):
+            sys.exit(1)
+        if state.get("export_malformed"):
+            sys.exit(0)
         print("PDA does not exist, creating initialize transaction")
         print("3mJr7AoUXx2Wqd")
     elif args[0] == "get-program-pda":
