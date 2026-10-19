@@ -69,11 +69,12 @@ slot=$(jq -er '.lastDeploySlot | select(type == "number" and . > 0)' "$directory
 if [ "$mode" = export ]; then
   # Export after the upgrade: the CLI records the live deployment slot in the
   # metadata. This only prepares unsigned bytes; Squads still approves/executes.
+  # The CLI prints its full RPC URL to stdout. Retain only the transaction;
+  # GitHub's console masking does not redact files uploaded as artifacts.
   solana-verify export-pda-tx "$repository" --url "$SOLANA_RPC_URL" \
     --program-id "$SWIG_PROGRAM_ID" --uploader "$uploader" --commit-hash "$source_sha" \
     --library-name swig --base-image "$build_image" --arch v3 --compute-unit-price 0 \
-    > "$directory/export-pda.log"
-  tail -n 1 "$directory/export-pda.log" > "$directory/verification-transaction.base58"
+    | tail -n 1 > "$directory/verification-transaction.base58"
   grep -Eq '^[1-9A-HJ-NP-Za-km-z]+$' "$directory/verification-transaction.base58"
   echo 'Import verification-transaction.base58 into Squads; approve and execute it before submit.'
   exit 0
