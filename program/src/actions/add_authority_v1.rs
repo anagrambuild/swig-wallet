@@ -245,10 +245,12 @@ pub fn add_authority_v1(
     {
         // Get current account lamports after reallocation
         let current_lamports = ctx.accounts.swig.lamports();
-        let required_lamports = Rent::get()?.minimum_balance(account_size);
-        let cost = required_lamports
-            .checked_sub(current_lamports)
-            .unwrap_or_default();
+        let cost = crate::util::rent::growth_cost(
+            &Rent::get()?,
+            current_lamports,
+            swig_data_len,
+            account_size,
+        );
 
         if cost > 0 {
             Transfer {

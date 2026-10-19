@@ -41,6 +41,7 @@ use swig_state::{
         sub_account_seeds, sub_account_v2_asset_seeds, sub_account_v2_state_seeds, Swig,
         SwigWithRoles,
     },
+    tail::rent_claimer,
     Transmutable,
 };
 const TOKEN_22_PROGRAM_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
@@ -267,12 +268,21 @@ impl<'c> SwigWallet<'c> {
         let swig_with_roles =
             SwigWithRoles::from_bytes(&swig_data).map_err(|e| SwigError::InvalidSwigData)?;
 
+        let parts = Swig::split_parts(&swig_data).map_err(|_| SwigError::InvalidSwigData)?;
+        let rent_claimer = rent_claimer::read_strict(parts.tail)
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .map(|key| Pubkey::new_from_array(*key));
+
         let authority_id = swig_with_roles.lookup_role_id(authority.as_ref()).unwrap();
 
         if let Some(authority_id) = authority_id {
             let instructions = self
                 .instruction_builder
-                .remove_authority(authority_id, Some(self.get_current_slot()?))?;
+                .remove_authority_with_rent_claimer(
+                    authority_id,
+                    Some(self.get_current_slot()?),
+                    rent_claimer,
+                )?;
 
             let msg = v0::Message::try_compile(
                 &self.fee_payer.pubkey(),
@@ -356,11 +366,24 @@ impl<'c> SwigWallet<'c> {
         let current_slot = self.get_current_slot()?;
         let counter = self.get_odometer()?;
 
-        let instructions = self.instruction_builder.update_authority(
-            authority_to_update_id,
-            Some(current_slot),
-            update_data,
-        )?;
+        let swig_pubkey = self.get_swig_account()?;
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let swig_data = self.litesvm.get_account(&swig_pubkey).unwrap().data;
+        let parts = Swig::split_parts(&swig_data).map_err(|_| SwigError::InvalidSwigData)?;
+        let rent_claimer = rent_claimer::read_strict(parts.tail)
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .map(|key| Pubkey::new_from_array(*key));
+
+        let instructions = self
+            .instruction_builder
+            .update_authority_with_rent_claimer(
+                authority_to_update_id,
+                Some(current_slot),
+                update_data,
+                rent_claimer,
+            )?;
 
         let msg = v0::Message::try_compile(
             &self.fee_payer.pubkey(),
@@ -749,8 +772,8 @@ impl<'c> SwigWallet<'c> {
         tx_result
     }
 
-    /// Returns the V2 sub-account asset PDA for `subacc_id` if its state account
-    /// is a valid, canonical program-owned V2 state account.
+    /// Returns the V2 sub-account asset PDA for `subacc_id` if its state
+    /// account is a valid, canonical program-owned V2 state account.
     pub fn get_sub_account_v2(&self, subacc_id: u32) -> Result<Option<Pubkey>, SwigError> {
         let swig_address = self.get_swig_account()?.to_bytes();
         let id_le = subacc_id.to_le_bytes();

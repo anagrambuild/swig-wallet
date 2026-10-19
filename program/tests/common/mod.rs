@@ -234,6 +234,26 @@ pub fn set_rent_claimer_with_ed25519(
     Ok(bench)
 }
 
+fn funded_rent_refund_accounts(
+    context: &mut SwigTestContext,
+    swig_data: &[u8],
+) -> anyhow::Result<swig_interface::AuthorityRentAccounts> {
+    let parts = Swig::split_parts(swig_data)
+        .map_err(|error| anyhow::anyhow!("Invalid Swig data: {error:?}"))?;
+    let rent_claimer = swig_state::tail::rent_claimer::read_strict(parts.tail)
+        .map_err(|error| anyhow::anyhow!("Invalid rent claimer: {error:?}"))?
+        .map(|key| Pubkey::new_from_array(*key));
+    if let Some(claimer) = rent_claimer {
+        if context.svm.get_account(&claimer).is_none() {
+            context.svm.airdrop(&claimer, 1_000_000).unwrap();
+        }
+    }
+    Ok(swig_interface::AuthorityRentAccounts {
+        payer: context.default_payer.pubkey(),
+        rent_claimer,
+    })
+}
+
 /// Removes an authority using the Ed25519 root authority (role 0) as the acting
 /// authority. Drives the `remove_authority_v1` realloc (shrink) path.
 pub fn remove_authority_with_ed25519_root(
@@ -257,7 +277,7 @@ pub fn remove_authority_with_ed25519_root(
 
     let remove_ix = RemoveAuthorityInstruction::new_with_ed25519_authority(
         *swig_pubkey,
-        payer_pubkey,
+        funded_rent_refund_accounts(context, &swig_account.data)?,
         acting_authority.pubkey(),
         acting_role_id,
         authority_to_remove_id,
@@ -310,7 +330,7 @@ pub fn update_authority_replace_with_ed25519_root(
 
     let update_ix = UpdateAuthorityInstruction::new_with_ed25519_authority(
         *swig_pubkey,
-        payer_pubkey,
+        funded_rent_refund_accounts(context, &swig_account.data)?,
         acting_authority.pubkey(),
         acting_role_id,
         authority_to_update_id,
