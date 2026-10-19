@@ -64,8 +64,8 @@ pub fn build_proposal(
         Some(&config.squads_program),
     )
     .0;
-    // Buffer rent is returned to the vault when members execute the upgrade.
-    let upgrade = bpf_loader_upgradeable::upgrade(&config.program, &buffer, &vault, &vault);
+    // Reimburse the proposer that funded the buffer when members execute the upgrade.
+    let upgrade = bpf_loader_upgradeable::upgrade(&config.program, &buffer, &vault, &proposer);
     let message = TransactionMessage::try_compile(&vault, &[upgrade], &[])?;
     // Squads uses its own message encoding, not a serialized Solana v0 Message.
     let vault_message = message.try_to_vec()?;

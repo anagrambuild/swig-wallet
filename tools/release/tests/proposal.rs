@@ -12,7 +12,9 @@ use solana_sdk::{
 use squads_multisig::{
     anchor_lang::{AnchorDeserialize, AnchorSerialize},
     pda::{get_proposal_pda, get_transaction_pda, get_vault_pda},
-    squads_multisig_program::{ProposalCreateArgs, TransactionMessage, VaultTransactionCreateArgs},
+    squads_multisig_program::{
+        ProposalCreateArgs, TransactionMessage, VaultTransactionCreateArgs, VaultTransactionMessage,
+    },
     vault_transaction::VaultTransactionMessageExt,
 };
 use swig_release::{config::ReleaseConfig, proposal::build_proposal};
@@ -71,8 +73,31 @@ fn proposal_atomically_hands_off_and_creates_active_upgrade_without_voting() -> 
     assert_eq!(create_args.vault_index, 7);
     assert_eq!(create_args.ephemeral_signers, 0);
     assert_eq!(create_args.memo, Some(memo));
+    let stored_message =
+        TransactionMessage::deserialize(&mut create_args.transaction_message.as_slice())?;
+    let stored_message = VaultTransactionMessage::try_from(stored_message)?;
+    let [upgrade] = stored_message.instructions.as_slice() else {
+        anyhow::bail!("Expected exactly one upgrade instruction")
+    };
+    let [_, _, _, refund_index, _, _, authority_index] = upgrade.account_indexes.as_slice() else {
+        anyhow::bail!("Expected the loader-v3 upgrade account layout")
+    };
+    let refund_index = usize::from(*refund_index);
+    let authority_index = usize::from(*authority_index);
+    assert_eq!(
+        stored_message.account_keys.get(refund_index),
+        Some(&proposer.pubkey())
+    );
+    assert!(stored_message.is_static_writable_index(refund_index));
+    assert!(!stored_message.is_signer_index(refund_index));
+    assert_eq!(
+        stored_message.account_keys.get(authority_index),
+        Some(&vault)
+    );
+    assert!(stored_message.is_signer_index(authority_index));
+    assert_eq!(stored_message.num_signers, 1);
     let expected_upgrade =
-        bpf_loader_upgradeable::upgrade(&config.program, &buffer, &vault, &vault);
+        bpf_loader_upgradeable::upgrade(&config.program, &buffer, &vault, &proposer.pubkey());
     let expected = TransactionMessage::try_compile(&vault, &[expected_upgrade], &[])?;
     assert_eq!(create_args.transaction_message, expected.try_to_vec()?);
     let proposal_args = ProposalCreateArgs::deserialize(
