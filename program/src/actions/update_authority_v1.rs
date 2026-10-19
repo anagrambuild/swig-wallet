@@ -16,7 +16,7 @@ use swig_state::{
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::Swig,
-    tail::{active_sub_account_count, SavedTail},
+    tail::{active_sub_account_count, rent_claimer, SavedTail},
     Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut,
 };
 
@@ -525,12 +525,17 @@ pub(crate) fn append_actions_to_role(
                 .pad_to_align()
                 .size();
 
+        let previous_len = account_len;
         swig_account.realloc(aligned_size, false)?;
         account_len = aligned_size;
 
-        let cost = Rent::get()?.minimum_balance(aligned_size);
         let current_lamports = unsafe { *swig_account.borrow_lamports_unchecked() };
-        let additional_cost = cost.saturating_sub(current_lamports);
+        let additional_cost = crate::util::rent::growth_cost(
+            &Rent::get()?,
+            current_lamports,
+            previous_len,
+            aligned_size,
+        );
         if additional_cost > 0 {
             Transfer {
                 from: payer,
@@ -724,6 +729,7 @@ pub fn update_authority_v1(
     let mut account_len: usize;
     let (
         saved_tail,
+        refund_destination,
         role_count,
         current_roles_len,
         current_actions_size,
@@ -851,6 +857,19 @@ pub fn update_authority_v1(
             },
         };
 
+        let refund_destination = if operation == AuthorityUpdateOperation::AddActions
+            || (operation == AuthorityUpdateOperation::ReplaceAll && prealloc_size_diff >= 0)
+        {
+            ctx.accounts.payer
+        } else {
+            crate::util::rent::refund_destination(
+                rent_claimer::read_strict(parts.tail)?,
+                ctx.accounts.swig,
+                ctx.accounts.payer,
+                all_accounts,
+            )?
+        };
+
         // V1 child metadata lives inside its role action. Until the child close
         // path tombstones that action, do not allow update operations that can
         // replace or remove it. AddActions is structurally append-only and safe.
@@ -864,6 +883,7 @@ pub fn update_authority_v1(
 
         (
             saved_tail,
+            refund_destination,
             swig.roles,
             roles_len,
             current_actions_size,
@@ -883,13 +903,18 @@ pub fn update_authority_v1(
                 .pad_to_align()
                 .size();
 
+        let previous_len = account_len;
         ctx.accounts.swig.realloc(aligned_size, false)?;
         account_len = aligned_size;
 
-        let cost = Rent::get()?.minimum_balance(aligned_size);
         let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
 
-        let additional_cost = cost.saturating_sub(current_lamports);
+        let additional_cost = crate::util::rent::growth_cost(
+            &Rent::get()?,
+            current_lamports,
+            previous_len,
+            aligned_size,
+        );
 
         if additional_cost > 0 {
             Transfer {
@@ -987,17 +1012,24 @@ pub fn update_authority_v1(
 
         ctx.accounts.swig.resize(aligned_size)?;
 
-        let cost = Rent::get()?.minimum_balance(aligned_size);
+        let rent = Rent::get()?;
+        let cost = rent.minimum_balance(aligned_size);
         let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
 
-        let additional_cost = current_lamports.saturating_sub(cost);
+        // Refund only the reserve released by shrinking, preserving wallet SOL.
+        let additional_cost = rent
+            .minimum_balance(account_len)
+            .saturating_sub(cost)
+            .min(current_lamports.saturating_sub(cost));
 
         if additional_cost > 0 {
             unsafe {
                 *ctx.accounts.swig.borrow_mut_lamports_unchecked() =
                     current_lamports - additional_cost;
-                *ctx.accounts.payer.borrow_mut_lamports_unchecked() =
-                    ctx.accounts.payer.lamports() + additional_cost;
+                *refund_destination.borrow_mut_lamports_unchecked() = refund_destination
+                    .lamports()
+                    .checked_add(additional_cost)
+                    .ok_or(ProgramError::ArithmeticOverflow)?;
             };
         }
     }

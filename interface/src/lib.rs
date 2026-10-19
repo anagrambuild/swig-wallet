@@ -879,21 +879,56 @@ impl SignV2Instruction {
     }
 }
 
+/// Payer and optional rent-refund recipient for authority resizing.
+/// The claimer is appended after authority accounts before signing.
+#[derive(Clone, Copy)]
+pub struct AuthorityRentAccounts {
+    pub payer: Pubkey,
+    /// Must be funded enough to remain rent-exempt after receiving the refund.
+    pub rent_claimer: Option<Pubkey>,
+}
+
+impl AuthorityRentAccounts {
+    fn append_claimer(&self, accounts: &mut Vec<AccountMeta>) {
+        if let Some(claimer) = self.rent_claimer {
+            if let Some(account) = accounts
+                .iter_mut()
+                .find(|account| account.pubkey == claimer)
+            {
+                account.is_writable = true;
+            } else {
+                accounts.push(AccountMeta::new(claimer, false));
+            }
+        }
+    }
+}
+
+impl From<Pubkey> for AuthorityRentAccounts {
+    fn from(payer: Pubkey) -> Self {
+        Self {
+            payer,
+            rent_claimer: None,
+        }
+    }
+}
+
 pub struct RemoveAuthorityInstruction;
 impl RemoveAuthorityInstruction {
     pub fn new_with_ed25519_authority(
         swig_account: Pubkey,
-        payer: Pubkey,
+        payer: impl Into<AuthorityRentAccounts>,
         authority: Pubkey,
         acting_role_id: u32,
         authority_to_remove_id: u32,
     ) -> anyhow::Result<Instruction> {
-        let accounts = vec![
+        let payer = payer.into();
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
-            AccountMeta::new(payer, true),
+            AccountMeta::new(payer.payer, true),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
+        payer.append_claimer(&mut accounts);
 
         let args = RemoveAuthorityV1Args::new(acting_role_id, authority_to_remove_id, 1);
         let arg_bytes = args
@@ -908,7 +943,7 @@ impl RemoveAuthorityInstruction {
 
     pub fn new_with_secp256k1_authority<F>(
         swig_account: Pubkey,
-        payer: Pubkey,
+        payer: impl Into<AuthorityRentAccounts>,
         mut authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
@@ -918,11 +953,13 @@ impl RemoveAuthorityInstruction {
     where
         F: FnMut(&[u8]) -> [u8; 65],
     {
-        let accounts = vec![
+        let payer = payer.into();
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
-            AccountMeta::new(payer, true),
+            AccountMeta::new(payer.payer, true),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
+        payer.append_claimer(&mut accounts);
         let args = RemoveAuthorityV1Args::new(acting_role_id, authority_to_remove_id, 65);
         let arg_bytes = args
             .into_bytes()
@@ -945,7 +982,7 @@ impl RemoveAuthorityInstruction {
 
     pub fn new_with_secp256r1_authority<F>(
         swig_account: Pubkey,
-        payer: Pubkey,
+        payer: impl Into<AuthorityRentAccounts>,
         mut authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
@@ -956,12 +993,14 @@ impl RemoveAuthorityInstruction {
     where
         F: FnMut(&[u8]) -> [u8; 64],
     {
-        let accounts = vec![
+        let payer = payer.into();
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
-            AccountMeta::new(payer, true),
+            AccountMeta::new(payer.payer, true),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
+        payer.append_claimer(&mut accounts);
         let args = RemoveAuthorityV1Args::new(acting_role_id, authority_to_remove_id, 17); // 17 bytes for secp256r1 authority payload
         let arg_bytes = args
             .into_bytes()
@@ -987,22 +1026,24 @@ impl RemoveAuthorityInstruction {
 
     pub fn new_with_program_exec(
         swig_account: Pubkey,
-        payer: Pubkey,
+        payer: impl Into<AuthorityRentAccounts>,
         preceding_instruction: Instruction,
         acting_role_id: u32,
         authority_to_remove_id: u32,
     ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
 
+        let payer = payer.into();
         let mut accounts = vec![
             AccountMeta::new(swig_account, false),
-            AccountMeta::new(payer, true),
+            AccountMeta::new(payer.payer, true),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         // Add instructions sysvar at a stable index
         let instruction_sysvar_index = accounts.len() as u8;
         accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+        payer.append_claimer(&mut accounts);
 
         let args = RemoveAuthorityV1Args::new(acting_role_id, authority_to_remove_id, 1);
         let arg_bytes = args
@@ -1024,7 +1065,7 @@ impl RemoveAuthorityInstruction {
 
     pub fn new_with_program_exec_ix_index(
         swig_account: Pubkey,
-        payer: Pubkey,
+        payer: impl Into<AuthorityRentAccounts>,
         preceding_instruction: Instruction,
         acting_role_id: u32,
         authority_to_remove_id: u32,
@@ -1032,14 +1073,16 @@ impl RemoveAuthorityInstruction {
     ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
 
+        let payer = payer.into();
         let mut accounts = vec![
             AccountMeta::new(swig_account, false),
-            AccountMeta::new(payer, true),
+            AccountMeta::new(payer.payer, true),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let instruction_sysvar_index = accounts.len() as u8;
         accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+        payer.append_claimer(&mut accounts);
 
         let args = RemoveAuthorityV1Args::new(acting_role_id, authority_to_remove_id, 1);
         let arg_bytes = args
@@ -1105,7 +1148,7 @@ impl UpdateAuthorityInstruction {
     /// Update authority using Ed25519 signature.
     pub fn new_with_ed25519_authority(
         swig_account: Pubkey,
-        payer: Pubkey,
+        payer: impl Into<AuthorityRentAccounts>,
         authority: Pubkey,
         acting_role_id: u32,
         authority_to_update_id: u32,
@@ -1125,19 +1168,21 @@ impl UpdateAuthorityInstruction {
 
     fn build_ed25519_instruction(
         swig_account: Pubkey,
-        payer: Pubkey,
+        payer: impl Into<AuthorityRentAccounts>,
         authority: Pubkey,
         acting_role_id: u32,
         authority_to_update_id: u32,
         operation: AuthorityUpdateOperation,
         operation_data: Vec<u8>,
     ) -> anyhow::Result<Instruction> {
-        let accounts = vec![
+        let payer = payer.into();
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
-            AccountMeta::new(payer, true),
+            AccountMeta::new(payer.payer, true),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(authority, true),
         ];
+        payer.append_claimer(&mut accounts);
 
         // Encode operation type in the first byte of the data
         let mut encoded_data = Vec::new();
@@ -1166,7 +1211,7 @@ impl UpdateAuthorityInstruction {
     /// Update authority using Secp256k1 signature.
     pub fn new_with_secp256k1_authority<F>(
         swig_account: Pubkey,
-        payer: Pubkey,
+        payer: impl Into<AuthorityRentAccounts>,
         authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
@@ -1193,7 +1238,7 @@ impl UpdateAuthorityInstruction {
 
     fn build_secp256k1_instruction<F>(
         swig_account: Pubkey,
-        payer: Pubkey,
+        payer: impl Into<AuthorityRentAccounts>,
         mut authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
@@ -1205,11 +1250,13 @@ impl UpdateAuthorityInstruction {
     where
         F: FnMut(&[u8]) -> [u8; 65],
     {
-        let accounts = vec![
+        let payer = payer.into();
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
-            AccountMeta::new(payer, true),
+            AccountMeta::new(payer.payer, true),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
+        payer.append_claimer(&mut accounts);
 
         // Encode operation type in the first byte of the data
         let mut encoded_data = Vec::new();
@@ -1247,7 +1294,7 @@ impl UpdateAuthorityInstruction {
     /// Update authority using Secp256r1 signature.
     pub fn new_with_secp256r1_authority<F>(
         swig_account: Pubkey,
-        payer: Pubkey,
+        payer: impl Into<AuthorityRentAccounts>,
         authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
@@ -1276,7 +1323,7 @@ impl UpdateAuthorityInstruction {
 
     fn build_secp256r1_instruction<F>(
         swig_account: Pubkey,
-        payer: Pubkey,
+        payer: impl Into<AuthorityRentAccounts>,
         mut authority_payload_fn: F,
         current_slot: u64,
         counter: u32,
@@ -1289,12 +1336,14 @@ impl UpdateAuthorityInstruction {
     where
         F: FnMut(&[u8]) -> [u8; 64],
     {
-        let accounts = vec![
+        let payer = payer.into();
+        let mut accounts = vec![
             AccountMeta::new(swig_account, false),
-            AccountMeta::new(payer, true),
+            AccountMeta::new(payer.payer, true),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
             AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
         ];
+        payer.append_claimer(&mut accounts);
 
         // Encode operation type in the first byte of the data
         let mut encoded_data = Vec::new();
@@ -1334,7 +1383,7 @@ impl UpdateAuthorityInstruction {
 
     pub fn new_with_program_exec(
         swig_account: Pubkey,
-        payer: Pubkey,
+        payer: impl Into<AuthorityRentAccounts>,
         preceding_instruction: Instruction,
         acting_role_id: u32,
         authority_to_update_id: u32,
@@ -1342,15 +1391,17 @@ impl UpdateAuthorityInstruction {
     ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
 
+        let payer = payer.into();
         let mut accounts = vec![
             AccountMeta::new(swig_account, false),
-            AccountMeta::new(payer, true),
+            AccountMeta::new(payer.payer, true),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         // Add instructions sysvar at a stable index
         let instruction_sysvar_index = accounts.len() as u8;
         accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+        payer.append_claimer(&mut accounts);
 
         let (operation, operation_data) = update_data.to_operation_and_data()?;
 
@@ -1384,7 +1435,7 @@ impl UpdateAuthorityInstruction {
 
     pub fn new_with_program_exec_ix_index(
         swig_account: Pubkey,
-        payer: Pubkey,
+        payer: impl Into<AuthorityRentAccounts>,
         preceding_instruction: Instruction,
         acting_role_id: u32,
         authority_to_update_id: u32,
@@ -1393,14 +1444,16 @@ impl UpdateAuthorityInstruction {
     ) -> anyhow::Result<Vec<Instruction>> {
         use solana_sdk::sysvar::instructions::ID as INSTRUCTIONS_ID;
 
+        let payer = payer.into();
         let mut accounts = vec![
             AccountMeta::new(swig_account, false),
-            AccountMeta::new(payer, true),
+            AccountMeta::new(payer.payer, true),
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
 
         let instruction_sysvar_index = accounts.len() as u8;
         accounts.push(AccountMeta::new_readonly(INSTRUCTIONS_ID, false));
+        payer.append_claimer(&mut accounts);
 
         let (operation, operation_data) = update_data.to_operation_and_data()?;
 

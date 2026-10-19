@@ -149,10 +149,7 @@ pub fn set_rent_claimer_v1(
     ctx.accounts.swig.resize(new_len)?;
 
     let current_lamports = ctx.accounts.swig.lamports();
-    let required_lamports = Rent::get()?.minimum_balance(new_len);
-    let cost = required_lamports
-        .checked_sub(current_lamports)
-        .unwrap_or_default();
+    let cost = crate::util::rent::growth_cost(&Rent::get()?, current_lamports, old_len, new_len);
     if cost > 0 {
         Transfer {
             from: ctx.accounts.payer,
