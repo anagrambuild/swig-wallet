@@ -60,7 +60,7 @@ impl DevnetConfig {
     }
 }
 
-fn load_rpc_url() -> Result<String> {
+pub fn load_rpc_url() -> Result<String> {
     let rpc_url = env::var("SOLANA_RPC_URL").map_err(|_| anyhow!("SOLANA_RPC_URL is required"))?;
     let parsed =
         url::Url::parse(&rpc_url).map_err(|_| anyhow!("SOLANA_RPC_URL must be an HTTP(S) URL"))?;

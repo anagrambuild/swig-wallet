@@ -4,10 +4,8 @@ use solana_loader_v3_interface::instruction::{
 };
 use solana_sdk::{
     hash::Hash,
-    message::Message,
     pubkey::Pubkey,
     signature::{Keypair, Signer},
-    transaction::Transaction,
 };
 use squads_multisig::{
     anchor_lang::{AnchorDeserialize, AnchorSerialize},
@@ -20,6 +18,7 @@ use squads_multisig::{
 use swig_release::{
     config::ReleaseConfig,
     proposal::build_proposal,
+    transactions::build_v1_transaction,
     verification::{build_verification_instruction, VerificationManifest},
 };
 
@@ -135,13 +134,27 @@ fn proposal_atomically_hands_off_and_creates_active_upgrade_without_voting() -> 
             .all(|meta| meta.pubkey == proposer.pubkey()));
     }
     let hash = Hash::new_unique();
-    let message =
-        Message::new_with_blockhash(&proposal.instructions, Some(&proposer.pubkey()), &hash);
-    let mut signed = Transaction::new_unsigned(message);
-    signed.try_sign(&[&proposer], hash)?;
-    signed.verify()?;
-    let size = bincode::serialize(&signed)?.len();
-    println!("Combined proposal transaction: {size} bytes");
-    assert!(size <= 1232, "Combined proposal is {size} bytes");
+    let signed = build_v1_transaction(
+        &proposer,
+        &proposal.instructions,
+        hash,
+        solana_message_v1::v1::TransactionConfig::empty()
+            .with_compute_unit_limit(200_000)
+            .with_loaded_accounts_data_size_limit(4 * 1024 * 1024),
+    )?;
+    signed.verify_and_hash_message()?;
+    let size = wincode::serialize(&signed)?.len();
+    println!(
+        "Combined v1 proposal transaction: {size} bytes ({} bytes spare)",
+        4096 - size
+    );
+    assert!(matches!(
+        signed.message,
+        solana_message_v1::VersionedMessage::V1(_)
+    ));
+    assert!(
+        size < 2048,
+        "Combined v1 proposal should leave at least half its capacity unused"
+    );
     Ok(())
 }

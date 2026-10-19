@@ -34,6 +34,7 @@ use swig_release::{
     config::ReleaseConfig,
     proposal::build_proposal,
     release::{check, propose, ProposalRequest},
+    transactions::prepare_proposal_transaction,
     verification::{
         build_verification_instruction, read_verification_instruction, VerificationManifest,
         VERIFY_PROGRAM,
@@ -340,7 +341,35 @@ async fn one_squads_proposal_upgrades_and_initializes_or_updates_metadata_atomic
                 println!("Second initializer rejected by preflight and proposal submission while first is active");
             }
         } else {
-            send(&rpc, &member, &proposal.instructions).await?;
+            // Prove a real Squads proposal can cross the old 1,232-byte ceiling.
+            let mut instructions = proposal.instructions.clone();
+            instructions.extend(vec![
+                solana_system_interface::instruction::transfer(
+                    &member.pubkey(),
+                    &vault,
+                    1
+                );
+                12
+            ]);
+            let transaction = prepare_proposal_transaction(&rpc, &member, &instructions).await?;
+            assert!(transaction.wire_bytes > 1232 && transaction.wire_bytes <= 4096);
+            let signature: String = rpc.send(squads_multisig::solana_rpc_client_api::request::RpcRequest::SendTransaction,
+                serde_json::json!([transaction.encoded, {"encoding":"base64", "skipPreflight":false, "preflightCommitment":"confirmed"}])).await?;
+            assert_eq!(signature, transaction.signature.to_string());
+            let mut confirmed = false;
+            for _ in 0..30 {
+                if let Some(status) = rpc.get_signature_status(&transaction.signature).await? {
+                    status?;
+                    confirmed = true;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            assert!(confirmed, "Oversize v1 proposal was not confirmed");
+            println!(
+                "Squads v1 proposal confirmed: {} bytes, above the legacy/v0 limit",
+                transaction.wire_bytes
+            );
         }
         send(
             &rpc,

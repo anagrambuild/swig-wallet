@@ -1,4 +1,4 @@
-name: Verify Swig Release
+name: Submit Swig Release to OtterSec
 
 on:
   workflow_dispatch:
@@ -48,6 +48,10 @@ jobs:
           fi
           if [ "$CLUSTER" = devnet ]; then
             [[ "$RELEASE_TAG" == devnet-upgrade-* ]]
+            if [ "$PHASE" = submit ]; then
+              echo '::error::OtterSec submission requires mainnet; use phase check for devnet.'
+              exit 1
+            fi
           else
             [[ "$RELEASE_TAG" == upgrade-* ]]
           fi
@@ -61,12 +65,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-solana-verify
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f
+        with:
+          toolchain: 1.96.1
 
-      - name: Install pinned Solana CLI
-        run: |
-          sh -c "$(curl -sSfL https://release.anza.xyz/v4.2.2/install)"
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - name: Build release CLI
+        run: cargo build --manifest-path tools/release/Cargo.toml --locked --release
+
+      - uses: ./.github/actions/setup-solana-verify
+        if: inputs.phase == 'submit'
 
       - name: Download the published binary and build recipe
         run: |
@@ -79,12 +86,16 @@ jobs:
           cd verification
           sha256sum --check swig.so.sha256
 
-      - name: Verify deployed release and perform selected phase
+      - name: Check deployed release or submit to OtterSec
         env:
           SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
           SWIG_PROGRAM_ID: ${{ secrets.SWIG_PROGRAM_ID }}
         run: |
-          bash tools/release/verification.sh "$PHASE" verification
+          if [ "$PHASE" = submit ]; then
+            tools/release/target/release/swig-release submit-ottersec --directory verification --source-commit "$SOURCE_SHA"
+          else
+            tools/release/target/release/swig-release check-release --directory verification --source-commit "$SOURCE_SHA" --cluster "$CLUSTER"
+          fi
           echo "Release $RELEASE_TAG: $PHASE completed on $CLUSTER." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve verification evidence

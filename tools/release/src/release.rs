@@ -6,15 +6,13 @@ use sha2::{Digest, Sha256};
 use solana_loader_v3_interface::state::UpgradeableLoaderState;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
-    message::Message,
     pubkey::Pubkey,
     signature::{Keypair, Signer},
-    transaction::Transaction,
 };
 use squads_multisig::{
     anchor_lang::{AccountDeserialize, AnchorSerialize},
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
-    solana_rpc_client_api::config::RpcSendTransactionConfig,
+    solana_rpc_client_api::request::RpcRequest,
     squads_multisig_program::{
         Proposal, ProposalStatus, TransactionMessage, VaultTransaction, VaultTransactionMessage,
     },
@@ -26,6 +24,7 @@ use crate::{
     proposal::{
         build_proposal, confirmation_complete, require_next_index, validate_release_identity,
     },
+    transactions::prepare_proposal_transaction,
     verification::{
         read_verification_instruction, require_no_pending_initializer, VerificationManifest,
     },
@@ -255,12 +254,7 @@ pub async fn propose(
         accounts.multisig.members.len(),
         verification.instruction,
     )?;
-    let blockhash = rpc
-        .get_latest_blockhash()
-        .await
-        .map_err(|_| anyhow!("Could not fetch a recent blockhash"))?;
-    let message =
-        Message::new_with_blockhash(&proposal.instructions, Some(&proposer.pubkey()), &blockhash);
+    let transaction = prepare_proposal_transaction(rpc, proposer, &proposal.instructions).await?;
     let transaction_rent = rpc
         .get_minimum_balance_for_rent_exemption(proposal.transaction_size)
         .await
@@ -269,44 +263,24 @@ pub async fn propose(
         .get_minimum_balance_for_rent_exemption(proposal.proposal_size)
         .await
         .map_err(|_| anyhow!("Could not fetch proposal rent"))?;
-    let fee = rpc
-        .get_fee_for_message(&message)
-        .await
-        .map_err(|_| anyhow!("Could not calculate proposal transaction fee"))?;
     let required = transaction_rent
         .checked_add(proposal_rent)
-        .and_then(|rent| rent.checked_add(fee))
+        .and_then(|rent| rent.checked_add(transaction.fee))
         .context("Proposal funding calculation overflow")?;
     ensure!(
         accounts.proposer_balance >= required,
         "Proposer needs {required} lamports for proposal creation"
     );
-    let mut transaction = Transaction::new_unsigned(message);
-    transaction.try_sign(&[proposer], blockhash)?;
-    ensure!(
-        bincode::serialize(&transaction)?.len() <= 1232,
-        "Proposal transaction exceeds the 1,232-byte legacy transaction limit"
-    );
-    let signature = *transaction
-        .signatures
-        .first()
-        .context("Missing transaction signature")?;
+    let signature = transaction.signature;
     // Print the public transaction identifier before submission so an unknown
     // network outcome can be investigated without constructing a new proposal.
     eprintln!(
-        "Submitting proposal transaction {signature}; transaction index {}",
-        request.transaction_index
+        "Submitting v1 proposal transaction {signature}; transaction index {}, bytes={}, compute={}, loaded_bytes={}",
+        request.transaction_index, transaction.wire_bytes, transaction.compute_unit_limit, transaction.loaded_accounts_data_size_limit
     );
     let returned = rpc
-        .send_transaction_with_config(
-            &transaction,
-            RpcSendTransactionConfig {
-                skip_preflight: false,
-                preflight_commitment: Some(CommitmentConfig::confirmed().commitment),
-                max_retries: Some(0),
-                ..RpcSendTransactionConfig::default()
-            },
-        )
+        .send::<String>(RpcRequest::SendTransaction, serde_json::json!([transaction.encoded,
+            {"encoding":"base64", "skipPreflight":false, "preflightCommitment":"confirmed", "maxRetries":0}]))
         .await
         .map_err(|_| {
             anyhow!(
@@ -315,7 +289,7 @@ pub async fn propose(
             )
         })?;
     ensure!(
-        returned == signature,
+        returned == signature.to_string(),
         "RPC returned an unexpected transaction signature; inspect {signature}"
     );
     let mut confirmed = false;

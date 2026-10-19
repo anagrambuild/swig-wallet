@@ -74,7 +74,7 @@ jobs:
         env:
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
-          bash tools/release/verification.sh build release-inputs
+          tools/release/target/release/swig-release build --source-commit "$SOURCE_SHA" --output-dir release-inputs
           cp tools/release/target/release/swig-release release-inputs/
           cd release-inputs
           sha256sum swig.so swig-release verification.json > SHA256SUMS

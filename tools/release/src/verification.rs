@@ -1,5 +1,5 @@
 use anyhow::{anyhow, ensure, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use solana_loader_v3_interface::state::UpgradeableLoaderState;
 use solana_sdk::{
@@ -21,10 +21,20 @@ use crate::config::ReleaseConfig;
 
 pub const VERIFY_PROGRAM: Pubkey =
     solana_sdk::pubkey!("verifycLy8mB96wd9wqq3WDXQwM4oU6r42Th37Db9fC");
-const BUILD_IMAGE: &str = "solanafoundation/solana-verifiable-build@sha256:\
+pub const BUILD_IMAGE: &str = "solanafoundation/solana-verifiable-build@sha256:\
                            12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd";
+pub const REPOSITORY: &str = "https://github.com/anagrambuild/swig-wallet";
+pub const VERIFY_VERSION: &str = "0.5.2";
+pub const BUILD_ARGS: [&str; 6] = [
+    "--library-name",
+    "swig",
+    "--base-image",
+    BUILD_IMAGE,
+    "--arch",
+    "v3",
+];
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct VerificationManifest {
     pub repository: String,
@@ -35,32 +45,57 @@ pub struct VerificationManifest {
 }
 
 impl VerificationManifest {
+    pub fn read_release(directory: &std::path::Path, source_commit: &str) -> Result<Self> {
+        let binary = crate::release::read_binary(&directory.join("swig.so"))?;
+        let manifest: Self = serde_json::from_slice(
+            &std::fs::read(directory.join("verification.json"))
+                .context("Could not read verification manifest")?,
+        )?;
+        manifest.validate(&binary, source_commit)?;
+        Ok(manifest)
+    }
+
     pub fn validate(&self, binary: &[u8], source_commit: &str) -> Result<()> {
         ensure!(
-            self.repository == "https://github.com/anagrambuild/swig-wallet"
+            self.repository == REPOSITORY
                 && self.commit == source_commit
                 && self.commit.len() == 40
                 && self.commit.bytes().all(|b| b.is_ascii_hexdigit())
-                && self.cli_version == "0.5.2"
-                && self.build_args
-                    == [
-                        "--library-name",
-                        "swig",
-                        "--base-image",
-                        BUILD_IMAGE,
-                        "--arch",
-                        "v3"
-                    ],
+                && self.cli_version == VERIFY_VERSION
+                && self.build_args == BUILD_ARGS,
             "Verification manifest does not match the release source and pinned build recipe"
         );
-        // solana-verify hashes executable bytes with trailing zero padding removed.
-        let end = binary.iter().rposition(|b| *b != 0).map_or(0, |i| i + 1);
         ensure!(
-            self.executable_hash == format!("{:x}", Sha256::digest(&binary[..end])),
+            self.executable_hash == executable_hash(binary),
             "Verification manifest executable hash does not match the binary"
         );
         Ok(())
     }
+}
+
+pub fn executable_hash(binary: &[u8]) -> String {
+    // solana-verify excludes trailing executable padding from its hash.
+    let end = binary.iter().rposition(|b| *b != 0).map_or(0, |i| i + 1);
+    format!("{:x}", Sha256::digest(&binary[..end]))
+}
+
+pub fn validate_published_metadata(
+    account: &Account,
+    program: Pubkey,
+    authority: Pubkey,
+    manifest: &VerificationManifest,
+    observed_slot: u64,
+) -> Result<()> {
+    let expected =
+        build_verification_instruction(program, authority, manifest, observed_slot, Some(account))?;
+    // The builder checks the account envelope. Compare its stored parameters to
+    // the release recipe, including the slot recorded in the proposal receipt.
+    ensure!(
+        account.data.get(72..account.data.len().saturating_sub(1))
+            == expected.instruction.data.get(8..),
+        "Published verification metadata does not match the release proposal"
+    );
+    Ok(())
 }
 
 // Wire format from otter-sec/otter-verify at

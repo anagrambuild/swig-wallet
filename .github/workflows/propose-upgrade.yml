@@ -76,7 +76,7 @@ jobs:
         env:
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
-          bash tools/release/verification.sh build release-inputs
+          tools/release/target/release/swig-release build --source-commit "$SOURCE_SHA" --output-dir release-inputs
           cp tools/release/target/release/swig-release release-inputs/
           cd release-inputs
           sha256sum swig.so swig-release verification.json > SHA256SUMS
@@ -160,7 +160,7 @@ jobs:
         run: |
           gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" proposal/proposal-receipt.json
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --notes "Upgrade candidate from $SOURCE_SHA. The active Squads proposal is in proposal-receipt.json; multisig members must approve and execute it. This proposal upgrades Swig and writes verification metadata atomically. After execution, run Verify Swig Release with this tag and phase submit."
+            --notes "Upgrade candidate from $SOURCE_SHA. The active Squads proposal is in proposal-receipt.json; multisig members must approve and execute it. This proposal upgrades Swig and writes verification metadata atomically. After execution, run Submit Swig Release to OtterSec with this tag and phase submit."
           cat proposal/proposal-receipt.json >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve public recovery information
