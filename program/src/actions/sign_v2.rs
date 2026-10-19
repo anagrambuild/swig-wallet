@@ -516,17 +516,15 @@ pub fn sign_v2(
                         balance,
                         native_reserve,
                         spent,
+                        ..
                     } => {
                         let data = unsafe { account.borrow_data_unchecked() };
 
-                        // Closing WSOL releases every lamport, even deposits not
-                        // yet reflected in the token amount by SyncNative.
-                        if native_reserve.is_some() && (data.is_empty() || account.lamports() == 0)
-                        {
-                            *spent = spent
-                                .checked_add(*balance)
-                                .ok_or(SwigError::AccountDataModifiedUnexpectedly)?;
-                            *balance = 0;
+                        // Closure consumes the remaining tracked balance, even
+                        // when one outer CPI hides the intermediate transfer.
+                        // For WSOL this includes unsynchronized lamport deposits.
+                        if data.is_empty() || account.lamports() == 0 {
+                            record_token_debit(balance, spent, 0)?;
                             continue;
                         }
                         if data.len() < TOKEN_BALANCE_RANGE.end {
@@ -553,11 +551,7 @@ pub fn sign_v2(
                             *previous_reserve = reserve;
                         }
 
-                        if current < *balance {
-                            *spent = spent.saturating_add(*balance - current);
-                        }
-
-                        *balance = current;
+                        record_token_debit(balance, spent, current)?;
                     },
                     AccountClassification::SwigStakeAccount {
                         state: _,
@@ -737,6 +731,7 @@ pub fn sign_v2(
             AccountClassification::SwigTokenAccount {
                 spent,
                 native_reserve,
+                mint: original_mint,
                 ..
             } => {
                 let account_info = unsafe { all_accounts.get_unchecked(index) };
@@ -755,11 +750,9 @@ pub fn sign_v2(
                         return Err(SwigError::AccountDataModifiedUnexpectedly.into());
                     }
 
-                    if native_reserve.is_none() {
-                        continue;
-                    }
-                    // Identity was validated before CPI; closed data has no mint.
-                    WSOL_MINT.as_slice()
+                    // Closing erases mint data but does not erase earlier debits.
+                    // Use the pre-CPI identity for every token spending policy.
+                    original_mint.as_slice()
                 } else {
                     if data.len() < TOKEN_ACCOUNT_BASE_DATA_LEN {
                         return Err(SwigError::AccountDataModifiedUnexpectedly.into());
@@ -1013,6 +1006,17 @@ pub(super) fn wsol_accounted_balance(
 fn assert_wallet_address_invariants(wallet: &AccountInfo) -> ProgramResult {
     check_system_owner(wallet, SwigError::WalletAddressInvariantViolation)?;
     check_zero_data(wallet, SwigError::WalletAddressInvariantViolation)?;
+    Ok(())
+}
+
+// Track gross debits across CPI boundaries; credits cannot erase prior spend.
+fn record_token_debit(balance: &mut u64, spent: &mut u64, current: u64) -> ProgramResult {
+    let debit = balance.saturating_sub(current);
+    let total = spent
+        .checked_add(debit)
+        .ok_or(SwigError::AccountDataModifiedUnexpectedly)?;
+    *spent = total;
+    *balance = current;
     Ok(())
 }
 
@@ -1280,6 +1284,8 @@ where
 
 #[cfg(test)]
 mod wsol_rent_tests {
+    include!("../../tests/unit/sign_v2_token_debits.rs");
+
     use super::*;
 
     fn native_data() -> [u8; TOKEN_ACCOUNT_BASE_DATA_LEN] {

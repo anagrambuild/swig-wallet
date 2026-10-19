@@ -25,6 +25,140 @@ use swig_state::{
 const TOKEN_LIMIT_AMOUNT: u64 = 100;
 const ACCOUNT_DATA_MODIFIED_UNEXPECTEDLY_ERROR: u32 = 43;
 
+#[test]
+fn closing_a_token_account_preserves_prior_spend_enforcement() {
+    for limit in [None, Some(99), Some(100)] {
+        let mut context = setup_test_context().unwrap();
+        let root = Keypair::new();
+        let authority = Keypair::new();
+        let recipient = Keypair::new();
+        let (swig, _) = create_swig_ed25519(&mut context, &root, rand::random()).unwrap();
+        let wallet =
+            Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id())
+                .0;
+        let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+        let source = setup_ata(&mut context.svm, &mint, &wallet, &context.default_payer).unwrap();
+        let destination = setup_ata(
+            &mut context.svm,
+            &mint,
+            &recipient.pubkey(),
+            &context.default_payer,
+        )
+        .unwrap();
+        mint_to(
+            &mut context.svm,
+            &mint,
+            &context.default_payer,
+            &source,
+            100,
+        )
+        .unwrap();
+        let mut actions = vec![
+            ClientAction::Program(Program {
+                program_id: spl_token::ID.to_bytes(),
+            }),
+            ClientAction::CloseSwigAuthority(CloseSwigAuthority),
+        ];
+        if let Some(amount) = limit {
+            actions.push(ClientAction::TokenLimit(TokenLimit {
+                token_mint: mint.to_bytes(),
+                current_amount: amount,
+            }));
+        }
+        add_authority_with_ed25519_root(
+            &mut context,
+            &swig,
+            &root,
+            AuthorityConfig {
+                authority_type: AuthorityType::Ed25519,
+                authority: authority.pubkey().as_ref(),
+            },
+            actions,
+        )
+        .unwrap();
+        let transfer = spl_token::instruction::transfer(
+            &spl_token::ID,
+            &source,
+            &destination,
+            &wallet,
+            &[],
+            100,
+        )
+        .unwrap();
+        let close = spl_token::instruction::close_account(
+            &spl_token::ID,
+            &source,
+            &context.default_payer.pubkey(),
+            &wallet,
+            &[],
+        )
+        .unwrap();
+        // The public builder accepts one CPI. Reuse its fixed account contract
+        // and the production compact encoder to compose the two ordinary CPIs.
+        let base =
+            SignV2Instruction::new_ed25519(swig, wallet, authority.pubkey(), transfer.clone(), 1)
+                .unwrap();
+        let (accounts, compact) =
+            compact_instructions(wallet, base.accounts[..3].to_vec(), vec![transfer, close])
+                .unwrap();
+        let payload = compact.into_bytes().unwrap();
+        let args = SignV2Args::new(1, u16::try_from(payload.len()).unwrap());
+        let instruction = Instruction {
+            accounts,
+            data: [args.into_bytes().unwrap(), &payload, &[2]].concat(),
+            ..base
+        };
+        let before_swig = context.svm.get_account(&swig).unwrap();
+        let before_source = context.svm.get_account(&source).unwrap();
+        let before_destination = context.svm.get_account(&destination).unwrap();
+        let message = v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &[instruction],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap();
+        let transaction = VersionedTransaction::try_new(
+            VersionedMessage::V0(message),
+            &[&context.default_payer, &authority],
+        )
+        .unwrap();
+        let result = context.svm.send_transaction(transaction);
+        if limit == Some(100) {
+            assert!(result.is_ok(), "{result:?}");
+            assert_eq!(token_limit_remaining(&context, &swig, 1, &mint), 0);
+            let received = context.svm.get_account(&destination).unwrap();
+            assert_eq!(
+                u64::from_le_bytes(received.data[64..72].try_into().unwrap()),
+                100
+            );
+        } else {
+            let error = result.unwrap_err();
+            let expected = if limit.is_none() {
+                InstructionError::Custom(
+                    SwigAuthenticateError::PermissionDeniedMissingPermission as u32,
+                )
+            } else {
+                InstructionError::Custom(
+                    SwigAuthenticateError::PermissionDeniedInsufficientBalance as u32,
+                )
+            };
+            assert_eq!(
+                error.err,
+                TransactionError::InstructionError(0, expected),
+                "{:?}",
+                error.meta.logs
+            );
+            assert_eq!(context.svm.get_account(&swig).unwrap(), before_swig);
+            assert_eq!(context.svm.get_account(&source).unwrap(), before_source);
+            assert_eq!(
+                context.svm.get_account(&destination).unwrap(),
+                before_destination
+            );
+        }
+    }
+}
+
 fn token_limit_remaining(
     context: &Context,
     swig_pubkey: &Pubkey,
