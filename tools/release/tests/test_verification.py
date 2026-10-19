@@ -34,6 +34,7 @@ class VerificationTests(unittest.TestCase):
             "build_args": BUILD_ARGS,
             "executable_hash": self.hash,
         }
+        self.receipt = {"source_commit": COMMIT, "program": PROGRAM, "verification_observed_deploy_slot": 123455}
         self.state = {
             "commit": COMMIT,
             "genesis": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
@@ -42,7 +43,7 @@ class VerificationTests(unittest.TestCase):
             "pda": "\n".join([
                 f"Program Id: {PROGRAM}", f"Signer: {UPLOADER}",
                 f"Git Url: {REPOSITORY}", f"Commit: {COMMIT}",
-                "Deployed Slot: 123456", "Version: 0.5.2",
+                "Deployed Slot: 123455", "Version: 0.5.2",
                 f"Args: {json.dumps(BUILD_ARGS)}",
             ]),
             "remote_status": [{
@@ -71,6 +72,7 @@ class VerificationTests(unittest.TestCase):
     def run_script(self, mode):
         (self.artifacts / "verification.json").write_text(json.dumps(self.metadata))
         (self.root / "fixture.json").write_text(json.dumps(self.state))
+        (self.artifacts / "proposal-receipt.json").write_text(json.dumps(self.receipt))
         return subprocess.run(
             ["bash", str(SCRIPT), mode, str(self.artifacts)],
             cwd=self.root, env=self.env, text=True, capture_output=True,
@@ -103,39 +105,6 @@ class VerificationTests(unittest.TestCase):
         self.assert_no_submission()
         self.assertFalse(any(call[1:2] == ["export-pda-tx"] for call in self.calls()))
 
-    def test_export_binds_release_recipe_and_live_authority(self):
-        result = self.run_script("export")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        call = next(call for call in self.calls() if call[1:2] == ["export-pda-tx"])
-        for name, expected in (("--commit-hash", COMMIT), ("--uploader", UPLOADER),
-                               ("--base-image", IMAGE), ("--arch", "v3")):
-            self.assertEqual(call[call.index(name) + 1], expected)
-        self.assertEqual((self.artifacts / "verification-transaction.base58").read_text(), "3mJr7AoUXx2Wqd\n")
-        self.assert_no_submission()
-
-    def test_export_does_not_persist_or_print_rpc_credentials(self):
-        secret = "rpc-test-credential"
-        self.env["SOLANA_RPC_URL"] = f"https://rpc.invalid/{secret}"
-        result = self.run_script("export")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotIn(secret, result.stdout + result.stderr)
-        for artifact in self.artifacts.iterdir():
-            self.assertNotIn(secret.encode(), artifact.read_bytes(), artifact.name)
-
-    def test_failed_or_malformed_export_never_writes_rpc_credentials(self):
-        secret = "rpc-test-credential"
-        self.env["SOLANA_RPC_URL"] = f"https://rpc.invalid/{secret}"
-        for failure in ("export_failure", "export_malformed"):
-            with self.subTest(failure=failure):
-                self.state[failure] = True
-                result = self.run_script("export")
-                self.assertNotEqual(result.returncode, 0)
-                self.assertFalse((self.artifacts / "verification-transaction.base58").exists())
-                self.assertNotIn(secret, result.stdout + result.stderr)
-                for artifact in self.artifacts.iterdir():
-                    self.assertNotIn(secret.encode(), artifact.read_bytes(), artifact.name)
-                self.state[failure] = False
-
     def test_metadata_mismatch_rejects_before_rpc(self):
         for field, wrong in (("commit", "a" * 40), ("repository", "https://github.com/wrong/repo"),
                              ("build_args", ["--arch", "v1"]), ("executable_hash", "")):
@@ -143,21 +112,31 @@ class VerificationTests(unittest.TestCase):
                 saved = self.metadata[field]
                 self.metadata[field] = wrong
                 (self.root / "calls.jsonl").write_text("")
-                self.assertNotEqual(self.run_script("export").returncode, 0)
+                self.assertNotEqual(self.run_script("submit").returncode, 0)
                 self.assertEqual(self.calls(), [["solana-verify", "--version"]])
                 self.metadata[field] = saved
 
     def test_changed_binary_rejects_before_export(self):
         (self.artifacts / "swig.so").write_bytes(b"different binary")
-        self.assertNotEqual(self.run_script("export").returncode, 0)
+        self.assertNotEqual(self.run_script("submit").returncode, 0)
         self.assertFalse(any(call[1:2] == ["export-pda-tx"] for call in self.calls()))
 
     def test_wrong_deployed_hash_rejects_before_export(self):
         self.state["onchain_hash"] = "a" * 64
-        result = self.run_script("export")
+        result = self.run_script("submit")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Deployed program does not match", result.stderr)
         self.assertFalse(any(call[1:2] == ["export-pda-tx"] for call in self.calls()))
+
+    def test_receipt_mismatch_or_unexecuted_upgrade_rejects(self):
+        for field, wrong in (("source_commit", "a" * 40), ("program", UPLOADER),
+                             ("verification_observed_deploy_slot", 123456)):
+            with self.subTest(field=field):
+                saved = self.receipt[field]
+                self.receipt[field] = wrong
+                self.assertNotEqual(self.run_script("submit").returncode, 0)
+                self.assert_no_submission()
+                self.receipt[field] = saved
 
     def test_wrong_network_rejects(self):
         self.state["genesis"] = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
@@ -174,7 +153,7 @@ class VerificationTests(unittest.TestCase):
 
     def test_stale_pda_rejects_before_submission(self):
         original = self.state["pda"]
-        for old, new in ((COMMIT, "a" * 40), ("123456", "123455"), ("v3", "v1"),
+        for old, new in ((COMMIT, "a" * 40), ("123455", "123454"), ("v3", "v1"),
                          (UPLOADER, PROGRAM), (REPOSITORY, "https://github.com/wrong/repo")):
             with self.subTest(old=old):
                 self.state["pda"] = original.replace(old, new)

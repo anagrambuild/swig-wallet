@@ -44,7 +44,7 @@ pub fn build_proposal(
     buffer: Pubkey,
     transaction_index: u64,
     member_count: usize,
-    memo: String,
+    verification: Instruction,
 ) -> Result<UpgradeProposal> {
     let vault = get_vault_pda(
         &config.multisig,
@@ -64,9 +64,10 @@ pub fn build_proposal(
         Some(&config.squads_program),
     )
     .0;
-    // Reimburse the proposer that funded the buffer when members execute the upgrade.
+    // Reimburse the proposer that funded the buffer when members execute the
+    // upgrade.
     let upgrade = bpf_loader_upgradeable::upgrade(&config.program, &buffer, &vault, &proposer);
-    let message = TransactionMessage::try_compile(&vault, &[upgrade], &[])?;
+    let message = TransactionMessage::try_compile(&vault, &[upgrade, verification], &[])?;
     // Squads uses its own message encoding, not a serialized Solana v0 Message.
     let vault_message = message.try_to_vec()?;
     let transaction_size = squads::VaultTransaction::size(0, &vault_message)
@@ -91,7 +92,9 @@ pub fn build_proposal(
                     vault_index: config.vault_index,
                     ephemeral_signers: 0,
                     transaction_message: vault_message.clone(),
-                    memo: Some(memo),
+                    // Source identity is in the verification instruction. Omitting the
+                    // redundant memo keeps proposal creation below the packet limit.
+                    memo: None,
                 },
             }
             .data(),
@@ -129,8 +132,11 @@ pub fn require_next_index(current: u64, requested: u64) -> Result<()> {
     let next = current
         .checked_add(1)
         .context("Multisig transaction index overflow")?;
-    ensure!(requested == next,
-        "Expected unused transaction index {next}, got {requested}; inspect the existing proposal before retrying");
+    ensure!(
+        requested == next,
+        "Expected unused transaction index {next}, got {requested}; inspect the existing proposal \
+         before retrying"
+    );
     Ok(())
 }
 

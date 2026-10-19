@@ -10,6 +10,7 @@ use swig_release::{
     devnet::{self, DeploymentRequest, DevnetCheckReceipt},
     proposal::validate_release_identity,
     release::{check, propose, read_binary, validate_preflight, CheckReceipt, ProposalRequest},
+    verification::VerificationManifest,
 };
 
 #[derive(Parser)]
@@ -29,12 +30,16 @@ enum Command {
     Check {
         #[arg(long)]
         binary: PathBuf,
+        #[arg(long)]
+        verification: PathBuf,
     },
     /// Upload the binary and create an active proposal; never votes or
     /// executes.
     Propose {
         #[arg(long)]
         binary: PathBuf,
+        #[arg(long)]
+        verification: PathBuf,
         #[arg(long)]
         preflight: PathBuf,
         #[arg(long)]
@@ -53,7 +58,8 @@ enum Command {
         #[arg(long)]
         binary: PathBuf,
     },
-    /// Expand ProgramData if needed, upload, and execute a direct devnet upgrade.
+    /// Expand ProgramData if needed, upload, and execute a direct devnet
+    /// upgrade.
     DeployDevnet {
         #[arg(long)]
         binary: PathBuf,
@@ -76,7 +82,10 @@ enum Command {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Check { binary } => {
+        Command::Check {
+            binary,
+            verification,
+        } => {
             let config = ReleaseConfig::from_env()?;
             let proposer = load_proposer()?;
             let rpc = RpcClient::new_with_timeout_and_commitment(
@@ -85,7 +94,10 @@ async fn main() -> Result<()> {
                 CommitmentConfig::confirmed(),
             );
             let binary = read_binary(&binary)?;
-            let receipt = check(&rpc, &config, &proposer, &binary).await?;
+            let manifest: VerificationManifest = serde_json::from_slice(
+                &fs::read(verification).context("Could not read verification manifest")?,
+            )?;
+            let receipt = check(&rpc, &config, &proposer, &binary, &manifest).await?;
             eprintln!(
                 "Preflight passed: bytes={} capacity={} transaction_index={}",
                 receipt.binary_bytes, receipt.program_capacity_bytes, receipt.transaction_index
@@ -94,6 +106,7 @@ async fn main() -> Result<()> {
         },
         Command::Propose {
             binary,
+            verification,
             preflight,
             source_commit,
             tag,
@@ -113,7 +126,11 @@ async fn main() -> Result<()> {
                 &fs::read(preflight).context("Could not read preflight receipt")?,
             )
             .context("Malformed preflight receipt")?;
-            let current = check(&rpc, &config, &proposer, &binary).await?;
+            let manifest: VerificationManifest = serde_json::from_slice(
+                &fs::read(verification).context("Could not read verification manifest")?,
+            )?;
+            manifest.validate(&binary, &source_commit)?;
+            let current = check(&rpc, &config, &proposer, &binary, &manifest).await?;
             validate_preflight(&saved, &current)?;
             // An existing directory may contain an earlier submission. Never
             // overwrite its recovery evidence or silently start another attempt.
@@ -136,6 +153,8 @@ async fn main() -> Result<()> {
                 ProposalRequest {
                     buffer,
                     transaction_index: saved.transaction_index,
+                    verification: manifest,
+                    verification_instruction_sha256: saved.verification_instruction_sha256,
                     source_commit,
                     tag,
                 },

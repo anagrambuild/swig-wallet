@@ -26,6 +26,7 @@ use crate::{
     proposal::{
         build_proposal, confirmation_complete, require_next_index, validate_release_identity,
     },
+    verification::{read_verification_instruction, VerificationManifest},
 };
 
 // Conservative reserve for upload transactions and fee changes. It is a balance
@@ -39,6 +40,7 @@ pub struct CheckReceipt {
     pub multisig: Pubkey,
     pub vault_index: u8,
     pub proposer: Pubkey,
+    pub verification_instruction_sha256: String,
     pub binary_bytes: usize,
     pub binary_sha256: String,
     pub program_capacity_bytes: usize,
@@ -52,6 +54,9 @@ pub struct CheckReceipt {
 
 #[derive(Serialize)]
 pub struct ProposalReceipt {
+    pub program: String,
+    pub verification_pda: String,
+    pub verification_observed_deploy_slot: u64,
     pub tag: String,
     pub source_commit: String,
     pub binary_sha256: String,
@@ -82,7 +87,14 @@ pub async fn check(
     config: &ReleaseConfig,
     proposer: &Keypair,
     binary: &[u8],
+    manifest: &VerificationManifest,
 ) -> Result<CheckReceipt> {
+    manifest.validate(binary, &manifest.commit)?;
+    let verification = read_verification_instruction(rpc, config, manifest).await?;
+    let verification_hash = format!(
+        "{:x}",
+        Sha256::digest(bincode::serialize(&verification.instruction)?)
+    );
     let accounts = read_upgrade_accounts(rpc, config, proposer.pubkey()).await?;
     if binary.len() > accounts.program_capacity {
         let rent = rpc
@@ -92,7 +104,8 @@ pub async fn check(
             .await
             .map_err(|_| anyhow!("Program is too small; could not calculate extension rent"))?;
         anyhow::bail!(
-            "Program needs {} additional bytes and {} additional rent lamports; extend it through an approved operation before retrying",
+            "Program needs {} additional bytes and {} additional rent lamports; extend it through \
+             an approved operation before retrying",
             binary.len() - accounts.program_capacity,
             rent.saturating_sub(accounts.program_data_balance),
         );
@@ -110,7 +123,7 @@ pub async fn check(
         Keypair::new().pubkey(),
         transaction_index,
         accounts.multisig.members.len(),
-        String::new(),
+        verification.instruction,
     )?;
     let buffer_rent = rpc
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_buffer(
@@ -133,14 +146,19 @@ pub async fn check(
         .checked_add(combined_rent)
         .and_then(|sum| sum.checked_add(UPLOAD_FEE_RESERVE))
         .context("Funding calculation overflow")?;
-    ensure!(accounts.proposer_balance >= minimum_balance,
-        "Proposer needs at least {minimum_balance} lamports for buffer/proposal rent and upload fee reserve; has {}", accounts.proposer_balance);
+    ensure!(
+        accounts.proposer_balance >= minimum_balance,
+        "Proposer needs at least {minimum_balance} lamports for buffer/proposal rent and upload \
+         fee reserve; has {}",
+        accounts.proposer_balance
+    );
     Ok(CheckReceipt {
         program: config.program,
         squads_program: config.squads_program,
         multisig: config.multisig,
         vault_index: config.vault_index,
         proposer: proposer.pubkey(),
+        verification_instruction_sha256: verification_hash,
         binary_bytes: binary.len(),
         binary_sha256: format!("{:x}", Sha256::digest(binary)),
         program_capacity_bytes: accounts.program_capacity,
@@ -168,6 +186,10 @@ pub fn validate_preflight(saved: &CheckReceipt, current: &CheckReceipt) -> Resul
         "Preflight binary does not match the current binary"
     );
     ensure!(
+        saved.verification_instruction_sha256 == current.verification_instruction_sha256,
+        "Preflight verification metadata or account state changed"
+    );
+    ensure!(
         saved.transaction_index == current.transaction_index,
         "Preflight transaction index is stale; expected unused index {}",
         current.transaction_index
@@ -180,6 +202,8 @@ pub struct ProposalRequest {
     pub transaction_index: u64,
     pub source_commit: String,
     pub tag: String,
+    pub verification: VerificationManifest,
+    pub verification_instruction_sha256: String,
 }
 
 pub async fn propose(
@@ -190,6 +214,18 @@ pub async fn propose(
     request: ProposalRequest,
 ) -> Result<ProposalReceipt> {
     validate_release_identity(&request.source_commit, &request.tag)?;
+    request
+        .verification
+        .validate(binary, &request.source_commit)?;
+    let verification = read_verification_instruction(rpc, config, &request.verification).await?;
+    ensure!(
+        request.verification_instruction_sha256
+            == format!(
+                "{:x}",
+                Sha256::digest(bincode::serialize(&verification.instruction)?)
+            ),
+        "Verification state changed after preflight; inspect the uploaded buffer before retrying"
+    );
     let accounts = read_upgrade_accounts(rpc, config, proposer.pubkey()).await?;
     validate_capacity(binary.len(), accounts.program_capacity)?;
     require_next_index(
@@ -207,17 +243,13 @@ pub async fn propose(
         .map_err(|_| anyhow!("Could not fetch buffer rent"))?;
     ensure!(buffer.lamports >= buffer_rent, "Buffer must be rent exempt");
     let binary_hash = format!("{:x}", Sha256::digest(binary));
-    let memo = format!(
-        "Swig upgrade {}; commit={}; sha256={binary_hash}",
-        request.tag, request.source_commit
-    );
     let proposal = build_proposal(
         config,
         proposer.pubkey(),
         request.buffer,
         request.transaction_index,
         accounts.multisig.members.len(),
-        memo,
+        verification.instruction,
     )?;
     let blockhash = rpc
         .get_latest_blockhash()
@@ -261,10 +293,23 @@ pub async fn propose(
         "Submitting proposal transaction {signature}; transaction index {}",
         request.transaction_index
     );
-    let returned = rpc.send_transaction_with_config(&transaction, RpcSendTransactionConfig {
-        skip_preflight: false, preflight_commitment: Some(CommitmentConfig::confirmed().commitment),
-        max_retries: Some(0), ..RpcSendTransactionConfig::default()
-    }).await.map_err(|_| anyhow!("Submission failed or is uncertain; inspect transaction {signature} before retrying"))?;
+    let returned = rpc
+        .send_transaction_with_config(
+            &transaction,
+            RpcSendTransactionConfig {
+                skip_preflight: false,
+                preflight_commitment: Some(CommitmentConfig::confirmed().commitment),
+                max_retries: Some(0),
+                ..RpcSendTransactionConfig::default()
+            },
+        )
+        .await
+        .map_err(|_| {
+            anyhow!(
+                "Submission failed or is uncertain; inspect transaction {signature} before \
+                 retrying"
+            )
+        })?;
     ensure!(
         returned == signature,
         "RPC returned an unexpected transaction signature; inspect {signature}"
@@ -293,8 +338,19 @@ pub async fn propose(
         confirmed,
         "Confirmation timed out; inspect transaction {signature} before retrying"
     );
-    let fetched = rpc.get_multiple_accounts(&[request.buffer, proposal.transaction_address, proposal.proposal_address])
-        .await.map_err(|_| anyhow!("Transaction {signature} confirmed, but receipt verification could not read its accounts"))?;
+    let fetched = rpc
+        .get_multiple_accounts(&[
+            request.buffer,
+            proposal.transaction_address,
+            proposal.proposal_address,
+        ])
+        .await
+        .map_err(|_| {
+            anyhow!(
+                "Transaction {signature} confirmed, but receipt verification could not read its \
+                 accounts"
+            )
+        })?;
     let mut fetched = fetched.into_iter();
     let buffer = fetched
         .next()
@@ -341,6 +397,9 @@ pub async fn propose(
         "Confirmed proposal is not active for this upgrade"
     );
     Ok(ProposalReceipt {
+        program: config.program.to_string(),
+        verification_pda: verification.address.to_string(),
+        verification_observed_deploy_slot: verification.observed_deploy_slot,
         tag: request.tag,
         source_commit: request.source_commit,
         binary_sha256: binary_hash,

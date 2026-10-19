@@ -14,11 +14,11 @@ on:
         type: choice
         options: [mainnet, devnet]
       phase:
-        description: Check hash, export metadata for Squads, or submit after metadata execution
+        description: Check deployed hash or submit the executed upgrade for remote verification
         required: true
-        default: export
+        default: submit
         type: choice
-        options: [check, export, submit]
+        options: [check, submit]
 
 # Share the release lock; metadata must describe the completed deployment.
 concurrency:
@@ -72,6 +72,10 @@ jobs:
         run: |
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern swig.so --pattern swig.so.sha256 --pattern verification.json --dir verification
+          if [ "$PHASE" = submit ]; then
+            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern proposal-receipt.json --dir verification
+          fi
           cd verification
           sha256sum --check swig.so.sha256
 
@@ -82,9 +86,6 @@ jobs:
         run: |
           bash tools/release/verification.sh "$PHASE" verification
           echo "Release $RELEASE_TAG: $PHASE completed on $CLUSTER." >> "$GITHUB_STEP_SUMMARY"
-          if [ "$PHASE" = export ]; then
-            echo 'Download verification-transaction.base58 from this run, import it into Squads, and approve/execute it. Then run this workflow with the same release tag and phase submit.' >> "$GITHUB_STEP_SUMMARY"
-          fi
 
       - name: Preserve verification evidence
         if: always()
@@ -95,6 +96,5 @@ jobs:
             verification/*.json
             verification/*.log
             verification/*.txt
-            verification/*.base58
           if-no-files-found: ignore
           retention-days: 90

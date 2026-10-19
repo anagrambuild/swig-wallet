@@ -17,7 +17,11 @@ use squads_multisig::{
     },
     vault_transaction::VaultTransactionMessageExt,
 };
-use swig_release::{config::ReleaseConfig, proposal::build_proposal};
+use swig_release::{
+    config::ReleaseConfig,
+    proposal::build_proposal,
+    verification::{build_verification_instruction, VerificationManifest},
+};
 
 #[test]
 fn proposal_atomically_hands_off_and_creates_active_upgrade_without_voting() -> Result<()> {
@@ -30,19 +34,23 @@ fn proposal_atomically_hands_off_and_creates_active_upgrade_without_voting() -> 
     };
     let proposer = Keypair::new();
     let buffer = Pubkey::new_unique();
-    let memo = format!(
-        "Swig upgrade {}; commit={}; sha256={}",
-        "t".repeat(80),
-        "a".repeat(40),
-        "b".repeat(64)
-    );
-    let proposal = build_proposal(&config, proposer.pubkey(), buffer, 42, 5, memo.clone())?;
     let vault = get_vault_pda(
         &config.multisig,
         config.vault_index,
         Some(&config.squads_program),
     )
     .0;
+    let manifest: VerificationManifest =
+        serde_json::from_str(include_str!("fixtures/verification.json"))?;
+    let verification = build_verification_instruction(config.program, vault, &manifest, 123, None)?;
+    let proposal = build_proposal(
+        &config,
+        proposer.pubkey(),
+        buffer,
+        42,
+        5,
+        verification.instruction.clone(),
+    )?;
     assert_eq!(
         proposal.transaction_address,
         get_transaction_pda(&config.multisig, 42, Some(&config.squads_program)).0
@@ -72,12 +80,12 @@ fn proposal_atomically_hands_off_and_creates_active_upgrade_without_voting() -> 
     )?;
     assert_eq!(create_args.vault_index, 7);
     assert_eq!(create_args.ephemeral_signers, 0);
-    assert_eq!(create_args.memo, Some(memo));
+    assert_eq!(create_args.memo, None);
     let stored_message =
         TransactionMessage::deserialize(&mut create_args.transaction_message.as_slice())?;
     let stored_message = VaultTransactionMessage::try_from(stored_message)?;
-    let [upgrade] = stored_message.instructions.as_slice() else {
-        anyhow::bail!("Expected exactly one upgrade instruction")
+    let [upgrade, metadata] = stored_message.instructions.as_slice() else {
+        anyhow::bail!("Expected upgrade followed by verification metadata")
     };
     let [_, _, _, refund_index, _, _, authority_index] = upgrade.account_indexes.as_slice() else {
         anyhow::bail!("Expected the loader-v3 upgrade account layout")
@@ -96,9 +104,20 @@ fn proposal_atomically_hands_off_and_creates_active_upgrade_without_voting() -> 
     );
     assert!(stored_message.is_signer_index(authority_index));
     assert_eq!(stored_message.num_signers, 1);
+    assert_eq!(metadata.data, verification.instruction.data);
+    assert_eq!(
+        stored_message
+            .account_keys
+            .get(usize::from(metadata.program_id_index)),
+        Some(&verification.instruction.program_id)
+    );
     let expected_upgrade =
         bpf_loader_upgradeable::upgrade(&config.program, &buffer, &vault, &proposer.pubkey());
-    let expected = TransactionMessage::try_compile(&vault, &[expected_upgrade], &[])?;
+    let expected = TransactionMessage::try_compile(
+        &vault,
+        &[expected_upgrade, verification.instruction],
+        &[],
+    )?;
     assert_eq!(create_args.transaction_message, expected.try_to_vec()?);
     let proposal_args = ProposalCreateArgs::deserialize(
         &mut create_proposal
@@ -121,6 +140,8 @@ fn proposal_atomically_hands_off_and_creates_active_upgrade_without_voting() -> 
     let mut signed = Transaction::new_unsigned(message);
     signed.try_sign(&[&proposer], hash)?;
     signed.verify()?;
-    assert!(bincode::serialize(&signed)?.len() <= 1232);
+    let size = bincode::serialize(&signed)?.len();
+    println!("Combined proposal transaction: {size} bytes");
+    assert!(size <= 1232, "Combined proposal is {size} bytes");
     Ok(())
 }

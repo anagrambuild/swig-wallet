@@ -131,7 +131,7 @@ jobs:
           SQUADS_MULTISIG_ADDRESS: ${{ secrets.SQUADS_MULTISIG_ADDRESS }}
           SQUADS_VAULT_INDEX: ${{ secrets.SQUADS_VAULT_INDEX }}
           SWIG_PROGRAM_ID: ${{ secrets.SWIG_PROGRAM_ID }}
-        run: ./release-inputs/swig-release check --binary release-inputs/swig.so > preflight.json
+        run: ./release-inputs/swig-release check --binary release-inputs/swig.so --verification release-inputs/verification.json > preflight.json
 
       - name: Tag latest main and publish release candidate
         run: |
@@ -152,6 +152,7 @@ jobs:
           SWIG_PROGRAM_ID: ${{ secrets.SWIG_PROGRAM_ID }}
         run: |
           ./release-inputs/swig-release propose --binary release-inputs/swig.so \
+            --verification release-inputs/verification.json \
             --preflight preflight.json --source-commit "$SOURCE_SHA" \
             --tag "$RELEASE_TAG" --output-dir proposal
 
@@ -159,7 +160,7 @@ jobs:
         run: |
           gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" proposal/proposal-receipt.json
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --notes "Upgrade candidate from $SOURCE_SHA. The active Squads proposal is in proposal-receipt.json; multisig members must approve and execute it. After execution, run Verify Swig Release with this tag and phase export, execute the exported metadata transaction through Squads, then run phase submit."
+            --notes "Upgrade candidate from $SOURCE_SHA. The active Squads proposal is in proposal-receipt.json; multisig members must approve and execute it. This proposal upgrades Swig and writes verification metadata atomically. After execution, run Verify Swig Release with this tag and phase submit."
           cat proposal/proposal-receipt.json >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve public recovery information
