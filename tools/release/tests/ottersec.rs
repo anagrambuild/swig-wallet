@@ -243,6 +243,39 @@ fn remote_success_requires_exact_signer_source_and_both_hashes() -> Result<()> {
         fixture.authority,
         &fixture.manifest,
     )?;
+    let mut unsigned = status.clone();
+    unsigned["signer"] = json!(null);
+    let matched = decode_attestation(
+        200,
+        &serde_json::to_vec(&vec![unsigned.clone(), status.clone()])?,
+        fixture.authority,
+        &fixture.manifest,
+    )?;
+    assert_eq!(matched.signer, Some(fixture.authority));
+    assert!(decode_attestation(
+        200,
+        &serde_json::to_vec(&vec![unsigned.clone()])?,
+        fixture.authority,
+        &fixture.manifest,
+    )
+    .err()
+    .context("Accepted unsigned attestation")?
+    .to_string()
+    .contains("no matching verified attestation"));
+    unsigned
+        .as_object_mut()
+        .context("Expected object")?
+        .remove("signer");
+    assert!(decode_attestation(
+        200,
+        &serde_json::to_vec(&vec![unsigned, status.clone()])?,
+        fixture.authority,
+        &fixture.manifest,
+    )
+    .err()
+    .context("Accepted missing signer field")?
+    .to_string()
+    .contains("Malformed OtterSec verification status"));
     for (field, wrong) in [
         ("signer", json!(Pubkey::new_unique().to_string())),
         ("commit", json!("b".repeat(40))),

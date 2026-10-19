@@ -130,8 +130,9 @@ pub async fn check_deployed_release(
 #[serde_with::serde_as]
 #[derive(Deserialize, Serialize)]
 pub struct VerifiedBuild {
-    #[serde_as(as = "serde_with::DisplayFromStr")]
-    pub signer: Pubkey,
+    // The API includes unsigned historical builds, but always returns this field.
+    #[serde_as(as = "Option<serde_with::DisplayFromStr>", no_default)]
+    pub signer: Option<Pubkey>,
     pub commit: String,
     pub is_verified: bool,
     pub repo_url: String,
@@ -155,7 +156,7 @@ pub fn decode_attestation(
     statuses
         .into_iter()
         .find(|status| {
-            status.signer == authority
+            status.signer == Some(authority)
                 && status.is_verified
                 && status.commit == manifest.commit
                 && status.repo_url == format!("{}/tree/{}", manifest.repository, manifest.commit)
