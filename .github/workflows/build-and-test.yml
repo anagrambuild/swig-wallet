@@ -65,6 +65,15 @@ jobs:
       - name: Build Solana Program
         run: cargo build-sbf --arch v3 --tools-version v1.53
 
+      - uses: ./.github/actions/setup-solana-verify
+
+      # Keep the test-authority fixture above, but exercise the production Swig
+      # binary with the same recipe used by both release workflows.
+      - name: Build verifiable Swig program for tests
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: cargo run --manifest-path tools/release/Cargo.toml --locked -- build --source-commit "$SOURCE_SHA" --output-dir target/verifiable-build
+
       - name: Run Rust Tests with nextest
         run: |
           cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast

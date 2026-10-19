@@ -7,7 +7,13 @@ use solana_sdk::signature::Keypair;
 fn missing_configuration_fails_before_reading_binary_or_sending_requests() -> Result<()> {
     let output = Command::new(env!("CARGO_BIN_EXE_swig-release"))
         .env_clear()
-        .args(["check", "--binary", "/does-not-exist/swig.so"])
+        .args([
+            "check",
+            "--binary",
+            "/does-not-exist/swig.so",
+            "--verification",
+            "/does-not-exist/verification.json",
+        ])
         .output()?;
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
@@ -21,7 +27,13 @@ fn invalid_rpc_error_does_not_expose_credentials() -> Result<()> {
     let output = Command::new(env!("CARGO_BIN_EXE_swig-release"))
         .env_clear()
         .env("SOLANA_RPC_URL", sentinel)
-        .args(["check", "--binary", "/does-not-exist/swig.so"])
+        .args([
+            "check",
+            "--binary",
+            "/does-not-exist/swig.so",
+            "--verification",
+            "/does-not-exist/verification.json",
+        ])
         .output()?;
     assert!(!output.status.success());
     let error = String::from_utf8(output.stderr)?;

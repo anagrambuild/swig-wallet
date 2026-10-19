@@ -1,21 +1,24 @@
 use std::{fs, path::PathBuf, time::Duration};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use solana_sdk::commitment_config::CommitmentConfig;
 use squads_multisig::solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use swig_release::{
     buffer::{upload_buffer, UploadProfile},
-    config::{load_program_authority, load_proposer, DevnetConfig, ReleaseConfig},
+    build::build_release,
+    config::{load_program_authority, load_proposer, load_rpc_url, DevnetConfig, ReleaseConfig},
     devnet::{self, DeploymentRequest, DevnetCheckReceipt},
+    ottersec::{check_deployed_release, submit_ottersec, Cluster, SubmissionReceipt},
     proposal::validate_release_identity,
     release::{check, propose, read_binary, validate_preflight, CheckReceipt, ProposalRequest},
+    verification::VerificationManifest,
 };
 
 #[derive(Parser)]
 #[command(
     name = "swig-release",
-    about = "Propose Swig upgrades through Squads or deploy directly to devnet"
+    about = "Build Swig releases, deploy upgrades and submit OtterSec verification"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -24,17 +27,48 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Build the pinned verifiable binary and its release manifest.
+    Build {
+        #[arg(long)]
+        source_commit: String,
+        #[arg(long)]
+        output_dir: PathBuf,
+        #[arg(long, default_value = "solana-verify")]
+        solana_verify_cli: PathBuf,
+    },
+    /// Compare a published release with the deployed mainnet or devnet program.
+    CheckRelease {
+        #[arg(long)]
+        directory: PathBuf,
+        #[arg(long)]
+        source_commit: String,
+        #[arg(long, value_enum)]
+        cluster: Cluster,
+    },
+    /// Submit an executed mainnet release to OtterSec and require its attestation.
+    SubmitOttersec {
+        #[arg(long)]
+        directory: PathBuf,
+        #[arg(long)]
+        source_commit: String,
+        #[arg(long, default_value = "solana-verify")]
+        solana_verify_cli: PathBuf,
+    },
     /// Read-only preflight. Configuration comes exclusively from environment
     /// variables.
     Check {
         #[arg(long)]
         binary: PathBuf,
+        #[arg(long)]
+        verification: PathBuf,
     },
     /// Upload the binary and create an active proposal; never votes or
     /// executes.
     Propose {
         #[arg(long)]
         binary: PathBuf,
+        #[arg(long)]
+        verification: PathBuf,
         #[arg(long)]
         preflight: PathBuf,
         #[arg(long)]
@@ -53,7 +87,8 @@ enum Command {
         #[arg(long)]
         binary: PathBuf,
     },
-    /// Expand ProgramData if needed, upload, and execute a direct devnet upgrade.
+    /// Expand ProgramData if needed, upload, and execute a direct devnet
+    /// upgrade.
     DeployDevnet {
         #[arg(long)]
         binary: PathBuf,
@@ -76,7 +111,76 @@ enum Command {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Check { binary } => {
+        Command::Build {
+            source_commit,
+            output_dir,
+            solana_verify_cli,
+        } => {
+            let manifest = build_release(&source_commit, &output_dir, &solana_verify_cli)?;
+            println!("Built {}: {}", manifest.commit, manifest.executable_hash);
+        },
+        Command::CheckRelease {
+            directory,
+            source_commit,
+            cluster,
+        } => {
+            let manifest = VerificationManifest::read_release(&directory, &source_commit)?;
+            let program = std::env::var("SWIG_PROGRAM_ID")
+                .context("SWIG_PROGRAM_ID is required")?
+                .parse()
+                .map_err(|_| anyhow!("SWIG_PROGRAM_ID must be a public key"))?;
+            let rpc = RpcClient::new_with_timeout_and_commitment(
+                load_rpc_url()?,
+                Duration::from_secs(30),
+                CommitmentConfig::confirmed(),
+            );
+            let deployed = check_deployed_release(&rpc, program, cluster, &manifest).await?;
+            fs::write(
+                directory.join("deployed-release.json"),
+                serde_json::to_vec_pretty(&deployed)?,
+            )?;
+            println!(
+                "Release {} matches deployed program: {}",
+                manifest.commit, deployed.executable_hash
+            );
+        },
+        Command::SubmitOttersec {
+            directory,
+            source_commit,
+            solana_verify_cli,
+        } => {
+            let manifest = VerificationManifest::read_release(&directory, &source_commit)?;
+            let receipt: SubmissionReceipt = serde_json::from_slice(
+                &fs::read(directory.join("proposal-receipt.json"))
+                    .context("Could not read proposal receipt")?,
+            )?;
+            let program = std::env::var("SWIG_PROGRAM_ID")
+                .context("SWIG_PROGRAM_ID is required")?
+                .parse()
+                .map_err(|_| anyhow!("SWIG_PROGRAM_ID must be a public key"))?;
+            let rpc = RpcClient::new_with_timeout_and_commitment(
+                load_rpc_url()?,
+                Duration::from_secs(30),
+                CommitmentConfig::confirmed(),
+            );
+            let attestation = submit_ottersec(
+                &rpc,
+                program,
+                &manifest,
+                &receipt,
+                &solana_verify_cli,
+                &directory,
+            )
+            .await?;
+            println!(
+                "OtterSec verified {}: {}",
+                attestation.commit, attestation.executable_hash
+            );
+        },
+        Command::Check {
+            binary,
+            verification,
+        } => {
             let config = ReleaseConfig::from_env()?;
             let proposer = load_proposer()?;
             let rpc = RpcClient::new_with_timeout_and_commitment(
@@ -85,7 +189,10 @@ async fn main() -> Result<()> {
                 CommitmentConfig::confirmed(),
             );
             let binary = read_binary(&binary)?;
-            let receipt = check(&rpc, &config, &proposer, &binary).await?;
+            let manifest: VerificationManifest = serde_json::from_slice(
+                &fs::read(verification).context("Could not read verification manifest")?,
+            )?;
+            let receipt = check(&rpc, &config, &proposer, &binary, &manifest).await?;
             eprintln!(
                 "Preflight passed: bytes={} capacity={} transaction_index={}",
                 receipt.binary_bytes, receipt.program_capacity_bytes, receipt.transaction_index
@@ -94,6 +201,7 @@ async fn main() -> Result<()> {
         },
         Command::Propose {
             binary,
+            verification,
             preflight,
             source_commit,
             tag,
@@ -113,7 +221,11 @@ async fn main() -> Result<()> {
                 &fs::read(preflight).context("Could not read preflight receipt")?,
             )
             .context("Malformed preflight receipt")?;
-            let current = check(&rpc, &config, &proposer, &binary).await?;
+            let manifest: VerificationManifest = serde_json::from_slice(
+                &fs::read(verification).context("Could not read verification manifest")?,
+            )?;
+            manifest.validate(&binary, &source_commit)?;
+            let current = check(&rpc, &config, &proposer, &binary, &manifest).await?;
             validate_preflight(&saved, &current)?;
             // An existing directory may contain an earlier submission. Never
             // overwrite its recovery evidence or silently start another attempt.
@@ -136,6 +248,8 @@ async fn main() -> Result<()> {
                 ProposalRequest {
                     buffer,
                     transaction_index: saved.transaction_index,
+                    verification: manifest,
+                    verification_instruction_sha256: saved.verification_instruction_sha256,
                     source_commit,
                     tag,
                 },

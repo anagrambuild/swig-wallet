@@ -69,16 +69,17 @@ jobs:
       - name: Build release CLI
         run: cargo build --manifest-path tools/release/Cargo.toml --locked --release
 
-      - name: Install pinned SBF compiler
-        run: cargo install cargo-build-sbf --version 4.0.0 --locked --force
+      - name: Install pinned Solana Verify
+        uses: ./.github/actions/setup-solana-verify
 
-      - name: Build production program
+      - name: Build verifiable production program
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
-          cargo build-sbf --arch v3 --tools-version v1.53 -- --locked
-          mkdir release-inputs
-          cp target/deploy/swig.so tools/release/target/release/swig-release release-inputs/
+          tools/release/target/release/swig-release build --source-commit "$SOURCE_SHA" --output-dir release-inputs
+          cp tools/release/target/release/swig-release release-inputs/
           cd release-inputs
-          sha256sum swig.so swig-release > SHA256SUMS
+          sha256sum swig.so swig-release verification.json > SHA256SUMS
           sha256sum swig.so > swig.so.sha256
 
       - name: Save immutable build inputs
@@ -130,7 +131,7 @@ jobs:
           SQUADS_MULTISIG_ADDRESS: ${{ secrets.SQUADS_MULTISIG_ADDRESS }}
           SQUADS_VAULT_INDEX: ${{ secrets.SQUADS_VAULT_INDEX }}
           SWIG_PROGRAM_ID: ${{ secrets.SWIG_PROGRAM_ID }}
-        run: ./release-inputs/swig-release check --binary release-inputs/swig.so > preflight.json
+        run: ./release-inputs/swig-release check --binary release-inputs/swig.so --verification release-inputs/verification.json > preflight.json
 
       - name: Tag latest main and publish release candidate
         run: |
@@ -139,7 +140,7 @@ jobs:
           gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
             --verify-tag --prerelease --title "$RELEASE_TAG" \
             --notes "Upgrade candidate from $SOURCE_SHA. Proposal creation is pending; see this run's receipts." \
-            release-inputs/swig.so release-inputs/swig.so.sha256 preflight.json
+            release-inputs/swig.so release-inputs/swig.so.sha256 release-inputs/verification.json preflight.json
 
       - name: Upload buffer and create proposal
         env:
@@ -151,6 +152,7 @@ jobs:
           SWIG_PROGRAM_ID: ${{ secrets.SWIG_PROGRAM_ID }}
         run: |
           ./release-inputs/swig-release propose --binary release-inputs/swig.so \
+            --verification release-inputs/verification.json \
             --preflight preflight.json --source-commit "$SOURCE_SHA" \
             --tag "$RELEASE_TAG" --output-dir proposal
 
@@ -158,7 +160,7 @@ jobs:
         run: |
           gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" proposal/proposal-receipt.json
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --notes "Upgrade candidate from $SOURCE_SHA. The active Squads proposal is in proposal-receipt.json; multisig members must approve and execute it."
+            --notes "Upgrade candidate from $SOURCE_SHA. The active Squads proposal is in proposal-receipt.json; multisig members must approve and execute it. This proposal upgrades Swig and writes verification metadata atomically. After execution, run Submit Swig Release to OtterSec with this tag and phase submit."
           cat proposal/proposal-receipt.json >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve public recovery information
