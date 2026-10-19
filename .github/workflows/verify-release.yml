@@ -1,0 +1,100 @@
+name: Verify Swig Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag whose binary has already been deployed
+        required: true
+        type: string
+      cluster:
+        description: Deployed network (OtterSec submission requires mainnet)
+        required: true
+        default: mainnet
+        type: choice
+        options: [mainnet, devnet]
+      phase:
+        description: Check hash, export metadata for Squads, or submit after metadata execution
+        required: true
+        default: export
+        type: choice
+        options: [check, export, submit]
+
+# Share the release lock; metadata must describe the completed deployment.
+concurrency:
+  group: ${{ inputs.cluster == 'mainnet' && 'swig-upgrade' || 'swig-upgrade-devnet' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: ${{ inputs.cluster == 'mainnet' && 'swig-upgrade' || 'swig-upgrade-devnet' }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      CLUSTER: ${{ inputs.cluster }}
+      PHASE: ${{ inputs.phase }}
+    steps:
+      - name: Require main and validate release tag
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          if [[ ! "$RELEASE_TAG" =~ ^(devnet-)?upgrade-[0-9]+-[0-9a-f]{12}$ ]]; then
+            echo '::error::Expected a Swig upgrade release tag.'
+            exit 1
+          fi
+          if [ "$CLUSTER" = devnet ]; then
+            [[ "$RELEASE_TAG" == devnet-upgrade-* ]]
+          else
+            [[ "$RELEASE_TAG" == upgrade-* ]]
+          fi
+          source_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_TAG" == *-"${source_sha:0:12}" ]]
+          echo "SOURCE_SHA=$source_sha" >> "$GITHUB_ENV"
+
+      # Run the workflow's trusted implementation, never scripts from an input tag.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-solana-verify
+
+      - name: Install pinned Solana CLI
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v4.2.2/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Download the published binary and build recipe
+        run: |
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern swig.so --pattern swig.so.sha256 --pattern verification.json --dir verification
+          cd verification
+          sha256sum --check swig.so.sha256
+
+      - name: Verify deployed release and perform selected phase
+        env:
+          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+          SWIG_PROGRAM_ID: ${{ secrets.SWIG_PROGRAM_ID }}
+        run: |
+          bash tools/release/verification.sh "$PHASE" verification
+          echo "Release $RELEASE_TAG: $PHASE completed on $CLUSTER." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PHASE" = export ]; then
+            echo 'Download verification-transaction.base58 from this run, import it into Squads, and approve/execute it. Then run this workflow with the same release tag and phase submit.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Preserve verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            verification/*.json
+            verification/*.log
+            verification/*.txt
+            verification/*.base58
+          if-no-files-found: ignore
+          retention-days: 90

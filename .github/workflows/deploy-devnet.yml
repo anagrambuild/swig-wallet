@@ -67,16 +67,17 @@ jobs:
       - name: Build release CLI
         run: cargo build --manifest-path tools/release/Cargo.toml --locked --release
 
-      - name: Install pinned SBF compiler
-        run: cargo install cargo-build-sbf --version 4.0.0 --locked --force
+      - name: Install pinned Solana Verify
+        uses: ./.github/actions/setup-solana-verify
 
-      - name: Build production program
+      - name: Build verifiable production program
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
-          cargo build-sbf --arch v3 --tools-version v1.53 -- --locked
-          mkdir release-inputs
-          cp target/deploy/swig.so tools/release/target/release/swig-release release-inputs/
+          bash tools/release/verification.sh build release-inputs
+          cp tools/release/target/release/swig-release release-inputs/
           cd release-inputs
-          sha256sum swig.so swig-release > SHA256SUMS
+          sha256sum swig.so swig-release verification.json > SHA256SUMS
           sha256sum swig.so > swig.so.sha256
 
       - name: Save immutable build inputs
@@ -135,7 +136,7 @@ jobs:
           gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
             --verify-tag --prerelease --latest=false --title "$RELEASE_TAG" \
             --notes "Devnet upgrade from $SOURCE_SHA. Deployment is pending; see this run's receipts." \
-            release-inputs/swig.so release-inputs/swig.so.sha256 preflight.json
+            release-inputs/swig.so release-inputs/swig.so.sha256 release-inputs/verification.json preflight.json
 
       - name: Expand program if needed, upload buffer, and deploy to devnet
         env:

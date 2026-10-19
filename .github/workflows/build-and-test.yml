@@ -65,6 +65,15 @@ jobs:
       - name: Build Solana Program
         run: cargo build-sbf --arch v3 --tools-version v1.53
 
+      - uses: ./.github/actions/setup-solana-verify
+
+      # Keep the test-authority fixture above, but exercise the production Swig
+      # binary with the same recipe used by both release workflows.
+      - name: Build verifiable Swig program for tests
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: bash tools/release/verification.sh build target/verifiable-build
+
       - name: Run Rust Tests with nextest
         run: |
           cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast
@@ -154,6 +163,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Test release verification gates
+        run: python3 -B -m unittest discover -s tools/release/tests -p 'test_*.py'
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f
         with:
           toolchain: 1.96.1
