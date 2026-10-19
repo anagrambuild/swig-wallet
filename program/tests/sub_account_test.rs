@@ -67,6 +67,11 @@ fn strip_active_count_tail(context: &mut SwigTestContext, swig: &Pubkey) {
     account
         .data
         .truncate(account.data.len() - active_sub_account_count::ENTRY_LEN);
+    // A real legacy V1 account holds exactly the rent for its data length.
+    // Keep the harness faithful: drop the lamports that backed the removed
+    // tail entry so no configuration SOL remains.
+    let rent = context.svm.get_sysvar::<solana_sdk::sysvar::rent::Rent>();
+    account.lamports = rent.minimum_balance(account.data.len());
     context.svm.set_account(*swig, account).unwrap();
 }
 
@@ -269,57 +274,138 @@ fn test_close_v2_swig_rejects_existing_sub_account_v1() {
 }
 
 #[test_log::test]
-fn test_close_v1_swig_skips_v2_active_child_guard() {
+fn test_close_v1_swig_checks_live_children_with_stored_and_legacy_counts() {
+    for strip_count in [false, true] {
+        let mut context = setup_test_context().unwrap();
+        let (swig_key, root, child_authority, id) =
+            setup_test_with_sub_account_authority(&mut context).unwrap();
+        let (wallet, wallet_bump) = Pubkey::find_program_address(
+            &swig_wallet_address_seeds(swig_key.as_ref()),
+            &program_id(),
+        );
+        // Model a V1 reserved-lamports overlay with a nonzero upper word.
+        let reserved_lamports = (1u64 << 32) | (1u64 << 8) | u64::from(wallet_bump);
+        let mut account = context.svm.get_account(&swig_key).unwrap();
+        account.data[Swig::LEN - 8..Swig::LEN].copy_from_slice(&reserved_lamports.to_le_bytes());
+        context.svm.set_account(swig_key, account).unwrap();
+        let child = create_sub_account(&mut context, &swig_key, &child_authority, 1, id).unwrap();
+        if strip_count {
+            strip_active_count_tail(&mut context, &swig_key);
+        }
+        let destination = Keypair::new();
+        let config_before = context.svm.get_account(&swig_key).unwrap();
+        let child_before = context.svm.get_account(&child).unwrap();
+        let wallet_before = context.svm.get_account(&wallet);
+        let destination_before = context.svm.get_account(&destination.pubkey());
+        let close = CloseSwigV1Instruction::new_with_ed25519_authority(
+            swig_key,
+            wallet,
+            root.pubkey(),
+            destination.pubkey(),
+            0,
+        )
+        .unwrap();
+        let message = v0::Message::try_compile(
+            &root.pubkey(),
+            &[close.clone()],
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap();
+        let transaction =
+            VersionedTransaction::try_new(VersionedMessage::V0(message), &[&root]).unwrap();
+        let error = context.svm.send_transaction(transaction).unwrap_err();
+        assert_eq!(
+            error.err,
+            TransactionError::InstructionError(
+                0,
+                InstructionError::Custom(swig::error::SwigError::ActiveSubAccountsRemain as u32)
+            )
+        );
+        assert_eq!(context.svm.get_account(&swig_key).unwrap(), config_before);
+        assert_eq!(context.svm.get_account(&child).unwrap(), child_before);
+        assert_eq!(context.svm.get_account(&wallet), wallet_before);
+        assert_eq!(
+            context.svm.get_account(&destination.pubkey()),
+            destination_before
+        );
+
+        // Follow the supported cleanup path: migrate, disable and close the
+        // child, then close its now-independent parent.
+        context.svm.expire_blockhash();
+        let mut migrate_data =
+            swig::actions::migrate_to_wallet_address_v1::MigrateToWalletAddressV1Args::new(
+                wallet_bump,
+                0,
+            )
+            .into_bytes()
+            .unwrap()
+            .to_vec();
+        migrate_data.push(1);
+        let migrate = Instruction {
+            program_id: program_id(),
+            accounts: vec![
+                AccountMeta::new(swig_key, false),
+                AccountMeta::new_readonly(root.pubkey(), true),
+                AccountMeta::new(root.pubkey(), true),
+                AccountMeta::new(wallet, false),
+                AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            ],
+            data: migrate_data,
+        };
+        send_single(&mut context, &root, migrate).unwrap();
+        toggle_sub_account(&mut context, &swig_key, &child, &root, 1, 0, false).unwrap();
+        let close_child = CloseSubAccountV1Instruction::new_with_ed25519_authority(
+            swig_key,
+            root.pubkey(),
+            child,
+            wallet,
+            None,
+            root.pubkey(),
+            0,
+            1,
+        )
+        .unwrap();
+        send_single(&mut context, &root, close_child).unwrap();
+        assert_eq!(active_sub_account_count(&context, &swig_key), 0);
+        let return_funds = solana_system_interface::instruction::transfer(
+            &wallet,
+            &root.pubkey(),
+            context.svm.get_account(&wallet).unwrap().lamports,
+        );
+        let signed_return =
+            SignV2Instruction::new_ed25519(swig_key, wallet, root.pubkey(), return_funds, 0)
+                .unwrap();
+        send_single(&mut context, &root, signed_return).unwrap();
+        send_single(&mut context, &root, close).unwrap();
+        assert_eq!(
+            context.svm.get_account(&swig_key).unwrap().data,
+            vec![swig_state::Discriminator::ClosedSwigAccount as u8]
+        );
+    }
+}
+
+#[test_log::test]
+fn test_close_v1_swig_without_children_ignores_reserved_lamports_upper_word() {
     let mut context = setup_test_context().unwrap();
-    let (swig_key, root, child_authority, id) =
-        setup_test_with_sub_account_authority(&mut context).unwrap();
+    let (swig_key, root, _, _) = setup_test_with_sub_account_authority(&mut context).unwrap();
     let (wallet, wallet_bump) =
         Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
-
-    // Model an unmigrated V1 header while preserving the canonical low-byte
-    // bump so the legacy parent-close signing path remains usable. The upper
-    // word is non-zero and would be misread as sub_account_counter == 1 if the
-    // V1 bytes were trusted as a V2 header.
     let reserved_lamports = (1u64 << 32) | (1u64 << 8) | u64::from(wallet_bump);
-    let mut swig_account = context.svm.get_account(&swig_key).unwrap();
-    swig_account.data[Swig::LEN - 8..Swig::LEN].copy_from_slice(&reserved_lamports.to_le_bytes());
-    context.svm.set_account(swig_key, swig_account).unwrap();
-
-    create_sub_account(&mut context, &swig_key, &child_authority, 1, id).unwrap();
-
-    // V1 child creation still records a count for a future migration, but the
-    // V2-only parent-close guard must not parse or enforce it on a V1 Swig.
-    let account = context.svm.get_account(&swig_key).unwrap();
-    let parts = Swig::split_parts(&account.data).unwrap();
-    assert_eq!(active_sub_account_count::read(parts.tail).unwrap(), Some(1));
-
-    let destination = Keypair::new();
-    context.svm.airdrop(&destination.pubkey(), 0).unwrap();
+    let mut account = context.svm.get_account(&swig_key).unwrap();
+    account.data[Swig::LEN - 8..Swig::LEN].copy_from_slice(&reserved_lamports.to_le_bytes());
+    context.svm.set_account(swig_key, account).unwrap();
     let close = CloseSwigV1Instruction::new_with_ed25519_authority(
         swig_key,
         wallet,
         root.pubkey(),
-        destination.pubkey(),
+        Keypair::new().pubkey(),
         0,
     )
     .unwrap();
-    let message = v0::Message::try_compile(
-        &root.pubkey(),
-        &[close],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-    let transaction =
-        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&root]).unwrap();
-
-    assert!(
-        context.svm.send_transaction(transaction).is_ok(),
-        "V1 parent close must retain legacy behavior"
-    );
-    let closed = context.svm.get_account(&swig_key).unwrap();
+    send_single(&mut context, &root, close).unwrap();
     assert_eq!(
-        closed.data,
+        context.svm.get_account(&swig_key).unwrap().data,
         vec![swig_state::Discriminator::ClosedSwigAccount as u8]
     );
 }

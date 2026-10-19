@@ -47,15 +47,13 @@ pub(crate) fn authenticate_close_authority(
 
 /// Returns the active-child count that gates final parent closure.
 ///
-/// The close guard is a V2 lifecycle invariant. Check the version before
-/// parsing roles or tail state so V1 parents retain their legacy close path.
+/// Both parent versions must retain live children. Only a V2 header exposes
+/// the monotonic V2 ID allocator; V1 overlays store reserved lamports there.
 pub(crate) fn active_count_for_close(data: &[u8]) -> Result<u32, ProgramError> {
     if data.len() < Swig::LEN {
         return Err(ProgramError::InvalidAccountData);
     }
-    if !unsafe { is_swig_v2(data) } {
-        return Ok(0);
-    }
+    let is_v2 = unsafe { is_swig_v2(data) };
 
     let parts = Swig::split_parts(data)?;
     validate_strict(parts.tail)?;
@@ -65,7 +63,11 @@ pub(crate) fn active_count_for_close(data: &[u8]) -> Result<u32, ProgramError> {
         None => active_sub_account_count::legacy_count(
             parts.state,
             parts.roles,
-            parts.state.sub_account_counter,
+            if is_v2 {
+                parts.state.sub_account_counter
+            } else {
+                0
+            },
         ),
     }
 }
