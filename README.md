@@ -135,9 +135,19 @@ Give your agents programmable smart wallets with built in spend limits and sessi
 
 ## SDKs
 
-- **[TypeScript SDK](https://github.com/anagrambuild/swig-ts)** for working with the protocol from TypeScript and JavaScript.
-- **[Developer SDK](https://github.com/anagrambuild/swig-developer-sdk)** for the hosted Swig API, in TypeScript and Python. The API prepares wallet transactions, your app signs them, and Swig can sponsor the fees so your users never see a gas prompt.
-- **[Rust SDK](docs/rust-sdk/rust-sdk.md)** in this repo, for Rust services and tooling.
+### Developer SDKs
+
+Server-side SDKs for the hosted Swig API, maintained in [swig-developer-sdk](https://github.com/anagrambuild/swig-developer-sdk). The API prepares wallet transactions, your app signs them, and Swig can sponsor the fees so your users never see a gas prompt.
+
+- **[TypeScript Developer SDK](https://github.com/anagrambuild/swig-developer-sdk/tree/main/typescript)** (`@swig-wallet/developer-sdk`).
+- **[Python Developer SDK](https://github.com/anagrambuild/swig-developer-sdk/tree/main/python)** (`swig-developer-sdk`).
+
+### Protocol SDKs
+
+SDKs for interacting directly with the onchain Swig protocol.
+
+- **[TypeScript Protocol SDK](https://github.com/anagrambuild/swig-ts)** for TypeScript and JavaScript applications.
+- **[Rust Protocol SDK](docs/rust-sdk/rust-sdk.md)** in this repo, for Rust services and tooling.
 
 Visit [onswig.com](https://onswig.com) to learn more, or reach out to talk about integrating smart wallets.
 
