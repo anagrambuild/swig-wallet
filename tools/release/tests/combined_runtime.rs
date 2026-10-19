@@ -34,7 +34,10 @@ use swig_release::{
     config::ReleaseConfig,
     proposal::build_proposal,
     release::{check, propose, ProposalRequest},
-    verification::{read_verification_instruction, VerificationManifest, VERIFY_PROGRAM},
+    verification::{
+        build_verification_instruction, read_verification_instruction, VerificationManifest,
+        VERIFY_PROGRAM,
+    },
 };
 
 struct Validator(Child);
@@ -110,12 +113,20 @@ async fn one_squads_proposal_upgrades_and_initializes_or_updates_metadata_atomic
             ..Account::default()
         },
     )?;
-    for key in [member.pubkey(), vault] {
+    let manifest: VerificationManifest =
+        serde_json::from_str(include_str!("fixtures/verification.json"))?;
+    let metadata_rent = solana_sdk::rent::Rent::default().minimum_balance(
+        build_verification_instruction(program, vault, &manifest, 0, None)?.account_size,
+    );
+    for (key, lamports) in [
+        (member.pubkey(), 100_000_000_000),
+        (vault, metadata_rent + 1),
+    ] {
         genesis_account(
             &accounts,
             key,
             Account {
-                lamports: 100_000_000_000,
+                lamports,
                 owner: system_program::id(),
                 ..Account::default()
             },
@@ -224,6 +235,24 @@ async fn one_squads_proposal_upgrades_and_initializes_or_updates_metadata_atomic
         manifest.executable_hash = format!("{:x}", Sha256::digest(&binary[..end]));
         manifest.commit = format!("{:040x}", index + 1);
         manifest.validate(&binary, &manifest.commit)?;
+        if index == 0 {
+            let error = check(&rpc, &config, &member, &binary, &manifest)
+                .await
+                .err()
+                .context("Accepted vault balance that would leave one lamport")?;
+            assert!(error.to_string().contains("own rent reserve"), "{error:#}");
+            send(
+                &rpc,
+                &member,
+                &[solana_system_interface::instruction::transfer(
+                    &member.pubkey(),
+                    &vault,
+                    10_000_000,
+                )],
+            )
+            .await?;
+            println!("Vault with metadata rent plus one lamport rejected before upload");
+        }
         let metadata = read_verification_instruction(&rpc, &config, &manifest).await?;
         let expected_payload = metadata
             .instruction
@@ -258,8 +287,10 @@ async fn one_squads_proposal_upgrades_and_initializes_or_updates_metadata_atomic
                     transaction_index: preflight.transaction_index,
                     source_commit: manifest.commit.clone(),
                     tag: format!("upgrade-{}", index + 1),
-                    verification: manifest,
-                    verification_instruction_sha256: preflight.verification_instruction_sha256,
+                    verification: manifest.clone(),
+                    verification_instruction_sha256: preflight
+                        .verification_instruction_sha256
+                        .clone(),
                 },
             )
             .await?;
@@ -269,6 +300,45 @@ async fn one_squads_proposal_upgrades_and_initializes_or_updates_metadata_atomic
                 receipt.verification_observed_deploy_slot,
                 metadata.observed_deploy_slot
             );
+            if index == 0 {
+                let error = check(&rpc, &config, &member, &binary, &manifest)
+                    .await
+                    .err()
+                    .context("Accepted a second pending initializer")?;
+                assert!(
+                    error.to_string().contains("already initializes"),
+                    "{error:#}"
+                );
+                let next_buffer = buffers[1];
+                let before = rpc.get_account(&next_buffer).await?;
+                let error = propose(
+                    &rpc,
+                    &config,
+                    &member,
+                    &binary,
+                    ProposalRequest {
+                        buffer: next_buffer,
+                        transaction_index: 2,
+                        source_commit: manifest.commit.clone(),
+                        tag: "overlapping-release".into(),
+                        verification: manifest.clone(),
+                        verification_instruction_sha256: preflight.verification_instruction_sha256,
+                    },
+                )
+                .await
+                .err()
+                .context("Submitted a second pending initializer")?;
+                assert!(
+                    error.to_string().contains("already initializes"),
+                    "{error:#}"
+                );
+                assert_eq!(
+                    before,
+                    rpc.get_account(&next_buffer).await?,
+                    "Rejected proposal changed the buffer"
+                );
+                println!("Second initializer rejected by preflight and proposal submission while first is active");
+            }
         } else {
             send(&rpc, &member, &proposal.instructions).await?;
         }
@@ -286,6 +356,16 @@ async fn one_squads_proposal_upgrades_and_initializes_or_updates_metadata_atomic
             )],
         )
         .await?;
+        if index == 0 {
+            let error = check(&rpc, &config, &member, &binary, &manifest)
+                .await
+                .err()
+                .context("Accepted second initializer while first is approved")?;
+            assert!(
+                error.to_string().contains("already initializes"),
+                "{error:#}"
+            );
+        }
         let message = TransactionMessage::deserialize(&mut proposal.vault_message.as_slice())?;
         let execute = vault_transaction_execute(
             VaultTransactionExecuteAccounts {

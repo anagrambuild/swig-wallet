@@ -9,9 +9,12 @@ use solana_sdk::{
 };
 use solana_sdk_ids::{bpf_loader_upgradeable, system_program};
 use squads_multisig::{
-    anchor_lang::{prelude::borsh, AnchorDeserialize, AnchorSerialize},
-    pda::get_vault_pda,
+    anchor_lang::{
+        prelude::borsh, AccountDeserialize, AnchorDeserialize, AnchorSerialize, Discriminator,
+    },
+    pda::{get_proposal_pda, get_transaction_pda, get_vault_pda},
     solana_rpc_client::nonblocking::rpc_client::RpcClient,
+    squads_multisig_program::{Multisig, Proposal, ProposalStatus, VaultTransaction},
 };
 
 use crate::config::ReleaseConfig;
@@ -21,7 +24,7 @@ pub const VERIFY_PROGRAM: Pubkey =
 const BUILD_IMAGE: &str = "solanafoundation/solana-verifiable-build@sha256:\
                            12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd";
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VerificationManifest {
     pub repository: String,
@@ -228,10 +231,137 @@ pub async fn read_verification_instruction(
         .get_minimum_balance_for_rent_exemption(verification.account_size)
         .await
         .map_err(|_| anyhow!("Could not calculate verification metadata rent"))?;
-    let required = rent.saturating_sub(existing.as_ref().map_or(0, |a| a.lamports));
-    ensure!(
-        vault_account.lamports >= required,
-        "Squads vault needs {required} lamports for verification metadata rent"
-    );
+    let vault_rent = rpc
+        .get_minimum_balance_for_rent_exemption(0)
+        .await
+        .map_err(|_| anyhow!("Could not calculate Squads vault rent reserve"))?;
+    validate_metadata_rent(
+        vault_account.lamports,
+        existing.as_ref().map_or(0, |a| a.lamports),
+        rent,
+        vault_rent,
+    )?;
     Ok(verification)
+}
+
+pub fn validate_metadata_rent(
+    vault_balance: u64,
+    metadata_balance: u64,
+    metadata_rent: u64,
+    vault_rent: u64,
+) -> Result<()> {
+    let required = metadata_rent
+        .saturating_sub(metadata_balance)
+        .checked_add(vault_rent)
+        .context("Verification funding calculation overflow")?;
+    ensure!(
+        vault_balance >= required,
+        "Squads vault needs {required} lamports for verification metadata and its own rent reserve"
+    );
+    Ok(())
+}
+
+pub fn proposal_can_still_execute(proposal: &Proposal, stale_index: u64) -> bool {
+    match proposal.status {
+        // Squads explicitly permits already-approved proposals to execute after
+        // a configuration change makes their transaction index stale.
+        ProposalStatus::Approved { .. } => true,
+        ProposalStatus::Draft { .. } | ProposalStatus::Active { .. } => {
+            proposal.transaction_index > stale_index
+        },
+        ProposalStatus::Rejected { .. }
+        | ProposalStatus::Cancelled { .. }
+        | ProposalStatus::Executed { .. } => false,
+        _ => true,
+    }
+}
+
+pub async fn require_no_pending_initializer(
+    rpc: &RpcClient,
+    config: &ReleaseConfig,
+    multisig: &Multisig,
+    verification: &VerificationInstruction,
+) -> Result<()> {
+    let initialize = Sha256::digest(b"global:initialize");
+    if verification.instruction.data.get(..8) != Some(&initialize[..8]) {
+        return Ok(());
+    }
+    // This scan only runs before the first metadata initialization. Include old
+    // indices: an approved proposal remains executable even when stale.
+    let mut next = 1_u64;
+    while next <= multisig.transaction_index {
+        let last = next.saturating_add(99).min(multisig.transaction_index);
+        let addresses: Vec<_> = (next..=last)
+            .map(|index| get_proposal_pda(&config.multisig, index, Some(&config.squads_program)).0)
+            .collect();
+        let accounts = rpc
+            .get_multiple_accounts(&addresses)
+            .await
+            .map_err(|_| anyhow!("Could not inspect outstanding Squads proposals"))?;
+        for (address, account) in addresses.iter().zip(accounts) {
+            let Some(account) = account else { continue };
+            ensure!(
+                account.owner == config.squads_program,
+                "Invalid Squads proposal owner"
+            );
+            let proposal = Proposal::try_deserialize(&mut account.data.as_slice())
+                .map_err(|_| anyhow!("Malformed Squads proposal"))?;
+            if !proposal_can_still_execute(&proposal, multisig.stale_transaction_index) {
+                continue;
+            }
+            let transaction_address = get_transaction_pda(
+                &config.multisig,
+                proposal.transaction_index,
+                Some(&config.squads_program),
+            )
+            .0;
+            let transaction = rpc
+                .get_account(&transaction_address)
+                .await
+                .map_err(|_| anyhow!("Could not inspect pending Squads transaction"))?;
+            ensure!(
+                transaction.owner == config.squads_program,
+                "Invalid Squads transaction owner"
+            );
+            if transaction.data.get(..8) != Some(VaultTransaction::DISCRIMINATOR) {
+                continue; // Configuration transactions and batches are not release proposals.
+            }
+            let transaction = VaultTransaction::try_deserialize(&mut transaction.data.as_slice())
+                .map_err(|_| anyhow!("Malformed Squads vault transaction"))?;
+            if transaction.vault_index != config.vault_index {
+                continue;
+            }
+            let message = transaction.message;
+            let initializes = message.instructions.iter().any(|instruction| {
+                message
+                    .account_keys
+                    .get(usize::from(instruction.program_id_index))
+                    == Some(&VERIFY_PROGRAM)
+                    && instruction.data.get(..8) == Some(&initialize[..8])
+                    && instruction
+                        .account_indexes
+                        .first()
+                        .and_then(|index| message.account_keys.get(usize::from(*index)))
+                        == Some(&verification.address)
+            });
+            ensure!(!initializes,
+                "Squads proposal {address} already initializes verification metadata; resolve it before preparing another release");
+        }
+        if last == multisig.transaction_index {
+            break;
+        }
+        next = last + 1;
+    }
+    // A pending initializer may have executed during the scan. Force a fresh
+    // preflight instead of freezing another Initialize instruction in that case.
+    let account = rpc
+        .get_account_with_commitment(&verification.address, rpc.commitment())
+        .await
+        .map_err(|_| anyhow!("Could not recheck verification metadata state"))?
+        .value;
+    ensure!(
+        account.is_none_or(|a| a.owner == system_program::id() && a.data.is_empty()),
+        "Verification metadata changed while checking proposals; rerun preflight"
+    );
+    Ok(())
 }

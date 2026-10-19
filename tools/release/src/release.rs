@@ -26,7 +26,9 @@ use crate::{
     proposal::{
         build_proposal, confirmation_complete, require_next_index, validate_release_identity,
     },
-    verification::{read_verification_instruction, VerificationManifest},
+    verification::{
+        read_verification_instruction, require_no_pending_initializer, VerificationManifest,
+    },
 };
 
 // Conservative reserve for upload transactions and fee changes. It is a balance
@@ -96,6 +98,7 @@ pub async fn check(
         Sha256::digest(bincode::serialize(&verification.instruction)?)
     );
     let accounts = read_upgrade_accounts(rpc, config, proposer.pubkey()).await?;
+    require_no_pending_initializer(rpc, config, &accounts.multisig, &verification).await?;
     if binary.len() > accounts.program_capacity {
         let rent = rpc
             .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
@@ -227,6 +230,7 @@ pub async fn propose(
         "Verification state changed after preflight; inspect the uploaded buffer before retrying"
     );
     let accounts = read_upgrade_accounts(rpc, config, proposer.pubkey()).await?;
+    require_no_pending_initializer(rpc, config, &accounts.multisig, &verification).await?;
     validate_capacity(binary.len(), accounts.program_capacity)?;
     require_next_index(
         accounts.multisig.transaction_index,
@@ -281,7 +285,7 @@ pub async fn propose(
     transaction.try_sign(&[proposer], blockhash)?;
     ensure!(
         bincode::serialize(&transaction)?.len() <= 1232,
-        "Proposal transaction exceeds the Solana packet limit"
+        "Proposal transaction exceeds the 1,232-byte legacy transaction limit"
     );
     let signature = *transaction
         .signatures

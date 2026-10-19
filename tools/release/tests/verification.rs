@@ -2,9 +2,64 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use solana_sdk::{account::Account, pubkey::Pubkey, transaction::Transaction};
 use solana_sdk_ids::system_program;
+use squads_multisig::state::{Proposal, ProposalStatus};
 use swig_release::verification::{
-    build_verification_instruction, VerificationManifest, VERIFY_PROGRAM,
+    build_verification_instruction, proposal_can_still_execute, validate_metadata_rent,
+    VerificationManifest, VERIFY_PROGRAM,
 };
+
+#[test]
+fn metadata_rent_preserves_vault_rent_exemption() -> Result<()> {
+    let metadata_rent = 3_389_520;
+    let vault_rent = 890_880;
+    for balance in [
+        metadata_rent - 1,
+        metadata_rent,
+        metadata_rent + 1,
+        metadata_rent + vault_rent - 1,
+    ] {
+        assert!(validate_metadata_rent(balance, 0, metadata_rent, vault_rent).is_err());
+    }
+    validate_metadata_rent(metadata_rent + vault_rent, 0, metadata_rent, vault_rent)?;
+    validate_metadata_rent(vault_rent, metadata_rent, metadata_rent, vault_rent)?;
+    validate_metadata_rent(vault_rent + 1, metadata_rent - 1, metadata_rent, vault_rent)?;
+    assert!(
+        validate_metadata_rent(vault_rent, metadata_rent - 1, metadata_rent, vault_rent).is_err()
+    );
+    assert!(validate_metadata_rent(u64::MAX, 0, u64::MAX, vault_rent).is_err());
+    Ok(())
+}
+
+#[test]
+fn outstanding_initializers_include_approved_proposals_even_when_stale() {
+    let mut proposal = Proposal {
+        multisig: Pubkey::new_unique(),
+        transaction_index: 7,
+        status: ProposalStatus::Active { timestamp: 0 },
+        bump: 0,
+        approved: vec![],
+        rejected: vec![],
+        cancelled: vec![],
+    };
+    for status in [
+        ProposalStatus::Draft { timestamp: 0 },
+        ProposalStatus::Active { timestamp: 0 },
+    ] {
+        proposal.status = status;
+        assert!(proposal_can_still_execute(&proposal, 6));
+        assert!(!proposal_can_still_execute(&proposal, 7));
+    }
+    proposal.status = ProposalStatus::Approved { timestamp: 0 };
+    assert!(proposal_can_still_execute(&proposal, 7));
+    for status in [
+        ProposalStatus::Executed { timestamp: 0 },
+        ProposalStatus::Rejected { timestamp: 0 },
+        ProposalStatus::Cancelled { timestamp: 0 },
+    ] {
+        proposal.status = status;
+        assert!(!proposal_can_still_execute(&proposal, 0));
+    }
+}
 
 #[test]
 fn metadata_matches_native_cli_export_from_devnet() -> Result<()> {

@@ -93,7 +93,7 @@ pub fn build_proposal(
                     ephemeral_signers: 0,
                     transaction_message: vault_message.clone(),
                     // Source identity is in the verification instruction. Omitting the
-                    // redundant memo keeps proposal creation below the packet limit.
+                    // redundant memo keeps creation below the legacy transaction limit.
                     memo: None,
                 },
             }
