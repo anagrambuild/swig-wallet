@@ -345,7 +345,7 @@ fn sol_lock_binds_all_role_to_the_reserved_floor() {
 
 #[test]
 fn sol_lock_binds_the_creating_role_until_released() {
-    let mut w = Wallet::new(10 * LAMPORTS_PER_SOL);
+    let mut w = Wallet::new(20 * LAMPORTS_PER_SOL);
     let card = w.card.insecure_clone();
     let expiry = w.slot() + 500;
     let lockable = w.lockable_sol();
@@ -1775,4 +1775,183 @@ fn sign_v2_cost_with_maximum_locks_is_bounded() {
         "32 locks added {} CU",
         locked - baseline
     );
+}
+
+// ---------------------------------------------------------------------------
+// The creator's limits back its reservations
+// ---------------------------------------------------------------------------
+
+#[test]
+fn creator_cannot_spend_the_limit_backing_its_locks() {
+    let mut w = Wallet::new(2 * LAMPORTS_PER_SOL);
+    let card = w.card.insecure_clone();
+    let expiry = w.slot() + 500;
+    ok(w.add_sol_lock(&card, CARD_ROLE, 3 * LAMPORTS_PER_SOL / 2, expiry));
+
+    // 2 SOL limit, 1.5 SOL held: only 0.5 SOL is free to spend elsewhere,
+    // even though the wallet balance is far above the lock floor.
+    assert_swig_error(
+        w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL),
+        SwigError::AuthorizationLockExceedsSpendLimit,
+    );
+    ok(w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL / 2));
+    assert_swig_error(
+        w.spend_sol(&card, CARD_ROLE, 1),
+        SwigError::AuthorizationLockExceedsSpendLimit,
+    );
+
+    // Capturing the hold uses exactly the reserved allowance.
+    let release = w.remove_lock_ix(&card, CARD_ROLE, 0);
+    let capture = w.sol_transfer_ix(&card, CARD_ROLE, 3 * LAMPORTS_PER_SOL / 2);
+    ok(w.send(&[release, capture], &[&card]));
+    // The limit is now exhausted.
+    assert!(w.spend_sol(&card, CARD_ROLE, 1).is_err());
+}
+
+#[test]
+fn locks_count_against_the_remaining_recurring_window() {
+    let window = 100;
+    let mut w = Wallet::with_card_actions(vec![
+        ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(MAX_DURATION)),
+        ClientAction::SolRecurringLimit(SolRecurringLimit {
+            recurring_amount: 3 * LAMPORTS_PER_SOL,
+            window,
+            last_reset: 0,
+            current_amount: 3 * LAMPORTS_PER_SOL,
+        }),
+        ClientAction::Program(Program {
+            program_id: solana_system_interface::program::ID.to_bytes(),
+        }),
+    ]);
+    let card = w.card.insecure_clone();
+    let expiry = w.slot() + 500;
+    ok(w.spend_sol(&card, CARD_ROLE, 2 * LAMPORTS_PER_SOL));
+
+    // Only 1 SOL is left in this window, so the role cannot hold more.
+    assert_swig_error(
+        w.add_sol_lock(&card, CARD_ROLE, LAMPORTS_PER_SOL + 1, expiry),
+        SwigError::AuthorizationLockExceedsSpendLimit,
+    );
+    ok(w.add_sol_lock(&card, CARD_ROLE, LAMPORTS_PER_SOL, expiry));
+    assert_swig_error(
+        w.spend_sol(&card, CARD_ROLE, 1),
+        SwigError::AuthorizationLockExceedsSpendLimit,
+    );
+
+    // A fresh window restores the full allowance; the hold still reserves 1.
+    let next_window = w.slot() + window + 1;
+    w.warp(next_window);
+    ok(w.add_sol_lock(&card, CARD_ROLE, LAMPORTS_PER_SOL, expiry));
+    assert_swig_error(
+        w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL + 1),
+        SwigError::AuthorizationLockExceedsSpendLimit,
+    );
+    ok(w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL));
+}
+
+#[test]
+fn destination_limits_back_locks_too() {
+    let merchant = Keypair::new().pubkey();
+    let mut w = Wallet::with_card_actions(vec![
+        ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(MAX_DURATION)),
+        ClientAction::SolDestinationLimit(SolDestinationLimit {
+            destination: merchant.to_bytes(),
+            amount: LAMPORTS_PER_SOL,
+        }),
+        ClientAction::Program(Program {
+            program_id: solana_system_interface::program::ID.to_bytes(),
+        }),
+    ]);
+    let card = w.card.insecure_clone();
+    let expiry = w.slot() + 500;
+    ok(w.add_sol_lock(&card, CARD_ROLE, LAMPORTS_PER_SOL, expiry));
+
+    let pay = |w: &Wallet, lamports| {
+        w.sign_ix(
+            &card,
+            CARD_ROLE,
+            system_instruction::transfer(&w.wallet, &merchant, lamports),
+        )
+    };
+    let early = pay(&w, LAMPORTS_PER_SOL / 2);
+    assert_swig_error(
+        w.send(&[early], &[&card]),
+        SwigError::AuthorizationLockExceedsSpendLimit,
+    );
+    let release = w.remove_lock_ix(&card, CARD_ROLE, 0);
+    let capture = pay(&w, LAMPORTS_PER_SOL);
+    ok(w.send(&[release, capture], &[&card]));
+}
+
+#[test]
+fn token_limits_back_token_locks() {
+    let mut w = Wallet::new(LAMPORTS_PER_SOL);
+    let root = w.root.insecure_clone();
+    let (mint, ata) = w.token_setup(10_000);
+    let card = Keypair::new();
+    add_authority_with_ed25519_root(
+        &mut w.context,
+        &w.swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: card.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(MAX_DURATION)),
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: mint.to_bytes(),
+                current_amount: 1_000,
+            }),
+            ClientAction::Program(Program {
+                program_id: spl_token::ID.to_bytes(),
+            }),
+        ],
+    )
+    .unwrap();
+    let role = 2;
+    let expiry = w.slot() + 500;
+    ok(w.add_lock(&card, role, ata, mint.to_bytes(), 600, expiry));
+
+    let ix = w.token_transfer_ix(&card, role, &mint, &ata, 401);
+    assert_swig_error(
+        w.send(&[ix], &[&card]),
+        SwigError::AuthorizationLockExceedsSpendLimit,
+    );
+    let ix = w.token_transfer_ix(&card, role, &mint, &ata, 400);
+    ok(w.send(&[ix], &[&card]));
+    let release = w.remove_lock_ix(&card, role, 0);
+    let capture = w.token_transfer_ix(&card, role, &mint, &ata, 600);
+    ok(w.send(&[release, capture], &[&card]));
+}
+
+#[test]
+fn other_roles_limits_are_independent_of_a_creators_locks() {
+    let mut w = Wallet::new(2 * LAMPORTS_PER_SOL);
+    let card = w.card.insecure_clone();
+    let root = w.root.insecure_clone();
+    let spender = Keypair::new();
+    add_authority_with_ed25519_root(
+        &mut w.context,
+        &w.swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: spender.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::SolLimit(SolLimit {
+                amount: LAMPORTS_PER_SOL,
+            }),
+            ClientAction::Program(Program {
+                program_id: solana_system_interface::program::ID.to_bytes(),
+            }),
+        ],
+    )
+    .unwrap();
+    let expiry = w.slot() + 500;
+    ok(w.add_sol_lock(&card, CARD_ROLE, 2 * LAMPORTS_PER_SOL, expiry));
+    // Another limited role spends its full allowance; only the balance floor
+    // applies to it.
+    ok(w.spend_sol(&spender, 2, LAMPORTS_PER_SOL));
 }

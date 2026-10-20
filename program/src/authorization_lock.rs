@@ -144,15 +144,23 @@ pub(crate) fn check_lockable_mint(
     Ok(())
 }
 
-/// Returns the most the role could ever spend of `mint` under its limit
-/// actions. A role without any applicable limit has no capacity, so it cannot
+/// Returns how much of `mint` the role's limit actions would let it spend at
+/// `slot`. A role without any applicable limit has no capacity, so it cannot
 /// reserve an asset it could never capture.
+///
+/// A role's active locks must always fit within this amount: the creator's
+/// limits back its reservations, so it cannot lock more than it may spend nor
+/// spend what it has reserved.
 ///
 /// SignV2 charges one general limit (one-shot before recurring) and, when
 /// destination limits exist, requires every debit to also match one, so the
-/// capacity is the smaller of the two. Recurring limits contribute their
-/// per-window allowance.
-pub(crate) fn spend_capacity(actions: &[u8], mint: &[u8; 32]) -> Result<u64, ProgramError> {
+/// capacity is the smaller of the two. Recurring limits count what is left in
+/// the current window, or the full allowance once SignV2 would reset it.
+pub(crate) fn remaining_spend_capacity(
+    actions: &[u8],
+    mint: &[u8; 32],
+    slot: u64,
+) -> Result<u64, ProgramError> {
     let native = mint == &authorization_locks::NATIVE_SOL_MINT;
     let mut one_shot: Option<u64> = None;
     let mut recurring: Option<u64> = None;
@@ -175,18 +183,36 @@ pub(crate) fn spend_capacity(actions: &[u8], mint: &[u8; 32]) -> Result<u64, Pro
 
         let (kind, amount) = match action.permission()? {
             Permission::SolLimit if native => (LimitKind::OneShot, load::<SolLimit>(data)?.amount),
-            Permission::SolRecurringLimit if native => (
-                LimitKind::Recurring,
-                load::<SolRecurringLimit>(data)?.recurring_amount,
-            ),
+            Permission::SolRecurringLimit if native => {
+                let limit = load::<SolRecurringLimit>(data)?;
+                (
+                    LimitKind::Recurring,
+                    recurring_remaining(
+                        limit.window,
+                        limit.last_reset,
+                        limit.recurring_amount,
+                        limit.current_amount,
+                        slot,
+                    ),
+                )
+            },
             Permission::SolDestinationLimit if native => (
                 LimitKind::Destination,
                 load::<SolDestinationLimit>(data)?.amount,
             ),
-            Permission::SolRecurringDestinationLimit if native => (
-                LimitKind::Destination,
-                load::<SolRecurringDestinationLimit>(data)?.recurring_amount,
-            ),
+            Permission::SolRecurringDestinationLimit if native => {
+                let limit = load::<SolRecurringDestinationLimit>(data)?;
+                (
+                    LimitKind::Destination,
+                    recurring_remaining(
+                        limit.window,
+                        limit.last_reset,
+                        limit.recurring_amount,
+                        limit.current_amount,
+                        slot,
+                    ),
+                )
+            },
             Permission::TokenLimit if !native => {
                 let limit = load::<TokenLimit>(data)?;
                 if &limit.token_mint != mint {
@@ -201,7 +227,16 @@ pub(crate) fn spend_capacity(actions: &[u8], mint: &[u8; 32]) -> Result<u64, Pro
                     cursor = data_end;
                     continue;
                 }
-                (LimitKind::Recurring, limit.limit)
+                (
+                    LimitKind::Recurring,
+                    recurring_remaining(
+                        limit.window,
+                        limit.last_reset,
+                        limit.limit,
+                        limit.current,
+                        slot,
+                    ),
+                )
             },
             Permission::TokenDestinationLimit if !native => {
                 let limit = load::<TokenDestinationLimit>(data)?;
@@ -217,7 +252,16 @@ pub(crate) fn spend_capacity(actions: &[u8], mint: &[u8; 32]) -> Result<u64, Pro
                     cursor = data_end;
                     continue;
                 }
-                (LimitKind::Destination, limit.recurring_amount)
+                (
+                    LimitKind::Destination,
+                    recurring_remaining(
+                        limit.window,
+                        limit.last_reset,
+                        limit.recurring_amount,
+                        limit.current_amount,
+                        slot,
+                    ),
+                )
             },
             _ => {
                 cursor = data_end;
@@ -246,6 +290,52 @@ pub(crate) fn spend_capacity(actions: &[u8], mint: &[u8; 32]) -> Result<u64, Pro
         (None, Some(d)) => d,
         (None, None) => 0,
     })
+}
+
+/// Mirrors the recurring limits' `run`: the allowance refreshes once more than
+/// `window` slots have passed since `last_reset`. A zero window never permits
+/// spending.
+fn recurring_remaining(window: u64, last_reset: u64, full: u64, current: u64, slot: u64) -> u64 {
+    if window == 0 {
+        0
+    } else if slot.saturating_sub(last_reset) > window {
+        full
+    } else {
+        current
+    }
+}
+
+/// Fails when the role's active locks on any mint exceed what its limits still
+/// let it spend. SignV2 runs this after charging the role's limits, so a role
+/// can neither spend the allowance backing its reservations nor keep locks its
+/// limits can no longer cover.
+#[inline(never)]
+pub(crate) fn check_role_locks_within_limits(
+    tail: &[u8],
+    role_id: u32,
+    actions: &[u8],
+    slot: u64,
+) -> Result<(), ProgramError> {
+    let Some(entry) = authorization_locks::read(tail)? else {
+        return Ok(());
+    };
+    let mut checked: Vec<[u8; 32]> = Vec::new();
+    for lock in entry
+        .iter()
+        .filter(|lock| lock.role_id == role_id && lock.is_active(slot))
+    {
+        if checked.contains(&lock.mint) {
+            continue;
+        }
+        checked.push(lock.mint);
+        let reserved = sum_active(entry.iter(), slot, |other| {
+            other.role_id == role_id && other.mint == lock.mint
+        })?;
+        if reserved > remaining_spend_capacity(actions, &lock.mint, slot)? {
+            return Err(SwigError::AuthorizationLockExceedsSpendLimit.into());
+        }
+    }
+    Ok(())
 }
 
 enum LimitKind {

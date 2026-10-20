@@ -31,6 +31,7 @@ use crate::{
     actions::sign_v2::{
         has_token_destination_limits, read_wsol_reserve, wsol_accounted_balance, WSOL_MINT,
     },
+    authorization_lock::check_role_locks_within_limits,
     error::SwigError,
     instruction::{
         accounts::{CloseTokenAccountV1Accounts, Context},
@@ -289,6 +290,17 @@ pub fn close_token_account_v1(
                 }
             }
         }
+    }
+
+    // Closing WSOL accounts consumes the role's limits, which must still back
+    // its own active authorization locks.
+    if !unrestricted_spend {
+        check_role_locks_within_limits(
+            Swig::split_parts(swig_account_data)?.tail,
+            close_ix.args.role_id,
+            role.actions,
+            current_slot,
+        )?;
     }
 
     for token_account in &accounts[token_account_offset..] {
