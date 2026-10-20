@@ -140,6 +140,19 @@ pub struct VerifiedBuild {
     pub on_chain_hash: String,
 }
 
+impl VerifiedBuild {
+    pub fn release_notes(&self, program: Pubkey) -> String {
+        format!(
+            "Swig mainnet upgrade executed and verified by OtterSec.\n\n\
+             [OtterSec verification]({OTTERSEC_URL}/status-all/{program})\n\n\
+             - Program: `{program}`\n\
+             - Source: [{}]({})\n\
+             - Executable hash: `{}`\n",
+            self.commit, self.repo_url, self.executable_hash
+        )
+    }
+}
+
 /// Decode and correlate the public status endpoint before accepting its attestation.
 pub fn decode_attestation(
     status: u16,
