@@ -1,0 +1,381 @@
+//! Authorization lock validation and enforcement.
+//!
+//! A lock reserves part of one wallet asset account: the swig wallet address
+//! for native SOL, or one token account whose authority is the wallet address.
+//! [`LockGuard`] enforces active locks around SignV2 execution for every role,
+//! including `All`: an account may receive funds freely, but may not end a
+//! transaction below `min(balance_before, reserved)`, and a locked token account
+//! must keep the wallet as its authority with no delegate or foreign close
+//! authority.
+
+extern crate alloc;
+use alloc::vec::Vec;
+
+use pinocchio::{
+    account_info::AccountInfo,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    sysvars::{rent::Rent, Sysvar},
+};
+use swig_state::{
+    action::{
+        sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
+        sol_recurring_destination_limit::SolRecurringDestinationLimit,
+        sol_recurring_limit::SolRecurringLimit, token_destination_limit::TokenDestinationLimit,
+        token_limit::TokenLimit, token_recurring_destination_limit::TokenRecurringDestinationLimit,
+        token_recurring_limit::TokenRecurringLimit, Action, Permission,
+    },
+    tail::authorization_locks::{self, AuthorizationLock},
+    Transmutable,
+};
+
+use crate::{error::SwigError, SPL_TOKEN_2022_ID, SPL_TOKEN_ID};
+
+const TOKEN_ACCOUNT_LEN: usize = 165;
+const TOKEN_MINT: core::ops::Range<usize> = 0..32;
+const TOKEN_AUTHORITY: core::ops::Range<usize> = 32..64;
+const TOKEN_AMOUNT: core::ops::Range<usize> = 64..72;
+const TOKEN_DELEGATE_TAG: core::ops::Range<usize> = 72..76;
+const TOKEN_STATE: usize = 108;
+const TOKEN_CLOSE_AUTHORITY_TAG: core::ops::Range<usize> = 129..133;
+const TOKEN_CLOSE_AUTHORITY: core::ops::Range<usize> = 133..165;
+const TOKEN_STATE_INITIALIZED: u8 = 1;
+const TOKEN_STATE_FROZEN: u8 = 2;
+const TOKEN_2022_ACCOUNT_TYPE_INDEX: usize = TOKEN_ACCOUNT_LEN;
+const TOKEN_2022_ACCOUNT_TYPE_ACCOUNT: u8 = 2;
+const COPTION_NONE: [u8; 4] = [0; 4];
+const COPTION_SOME: [u8; 4] = [1, 0, 0, 0];
+
+/// Returns the native SOL the wallet address can reserve: lamports above the
+/// rent-exempt minimum that SignV2 always preserves.
+pub(crate) fn lockable_lamports(wallet: &AccountInfo) -> Result<u64, ProgramError> {
+    Ok(wallet
+        .lamports()
+        .saturating_sub(Rent::get()?.minimum_balance(0)))
+}
+
+/// Returns the balance of a token account that can carry a lock, or `None`
+/// when the account is not a token account of `mint` controlled solely by
+/// `wallet`. New locks require an initialized account; the SignV2 guard also
+/// accepts a frozen one, since a mint's freeze authority can freeze and thaw a
+/// locked account at will and the reservation must hold either way.
+pub(crate) fn lockable_token_balance(
+    account: &AccountInfo,
+    mint: &[u8; 32],
+    wallet: &Pubkey,
+    allow_frozen: bool,
+) -> Option<u64> {
+    let owner = account.owner();
+    if owner != &SPL_TOKEN_ID && owner != &SPL_TOKEN_2022_ID {
+        return None;
+    }
+    let data = unsafe { account.borrow_data_unchecked() };
+    if data.len() < TOKEN_ACCOUNT_LEN || (owner == &SPL_TOKEN_ID && data.len() != TOKEN_ACCOUNT_LEN)
+    {
+        return None;
+    }
+    if data.len() > TOKEN_ACCOUNT_LEN
+        && data[TOKEN_2022_ACCOUNT_TYPE_INDEX] != TOKEN_2022_ACCOUNT_TYPE_ACCOUNT
+    {
+        return None;
+    }
+    let state_ok = data[TOKEN_STATE] == TOKEN_STATE_INITIALIZED
+        || (allow_frozen && data[TOKEN_STATE] == TOKEN_STATE_FROZEN);
+    if data[TOKEN_MINT] != mint[..]
+        || data[TOKEN_AUTHORITY] != wallet[..]
+        || !state_ok
+        || data[TOKEN_DELEGATE_TAG] != COPTION_NONE
+    {
+        return None;
+    }
+    let close_authority_tag = &data[TOKEN_CLOSE_AUTHORITY_TAG];
+    let close_authority_ok = close_authority_tag == COPTION_NONE
+        || (close_authority_tag == COPTION_SOME && data[TOKEN_CLOSE_AUTHORITY] == wallet[..]);
+    if !close_authority_ok {
+        return None;
+    }
+    Some(u64::from_le_bytes(
+        data[TOKEN_AMOUNT].try_into().expect("fixed-size field"),
+    ))
+}
+
+const MINT_BASE_LEN: usize = 82;
+const TOKEN_2022_ACCOUNT_TYPE_MINT: u8 = 1;
+const EXTENSION_PERMANENT_DELEGATE: u16 = 12;
+
+/// Rejects Token-2022 mints whose extensions let a third party move tokens out
+/// of any holder's account. A permanent delegate can debit a locked account
+/// without the wallet's signature, so a lock on such a mint guarantees nothing.
+pub(crate) fn check_lockable_mint(
+    asset_account: &AccountInfo,
+    mint_account: Option<&AccountInfo>,
+    mint: &[u8; 32],
+) -> Result<(), ProgramError> {
+    if asset_account.owner() != &SPL_TOKEN_2022_ID {
+        return Ok(());
+    }
+    let mint_account = mint_account.ok_or(SwigError::InvalidAuthorizationLockAsset)?;
+    if mint_account.key() != mint || mint_account.owner() != &SPL_TOKEN_2022_ID {
+        return Err(SwigError::InvalidAuthorizationLockAsset.into());
+    }
+    let data = unsafe { mint_account.borrow_data_unchecked() };
+    if data.len() == MINT_BASE_LEN {
+        return Ok(());
+    }
+    if data.len() <= TOKEN_2022_ACCOUNT_TYPE_INDEX
+        || data[TOKEN_2022_ACCOUNT_TYPE_INDEX] != TOKEN_2022_ACCOUNT_TYPE_MINT
+    {
+        return Err(SwigError::InvalidAuthorizationLockAsset.into());
+    }
+    let mut cursor = TOKEN_2022_ACCOUNT_TYPE_INDEX + 1;
+    while cursor + 4 <= data.len() {
+        let extension = u16::from_le_bytes([data[cursor], data[cursor + 1]]);
+        let len = u16::from_le_bytes([data[cursor + 2], data[cursor + 3]]) as usize;
+        if extension == EXTENSION_PERMANENT_DELEGATE {
+            return Err(SwigError::InvalidAuthorizationLockAsset.into());
+        }
+        if extension == 0 {
+            break;
+        }
+        cursor = cursor
+            .checked_add(4 + len)
+            .ok_or(SwigError::InvalidAuthorizationLockAsset)?;
+    }
+    Ok(())
+}
+
+/// Returns the most the role could ever spend of `mint` under its limit
+/// actions. A role without any applicable limit has no capacity, so it cannot
+/// reserve an asset it could never capture.
+///
+/// SignV2 charges one general limit (one-shot before recurring) and, when
+/// destination limits exist, requires every debit to also match one, so the
+/// capacity is the smaller of the two. Recurring limits contribute their
+/// per-window allowance.
+pub(crate) fn spend_capacity(actions: &[u8], mint: &[u8; 32]) -> Result<u64, ProgramError> {
+    let native = mint == &authorization_locks::NATIVE_SOL_MINT;
+    let mut one_shot: Option<u64> = None;
+    let mut recurring: Option<u64> = None;
+    let mut destination: Option<u64> = None;
+    let mut cursor = 0usize;
+    while cursor < actions.len() {
+        let header_end = cursor
+            .checked_add(Action::LEN)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        let header = actions
+            .get(cursor..header_end)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        let action = unsafe { Action::load_unchecked(header)? };
+        let data_end = header_end
+            .checked_add(action.length() as usize)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        let data = actions
+            .get(header_end..data_end)
+            .ok_or(ProgramError::InvalidAccountData)?;
+
+        let (kind, amount) = match action.permission()? {
+            Permission::SolLimit if native => (LimitKind::OneShot, load::<SolLimit>(data)?.amount),
+            Permission::SolRecurringLimit if native => (
+                LimitKind::Recurring,
+                load::<SolRecurringLimit>(data)?.recurring_amount,
+            ),
+            Permission::SolDestinationLimit if native => (
+                LimitKind::Destination,
+                load::<SolDestinationLimit>(data)?.amount,
+            ),
+            Permission::SolRecurringDestinationLimit if native => (
+                LimitKind::Destination,
+                load::<SolRecurringDestinationLimit>(data)?.recurring_amount,
+            ),
+            Permission::TokenLimit if !native => {
+                let limit = load::<TokenLimit>(data)?;
+                if &limit.token_mint != mint {
+                    cursor = data_end;
+                    continue;
+                }
+                (LimitKind::OneShot, limit.current_amount)
+            },
+            Permission::TokenRecurringLimit if !native => {
+                let limit = load::<TokenRecurringLimit>(data)?;
+                if &limit.token_mint != mint {
+                    cursor = data_end;
+                    continue;
+                }
+                (LimitKind::Recurring, limit.limit)
+            },
+            Permission::TokenDestinationLimit if !native => {
+                let limit = load::<TokenDestinationLimit>(data)?;
+                if &limit.token_mint != mint {
+                    cursor = data_end;
+                    continue;
+                }
+                (LimitKind::Destination, limit.amount)
+            },
+            Permission::TokenRecurringDestinationLimit if !native => {
+                let limit = load::<TokenRecurringDestinationLimit>(data)?;
+                if &limit.token_mint != mint {
+                    cursor = data_end;
+                    continue;
+                }
+                (LimitKind::Destination, limit.recurring_amount)
+            },
+            _ => {
+                cursor = data_end;
+                continue;
+            },
+        };
+
+        // SignV2 charges the first matching action of each general type.
+        match kind {
+            LimitKind::OneShot => {
+                one_shot.get_or_insert(amount);
+            },
+            LimitKind::Recurring => {
+                recurring.get_or_insert(amount);
+            },
+            LimitKind::Destination => {
+                destination = Some(destination.unwrap_or(0).saturating_add(amount));
+            },
+        }
+        cursor = data_end;
+    }
+
+    Ok(match (one_shot.or(recurring), destination) {
+        (Some(g), Some(d)) => g.min(d),
+        (Some(g), None) => g,
+        (None, Some(d)) => d,
+        (None, None) => 0,
+    })
+}
+
+enum LimitKind {
+    OneShot,
+    Recurring,
+    Destination,
+}
+
+fn load<T: Transmutable>(data: &[u8]) -> Result<&T, ProgramError> {
+    if data.len() != T::LEN {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    unsafe { T::load_unchecked(data) }
+}
+
+/// Sums active lock amounts matching `filter`.
+pub(crate) fn sum_active<F>(
+    locks: impl Iterator<Item = AuthorizationLock>,
+    slot: u64,
+    filter: F,
+) -> Result<u64, ProgramError>
+where
+    F: Fn(&AuthorizationLock) -> bool,
+{
+    let mut total = 0u64;
+    for lock in locks.filter(|lock| lock.is_active(slot) && filter(lock)) {
+        total = total
+            .checked_add(lock.amount)
+            .ok_or(ProgramError::ArithmeticOverflow)?;
+    }
+    Ok(total)
+}
+
+struct GuardedAccount {
+    index: usize,
+    native: bool,
+    mint: [u8; 32],
+    reserved: u64,
+    before: u64,
+}
+
+/// Pre-CPI snapshot of every writable account that carries an active lock.
+pub(crate) struct LockGuard {
+    accounts: Vec<GuardedAccount>,
+}
+
+impl LockGuard {
+    /// Captures the locked accounts present and writable in this transaction.
+    /// Read-only and absent accounts cannot change, so they need no check.
+    #[inline(never)]
+    pub(crate) fn capture(
+        tail: &[u8],
+        all_accounts: &[AccountInfo],
+        wallet: &AccountInfo,
+        slot: u64,
+    ) -> Result<Option<Self>, ProgramError> {
+        let Some(entry) = authorization_locks::read(tail)? else {
+            return Ok(None);
+        };
+        let mut accounts: Vec<GuardedAccount> = Vec::new();
+        for lock in entry.iter().filter(|lock| lock.is_active(slot)) {
+            if let Some(guarded) = accounts
+                .iter_mut()
+                .find(|g| all_accounts[g.index].key() == &lock.asset_account)
+            {
+                guarded.reserved = guarded
+                    .reserved
+                    .checked_add(lock.amount)
+                    .ok_or(ProgramError::ArithmeticOverflow)?;
+                continue;
+            }
+            let Some(index) = all_accounts
+                .iter()
+                .position(|account| account.key() == &lock.asset_account)
+            else {
+                continue;
+            };
+            if !all_accounts[index].is_writable() {
+                continue;
+            }
+            let native = lock.is_native_sol();
+            let before = Self::balance(&all_accounts[index], native, &lock.mint, wallet)?;
+            accounts.push(GuardedAccount {
+                index,
+                native,
+                mint: lock.mint,
+                reserved: lock.amount,
+                before,
+            });
+        }
+        if accounts.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(Self { accounts }))
+    }
+
+    /// Verifies that no locked account lost reserved funds or its identity.
+    #[inline(never)]
+    pub(crate) fn validate(
+        &self,
+        all_accounts: &[AccountInfo],
+        wallet: &AccountInfo,
+    ) -> Result<(), ProgramError> {
+        for guarded in &self.accounts {
+            let after = Self::balance(
+                &all_accounts[guarded.index],
+                guarded.native,
+                &guarded.mint,
+                wallet,
+            )?;
+            if after < guarded.before.min(guarded.reserved) {
+                return Err(SwigError::AuthorizationLockViolated.into());
+            }
+        }
+        Ok(())
+    }
+
+    fn balance(
+        account: &AccountInfo,
+        native: bool,
+        mint: &[u8; 32],
+        wallet: &AccountInfo,
+    ) -> Result<u64, ProgramError> {
+        if native {
+            if account.key() != wallet.key() {
+                return Err(SwigError::AuthorizationLockViolated.into());
+            }
+            return lockable_lamports(account);
+        }
+        lockable_token_balance(account, mint, wallet.key(), true)
+            .ok_or_else(|| SwigError::AuthorizationLockViolated.into())
+    }
+}

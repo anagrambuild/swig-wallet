@@ -139,6 +139,10 @@ pub enum SwigStateError {
     DuplicateNonRepeatableAction,
     /// Config seed prefix tail entry is malformed, duplicated, or unsupported.
     InvalidSeedPrefix,
+    /// The authorization-lock tail entry is malformed.
+    InvalidAuthorizationLockLayout,
+    /// The wallet already stores the maximum number of authorization locks.
+    AuthorizationLockLimitReached,
 }
 
 /// Error types related to authentication operations.

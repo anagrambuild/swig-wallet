@@ -5,6 +5,7 @@ use swig_state::{
         all::All,
         all_but_manage_authority::AllButManageAuthority,
         manage_authority::ManageAuthority,
+        manage_authorization_locks::ManageAuthorizationLocks,
         program::Program,
         program_all::ProgramAll,
         program_curated::ProgramCurated,
@@ -68,6 +69,11 @@ pub enum Permission {
     /// Permission to replace one role's signer without changing its
     /// permissions.
     ReplaceAuthority { role_id: u32 },
+
+    /// Permission to place authorization locks (holds) on wallet assets, up to
+    /// this role's own spending limits for each asset and for at most
+    /// `max_duration_slots`, and to release its own locks.
+    ManageAuthorizationLocks { max_duration_slots: u64 },
 
     /// Permission to interact with specific tokens. Can be configured with
     /// either a fixed limit or a recurring limit that resets after a
@@ -211,6 +217,11 @@ impl Permission {
                     actions.push(ClientAction::ReplaceAuthority(ReplaceAuthority::new(
                         role_id,
                     )));
+                },
+                Permission::ManageAuthorizationLocks { max_duration_slots } => {
+                    actions.push(ClientAction::ManageAuthorizationLocks(
+                        ManageAuthorizationLocks::new(max_duration_slots),
+                    ));
                 },
                 Permission::Token {
                     mint,
@@ -424,6 +435,15 @@ impl Permission {
         {
             permissions.push(Permission::ReplaceAuthority {
                 role_id: action.role_id,
+            });
+        }
+
+        if let Some(action) =
+            swig_state::role::Role::get_action::<ManageAuthorizationLocks>(role, &[])
+                .map_err(|_| SwigError::InvalidSwigData)?
+        {
+            permissions.push(Permission::ManageAuthorizationLocks {
+                max_duration_slots: action.max_duration_slots,
             });
         }
 
@@ -679,6 +699,7 @@ impl Permission {
             Permission::All => 7,
             Permission::ManageAuthority => 8,
             Permission::ReplaceAuthority { role_id: _ } => 21,
+            Permission::ManageAuthorizationLocks { .. } => 27,
             Permission::Sol {
                 amount: _,
                 recurring,
