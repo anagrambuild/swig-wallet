@@ -16,7 +16,7 @@ use swig_state::{
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::Swig,
-    tail::{active_sub_account_count, rent_claimer, SavedTail},
+    tail::{active_sub_account_count, authorization_locks, rent_claimer, SavedTail},
     Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut,
 };
 
@@ -789,6 +789,27 @@ pub fn update_authority_v1(
             && update_authority_v1.args.acting_role_id != 0
         {
             return Err(SwigAuthenticateError::PermissionDeniedCannotUpdateRootAuthority.into());
+        }
+
+        // A role holding an active authorization lock must keep the permissions
+        // and signer it needs to capture the reservation. Stripping only its
+        // ManageAuthorizationLocks action is allowed, so a delegate cannot make
+        // itself irrevocable by continually renewing locks; existing locks
+        // still run to expiry and the creator can still release them.
+        let revokes_only_lock_permission =
+            matches!(operation, AuthorityUpdateOperation::RemoveActionsByType)
+                && update_authority_v1.get_remove_types()?
+                    == [swig_state::action::Permission::ManageAuthorizationLocks as u8];
+        if update_authority_v1.args.authority_to_update_id
+            != update_authority_v1.args.acting_role_id
+            && !revokes_only_lock_permission
+            && authorization_locks::role_has_active_locks(
+                parts.tail,
+                update_authority_v1.args.authority_to_update_id,
+                slot,
+            )?
+        {
+            return Err(SwigError::AuthorizationLockActive.into());
         }
 
         // Verify the authority to update exists and calculate offsets.

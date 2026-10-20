@@ -45,6 +45,7 @@ use swig_state::{
 };
 
 use crate::{
+    authorization_lock::LockGuard,
     error::SwigError,
     instruction::{
         accounts::{Context, SignV2Accounts},
@@ -262,6 +263,7 @@ pub fn sign_v2(
     let parts = Swig::split_parts_mut(swig_account_data)?;
     let swig = parts.state;
     let swig_roles = parts.roles;
+    let swig_tail: &[u8] = parts.tail;
     // The generic account classifier already identified account 0 as Swig config.
     // Keep this hot-path discriminator check as a local unsafe-read precondition.
     let Some(role) = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)? else {
@@ -284,6 +286,18 @@ pub fn sign_v2(
             slot,
         )?;
     }
+    // Authorization locks bind every role, so capture locked balances before
+    // any CPI on both the unrestricted and the limited paths.
+    let lock_guard = if swig_tail.is_empty() {
+        None
+    } else {
+        LockGuard::capture(
+            swig_tail,
+            all_accounts,
+            ctx.accounts.swig_wallet_address,
+            slot,
+        )?
+    };
     // Intentionally no restricted keys: SignV2 forwards existing outer signer
     // bits in compact CPI metas in addition to the Swig wallet PDA signer.
     let mut isolation = IsolationGuard::new(all_accounts);
@@ -335,6 +349,9 @@ pub fn sign_v2(
         }
 
         isolation.validate()?;
+        if let Some(lock_guard) = &lock_guard {
+            lock_guard.validate(all_accounts, ctx.accounts.swig_wallet_address)?;
+        }
 
         return Ok(());
     }
@@ -957,6 +974,9 @@ pub fn sign_v2(
     }
 
     isolation.validate()?;
+    if let Some(lock_guard) = &lock_guard {
+        lock_guard.validate(all_accounts, ctx.accounts.swig_wallet_address)?;
+    }
     Ok(())
 }
 

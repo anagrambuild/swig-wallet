@@ -136,6 +136,10 @@ pub enum SwigStateError {
     /// A role may not hold the same non-repeatable permission type more than
     /// once.
     DuplicateNonRepeatableAction,
+    /// The authorization-lock tail entry is malformed.
+    InvalidAuthorizationLockLayout,
+    /// The wallet already stores the maximum number of authorization locks.
+    AuthorizationLockLimitReached,
 }
 
 /// Error types related to authentication operations.
