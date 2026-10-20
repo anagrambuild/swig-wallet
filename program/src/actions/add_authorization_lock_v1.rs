@@ -29,7 +29,8 @@ use swig_state::{
 
 use crate::{
     authorization_lock::{
-        check_lockable_mint, lockable_lamports, lockable_token_balance, spend_capacity, sum_active,
+        check_lockable_mint, lockable_lamports, lockable_token_balance, remaining_spend_capacity,
+        sum_active,
     },
     error::SwigError,
     instruction::{
@@ -193,7 +194,8 @@ pub fn add_authorization_lock_v1(
             let reserved_with_new = role_reserved
                 .checked_add(args.amount)
                 .ok_or(ProgramError::ArithmeticOverflow)?;
-            if reserved_with_new > spend_capacity(acting_role.actions, &args.mint)? {
+            if reserved_with_new > remaining_spend_capacity(acting_role.actions, &args.mint, slot)?
+            {
                 return Err(SwigError::AuthorizationLockExceedsSpendLimit.into());
             }
         }

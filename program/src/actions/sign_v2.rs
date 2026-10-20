@@ -45,7 +45,7 @@ use swig_state::{
 };
 
 use crate::{
-    authorization_lock::LockGuard,
+    authorization_lock::{check_role_locks_within_limits, LockGuard},
     error::SwigError,
     instruction::{
         accounts::{Context, SignV2Accounts},
@@ -971,6 +971,12 @@ pub fn sign_v2(
 
     if check_wallet_shape {
         assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
+    }
+
+    // The acting role's limits back its own reservations, so after charging
+    // this transaction's spending they must still cover its active locks.
+    if !swig_tail.is_empty() {
+        check_role_locks_within_limits(swig_tail, sign_v2.args.role_id, actions, slot)?;
     }
 
     isolation.validate()?;
