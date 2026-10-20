@@ -104,7 +104,7 @@ jobs:
         if: inputs.phase == 'submit' && inputs.cluster == 'mainnet'
         run: |
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --prerelease=false --notes-file verification/verified-release.md
+            --prerelease=false --latest --notes-file verification/verified-release.md
           cat verification/verified-release.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preserve verification evidence
