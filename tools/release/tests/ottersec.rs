@@ -73,6 +73,13 @@ fn remote_success_requires_exact_signer_source_and_both_hashes() -> Result<()> {
         &manifest,
     )?;
     assert_eq!(matched.signer, Some(authority));
+    let program = solana_sdk::pubkey!("swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB");
+    let notes = matched.release_notes(program);
+    assert!(notes.contains(
+        "[OtterSec verification](https://verify.osec.io/status-all/swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB)"
+    ));
+    assert!(notes.contains(&format!("[{}]({})", manifest.commit, matched.repo_url)));
+    assert!(notes.contains(&format!("Executable hash: `{}`", manifest.executable_hash)));
     assert!(decode_attestation(
         200,
         &serde_json::to_vec(&vec![unsigned.clone()])?,

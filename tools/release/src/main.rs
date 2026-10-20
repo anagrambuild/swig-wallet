@@ -172,10 +172,10 @@ async fn main() -> Result<()> {
                 &directory,
             )
             .await?;
-            println!(
-                "OtterSec verified {}: {}",
-                attestation.commit, attestation.executable_hash
-            );
+            let notes = attestation.release_notes(program);
+            fs::write(directory.join("verified-release.md"), &notes)
+                .context("OtterSec verified the release, but could not save the release notes")?;
+            print!("{notes}");
         },
         Command::Check {
             binary,

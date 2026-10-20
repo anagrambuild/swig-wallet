@@ -32,6 +32,8 @@ jobs:
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    permissions:
+      contents: write
     environment: ${{ inputs.cluster == 'mainnet' && 'swig-upgrade' || 'swig-upgrade-devnet' }}
     env:
       GH_TOKEN: ${{ github.token }}
@@ -98,6 +100,13 @@ jobs:
           fi
           echo "Release $RELEASE_TAG: $PHASE completed on $CLUSTER." >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Promote the verified mainnet release
+        if: inputs.phase == 'submit' && inputs.cluster == 'mainnet'
+        run: |
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --prerelease=false --notes-file verification/verified-release.md
+          cat verification/verified-release.md >> "$GITHUB_STEP_SUMMARY"
+
       - name: Preserve verification evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -107,5 +116,6 @@ jobs:
             verification/*.json
             verification/*.log
             verification/*.txt
+            verification/*.md
           if-no-files-found: ignore
           retention-days: 90
