@@ -2124,3 +2124,74 @@ fn other_roles_limits_are_independent_of_a_creators_locks() {
     // applies to it.
     ok(w.spend_sol(&spender, 2, LAMPORTS_PER_SOL));
 }
+
+#[test]
+fn spend_capacity_composes_general_and_destination_pairs() {
+    // A general 100 SOL limit together with a destination pair (10 SOL
+    // one-shot + 1 SOL/window recurring to A) and a 5 SOL one-shot to B:
+    // the reservation can never exceed what a transaction can spend, so
+    // total capacity is min(100, min(10, 1) + 5) = 6 SOL.
+    let a = Keypair::new().pubkey();
+    let b = Keypair::new().pubkey();
+    let mut w = Wallet::with_card_actions(vec![
+        ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(MAX_DURATION)),
+        ClientAction::SolLimit(SolLimit {
+            amount: 100 * LAMPORTS_PER_SOL,
+        }),
+        ClientAction::SolRecurringDestinationLimit(SolRecurringDestinationLimit {
+            destination: a.to_bytes(),
+            recurring_amount: LAMPORTS_PER_SOL,
+            window: 100,
+            last_reset: 0,
+            current_amount: LAMPORTS_PER_SOL,
+        }),
+        ClientAction::SolDestinationLimit(SolDestinationLimit {
+            destination: a.to_bytes(),
+            amount: 10 * LAMPORTS_PER_SOL,
+        }),
+        ClientAction::SolDestinationLimit(SolDestinationLimit {
+            destination: b.to_bytes(),
+            amount: 5 * LAMPORTS_PER_SOL,
+        }),
+    ]);
+    let card = w.card.insecure_clone();
+    let expiry = w.slot() + 100;
+    ok(w.add_sol_lock(&card, CARD_ROLE, 6 * LAMPORTS_PER_SOL, expiry));
+    assert_swig_error(
+        w.add_sol_lock(&card, CARD_ROLE, LAMPORTS_PER_SOL, expiry),
+        SwigError::AuthorizationLockExceedsSpendLimit,
+    );
+
+    // A general recurring half tightens it further: min(100, 3 SOL window)
+    // general capacity with a 1/window pair to A gives min(3, 1) = 1 SOL.
+    let mut w = Wallet::with_card_actions(vec![
+        ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(MAX_DURATION)),
+        ClientAction::SolLimit(SolLimit {
+            amount: 100 * LAMPORTS_PER_SOL,
+        }),
+        ClientAction::SolRecurringLimit(SolRecurringLimit {
+            recurring_amount: 3 * LAMPORTS_PER_SOL,
+            window: 100,
+            last_reset: 0,
+            current_amount: 3 * LAMPORTS_PER_SOL,
+        }),
+        ClientAction::SolRecurringDestinationLimit(SolRecurringDestinationLimit {
+            destination: a.to_bytes(),
+            recurring_amount: LAMPORTS_PER_SOL,
+            window: 100,
+            last_reset: 0,
+            current_amount: LAMPORTS_PER_SOL,
+        }),
+        ClientAction::SolDestinationLimit(SolDestinationLimit {
+            destination: a.to_bytes(),
+            amount: 10 * LAMPORTS_PER_SOL,
+        }),
+    ]);
+    let card = w.card.insecure_clone();
+    let expiry = w.slot() + 100;
+    ok(w.add_sol_lock(&card, CARD_ROLE, LAMPORTS_PER_SOL, expiry));
+    assert_swig_error(
+        w.add_sol_lock(&card, CARD_ROLE, 2 * LAMPORTS_PER_SOL, expiry),
+        SwigError::AuthorizationLockExceedsSpendLimit,
+    );
+}
