@@ -229,6 +229,7 @@ pub fn add_authority_v1(
             reject_root_recovery_grants(add_authority_v1.actions)?;
         }
         ActionLoader::validate_v2_actions(add_authority_v1.actions, swig.sub_account_counter)?;
+        ActionLoader::validate_destination_limit_duplicates(add_authority_v1.actions)?;
         let new_authority_length = authority_type_to_length(&new_authority_type)?;
         let role_size = Position::LEN + new_authority_length + add_authority_v1.actions.len();
 
