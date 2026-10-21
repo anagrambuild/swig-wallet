@@ -356,7 +356,7 @@ fn rejects_malformed_instruction_data() {
     }
 
     let mut unknown = pro_ix(&context, id);
-    unknown.data[..2].copy_from_slice(&1u16.to_le_bytes());
+    unknown.data[..2].copy_from_slice(&2u16.to_le_bytes());
     assert_instruction_error(
         send(&mut context, unknown),
         InstructionError::InvalidInstructionData,
