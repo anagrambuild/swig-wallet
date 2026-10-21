@@ -297,6 +297,7 @@ fn perform_replace_all_operation(
     // through here after concatenating existing + new actions, so both mutation
     // paths are covered by this single check.
     ActionLoader::validate_v2_actions(new_actions, sub_account_counter)?;
+    ActionLoader::validate_destination_limit_duplicates(new_actions)?;
 
     let new_actions_size = new_actions.len();
     let size_diff = new_actions_size as i64 - current_actions_size as i64;

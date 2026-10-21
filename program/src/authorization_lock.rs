@@ -164,7 +164,7 @@ pub(crate) fn remaining_spend_capacity(
     let native = mint == &authorization_locks::NATIVE_SOL_MINT;
     let mut one_shot: Option<u64> = None;
     let mut recurring: Option<u64> = None;
-    let mut destination: Option<u64> = None;
+    let mut destination_groups: Vec<(DestinationKey, DestinationPair)> = Vec::new();
     let mut cursor = 0usize;
     while cursor < actions.len() {
         let header_end = cursor
@@ -181,8 +181,10 @@ pub(crate) fn remaining_spend_capacity(
             .get(header_end..data_end)
             .ok_or(ProgramError::InvalidAccountData)?;
 
-        let (kind, amount) = match action.permission()? {
-            Permission::SolLimit if native => (LimitKind::OneShot, load::<SolLimit>(data)?.amount),
+        let (kind, amount, destination_key) = match action.permission()? {
+            Permission::SolLimit if native => {
+                (LimitKind::OneShot, load::<SolLimit>(data)?.amount, None)
+            },
             Permission::SolRecurringLimit if native => {
                 let limit = load::<SolRecurringLimit>(data)?;
                 (
@@ -194,12 +196,17 @@ pub(crate) fn remaining_spend_capacity(
                         limit.current_amount,
                         slot,
                     ),
+                    None,
                 )
             },
-            Permission::SolDestinationLimit if native => (
-                LimitKind::Destination,
-                load::<SolDestinationLimit>(data)?.amount,
-            ),
+            Permission::SolDestinationLimit if native => {
+                let limit = load::<SolDestinationLimit>(data)?;
+                (
+                    LimitKind::Destination,
+                    limit.amount,
+                    Some(DestinationKey::Sol(limit.destination)),
+                )
+            },
             Permission::SolRecurringDestinationLimit if native => {
                 let limit = load::<SolRecurringDestinationLimit>(data)?;
                 (
@@ -211,6 +218,7 @@ pub(crate) fn remaining_spend_capacity(
                         limit.current_amount,
                         slot,
                     ),
+                    Some(DestinationKey::Sol(limit.destination)),
                 )
             },
             Permission::TokenLimit if !native => {
@@ -219,7 +227,7 @@ pub(crate) fn remaining_spend_capacity(
                     cursor = data_end;
                     continue;
                 }
-                (LimitKind::OneShot, limit.current_amount)
+                (LimitKind::OneShot, limit.current_amount, None)
             },
             Permission::TokenRecurringLimit if !native => {
                 let limit = load::<TokenRecurringLimit>(data)?;
@@ -236,6 +244,7 @@ pub(crate) fn remaining_spend_capacity(
                         limit.current,
                         slot,
                     ),
+                    None,
                 )
             },
             Permission::TokenDestinationLimit if !native => {
@@ -244,7 +253,14 @@ pub(crate) fn remaining_spend_capacity(
                     cursor = data_end;
                     continue;
                 }
-                (LimitKind::Destination, limit.amount)
+                (
+                    LimitKind::Destination,
+                    limit.amount,
+                    Some(DestinationKey::Token {
+                        mint: limit.token_mint,
+                        destination: limit.destination,
+                    }),
+                )
             },
             Permission::TokenRecurringDestinationLimit if !native => {
                 let limit = load::<TokenRecurringDestinationLimit>(data)?;
@@ -261,6 +277,10 @@ pub(crate) fn remaining_spend_capacity(
                         limit.current_amount,
                         slot,
                     ),
+                    Some(DestinationKey::Token {
+                        mint: limit.token_mint,
+                        destination: limit.destination,
+                    }),
                 )
             },
             _ => {
@@ -269,22 +289,85 @@ pub(crate) fn remaining_spend_capacity(
             },
         };
 
-        // SignV2 charges the first matching action of each general type.
-        match kind {
-            LimitKind::OneShot => {
+        // SignV2 charges the first matching action of each general type. For
+        // destination limits it charges the first regular and first recurring
+        // action matching the same destination key, so a debit must fit within
+        // whichever of the two types is present, and a pair's debit drains
+        // both ledgers.
+        match (kind, destination_key) {
+            (LimitKind::OneShot, _) => {
                 one_shot.get_or_insert(amount);
             },
-            LimitKind::Recurring => {
+            (LimitKind::Recurring, _) => {
                 recurring.get_or_insert(amount);
             },
-            LimitKind::Destination => {
-                destination = Some(destination.unwrap_or(0).saturating_add(amount));
+            (LimitKind::Destination, Some(key)) => {
+                let is_recurring_limit = matches!(
+                    action.permission()?,
+                    Permission::SolRecurringDestinationLimit
+                        | Permission::TokenRecurringDestinationLimit
+                );
+                match destination_groups
+                    .iter_mut()
+                    .find(|(existing, ..)| existing == &key)
+                {
+                    Some((_, group)) => {
+                        if is_recurring_limit {
+                            group.recurring.get_or_insert(amount);
+                        } else {
+                            group.one_shot.get_or_insert(amount);
+                        }
+                    },
+                    None => destination_groups.push((
+                        key,
+                        DestinationPair {
+                            one_shot: if is_recurring_limit {
+                                None
+                            } else {
+                                Some(amount)
+                            },
+                            recurring: if is_recurring_limit {
+                                Some(amount)
+                            } else {
+                                None
+                            },
+                        },
+                    )),
+                }
             },
+            (LimitKind::Destination, None) => unreachable!(),
         }
         cursor = data_end;
     }
 
-    Ok(match (one_shot.or(recurring), destination) {
+    // Per destination key, the debit must fit within both present limit types,
+    // so a pair's window capacity is whichever twin is smaller; defaulting the
+    // absent twin to u64::MAX keeps that minimum equal to whichever exists.
+    let destination = if destination_groups.is_empty() {
+        None
+    } else {
+        Some(
+            destination_groups
+                .iter()
+                .map(|(_, group)| {
+                    group
+                        .one_shot
+                        .unwrap_or(u64::MAX)
+                        .min(group.recurring.unwrap_or(u64::MAX))
+                })
+                .fold(0u64, |total, cap| total.saturating_add(cap)),
+        )
+    };
+
+    // A general one-shot and a general recurring limit for the same mint are
+    // also a pair: SignV2 charges both, so the general window capacity is
+    // whichever twin is smaller (defaulting the absent twin to u64::MAX).
+    let general = match (one_shot, recurring) {
+        (Some(one), Some(recur)) => Some(one.min(recur)),
+        (one, recur) => one.or(recur),
+    };
+
+    Ok(match (general, destination) {
         (Some(g), Some(d)) => g.min(d),
         (Some(g), None) => g,
         (None, Some(d)) => d,
@@ -342,6 +425,27 @@ enum LimitKind {
     OneShot,
     Recurring,
     Destination,
+}
+
+/// Identifies the destination a destination-limit action reserves capacity
+/// for: the destination pubkey for SOL limits, or the mint + destination
+/// token account pair for token limits. Keys are only compared within one
+/// capacity call, which is scoped to a single mint (native or one token), so
+/// a collision between the two families cannot happen.
+#[derive(PartialEq)]
+enum DestinationKey {
+    Sol([u8; 32]),
+    Token {
+        mint: [u8; 32],
+        destination: [u8; 32],
+    },
+}
+
+/// The first regular (one-shot) and recurring destination-limit amounts for
+/// one destination key, mirroring which actions SignV2 charges.
+struct DestinationPair {
+    one_shot: Option<u64>,
+    recurring: Option<u64>,
 }
 
 fn load<T: Transmutable>(data: &[u8]) -> Result<&T, ProgramError> {

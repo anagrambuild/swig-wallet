@@ -48,8 +48,8 @@ fn compare_sign_v2_role_compute_units() {
         ("All", all, 3_618),
         ("SOL limit", sol_limit, 5_116),
         ("SOL destination limit", sol_limit_destination, 5_834),
-        ("Token limit", token_limit, 6_281),
-        ("Token destination limit", token_limit_destination, 7_199),
+        ("Token limit", token_limit, 6_287),
+        ("Token destination limit", token_limit_destination, 7_218),
     ] {
         assert!(
             actual <= baseline,

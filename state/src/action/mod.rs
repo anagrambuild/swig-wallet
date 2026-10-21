@@ -410,6 +410,66 @@ impl ActionLoader {
         Ok(())
     }
 
+    /// Enforces one destination-limit action per `(destination, mint)` key for
+    /// each destination-limit type on a role.
+    ///
+    /// SignV2 charges a debit to `swig_wallet_address` against exactly one
+    /// matching destination limit — the first
+    /// `SolRecurringDestinationLimit`/`TokenRecurringDestinationLimit` for that
+    /// destination, else the first `SolDestinationLimit`/`TokenDestinationLimit`.
+    /// A second same-type action for the same key is never charged, while the
+    /// lock reservation capacity sums the role's destination limits, so an
+    /// unvalidated duplicate lets a role reserve more than any transaction can
+    /// move and keep a paired one-shot limit inert. Cross-type pairs for the
+    /// same key are allowed: the recurring allowance functions as the per-window
+    /// budget and the one-shot amount as the total budget.
+    ///
+    /// `actions_data` is walked sequentially by `[header][data]`.
+    pub fn validate_destination_limit_duplicates(actions_data: &[u8]) -> Result<(), ProgramError> {
+        const MAX_KEY_LEN: usize = 4 + 32 + 32;
+        let mut keys: alloc::vec::Vec<(usize, [u8; MAX_KEY_LEN])> = alloc::vec::Vec::new();
+        let mut cursor = 0;
+        while cursor + Action::LEN <= actions_data.len() {
+            let header =
+                unsafe { Action::load_unchecked(&actions_data[cursor..cursor + Action::LEN])? };
+            let data_start = cursor + Action::LEN;
+            let data_end = data_start
+                .checked_add(header.length() as usize)
+                .ok_or(ProgramError::InvalidInstructionData)?;
+            if data_end > actions_data.len() {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let data = &actions_data[data_start..data_end];
+            let (is_destination_limit, minted) = match header.permission()? {
+                Permission::SolDestinationLimit | Permission::SolRecurringDestinationLimit => {
+                    (true, false)
+                },
+                Permission::TokenDestinationLimit | Permission::TokenRecurringDestinationLimit => {
+                    (true, true)
+                },
+                _ => (false, false),
+            };
+            if is_destination_limit {
+                let key_len = if minted { 64 } else { 32 };
+                if data.len() < key_len {
+                    return Err(ProgramError::InvalidInstructionData);
+                }
+                let mut key = [0u8; MAX_KEY_LEN];
+                key[..4].copy_from_slice(&(header.permission()? as u32).to_le_bytes());
+                key[4..4 + key_len].copy_from_slice(&data[..key_len]);
+                keys.push((4 + key_len, key));
+            }
+            cursor = data_end;
+        }
+        keys.sort_unstable();
+        for pair in keys.windows(2) {
+            if pair[0] == pair[1] {
+                return Err(SwigStateError::DuplicateDestinationLimit.into());
+            }
+        }
+        Ok(())
+    }
+
     /// Finds an action of a specific type in the provided bytes.
     pub fn find_action<'a, T: Actionable<'a>>(
         bytes: &'a [u8],
