@@ -347,8 +347,19 @@ fn sign_v2_compute_for_global_and_two_destination_pairs() {
             window: SOL,
         })
     };
-    let cu =
-        |m: &mut Matrix, transfers: &[(Pubkey, u64)]| ok(m.sign(transfers)).compute_units_consumed;
+    // SignV2's own consumption, from its "consumed X of Y" log line. This
+    // excludes the ComputeBudget instruction, like `sign_v2_cu_comparison`,
+    // which sends SignV2 alone.
+    let cu = |m: &mut Matrix, transfers: &[(Pubkey, u64)]| {
+        let meta = ok(m.sign(transfers));
+        let prefix = format!("Program {} consumed ", Pubkey::from(swig::ID));
+        meta.logs
+            .iter()
+            .find_map(|log| log.strip_prefix(&prefix))
+            .and_then(|rest| rest.split(' ').next())
+            .and_then(|units| units.parse::<u64>().ok())
+            .expect("SignV2 compute log")
+    };
     let amount = SOL / 10;
 
     let mut global_only = setup(Some(10 * SOL), None, None);
