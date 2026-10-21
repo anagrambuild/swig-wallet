@@ -16,9 +16,9 @@ use swig_assertions::check_self_owned;
 use swig_state::{
     action::{
         all::All, all_but_manage_authority::AllButManageAuthority,
-        close_swig_authority::CloseSwigAuthority, manage_authority::ManageAuthority,
-        token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
-        token_recurring_destination_limit::TokenRecurringDestinationLimit,
+        close_swig_authority::CloseSwigAuthority, close_token_account::CloseTokenAccount,
+        manage_authority::ManageAuthority, token_destination_limit::TokenDestinationLimit,
+        token_limit::TokenLimit, token_recurring_destination_limit::TokenRecurringDestinationLimit,
         token_recurring_limit::TokenRecurringLimit,
     },
     role::RoleMut,
@@ -160,7 +160,8 @@ pub fn close_token_account_v1(
     let has_all_but_manage =
         RoleMut::get_action_mut::<AllButManageAuthority>(role.actions, &[])?.is_some();
     let has_manage = RoleMut::get_action_mut::<ManageAuthority>(role.actions, &[])?.is_some();
-    let has_close = RoleMut::get_action_mut::<CloseSwigAuthority>(role.actions, &[])?.is_some();
+    let has_close = RoleMut::get_action_mut::<CloseSwigAuthority>(role.actions, &[])?.is_some()
+        || RoleMut::get_action_mut::<CloseTokenAccount>(role.actions, &[])?.is_some();
     if !has_all && !has_all_but_manage && !has_manage && !has_close {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
