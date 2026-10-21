@@ -1,0 +1,19 @@
+[package]
+name = "developer-account-registry-interface"
+version.workspace = true
+edition = "2021"
+license = "AGPL-3.0"
+publish = false
+authors.workspace = true
+documentation.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1.0.75"
+solana-sdk = { version = "4.0.1" }
+solana-system-interface = "3.1.0"
+developer-account-registry = { path = "../developer-account-registry", default-features = false, features = ["no-entrypoint"] }
+developer-account-registry-state = { path = "../developer-account-registry-state" }
+swig-state = { path = "../state" }
