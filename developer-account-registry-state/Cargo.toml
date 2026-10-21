@@ -1,0 +1,16 @@
+[package]
+name = "developer-account-registry-state"
+version.workspace = true
+edition = "2021"
+license = "AGPL-3.0"
+authors.workspace = true
+documentation.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pinocchio = { version = "0.9", features = ["std"] }
+pinocchio-pubkey = { version = "0.3" }
+no-padding = { path = "../no-padding" }
+swig-state = { path = "../state" }
