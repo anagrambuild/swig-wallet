@@ -21,9 +21,7 @@ use swig_state::{
     action::{
         sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
         sol_recurring_destination_limit::SolRecurringDestinationLimit,
-        sol_recurring_limit::SolRecurringLimit, token_destination_limit::TokenDestinationLimit,
-        token_limit::TokenLimit, token_recurring_destination_limit::TokenRecurringDestinationLimit,
-        token_recurring_limit::TokenRecurringLimit, Action, Permission,
+        sol_recurring_limit::SolRecurringLimit, Action, Permission,
     },
     tail::authorization_locks::{self, AuthorizationLock},
     Transmutable,
@@ -152,9 +150,9 @@ pub(crate) fn check_lockable_mint(
 /// limits back its reservations, so it cannot lock more than it may spend nor
 /// spend what it has reserved.
 ///
-/// SignV2 charges one general limit (one-shot before recurring) and, when
-/// destination limits exist, requires every debit to also match one, so the
-/// capacity is the smaller of the two. Recurring limits count what is left in
+/// SignV2 charges both ledgers of every applicable general/destination scope,
+/// including wildcards. Capacity follows those same minimum bounds.
+/// Recurring limits count what is left in
 /// the current window, or the full allowance once SignV2 would reset it.
 pub(crate) fn remaining_spend_capacity(
     actions: &[u8],
@@ -162,6 +160,11 @@ pub(crate) fn remaining_spend_capacity(
     slot: u64,
 ) -> Result<u64, ProgramError> {
     let native = mint == &authorization_locks::NATIVE_SOL_MINT;
+    if !native {
+        return Ok(
+            crate::token_limit_capacity::TokenCapacity::read(actions, slot)?.remaining(mint),
+        );
+    }
     let mut one_shot: Option<u64> = None;
     let mut recurring: Option<u64> = None;
     let mut destination_groups: Vec<(DestinationKey, DestinationPair)> = Vec::new();
@@ -221,68 +224,6 @@ pub(crate) fn remaining_spend_capacity(
                     Some(DestinationKey::Sol(limit.destination)),
                 )
             },
-            Permission::TokenLimit if !native => {
-                let limit = load::<TokenLimit>(data)?;
-                if &limit.token_mint != mint {
-                    cursor = data_end;
-                    continue;
-                }
-                (LimitKind::OneShot, limit.current_amount, None)
-            },
-            Permission::TokenRecurringLimit if !native => {
-                let limit = load::<TokenRecurringLimit>(data)?;
-                if &limit.token_mint != mint {
-                    cursor = data_end;
-                    continue;
-                }
-                (
-                    LimitKind::Recurring,
-                    recurring_remaining(
-                        limit.window,
-                        limit.last_reset,
-                        limit.limit,
-                        limit.current,
-                        slot,
-                    ),
-                    None,
-                )
-            },
-            Permission::TokenDestinationLimit if !native => {
-                let limit = load::<TokenDestinationLimit>(data)?;
-                if &limit.token_mint != mint {
-                    cursor = data_end;
-                    continue;
-                }
-                (
-                    LimitKind::Destination,
-                    limit.amount,
-                    Some(DestinationKey::Token {
-                        mint: limit.token_mint,
-                        destination: limit.destination,
-                    }),
-                )
-            },
-            Permission::TokenRecurringDestinationLimit if !native => {
-                let limit = load::<TokenRecurringDestinationLimit>(data)?;
-                if &limit.token_mint != mint {
-                    cursor = data_end;
-                    continue;
-                }
-                (
-                    LimitKind::Destination,
-                    recurring_remaining(
-                        limit.window,
-                        limit.last_reset,
-                        limit.recurring_amount,
-                        limit.current_amount,
-                        slot,
-                    ),
-                    Some(DestinationKey::Token {
-                        mint: limit.token_mint,
-                        destination: limit.destination,
-                    }),
-                )
-            },
             _ => {
                 cursor = data_end;
                 continue;
@@ -305,7 +246,6 @@ pub(crate) fn remaining_spend_capacity(
                 let is_recurring_limit = matches!(
                     action.permission()?,
                     Permission::SolRecurringDestinationLimit
-                        | Permission::TokenRecurringDestinationLimit
                 );
                 match destination_groups
                     .iter_mut()
@@ -378,7 +318,13 @@ pub(crate) fn remaining_spend_capacity(
 /// Mirrors the recurring limits' `run`: the allowance refreshes once more than
 /// `window` slots have passed since `last_reset`. A zero window never permits
 /// spending.
-fn recurring_remaining(window: u64, last_reset: u64, full: u64, current: u64, slot: u64) -> u64 {
+pub(crate) fn recurring_remaining(
+    window: u64,
+    last_reset: u64,
+    full: u64,
+    current: u64,
+    slot: u64,
+) -> u64 {
     if window == 0 {
         0
     } else if slot.saturating_sub(last_reset) > window {
@@ -402,10 +348,20 @@ pub(crate) fn check_role_locks_within_limits(
     let Some(entry) = authorization_locks::read(tail)? else {
         return Ok(());
     };
+    if entry
+        .iter()
+        .any(|l| l.role_id == role_id && l.is_active(slot) && !l.is_native_sol())
+    {
+        crate::token_limit_capacity::TokenCapacity::read(actions, slot)?.check_reservations(
+            entry
+                .iter()
+                .filter(|l| l.role_id == role_id && l.is_active(slot)),
+        )?;
+    }
     let mut checked: Vec<[u8; 32]> = Vec::new();
     for lock in entry
         .iter()
-        .filter(|lock| lock.role_id == role_id && lock.is_active(slot))
+        .filter(|lock| lock.role_id == role_id && lock.is_active(slot) && lock.is_native_sol())
     {
         if checked.contains(&lock.mint) {
             continue;
@@ -427,18 +383,11 @@ enum LimitKind {
     Destination,
 }
 
-/// Identifies the destination a destination-limit action reserves capacity
-/// for: the destination pubkey for SOL limits, or the mint + destination
-/// token account pair for token limits. Keys are only compared within one
-/// capacity call, which is scoped to a single mint (native or one token), so
-/// a collision between the two families cannot happen.
+/// Identifies a native SOL destination. Token scope capacity is handled by
+/// `TokenCapacity`, which also accounts for overlapping wildcard budgets.
 #[derive(PartialEq)]
 enum DestinationKey {
     Sol([u8; 32]),
-    Token {
-        mint: [u8; 32],
-        destination: [u8; 32],
-    },
 }
 
 /// The first regular (one-shot) and recurring destination-limit amounts for
