@@ -30,7 +30,7 @@ use swig_state::{
         sol_recurring_destination_limit::SolRecurringDestinationLimit,
         sol_recurring_limit::SolRecurringLimit, token_destination_limit::TokenDestinationLimit,
         token_limit::TokenLimit, token_recurring_destination_limit::TokenRecurringDestinationLimit,
-        token_recurring_limit::TokenRecurringLimit,
+        token_recurring_limit::TokenRecurringLimit, wildcard::WILDCARD,
     },
     authority::AuthorityType,
     swig::{swig_account_seeds, swig_wallet_address_seeds, Swig},
@@ -45,6 +45,119 @@ const ROOT_ROLE: u32 = 0;
 const CARD_ROLE: u32 = 1;
 const NATIVE: [u8; 32] = authorization_locks::NATIVE_SOL_MINT;
 const MAX_DURATION: u64 = 1_000;
+
+#[test_log::test]
+fn wildcard_pairs_back_locks_across_mints_and_block_spending_the_shared_reserve() {
+    let mut w = Wallet::with_card_actions(vec![
+        ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(MAX_DURATION)),
+        ClientAction::Program(Program {
+            program_id: spl_token::ID.to_bytes(),
+        }),
+        ClientAction::TokenLimit(TokenLimit {
+            token_mint: WILDCARD,
+            current_amount: 10,
+        }),
+        ClientAction::TokenRecurringLimit(TokenRecurringLimit {
+            token_mint: WILDCARD,
+            window: 1_000,
+            limit: 8,
+            current: 8,
+            last_reset: 0,
+        }),
+    ]);
+    let card = w.card.insecure_clone();
+    let (a, account_a) = w.token_setup(100);
+    let (b, account_b) = w.token_setup(100);
+    let expiry = w.slot() + 100;
+    ok(w.add_lock(&card, CARD_ROLE, account_a, a.to_bytes(), 4, expiry));
+    ok(w.add_lock(&card, CARD_ROLE, account_b, b.to_bytes(), 4, expiry));
+    let denied = w
+        .add_lock(&card, CARD_ROLE, account_b, b.to_bytes(), 1, expiry)
+        .unwrap_err();
+    assert_eq!(
+        denied.err,
+        TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(SwigError::AuthorizationLockExceedsSpendLimit as u32)
+        )
+    );
+
+    // The account balance remains above its lock. It is the *shared allowance*
+    // backing both mint reservations that makes this otherwise-valid spend fail.
+    let before = w.data();
+    let spend = w.token_transfer_ix(&card, CARD_ROLE, &a, &account_a, 1);
+    let denied = w.send(&[spend], &[&card]).unwrap_err();
+    assert_eq!(
+        denied.err,
+        TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(SwigError::AuthorizationLockExceedsSpendLimit as u32)
+        )
+    );
+    assert_eq!(w.data(), before);
+    assert_eq!(w.token_balance(&account_a), 100);
+
+    ok(w.remove_lock(&card, CARD_ROLE, 0));
+    let spend = w.token_transfer_ix(&card, CARD_ROLE, &a, &account_a, 1);
+    ok(w.send(&[spend], &[&card]));
+    ok(w.add_lock(&card, CARD_ROLE, account_a, a.to_bytes(), 3, expiry));
+    assert!(w
+        .add_lock(&card, CARD_ROLE, account_a, a.to_bytes(), 1, expiry)
+        .is_err());
+}
+
+#[test_log::test]
+fn shared_wildcard_destination_pools_back_simultaneous_token_reservations() {
+    let mut w = Wallet::new(100);
+    let (a, account_a) = w.token_setup(100);
+    let (b, account_b) = w.token_setup(100);
+    let (c, account_c) = w.token_setup(100);
+    let issuer = Keypair::new();
+    let x = Pubkey::new_unique().to_bytes();
+    let y = Pubkey::new_unique().to_bytes();
+    let mut actions = vec![ClientAction::ManageAuthorizationLocks(
+        ManageAuthorizationLocks::new(MAX_DURATION),
+    )];
+    for dest in [x, y] {
+        actions.push(ClientAction::TokenDestinationLimit(TokenDestinationLimit {
+            token_mint: WILDCARD,
+            destination: dest,
+            amount: 5,
+        }));
+    }
+    // B can only capture against X; A and C can use either pool. Destination
+    // capacity remains abstract, just as for destination-only roles in #226.
+    actions.push(ClientAction::TokenDestinationLimit(TokenDestinationLimit {
+        token_mint: b.to_bytes(),
+        destination: y,
+        amount: 0,
+    }));
+    add_authority_with_ed25519_root(
+        &mut w.context,
+        &w.swig,
+        &w.root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: issuer.pubkey().as_ref(),
+        },
+        actions,
+    )
+    .unwrap();
+    let expiry = w.slot() + 100;
+    ok(w.add_lock(&issuer, 2, account_a, a.to_bytes(), 5, expiry));
+    // The first reservation may be reassigned from X to Y to make room for B.
+    ok(w.add_lock(&issuer, 2, account_b, b.to_bytes(), 5, expiry));
+    let error = w
+        .add_lock(&issuer, 2, account_c, c.to_bytes(), 1, expiry)
+        .unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(SwigError::AuthorizationLockExceedsSpendLimit as u32)
+        )
+    );
+}
 
 struct Wallet {
     context: SwigTestContext,

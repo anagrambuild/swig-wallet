@@ -3,8 +3,8 @@
 //!
 //! Wildcard keys (all-0xFF) in the mint and/or destination fields of token
 //! limit actions let a single action cover any mint and/or any destination.
-//! Charging is most-specific-wins: transfers covered by an exact limit are
-//! charged to the exact limit only, and the wildcard budget is untouched.
+//! Every applicable exact and wildcard scope is charged, including both
+//! one-shot and recurring ledgers. Rejected spends roll back all ledgers.
 
 mod common;
 use common::*;
@@ -14,13 +14,14 @@ use solana_sdk::{
     pubkey::Pubkey,
     signature::Keypair,
     signer::Signer,
-    transaction::VersionedTransaction,
+    transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{AuthorityConfig, ClientAction, SignV2Instruction};
 use swig_state::{
     action::{
         program_all::ProgramAll, token_destination_limit::TokenDestinationLimit,
-        token_limit::TokenLimit, token_recurring_limit::TokenRecurringLimit, wildcard::WILDCARD,
+        token_limit::TokenLimit, token_recurring_destination_limit::TokenRecurringDestinationLimit,
+        token_recurring_limit::TokenRecurringLimit, wildcard::WILDCARD,
     },
     authority::AuthorityType,
     swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
@@ -36,7 +37,7 @@ fn send_token_transfer(
     source_ata: &Pubkey,
     destination_ata: &Pubkey,
     amount: u64,
-) -> anyhow::Result<std::result::Result<(), anyhow::Error>> {
+) -> anyhow::Result<std::result::Result<(), TransactionError>> {
     let transfer_ix = spl_token::instruction::transfer(
         &spl_token::ID,
         source_ata,
@@ -70,7 +71,7 @@ fn send_token_transfer(
         .svm
         .send_transaction(tx)
         .map(|_| ())
-        .map_err(|e| anyhow::anyhow!("Failed to send transfer transaction {:?}", e)))
+        .map_err(|e| e.err))
 }
 
 /// Runs `f` against role 1 of the current swig state for readbacks.
@@ -230,6 +231,7 @@ fn test_wildcard_general_limit_covers_any_mint() {
         (count, wildcard)
     })
     .unwrap();
+    assert_eq!(remaining, (2, Some(100)));
 
     // First spend (mint A) succeeds and drafts the shared budget.
     send_token_transfer(
@@ -323,10 +325,9 @@ fn test_wildcard_general_limit_covers_any_mint() {
     assert_eq!(remaining, 0);
 }
 
-/// An exact mint limit takes precedence: spends of that mint are charged
-/// only against the exact limit and never consume the wildcard budget.
+/// Exact and wildcard mint limits both charge; neither bypasses the other.
 #[test_log::test]
-fn test_exact_mint_limit_wins_over_wildcard() {
+fn test_exact_mint_limit_stacks_with_wildcard() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
     let recipient = Keypair::new();
@@ -430,7 +431,7 @@ fn test_exact_mint_limit_wins_over_wildcard() {
         .airdrop(&swig_wallet_address, 2_000_000_000)
         .unwrap();
 
-    // Mint A spends draft the exact limit.
+    // Mint A spends charge both the exact and the wildcard limits.
     send_token_transfer(
         &mut context,
         &swig,
@@ -458,7 +459,7 @@ fn test_exact_mint_limit_wins_over_wildcard() {
             .current_amount
     })
     .unwrap();
-    assert_eq!(wildcard, 100);
+    assert_eq!(wildcard, 93);
 
     // The exact cap is enforced.
     let res = send_token_transfer(
@@ -473,7 +474,7 @@ fn test_exact_mint_limit_wins_over_wildcard() {
     .unwrap();
     assert!(res.is_err());
 
-    // Unsigned token B falls through to the wildcard budget.
+    // Mint B has no exact limit, so only the wildcard budget applies.
     send_token_transfer(
         &mut context,
         &swig,
@@ -493,7 +494,7 @@ fn test_exact_mint_limit_wins_over_wildcard() {
             .current_amount
     })
     .unwrap();
-    assert_eq!(wildcard, 70);
+    assert_eq!(wildcard, 63);
     let exact = with_role_1(&context, &swig, |role| {
         role.get_action::<TokenLimit>(mint_a.to_bytes().as_ref())
             .unwrap()
@@ -960,8 +961,8 @@ fn test_fully_wildcard_destination_limit() {
     assert!(res.is_err());
 }
 
-/// Specificity tiers for destination limits: exact pair wins over
-/// (mint, wildcard) and (wildcard, destination); uncovered destinations
+/// Exact pairs stack with (mint, wildcard) and (wildcard, destination);
+/// uncovered destinations
 /// remain rejected even when wildcard limits for other pairs exist.
 #[test_log::test]
 fn test_destination_wildcard_specificity_and_coverage() {
@@ -1095,7 +1096,7 @@ fn test_destination_wildcard_specificity_and_coverage() {
         .airdrop(&swig_wallet_address, 2_000_000_000)
         .unwrap();
 
-    // 1. Exact pair drafts the exact limit, not the mint-wide wildcard.
+    // 1. The exact pair and the mint-wide wildcard both charge.
     send_token_transfer(
         &mut context,
         &swig,
@@ -1110,7 +1111,7 @@ fn test_destination_wildcard_specificity_and_coverage() {
 
     let exact = with_role_1(&context, &swig, |role| {
         role.get_action::<TokenDestinationLimit>(
-            &[mint_x.to_bytes(), dest_x_1.to_bytes()].concat().as_ref(),
+            [mint_x.to_bytes(), dest_x_1.to_bytes()].concat().as_ref(),
         )
         .unwrap()
         .unwrap()
@@ -1125,7 +1126,7 @@ fn test_destination_wildcard_specificity_and_coverage() {
             .amount
     })
     .unwrap();
-    assert_eq!(mint_wild, 100);
+    assert_eq!(mint_wild, 85);
 
     // 2. A different destination for mint_x drafts (mint_x, WILD).
     send_token_transfer(
@@ -1147,7 +1148,7 @@ fn test_destination_wildcard_specificity_and_coverage() {
             .amount
     })
     .unwrap();
-    assert_eq!(mint_wild, 60);
+    assert_eq!(mint_wild, 45);
 
     // 3. mint_y into dest_y_2 drafts (WILD, dest_y_2).
     send_token_transfer(
@@ -1184,4 +1185,180 @@ fn test_destination_wildcard_specificity_and_coverage() {
     )
     .unwrap();
     assert!(res.is_err());
+}
+
+/// All four destination scopes and both general scopes hold independent
+/// lifetime/window pairs. Narrower scopes never bypass the shared budgets.
+#[test_log::test]
+fn every_applicable_scope_and_pair_charges_atomically_across_windows() {
+    for reverse in [false, true] {
+        let mut context = setup_test_context().unwrap();
+        let root = Keypair::new();
+        let signer = Keypair::new();
+        for key in [&root, &signer] {
+            context.svm.airdrop(&key.pubkey(), 1_000_000_000).unwrap();
+        }
+        let id = rand::random();
+        let (swig, _) = create_swig_ed25519(&mut context, &root, id).unwrap();
+        let wallet =
+            Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id())
+                .0;
+        let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+        let source = setup_ata(&mut context.svm, &mint, &wallet, &context.default_payer).unwrap();
+        let destination = setup_ata(
+            &mut context.svm,
+            &mint,
+            &signer.pubkey(),
+            &context.default_payer,
+        )
+        .unwrap();
+        mint_to(
+            &mut context.svm,
+            &mint,
+            &context.default_payer,
+            &source,
+            100,
+        )
+        .unwrap();
+        context.svm.warp_to_slot(100);
+        let scopes = [
+            (mint.to_bytes(), destination.to_bytes(), 18, 5),
+            (mint.to_bytes(), WILDCARD, 16, 4),
+            (WILDCARD, destination.to_bytes(), 14, 3),
+            (WILDCARD, WILDCARD, 12, 2),
+        ];
+        let mut actions = vec![ClientAction::ProgramAll(ProgramAll {})];
+        for (key, lifetime, window) in [(mint.to_bytes(), 20, 6), (WILDCARD, 30, 9)] {
+            actions.push(ClientAction::TokenLimit(TokenLimit {
+                token_mint: key,
+                current_amount: lifetime,
+            }));
+            actions.push(ClientAction::TokenRecurringLimit(TokenRecurringLimit {
+                token_mint: key,
+                window: 10,
+                limit: window,
+                current: window,
+                last_reset: 0,
+            }));
+        }
+        for (key, dest, lifetime, window) in scopes {
+            actions.push(ClientAction::TokenDestinationLimit(TokenDestinationLimit {
+                token_mint: key,
+                destination: dest,
+                amount: lifetime,
+            }));
+            actions.push(ClientAction::TokenRecurringDestinationLimit(
+                TokenRecurringDestinationLimit {
+                    token_mint: key,
+                    destination: dest,
+                    recurring_amount: window,
+                    window: 10,
+                    current_amount: window,
+                    last_reset: 0,
+                },
+            ));
+        }
+        if reverse {
+            actions.reverse();
+        }
+        add_authority_with_ed25519_root(
+            &mut context,
+            &swig,
+            &root,
+            AuthorityConfig {
+                authority_type: AuthorityType::Ed25519,
+                authority: signer.pubkey().as_ref(),
+            },
+            actions,
+        )
+        .unwrap();
+        for window in 0..6 {
+            context.svm.warp_to_slot(100 + window * 11);
+            context.svm.expire_blockhash();
+            send_token_transfer(
+                &mut context,
+                &swig,
+                &wallet,
+                &signer,
+                &source,
+                &destination,
+                2,
+            )
+            .unwrap()
+            .unwrap();
+            with_role_1(&context, &swig, |role| {
+                for (key, dest, lifetime, recurring) in scopes {
+                    let key = [key, dest].concat();
+                    assert_eq!(
+                        role.get_action::<TokenDestinationLimit>(&key)
+                            .unwrap()
+                            .unwrap()
+                            .amount,
+                        lifetime - 2 * (window + 1)
+                    );
+                    assert_eq!(
+                        role.get_action::<TokenRecurringDestinationLimit>(&key)
+                            .unwrap()
+                            .unwrap()
+                            .current_amount,
+                        recurring - 2
+                    );
+                }
+                for (key, lifetime, recurring) in [(mint.to_bytes(), 20, 6), (WILDCARD, 30, 9)] {
+                    assert_eq!(
+                        role.get_action::<TokenLimit>(&key)
+                            .unwrap()
+                            .unwrap()
+                            .current_amount,
+                        lifetime - 2 * (window + 1)
+                    );
+                    assert_eq!(
+                        role.get_action::<TokenRecurringLimit>(&key)
+                            .unwrap()
+                            .unwrap()
+                            .current,
+                        recurring - 2
+                    );
+                }
+            })
+            .unwrap();
+            let before = context.svm.get_account(&swig).unwrap().data;
+            let balance = token_balance(&context, &source);
+            let error = send_token_transfer(
+                &mut context,
+                &swig,
+                &wallet,
+                &signer,
+                &source,
+                &destination,
+                1,
+            )
+            .unwrap()
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                TransactionError::InstructionError(
+                    0,
+                    solana_sdk::instruction::InstructionError::Custom(_)
+                )
+            ));
+            assert_eq!(context.svm.get_account(&swig).unwrap().data, before);
+            assert_eq!(token_balance(&context, &source), balance);
+        }
+        // A fresh recurring window cannot replenish the exhausted wildcard lifetime.
+        context.svm.warp_to_slot(200);
+        context.svm.expire_blockhash();
+        assert!(send_token_transfer(
+            &mut context,
+            &swig,
+            &wallet,
+            &signer,
+            &source,
+            &destination,
+            1
+        )
+        .unwrap()
+        .is_err());
+        assert_eq!(token_balance(&context, &destination), 12);
+    }
 }

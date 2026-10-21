@@ -194,9 +194,28 @@ pub fn add_authorization_lock_v1(
             let reserved_with_new = role_reserved
                 .checked_add(args.amount)
                 .ok_or(ProgramError::ArithmeticOverflow)?;
-            if reserved_with_new > remaining_spend_capacity(acting_role.actions, &args.mint, slot)?
+            if args.mint == authorization_locks::NATIVE_SOL_MINT
+                && reserved_with_new
+                    > remaining_spend_capacity(acting_role.actions, &args.mint, slot)?
             {
                 return Err(SwigError::AuthorizationLockExceedsSpendLimit.into());
+            }
+            if args.mint != authorization_locks::NATIVE_SOL_MINT {
+                crate::token_limit_capacity::TokenCapacity::read(acting_role.actions, slot)?
+                    .check_reservations(
+                        locks
+                            .iter()
+                            .copied()
+                            .filter(|l| l.role_id == args.acting_role_id && l.is_active(slot))
+                            .chain(core::iter::once(AuthorizationLock {
+                                asset_account: args.asset_account,
+                                mint: args.mint,
+                                amount: args.amount,
+                                expiry_slot: args.expiry_slot,
+                                role_id: args.acting_role_id,
+                                lock_id: next_lock_id,
+                            })),
+                    )?;
             }
         }
 
