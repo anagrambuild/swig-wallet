@@ -3,6 +3,7 @@ fn workspace_artifacts_target_sbpf_v3() {
     for path in [
         "../target/deploy/swig.so",
         "../target/deploy/test_program_authority.so",
+        "../target/deploy/developer_account_registry.so",
     ] {
         let bytes = std::fs::read(path).unwrap_or_else(|error| panic!("{path}: {error}"));
         assert!(bytes.len() >= 64, "{path}: truncated ELF64 header");

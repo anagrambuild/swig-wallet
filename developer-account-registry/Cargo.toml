@@ -1,0 +1,40 @@
+[package]
+name = "developer-account-registry"
+version.workspace = true
+edition = "2021"
+license = "AGPL-3.0"
+description = "Solana program that stores Swig Developer Accounts"
+publish = false
+authors.workspace = true
+documentation.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pinocchio-pubkey = { version = "0.3" }
+pinocchio = { version = "0.9", features = ["std"] }
+pinocchio-system = { version = "0.3" }
+shank = { version = "0.4.2", git = "https://github.com/anagrambuild/shank.git" }
+num_enum = "0.7.3"
+no-padding = { path = "../no-padding" }
+swig-assertions = { path = "../assertions" }
+swig-state = { path = "../state" }
+developer-account-registry-state = { path = "../developer-account-registry-state" }
+
+[target.'cfg(not(target_arch = "bpf"))'.dev-dependencies]
+litesvm.workspace = true
+solana-sdk = "4.0.1"
+developer-account-registry-interface = { path = "../developer-account-registry-interface" }
+anyhow = "1.0.71"
+solana-system-interface = "3.1.0"
+rand = "0.9.0"
+
+[features]
+test-bpf = []
+no-entrypoint = []
+# No-op; CI builds every default member with --features=program_scope_test.
+program_scope_test = []
+
+[lib]
+crate-type = ["cdylib", "lib"]
