@@ -19,7 +19,7 @@ use super::{ed25519::ed25519_authenticate, Authority, AuthorityInfo, AuthorityTy
 use crate::{IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut};
 
 /// Maximum age (in slots) for a Secp256k1 signature to be considered valid
-const MAX_SIGNATURE_AGE_IN_SLOTS: u64 = 60;
+const MAX_SIGNATURE_AGE_IN_SLOTS: u64 = 2_000;
 const MAX_AUTHENTICATED_ACCOUNTS: usize = 64;
 
 /// Creation parameters for a session-based Secp256k1 authority.
