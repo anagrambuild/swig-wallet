@@ -4,6 +4,7 @@ use developer_account_registry::error::DeveloperAccountRegistryError;
 pub use developer_account_registry_interface::{
     developer_account_address, program_id, registry_admin,
     CreateOrUpdateDeveloperAccountInstruction, DeveloperAccount, DeveloperTier,
+    UpdateDeveloperSignerInstruction,
 };
 use litesvm::LiteSVM;
 pub use solana_sdk::{
