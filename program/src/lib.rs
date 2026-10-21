@@ -7,9 +7,11 @@
 //! accounts.
 
 pub mod actions;
+pub(crate) mod authorization_lock;
 pub mod error;
 pub mod instruction;
 pub mod isolation;
+pub(crate) mod token_limit_capacity;
 pub mod util;
 use core::mem::MaybeUninit;
 

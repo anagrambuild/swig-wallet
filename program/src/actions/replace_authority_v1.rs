@@ -30,6 +30,7 @@ use swig_state::{
     },
     role::Position,
     swig::{swig_wallet_address_seeds, Swig},
+    tail::authorization_locks,
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -142,6 +143,7 @@ pub fn replace_authority_v1(
     let parts = Swig::split_parts_mut(swig_account_data)?;
     let swig = parts.state;
     let swig_roles = parts.roles;
+    let swig_tail: &[u8] = parts.tail;
 
     let acting_authority_type = {
         let acting_role = Swig::get_mut_role(replace.args.acting_role_id, swig_roles)?
@@ -171,6 +173,17 @@ pub fn replace_authority_v1(
                 .is_some();
         if !has_permission {
             return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+        }
+        // Another role taking over the signer could release the target's
+        // active authorization locks; self-rotation keeps the same principal.
+        if replace.args.acting_role_id != replace.args.target_role_id
+            && authorization_locks::role_has_active_locks(
+                swig_tail,
+                replace.args.target_role_id,
+                slot,
+            )?
+        {
+            return Err(SwigError::AuthorizationLockActive.into());
         }
         acting_authority_type
     };

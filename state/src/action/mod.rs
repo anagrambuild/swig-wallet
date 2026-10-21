@@ -11,6 +11,7 @@ pub mod all;
 pub mod all_but_manage_authority;
 pub mod close_swig_authority;
 pub mod manage_authority;
+pub mod manage_authorization_locks;
 pub mod program;
 pub mod program_all;
 pub mod program_curated;
@@ -29,10 +30,12 @@ pub mod token_destination_limit;
 pub mod token_limit;
 pub mod token_recurring_destination_limit;
 pub mod token_recurring_limit;
+pub mod wildcard;
 use all::All;
 use all_but_manage_authority::AllButManageAuthority;
 use close_swig_authority::CloseSwigAuthority;
 use manage_authority::ManageAuthority;
+use manage_authorization_locks::ManageAuthorizationLocks;
 use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 use program::Program;
@@ -189,6 +192,8 @@ pub enum Permission {
     SubAccountV2Withdraw = 25,
     /// Scoped permission to toggle a V2 sub-account for a single `subacc_id`
     SubAccountV2Toggle = 26,
+    /// Permission to create bounded authorization locks and release own locks
+    ManageAuthorizationLocks = 27,
 }
 
 impl TryFrom<u16> for Permission {
@@ -198,7 +203,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=26 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=27 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -247,6 +252,7 @@ impl Permission {
             Permission::SubAccountV2Sign => SubAccountV2Sign::REPEATABLE,
             Permission::SubAccountV2Withdraw => SubAccountV2Withdraw::REPEATABLE,
             Permission::SubAccountV2Toggle => SubAccountV2Toggle::REPEATABLE,
+            Permission::ManageAuthorizationLocks => ManageAuthorizationLocks::REPEATABLE,
         }
     }
 }
@@ -332,6 +338,7 @@ impl ActionLoader {
             Permission::SubAccountV2Sign => SubAccountV2Sign::valid_layout(data),
             Permission::SubAccountV2Withdraw => SubAccountV2Withdraw::valid_layout(data),
             Permission::SubAccountV2Toggle => SubAccountV2Toggle::valid_layout(data),
+            Permission::ManageAuthorizationLocks => ManageAuthorizationLocks::valid_layout(data),
             _ => Ok(false),
         }
     }
@@ -400,6 +407,66 @@ impl ActionLoader {
         }
         if has_duplicate_non_repeatable {
             return Err(SwigStateError::DuplicateNonRepeatableAction.into());
+        }
+        Ok(())
+    }
+
+    /// Enforces one destination-limit action per `(destination, mint)` key for
+    /// each destination-limit type on a role.
+    ///
+    /// SignV2 charges a debit to `swig_wallet_address` against exactly one
+    /// matching destination limit — the first
+    /// `SolRecurringDestinationLimit`/`TokenRecurringDestinationLimit` for that
+    /// destination, else the first `SolDestinationLimit`/`TokenDestinationLimit`.
+    /// A second same-type action for the same key is never charged, while the
+    /// lock reservation capacity sums the role's destination limits, so an
+    /// unvalidated duplicate lets a role reserve more than any transaction can
+    /// move and keep a paired one-shot limit inert. Cross-type pairs for the
+    /// same key are allowed: the recurring allowance functions as the per-window
+    /// budget and the one-shot amount as the total budget.
+    ///
+    /// `actions_data` is walked sequentially by `[header][data]`.
+    pub fn validate_destination_limit_duplicates(actions_data: &[u8]) -> Result<(), ProgramError> {
+        const MAX_KEY_LEN: usize = 4 + 32 + 32;
+        let mut keys: alloc::vec::Vec<(usize, [u8; MAX_KEY_LEN])> = alloc::vec::Vec::new();
+        let mut cursor = 0;
+        while cursor + Action::LEN <= actions_data.len() {
+            let header =
+                unsafe { Action::load_unchecked(&actions_data[cursor..cursor + Action::LEN])? };
+            let data_start = cursor + Action::LEN;
+            let data_end = data_start
+                .checked_add(header.length() as usize)
+                .ok_or(ProgramError::InvalidInstructionData)?;
+            if data_end > actions_data.len() {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let data = &actions_data[data_start..data_end];
+            let (is_destination_limit, minted) = match header.permission()? {
+                Permission::SolDestinationLimit | Permission::SolRecurringDestinationLimit => {
+                    (true, false)
+                },
+                Permission::TokenDestinationLimit | Permission::TokenRecurringDestinationLimit => {
+                    (true, true)
+                },
+                _ => (false, false),
+            };
+            if is_destination_limit {
+                let key_len = if minted { 64 } else { 32 };
+                if data.len() < key_len {
+                    return Err(ProgramError::InvalidInstructionData);
+                }
+                let mut key = [0u8; MAX_KEY_LEN];
+                key[..4].copy_from_slice(&(header.permission()? as u32).to_le_bytes());
+                key[4..4 + key_len].copy_from_slice(&data[..key_len]);
+                keys.push((4 + key_len, key));
+            }
+            cursor = data_end;
+        }
+        keys.sort_unstable();
+        for pair in keys.windows(2) {
+            if pair[0] == pair[1] {
+                return Err(SwigStateError::DuplicateDestinationLimit.into());
+            }
         }
         Ok(())
     }
