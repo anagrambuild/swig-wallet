@@ -23,25 +23,47 @@ use crate::{
     Discriminator, IntoBytes, SwigStateError, Transmutable, TransmutableMut,
 };
 
-/// Generates the seeds for a Swig account.
+/// Generates config seeds for the legacy `swig` namespace only.
+/// For an existing config of either namespace, use [`config_seeds`].
 #[inline(always)]
 pub fn swig_account_seeds(id: &[u8]) -> [&[u8]; 2] {
     [b"swig".as_ref(), id]
 }
 
-/// Generates the seeds for a Swig account with bump seed.
+/// Generates legacy config seeds with a bump. See [`config_seeds`] for stored
+/// configs.
 #[inline(always)]
 pub fn swig_account_seeds_with_bump<'a>(id: &'a [u8], bump: &'a [u8]) -> [&'a [u8]; 3] {
     [b"swig".as_ref(), id, bump]
 }
 
-/// Creates a signer seeds array for a Swig account.
+/// Creates legacy config signer seeds. See [`config_seeds`] for stored configs.
 pub fn swig_account_signer<'a>(id: &'a [u8], bump: &'a [u8; 1]) -> [Seed<'a>; 3] {
     [
         b"swig".as_ref().into(),
         id.as_ref().into(),
         bump.as_ref().into(),
     ]
+}
+
+/// Loads `[prefix, id, bump]` from a config's header and strictly validated
+/// tail. An absent prefix entry means `swig`; reserved configs store their
+/// commitment in `id`. The ID alone cannot identify the config's namespace or
+/// address.
+///
+/// Programs can use these seeds for signing; clients and indexers can pass them
+/// to their public-key library's `create_program_address` with the program ID.
+/// Callers must separately verify the account owner and derived address.
+pub fn config_seeds(account_data: &[u8]) -> Result<[&[u8]; 3], ProgramError> {
+    if account_data.first() != Some(&(Discriminator::SwigConfigAccount as u8)) {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let parts = Swig::split_parts(account_data)?;
+    Ok([
+        crate::tail::config_seed_prefix::read(parts.tail)?,
+        &parts.state.id,
+        core::slice::from_ref(&parts.state.bump),
+    ])
 }
 
 /// Generates the seeds for a Swig wallet address account.
@@ -497,7 +519,9 @@ pub struct Swig {
     pub discriminator: u8,
     /// PDA bump seed
     pub bump: u8,
-    /// Unique identifier for this Swig account
+    /// Config seed: the caller's ID for legacy wallets, or the reservation
+    /// commitment for reserved wallets. This is not the config PDA; derive
+    /// that address with the prefix and bump from [`config_seeds`].
     pub id: [u8; 32],
     /// Number of roles in this account
     pub roles: u16,
