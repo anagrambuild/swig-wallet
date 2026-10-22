@@ -66,7 +66,7 @@ pub const INSTRUCTION_SYSVAR_ACCOUNT: Pubkey =
 const TOKEN_BALANCE_EXCLUDE_RANGE: core::ops::Range<usize> = 64..72;
 
 // Only the reserve payload is mutable. The COption tag stays protected.
-const TOKEN_NATIVE_RESERVE_RANGE: core::ops::Range<usize> = 113..121;
+pub(super) const TOKEN_NATIVE_RESERVE_RANGE: core::ops::Range<usize> = 113..121;
 pub(super) const WSOL_MINT: Pubkey = from_str("So11111111111111111111111111111111111111112");
 const TOKEN_EXCLUDE_RANGES: &[core::ops::Range<usize>] = &[TOKEN_BALANCE_EXCLUDE_RANGE];
 const WSOL_EXCLUDE_RANGES: &[core::ops::Range<usize>] =
@@ -98,17 +98,17 @@ const STAKE_STATE_EXCLUDE_RANGE: core::ops::Range<usize> = 0..4;
 const STAKE_DELEGATION_EXCLUDE_RANGE: core::ops::Range<usize> = 124..200;
 
 /// Token account field ranges
-const TOKEN_ACCOUNT_BASE_DATA_LEN: usize = 165;
+pub(super) const TOKEN_ACCOUNT_BASE_DATA_LEN: usize = 165;
 const TOKEN_MINT_RANGE: core::ops::Range<usize> = 0..32;
 const TOKEN_AUTHORITY_RANGE: core::ops::Range<usize> = 32..64;
 const TOKEN_BALANCE_RANGE: core::ops::Range<usize> = 64..72;
-const TOKEN_STATE_INDEX: usize = 108;
+pub(super) const TOKEN_STATE_INDEX: usize = 108;
 
 /// Stake account field ranges
 const STAKE_BALANCE_RANGE: core::ops::Range<usize> = 156..164;
 
 /// Account state constants
-const TOKEN_ACCOUNT_INITIALIZED_STATE: u8 = 1;
+pub(super) const TOKEN_ACCOUNT_INITIALIZED_STATE: u8 = 1;
 
 /// Empty exclude ranges for hash_except when no exclusions are needed
 const NO_EXCLUDE_RANGES: &[core::ops::Range<usize>] = &[];
