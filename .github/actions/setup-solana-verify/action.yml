@@ -1,0 +1,15 @@
+name: Install Solana Verify
+description: Install the checksum-pinned Linux release of Solana Verify.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        mkdir -p "$RUNNER_TEMP/solana-verify-bin"
+        cd "$RUNNER_TEMP/solana-verify-bin"
+        curl --fail --silent --show-error --location \
+          https://github.com/solana-foundation/solana-verifiable-build/releases/download/v0.5.2/solana-verify-0.5.2-linux \
+          --output solana-verify
+        echo 'b9d5ccce9634dc14269cab3e7a58649bc141b3306e7735a94478c936341f211f  solana-verify' | sha256sum --check
+        chmod 755 solana-verify
+        echo "$RUNNER_TEMP/solana-verify-bin" >> "$GITHUB_PATH"

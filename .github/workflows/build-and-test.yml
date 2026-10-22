@@ -65,6 +65,15 @@ jobs:
       - name: Build Solana Program
         run: cargo build-sbf --arch v3 --tools-version v1.53
 
+      - uses: ./.github/actions/setup-solana-verify
+
+      # Keep the test-authority fixture above, but exercise the production Swig
+      # binary with the same recipe used by both release workflows.
+      - name: Build verifiable Swig program for tests
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: cargo run --manifest-path tools/release/Cargo.toml --locked -- build --source-commit "$SOURCE_SHA" --output-dir target/verifiable-build
+
       - name: Run Rust Tests with nextest
         run: |
           cargo nextest run --config-file nextest.toml --profile ci --all --workspace --no-fail-fast
@@ -142,3 +151,22 @@ jobs:
         with:
           report_paths: "target/nextest/reports/*.xml"
           check_name: "Test Results"
+
+  release-cli:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      RUSTC_WRAPPER: ""
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f
+        with:
+          toolchain: 1.96.1
+          components: rustfmt, clippy
+      - run: cargo fmt --manifest-path tools/release/Cargo.toml --all -- --check
+      - run: cargo clippy --manifest-path tools/release/Cargo.toml --locked --all-targets -- -D warnings
+      - run: cargo test --manifest-path tools/release/Cargo.toml --locked

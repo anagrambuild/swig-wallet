@@ -24,6 +24,52 @@ use crate::{
     tests::common::{mint_to, setup_ata, setup_mint},
 };
 
+#[test]
+fn rejects_program_scope_window_without_limit() {
+    let permission = Permission::ProgramScope {
+        program_id: spl_token::ID,
+        target_account: Pubkey::new_unique(),
+        numeric_type: 2,
+        limit: None,
+        window: Some(100),
+        balance_field_start: Some(64),
+        balance_field_end: Some(72),
+    };
+
+    assert!(matches!(
+        Permission::to_client_actions(vec![permission.clone()]),
+        Err(SwigError::InvalidProgramScope)
+    ));
+    assert!(matches!(
+        UpdateAuthorityData::ReplaceAll(vec![permission.clone()]).to_interface_data(),
+        Err(SwigError::InvalidProgramScope)
+    ));
+    assert!(matches!(
+        UpdateAuthorityData::AddActions(vec![permission.clone()]).to_interface_data(),
+        Err(SwigError::InvalidProgramScope)
+    ));
+
+    let mut builder = SwigInstructionBuilder::new(
+        [42; 32],
+        Box::new(Ed25519ClientRole::new(Pubkey::new_unique())),
+        Pubkey::new_unique(),
+        0,
+    );
+    assert!(matches!(
+        builder.add_authority_instruction(
+            AuthorityType::Ed25519,
+            &[1; 32],
+            vec![permission.clone()],
+            None,
+        ),
+        Err(SwigError::InvalidProgramScope)
+    ));
+    assert!(matches!(
+        builder.update_authority(1, None, UpdateAuthorityData::ReplaceAll(vec![permission]),),
+        Err(SwigError::InvalidProgramScope)
+    ));
+}
+
 #[test_log::test]
 fn test_token_transfer_with_program_scope() {
     let mut context = setup_test_context().unwrap();

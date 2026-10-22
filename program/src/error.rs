@@ -183,6 +183,8 @@ pub enum SwigError {
     /// The authority mutation would leave the Swig without an `All` or
     /// `ManageAuthority` role.
     NoAdminAuthorityWouldRemain,
+    /// The payer must be a writable signer even when no rent top-up is needed
+    PayerMustBeWritableSigner,
 }
 
 /// Implements conversion from SwigError to ProgramError.

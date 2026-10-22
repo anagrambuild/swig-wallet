@@ -1,0 +1,121 @@
+name: Submit Swig Release to OtterSec
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag whose binary has already been deployed
+        required: true
+        type: string
+      cluster:
+        description: Deployed network (OtterSec submission requires mainnet)
+        required: true
+        default: mainnet
+        type: choice
+        options: [mainnet, devnet]
+      phase:
+        description: Check deployed hash or submit the executed upgrade for remote verification
+        required: true
+        default: submit
+        type: choice
+        options: [check, submit]
+
+# Share the release lock; metadata must describe the completed deployment.
+concurrency:
+  group: ${{ inputs.cluster == 'mainnet' && 'swig-upgrade' || 'swig-upgrade-devnet' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    environment: ${{ inputs.cluster == 'mainnet' && 'swig-upgrade' || 'swig-upgrade-devnet' }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      CLUSTER: ${{ inputs.cluster }}
+      PHASE: ${{ inputs.phase }}
+    steps:
+      - name: Require main and validate release tag
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          if [[ ! "$RELEASE_TAG" =~ ^(devnet-)?upgrade-[0-9]+-[0-9a-f]{12}$ ]]; then
+            echo '::error::Expected a Swig upgrade release tag.'
+            exit 1
+          fi
+          if [ "$CLUSTER" = devnet ]; then
+            [[ "$RELEASE_TAG" == devnet-upgrade-* ]]
+            if [ "$PHASE" = submit ]; then
+              echo '::error::OtterSec submission requires mainnet; use phase check for devnet.'
+              exit 1
+            fi
+          else
+            [[ "$RELEASE_TAG" == upgrade-* ]]
+          fi
+          source_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_TAG" == *-"${source_sha:0:12}" ]]
+          echo "SOURCE_SHA=$source_sha" >> "$GITHUB_ENV"
+
+      # Run the workflow's trusted implementation, never scripts from an input tag.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f
+        with:
+          toolchain: 1.96.1
+
+      - name: Build release CLI
+        run: cargo build --manifest-path tools/release/Cargo.toml --locked --release
+
+      - uses: ./.github/actions/setup-solana-verify
+        if: inputs.phase == 'submit'
+
+      - name: Download the published binary and build recipe
+        run: |
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern swig.so --pattern swig.so.sha256 --pattern verification.json --dir verification
+          if [ "$PHASE" = submit ]; then
+            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern proposal-receipt.json --dir verification
+          fi
+          cd verification
+          sha256sum --check swig.so.sha256
+
+      - name: Check deployed release or submit to OtterSec
+        env:
+          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+          SWIG_PROGRAM_ID: ${{ secrets.SWIG_PROGRAM_ID }}
+        run: |
+          if [ "$PHASE" = submit ]; then
+            tools/release/target/release/swig-release submit-ottersec --directory verification --source-commit "$SOURCE_SHA"
+          else
+            tools/release/target/release/swig-release check-release --directory verification --source-commit "$SOURCE_SHA" --cluster "$CLUSTER"
+          fi
+          echo "Release $RELEASE_TAG: $PHASE completed on $CLUSTER." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Promote the verified mainnet release
+        if: inputs.phase == 'submit' && inputs.cluster == 'mainnet'
+        run: |
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --prerelease=false --latest --notes-file verification/verified-release.md
+          cat verification/verified-release.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            verification/*.json
+            verification/*.log
+            verification/*.txt
+            verification/*.md
+          if-no-files-found: ignore
+          retention-days: 90
