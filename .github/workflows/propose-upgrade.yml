@@ -1,0 +1,175 @@
+name: Propose Swig Upgrade
+
+on:
+  workflow_dispatch:
+
+# A run represents one immutable candidate. Never cancel a buffer upload or
+# submission in favor of a later run.
+concurrency:
+  group: swig-upgrade
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  RUST_VERSION: 1.96.1
+  SOLANA_VERSION: 4.2.2
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+      source_sha: ${{ steps.source.outputs.sha }}
+      release_tag: ${{ steps.source.outputs.tag }}
+    steps:
+      - name: Resolve latest main and require successful CI
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          if [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
+            echo "::error::Reruns are disabled. Inspect the original release before starting another run."
+            exit 1
+          fi
+          source_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Could not resolve a valid main commit."
+            exit 1
+          fi
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "tag=upgrade-${GITHUB_RUN_NUMBER}-${source_sha:0:12}" >> "$GITHUB_OUTPUT"
+          for workflow in build-and-test.yml lint.yml; do
+            passed=$(gh run list --repo "$GITHUB_REPOSITORY" \
+              --workflow "$workflow" --commit "$source_sha" --branch main --event push \
+              --limit 1 --json status,conclusion \
+              --jq '.[0] | .status == "completed" and .conclusion == "success"')
+            if [ "$passed" != true ]; then
+              echo "::error::$workflow must pass on latest main ($source_sha) before release."
+              exit 1
+            fi
+          done
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Build release CLI
+        run: cargo build --manifest-path tools/release/Cargo.toml --locked --release
+
+      - name: Install pinned Solana Verify
+        uses: ./.github/actions/setup-solana-verify
+
+      - name: Build verifiable production program
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          tools/release/target/release/swig-release build --source-commit "$SOURCE_SHA" --output-dir release-inputs
+          cp tools/release/target/release/swig-release release-inputs/
+          cd release-inputs
+          sha256sum swig.so swig-release verification.json > SHA256SUMS
+          sha256sum swig.so > swig.so.sha256
+
+      - name: Save immutable build inputs
+        id: artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-inputs-${{ steps.source.outputs.sha }}
+          path: release-inputs/
+          if-no-files-found: error
+          retention-days: 30
+
+  propose:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Configure this environment with a selected-branch rule for main before
+    # adding the six required secrets. No repository/organization fallbacks.
+    environment: swig-upgrade
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+      RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          merge-multiple: true
+          path: release-inputs
+
+      - name: Verify build inputs
+        working-directory: release-inputs
+        run: |
+          sha256sum --check SHA256SUMS
+          chmod 700 swig-release
+
+      - name: Install pinned Solana CLI
+        run: |
+          sh -c "$(curl -sSfL "https://release.anza.xyz/v${SOLANA_VERSION}/install")"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Validate deployment before tagging or uploading
+        env:
+          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+          PROPOSER_KEYPAIR: ${{ secrets.PROPOSER_KEYPAIR }}
+          SQUADS_PROGRAM_ID: ${{ secrets.SQUADS_PROGRAM_ID }}
+          SQUADS_MULTISIG_ADDRESS: ${{ secrets.SQUADS_MULTISIG_ADDRESS }}
+          SQUADS_VAULT_INDEX: ${{ secrets.SQUADS_VAULT_INDEX }}
+          SWIG_PROGRAM_ID: ${{ secrets.SWIG_PROGRAM_ID }}
+        run: ./release-inputs/swig-release check --binary release-inputs/swig.so --verification release-inputs/verification.json > preflight.json
+
+      - name: Tag latest main and publish release candidate
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$SOURCE_SHA"
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --prerelease --title "$RELEASE_TAG" \
+            --notes "Upgrade candidate from $SOURCE_SHA. Proposal creation is pending; see this run's receipts." \
+            release-inputs/swig.so release-inputs/swig.so.sha256 release-inputs/verification.json preflight.json
+
+      - name: Upload buffer and create proposal
+        env:
+          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+          PROPOSER_KEYPAIR: ${{ secrets.PROPOSER_KEYPAIR }}
+          SQUADS_PROGRAM_ID: ${{ secrets.SQUADS_PROGRAM_ID }}
+          SQUADS_MULTISIG_ADDRESS: ${{ secrets.SQUADS_MULTISIG_ADDRESS }}
+          SQUADS_VAULT_INDEX: ${{ secrets.SQUADS_VAULT_INDEX }}
+          SWIG_PROGRAM_ID: ${{ secrets.SWIG_PROGRAM_ID }}
+        run: |
+          ./release-inputs/swig-release propose --binary release-inputs/swig.so \
+            --verification release-inputs/verification.json \
+            --preflight preflight.json --source-commit "$SOURCE_SHA" \
+            --tag "$RELEASE_TAG" --output-dir proposal
+
+      - name: Publish confirmed proposal receipt
+        run: |
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" proposal/proposal-receipt.json
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --notes "Upgrade candidate from $SOURCE_SHA. The active Squads proposal is in proposal-receipt.json; multisig members must approve and execute it. This proposal upgrades Swig and writes verification metadata atomically. After execution, run Submit Swig Release to OtterSec with this tag and phase submit."
+          cat proposal/proposal-receipt.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve public recovery information
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: upgrade-receipts-${{ github.run_id }}
+          path: |
+            preflight.json
+            proposal/
+          if-no-files-found: ignore
+          retention-days: 90

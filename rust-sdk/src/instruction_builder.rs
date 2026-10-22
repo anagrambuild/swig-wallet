@@ -171,7 +171,7 @@ impl SwigInstructionBuilder {
         permissions: Vec<ClientPermission>,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
-        let actions = ClientPermission::to_client_actions(permissions);
+        let actions = ClientPermission::to_client_actions(permissions)?;
 
         self.client_role.add_authority_instruction(
             self.swig_account,
@@ -266,7 +266,7 @@ impl SwigInstructionBuilder {
                 },
                 self.role_id,
                 authority_to_replace_id,
-                update_data.to_interface_data(),
+                update_data.to_interface_data()?,
                 current_slot,
             )?;
 

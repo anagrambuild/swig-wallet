@@ -353,93 +353,114 @@ fn test_secp256k1_direct_signature_reuse_v2() {
 }
 
 #[test_log::test]
-fn test_secp256k1_old_signature_v2() {
-    let mut context = setup_test_context().unwrap();
-
-    // Generate a random Ethereum wallet
-    let wallet = LocalSigner::random();
-
-    // Create a new swig with the secp256k1 authority
-    let id = rand::random::<[u8; 32]>();
-    let (swig_key, _) = create_swig_secp256k1(&mut context, &wallet, id).unwrap();
-    let (swig_wallet_address, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
-
-    // For SignV2, fund the swig_wallet_address instead of swig
-    context
-        .svm
-        .airdrop(&swig_wallet_address, 10_000_000_000)
-        .unwrap();
-
-    // Set up a recipient and transaction
-    let recipient = Keypair::new();
-    context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
-    let transfer_amount = 1_000_000;
-    let transfer_ix = solana_system_interface::instruction::transfer(
-        &swig_wallet_address,
-        &recipient.pubkey(),
-        transfer_amount,
-    );
-
-    // Create a signature for a very old slot
-    let old_slot = 0;
-
-    // Create a signing function that uses the old slot
-    let signing_fn = |payload: &[u8]| -> [u8; 65] {
-        let mut hash = [0u8; 32];
-        hash.copy_from_slice(&payload[..32]);
-        let hash = B256::from(hash);
-        wallet.sign_hash_sync(&hash).unwrap().as_bytes()
-    };
-
-    // Advance the slot by more than MAX_SIGNATURE_AGE_IN_SLOTS (60)
-    context.svm.warp_to_slot(100);
-
-    // Get current counter and calculate next
-    let current_counter = get_secp256k1_counter(&context, &swig_key, &wallet).unwrap();
-    let next_counter = current_counter + 1;
-
-    // Create and submit the transaction with the old signature using SignV2
-    let sign_ix = swig_interface::SignV2Instruction::new_secp256k1_with_signers(
-        swig_key,
-        swig_wallet_address,
-        signing_fn,
-        old_slot,     // Using old slot
-        next_counter, // Use dynamic counter value
-        transfer_ix,
-        0,
-        &[context.default_payer.pubkey()],
-    )
-    .unwrap();
-
-    let message = v0::Message::try_compile(
-        &context.default_payer.pubkey(),
-        &[sign_ix],
-        &[],
-        context.svm.latest_blockhash(),
-    )
-    .unwrap();
-
-    let tx =
-        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+fn test_secp256k1_signature_age_boundaries_v2() {
+    for (signature_slot, current_slot, accepted) in [
+        (100, 160, true),
+        (100, 161, true),
+        (100, 2_100, true),
+        (100, 2_101, false),
+        (2_101, 2_100, false),
+    ] {
+        let mut context = setup_test_context().unwrap();
+        let wallet = LocalSigner::random();
+        let (swig_key, _) = create_swig_secp256k1(&mut context, &wallet, rand::random()).unwrap();
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_wallet_address_seeds(swig_key.as_ref()),
+            &program_id(),
+        );
+        context
+            .svm
+            .airdrop(&swig_wallet_address, 10_000_000_000)
             .unwrap();
+        let recipient = Keypair::new();
+        context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
+        let transfer_amount = 1_000_000;
+        let transfer_ix = solana_system_interface::instruction::transfer(
+            &swig_wallet_address,
+            &recipient.pubkey(),
+            transfer_amount,
+        );
+        let signing_fn = |payload: &[u8]| -> [u8; 65] {
+            let hash = B256::from_slice(&payload[..32]);
+            wallet.sign_hash_sync(&hash).unwrap().as_bytes()
+        };
+        let instructions = vec![
+            swig_interface::SignV2Instruction::new_secp256k1_with_signers(
+                swig_key,
+                swig_wallet_address,
+                signing_fn,
+                signature_slot,
+                1,
+                transfer_ix,
+                0,
+                &[context.default_payer.pubkey()],
+            )
+            .unwrap(),
+        ];
 
-    // Transaction should fail due to old signature
-    let result = context.svm.send_transaction(tx);
-    assert!(
-        result.is_err(),
-        "Expected transaction to fail due to old signature"
-    );
+        context.svm.warp_to_slot(current_slot);
+        let swig_before = context.svm.get_account(&swig_key).unwrap();
+        let wallet_before = context.svm.get_account(&swig_wallet_address).unwrap();
+        let recipient_before = context.svm.get_account(&recipient.pubkey()).unwrap();
+        let message = v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &instructions,
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap();
+        let tx =
+            VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+                .unwrap();
+        let result = context.svm.send_transaction(tx);
 
-    // Verify the specific error
-    match result.unwrap_err().err {
-        TransactionError::InstructionError(_, InstructionError::Custom(code)) => {
-            // This should match the error code for
-            // PermissionDeniedSecp256k1InvalidSignatureAge Note: You may need
-            // to adjust this assertion based on your actual error code
-            assert!(code > 0, "Expected a custom error code for old signature");
-        },
-        err => panic!("Expected InstructionError::Custom, got {:?}", err),
+        if accepted {
+            assert!(
+                result.is_ok(),
+                "signature slot {signature_slot}, current slot {current_slot}: {result:?}"
+            );
+            assert_eq!(
+                get_secp256k1_counter(&context, &swig_key, &wallet).unwrap(),
+                1
+            );
+            assert_eq!(
+                context
+                    .svm
+                    .get_account(&recipient.pubkey())
+                    .unwrap()
+                    .lamports,
+                recipient_before.lamports + transfer_amount
+            );
+            assert_eq!(
+                context
+                    .svm
+                    .get_account(&swig_wallet_address)
+                    .unwrap()
+                    .lamports,
+                wallet_before.lamports - transfer_amount
+            );
+        } else {
+            assert_eq!(
+                result.map_err(|error| error.err),
+                Err(TransactionError::InstructionError(
+                    0,
+                    InstructionError::Custom(
+                        swig_state::SwigAuthenticateError::PermissionDeniedSecp256k1InvalidSignature
+                            as u32
+                    ),
+                )),
+                "signature slot {signature_slot}, current slot {current_slot}",
+            );
+            assert_eq!(context.svm.get_account(&swig_key).unwrap(), swig_before);
+            assert_eq!(
+                context.svm.get_account(&swig_wallet_address).unwrap(),
+                wallet_before
+            );
+            assert_eq!(
+                context.svm.get_account(&recipient.pubkey()).unwrap(),
+                recipient_before
+            );
+        }
     }
 }
 

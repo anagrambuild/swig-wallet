@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/anagrambuild/swig-wallet",
+  "commit": "3f848e79ec8af03e4502f88230d77b922952907d",
+  "cli_version": "0.5.2",
+  "build_args": [
+    "--library-name",
+    "swig",
+    "--base-image",
+    "solanafoundation/solana-verifiable-build@sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd",
+    "--arch",
+    "v3"
+  ],
+  "executable_hash": "5fd9ba91bad3228dd90c48373a89682852dab19015ab12fdd63c2d5c209c98c0"
+}

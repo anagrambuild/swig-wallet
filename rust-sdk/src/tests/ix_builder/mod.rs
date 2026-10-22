@@ -3,7 +3,6 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::LocalSigner;
 use common::*;
 use litesvm::{types::TransactionMetadata, LiteSVM};
-use litesvm_token::spl_token;
 use solana_program::pubkey::Pubkey;
 use solana_sdk::{
     account::ReadableAccount,
@@ -190,7 +189,8 @@ pub fn display_swig(swig_pubkey: Pubkey, swig_account: &Account) -> Result<(), S
             }
 
             // Check Program Scope
-            if let Some(action) = Role::get_action::<ProgramScope>(&role, &spl_token::ID.to_bytes())
+            for action in role
+                .get_all_actions_of_type::<ProgramScope>()
                 .map_err(|_| SwigError::AuthorityNotFound)?
             {
                 let program_id = Pubkey::from(action.program_id);
