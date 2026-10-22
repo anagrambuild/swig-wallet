@@ -1,5 +1,8 @@
 pub use developer_account_registry;
-use developer_account_registry::actions::create_or_update_developer_account::CreateOrUpdateDeveloperAccountArgs;
+use developer_account_registry::actions::{
+    create_or_update_developer_account::CreateOrUpdateDeveloperAccountArgs,
+    update_developer_signer::UpdateDeveloperSignerArgs,
+};
 pub use developer_account_registry_state::{
     self, developer_account_seeds, DeveloperAccount, DeveloperTier,
 };
@@ -42,6 +45,30 @@ impl CreateOrUpdateDeveloperAccountInstruction {
             AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ];
         let args = CreateOrUpdateDeveloperAccountArgs::new(developer_account_id, tier, valid_until);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: args_bytes.to_vec(),
+        })
+    }
+}
+
+pub struct UpdateDeveloperSignerInstruction;
+
+impl UpdateDeveloperSignerInstruction {
+    pub fn new(
+        developer_account: Pubkey,
+        registry_admin: Pubkey,
+        signer: Pubkey,
+    ) -> anyhow::Result<Instruction> {
+        let accounts = vec![
+            AccountMeta::new(developer_account, false),
+            AccountMeta::new_readonly(registry_admin, true),
+        ];
+        let args = UpdateDeveloperSignerArgs::new(signer.to_bytes());
         let args_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;

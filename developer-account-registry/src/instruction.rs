@@ -11,6 +11,10 @@ pub enum DeveloperAccountRegistryInstruction {
     #[account(2, writable, signer, name="payer", desc="the rent payer")]
     #[account(3, name="system_program", desc="the system program")]
     CreateOrUpdateDeveloperAccount = 0,
+
+    #[account(0, writable, name="developer_account", desc="the developer account PDA")]
+    #[account(1, signer, name="registry_admin", desc="the embedded registry admin")]
+    UpdateDeveloperSigner = 1,
 }
 
 #[cfg(test)]
@@ -23,6 +27,10 @@ mod tests {
             u16::from(DeveloperAccountRegistryInstruction::CreateOrUpdateDeveloperAccount),
             0
         );
-        assert!(DeveloperAccountRegistryInstruction::try_from(1u16).is_err());
+        assert_eq!(
+            u16::from(DeveloperAccountRegistryInstruction::UpdateDeveloperSigner),
+            1
+        );
+        assert!(DeveloperAccountRegistryInstruction::try_from(2u16).is_err());
     }
 }
