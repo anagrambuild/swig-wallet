@@ -9,7 +9,7 @@ use pinocchio::{
     program::invoke_signed,
     program_error::ProgramError,
     pubkey::Pubkey,
-    sysvars::{clock::Clock, rent::Rent, Sysvar},
+    sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
 use pinocchio_system::instructions::Transfer;
@@ -158,15 +158,13 @@ pub fn create_sub_account_v1(
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
         let parts = Swig::split_parts_mut(swig_account_data)?;
-        let slot = Clock::get()?.slot;
-        let role = swig_state::authority::counter::authenticate_role(
+
+        let (role, _) = swig_state::authority::counter::authenticate_role(
             parts.roles,
-            None,
             create_sub_account.args.role_id,
             all_accounts,
             create_sub_account.authority_payload,
             create_sub_account.data_payload,
-            slot,
             false,
         )?
         .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;

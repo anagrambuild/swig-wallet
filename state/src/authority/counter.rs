@@ -1,6 +1,10 @@
 //! Replay counters shared by roles with the same secp curve and public key.
 
-use pinocchio::{account_info::AccountInfo, program_error::ProgramError};
+use pinocchio::{
+    account_info::AccountInfo,
+    program_error::ProgramError,
+    sysvars::{clock::Clock, Sysvar},
+};
 
 use super::{
     secp256k1::{Secp256k1Authority, Secp256k1SessionAuthority},
@@ -66,25 +70,23 @@ impl SecpCounter {
     }
 }
 
-/// Authenticates once, then consumes the counter across all same-key roles.
-/// `role_count` bounds a roles-plus-tail slice; `None` requires a roles-only slice.
-/// On-chain callers must propagate errors so transaction rollback also restores
-/// earlier counter writes. Session-key authentication does not consume a root counter.
-#[allow(clippy::too_many_arguments)]
+/// Authenticates against the selected role's counter, then synchronizes same-key roles.
+/// Returns the authenticated role and the slot used for its checks.
+/// `roles` must contain only roles, excluding the account header and optional tail.
+/// Legacy unequal counters align to their previous maximum plus one on first success.
+/// That first authentication can accept a replay through a lagging legacy role.
+/// On-chain callers must propagate errors so failed transactions roll back all writes.
 pub fn authenticate_role<'a>(
     roles: &'a mut [u8],
-    role_count: Option<u16>,
     role_id: u32,
     accounts: &[AccountInfo],
     authority_payload: &[u8],
     data_payload: &[u8],
-    slot: u64,
     create_session: bool,
-) -> Result<Option<RoleMut<'a>>, ProgramError> {
+) -> Result<Option<(RoleMut<'a>, u64)>, ProgramError> {
     let mut offset = 0;
-    let mut remaining = role_count.map(usize::from).unwrap_or(usize::MAX);
     let selected = loop {
-        if remaining == 0 || offset == roles.len() {
+        if offset == roles.len() {
             return Ok(None);
         }
         let pos_end = offset
@@ -103,8 +105,8 @@ pub fn authenticate_role<'a>(
             break offset;
         }
         offset = boundary;
-        remaining -= 1;
     };
+    let slot = Clock::get()?.slot;
     let consumed = {
         let role = Swig::get_mut_role_at(selected, roles)?;
         if create_session && !role.authority.session_based() {
@@ -120,118 +122,63 @@ pub fn authenticate_role<'a>(
             SecpCounter::from_role(&role)?
         }
     };
-    let end = if let Some(counter) = consumed {
-        advance_counters(roles, role_count, selected, &counter)?
-    } else if let Some(count) = role_count {
-        // The hot path uses this walk in place of split_parts_mut's role walk.
-        roles_end(roles, count)?
-    } else {
-        roles.len()
-    };
-    Swig::get_mut_role_at(selected, &mut roles[..end]).map(Some)
+    if let Some(counter) = consumed {
+        sync_counters(roles, selected, &counter)?;
+    }
+    Swig::get_mut_role_at(selected, roles).map(|role| Some((role, slot)))
 }
 
-fn roles_end(roles: &[u8], count: u16) -> Result<usize, ProgramError> {
+/// Writes the shared next counter after authentication succeeds.
+fn sync_counters(
+    roles: &mut [u8],
+    selected: usize,
+    counter: &SecpCounter,
+) -> Result<(), ProgramError> {
+    let mut next = counter.counter;
+    let mut previous = next.wrapping_sub(1);
     let mut cursor = 0;
-    for _ in 0..count {
+    while cursor < roles.len() {
         let pos_end = cursor + Position::LEN;
         let bytes = roles
             .get(cursor..pos_end)
             .ok_or(ProgramError::InvalidAccountData)?;
-        // Position contains only integer fields; do not form a reference at an untrusted boundary.
         let position = unsafe { (bytes.as_ptr() as *const Position).read_unaligned() };
         let boundary = position.boundary() as usize;
         if boundary < pos_end || boundary > roles.len() {
             return Err(ProgramError::InvalidAccountData);
         }
-        cursor = boundary;
-    }
-    Ok(cursor)
-}
-
-/// Advances peers only after the selected authority has verified and stored its
-/// next counter. A legacy peer ahead of the selected role rejects the transaction;
-/// first use through a role at the group maximum safely aligns lower peers.
-pub fn advance_counters(
-    roles: &mut [u8],
-    count: Option<u16>,
-    selected: usize,
-    consumed: &SecpCounter,
-) -> Result<usize, ProgramError> {
-    match count {
-        Some(count) => advance_counters_inner::<true>(roles, count, selected, consumed),
-        None => advance_counters_inner::<false>(roles, 0, selected, consumed),
-    }
-}
-
-// The counted SignV2 path replaces its full role walk. Other callers already
-// hold a validated roles-only slice. Specializing the bound avoids testing both
-// termination conditions on every role.
-#[inline(never)]
-fn advance_counters_inner<const COUNTED: bool>(
-    roles: &mut [u8],
-    count: u16,
-    selected: usize,
-    consumed: &SecpCounter,
-) -> Result<usize, ProgramError> {
-    let previous = consumed.counter.wrapping_sub(1);
-    let curve = match consumed.authority_type {
-        AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session => 3u16,
-        AuthorityType::Secp256r1 | AuthorityType::Secp256r1Session => 5u16,
-        _ => return Err(ProgramError::InvalidAccountData),
-    };
-    let prefix = u64::from_le_bytes(consumed.public_key[1..9].try_into().unwrap());
-    let mut cursor = 0;
-    let mut remaining = count;
-    while if COUNTED {
-        remaining != 0
-    } else {
-        cursor < roles.len()
-    } {
-        let pos_end = cursor + Position::LEN;
-        if pos_end > roles.len() {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        let position =
-            unsafe { (roles[cursor..pos_end].as_ptr() as *const Position).read_unaligned() };
-        let boundary = position.boundary() as usize;
-        if boundary < pos_end || boundary > roles.len() {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        if position.authority_type.wrapping_sub(curve) <= 1 {
-            if position.authority_length < 40 || pos_end + 40 > boundary {
+        if counter.matches_curve(position.authority_type) {
+            let len = position.authority_length as usize;
+            if len < COUNTER_OFFSET + 4 || pos_end + len > boundary {
                 return Err(ProgramError::InvalidAccountData);
             }
-            if u64::from_le_bytes(roles[pos_end + 1..pos_end + 9].try_into().unwrap()) == prefix
-                && roles[pos_end..pos_end + 33] == consumed.public_key
-                && cursor != selected
-            {
-                let stored =
-                    u32::from_le_bytes(roles[pos_end + 36..pos_end + 40].try_into().unwrap());
-                if stored > previous {
-                    return Err(SwigAuthenticateError::PermissionDeniedSecpCounterBehind.into());
+            let data = &mut roles[pos_end..pos_end + len];
+            if counter.matches_key(data) {
+                let stored = u32::from_le_bytes(
+                    data[COUNTER_OFFSET..COUNTER_OFFSET + 4].try_into().unwrap(),
+                );
+                if cursor != selected && stored > previous {
+                    // Legacy mismatch: restart once at the group maximum. Earlier writes
+                    // used `next <= stored`, so they cannot inflate that maximum.
+                    previous = inherited_counter(roles, counter)?;
+                    next = previous.wrapping_add(1);
+                    cursor = 0;
+                    continue;
                 }
-                roles[pos_end + 36..pos_end + 40].copy_from_slice(&consumed.counter.to_le_bytes());
+                data[COUNTER_OFFSET..COUNTER_OFFSET + 4].copy_from_slice(&next.to_le_bytes());
             }
         }
         cursor = boundary;
-        if COUNTED {
-            remaining -= 1;
-        }
     }
-    Ok(cursor)
+    Ok(())
 }
 
-/// Initializes an added/replaced duplicate from the greatest existing counter.
+/// Finds the greatest existing counter for legacy alignment and added/replaced keys.
 /// Only existing same-curve full-key matches contribute; unrelated state is untouched.
-pub fn inherited_counter(
-    roles: &[u8],
-    count: u16,
-    authority: &SecpCounter,
-) -> Result<u32, ProgramError> {
+pub fn inherited_counter(roles: &[u8], authority: &SecpCounter) -> Result<u32, ProgramError> {
     let mut maximum = 0;
     let mut cursor = 0;
-    for _ in 0..count {
+    while cursor < roles.len() {
         let pos_end = cursor + Position::LEN;
         let bytes = roles
             .get(cursor..pos_end)
@@ -272,7 +219,10 @@ mod tests {
     #[repr(C, align(8))]
     struct Buffer([u8; 4096]);
 
-    fn fixture(buffer: &mut Buffer, entries: &[(AuthorityType, [u8; 33], u32)]) -> Vec<usize> {
+    fn fixture(
+        buffer: &mut Buffer,
+        entries: &[(AuthorityType, [u8; 33], u32)],
+    ) -> (Vec<usize>, usize) {
         let mut offsets = Vec::new();
         let mut at = 0;
         for (id, (kind, key, counter)) in entries.iter().enumerate() {
@@ -301,14 +251,14 @@ mod tests {
             offsets.push(at);
             at = end;
         }
-        offsets
+        (offsets, at)
     }
     fn counter(b: &Buffer, offset: usize) -> u32 {
         u32::from_le_bytes(b.0[offset + 52..offset + 56].try_into().unwrap())
     }
 
     #[test]
-    fn advances_full_key_peers_across_plain_and_session_types_only() {
+    fn synchronizes_full_key_peers_across_plain_and_session_types_only() {
         for (kind, session, other_curve) in [
             (
                 AuthorityType::Secp256k1,
@@ -327,109 +277,87 @@ mod tests {
             let mut opposite = key;
             opposite[0] ^= 1; // Same x-coordinate, opposite point.
             let mut b = Buffer([0; 4096]);
-            let offsets = fixture(
+            let (offsets, end) = fixture(
                 &mut b,
                 &[
                     (kind, key, 18),
-                    (session, key, 17),
-                    (kind, different, 17),
-                    (other_curve, key, 17),
+                    (session, key, 27),
+                    (kind, different, 100),
+                    (other_curve, key, 100),
                     (AuthorityType::Ed25519, key, 0),
-                    (kind, opposite, 17),
+                    (kind, opposite, 100),
                 ],
             );
             let before = b.0;
-            advance_counters(
-                &mut b.0,
-                Some(6),
-                0,
-                &SecpCounter {
-                    authority_type: kind,
-                    public_key: key,
-                    counter: 18,
-                },
-            )
-            .unwrap();
+            let shared = SecpCounter {
+                authority_type: kind,
+                public_key: key,
+                counter: 18,
+            };
+            sync_counters(&mut b.0[..end], offsets[0], &shared).unwrap();
             let mut expected = before;
-            expected[offsets[1] + 52..offsets[1] + 56].copy_from_slice(&18u32.to_le_bytes());
+            for at in &offsets[..2] {
+                expected[at + 52..at + 56].copy_from_slice(&28u32.to_le_bytes());
+            }
             assert_eq!(b.0, expected);
         }
     }
 
     #[test]
-    fn highest_existing_counter_aligns_lower_peers() {
+    fn legacy_maximum_can_be_first_middle_or_last_and_next_use_advances_once() {
         for kind in [AuthorityType::Secp256k1, AuthorityType::Secp256r1] {
-            let mut b = Buffer([0; 4096]);
-            let key = [9; 33];
-            let offsets = fixture(&mut b, &[(kind, key, 5), (kind, key, 10), (kind, key, 7)]);
-            advance_counters(
-                &mut b.0,
-                Some(3),
-                offsets[1],
-                &SecpCounter {
-                    authority_type: kind,
-                    public_key: key,
-                    counter: 10,
-                },
-            )
-            .unwrap();
-            for offset in offsets {
-                assert_eq!(counter(&b, offset), 10);
+            for counters in [[100, 27, 30], [27, 100, 30], [27, 30, 100], [27, 28, 27]] {
+                for selected in 0..3 {
+                    let mut b = Buffer([0; 4096]);
+                    let (offsets, end) =
+                        fixture(&mut b, &counters.map(|counter| (kind, [9; 33], counter)));
+                    let next = counters.iter().max().unwrap() + 1;
+                    for expected in [next, next + 1] {
+                        // Existing authority verification increments only the selected role.
+                        let consumed = counter(&b, offsets[selected]).wrapping_add(1);
+                        b.0[offsets[selected] + 52..offsets[selected] + 56]
+                            .copy_from_slice(&consumed.to_le_bytes());
+                        let shared = SecpCounter {
+                            authority_type: kind,
+                            public_key: [9; 33],
+                            counter: consumed,
+                        };
+                        sync_counters(&mut b.0[..end], offsets[selected], &shared).unwrap();
+                        for at in &offsets {
+                            assert_eq!(counter(&b, *at), expected);
+                        }
+                    }
+                }
             }
         }
-    }
-
-    #[test]
-    fn a_counter_consumed_by_a_peer_cannot_execute_through_a_lagging_role() {
-        let mut b = Buffer([0; 4096]);
-        let key = [9; 33];
-        fixture(
-            &mut b,
-            &[
-                (AuthorityType::Secp256k1, key, 6),
-                (AuthorityType::Secp256k1, key, 9),
-            ],
-        );
-        let before = b.0;
-        assert_eq!(
-            advance_counters(
-                &mut b.0,
-                Some(2),
-                0,
-                &SecpCounter {
-                    authority_type: AuthorityType::Secp256k1,
-                    public_key: key,
-                    counter: 6
-                }
-            ),
-            Err(SwigAuthenticateError::PermissionDeniedSecpCounterBehind.into())
-        );
-        assert_eq!(b.0, before);
     }
 
     #[test]
     fn preserves_the_existing_full_width_counter_wrap() {
         let mut b = Buffer([0; 4096]);
         let key = [9; 33];
-        let offsets = fixture(
-            &mut b,
-            &[
-                (AuthorityType::Secp256k1, key, 0),
-                (AuthorityType::Secp256k1Session, key, u32::MAX),
-            ],
-        );
-        advance_counters(
-            &mut b.0,
-            Some(2),
-            0,
-            &SecpCounter {
-                authority_type: AuthorityType::Secp256k1,
-                public_key: key,
-                counter: 0,
-            },
-        )
-        .unwrap();
-        assert_eq!(counter(&b, offsets[1]), 0);
+        for counters in [[u32::MAX, u32::MAX], [27, u32::MAX]] {
+            let (offsets, end) = fixture(
+                &mut b,
+                &[
+                    (AuthorityType::Secp256k1, key, counters[0]),
+                    (AuthorityType::Secp256k1Session, key, counters[1]),
+                ],
+            );
+            for expected in [0, 1] {
+                let consumed = counter(&b, offsets[0]).wrapping_add(1);
+                b.0[offsets[0] + 52..offsets[0] + 56].copy_from_slice(&consumed.to_le_bytes());
+                let shared = SecpCounter {
+                    authority_type: AuthorityType::Secp256k1,
+                    public_key: key,
+                    counter: consumed,
+                };
+                sync_counters(&mut b.0[..end], offsets[0], &shared).unwrap();
+                for at in &offsets {
+                    assert_eq!(counter(&b, *at), expected);
+                }
+            }
+        }
     }
 
     #[test]
@@ -438,7 +366,7 @@ mod tests {
         let key = [11; 33];
         let mut other = key;
         other[32] = 12;
-        fixture(
+        let (_, end) = fixture(
             &mut b,
             &[
                 (AuthorityType::Secp256k1, key, 5),
@@ -452,12 +380,12 @@ mod tests {
             public_key: key,
             counter: 0,
         };
-        assert_eq!(inherited_counter(&b.0, 4, &identity).unwrap(), 9);
-        assert_eq!(inherited_counter(&b.0, 0, &identity).unwrap(), 0);
+        assert_eq!(inherited_counter(&b.0[..end], &identity).unwrap(), 9);
+        assert_eq!(inherited_counter(&[], &identity).unwrap(), 0);
     }
 
     #[test]
-    fn malformed_peer_and_role_count_fail_closed() {
+    fn maximum_scan_rejects_malformed_peers_without_writing() {
         let key = [11; 33];
         let kind = AuthorityType::Secp256k1;
         let identity = SecpCounter {
@@ -465,21 +393,22 @@ mod tests {
             public_key: key,
             counter: 18,
         };
+        for malformed in 0..3 {
+            let mut b = Buffer([0; 4096]);
+            let (offsets, end) = fixture(&mut b, &[(kind, key, 17); 3]);
+            b.0[offsets[malformed] + 2..offsets[malformed] + 4]
+                .copy_from_slice(&32u16.to_le_bytes());
+            let before = b.0;
+            assert_eq!(
+                inherited_counter(&b.0[..end], &identity),
+                Err(ProgramError::InvalidAccountData)
+            );
+            assert_eq!(b.0, before);
+        }
         let mut b = Buffer([0; 4096]);
-        fixture(&mut b, &[(kind, key, 18), (kind, key, 17)]);
-        b.0[56 + 2..56 + 4].copy_from_slice(&32u16.to_le_bytes());
+        fixture(&mut b, &[(kind, key, 17)]);
         assert_eq!(
-            advance_counters(&mut b.0, Some(2), 0, &identity),
-            Err(ProgramError::InvalidAccountData)
-        );
-        assert_eq!(
-            inherited_counter(&b.0, 2, &identity),
-            Err(ProgramError::InvalidAccountData)
-        );
-        let mut b = Buffer([0; 4096]);
-        fixture(&mut b, &[(kind, key, 18)]);
-        assert_eq!(
-            advance_counters(&mut b.0[..56], Some(2), 0, &identity),
+            inherited_counter(&b.0[..55], &identity),
             Err(ProgramError::InvalidAccountData)
         );
     }
@@ -495,11 +424,10 @@ mod tests {
                 (AuthorityType::Secp256k1, key, 17),
             ],
         );
-        assert!(
-            authenticate_role(&mut b.0, Some(1), 1, &[], &[], &[], 100, false)
-                .unwrap()
-                .is_none()
-        );
+        // The canonical account split supplies only the first role.
+        assert!(authenticate_role(&mut b.0[..56], 1, &[], &[], &[], false)
+            .unwrap()
+            .is_none());
     }
 
     #[test]

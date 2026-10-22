@@ -4,10 +4,7 @@
 /// permission checks.
 use no_padding::NoPadding;
 use pinocchio::{
-    account_info::AccountInfo,
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    sysvars::{clock::Clock, Sysvar},
+    account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, sysvars::Sysvar,
     ProgramResult,
 };
 use swig_assertions::*;
@@ -147,15 +144,12 @@ pub fn sub_account_sign_v1(
     let swig = parts.state;
     let swig_roles = parts.roles;
 
-    let slot = Clock::get()?.slot;
-    let role = swig_state::authority::counter::authenticate_role(
+    let (role, _) = swig_state::authority::counter::authenticate_role(
         swig_roles,
-        None,
         sign_v1.args.role_id,
         all_accounts,
         sign_v1.authority_payload,
         sign_v1.instruction_payload,
-        slot,
         false,
     )?
     .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;

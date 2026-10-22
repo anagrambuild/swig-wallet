@@ -457,7 +457,6 @@ impl<'a> SwigBuilder<'a> {
             };
             let counter = crate::authority::counter::inherited_counter(
                 &self.role_buffer[..cursor],
-                self.swig.roles,
                 &identity,
             )?;
             self.role_buffer[auth_offset + 36..auth_offset + 40]

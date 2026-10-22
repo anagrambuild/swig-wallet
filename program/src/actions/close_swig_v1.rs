@@ -9,7 +9,7 @@ use pinocchio::{
     memory::sol_memset,
     program_error::ProgramError,
     pubkey::Pubkey,
-    sysvars::{clock::Clock, rent::Rent, Sysvar},
+    sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
 use swig_assertions::{check_bytes_match, check_self_owned};
@@ -152,21 +152,19 @@ pub fn close_swig_v1(
     }
 
     // Get and authenticate role
-    let current_slot = Clock::get()?.slot;
+
     let role_opt = swig_state::authority::counter::authenticate_role(
         swig_roles,
-        None,
         close_ix.args.role_id,
         accounts,
         close_ix.authority_payload,
         close_ix.args.into_bytes()?,
-        current_slot,
         false,
     )?;
     if role_opt.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
-    let role = role_opt.unwrap();
+    let (role, _) = role_opt.unwrap();
 
     // Check permissions: must have All, ManageAuthority, or CloseSwigAuthority
     let has_all = role.get_action::<All>(&[])?.is_some();

@@ -3,7 +3,7 @@
 use pinocchio::{
     account_info::AccountInfo,
     program_error::ProgramError,
-    sysvars::{clock::Clock, rent::Rent, Sysvar},
+    sysvars::{rent::Rent, Sysvar},
 };
 use pinocchio_system::instructions::Transfer;
 use swig_state::{
@@ -25,14 +25,12 @@ pub(crate) fn authenticate_close_authority(
     authority_payload: &[u8],
     data_payload: &[u8],
 ) -> Result<(), ProgramError> {
-    let role = swig_state::authority::counter::authenticate_role(
+    let (role, _) = swig_state::authority::counter::authenticate_role(
         roles,
-        None,
         role_id,
         accounts,
         authority_payload,
         data_payload,
-        Clock::get()?.slot,
         false,
     )?
     .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;

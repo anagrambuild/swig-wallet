@@ -6,14 +6,8 @@ use core::mem::MaybeUninit;
 
 use no_padding::NoPadding;
 use pinocchio::{
-    account_info::AccountInfo,
-    instruction::Signer,
-    memory::sol_memcmp,
-    msg,
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    sysvars::{clock::Clock, Sysvar},
-    ProgramResult,
+    account_info::AccountInfo, instruction::Signer, memory::sol_memcmp, msg,
+    program_error::ProgramError, pubkey::Pubkey, ProgramResult,
 };
 use pinocchio_token::instructions::Transfer;
 use swig_assertions::*;
@@ -139,21 +133,19 @@ pub fn withdraw_from_sub_account_v1(
 
     // We'll get sub-account metadata from the SubAccount action later after
     // authentication
-    let slot = Clock::get()?.slot;
+
     let role_opt = swig_state::authority::counter::authenticate_role(
         swig_roles,
-        None,
         withdraw.args.role_id,
         all_accounts,
         withdraw.authority_payload,
         withdraw.data_payload,
-        slot,
         false,
     )?;
     if role_opt.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
-    let role = role_opt.unwrap();
+    let (role, _) = role_opt.unwrap();
 
     // Check if the role has the required permissions
     let all_action = role.get_action::<All>(&[])?;

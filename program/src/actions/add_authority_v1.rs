@@ -6,7 +6,7 @@ use pinocchio::{
     account_info::AccountInfo,
     msg,
     program_error::ProgramError,
-    sysvars::{clock::Clock, rent::Rent, Sysvar},
+    sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
 use pinocchio_system::instructions::Transfer;
@@ -193,21 +193,19 @@ pub fn add_authority_v1(
         let saved_tail = SavedTail::take(parts.tail)?;
         let swig = parts.state;
         let swig_roles = parts.roles;
-        let slot = Clock::get()?.slot;
+
         let acting_role = swig_state::authority::counter::authenticate_role(
             swig_roles,
-            None,
             add_authority_v1.args.acting_role_id,
             all_accounts,
             add_authority_v1.authority_payload,
             add_authority_v1.data_payload,
-            slot,
             false,
         )?;
         if acting_role.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
-        let acting_role = acting_role.unwrap();
+        let (acting_role, _) = acting_role.unwrap();
 
         let all = acting_role.get_action::<All>(&[])?;
         let manage_authority = acting_role.get_action::<ManageAuthority>(&[])?;

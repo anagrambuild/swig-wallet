@@ -6,10 +6,7 @@ use core::mem::MaybeUninit;
 
 use no_padding::NoPadding;
 use pinocchio::{
-    account_info::AccountInfo,
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    sysvars::{clock::Clock, Sysvar},
+    account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, sysvars::Sysvar,
     ProgramResult,
 };
 use pinocchio_pubkey::from_str;
@@ -262,21 +259,16 @@ pub fn sign_v2(
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
-    let (header, swig_roles) = swig_account_data
-        .split_at_mut_checked(Swig::LEN)
-        .ok_or(ProgramError::InvalidAccountData)?;
-    let swig = unsafe { Swig::load_mut_unchecked(header)? };
-    // The generic account classifier already identified account 0 as Swig config.
-    // Keep this hot-path discriminator check as a local unsafe-read precondition.
-    let slot = Clock::get()?.slot;
-    let Some(role) = swig_state::authority::counter::authenticate_role(
+    let parts = Swig::split_parts_mut(swig_account_data)?;
+    let swig = parts.state;
+    let swig_roles = parts.roles;
+
+    let Some((role, slot)) = swig_state::authority::counter::authenticate_role(
         swig_roles,
-        Some(swig.roles),
         sign_v2.args.role_id,
         all_accounts,
         sign_v2.authority_payload,
         sign_v2.instruction_payload,
-        slot,
         false,
     )?
     else {

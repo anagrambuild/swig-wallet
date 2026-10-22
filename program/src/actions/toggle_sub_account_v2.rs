@@ -5,12 +5,7 @@
 //! Authorization is default-deny: the acting role must hold a scoped
 //! `SubAccountV2Toggle { subacc_id }` or `SubAccountV2All { subacc_id }` action.
 use no_padding::NoPadding;
-use pinocchio::{
-    account_info::AccountInfo,
-    program_error::ProgramError,
-    sysvars::{clock::Clock, Sysvar},
-    ProgramResult,
-};
+use pinocchio::{account_info::AccountInfo, program_error::ProgramError, ProgramResult};
 use swig_assertions::*;
 use swig_state::{
     action::Permission,
@@ -121,18 +116,16 @@ pub fn toggle_sub_account_v2(
     // Authenticate the acting role and require a scoped toggle permission.
     let role_opt = swig_state::authority::counter::authenticate_role(
         swig_roles,
-        None,
         toggle.args.auth_role_id,
         all_accounts,
         toggle.authority_payload,
         toggle.data_payload,
-        Clock::get()?.slot,
         false,
     )?;
     if role_opt.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
-    let mut role = role_opt.unwrap();
+    let (mut role, _) = role_opt.unwrap();
 
     // Scoped auth: SubAccountV2Toggle { id } or SubAccountV2All { id }.
     authorize_scoped_v2(&role, Permission::SubAccountV2Toggle, toggle.args.subacc_id)?;

@@ -2,7 +2,7 @@ use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
     program_error::ProgramError,
-    sysvars::{clock::Clock, rent::Rent, Sysvar},
+    sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
 use pinocchio_system::instructions::Transfer;
@@ -112,15 +112,12 @@ pub fn set_rent_claimer_v1(
             return Err(SwigError::InvalidRentClaimerValue.into());
         }
 
-        let slot = Clock::get()?.slot;
-        let acting_role = swig_state::authority::counter::authenticate_role(
+        let (acting_role, _) = swig_state::authority::counter::authenticate_role(
             parts.roles,
-            None,
             set_ix.args.role_id,
             all_accounts,
             set_ix.authority_payload,
             set_ix.data_payload,
-            slot,
             false,
         )?
         .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;

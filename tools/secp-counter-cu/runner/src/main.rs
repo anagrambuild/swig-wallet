@@ -224,6 +224,7 @@ fn main() {
         r1: EcKey::generate(&EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap()).unwrap(),
     };
     h.svm.add_program_from_file(h.program, so).unwrap();
+    h.svm.warp_to_slot(100);
     h.svm.airdrop(&h.payer.pubkey(), 10_000_000_000).unwrap();
     println!("kind,roles,duplicate_index,mode,cu");
     for kind in [1u16, 3, 5] {
@@ -232,7 +233,7 @@ fn main() {
                 if kind == 1 && duplicate.is_some() {
                     continue;
                 }
-                for mode in [0u8, 1, 2, 3] {
+                for mode in [0u8, 1, 3] {
                     let (data, offsets) = h.fixture(kind, n, duplicate, false);
                     h.set(data.clone());
                     let tx = h.transaction(kind, mode, 0, 18, false);
@@ -288,48 +289,141 @@ fn main() {
         let tx = h.transaction(kind, 1, 1, 19, false);
         h.svm.send_transaction(tx).unwrap();
         h.svm.expire_blockhash();
-        // Legacy unequal counters: lower role rejects and rolls back; highest role aligns.
+        // A genuine signature consumed under the old single-role behavior can execute
+        // once through a lagging role during the accepted automatic migration.
+        h.set(data.clone());
+        let tx = h.transaction(kind, 0, 1, 18, false);
+        let mut legacy_message = tx.message.clone();
+        h.svm.send_transaction(tx).unwrap();
+        h.svm.expire_blockhash();
+        if let VersionedMessage::V0(ref mut message) = legacy_message {
+            message.recent_blockhash = h.svm.latest_blockhash();
+            message.instructions.last_mut().unwrap().data[0] = 1;
+            message.instructions.last_mut().unwrap().data[1..5]
+                .copy_from_slice(&0u32.to_le_bytes());
+        }
+        let replay = VersionedTransaction::try_new(legacy_message, &[&h.payer]).unwrap();
+        h.svm.send_transaction(replay).unwrap();
+        h.svm.expire_blockhash();
+        for at in &offsets {
+            assert_eq!(
+                &h.svm.get_account(&h.state).unwrap().data[at + 52..at + 56],
+                &19u32.to_le_bytes()
+            );
+        }
+        for selected in [0, 1] {
+            let before = h.svm.get_account(&h.state).unwrap().data;
+            let err = h
+                .svm
+                .send_transaction(h.transaction(kind, 1, selected, 18, false))
+                .unwrap_err();
+            assert!(
+                matches!(&err.err,
+                    TransactionError::InstructionError(_, InstructionError::Custom(code)) if *code == expected
+                ),
+                "{:?}",
+                err.err
+            );
+            assert_eq!(h.svm.get_account(&h.state).unwrap().data, before);
+            h.svm.expire_blockhash();
+        }
+        // A much larger legacy gap also aligns after either role authenticates.
+        for selected in [0, 1] {
+            let mut unequal = data.clone();
+            unequal[offsets[0] + 52..offsets[0] + 56].copy_from_slice(&27u32.to_le_bytes());
+            unequal[offsets[1] + 52..offsets[1] + 56].copy_from_slice(&100u32.to_le_bytes());
+            h.set(unequal);
+            let counter = if selected == 0 { 28 } else { 101 };
+            h.svm
+                .send_transaction(h.transaction(kind, 1, selected, counter, false))
+                .unwrap();
+            h.svm.expire_blockhash();
+            for at in &offsets {
+                assert_eq!(
+                    &h.svm.get_account(&h.state).unwrap().data[at + 52..at + 56],
+                    &101u32.to_le_bytes()
+                );
+            }
+            // Normal operation resumes at maximum + 2, without an extra skipped counter.
+            h.svm
+                .send_transaction(h.transaction(kind, 1, 1 - selected, 102, false))
+                .unwrap();
+            h.svm.expire_blockhash();
+            for at in &offsets {
+                assert_eq!(
+                    &h.svm.get_account(&h.state).unwrap().data[at + 52..at + 56],
+                    &102u32.to_le_bytes()
+                );
+            }
+        }
+        // A downstream error rolls back authentication and every peer counter write.
         let mut unequal = data.clone();
-        unequal[offsets[1] + 52..offsets[1] + 56].copy_from_slice(&22u32.to_le_bytes());
+        unequal[offsets[1] + 52..offsets[1] + 56].copy_from_slice(&100u32.to_le_bytes());
         h.set(unequal.clone());
-        let tx = h.transaction(kind, 1, 0, 18, false);
-        let err = h.svm.send_transaction(tx).unwrap_err();
+        let err = h
+            .svm
+            .send_transaction(h.transaction(kind, 4, 0, 18, false))
+            .unwrap_err();
         assert!(
             matches!(
                 &err.err,
-                TransactionError::InstructionError(_, InstructionError::Custom(3040))
+                TransactionError::InstructionError(_, InstructionError::Custom(9999))
             ),
             "{:?}",
             err.err
         );
         assert_eq!(h.svm.get_account(&h.state).unwrap().data, unequal);
         h.svm.expire_blockhash();
-        let tx = h.transaction(kind, 1, 1, 23, false);
-        h.svm.send_transaction(tx).unwrap();
-        h.svm.expire_blockhash();
-        for at in &offsets {
-            assert_eq!(
-                &h.svm.get_account(&h.state).unwrap().data[at + 52..at + 56],
-                &23u32.to_le_bytes()
-            );
+        // A bad signature never triggers synchronization, even with a valid counter.
+        let mut bad = h.transaction(kind, 1, 0, 18, false).message;
+        if let VersionedMessage::V0(ref mut message) = bad {
+            let index = if kind == 3 {
+                message.instructions.len() - 1
+            } else {
+                1
+            };
+            let start = if kind == 3 {
+                6 + 12
+            } else {
+                u16::from_le_bytes(message.instructions[index].data[2..4].try_into().unwrap())
+                    as usize
+            };
+            message.instructions[index].data[start..start + 64].fill(0);
         }
-        // A later peer failure must roll back an earlier peer write as well.
-        let (mut data, offsets) = h.fixture(kind, 3, Some(1), false);
-        data[offsets[2] + 16..offsets[2] + 49].copy_from_slice(&h.key(kind));
-        data[offsets[2] + 52..offsets[2] + 56].copy_from_slice(&22u32.to_le_bytes());
-        h.set(data.clone());
-        let tx = h.transaction(kind, 1, 0, 18, false);
-        let err = h.svm.send_transaction(tx).unwrap_err();
+        let bad = VersionedTransaction::try_new(bad, &[&h.payer]).unwrap();
+        let bad_error = h.svm.send_transaction(bad).unwrap_err();
+        let invalid_signature = if kind == 3 { 3015 } else { 2 };
         assert!(
-            matches!(
-                &err.err,
-                TransactionError::InstructionError(_, InstructionError::Custom(3040))
+            matches!(&bad_error.err,
+                TransactionError::InstructionError(1, InstructionError::Custom(code)) if *code == invalid_signature
             ),
             "{:?}",
-            err.err
+            bad_error.err
         );
-        assert_eq!(h.svm.get_account(&h.state).unwrap().data, data);
+        assert_eq!(h.svm.get_account(&h.state).unwrap().data, unequal);
         h.svm.expire_blockhash();
+        // A malformed later peer must also roll back writes to earlier valid peers.
+        for malformed in [1, 2] {
+            let (mut malformed_data, positions) = h.fixture(kind, 3, Some(1), false);
+            malformed_data[positions[2] + 16..positions[2] + 49].copy_from_slice(&h.key(kind));
+            malformed_data[positions[malformed] + 2..positions[malformed] + 4]
+                .copy_from_slice(&32u16.to_le_bytes());
+            h.set(malformed_data.clone());
+            let err = h
+                .svm
+                .send_transaction(h.transaction(kind, 1, 0, 18, false))
+                .unwrap_err();
+            assert!(
+                matches!(
+                    &err.err,
+                    TransactionError::InstructionError(_, InstructionError::InvalidAccountData)
+                ),
+                "{:?}",
+                err.err
+            );
+            assert_eq!(h.svm.get_account(&h.state).unwrap().data, malformed_data);
+            h.svm.expire_blockhash();
+        }
         // Ordinary and session-root authorities share counters; session-key signing does not.
         let (data, offsets) = h.fixture(kind, 2, Some(1), true);
         h.set(data);
@@ -350,6 +444,35 @@ fn main() {
                 &19u32.to_le_bytes()
             );
         }
+        // Authentication reads Clock internally and keeps the existing age boundary.
+        for slot in [99, 2100, 2101] {
+            let (data, positions) = h.fixture(kind, 2, Some(1), false);
+            h.set(data.clone());
+            h.svm.warp_to_slot(slot);
+            let result = h.svm.send_transaction(h.transaction(kind, 1, 0, 18, false));
+            if slot == 2100 {
+                result.unwrap();
+                let mut expected = data;
+                for at in positions {
+                    expected[at + 52..at + 56].copy_from_slice(&18u32.to_le_bytes());
+                }
+                assert_eq!(h.svm.get_account(&h.state).unwrap().data, expected);
+            } else {
+                let err = result.unwrap_err();
+                let age_error = if kind == 3 { 3015 } else { 3016 };
+                assert!(
+                    matches!(
+                        err.err,
+                        TransactionError::InstructionError(_, InstructionError::Custom(code)) if code == age_error
+                    ),
+                    "{:?}",
+                    err.err
+                );
+                assert_eq!(h.svm.get_account(&h.state).unwrap().data, data);
+            }
+            h.svm.expire_blockhash();
+        }
+        h.svm.warp_to_slot(100);
     }
     eprintln!("All CU fixtures and real k1/r1 replay, rollback, legacy alignment, and session assertions passed.");
 }

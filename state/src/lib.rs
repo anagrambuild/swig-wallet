@@ -220,8 +220,6 @@ pub enum SwigAuthenticateError {
     PermissionDeniedProgramExecInvalidWalletAccount,
     /// Program execution cannot be the Swig program
     PermissionDeniedProgramExecCannotBeSwig,
-    /// A matching secp role has already consumed this counter or a newer one.
-    PermissionDeniedSecpCounterBehind,
 }
 
 impl From<SwigStateError> for ProgramError {

@@ -6,14 +6,8 @@
 /// old swig account to the new wallet address structure.
 use no_padding::NoPadding;
 use pinocchio::{
-    account_info::AccountInfo,
-    instruction::Signer,
-    memory::sol_memcmp,
-    msg,
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    sysvars::{clock::Clock, Sysvar},
-    ProgramResult,
+    account_info::AccountInfo, instruction::Signer, memory::sol_memcmp, msg,
+    program_error::ProgramError, pubkey::Pubkey, sysvars::Sysvar, ProgramResult,
 };
 use swig_assertions::{check_self_owned, check_self_pda};
 use swig_state::{
@@ -243,21 +237,19 @@ pub fn transfer_assets_v1(
 
     // Get the role and authenticate the authority
     let role_id = transfer_ix.args.role_id;
-    let current_slot = Clock::get()?.slot;
+
     let role_opt = swig_state::authority::counter::authenticate_role(
         swig_roles,
-        None,
         role_id,
         accounts,
         transfer_ix.authority_payload,
         transfer_ix.args.into_bytes()?,
-        current_slot,
         false,
     )?;
     if role_opt.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
-    let role = role_opt.unwrap();
+    let (role, _) = role_opt.unwrap();
 
     // Check if the role has All or ManageAuthority permissions
     let has_all_permission = role.get_action::<All>(&[])?.is_some();

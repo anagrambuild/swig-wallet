@@ -9,7 +9,7 @@ use pinocchio::{
     account_info::AccountInfo,
     msg,
     program_error::ProgramError,
-    sysvars::{clock::Clock, rent::Rent, Sysvar},
+    sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
 use swig_assertions::{check_bytes_match, check_self_owned, check_system_owner, check_zero_data};
@@ -180,15 +180,13 @@ pub fn migrate_to_wallet_address_v1(
     {
         let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
         let swig_roles = Swig::split_parts_mut(swig_account_data)?.roles;
-        let slot = Clock::get()?.slot;
-        let role = swig_state::authority::counter::authenticate_role(
+
+        let (role, _) = swig_state::authority::counter::authenticate_role(
             swig_roles,
-            None,
             migrate.args.role_id,
             all_accounts,
             migrate.authority_payload,
             migrate.data_payload,
-            slot,
             false,
         )?
         .ok_or(SwigStateError::RoleNotFound)?;

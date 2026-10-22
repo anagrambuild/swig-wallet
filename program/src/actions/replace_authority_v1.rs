@@ -13,7 +13,6 @@ use pinocchio::{
     pubkey::find_program_address,
     syscalls::sol_sha256,
     sysvars::{
-        clock::Clock,
         instructions::{Instructions, INSTRUCTIONS_ID},
         Sysvar,
     },
@@ -144,15 +143,12 @@ pub fn replace_authority_v1(
     let swig_roles = parts.roles;
 
     let acting_authority_type = {
-        let slot = Clock::get()?.slot;
-        let acting_role = swig_state::authority::counter::authenticate_role(
+        let (acting_role, _) = swig_state::authority::counter::authenticate_role(
             swig_roles,
-            None,
             replace.args.acting_role_id,
             all_accounts,
             replace.authority_payload,
             replace.data_payload,
-            slot,
             false,
         )?
         .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
@@ -259,7 +255,6 @@ fn replace_target_signer(
                     };
                     swig_state::authority::counter::inherited_counter(
                         swig_roles,
-                        swig.roles,
                         &swig_state::authority::counter::SecpCounter {
                             authority_type: target_signer_type,
                             public_key,

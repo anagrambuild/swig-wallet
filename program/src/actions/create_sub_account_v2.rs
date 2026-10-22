@@ -13,7 +13,7 @@ use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
     program_error::ProgramError,
-    sysvars::{clock::Clock, rent::Rent, Sysvar},
+    sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
 use pinocchio_system::instructions::{Allocate, Assign, Transfer};
@@ -151,18 +151,16 @@ pub fn create_sub_account_v2(
 
         let role_opt = swig_state::authority::counter::authenticate_role(
             swig_roles,
-            None,
             create.args.role_id,
             all_accounts,
             create.authority_payload,
             create.data_payload,
-            Clock::get()?.slot,
             false,
         )?;
         if role_opt.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
-        let role = role_opt.unwrap();
+        let (role, _) = role_opt.unwrap();
 
         // Default-deny: creating requires an explicit SubAccountV2Create action.
         if role.get_action::<SubAccountV2Create>(&[])?.is_none() {

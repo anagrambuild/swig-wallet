@@ -3,12 +3,7 @@
 /// sub-accounts, allowing authorized roles to control sub-account access.
 use no_padding::NoPadding;
 use pinocchio::{
-    account_info::AccountInfo,
-    msg,
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    sysvars::{clock::Clock, Sysvar},
-    ProgramResult,
+    account_info::AccountInfo, msg, program_error::ProgramError, pubkey::Pubkey, ProgramResult,
 };
 use swig_assertions::*;
 use swig_state::{
@@ -163,14 +158,12 @@ pub fn toggle_sub_account_v1(
         "toggle_sub_account_v1: role_id: {}",
         toggle_sub_account.args.role_id
     );
-    let role = swig_state::authority::counter::authenticate_role(
+    let (role, _) = swig_state::authority::counter::authenticate_role(
         swig_roles,
-        None,
         toggle_sub_account.args.auth_role_id,
         all_accounts,
         toggle_sub_account.authority_payload,
         toggle_sub_account.data_payload,
-        Clock::get()?.slot,
         false,
     )?
     .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;

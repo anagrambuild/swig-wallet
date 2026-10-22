@@ -6,11 +6,7 @@
 
 use no_padding::NoPadding;
 use pinocchio::{
-    account_info::AccountInfo,
-    memory::sol_memcmp,
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    sysvars::{clock::Clock, Sysvar},
+    account_info::AccountInfo, memory::sol_memcmp, program_error::ProgramError, pubkey::Pubkey,
     ProgramResult,
 };
 use pinocchio_pubkey::from_str;
@@ -169,15 +165,13 @@ pub fn close_token_account_v1(
     let is_v2 = unsafe { is_swig_v2(swig_account_data) };
     let parts = Swig::split_parts_mut(swig_account_data)?;
     let swig = parts.state;
-    let current_slot = Clock::get()?.slot;
-    let role = swig_state::authority::counter::authenticate_role(
+
+    let (role, current_slot) = swig_state::authority::counter::authenticate_role(
         parts.roles,
-        None,
         close_ix.args.role_id,
         accounts,
         close_ix.authority_payload,
         close_ix.args.into_bytes()?,
-        current_slot,
         false,
     )?
     .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
