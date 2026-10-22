@@ -210,3 +210,99 @@ fn mixed_other_actions_do_not_confuse_the_scan() {
         Ok(())
     );
 }
+
+fn token_limit(mint: [u8; 32], amount: u64) -> Vec<u8> {
+    action_bytes(
+        Permission::TokenLimit,
+        &swig_state::action::token_limit::TokenLimit {
+            token_mint: mint,
+            current_amount: amount,
+        },
+    )
+}
+
+fn token_recurring_limit(mint: [u8; 32]) -> Vec<u8> {
+    action_bytes(
+        Permission::TokenRecurringLimit,
+        &swig_state::action::token_recurring_limit::TokenRecurringLimit {
+            token_mint: mint,
+            window: 100,
+            limit: 100,
+            current: 100,
+            last_reset: 0,
+        },
+    )
+}
+
+fn duplicate_token_limit() -> Result<(), ProgramError> {
+    Err(SwigStateError::DuplicateTokenLimit.into())
+}
+
+#[test]
+fn rejects_duplicate_general_token_limits_for_the_same_mint() {
+    let mint = [3u8; 32];
+    let mut actions = token_limit(mint, 10);
+    actions.extend(token_limit(mint, 20));
+    assert_eq!(
+        ActionLoader::validate_destination_limit_duplicates(&actions),
+        duplicate_token_limit()
+    );
+
+    let mut actions = token_recurring_limit(mint);
+    actions.extend(token_recurring_limit(mint));
+    assert_eq!(
+        ActionLoader::validate_destination_limit_duplicates(&actions),
+        duplicate_token_limit()
+    );
+}
+
+#[test]
+fn allows_general_token_pairs_and_distinct_mints() {
+    let mut actions = token_limit([3u8; 32], 10);
+    actions.extend(token_recurring_limit([3u8; 32]));
+    actions.extend(token_limit([4u8; 32], 10));
+    assert_eq!(
+        ActionLoader::validate_destination_limit_duplicates(&actions),
+        Ok(())
+    );
+}
+
+#[test]
+fn added_actions_are_checked_against_existing_ones() {
+    let dest = [7u8; 32];
+    let existing = sol_destination_limit(dest, 100);
+    assert_eq!(
+        ActionLoader::validate_added_limit_duplicates(&existing, &sol_destination_limit(dest, 5)),
+        Err(SwigStateError::DuplicateDestinationLimit.into())
+    );
+    assert_eq!(
+        ActionLoader::validate_added_limit_duplicates(
+            &existing,
+            &sol_recurring_destination_limit(dest)
+        ),
+        Ok(())
+    );
+}
+
+#[test]
+fn existing_duplicates_do_not_block_unrelated_additions() {
+    // Roles created before duplicates were rejected keep them and stay
+    // updatable; only the added actions are checked.
+    let dest = [7u8; 32];
+    let mut existing = sol_destination_limit(dest, 100);
+    existing.extend(sol_destination_limit(dest, 200));
+    existing.extend(token_limit([3u8; 32], 10));
+    existing.extend(token_limit([3u8; 32], 20));
+    assert_eq!(
+        ActionLoader::validate_added_limit_duplicates(&existing, &token_limit([4u8; 32], 1)),
+        Ok(())
+    );
+    assert_eq!(
+        ActionLoader::validate_added_limit_duplicates(&existing, &[]),
+        Ok(())
+    );
+    assert_eq!(
+        ActionLoader::validate_added_limit_duplicates(&existing, &token_limit([3u8; 32], 1)),
+        duplicate_token_limit()
+    );
+}

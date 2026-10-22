@@ -297,7 +297,6 @@ fn perform_replace_all_operation(
     // through here after concatenating existing + new actions, so both mutation
     // paths are covered by this single check.
     ActionLoader::validate_v2_actions(new_actions, sub_account_counter)?;
-    ActionLoader::validate_destination_limit_duplicates(new_actions)?;
 
     let new_actions_size = new_actions.len();
     let size_diff = new_actions_size as i64 - current_actions_size as i64;
@@ -418,6 +417,13 @@ fn perform_add_actions_operation(
     authority_to_update_id: u32,
     sub_account_counter: u32,
 ) -> Result<i64, ProgramError> {
+    // Only the appended actions may not duplicate a keyed spend limit; roles
+    // created before that rule keep any duplicates they already hold.
+    ActionLoader::validate_added_limit_duplicates(
+        &swig_roles[actions_offset..actions_offset + current_actions_size],
+        new_actions,
+    )?;
+
     // For add operation, we need to append new actions to existing ones
     let mut combined_actions = Vec::new();
 
@@ -962,6 +968,7 @@ pub fn update_authority_v1(
     let size_diff = match operation {
         AuthorityUpdateOperation::ReplaceAll => {
             let new_actions = update_authority_v1.get_actions_data()?;
+            ActionLoader::validate_destination_limit_duplicates(new_actions)?;
             perform_replace_all_operation(
                 swig_roles,
                 current_roles_len,

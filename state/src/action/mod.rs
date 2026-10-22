@@ -410,24 +410,57 @@ impl ActionLoader {
         Ok(())
     }
 
-    /// Enforces one destination-limit action per `(destination, mint)` key for
-    /// each destination-limit type on a role.
-    ///
-    /// SignV2 charges a debit to `swig_wallet_address` against exactly one
-    /// matching destination limit — the first
-    /// `SolRecurringDestinationLimit`/`TokenRecurringDestinationLimit` for that
-    /// destination, else the first `SolDestinationLimit`/`TokenDestinationLimit`.
-    /// A second same-type action for the same key is never charged, while the
-    /// lock reservation capacity sums the role's destination limits, so an
-    /// unvalidated duplicate lets a role reserve more than any transaction can
-    /// move and keep a paired one-shot limit inert. Cross-type pairs for the
-    /// same key are allowed: the recurring allowance functions as the per-window
-    /// budget and the one-shot amount as the total budget.
-    ///
-    /// `actions_data` is walked sequentially by `[header][data]`.
+    /// Rejects duplicate keyed spend limits in a complete action list. See
+    /// [`Self::validate_added_limit_duplicates`].
     pub fn validate_destination_limit_duplicates(actions_data: &[u8]) -> Result<(), ProgramError> {
-        const MAX_KEY_LEN: usize = 4 + 32 + 32;
-        let mut keys: alloc::vec::Vec<(usize, [u8; MAX_KEY_LEN])> = alloc::vec::Vec::new();
+        Self::validate_added_limit_duplicates(&[], actions_data)
+    }
+
+    /// Rejects keyed spend limits in `added` that duplicate one in `existing`
+    /// or another in `added`.
+    ///
+    /// SignV2 charges a debit against only the first matching action of each
+    /// type: per destination (SOL) or mint + destination (tokens) for
+    /// destination limits, and per mint for general token limits. A same-type
+    /// duplicate is never charged but would inflate authorization-lock
+    /// capacity. Different types for the same key (one-shot + recurring) form
+    /// a pair and stay allowed. Duplicate general SOL and stake limits are
+    /// already rejected as non-repeatable actions.
+    ///
+    /// Only newly added actions are checked, so roles created before this rule
+    /// keep any duplicates they already hold and remain updatable.
+    pub fn validate_added_limit_duplicates(
+        existing: &[u8],
+        added: &[u8],
+    ) -> Result<(), ProgramError> {
+        let mut existing_keys = alloc::vec::Vec::new();
+        Self::collect_limit_keys(existing, &mut existing_keys)?;
+        let mut added_keys = alloc::vec::Vec::new();
+        Self::collect_limit_keys(added, &mut added_keys)?;
+        existing_keys.sort_unstable();
+        added_keys.sort_unstable();
+        let duplicate = added_keys
+            .windows(2)
+            .find(|pair| pair[0] == pair[1])
+            .map(|p| p[0])
+            .or_else(|| {
+                added_keys
+                    .iter()
+                    .copied()
+                    .find(|key| existing_keys.binary_search(key).is_ok())
+            });
+        match duplicate {
+            Some((_, _, true)) => Err(SwigStateError::DuplicateDestinationLimit.into()),
+            Some((_, _, false)) => Err(SwigStateError::DuplicateTokenLimit.into()),
+            None => Ok(()),
+        }
+    }
+
+    /// Appends `(len, key, is_destination)` for every keyed spend limit.
+    fn collect_limit_keys(
+        actions_data: &[u8],
+        keys: &mut alloc::vec::Vec<(usize, [u8; 68], bool)>,
+    ) -> Result<(), ProgramError> {
         let mut cursor = 0;
         while cursor + Action::LEN <= actions_data.len() {
             let header =
@@ -439,33 +472,29 @@ impl ActionLoader {
             if data_end > actions_data.len() {
                 return Err(ProgramError::InvalidInstructionData);
             }
-            let data = &actions_data[data_start..data_end];
-            let (is_destination_limit, minted) = match header.permission()? {
+            let permission = header.permission()?;
+            let (key_len, is_destination) = match permission {
                 Permission::SolDestinationLimit | Permission::SolRecurringDestinationLimit => {
-                    (true, false)
+                    (32, true)
                 },
                 Permission::TokenDestinationLimit | Permission::TokenRecurringDestinationLimit => {
-                    (true, true)
+                    (64, true)
                 },
-                _ => (false, false),
+                Permission::TokenLimit | Permission::TokenRecurringLimit => (32, false),
+                _ => {
+                    cursor = data_end;
+                    continue;
+                },
             };
-            if is_destination_limit {
-                let key_len = if minted { 64 } else { 32 };
-                if data.len() < key_len {
-                    return Err(ProgramError::InvalidInstructionData);
-                }
-                let mut key = [0u8; MAX_KEY_LEN];
-                key[..4].copy_from_slice(&(header.permission()? as u32).to_le_bytes());
-                key[4..4 + key_len].copy_from_slice(&data[..key_len]);
-                keys.push((4 + key_len, key));
+            let data = &actions_data[data_start..data_end];
+            if data.len() < key_len {
+                return Err(ProgramError::InvalidInstructionData);
             }
+            let mut key = [0u8; 68];
+            key[..4].copy_from_slice(&(permission as u32).to_le_bytes());
+            key[4..4 + key_len].copy_from_slice(&data[..key_len]);
+            keys.push((4 + key_len, key, is_destination));
             cursor = data_end;
-        }
-        keys.sort_unstable();
-        for pair in keys.windows(2) {
-            if pair[0] == pair[1] {
-                return Err(SwigStateError::DuplicateDestinationLimit.into());
-            }
         }
         Ok(())
     }

@@ -145,6 +145,8 @@ pub enum SwigStateError {
     /// exactly one matching limit, so a same-type duplicate is inert and only
     /// inflates the lock-reservation capacity.
     DuplicateDestinationLimit,
+    /// A role may hold at most one general token limit of each type per mint.
+    DuplicateTokenLimit,
 }
 
 /// Error types related to authentication operations.
