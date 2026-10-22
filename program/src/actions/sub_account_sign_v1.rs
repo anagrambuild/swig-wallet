@@ -203,6 +203,7 @@ pub fn sub_account_sign_v1(
     let sub_account_swig_id = sub_account.swig_id;
     let mut isolation = IsolationGuard::new(all_accounts);
     isolation.capture_signers(ctx.accounts.sub_account.key())?;
+    isolation.capture_seeded_accounts(sign_v1.instruction_payload)?;
     for (index, account) in all_accounts.iter().enumerate() {
         if account.is_writable() && account.key() != ctx.accounts.sub_account.key() {
             isolation.snapshot(index)?;

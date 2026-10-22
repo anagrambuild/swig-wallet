@@ -291,6 +291,7 @@ pub fn sign_v2(
     // bits in compact CPI metas in addition to the Swig wallet PDA signer.
     let mut isolation = IsolationGuard::new(all_accounts);
     isolation.capture_signers(ctx.accounts.swig_wallet_address.key())?;
+    isolation.capture_seeded_accounts(sign_v2.instruction_payload)?;
     let rkeys: &[&Pubkey] = &[];
     let ix_iter = InstructionIterator::new(
         all_accounts,

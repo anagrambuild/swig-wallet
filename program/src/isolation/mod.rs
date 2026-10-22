@@ -9,6 +9,7 @@
 
 mod frozen;
 mod funding;
+mod seeded;
 mod snapshot;
 mod token;
 

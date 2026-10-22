@@ -343,5 +343,11 @@ pub fn hash_except(
     #[cfg(not(target_os = "solana"))]
     let res = 0;
 
+    // Host unit tests must exercise metadata changes as well as balance changes.
+    #[cfg(all(test, not(target_os = "solana")))]
+    {
+        data_payload_hash = solana_sdk::hash::hashv(&segments[..segment_count]).to_bytes();
+    }
+
     data_payload_hash
 }
