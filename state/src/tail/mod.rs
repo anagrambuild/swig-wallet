@@ -25,11 +25,15 @@
 //! no changes to `swig.rs`.
 
 pub mod active_sub_account_count;
+pub mod authorization_locks;
 pub mod rent_claimer;
 
 use crate::SwigStateError;
 use core::convert::TryInto;
 use pinocchio::program_error::ProgramError;
+
+extern crate alloc;
+use alloc::vec::Vec;
 
 /// Length of every tail entry header: `[kind][version][value_len:u16][reserved:u8;4]`.
 pub const TAIL_HEADER_LEN: usize = 8;
@@ -125,6 +129,7 @@ pub struct UnknownTailEntry<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnyTailEntry<'a> {
     ActiveSubAccountCount(active_sub_account_count::ActiveSubAccountCountEntry<'a>),
+    AuthorizationLocks(authorization_locks::AuthorizationLocksEntry<'a>),
     RentClaimer(rent_claimer::RentClaimerEntry<'a>),
     Unknown(UnknownTailEntry<'a>),
 }
@@ -138,6 +143,10 @@ impl<'a> AnyTailEntry<'a> {
                 let (entry, consumed) =
                     active_sub_account_count::ActiveSubAccountCountEntry::read(buf)?;
                 Ok((Self::ActiveSubAccountCount(entry), consumed))
+            },
+            Some(TailKind::AuthorizationLocks) => {
+                let (entry, consumed) = authorization_locks::AuthorizationLocksEntry::read(buf)?;
+                Ok((Self::AuthorizationLocks(entry), consumed))
             },
             Some(TailKind::RentClaimer) => {
                 let (entry, consumed) = rent_claimer::RentClaimerEntry::read(buf)?;
@@ -200,6 +209,8 @@ pub enum TailKind {
     RentClaimer = 1,
     /// Number of live V1 and V2 sub-accounts.
     ActiveSubAccountCount = 2,
+    /// Authorization locks ([`authorization_locks`]).
+    AuthorizationLocks = 3,
 }
 
 impl TailKind {
@@ -210,6 +221,7 @@ impl TailKind {
             x if x == TailKind::ActiveSubAccountCount as u8 => {
                 Some(TailKind::ActiveSubAccountCount)
             },
+            x if x == TailKind::AuthorizationLocks as u8 => Some(TailKind::AuthorizationLocks),
             _ => None,
         }
     }
@@ -219,14 +231,17 @@ impl TailKind {
     }
 }
 
-/// The largest tail any current tail type can produce. Used to allocate a scratch buffer for realloc handlers.
-pub const MAX_TAIL_LEN: usize = rent_claimer::ENTRY_LEN + active_sub_account_count::ENTRY_LEN;
+/// The largest tail any current tail type can produce.
+pub const MAX_TAIL_LEN: usize = rent_claimer::ENTRY_LEN
+    + active_sub_account_count::ENTRY_LEN
+    + authorization_locks::MAX_ENTRY_LEN;
 
 /// Validates the complete tail. Each known kind may occur at most once;
 /// unknown kinds, malformed versions, and non-zero reserved bytes fail closed.
 pub fn validate_strict(mut tail_data: &[u8]) -> Result<(), ProgramError> {
     let mut seen_rent_claimer = false;
     let mut seen_active_count = false;
+    let mut seen_authorization_locks = false;
 
     while !tail_data.is_empty() {
         let (entry, consumed) = AnyTailEntry::read(tail_data)?;
@@ -250,6 +265,13 @@ pub fn validate_strict(mut tail_data: &[u8]) -> Result<(), ProgramError> {
                 }
                 seen_active_count = true;
             },
+            AnyTailEntry::AuthorizationLocks(entry) => {
+                if seen_authorization_locks {
+                    return Err(SwigStateError::InvalidAuthorizationLockLayout.into());
+                }
+                entry.validate()?;
+                seen_authorization_locks = true;
+            },
             AnyTailEntry::Unknown(_) => {
                 return Err(SwigStateError::InvalidRentClaimerLayout.into());
             },
@@ -259,45 +281,44 @@ pub fn validate_strict(mut tail_data: &[u8]) -> Result<(), ProgramError> {
     Ok(())
 }
 
-/// A stack copy of the account tail, captured before a roles realloc so it can
-/// be restored afterwards. Used to store the tail before and after a roles realloc.
+/// A heap copy of the account tail, captured before a roles realloc so it can
+/// be restored afterwards. Authorization locks make the tail too large to keep
+/// on the SBF stack.
 pub struct SavedTail {
-    bytes: [u8; MAX_TAIL_LEN],
-    len: usize, // actual length of the tail
+    bytes: Vec<u8>,
 }
 
 impl SavedTail {
-    /// Copies the tail (the bytes after `roles_end`) onto the stack.
+    /// Copies the tail (the bytes after `roles_end`) onto the heap.
     pub fn take(tail_data: &[u8]) -> Result<Self, ProgramError> {
         validate_strict(tail_data)?;
-        let len = tail_data.len();
-        let mut bytes = [0u8; MAX_TAIL_LEN];
-        bytes[..len].copy_from_slice(tail_data);
-        Ok(Self { bytes, len })
+        Ok(Self {
+            bytes: tail_data.to_vec(),
+        })
     }
 
     /// Length of the captured tail (`0` when the wallet has no tail).
     pub fn len(&self) -> usize {
-        self.len
+        self.bytes.len()
     }
 
     /// Whether no tail was captured.
     pub fn is_empty(&self) -> bool {
-        self.len == 0
+        self.bytes.is_empty()
     }
 
     /// Writes the saved tail at `offset`.
     pub fn restore_at(&self, account_data: &mut [u8], offset: usize) -> Result<(), ProgramError> {
-        if self.len == 0 {
+        if self.bytes.is_empty() {
             return Ok(()); // no-op when there was no tail
         }
         let end = offset
-            .checked_add(self.len)
+            .checked_add(self.bytes.len())
             .ok_or(ProgramError::InvalidAccountData)?;
         if end > account_data.len() {
             return Err(ProgramError::InvalidAccountData);
         }
-        account_data[offset..end].copy_from_slice(&self.bytes[..self.len]); // write the tail back
+        account_data[offset..end].copy_from_slice(&self.bytes); // write the tail back
         Ok(())
     }
 
@@ -305,7 +326,7 @@ impl SavedTail {
     pub fn restore(&self, account_data: &mut [u8]) -> Result<(), ProgramError> {
         let offset = account_data
             .len()
-            .checked_sub(self.len)
+            .checked_sub(self.bytes.len())
             .ok_or(ProgramError::InvalidAccountData)?;
         self.restore_at(account_data, offset)
     }
@@ -372,9 +393,9 @@ mod tests {
             [count_entry.as_slice(), rent_entry.as_slice()].concat(),
         ] {
             let saved = SavedTail::take(&tail).expect("both known entries are valid");
-            assert_eq!(saved.len(), MAX_TAIL_LEN);
+            assert_eq!(saved.len(), tail.len());
 
-            let mut account = vec![0u8; 8 + MAX_TAIL_LEN];
+            let mut account = vec![0u8; 8 + tail.len()];
             saved.restore(&mut account).expect("restore");
             assert_eq!(&account[8..], tail.as_slice());
         }

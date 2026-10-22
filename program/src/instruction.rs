@@ -364,4 +364,40 @@ pub enum SwigInstruction {
     #[account(5, writable, optional, name="rent_claimer_destination", desc="the configured rent claimer; omit when unset")]
     #[account(6, name="system_program", desc="the system program")]
     CloseSubAccountV2 = 23,
+
+    /// Reserves part of one wallet asset account until an expiry slot.
+    ///
+    /// While active, no role can spend the asset account below the reserved
+    /// amount. Only the creating role may release the lock before it expires.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Payer for the lock's rent
+    /// 3. System program account
+    /// 4. Swig wallet address PDA
+    /// 5. Asset account: the swig wallet address for native SOL, or a token
+    ///    account owned by it
+    /// 6. Token mint (trailing; required for Token-2022 asset accounts)
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, name="system_program", desc="the system program")]
+    #[account(3, name="swig_wallet_address", desc="the swig wallet address")]
+    #[account(4, name="asset_account", desc="the wallet address or token account to lock")]
+    AddAuthorizationLockV1 = 24,
+
+    /// Releases an authorization lock. The creating role may release its own
+    /// lock at any time; once expired, a role with All, AllButManageAuthority,
+    /// ManageAuthority, or ManageAuthorizationLocks may remove it. Rent returns
+    /// to the configured rent claimer, or to the payer when none is set.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. `[writable, signer]` Payer, and the refund destination without a
+    ///    rent claimer
+    /// 3. System program account
+    /// 4. `[writable]` Configured rent claimer (trailing; required when one is set)
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, writable, signer, name="payer", desc="the payer")]
+    #[account(2, name="system_program", desc="the system program")]
+    RemoveAuthorizationLockV1 = 25,
 }

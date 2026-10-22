@@ -136,6 +136,17 @@ pub enum SwigStateError {
     /// A role may not hold the same non-repeatable permission type more than
     /// once.
     DuplicateNonRepeatableAction,
+    /// The authorization-lock tail entry is malformed.
+    InvalidAuthorizationLockLayout,
+    /// The wallet already stores the maximum number of authorization locks.
+    AuthorizationLockLimitReached,
+    /// A role may hold at most one destination-limit action of each type for
+    /// the same `(destination, mint)` key. SignV2 charges a debit against
+    /// exactly one matching limit, so a same-type duplicate is inert and only
+    /// inflates the lock-reservation capacity.
+    DuplicateDestinationLimit,
+    /// A role may hold at most one general token limit of each type per mint.
+    DuplicateTokenLimit,
 }
 
 /// Error types related to authentication operations.
