@@ -59,7 +59,7 @@ pub(super) fn signer_controls_frozen_account(
     if owner == &crate::VOTE_PROGRAM_ID && len >= VOTE_WITHDRAWER_OFF + 32 {
         let data = unsafe { account.borrow_data_unchecked() };
         // V1_14_11, V3 and V4 share this prefix. Tag 0 is uninitialized.
-        return matches!(data[..4], [1 | 2 | 3, 0, 0, 0])
+        return matches!(data[..4], [1..=3, 0, 0, 0])
             && &data[VOTE_WITHDRAWER_OFF..VOTE_WITHDRAWER_OFF + 32] == authority_key.as_ref();
     }
     if owner == &crate::SYSTEM_PROGRAM_ID && len == NONCE_ACCOUNT_LEN {
