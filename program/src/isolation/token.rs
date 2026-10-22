@@ -10,8 +10,7 @@ use pinocchio_pubkey::from_str;
 
 use super::snapshot::{IsolationGuard, SignerSnapshot, TokenSnapshot};
 use crate::{
-    actions::close_token_account_v1::TOKEN_2022_NATIVE_MINT,
-    error::SwigError,
+    actions::close_token_account_v1::TOKEN_2022_NATIVE_MINT, error::SwigError,
     util::token_integrity::hash_with_transfer_fee,
 };
 

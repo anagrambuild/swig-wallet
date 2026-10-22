@@ -24,11 +24,8 @@ use swig_interface::{
 };
 use swig_state::{
     action::{
-        all::All,
-        close_swig_authority::CloseSwigAuthority,
-        program_all::ProgramAll,
-        token_destination_limit::TokenDestinationLimit,
-        token_limit::TokenLimit,
+        all::All, close_swig_authority::CloseSwigAuthority, program_all::ProgramAll,
+        token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
     },
     authority::AuthorityType,
     swig::{swig_wallet_address_seeds, SwigWithRoles},
@@ -542,8 +539,7 @@ fn token_2022_native_mint_identity() {
     // program — the only token program that supports on-chain native-mint
     // initialization via `create_native_mint`.
     let derived_2022 =
-        Pubkey::create_program_address(&["native-mint".as_bytes(), &[255u8]], &token_2022)
-            .unwrap();
+        Pubkey::create_program_address(&["native-mint".as_bytes(), &[255u8]], &token_2022).unwrap();
     assert_eq!(derived_2022, native_2022);
 }
 
@@ -584,15 +580,12 @@ fn sign_v2_t22_native_transfer_charges_t22_native_token_limit() {
     .unwrap();
 
     let ata = funded_t22_native_ata(&mut context, &wallet, 900_000_000);
-    let destination = CreateAssociatedTokenAccount::new(
-        &mut context.svm,
-        &context.default_payer,
-        &native2022,
-    )
-    .owner(&root.pubkey())
-    .token_program_id(&token2022)
-    .send()
-    .expect("destination T22 native ATA");
+    let destination =
+        CreateAssociatedTokenAccount::new(&mut context.svm, &context.default_payer, &native2022)
+            .owner(&root.pubkey())
+            .token_program_id(&token2022)
+            .send()
+            .expect("destination T22 native ATA");
 
     let inner = spl_token_2022_interface::instruction::transfer(
         &token2022,
@@ -662,15 +655,12 @@ fn sign_v2_t22_native_transfer_beyond_budget_is_denied() {
 
     let ata = funded_t22_native_ata(&mut context, &wallet, 900_000_000);
     let ata_lamports = context.svm.get_account(&ata).unwrap().lamports;
-    let destination = CreateAssociatedTokenAccount::new(
-        &mut context.svm,
-        &context.default_payer,
-        &native2022,
-    )
-    .owner(&root.pubkey())
-    .token_program_id(&token2022)
-    .send()
-    .expect("destination T22 native ATA");
+    let destination =
+        CreateAssociatedTokenAccount::new(&mut context.svm, &context.default_payer, &native2022)
+            .owner(&root.pubkey())
+            .token_program_id(&token2022)
+            .send()
+            .expect("destination T22 native ATA");
 
     let inner = spl_token_2022_interface::instruction::transfer(
         &token2022,
@@ -782,15 +772,12 @@ fn sign_v2_t22_native_batch_close_consumes_full_wrapped_sol_value() {
     );
     let ata_lamports = context.svm.get_account(&ata).unwrap().lamports;
 
-    let destination = CreateAssociatedTokenAccount::new(
-        &mut context.svm,
-        &context.default_payer,
-        &native2022,
-    )
-    .owner(&root.pubkey())
-    .token_program_id(&token2022)
-    .send()
-    .expect("destination T22 native ATA");
+    let destination =
+        CreateAssociatedTokenAccount::new(&mut context.svm, &context.default_payer, &native2022)
+            .owner(&root.pubkey())
+            .token_program_id(&token2022)
+            .send()
+            .expect("destination T22 native ATA");
     let destination_before = context.svm.get_account(&destination).unwrap().lamports;
 
     let inner = spl_token_2022_interface::instruction::close_account(
