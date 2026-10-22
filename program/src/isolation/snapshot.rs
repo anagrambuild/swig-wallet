@@ -168,6 +168,11 @@ impl<'a> IsolationGuard<'a> {
         // Only an empty System account can become a creation-rent destination.
         // Remember prefunding so it cannot be counted again as signer spending.
         if account.is_owned_by(&crate::SYSTEM_PROGRAM_ID) && account.data_len() == 0 {
+            // A funded with-seed target is an existing signer-controlled asset,
+            // not a new-account rent destination. Keep its original SOL/control.
+            if guard.seeded[index / 8] & (1 << (index % 8)) != 0 {
+                return guard.snapshot_frozen(index, account, &[]);
+            }
             // Existing signer SOL accounts cannot be reassigned; they are not
             // rent destinations. Duplicate account metas count only once.
             if account.is_signer() && account.lamports() != 0 {

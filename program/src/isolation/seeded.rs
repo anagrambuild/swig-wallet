@@ -13,10 +13,13 @@ impl IsolationGuard<'_> {
     #[inline(never)]
     pub fn capture_seeded_accounts(&mut self, payload: &[u8]) -> ProgramResult {
         if self.signers.as_slice().is_empty()
-            || !self
-                .accounts
-                .iter()
-                .any(|account| account.is_writable() && account.is_owned_by(&crate::STAKING_ID))
+            || !self.accounts.iter().any(|account| {
+                account.is_writable()
+                    && (account.is_owned_by(&crate::STAKING_ID)
+                        || (account.is_owned_by(&crate::SYSTEM_PROGRAM_ID)
+                            && account.data_len() == 0
+                            && account.lamports() != 0))
+            })
         {
             return Ok(());
         }
@@ -45,31 +48,47 @@ impl IsolationGuard<'_> {
                 .ok_or(SwigError::InstructionExecutionError)?;
             remaining = rest;
 
-            // Stake AuthorizeWithSeed / AuthorizeCheckedWithSeed. Both use
-            // account 0 as the target and account 1 as the signed authority base.
-            if program.key() != &crate::STAKING_ID
-                || !matches!(data.get(..4), Some([8, 0, 0, 0] | [11, 0, 0, 0]))
-            {
-                continue;
-            }
-            let [target_index, base_index, ..] = indexes else {
-                return Err(SwigError::InstructionExecutionError.into());
+            let (target_position, base_position) = match (program.key(), data.get(..4)) {
+                // Stake AuthorizeWithSeed / AuthorizeCheckedWithSeed.
+                (&crate::STAKING_ID, Some([8, 0, 0, 0] | [11, 0, 0, 0])) => (0, Some(1)),
+                // System TransferWithSeed also uses account 1 as the base.
+                (&crate::SYSTEM_PROGRAM_ID, Some([11, 0, 0, 0])) => (0, Some(1)),
+                // AllocateWithSeed / AssignWithSeed encode the base in data.
+                // The runtime accepts that signer anywhere in the account list.
+                (&crate::SYSTEM_PROGRAM_ID, Some([9, 0, 0, 0] | [10, 0, 0, 0])) => (0, None),
+                // CreateAccountWithSeed encodes the base in the same data field.
+                (&crate::SYSTEM_PROGRAM_ID, Some([3, 0, 0, 0])) => (1, None),
+                _ => continue,
             };
+            let target_index = indexes
+                .get(target_position)
+                .ok_or(SwigError::InstructionExecutionError)?;
             let target = self
                 .accounts
                 .get(*target_index as usize)
                 .ok_or(SwigError::InstructionExecutionError)?;
-            let base = self
-                .accounts
-                .get(*base_index as usize)
-                .ok_or(SwigError::InstructionExecutionError)?;
+            let base = if let Some(position) = base_position {
+                let index = indexes
+                    .get(position)
+                    .ok_or(SwigError::InstructionExecutionError)?;
+                self.accounts
+                    .get(*index as usize)
+                    .ok_or(SwigError::InstructionExecutionError)?
+                    .key()
+                    .as_slice()
+            } else {
+                data.get(4..36)
+                    .ok_or(SwigError::InstructionExecutionError)?
+            };
             if target.is_writable()
-                && target.is_owned_by(&crate::STAKING_ID)
+                && target.is_owned_by(program.key())
+                && (program.key() == &crate::STAKING_ID
+                    || (target.data_len() == 0 && target.lamports() != 0))
                 && self
                     .signers
                     .as_slice()
                     .iter()
-                    .any(|signer| self.accounts[signer.index as usize].key() == base.key())
+                    .any(|signer| self.accounts[signer.index as usize].key().as_slice() == base)
             {
                 self.seeded[*target_index as usize / 8] |= 1 << (*target_index as usize % 8);
             }
