@@ -8,6 +8,7 @@
 //! - Sub-account management errors
 //! - Permission and security errors
 
+use developer_account_registry_state::DeveloperAccountError;
 use pinocchio::program_error::ProgramError;
 
 /// Custom error types for the Swig wallet program.
@@ -185,6 +186,20 @@ pub enum SwigError {
     NoAdminAuthorityWouldRemain,
     /// The payer must be a writable signer even when no rent top-up is needed
     PayerMustBeWritableSigner,
+    /// The Developer Account or developer signer was passed as writable
+    WritableDeveloperProofAccount,
+    /// The Developer Account has the wrong owner, layout, or address
+    InvalidDeveloperAccount,
+    /// The Developer Account's `valid_until` has passed
+    DeveloperAccountExpired,
+    /// The Developer Account's tier is below the required tier
+    InsufficientDeveloperTier,
+    /// The Developer Account has no signer registered
+    DeveloperSignerNotSet,
+    /// The developer signer does not match the registered signer
+    DeveloperSignerMismatch,
+    /// The registered developer signer did not sign the transaction
+    MissingDeveloperSignature,
 }
 
 /// Implements conversion from SwigError to ProgramError.
@@ -194,5 +209,11 @@ pub enum SwigError {
 impl From<SwigError> for ProgramError {
     fn from(e: SwigError) -> Self {
         ProgramError::Custom(e as u32)
+    }
+}
+
+impl From<DeveloperAccountError> for SwigError {
+    fn from(_: DeveloperAccountError) -> Self {
+        SwigError::InvalidDeveloperAccount
     }
 }

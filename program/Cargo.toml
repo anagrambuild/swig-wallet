@@ -19,6 +19,7 @@ pinocchio-token = { version = "0.3" }
 shank = { version = "0.4.2", git = "https://github.com/anagrambuild/shank.git" }
 swig-compact-instructions = { path = "../instructions" }
 swig-state = { path = "../state" }
+developer-account-registry-state = { path = "../developer-account-registry-state" }
 swig-assertions = { path = "../assertions" }
 static_assertions = "1.1.0"
 bs58 = "*"
