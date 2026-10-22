@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-default-members = ["program", "test-program-authority"]
+default-members = ["program", "test-program-authority", "developer-account-registry"]
 members = [
   "program",
   "interface",
@@ -12,6 +12,8 @@ members = [
   "cli",
   "test-program-authority",
   "developer-account-registry-state",
+  "developer-account-registry",
+  "developer-account-registry-interface",
 ]
 
 [workspace.package]
