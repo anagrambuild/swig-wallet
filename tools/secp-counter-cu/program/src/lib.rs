@@ -7,6 +7,7 @@ use pinocchio::{
     ProgramResult,
 };
 use swig_state::{authority::counter::authenticate_role, swig::Swig};
+mod indexed;
 pinocchio::entrypoint!(process_instruction);
 fn process_instruction(_: &Pubkey, accounts: &[AccountInfo], ix: &[u8]) -> ProgramResult {
     let mode = ix[0];
@@ -29,6 +30,15 @@ fn process_instruction(_: &Pubkey, accounts: &[AccountInfo], ix: &[u8]) -> Progr
             role.authority
                 .authenticate(accounts, &ix[6..], b"counter-cu", slot)?;
         }
+    } else if matches!(mode, 5..=8) {
+        if mode <= 6 {
+            indexed::authenticate_indexed::<true>(data, selected, accounts, &ix[6..], root)?;
+        } else {
+            indexed::authenticate_indexed::<false>(data, selected, accounts, &ix[6..], root)?;
+        }
+        if mode == 6 || mode == 8 {
+            return Err(ProgramError::Custom(9999));
+        }
     } else {
         authenticate_role(
             Swig::split_parts_mut(data)?.roles,
@@ -43,6 +53,18 @@ fn process_instruction(_: &Pubkey, accounts: &[AccountInfo], ix: &[u8]) -> Progr
             // Inject a downstream failure after synchronization to prove rollback.
             return Err(ProgramError::Custom(9999));
         }
+    }
+    // Read the pinned Pinocchio bump allocator's cursor; this includes allocations
+    // that have been dropped, since its deallocator does not reclaim them.
+    if mode != 3 {
+        use pinocchio::entrypoint::{HEAP_LENGTH, HEAP_START_ADDRESS};
+        let position = unsafe { *(HEAP_START_ADDRESS as *const usize) };
+        let used = if position == 0 {
+            0usize
+        } else {
+            HEAP_START_ADDRESS as usize + HEAP_LENGTH - position
+        };
+        unsafe { pinocchio::syscalls::sol_set_return_data(used.to_le_bytes().as_ptr(), 8) };
     }
     Ok(())
 }

@@ -213,46 +213,233 @@ impl Harness {
             .unwrap();
     }
 }
+fn index_comparison(h: &mut Harness) {
+    println!("kind,roles,selected,scenario,mode,cu,heap_bytes,status");
+    for kind in [1u16, 3, 5] {
+        for n in [9usize, 10, 100, 512, 1000] {
+            for selected in [0, n / 2, n - 1] {
+                for scenario in ["none", "pair", "last_pair", "legacy", "all"] {
+                    if kind == 1 && scenario != "none" {
+                        continue;
+                    }
+                    let (mut data, offsets) = h.fixture(kind, n, None, false);
+                    let key_len = if kind == 1 { 32 } else { 33 };
+                    let previous_key =
+                        data[offsets[selected] + 16..offsets[selected] + 16 + key_len].to_vec();
+                    data[offsets[0] + 16..offsets[0] + 16 + key_len].copy_from_slice(&previous_key);
+                    data[offsets[selected] + 16..offsets[selected] + 16 + key_len]
+                        .copy_from_slice(&h.key(kind)[..key_len]);
+                    let peer = if scenario == "last_pair" && selected != n - 1 {
+                        n - 1
+                    } else if selected == 0 {
+                        1
+                    } else {
+                        0
+                    };
+                    if matches!(scenario, "pair" | "last_pair" | "legacy") {
+                        data[offsets[peer] + 16..offsets[peer] + 49].copy_from_slice(&h.key(kind));
+                    } else if scenario == "all" {
+                        for at in &offsets {
+                            data[at + 16..at + 49].copy_from_slice(&h.key(kind));
+                        }
+                    }
+                    let counter = if scenario == "legacy" {
+                        data[offsets[selected] + 52..offsets[selected] + 56]
+                            .copy_from_slice(&27u32.to_le_bytes());
+                        data[offsets[peer] + 52..offsets[peer] + 56]
+                            .copy_from_slice(&100u32.to_le_bytes());
+                        28
+                    } else {
+                        18
+                    };
+                    for mode in [0u8, 1, 5, 7] {
+                        h.set(data.clone());
+                        let result = h.svm.send_transaction(h.transaction(
+                            kind,
+                            mode,
+                            selected as u32,
+                            counter,
+                            false,
+                        ));
+                        match result {
+                            Ok(result) => {
+                                let mut expected = data.clone();
+                                if kind != 1 {
+                                    for (i, at) in offsets.iter().enumerate() {
+                                        if i == selected
+                                            || (mode != 0
+                                                && (scenario == "all"
+                                                    || (scenario != "none" && i == peer)))
+                                        {
+                                            let next: u32 = if mode != 0 && scenario == "legacy" {
+                                                101
+                                            } else {
+                                                counter
+                                            };
+                                            expected[at + 52..at + 56]
+                                                .copy_from_slice(&next.to_le_bytes());
+                                        }
+                                    }
+                                }
+                                assert_eq!(h.svm.get_account(&h.state).unwrap().data, expected, "kind={kind} n={n} selected={selected} scenario={scenario} mode={mode}");
+                                let heap =
+                                    u64::from_le_bytes(result.return_data.data.try_into().unwrap());
+                                println!(
+                                    "{kind},{n},{selected},{scenario},{mode},{},{heap},ok",
+                                    result.compute_units_consumed
+                                );
+                            },
+                            Err(error) => {
+                                let out_of_memory = error
+                                    .meta
+                                    .logs
+                                    .iter()
+                                    .any(|line| line.contains("memory allocation failed"));
+                                assert!(
+                                    mode == 5 && out_of_memory,
+                                    "unexpected mode={mode} kind={kind} n={n}: {error:?}"
+                                );
+                                assert_eq!(h.svm.get_account(&h.state).unwrap().data, data);
+                                println!(
+                                    "{kind},{n},{selected},{scenario},{mode},{},,out_of_memory",
+                                    error.meta.compute_units_consumed
+                                );
+                            },
+                        }
+                        h.svm.expire_blockhash();
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn index_edge_cases(h: &mut Harness, mode: u8) {
+    for kind in [3u16, 5] {
+        // Duplicates before and after the selected role, plus lookalike nonmatches.
+        for selected in [0usize, 2, 5] {
+            for maximum in [100u32, u32::MAX] {
+                let (mut data, offsets) = h.fixture(kind, 6, None, false);
+                for i in [0, 2, 5] {
+                    data[offsets[i] + 16..offsets[i] + 49].copy_from_slice(&h.key(kind));
+                    data[offsets[i] + 52..offsets[i] + 56].copy_from_slice(&27u32.to_le_bytes());
+                }
+                data[offsets[2] + 52..offsets[2] + 56].copy_from_slice(&maximum.to_le_bytes());
+                // Same curve and eight-byte prefix, different full key.
+                data[offsets[1] + 16..offsets[1] + 49].copy_from_slice(&h.key(kind));
+                data[offsets[1] + 48] ^= 1;
+                // Same full bytes, different curve.
+                data[offsets[3]..offsets[3] + 2]
+                    .copy_from_slice(&(if kind == 3 { 5u16 } else { 3u16 }).to_le_bytes());
+                data[offsets[3] + 16..offsets[3] + 49].copy_from_slice(&h.key(kind));
+                // Same x coordinate, opposite compressed point prefix.
+                data[offsets[4] + 16..offsets[4] + 49].copy_from_slice(&h.key(kind));
+                data[offsets[4] + 16] ^= 1;
+                let own = if selected == 2 { maximum } else { 27 };
+                h.set(data.clone());
+                h.svm
+                    .send_transaction(h.transaction(
+                        kind,
+                        mode,
+                        selected as u32,
+                        own.wrapping_add(1),
+                        false,
+                    ))
+                    .unwrap();
+                let mut expected = data;
+                for i in [0, 2, 5] {
+                    expected[offsets[i] + 52..offsets[i] + 56]
+                        .copy_from_slice(&maximum.wrapping_add(1).to_le_bytes());
+                }
+                assert_eq!(h.svm.get_account(&h.state).unwrap().data, expected);
+                h.svm.expire_blockhash();
+            }
+        }
+        // A role-shaped tail is neither considered a peer nor selectable by ID.
+        let (mut data, offsets) = h.fixture(kind, 3, Some(1), false);
+        data[34..36].copy_from_slice(&2u16.to_le_bytes());
+        data[offsets[2] + 16..offsets[2] + 49].copy_from_slice(&h.key(kind));
+        data[offsets[2] + 52..offsets[2] + 56].copy_from_slice(&1000u32.to_le_bytes());
+        h.set(data.clone());
+        h.svm
+            .send_transaction(h.transaction(kind, mode, 0, 18, false))
+            .unwrap();
+        let mut expected = data;
+        for at in &offsets[..2] {
+            expected[at + 52..at + 56].copy_from_slice(&18u32.to_le_bytes());
+        }
+        assert_eq!(h.svm.get_account(&h.state).unwrap().data, expected);
+        h.svm.expire_blockhash();
+        let err = h
+            .svm
+            .send_transaction(h.transaction(kind, mode, 2, 1001, false))
+            .unwrap_err();
+        assert!(matches!(
+            err.err,
+            TransactionError::InstructionError(_, InstructionError::InvalidAccountData)
+        ));
+        assert_eq!(h.svm.get_account(&h.state).unwrap().data, expected);
+        h.svm.expire_blockhash();
+    }
+}
+
 fn main() {
     let so = std::env::args().nth(1).expect("SBF artifact path");
+    let auth_mode: u8 = std::env::args()
+        .nth(2)
+        .map(|s| s.parse().unwrap())
+        .unwrap_or(1);
+    assert!([1, 5, 7].contains(&auth_mode));
+    let r1_group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+    let r1_private = BigNum::from_slice(&[7; 32]).unwrap();
+    let mut r1_public = EcPoint::new(&r1_group).unwrap();
+    r1_public
+        .mul_generator2(&r1_group, &r1_private, &mut BigNumContext::new().unwrap())
+        .unwrap();
     let mut h = Harness {
         svm: LiteSVM::new(),
         payer: Keypair::new(),
         program: Pubkey::new_unique(),
         state: Pubkey::new_unique(),
         k1: libsecp256k1::SecretKey::parse(&[7; 32]).unwrap(),
-        r1: EcKey::generate(&EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap()).unwrap(),
+        r1: EcKey::from_private_components(&r1_group, &r1_private, &r1_public).unwrap(),
     };
     h.svm.add_program_from_file(h.program, so).unwrap();
     h.svm.warp_to_slot(100);
     h.svm.airdrop(&h.payer.pubkey(), 10_000_000_000).unwrap();
-    println!("kind,roles,duplicate_index,mode,cu");
-    for kind in [1u16, 3, 5] {
-        for n in [9usize, 10] {
-            for duplicate in [None, Some(1), Some(n - 1)] {
-                if kind == 1 && duplicate.is_some() {
-                    continue;
-                }
-                for mode in [0u8, 1, 3] {
-                    let (data, offsets) = h.fixture(kind, n, duplicate, false);
-                    h.set(data.clone());
-                    let tx = h.transaction(kind, mode, 0, 18, false);
-                    let result = h.svm.send_transaction(tx).unwrap();
-                    let mut expected = data;
-                    if kind != 1 && mode < 3 {
-                        for (i, at) in offsets.iter().enumerate() {
-                            if i == 0 || (mode > 0 && duplicate == Some(i)) {
-                                expected[at + 52..at + 56].copy_from_slice(&18u32.to_le_bytes());
+    index_edge_cases(&mut h, auth_mode);
+    if std::env::args().nth(3).as_deref() == Some("--index") {
+        index_comparison(&mut h);
+    } else {
+        println!("kind,roles,duplicate_index,mode,cu");
+        for kind in [1u16, 3, 5] {
+            for n in [9usize, 10] {
+                for duplicate in [None, Some(1), Some(n - 1)] {
+                    if kind == 1 && duplicate.is_some() {
+                        continue;
+                    }
+                    for mode in [0u8, auth_mode, 3] {
+                        let (data, offsets) = h.fixture(kind, n, duplicate, false);
+                        h.set(data.clone());
+                        let tx = h.transaction(kind, mode, 0, 18, false);
+                        let result = h.svm.send_transaction(tx).unwrap();
+                        let mut expected = data;
+                        if kind != 1 && mode != 3 {
+                            for (i, at) in offsets.iter().enumerate() {
+                                if i == 0 || (mode > 0 && duplicate == Some(i)) {
+                                    expected[at + 52..at + 56]
+                                        .copy_from_slice(&18u32.to_le_bytes());
+                                }
                             }
                         }
+                        assert_eq!(h.svm.get_account(&h.state).unwrap().data, expected);
+                        println!(
+                            "{kind},{n},{},{mode},{}",
+                            duplicate.map_or(-1, |n| n as i32),
+                            result.compute_units_consumed
+                        );
+                        h.svm.expire_blockhash();
                     }
-                    assert_eq!(h.svm.get_account(&h.state).unwrap().data, expected);
-                    println!(
-                        "{kind},{n},{},{mode},{}",
-                        duplicate.map_or(-1, |n| n as i32),
-                        result.compute_units_consumed
-                    );
-                    h.svm.expire_blockhash();
                 }
             }
         }
@@ -261,7 +448,7 @@ fn main() {
     for kind in [3u16, 5] {
         let (data, offsets) = h.fixture(kind, 2, Some(1), false);
         h.set(data.clone());
-        let tx = h.transaction(kind, 1, 0, 18, false);
+        let tx = h.transaction(kind, auth_mode, 0, 18, false);
         let original_message = tx.message.clone();
         h.svm.send_transaction(tx).unwrap();
         h.svm.expire_blockhash();
@@ -286,7 +473,7 @@ fn main() {
         assert_eq!(h.svm.get_account(&h.state).unwrap().data, before);
         h.svm.expire_blockhash();
         // A fresh signature through the peer succeeds.
-        let tx = h.transaction(kind, 1, 1, 19, false);
+        let tx = h.transaction(kind, auth_mode, 1, 19, false);
         h.svm.send_transaction(tx).unwrap();
         h.svm.expire_blockhash();
         // A genuine signature consumed under the old single-role behavior can execute
@@ -298,7 +485,7 @@ fn main() {
         h.svm.expire_blockhash();
         if let VersionedMessage::V0(ref mut message) = legacy_message {
             message.recent_blockhash = h.svm.latest_blockhash();
-            message.instructions.last_mut().unwrap().data[0] = 1;
+            message.instructions.last_mut().unwrap().data[0] = auth_mode;
             message.instructions.last_mut().unwrap().data[1..5]
                 .copy_from_slice(&0u32.to_le_bytes());
         }
@@ -315,7 +502,7 @@ fn main() {
             let before = h.svm.get_account(&h.state).unwrap().data;
             let err = h
                 .svm
-                .send_transaction(h.transaction(kind, 1, selected, 18, false))
+                .send_transaction(h.transaction(kind, auth_mode, selected, 18, false))
                 .unwrap_err();
             assert!(
                 matches!(&err.err,
@@ -335,7 +522,7 @@ fn main() {
             h.set(unequal);
             let counter = if selected == 0 { 28 } else { 101 };
             h.svm
-                .send_transaction(h.transaction(kind, 1, selected, counter, false))
+                .send_transaction(h.transaction(kind, auth_mode, selected, counter, false))
                 .unwrap();
             h.svm.expire_blockhash();
             for at in &offsets {
@@ -346,7 +533,7 @@ fn main() {
             }
             // Normal operation resumes at maximum + 2, without an extra skipped counter.
             h.svm
-                .send_transaction(h.transaction(kind, 1, 1 - selected, 102, false))
+                .send_transaction(h.transaction(kind, auth_mode, 1 - selected, 102, false))
                 .unwrap();
             h.svm.expire_blockhash();
             for at in &offsets {
@@ -362,7 +549,13 @@ fn main() {
         h.set(unequal.clone());
         let err = h
             .svm
-            .send_transaction(h.transaction(kind, 4, 0, 18, false))
+            .send_transaction(h.transaction(
+                kind,
+                if auth_mode == 1 { 4 } else { auth_mode + 1 },
+                0,
+                18,
+                false,
+            ))
             .unwrap_err();
         assert!(
             matches!(
@@ -375,7 +568,7 @@ fn main() {
         assert_eq!(h.svm.get_account(&h.state).unwrap().data, unequal);
         h.svm.expire_blockhash();
         // A bad signature never triggers synchronization, even with a valid counter.
-        let mut bad = h.transaction(kind, 1, 0, 18, false).message;
+        let mut bad = h.transaction(kind, auth_mode, 0, 18, false).message;
         if let VersionedMessage::V0(ref mut message) = bad {
             let index = if kind == 3 {
                 message.instructions.len() - 1
@@ -411,7 +604,7 @@ fn main() {
             h.set(malformed_data.clone());
             let err = h
                 .svm
-                .send_transaction(h.transaction(kind, 1, 0, 18, false))
+                .send_transaction(h.transaction(kind, auth_mode, 0, 18, false))
                 .unwrap_err();
             assert!(
                 matches!(
@@ -427,15 +620,15 @@ fn main() {
         // Ordinary and session-root authorities share counters; session-key signing does not.
         let (data, offsets) = h.fixture(kind, 2, Some(1), true);
         h.set(data);
-        let tx = h.transaction(kind, 1, 0, 18, false);
+        let tx = h.transaction(kind, auth_mode, 0, 18, false);
         h.svm.send_transaction(tx).unwrap();
         h.svm.expire_blockhash();
         let before = h.svm.get_account(&h.state).unwrap().data;
-        let tx = h.transaction(kind + 1, 1, 1, 0, true);
+        let tx = h.transaction(kind + 1, auth_mode, 1, 0, true);
         h.svm.send_transaction(tx).unwrap();
         h.svm.expire_blockhash();
         assert_eq!(h.svm.get_account(&h.state).unwrap().data, before);
-        let tx = h.transaction(kind + 1, 1, 1, 19, false);
+        let tx = h.transaction(kind + 1, auth_mode, 1, 19, false);
         h.svm.send_transaction(tx).unwrap();
         h.svm.expire_blockhash();
         for at in &offsets {
@@ -449,7 +642,9 @@ fn main() {
             let (data, positions) = h.fixture(kind, 2, Some(1), false);
             h.set(data.clone());
             h.svm.warp_to_slot(slot);
-            let result = h.svm.send_transaction(h.transaction(kind, 1, 0, 18, false));
+            let result = h
+                .svm
+                .send_transaction(h.transaction(kind, auth_mode, 0, 18, false));
             if slot == 2100 {
                 result.unwrap();
                 let mut expected = data;
