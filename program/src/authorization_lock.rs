@@ -181,10 +181,8 @@ pub(crate) fn remaining_spend_capacity(
             .get(header_end..data_end)
             .ok_or(ProgramError::InvalidAccountData)?;
 
-        let (kind, amount, destination_key) = match action.permission()? {
-            Permission::SolLimit if native => {
-                (LimitKind::OneShot, load::<SolLimit>(data)?.amount, None)
-            },
+        let (kind, amount) = match action.permission()? {
+            Permission::SolLimit if native => (LimitKind::OneShot, load::<SolLimit>(data)?.amount),
             Permission::SolRecurringLimit if native => {
                 let limit = load::<SolRecurringLimit>(data)?;
                 (
@@ -196,21 +194,25 @@ pub(crate) fn remaining_spend_capacity(
                         limit.current_amount,
                         slot,
                     ),
-                    None,
                 )
             },
             Permission::SolDestinationLimit if native => {
                 let limit = load::<SolDestinationLimit>(data)?;
                 (
-                    LimitKind::Destination,
+                    LimitKind::Destination {
+                        key: DestinationKey::Sol(limit.destination),
+                        recurring: false,
+                    },
                     limit.amount,
-                    Some(DestinationKey::Sol(limit.destination)),
                 )
             },
             Permission::SolRecurringDestinationLimit if native => {
                 let limit = load::<SolRecurringDestinationLimit>(data)?;
                 (
-                    LimitKind::Destination,
+                    LimitKind::Destination {
+                        key: DestinationKey::Sol(limit.destination),
+                        recurring: true,
+                    },
                     recurring_remaining(
                         limit.window,
                         limit.last_reset,
@@ -218,7 +220,6 @@ pub(crate) fn remaining_spend_capacity(
                         limit.current_amount,
                         slot,
                     ),
-                    Some(DestinationKey::Sol(limit.destination)),
                 )
             },
             Permission::TokenLimit if !native => {
@@ -227,7 +228,7 @@ pub(crate) fn remaining_spend_capacity(
                     cursor = data_end;
                     continue;
                 }
-                (LimitKind::OneShot, limit.current_amount, None)
+                (LimitKind::OneShot, limit.current_amount)
             },
             Permission::TokenRecurringLimit if !native => {
                 let limit = load::<TokenRecurringLimit>(data)?;
@@ -244,7 +245,6 @@ pub(crate) fn remaining_spend_capacity(
                         limit.current,
                         slot,
                     ),
-                    None,
                 )
             },
             Permission::TokenDestinationLimit if !native => {
@@ -254,12 +254,14 @@ pub(crate) fn remaining_spend_capacity(
                     continue;
                 }
                 (
-                    LimitKind::Destination,
+                    LimitKind::Destination {
+                        key: DestinationKey::Token {
+                            mint: limit.token_mint,
+                            destination: limit.destination,
+                        },
+                        recurring: false,
+                    },
                     limit.amount,
-                    Some(DestinationKey::Token {
-                        mint: limit.token_mint,
-                        destination: limit.destination,
-                    }),
                 )
             },
             Permission::TokenRecurringDestinationLimit if !native => {
@@ -269,7 +271,13 @@ pub(crate) fn remaining_spend_capacity(
                     continue;
                 }
                 (
-                    LimitKind::Destination,
+                    LimitKind::Destination {
+                        key: DestinationKey::Token {
+                            mint: limit.token_mint,
+                            destination: limit.destination,
+                        },
+                        recurring: true,
+                    },
                     recurring_remaining(
                         limit.window,
                         limit.last_reset,
@@ -277,10 +285,6 @@ pub(crate) fn remaining_spend_capacity(
                         limit.current_amount,
                         slot,
                     ),
-                    Some(DestinationKey::Token {
-                        mint: limit.token_mint,
-                        destination: limit.destination,
-                    }),
                 )
             },
             _ => {
@@ -294,48 +298,33 @@ pub(crate) fn remaining_spend_capacity(
         // action matching the same destination key, so a debit must fit within
         // whichever of the two types is present, and a pair's debit drains
         // both ledgers.
-        match (kind, destination_key) {
-            (LimitKind::OneShot, _) => {
+        match kind {
+            LimitKind::OneShot => {
                 one_shot.get_or_insert(amount);
             },
-            (LimitKind::Recurring, _) => {
+            LimitKind::Recurring => {
                 recurring.get_or_insert(amount);
             },
-            (LimitKind::Destination, Some(key)) => {
-                let is_recurring_limit = matches!(
-                    action.permission()?,
-                    Permission::SolRecurringDestinationLimit
-                        | Permission::TokenRecurringDestinationLimit
-                );
+            LimitKind::Destination { key, recurring } => {
                 match destination_groups
                     .iter_mut()
-                    .find(|(existing, ..)| existing == &key)
+                    .find(|(existing, _)| existing == &key)
                 {
+                    Some((_, group)) if recurring => {
+                        group.recurring.get_or_insert(amount);
+                    },
                     Some((_, group)) => {
-                        if is_recurring_limit {
-                            group.recurring.get_or_insert(amount);
-                        } else {
-                            group.one_shot.get_or_insert(amount);
-                        }
+                        group.one_shot.get_or_insert(amount);
                     },
                     None => destination_groups.push((
                         key,
                         DestinationPair {
-                            one_shot: if is_recurring_limit {
-                                None
-                            } else {
-                                Some(amount)
-                            },
-                            recurring: if is_recurring_limit {
-                                Some(amount)
-                            } else {
-                                None
-                            },
+                            one_shot: (!recurring).then_some(amount),
+                            recurring: recurring.then_some(amount),
                         },
                     )),
                 }
             },
-            (LimitKind::Destination, None) => unreachable!(),
         }
         cursor = data_end;
     }
@@ -424,7 +413,11 @@ pub(crate) fn check_role_locks_within_limits(
 enum LimitKind {
     OneShot,
     Recurring,
-    Destination,
+    /// A destination-scoped limit, keyed by what SignV2 matches it against.
+    Destination {
+        key: DestinationKey,
+        recurring: bool,
+    },
 }
 
 /// Identifies the destination a destination-limit action reserves capacity
