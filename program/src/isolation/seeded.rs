@@ -16,6 +16,7 @@ impl IsolationGuard<'_> {
             || !self.accounts.iter().any(|account| {
                 account.is_writable()
                     && (account.is_owned_by(&crate::STAKING_ID)
+                        || account.is_owned_by(&crate::VOTE_PROGRAM_ID)
                         || (account.is_owned_by(&crate::SYSTEM_PROGRAM_ID)
                             && account.data_len() == 0
                             && account.lamports() != 0))
@@ -51,6 +52,8 @@ impl IsolationGuard<'_> {
             let (target_position, base_position) = match (program.key(), data.get(..4)) {
                 // Stake AuthorizeWithSeed / AuthorizeCheckedWithSeed.
                 (&crate::STAKING_ID, Some([8, 0, 0, 0] | [11, 0, 0, 0])) => (0, Some(1)),
+                // Vote AuthorizeWithSeed / AuthorizeCheckedWithSeed put clock first.
+                (&crate::VOTE_PROGRAM_ID, Some([10, 0, 0, 0] | [11, 0, 0, 0])) => (0, Some(2)),
                 // System TransferWithSeed also uses account 1 as the base.
                 (&crate::SYSTEM_PROGRAM_ID, Some([11, 0, 0, 0])) => (0, Some(1)),
                 // AllocateWithSeed / AssignWithSeed encode the base in data.
@@ -83,6 +86,7 @@ impl IsolationGuard<'_> {
             if target.is_writable()
                 && target.is_owned_by(program.key())
                 && (program.key() == &crate::STAKING_ID
+                    || program.key() == &crate::VOTE_PROGRAM_ID
                     || (target.data_len() == 0 && target.lamports() != 0))
                 && self
                     .signers
