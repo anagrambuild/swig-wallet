@@ -633,32 +633,36 @@ impl Swig {
 
     /// Gets a mutable reference to a role by ID.
     pub fn get_mut_role(id: u32, roles: &mut [u8]) -> Result<Option<RoleMut<'_>>, ProgramError> {
-        let mut cursor = 0;
-        let mut found_offset = None;
-        let roles_len = roles.len();
-        while cursor < roles_len {
-            if cursor + Position::LEN > roles_len {
-                return Err(ProgramError::InvalidAccountData);
-            }
-            let offset = cursor + Position::LEN;
-            let position =
-                unsafe { Position::load_unchecked(roles.get_unchecked(cursor..offset))? };
-            if position.id() == id {
-                found_offset = Some(cursor);
-                break;
-            }
-            let boundary = position.boundary() as usize;
-            if boundary < offset || boundary > roles_len {
-                return Err(ProgramError::InvalidAccountData);
-            }
-            cursor = boundary;
-        }
-        if let Some(offset) = found_offset {
-            return Self::get_mut_role_at(offset, roles).map(Some);
-        }
+        let Some(offset) = Self::find_role_offset(id, roles)? else {
+            return Ok(None);
+        };
+        Self::get_mut_role_at(offset, roles).map(Some)
+    }
 
+    /// Finds a role by ID, validating each position before following its boundary.
+    pub(crate) fn find_role_offset(id: u32, roles: &[u8]) -> Result<Option<usize>, ProgramError> {
+        let mut offset = 0;
+        while offset < roles.len() {
+            let pos_end = offset
+                .checked_add(Position::LEN)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            let bytes = roles
+                .get(offset..pos_end)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            // Position contains only integer fields; do not form a reference at an untrusted boundary.
+            let position = unsafe { (bytes.as_ptr() as *const Position).read_unaligned() };
+            let boundary = position.boundary() as usize;
+            if boundary < pos_end || boundary > roles.len() {
+                return Err(ProgramError::InvalidAccountData);
+            }
+            if position.id() == id {
+                return Ok(Some(offset));
+            }
+            offset = boundary;
+        }
         Ok(None)
     }
+
     /// Loads a role at a validated position offset without walking preceding roles again.
     pub fn get_mut_role_at(offset: usize, roles: &mut [u8]) -> Result<RoleMut<'_>, ProgramError> {
         if (roles.as_ptr() as usize).wrapping_add(offset) & (core::mem::align_of::<Position>() - 1)

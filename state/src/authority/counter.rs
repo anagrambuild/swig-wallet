@@ -84,28 +84,10 @@ pub fn authenticate_role<'a>(
     data_payload: &[u8],
     create_session: bool,
 ) -> Result<Option<(RoleMut<'a>, u64)>, ProgramError> {
-    let mut offset = 0;
-    let selected = loop {
-        if offset == roles.len() {
-            return Ok(None);
-        }
-        let pos_end = offset
-            .checked_add(Position::LEN)
-            .ok_or(ProgramError::InvalidAccountData)?;
-        let bytes = roles
-            .get(offset..pos_end)
-            .ok_or(ProgramError::InvalidAccountData)?;
-        // Position contains only integer fields; do not form a reference at an untrusted boundary.
-        let position = unsafe { (bytes.as_ptr() as *const Position).read_unaligned() };
-        let boundary = position.boundary() as usize;
-        if boundary < pos_end || boundary > roles.len() {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        if position.id() == role_id {
-            break offset;
-        }
-        offset = boundary;
+    let Some(selected) = Swig::find_role_offset(role_id, roles)? else {
+        return Ok(None);
     };
+
     let slot = Clock::get()?.slot;
     let consumed = {
         let role = Swig::get_mut_role_at(selected, roles)?;
@@ -122,10 +104,13 @@ pub fn authenticate_role<'a>(
             SecpCounter::from_role(&role)?
         }
     };
+
     if let Some(counter) = consumed {
         sync_counters(roles, selected, &counter)?;
     }
-    Swig::get_mut_role_at(selected, roles).map(|role| Some((role, slot)))
+
+    let role = Swig::get_mut_role_at(selected, roles)?;
+    Ok(Some((role, slot)))
 }
 
 /// Writes the shared next counter after authentication succeeds.
@@ -411,6 +396,50 @@ mod tests {
             inherited_counter(&b.0[..55], &identity),
             Err(ProgramError::InvalidAccountData)
         );
+    }
+
+    #[test]
+    fn role_lookup_finds_each_id_and_preserves_missing_roles() {
+        let mut b = Buffer([0; 4096]);
+        let (offsets, end) = fixture(&mut b, &[(AuthorityType::Secp256k1, [11; 33], 17); 3]);
+        for (id, offset) in offsets.into_iter().enumerate() {
+            assert_eq!(
+                Swig::find_role_offset(id as u32, &b.0[..end]),
+                Ok(Some(offset))
+            );
+            let role = Swig::get_mut_role(id as u32, &mut b.0[..end])
+                .unwrap()
+                .unwrap();
+            assert_eq!(role.position.id(), id as u32);
+        }
+        assert_eq!(Swig::find_role_offset(3, &b.0[..end]), Ok(None));
+        assert_eq!(Swig::find_role_offset(0, &[]), Ok(None));
+    }
+
+    #[test]
+    fn role_lookup_rejects_malformed_positions_before_following_them() {
+        for malformed in 0..3 {
+            let mut b = Buffer([0; 4096]);
+            let (offsets, end) = fixture(&mut b, &[(AuthorityType::Secp256k1, [11; 33], 17); 3]);
+            let offset = offsets[malformed];
+            for boundary in [offset, offset + Position::LEN - 1, end + 1] {
+                b.0[offset + 12..offset + 16].copy_from_slice(&(boundary as u32).to_le_bytes());
+                for id in [malformed as u32, 3] {
+                    assert_eq!(
+                        Swig::find_role_offset(id, &b.0[..end]),
+                        Err(ProgramError::InvalidAccountData)
+                    );
+                    assert!(matches!(
+                        Swig::get_mut_role(id, &mut b.0[..end]),
+                        Err(ProgramError::InvalidAccountData)
+                    ));
+                }
+            }
+            assert_eq!(
+                Swig::find_role_offset(3, &b.0[..offset + Position::LEN - 1]),
+                Err(ProgramError::InvalidAccountData)
+            );
+        }
     }
 
     #[test]
