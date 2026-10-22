@@ -7,6 +7,7 @@
 //! accounts.
 
 pub mod actions;
+pub mod developer_account;
 pub mod error;
 pub mod instruction;
 pub mod isolation;

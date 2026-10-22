@@ -10263,6 +10263,7 @@ dependencies = [
  "bs58",
  "bytemuck",
  "default-env",
+ "developer-account-registry-state",
  "ecdsa",
  "hex",
  "litesvm",
