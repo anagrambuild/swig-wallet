@@ -262,31 +262,27 @@ pub fn sign_v2(
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
-    let parts = Swig::split_parts_mut(swig_account_data)?;
-    let swig = parts.state;
-    let swig_roles = parts.roles;
+    let (header, swig_roles) = swig_account_data
+        .split_at_mut_checked(Swig::LEN)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    let swig = unsafe { Swig::load_mut_unchecked(header)? };
     // The generic account classifier already identified account 0 as Swig config.
     // Keep this hot-path discriminator check as a local unsafe-read precondition.
-    let Some(role) = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)? else {
+    let slot = Clock::get()?.slot;
+    let Some(role) = swig_state::authority::counter::authenticate_role(
+        swig_roles,
+        Some(swig.roles),
+        sign_v2.args.role_id,
+        all_accounts,
+        sign_v2.authority_payload,
+        sign_v2.instruction_payload,
+        slot,
+        false,
+    )?
+    else {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     };
-    let clock = Clock::get()?;
-    let slot = clock.slot;
-    if role.authority.session_based() {
-        role.authority.authenticate_session(
-            all_accounts,
-            sign_v2.authority_payload,
-            sign_v2.instruction_payload,
-            slot,
-        )?;
-    } else {
-        role.authority.authenticate(
-            all_accounts,
-            sign_v2.authority_payload,
-            sign_v2.instruction_payload,
-            slot,
-        )?;
-    }
+
     // Intentionally no restricted keys: SignV2 forwards existing outer signer
     // bits in compact CPI metas in addition to the Swig wallet PDA signer.
     let mut isolation = IsolationGuard::new(all_accounts);

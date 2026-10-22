@@ -752,30 +752,21 @@ pub fn update_authority_v1(
         let roles_len = swig_roles.len();
 
         // Get and validate acting role.
-        let acting_role = Swig::get_mut_role(update_authority_v1.args.acting_role_id, swig_roles)?;
+        let slot = Clock::get()?.slot;
+        let acting_role = swig_state::authority::counter::authenticate_role(
+            swig_roles,
+            None,
+            update_authority_v1.args.acting_role_id,
+            all_accounts,
+            update_authority_v1.authority_payload,
+            update_authority_v1.data_payload,
+            slot,
+            false,
+        )?;
         if acting_role.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
         let acting_role = acting_role.unwrap();
-
-        // Authenticate the caller.
-        let clock = Clock::get()?;
-        let slot = clock.slot;
-        if acting_role.authority.session_based() {
-            acting_role.authority.authenticate_session(
-                all_accounts,
-                update_authority_v1.authority_payload,
-                update_authority_v1.data_payload,
-                slot,
-            )?;
-        } else {
-            acting_role.authority.authenticate(
-                all_accounts,
-                update_authority_v1.authority_payload,
-                update_authority_v1.data_payload,
-                slot,
-            )?;
-        }
 
         // Check permissions - same as add/remove authority.
         let all = acting_role.get_action::<All>(&[])?;

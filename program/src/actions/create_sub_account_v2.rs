@@ -149,27 +149,20 @@ pub fn create_sub_account_v2(
         let swig = parts.state;
         let swig_roles = parts.roles;
 
-        let role_opt = Swig::get_mut_role(create.args.role_id, swig_roles)?;
+        let role_opt = swig_state::authority::counter::authenticate_role(
+            swig_roles,
+            None,
+            create.args.role_id,
+            all_accounts,
+            create.authority_payload,
+            create.data_payload,
+            Clock::get()?.slot,
+            false,
+        )?;
         if role_opt.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
         let role = role_opt.unwrap();
-        let clock = Clock::get()?;
-        if role.authority.session_based() {
-            role.authority.authenticate_session(
-                all_accounts,
-                create.authority_payload,
-                create.data_payload,
-                clock.slot,
-            )?;
-        } else {
-            role.authority.authenticate(
-                all_accounts,
-                create.authority_payload,
-                create.data_payload,
-                clock.slot,
-            )?;
-        }
 
         // Default-deny: creating requires an explicit SubAccountV2Create action.
         if role.get_action::<SubAccountV2Create>(&[])?.is_none() {

@@ -25,16 +25,17 @@ pub(crate) fn authenticate_close_authority(
     authority_payload: &[u8],
     data_payload: &[u8],
 ) -> Result<(), ProgramError> {
-    let role =
-        Swig::get_mut_role(role_id, roles)?.ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
-    let slot = Clock::get()?.slot;
-    if role.authority.session_based() {
-        role.authority
-            .authenticate_session(accounts, authority_payload, data_payload, slot)?;
-    } else {
-        role.authority
-            .authenticate(accounts, authority_payload, data_payload, slot)?;
-    }
+    let role = swig_state::authority::counter::authenticate_role(
+        roles,
+        None,
+        role_id,
+        accounts,
+        authority_payload,
+        data_payload,
+        Clock::get()?.slot,
+        false,
+    )?
+    .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
 
     let has_all = role.get_action::<All>(&[])?.is_some();
     let has_manage = role.get_action::<ManageAuthority>(&[])?.is_some();

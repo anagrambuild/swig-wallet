@@ -222,27 +222,21 @@ pub fn sub_account_sign_v2(
         let swig_roles = parts.roles;
         let swig_address = *ctx.accounts.swig.key();
 
-        let role_opt = Swig::get_mut_role(sign.args.role_id, swig_roles)?;
+        let role_opt = swig_state::authority::counter::authenticate_role(
+            swig_roles,
+            None,
+            sign.args.role_id,
+            all_accounts,
+            sign.authority_payload,
+            sign.data_payload,
+            Clock::get()?.slot,
+            false,
+        )?;
         if role_opt.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
         let role = role_opt.unwrap();
-        let clock = Clock::get()?;
-        if role.authority.session_based() {
-            role.authority.authenticate_session(
-                all_accounts,
-                sign.authority_payload,
-                sign.data_payload,
-                clock.slot,
-            )?;
-        } else {
-            role.authority.authenticate(
-                all_accounts,
-                sign.authority_payload,
-                sign.data_payload,
-                clock.slot,
-            )?;
-        }
+
         authorize_scoped_v2(&role, Permission::SubAccountV2Sign, sign.args.subacc_id)?;
         swig_address
     };

@@ -147,34 +147,18 @@ pub fn sub_account_sign_v1(
     let swig = parts.state;
     let swig_roles = parts.roles;
 
-    let role_opt = Swig::get_mut_role(sign_v1.args.role_id, swig_roles)?;
-    if role_opt.is_none() {
-        return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-    }
-
-    let role = role_opt.unwrap();
-
-    // Store authority info before authentication (to avoid borrow checker issues)
-    let is_session_based = role.authority.session_based();
-
-    let clock = Clock::get()?;
-    let slot = clock.slot;
-
-    if is_session_based {
-        role.authority.authenticate_session(
-            all_accounts,
-            sign_v1.authority_payload,
-            sign_v1.instruction_payload,
-            slot,
-        )?;
-    } else {
-        role.authority.authenticate(
-            all_accounts,
-            sign_v1.authority_payload,
-            sign_v1.instruction_payload,
-            slot,
-        )?;
-    }
+    let slot = Clock::get()?.slot;
+    let role = swig_state::authority::counter::authenticate_role(
+        swig_roles,
+        None,
+        sign_v1.args.role_id,
+        all_accounts,
+        sign_v1.authority_payload,
+        sign_v1.instruction_payload,
+        slot,
+        false,
+    )?
+    .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
 
     // Find the SubAccount action to get sub-account metadata (after authentication)
     let sub_account_action =

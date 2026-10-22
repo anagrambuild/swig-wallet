@@ -163,14 +163,18 @@ pub fn toggle_sub_account_v1(
         "toggle_sub_account_v1: role_id: {}",
         toggle_sub_account.args.role_id
     );
+    let role = swig_state::authority::counter::authenticate_role(
+        swig_roles,
+        None,
+        toggle_sub_account.args.auth_role_id,
+        all_accounts,
+        toggle_sub_account.authority_payload,
+        toggle_sub_account.data_payload,
+        Clock::get()?.slot,
+        false,
+    )?
+    .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
     let action = if toggle_sub_account.args.auth_role_id != toggle_sub_account.args.role_id {
-        // 1. Check if authority role exists and authenticate
-        let role_opt = Swig::get_mut_role(toggle_sub_account.args.auth_role_id, swig_roles)?;
-        if role_opt.is_none() {
-            return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-        }
-        let mut role = role_opt.unwrap();
-        authenticate_authority(&mut role, all_accounts, &toggle_sub_account)?;
         let all_action = role.get_action::<All>(&[])?;
         let manage_authority_action = role.get_action::<ManageAuthority>(&[])?;
         if all_action.is_none() && manage_authority_action.is_none() {
@@ -197,9 +201,7 @@ pub fn toggle_sub_account_v1(
         if sub_acc_role_opt.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
-        let mut sub_account_role = sub_acc_role_opt.unwrap();
-
-        authenticate_authority(&mut sub_account_role, all_accounts, &toggle_sub_account)?;
+        let sub_account_role = sub_acc_role_opt.unwrap();
 
         let sub_account_action_mut = RoleMut::get_action_mut::<SubAccount>(
             sub_account_role.actions,
@@ -218,34 +220,6 @@ pub fn toggle_sub_account_v1(
     }
     action.enabled = toggle_sub_account.args.enabled;
 
-    Ok(())
-}
-
-pub fn authenticate_authority(
-    role: &mut RoleMut<'_>,
-    all_accounts: &[AccountInfo],
-    toggle_sub_account: &ToggleSubAccountV1<'_>,
-) -> ProgramResult {
-    // Authenticate the authority
-    let clock = Clock::get()?;
-    let slot = clock.slot;
-
-    // Authenticate based on authority type (session-based or not)
-    if role.authority.session_based() {
-        role.authority.authenticate_session(
-            all_accounts,
-            toggle_sub_account.authority_payload,
-            toggle_sub_account.data_payload,
-            slot,
-        )?;
-    } else {
-        role.authority.authenticate(
-            all_accounts,
-            toggle_sub_account.authority_payload,
-            toggle_sub_account.data_payload,
-            slot,
-        )?;
-    }
     Ok(())
 }
 

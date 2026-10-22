@@ -150,8 +150,7 @@ pub fn close_token_account_v1(
     let close_ix = CloseTokenAccountV1::from_instruction_bytes(data)?;
 
     // Load and validate swig account
-    let swig_account_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
-    let swig = unsafe { Swig::load_unchecked(&swig_account_data[..Swig::LEN])? };
+    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
 
     // Verify discriminator
     if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
@@ -167,36 +166,21 @@ pub fn close_token_account_v1(
         return Err(SwigError::InvalidSeedSwigAccount.into());
     }
 
-    // Get and authenticate role
-    let swig_roles = Swig::split_parts(swig_account_data)?.roles;
-    let role_opt = unsafe {
-        let roles_ptr = swig_roles.as_ptr() as *mut u8;
-        let roles_mut = core::slice::from_raw_parts_mut(roles_ptr, swig_roles.len());
-        Swig::get_mut_role(close_ix.args.role_id, roles_mut)?
-    };
-
-    if role_opt.is_none() {
-        return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-    }
-    let role = role_opt.unwrap();
-
-    // Authenticate
+    let is_v2 = unsafe { is_swig_v2(swig_account_data) };
+    let parts = Swig::split_parts_mut(swig_account_data)?;
+    let swig = parts.state;
     let current_slot = Clock::get()?.slot;
-    if role.authority.session_based() {
-        role.authority.authenticate_session(
-            accounts,
-            close_ix.authority_payload,
-            close_ix.args.into_bytes()?,
-            current_slot,
-        )?;
-    } else {
-        role.authority.authenticate(
-            accounts,
-            close_ix.authority_payload,
-            close_ix.args.into_bytes()?,
-            current_slot,
-        )?;
-    }
+    let role = swig_state::authority::counter::authenticate_role(
+        parts.roles,
+        None,
+        close_ix.args.role_id,
+        accounts,
+        close_ix.authority_payload,
+        close_ix.args.into_bytes()?,
+        current_slot,
+        false,
+    )?
+    .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
 
     // Unrestricted asset permissions also authorize closing token accounts.
     let has_all = RoleMut::get_action_mut::<All>(role.actions, &[])?.is_some();
@@ -207,14 +191,11 @@ pub fn close_token_account_v1(
     if !has_all && !has_all_but_manage && !has_manage && !has_close {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
-    if let Some(claimer) = rent_claimer::read_strict(Swig::split_parts(swig_account_data)?.tail)? {
+    if let Some(claimer) = rent_claimer::read_strict(parts.tail)? {
         if ctx.accounts.destination.key().as_ref() != claimer.as_ref() {
             return Err(SwigError::InvalidRentClaimerDestination.into());
         }
     }
-
-    // Use is_swig_v2 to determine expected authority
-    let is_v2 = unsafe { is_swig_v2(swig_account_data) };
 
     // Extract swig values we need before releasing the borrow
     let swig_id = swig.id;

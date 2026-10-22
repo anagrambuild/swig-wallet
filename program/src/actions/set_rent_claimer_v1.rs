@@ -112,25 +112,18 @@ pub fn set_rent_claimer_v1(
             return Err(SwigError::InvalidRentClaimerValue.into());
         }
 
-        let acting_role = Swig::get_mut_role(set_ix.args.role_id, parts.roles)?
-            .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
-
         let slot = Clock::get()?.slot;
-        if acting_role.authority.session_based() {
-            acting_role.authority.authenticate_session(
-                all_accounts,
-                set_ix.authority_payload,
-                set_ix.data_payload,
-                slot,
-            )?;
-        } else {
-            acting_role.authority.authenticate(
-                all_accounts,
-                set_ix.authority_payload,
-                set_ix.data_payload,
-                slot,
-            )?;
-        }
+        let acting_role = swig_state::authority::counter::authenticate_role(
+            parts.roles,
+            None,
+            set_ix.args.role_id,
+            all_accounts,
+            set_ix.authority_payload,
+            set_ix.data_payload,
+            slot,
+            false,
+        )?
+        .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
 
         let has_all = acting_role.get_action::<All>(&[])?.is_some();
         let has_close = acting_role.get_action::<CloseSwigAuthority>(&[])?.is_some();

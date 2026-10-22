@@ -158,24 +158,19 @@ pub fn create_sub_account_v1(
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
         let parts = Swig::split_parts_mut(swig_account_data)?;
-        let role = Swig::get_mut_role(create_sub_account.args.role_id, parts.roles)?
-            .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
         let slot = Clock::get()?.slot;
-        if role.authority.session_based() {
-            role.authority.authenticate_session(
-                all_accounts,
-                create_sub_account.authority_payload,
-                create_sub_account.data_payload,
-                slot,
-            )?;
-        } else {
-            role.authority.authenticate(
-                all_accounts,
-                create_sub_account.authority_payload,
-                create_sub_account.data_payload,
-                slot,
-            )?;
-        }
+        let role = swig_state::authority::counter::authenticate_role(
+            parts.roles,
+            None,
+            create_sub_account.args.role_id,
+            all_accounts,
+            create_sub_account.authority_payload,
+            create_sub_account.data_payload,
+            slot,
+            false,
+        )?
+        .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
+
         if RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?.is_none() {
             return Err(SwigError::AuthorityCannotCreateSubAccount.into());
         }

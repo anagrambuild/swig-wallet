@@ -441,6 +441,28 @@ impl<'a> SwigBuilder<'a> {
             },
             _ => return Err(SwigStateError::InvalidAuthorityData.into()),
         };
+        if matches!(
+            authority_type,
+            AuthorityType::Secp256k1
+                | AuthorityType::Secp256k1Session
+                | AuthorityType::Secp256r1
+                | AuthorityType::Secp256r1Session
+        ) {
+            let identity = crate::authority::counter::SecpCounter {
+                authority_type,
+                public_key: self.role_buffer[auth_offset..auth_offset + 33]
+                    .try_into()
+                    .unwrap(),
+                counter: 0,
+            };
+            let counter = crate::authority::counter::inherited_counter(
+                &self.role_buffer[..cursor],
+                self.swig.roles,
+                &identity,
+            )?;
+            self.role_buffer[auth_offset + 36..auth_offset + 40]
+                .copy_from_slice(&counter.to_le_bytes());
+        }
         let size = authority_length + actions_data.len();
         let boundary = cursor + Position::LEN + size;
         // add role to the end of the buffer
@@ -633,53 +655,73 @@ impl Swig {
             cursor = boundary;
         }
         if let Some(offset) = found_offset {
-            let (position, remaning) =
-                unsafe { roles[offset..].split_at_mut_unchecked(Position::LEN) };
-            let position = unsafe { Position::load_unchecked(position)? };
-            let authority_length = position.authority_length() as usize;
-            let (authority, actions) = unsafe { remaning.split_at_mut_unchecked(authority_length) };
-
-            let auth: &mut dyn AuthorityInfo = match position.authority_type()? {
-                AuthorityType::Ed25519 => unsafe {
-                    ED25519Authority::load_mut_unchecked(authority)?
-                },
-                AuthorityType::Ed25519Session => unsafe {
-                    Ed25519SessionAuthority::load_mut_unchecked(authority)?
-                },
-                AuthorityType::Secp256k1 => unsafe {
-                    Secp256k1Authority::load_mut_unchecked(authority)?
-                },
-                AuthorityType::Secp256k1Session => unsafe {
-                    Secp256k1SessionAuthority::load_mut_unchecked(authority)?
-                },
-                AuthorityType::Secp256r1 => unsafe {
-                    Secp256r1Authority::load_mut_unchecked(authority)?
-                },
-                AuthorityType::Secp256r1Session => unsafe {
-                    Secp256r1SessionAuthority::load_mut_unchecked(authority)?
-                },
-                AuthorityType::ProgramExec => unsafe {
-                    ProgramExecAuthority::load_mut_unchecked(authority)?
-                },
-                AuthorityType::ProgramExecSession => unsafe {
-                    ProgramExecSessionAuthority::load_mut_unchecked(authority)?
-                },
-                _ => return Err(ProgramError::InvalidAccountData),
-            };
-
-            let action_data_end =
-                position.boundary() as usize - (offset + Position::LEN + authority_length);
-            let (actions, _rest) = unsafe { actions.split_at_mut_unchecked(action_data_end) };
-            let role = RoleMut {
-                position,
-                authority: auth,
-                num_actions: position.num_actions() as u8,
-                actions,
-            };
-            return Ok(Some(role));
+            return Self::get_mut_role_at(offset, roles).map(Some);
         }
 
         Ok(None)
+    }
+    /// Loads a role at a validated position offset without walking preceding roles again.
+    pub fn get_mut_role_at(offset: usize, roles: &mut [u8]) -> Result<RoleMut<'_>, ProgramError> {
+        if (roles.as_ptr() as usize).wrapping_add(offset) & (core::mem::align_of::<Position>() - 1)
+            != 0
+        {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let bytes = roles
+            .get_mut(offset..)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        if bytes.len() < Position::LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let (position, remaning) = bytes.split_at_mut(Position::LEN);
+        let position = unsafe { Position::load_unchecked(position)? };
+        let authority_length = position.authority_length() as usize;
+        let boundary = position.boundary() as usize;
+        let authority_type = position.authority_type()?;
+        if boundary < offset + Position::LEN + authority_length
+            || boundary - offset - Position::LEN > remaning.len()
+            || authority_length != crate::authority::authority_type_to_length(&authority_type)?
+        {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let (authority, actions) = remaning.split_at_mut(authority_length);
+
+        let auth: &mut dyn AuthorityInfo = match position.authority_type()? {
+            AuthorityType::Ed25519 => unsafe { ED25519Authority::load_mut_unchecked(authority)? },
+            AuthorityType::Ed25519Session => unsafe {
+                Ed25519SessionAuthority::load_mut_unchecked(authority)?
+            },
+            AuthorityType::Secp256k1 => unsafe {
+                Secp256k1Authority::load_mut_unchecked(authority)?
+            },
+            AuthorityType::Secp256k1Session => unsafe {
+                Secp256k1SessionAuthority::load_mut_unchecked(authority)?
+            },
+            AuthorityType::Secp256r1 => unsafe {
+                Secp256r1Authority::load_mut_unchecked(authority)?
+            },
+            AuthorityType::Secp256r1Session => unsafe {
+                Secp256r1SessionAuthority::load_mut_unchecked(authority)?
+            },
+            AuthorityType::ProgramExec => unsafe {
+                ProgramExecAuthority::load_mut_unchecked(authority)?
+            },
+            AuthorityType::ProgramExecSession => unsafe {
+                ProgramExecSessionAuthority::load_mut_unchecked(authority)?
+            },
+            _ => return Err(ProgramError::InvalidAccountData),
+        };
+
+        let action_data_end =
+            position.boundary() as usize - (offset + Position::LEN + authority_length);
+        let (actions, _rest) = unsafe { actions.split_at_mut_unchecked(action_data_end) };
+        let role = RoleMut {
+            position,
+            authority: auth,
+            num_actions: position.num_actions() as u8,
+            actions,
+        };
+        Ok(role)
     }
 }
 

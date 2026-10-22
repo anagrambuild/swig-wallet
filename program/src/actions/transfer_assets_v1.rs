@@ -243,30 +243,21 @@ pub fn transfer_assets_v1(
 
     // Get the role and authenticate the authority
     let role_id = transfer_ix.args.role_id;
-    let role_opt = Swig::get_mut_role(role_id, swig_roles)?;
+    let current_slot = Clock::get()?.slot;
+    let role_opt = swig_state::authority::counter::authenticate_role(
+        swig_roles,
+        None,
+        role_id,
+        accounts,
+        transfer_ix.authority_payload,
+        transfer_ix.args.into_bytes()?,
+        current_slot,
+        false,
+    )?;
     if role_opt.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
     let role = role_opt.unwrap();
-
-    // Authenticate the authority
-    let current_slot = Clock::get()?.slot;
-
-    if role.authority.session_based() {
-        role.authority.authenticate_session(
-            accounts,
-            transfer_ix.authority_payload,
-            transfer_ix.args.into_bytes()?,
-            current_slot,
-        )?;
-    } else {
-        role.authority.authenticate(
-            accounts,
-            transfer_ix.authority_payload,
-            transfer_ix.args.into_bytes()?,
-            current_slot,
-        )?;
-    }
 
     // Check if the role has All or ManageAuthority permissions
     let has_all_permission = role.get_action::<All>(&[])?.is_some();
