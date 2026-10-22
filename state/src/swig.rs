@@ -664,6 +664,7 @@ impl Swig {
     }
 
     /// Loads a role at a validated position offset without walking preceding roles again.
+    #[inline(always)]
     pub fn get_mut_role_at(offset: usize, roles: &mut [u8]) -> Result<RoleMut<'_>, ProgramError> {
         if (roles.as_ptr() as usize).wrapping_add(offset) & (core::mem::align_of::<Position>() - 1)
             != 0

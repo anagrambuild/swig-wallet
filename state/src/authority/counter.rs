@@ -38,6 +38,7 @@ pub struct SecpCounter {
 }
 
 impl SecpCounter {
+    #[inline(always)]
     pub fn from_role(role: &RoleMut<'_>) -> Result<Option<Self>, ProgramError> {
         let Some(counter) = role.authority.signature_odometer() else {
             return Ok(None);
