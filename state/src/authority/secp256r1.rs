@@ -24,7 +24,7 @@ use super::{Authority, AuthorityInfo, AuthorityType};
 use crate::{IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut};
 
 /// Maximum age (in slots) for a Secp256r1 signature to be considered valid
-const MAX_SIGNATURE_AGE_IN_SLOTS: u64 = 60;
+const MAX_SIGNATURE_AGE_IN_SLOTS: u64 = 2_000;
 
 /// Secp256r1 program ID
 pub const SECP256R1_PROGRAM_ID: [u8; 32] = pubkey!("Secp256r1SigVerify1111111111111111111111111");

@@ -8,7 +8,7 @@ use pinocchio::{
     sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
-use pinocchio_system::instructions::{CreateAccount, Transfer};
+use pinocchio_system::instructions::{Allocate, Assign, Transfer};
 use swig_assertions::{
     check_self_pda, check_system_owner, check_writable_signer, check_zero_data, find_self_pda,
 };
@@ -148,6 +148,10 @@ impl<'a> CreateV1<'a> {
 /// * `ProgramResult` - Success or error status
 #[inline(always)]
 pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult {
+    // The payer must always be a writable signer. When both PDAs are already
+    // funded to rent exemption, every system CPI here either is skipped or only
+    // needs the Swig PDA's signature, so nothing else enforces the payer's
+    // flags. The account context metadata alone is not validated at runtime.
     check_writable_signer(ctx.accounts.payer, SwigError::PayerMustBeWritableSigner)?;
     check_system_owner(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
     check_zero_data(ctx.accounts.swig, SwigError::AccountNotEmptySwigAccount)?;
@@ -171,12 +175,6 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
         ctx.accounts.swig_wallet_address,
         SwigError::AccountNotEmptySwigAccount,
     )?;
-
-    // Legacy creation requires both accounts to be unfunded. Addresses that
-    // need deposits before activation must use the reservation flow.
-    if ctx.accounts.swig.lamports() != 0 || ctx.accounts.swig_wallet_address.lamports() != 0 {
-        return Err(SwigError::AccountNotEmptySwigAccount.into());
-    }
 
     let wallet_address_bump = check_self_pda(
         &swig_wallet_address_seeds_with_bump(
@@ -218,14 +216,38 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
     let lamports_needed = Rent::get()?.minimum_balance(account_size);
     let swig = Swig::new(create_v1.args.id, bump, wallet_address_bump);
 
+    // Initialize the program-owned Swig account. Anyone can transfer SOL to
+    // this predictable PDA before creation, and `CreateAccount` rejects such a
+    // pre-funded destination, which would permanently brick creation. Top up,
+    // allocate, and assign separately so pre-funding cannot brick creation.
+    // This is safe because the checks above guarantee the account is
+    // uninitialized: `check_system_owner` rejects closed Swig accounts (they
+    // remain owned by this program after close) and any populated account,
+    // `check_zero_data` rejects allocated data, and only this program can sign
+    // for the PDA to `Allocate`/`Assign` it.
+    let current_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
+
+    // Only transfer additional lamports if needed for rent exemption
+    let lamports_to_transfer = lamports_needed.saturating_sub(current_lamports);
+    if lamports_to_transfer > 0 {
+        Transfer {
+            from: ctx.accounts.payer,
+            to: ctx.accounts.swig,
+            lamports: lamports_to_transfer,
+        }
+        .invoke()?;
+    }
+
     let swig_bump_seed = [swig.bump];
     let swig_signer_seeds = swig_account_signer(&swig.id, &swig_bump_seed);
     let swig_signers = [swig_signer_seeds.as_slice().into()];
-    CreateAccount {
-        from: ctx.accounts.payer,
-        to: ctx.accounts.swig,
-        lamports: lamports_needed,
+    Allocate {
+        account: ctx.accounts.swig,
         space: account_size as u64,
+    }
+    .invoke_signed(&swig_signers)?;
+    Assign {
+        account: ctx.accounts.swig,
         owner: &crate::ID,
     }
     .invoke_signed(&swig_signers)?;
@@ -234,12 +256,26 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
     // This creates a system program owned account by transferring SOL to it
     let wallet_address_rent_exemption = Rent::get()?.minimum_balance(0); // 0 space for system account
 
-    Transfer {
-        from: ctx.accounts.payer,
-        to: ctx.accounts.swig_wallet_address,
-        lamports: wallet_address_rent_exemption,
+    // Get current lamports in wallet address account
+    let current_wallet_lamports =
+        unsafe { *ctx.accounts.swig_wallet_address.borrow_lamports_unchecked() };
+
+    // Only transfer if the account needs more lamports for rent exemption
+    let wallet_lamports_to_transfer = if current_wallet_lamports >= wallet_address_rent_exemption {
+        0
+    } else {
+        wallet_address_rent_exemption - current_wallet_lamports
+    };
+
+    if wallet_lamports_to_transfer > 0 {
+        // Use CPI to system program for clean lamport transfer
+        pinocchio_system::instructions::Transfer {
+            from: ctx.accounts.payer,
+            to: ctx.accounts.swig_wallet_address,
+            lamports: wallet_lamports_to_transfer,
+        }
+        .invoke()?;
     }
-    .invoke()?;
 
     let swig_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
     let mut swig_builder = SwigBuilder::create(swig_data, swig)?;

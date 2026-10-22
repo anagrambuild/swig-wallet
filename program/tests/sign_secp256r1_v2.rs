@@ -187,6 +187,113 @@ fn get_secp256r1_counter(
 }
 
 #[test_log::test]
+fn test_secp256r1_signature_age_boundaries_v2() {
+    for (signature_slot, current_slot, accepted) in [
+        (100, 160, true),
+        (100, 161, true),
+        (100, 2_100, true),
+        (100, 2_101, false),
+        (2_101, 2_100, false),
+    ] {
+        let mut context = setup_test_context().unwrap();
+        let (signing_key, public_key) = create_test_secp256r1_keypair();
+        let (swig_key, _) =
+            create_swig_secp256r1(&mut context, &public_key, rand::random()).unwrap();
+        let (swig_wallet_address, _) = Pubkey::find_program_address(
+            &swig_wallet_address_seeds(swig_key.as_ref()),
+            &program_id(),
+        );
+        context
+            .svm
+            .airdrop(&swig_wallet_address, 10_000_000_000)
+            .unwrap();
+        let recipient = Keypair::new();
+        context.svm.airdrop(&recipient.pubkey(), 1_000_000).unwrap();
+        let transfer_amount = 1_000_000;
+        let transfer_ix = solana_system_interface::instruction::transfer(
+            &swig_wallet_address,
+            &recipient.pubkey(),
+            transfer_amount,
+        );
+        let signing_fn = |message_hash: &[u8]| -> [u8; 64] {
+            sign_message(message_hash, &signing_key.private_key_to_der().unwrap()).unwrap()
+        };
+        let instructions = swig_interface::SignV2Instruction::new_secp256r1(
+            swig_key,
+            swig_wallet_address,
+            signing_fn,
+            signature_slot,
+            1,
+            transfer_ix,
+            0,
+            &public_key,
+        )
+        .unwrap();
+
+        context.svm.warp_to_slot(current_slot);
+        let swig_before = context.svm.get_account(&swig_key).unwrap();
+        let wallet_before = context.svm.get_account(&swig_wallet_address).unwrap();
+        let recipient_before = context.svm.get_account(&recipient.pubkey()).unwrap();
+        let message = v0::Message::try_compile(
+            &context.default_payer.pubkey(),
+            &instructions,
+            &[],
+            context.svm.latest_blockhash(),
+        )
+        .unwrap();
+        let tx =
+            VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+                .unwrap();
+        let result = context.svm.send_transaction(tx);
+
+        if accepted {
+            assert!(
+                result.is_ok(),
+                "signature slot {signature_slot}, current slot {current_slot}: {result:?}"
+            );
+            assert_eq!(
+                get_secp256r1_counter(&context, &swig_key, &public_key).unwrap(),
+                1
+            );
+            assert_eq!(
+                context
+                    .svm
+                    .get_account(&recipient.pubkey())
+                    .unwrap()
+                    .lamports,
+                recipient_before.lamports + transfer_amount
+            );
+            assert_eq!(
+                context
+                    .svm
+                    .get_account(&swig_wallet_address)
+                    .unwrap()
+                    .lamports,
+                wallet_before.lamports - transfer_amount
+            );
+        } else {
+            assert_eq!(
+                result.map_err(|error| error.err),
+                Err(TransactionError::InstructionError(
+                    1,
+                    InstructionError::Custom(swig_state::SwigAuthenticateError::PermissionDeniedSecp256k1InvalidSignatureAge as u32),
+                )),
+                "signature slot {signature_slot}, current slot {current_slot}",
+            );
+            assert_eq!(context.svm.get_account(&swig_key).unwrap(), swig_before);
+            assert_eq!(
+                context.svm.get_account(&swig_wallet_address).unwrap(),
+                wallet_before
+            );
+            assert_eq!(
+                context.svm.get_account(&recipient.pubkey()).unwrap(),
+                recipient_before
+            );
+        }
+    }
+}
+
+#[test_log::test]
 fn test_secp256r1_basic_signing_v2() {
     let mut context = setup_test_context().unwrap();
 
