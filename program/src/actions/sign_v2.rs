@@ -52,7 +52,7 @@ use crate::{
     },
     isolation::IsolationGuard,
     util::{
-        hash_except,
+        assert_system_account_invariants, hash_except,
         token_integrity::{hash_with_transfer_fee, transfer_fee_amount_offset},
     },
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
@@ -330,7 +330,7 @@ pub fn sign_v2(
                 &[signer.into()],
             )?;
             if check_shape {
-                assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
+                assert_system_account_invariants(ctx.accounts.swig_wallet_address)?;
             }
         }
 
@@ -953,7 +953,7 @@ pub fn sign_v2(
     }
 
     if check_wallet_shape {
-        assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
+        assert_system_account_invariants(ctx.accounts.swig_wallet_address)?;
     }
 
     isolation.validate()?;
@@ -1001,12 +1001,6 @@ pub(super) fn wsol_accounted_balance(
         return Err(SwigError::AccountDataModifiedUnexpectedly.into());
     }
     Ok(lamports)
-}
-
-fn assert_wallet_address_invariants(wallet: &AccountInfo) -> ProgramResult {
-    check_system_owner(wallet, SwigError::WalletAddressInvariantViolation)?;
-    check_zero_data(wallet, SwigError::WalletAddressInvariantViolation)?;
-    Ok(())
 }
 
 // Track gross debits across CPI boundaries; credits cannot erase prior spend.

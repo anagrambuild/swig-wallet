@@ -32,6 +32,13 @@ use swig_state::{
 
 use crate::error::SwigError;
 
+/// Signing asset accounts must remain usable by the System program.
+pub(crate) fn assert_system_account_invariants(account: &AccountInfo) -> ProgramResult {
+    swig_assertions::check_system_owner(account, SwigError::WalletAddressInvariantViolation)?;
+    swig_assertions::check_zero_data(account, SwigError::WalletAddressInvariantViolation)?;
+    Ok(())
+}
+
 /// Reject grants targeting root in a non-root caller's add/update payload.
 /// Instruction action boundaries are normalized when stored, so scan by header
 /// lengths here. Stored actions still use the stricter ActionLoader decoder.
