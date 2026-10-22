@@ -57,6 +57,8 @@ use crate::{
     },
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
 };
+
+use super::close_token_account_v1::{read_token_2022_native_reserve, TOKEN_2022_NATIVE_MINT};
 // use swig_instructions::InstructionIterator;
 
 pub const INSTRUCTION_SYSVAR_ACCOUNT: Pubkey =
@@ -383,12 +385,21 @@ pub fn sign_v2(
                 ..
             } => {
                 let data = unsafe { account.borrow_data_unchecked() };
-                // Choose the policy once, from pre-CPI identity. Token-2022 and
+                // Choose the policy once, from pre-CPI identity. Wrapped-native
+                // accounts of either token program get wrapped-SOL accounting;
                 // non-native mints keep their existing amount-only policy.
-                let exclude_ranges = if account.owner() == &SPL_TOKEN_ID
-                    && data.get(TOKEN_MINT_RANGE) == Some(WSOL_MINT.as_slice())
+                let native_mint = if account.owner() == &SPL_TOKEN_ID {
+                    Some(WSOL_MINT)
+                } else if account.owner() == &SPL_TOKEN_2022_ID {
+                    Some(TOKEN_2022_NATIVE_MINT)
+                } else {
+                    None
+                };
+                let exclude_ranges = if native_mint
+                    .map(|mint| data.get(TOKEN_MINT_RANGE) == Some(mint.as_slice()))
+                    .unwrap_or(false)
                 {
-                    let reserve = read_wsol_reserve(account.owner(), data)?;
+                    let reserve = read_native_reserve(account.owner(), data)?;
                     if &data[TOKEN_AUTHORITY_RANGE] != ctx.accounts.swig_wallet_address.key() {
                         return Err(
                             SwigAuthenticateError::PermissionDeniedTokenAccountAuthorityNotSwig
@@ -538,7 +549,7 @@ pub fn sign_v2(
                         });
 
                         if let Some(previous_reserve) = native_reserve {
-                            let reserve = read_wsol_reserve(account.owner(), data)?;
+                            let reserve = read_native_reserve(account.owner(), data)?;
                             if reserve != *previous_reserve {
                                 let required = pinocchio::sysvars::rent::Rent::get()?
                                     .minimum_balance(TOKEN_ACCOUNT_BASE_DATA_LEN);
@@ -960,8 +971,21 @@ pub fn sign_v2(
     Ok(())
 }
 
-/// The reserve exception is limited to the legacy Token program's native mint.
-/// Check every byte of the option tag; the pinned zero-copy token accessor only
+/// Reads the wrapped-native reserve for a token account of either token
+/// program. Both keep the legacy base layout with the reserve behind the
+/// `is_native` COption tag at bytes 109..121, but Token-2022 accounts may
+/// carry trailing extension data, so only the base prefix is validated there.
+pub(super) fn read_native_reserve(owner: &Pubkey, data: &[u8]) -> Result<u64, ProgramError> {
+    if owner == &SPL_TOKEN_ID {
+        read_wsol_reserve(owner, data)
+    } else {
+        read_token_2022_native_reserve(data)
+    }
+}
+
+/// The reserve exception is limited to the wrapped-native mints. For the
+/// legacy program this is the exact 165-byte layout; check every byte of the
+/// option tag either way, since the pinned zero-copy token accessor only
 /// inspects its first byte and is not a canonical option decoder.
 pub(super) fn read_wsol_reserve(owner: &Pubkey, data: &[u8]) -> Result<u64, ProgramError> {
     if owner != &SPL_TOKEN_ID

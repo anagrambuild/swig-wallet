@@ -100,11 +100,12 @@ impl<'a> CloseTokenAccountV1<'a> {
 /// Token-2022 represents wrapped native SOL under its own native mint, which
 /// is distinct from the legacy SPL Token program's native mint (`WSOL_MINT`
 /// in `sign_v2`). Both must receive identical spend accounting.
-const TOKEN_2022_NATIVE_MINT: Pubkey = from_str("9pan9bMn5HatX4EJdBwg9VgCa7Uz5HL8N1m5D3NdXejP");
+pub(crate) const TOKEN_2022_NATIVE_MINT: Pubkey =
+    from_str("9pan9bMn5HatX4EJdBwg9VgCa7Uz5HL8N1m5D3NdXejP");
 
 /// Resolves the wrapped-native mint for the (already validated) token
 /// program handling this close.
-fn native_wsol_mint(token_program_id: &Pubkey) -> Pubkey {
+pub(super) fn native_wsol_mint(token_program_id: &Pubkey) -> Pubkey {
     if token_program_id == &SPL_TOKEN_ID {
         WSOL_MINT
     } else {
@@ -119,7 +120,7 @@ fn native_wsol_mint(token_program_id: &Pubkey) -> Pubkey {
 /// but real accounts may carry trailing extension data, so only the base
 /// prefix is validated here (unlike `read_wsol_reserve`, which requires the
 /// exact legacy 165-byte layout).
-fn read_token_2022_native_reserve(data: &[u8]) -> Result<u64, ProgramError> {
+pub(crate) fn read_token_2022_native_reserve(data: &[u8]) -> Result<u64, ProgramError> {
     if data.len() < TOKEN_ACCOUNT_BASE_DATA_LEN
         || data[TOKEN_STATE_INDEX] != TOKEN_ACCOUNT_INITIALIZED_STATE
         || data[109..113] != [1, 0, 0, 0]

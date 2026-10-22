@@ -19,10 +19,15 @@ use solana_sdk::{
     transaction::{TransactionError, VersionedTransaction},
 };
 use std::str::FromStr;
-use swig_interface::{AuthorityConfig, ClientAction, CloseTokenAccountV1Instruction};
+use swig_interface::{
+    AuthorityConfig, ClientAction, CloseTokenAccountV1Instruction, SignV2Instruction,
+};
 use swig_state::{
     action::{
-        close_swig_authority::CloseSwigAuthority, token_destination_limit::TokenDestinationLimit,
+        all::All,
+        close_swig_authority::CloseSwigAuthority,
+        program_all::ProgramAll,
+        token_destination_limit::TokenDestinationLimit,
         token_limit::TokenLimit,
     },
     authority::AuthorityType,
@@ -516,5 +521,313 @@ fn legacy_wsol_close_with_close_only_delegate_is_denied_control() {
     assert_eq!(
         context.svm.get_account(&victim).unwrap().lamports,
         reserve + amount
+    );
+}
+
+/// Independently confirm that 9pan9bMn5HatX4EJdBwg9VgCa7Uz5HL8N1m5D3NdXejP is
+/// Token-2022's wrapped-native SOL mint: it must (a) match the constant the
+/// pinned SPL Token-2022 interface crate declares and (b) equal the program
+/// address derived from seed "native-mint" with bump 255 under the
+/// Token-2022 program. The legacy native mint is initialized at genesis and
+/// has no such PDA derivation, so only the Token-2022 identity is asserted.
+#[test]
+fn token_2022_native_mint_identity() {
+    let token_2022 = Pubkey::from_str(TOKEN_2022).unwrap();
+    let native_2022 = Pubkey::from_str(NATIVE_2022).unwrap();
+
+    // (a) The pinned SPL Token-2022 interface crate declares this mint.
+    assert_eq!(spl_token_2022_interface::native_mint::id(), native_2022);
+
+    // (b) PDA derivation: ["native-mint"] + bump 255, under the Token-2022
+    // program — the only token program that supports on-chain native-mint
+    // initialization via `create_native_mint`.
+    let derived_2022 =
+        Pubkey::create_program_address(&["native-mint".as_bytes(), &[255u8]], &token_2022)
+            .unwrap();
+    assert_eq!(derived_2022, native_2022);
+}
+
+/// SignV2 must account Token-2022 native spending against the T22-native
+/// TokenLimit exactly like legacy WSOL spending: a synced T22-native account
+/// spending tokens consumes the delegate's allowance.
+#[test_log::test]
+fn sign_v2_t22_native_transfer_charges_t22_native_token_limit() {
+    use litesvm_token::CreateAssociatedTokenAccount;
+
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let delegate = Keypair::new();
+    let (swig, _) = create_swig_ed25519(&mut context, &root, rand::random()).unwrap();
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let native2022 = Pubkey::from_str(NATIVE_2022).unwrap();
+    let token2022 = Pubkey::from_str(TOKEN_2022).unwrap();
+    let limit = 1_000_000u64;
+
+    context.svm.airdrop(&delegate.pubkey(), 1_000_000).unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: delegate.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ProgramAll(ProgramAll),
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: native2022.to_bytes(),
+                current_amount: limit,
+            }),
+        ],
+    )
+    .unwrap();
+
+    let ata = funded_t22_native_ata(&mut context, &wallet, 900_000_000);
+    let destination = CreateAssociatedTokenAccount::new(
+        &mut context.svm,
+        &context.default_payer,
+        &native2022,
+    )
+    .owner(&root.pubkey())
+    .token_program_id(&token2022)
+    .send()
+    .expect("destination T22 native ATA");
+
+    let inner = spl_token_2022_interface::instruction::transfer(
+        &token2022,
+        &ata,
+        &destination,
+        &wallet,
+        &[],
+        limit,
+    )
+    .unwrap();
+    let signv2 = SignV2Instruction::new_ed25519(swig, wallet, delegate.pubkey(), inner, 1).unwrap();
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[signv2],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(message),
+        &[&context.default_payer, &delegate],
+    )
+    .unwrap();
+    context
+        .svm
+        .send_transaction(tx)
+        .expect("limited SignV2 T22 native transfer");
+
+    assert_eq!(
+        read_role_action_amount(&context, &swig, native2022.as_ref()),
+        0,
+        "the transfer must consume the T22 native TokenLimit"
+    );
+}
+
+#[test_log::test]
+fn sign_v2_t22_native_transfer_beyond_budget_is_denied() {
+    use litesvm_token::CreateAssociatedTokenAccount;
+
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let delegate = Keypair::new();
+    let (swig, _) = create_swig_ed25519(&mut context, &root, rand::random()).unwrap();
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let native2022 = Pubkey::from_str(NATIVE_2022).unwrap();
+    let token2022 = Pubkey::from_str(TOKEN_2022).unwrap();
+
+    context.svm.airdrop(&delegate.pubkey(), 1_000_000).unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: delegate.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ProgramAll(ProgramAll),
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: native2022.to_bytes(),
+                current_amount: 1_000_000,
+            }),
+        ],
+    )
+    .unwrap();
+
+    let ata = funded_t22_native_ata(&mut context, &wallet, 900_000_000);
+    let ata_lamports = context.svm.get_account(&ata).unwrap().lamports;
+    let destination = CreateAssociatedTokenAccount::new(
+        &mut context.svm,
+        &context.default_payer,
+        &native2022,
+    )
+    .owner(&root.pubkey())
+    .token_program_id(&token2022)
+    .send()
+    .expect("destination T22 native ATA");
+
+    let inner = spl_token_2022_interface::instruction::transfer(
+        &token2022,
+        &ata,
+        &destination,
+        &wallet,
+        &[],
+        1_000_001,
+    )
+    .unwrap();
+    let signv2 = SignV2Instruction::new_ed25519(swig, wallet, delegate.pubkey(), inner, 1).unwrap();
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[signv2],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(message),
+        &[&context.default_payer, &delegate],
+    )
+    .unwrap();
+    let error = context
+        .svm
+        .send_transaction(tx)
+        .expect_err("spend above the delegated budget must be denied");
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(
+                SwigAuthenticateError::PermissionDeniedInsufficientBalance as u32
+            )
+        )
+    );
+    assert_eq!(
+        context.svm.get_account(&ata).unwrap().lamports,
+        ata_lamports,
+        "denied transfer must not move funds"
+    );
+    assert_eq!(
+        read_role_action_amount(&context, &swig, native2022.as_ref()),
+        1_000_000,
+        "denied transfer must not consume the allowance"
+    );
+}
+
+/// A batch close drains the entire token account's lamports. SignV2 must
+/// charge the full wrapped-SOL value — the token balance plus any
+/// unsynchronized lamport deposits — exactly like it does for the legacy
+/// Token program's WSOL accounts.
+#[test_log::test]
+fn sign_v2_t22_native_batch_close_consumes_full_wrapped_sol_value() {
+    use litesvm_token::CreateAssociatedTokenAccount;
+    use solana_system_interface::instruction::transfer as sol_transfer;
+
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let delegate = Keypair::new();
+    let (swig, _) = create_swig_ed25519(&mut context, &root, rand::random()).unwrap();
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let native2022 = Pubkey::from_str(NATIVE_2022).unwrap();
+    let token2022 = Pubkey::from_str(TOKEN_2022).unwrap();
+
+    context.svm.airdrop(&delegate.pubkey(), 1_000_000).unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: delegate.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ProgramAll(ProgramAll),
+            ClientAction::CloseSwigAuthority(CloseSwigAuthority {}),
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: native2022.to_bytes(),
+                current_amount: 1_000_000_000,
+            }),
+        ],
+    )
+    .unwrap();
+
+    let ata = funded_t22_native_ata(&mut context, &wallet, 900_000_000);
+    // Inject additional unsynchronized lamports on top of the synced balance.
+    let injected = 2_000_000u64;
+    context.svm.airdrop(&root.pubkey(), injected * 2).unwrap();
+    let before = context.svm.get_account(&root.pubkey()).unwrap().lamports;
+    let fund = VersionedTransaction::try_new(
+        VersionedMessage::V0(
+            v0::Message::try_compile(
+                &root.pubkey(),
+                &[sol_transfer(&root.pubkey(), &ata, injected)],
+                &[],
+                context.svm.latest_blockhash(),
+            )
+            .unwrap(),
+        ),
+        &[&root],
+    )
+    .unwrap();
+    context.svm.send_transaction(fund).expect("inject lamports");
+    assert_eq!(
+        context.svm.get_account(&root.pubkey()).unwrap().lamports,
+        before - injected - 5_000
+    );
+    let ata_lamports = context.svm.get_account(&ata).unwrap().lamports;
+
+    let destination = CreateAssociatedTokenAccount::new(
+        &mut context.svm,
+        &context.default_payer,
+        &native2022,
+    )
+    .owner(&root.pubkey())
+    .token_program_id(&token2022)
+    .send()
+    .expect("destination T22 native ATA");
+    let destination_before = context.svm.get_account(&destination).unwrap().lamports;
+
+    let inner = spl_token_2022_interface::instruction::close_account(
+        &token2022,
+        &ata,
+        &destination,
+        &wallet,
+        &[],
+    )
+    .unwrap();
+    let signv2 = SignV2Instruction::new_ed25519(swig, wallet, delegate.pubkey(), inner, 1).unwrap();
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &[signv2],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(message),
+        &[&context.default_payer, &delegate],
+    )
+    .unwrap();
+    context
+        .svm
+        .send_transaction(tx)
+        .expect("batch close of the T22 native account");
+
+    assert_eq!(
+        read_role_action_amount(&context, &swig, native2022.as_ref()),
+        1_000_000_000 - ata_lamports,
+        "the batch close must consume the full wrapped-SOL value"
+    );
+    // Closing reallocates the token account; lamports moved to the destination.
+    assert_eq!(
+        context.svm.get_account(&destination).unwrap().lamports,
+        destination_before + ata_lamports,
+        "destination must receive the token account's lamports"
     );
 }
