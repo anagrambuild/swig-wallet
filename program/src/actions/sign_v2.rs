@@ -265,6 +265,13 @@ pub fn sign_v2(
     let parts = Swig::split_parts_mut(swig_account_data)?;
     let swig = parts.state;
     let swig_roles = parts.roles;
+    // Bind the wallet slot before excluding it from personal-asset isolation.
+    let b = [swig.wallet_bump];
+    check_self_pda(
+        &swig_wallet_address_seeds_with_bump(ctx.accounts.swig.key().as_ref(), &b),
+        ctx.accounts.swig_wallet_address.key(),
+        SwigError::InvalidSeedSwigAccount,
+    )?;
     // The generic account classifier already identified account 0 as Swig config.
     // Keep this hot-path discriminator check as a local unsafe-read precondition.
     let Some(role) = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)? else {
@@ -298,7 +305,6 @@ pub fn sign_v2(
         ctx.accounts.swig_wallet_address.key(),
         rkeys,
     )?;
-    let b = [swig.wallet_bump];
     let seeds = swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &b);
     let signer = seeds.as_slice();
 
@@ -487,14 +493,7 @@ pub fn sign_v2(
             }
 
             if wallet_shape_can_change(&instruction) {
-                if !check_wallet_shape {
-                    check_self_pda(
-                        &swig_wallet_address_seeds_with_bump(ctx.accounts.swig.key().as_ref(), &b),
-                        ctx.accounts.swig_wallet_address.key(),
-                        SwigError::InvalidSeedSwigAccount,
-                    )?;
-                    check_wallet_shape = true;
-                }
+                check_wallet_shape = true;
                 reject_wallet_address_shape_mutation(
                     &instruction,
                     ctx.accounts.swig_wallet_address.key(),
