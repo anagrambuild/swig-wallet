@@ -20,6 +20,7 @@ use swig_state::{
         all::All,
         all_but_manage_authority::AllButManageAuthority,
         close_swig_authority::CloseSwigAuthority,
+        close_token_account::CloseTokenAccount,
         program::Program,
         program_all::ProgramAll,
         program_curated::ProgramCurated,
@@ -742,7 +743,9 @@ pub fn sign_v2(
                 // drain the account's lamports and assign it to the system program.
                 let mint = if data.is_empty() || account_info.lamports() == 0 {
                     let has_close_permission =
-                        RoleMut::get_action_mut::<CloseSwigAuthority>(actions, &[])?.is_some();
+                        RoleMut::get_action_mut::<CloseSwigAuthority>(actions, &[])?.is_some()
+                            || RoleMut::get_action_mut::<CloseTokenAccount>(actions, &[])?
+                                .is_some();
                     if !has_close_permission {
                         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                     }
