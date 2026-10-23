@@ -552,7 +552,7 @@ pub fn sign_v2(
                             let reserve = read_native_reserve(account.owner(), data)?;
                             if reserve != *previous_reserve {
                                 let required = pinocchio::sysvars::rent::Rent::get()?
-                                    .minimum_balance(TOKEN_ACCOUNT_BASE_DATA_LEN);
+                                    .minimum_balance(data.len());
                                 validate_wsol_reserve_change(*previous_reserve, reserve, required)?;
                             }
                             // A SyncNative rent refresh changes amount and reserve
