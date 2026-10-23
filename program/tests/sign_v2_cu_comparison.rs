@@ -43,17 +43,18 @@ fn compare_sign_v2_role_compute_units() {
     );
 
     // Main ff2929b built for SBPF v1 with platform-tools v1.53, measured on
-    // LiteSVM 0.16. Keep the v3 migration within those existing SignV2 costs.
-    for (path, actual, baseline) in [
+    // LiteSVM 0.16. Token ceilings allow a small increase for seeded-stake
+    // isolation: PR #71 measured 6_302 and 7_219 CU on the token paths.
+    for (path, actual, ceiling) in [
         ("All", all, 3_618),
         ("SOL limit", sol_limit, 5_116),
         ("SOL destination limit", sol_limit_destination, 5_834),
-        ("Token limit", token_limit, 6_281),
-        ("Token destination limit", token_limit_destination, 7_199),
+        ("Token limit", token_limit, 6_325),
+        ("Token destination limit", token_limit_destination, 7_225),
     ] {
         assert!(
-            actual <= baseline,
-            "SignV2 {path} consumed {actual} CU, exceeding the main baseline of {baseline} CU"
+            actual <= ceiling,
+            "SignV2 {path} consumed {actual} CU, exceeding the ceiling of {ceiling} CU"
         );
     }
 }
