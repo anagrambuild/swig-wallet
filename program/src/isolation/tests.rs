@@ -52,6 +52,44 @@ fn account(owner: [u8; 32], data: Vec<u8>) -> Account {
 }
 
 #[test]
+fn signing_account_postcondition_rejects_reassignment_and_allocation() {
+    use crate::util::assert_system_account_invariants;
+
+    with_accounts(
+        &[(
+            Pubkey::new_unique(),
+            account(SYSTEM_PROGRAM_ID, vec![]),
+            false,
+        )],
+        |accounts| {
+            let asset = &accounts[0];
+            assert_eq!(assert_system_account_invariants(asset), Ok(()));
+            *asset.try_borrow_mut_lamports().unwrap() -= 1;
+            assert_eq!(
+                assert_system_account_invariants(asset),
+                Ok(()),
+                "normal spending remains allowed"
+            );
+            unsafe { asset.assign(&Pubkey::new_unique().to_bytes()) };
+            assert_eq!(
+                assert_system_account_invariants(asset),
+                Err(SwigError::WalletAddressInvariantViolation.into()),
+                "assigned ownership must not survive the batch"
+            );
+            unsafe { asset.assign(&SYSTEM_PROGRAM_ID) };
+            asset.resize(80).unwrap();
+            assert_eq!(
+                assert_system_account_invariants(asset),
+                Err(SwigError::WalletAddressInvariantViolation.into()),
+                "System-owned nonce data must not survive the batch"
+            );
+            asset.resize(0).unwrap();
+            assert_eq!(assert_system_account_invariants(asset), Ok(()));
+        },
+    );
+}
+
+#[test]
 fn snapshots_cover_extended_mints_and_multisig_token_owners() {
     let signer = Pubkey::new_unique();
     let multisig_key = Pubkey::new_unique();
