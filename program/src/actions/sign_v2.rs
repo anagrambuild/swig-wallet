@@ -53,6 +53,7 @@ use crate::{
     isolation::IsolationGuard,
     util::{
         hash_except,
+        rent::minimum_balance,
         token_integrity::{hash_with_transfer_fee, transfer_fee_amount_offset},
     },
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
@@ -540,8 +541,10 @@ pub fn sign_v2(
                         if let Some(previous_reserve) = native_reserve {
                             let reserve = read_wsol_reserve(account.owner(), data)?;
                             if reserve != *previous_reserve {
-                                let required = pinocchio::sysvars::rent::Rent::get()?
-                                    .minimum_balance(TOKEN_ACCOUNT_BASE_DATA_LEN);
+                                let required = minimum_balance(
+                                    &pinocchio::sysvars::rent::Rent::get()?,
+                                    TOKEN_ACCOUNT_BASE_DATA_LEN,
+                                );
                                 validate_wsol_reserve_change(*previous_reserve, reserve, required)?;
                             }
                             // A SyncNative rent refresh changes amount and reserve
@@ -650,8 +653,10 @@ pub fn sign_v2(
                 }
 
                 let swig_wallet_balance = ctx.accounts.swig_wallet_address.lamports();
-                let swig_wallet_rent_exempt_minimum =
-                    pinocchio::sysvars::rent::Rent::get()?.minimum_balance(WALLET_ADDRESS_DATA_LEN);
+                let swig_wallet_rent_exempt_minimum = minimum_balance(
+                    &pinocchio::sysvars::rent::Rent::get()?,
+                    WALLET_ADDRESS_DATA_LEN,
+                );
                 if swig_wallet_balance < swig_wallet_rent_exempt_minimum {
                     return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
                 }
