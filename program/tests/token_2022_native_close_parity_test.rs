@@ -19,6 +19,7 @@ use solana_sdk::{
     transaction::{TransactionError, VersionedTransaction},
 };
 use std::str::FromStr;
+use swig::error::SwigError;
 use swig_interface::{
     AuthorityConfig, ClientAction, CloseTokenAccountV1Instruction, SignV2Instruction,
 };
@@ -817,4 +818,236 @@ fn sign_v2_t22_native_batch_close_consumes_full_wrapped_sol_value() {
         destination_before + ata_lamports,
         "destination must receive the token account's lamports"
     );
+}
+
+#[derive(Clone, Copy, Debug)]
+enum NativeRefreshAction {
+    Sync,
+    Transfer(u64),
+    Approve,
+}
+
+fn t22_native_refresh_case(
+    personal_source: bool,
+    rent_increases: bool,
+    action: NativeRefreshAction,
+    expected_error: Option<u32>,
+) {
+    use litesvm_token::CreateAssociatedTokenAccount;
+    use solana_sdk::rent::Rent;
+    use spl_token_2022_interface::instruction::{approve, sync_native, transfer};
+
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let delegate = Keypair::new();
+    let (swig, _) = create_swig_ed25519(&mut context, &root, rand::random()).unwrap();
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let native2022 = Pubkey::from_str(NATIVE_2022).unwrap();
+    let token2022 = Pubkey::from_str(TOKEN_2022).unwrap();
+    let limit = 1_000_000;
+    context.svm.airdrop(&delegate.pubkey(), 10_000_000).unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: delegate.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ProgramAll(ProgramAll),
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: native2022.to_bytes(),
+                current_amount: limit,
+            }),
+        ],
+    )
+    .unwrap();
+
+    let lower_rent = Rent::with_lamports_per_byte(3_480);
+    let (old_rent, new_rent) = if rent_increases {
+        (lower_rent, Rent::default())
+    } else {
+        (Rent::default(), lower_rent)
+    };
+    context.svm.set_sysvar(&old_rent);
+    let owner = if personal_source {
+        delegate.pubkey()
+    } else {
+        wallet
+    };
+    let source = funded_t22_native_ata(&mut context, &owner, 900_000_000);
+    let destination =
+        CreateAssociatedTokenAccount::new(&mut context.svm, &context.default_payer, &native2022)
+            .owner(&root.pubkey())
+            .token_program_id(&token2022)
+            .send()
+            .unwrap();
+    // Keep the destination rent-exempt under either rent schedule.
+    context.svm.airdrop(&destination, 10_000_000).unwrap();
+    let before = context.svm.get_account(&source).unwrap();
+    assert!(
+        before.data.len() > 165,
+        "exercise a real extension-sized ATA"
+    );
+    let old_reserve = u64::from_le_bytes(before.data[113..121].try_into().unwrap());
+    assert_eq!(old_reserve, old_rent.minimum_balance(before.data.len()));
+    let required = new_rent.minimum_balance(before.data.len());
+    assert_ne!(required, old_reserve);
+    assert_ne!(required, new_rent.minimum_balance(165));
+    context.svm.set_sysvar(&new_rent);
+
+    let mut inner = vec![sync_native(&token2022, &source).unwrap()];
+    match action {
+        NativeRefreshAction::Sync => {},
+        NativeRefreshAction::Transfer(amount) => {
+            inner.push(transfer(&token2022, &source, &destination, &owner, &[], amount).unwrap());
+        },
+        NativeRefreshAction::Approve => {
+            inner
+                .push(approve(&token2022, &source, &Pubkey::new_unique(), &owner, &[], 1).unwrap());
+        },
+    }
+    let instruction_count = inner.len();
+    let instructions: Vec<_> = inner
+        .into_iter()
+        .map(|instruction| {
+            SignV2Instruction::new_ed25519_with_signers(
+                swig,
+                wallet,
+                delegate.pubkey(),
+                instruction,
+                1,
+                &[delegate.pubkey()],
+            )
+            .unwrap()
+        })
+        .collect();
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &instructions,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(
+        VersionedMessage::V0(message),
+        &[&context.default_payer, &delegate],
+    )
+    .unwrap();
+    let protected_keys = [source, destination, swig, wallet, delegate.pubkey()];
+    let protected_before: Vec<_> = protected_keys
+        .iter()
+        .map(|key| context.svm.get_account(key))
+        .collect();
+    let result = context.svm.send_transaction(tx);
+    let metadata = if let Some(error) = expected_error {
+        let failure = result.expect_err("invalid spend or metadata mutation must roll back");
+        assert_eq!(
+            failure.err,
+            TransactionError::InstructionError(1, InstructionError::Custom(error))
+        );
+        let protected_after: Vec<_> = protected_keys
+            .iter()
+            .map(|key| context.svm.get_account(key))
+            .collect();
+        assert_eq!(
+            protected_after, protected_before,
+            "roll back the earlier reserve refresh too"
+        );
+        failure.meta
+    } else {
+        let metadata = result.unwrap_or_else(|error| {
+            panic!(
+                "personal={personal_source}, rent increase={rent_increases}, {action:?}: {error:?}"
+            )
+        });
+        let after = context.svm.get_account(&source).unwrap();
+        let spent = match action {
+            NativeRefreshAction::Transfer(amount) => amount,
+            NativeRefreshAction::Sync => 0,
+            NativeRefreshAction::Approve => unreachable!(),
+        };
+        assert_eq!(after.lamports, before.lamports - spent);
+        assert_eq!(
+            u64::from_le_bytes(after.data[113..121].try_into().unwrap()),
+            required
+        );
+        assert_eq!(
+            u64::from_le_bytes(after.data[64..72].try_into().unwrap()),
+            after.lamports - required
+        );
+        // Only the amount and native reserve may change, including extension bytes.
+        let mut expected_data = before.data.clone();
+        expected_data[64..72].copy_from_slice(&(after.lamports - required).to_le_bytes());
+        expected_data[113..121].copy_from_slice(&required.to_le_bytes());
+        assert_eq!(after.data, expected_data);
+        assert_eq!(after.owner, before.owner);
+        assert_eq!(
+            read_role_action_amount(&context, &swig, native2022.as_ref()),
+            limit - spent
+        );
+        metadata
+    };
+    let token_success = format!("Program {token2022} success");
+    assert_eq!(
+        metadata
+            .logs
+            .iter()
+            .filter(|line| **line == token_success)
+            .count(),
+        instruction_count,
+        "Token-2022 must finish each CPI before Swig verifies its effects: {:?}",
+        metadata.logs
+    );
+}
+
+#[test_log::test]
+fn t22_native_reserve_refresh_preserves_wallet_value() {
+    for rent_increases in [false, true] {
+        t22_native_refresh_case(false, rent_increases, NativeRefreshAction::Sync, None);
+    }
+}
+
+#[test_log::test]
+fn t22_native_reserve_refresh_preserves_personal_value() {
+    for rent_increases in [false, true] {
+        t22_native_refresh_case(true, rent_increases, NativeRefreshAction::Sync, None);
+    }
+}
+
+#[test_log::test]
+fn t22_native_reserve_refresh_preserves_exact_spend_limit_and_rolls_back_overspend() {
+    for rent_increases in [false, true] {
+        t22_native_refresh_case(
+            false,
+            rent_increases,
+            NativeRefreshAction::Transfer(1_000_000),
+            None,
+        );
+        t22_native_refresh_case(
+            false,
+            rent_increases,
+            NativeRefreshAction::Transfer(1_000_001),
+            Some(SwigAuthenticateError::PermissionDeniedInsufficientBalance as u32),
+        );
+    }
+}
+
+#[test_log::test]
+fn t22_native_reserve_refresh_rejects_personal_spending_and_metadata_changes() {
+    for rent_increases in [false, true] {
+        for action in [
+            NativeRefreshAction::Transfer(1),
+            NativeRefreshAction::Approve,
+        ] {
+            t22_native_refresh_case(
+                true,
+                rent_increases,
+                action,
+                Some(SwigError::PermissionDeniedAuthorityExternalAssetChange as u32),
+            );
+        }
+    }
 }
