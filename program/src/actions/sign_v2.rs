@@ -1168,7 +1168,7 @@ where
     let mut instruction_iter =
         InstructionIterator::new(all_accounts, instruction_payload, signer, restricted_keys)?;
 
-    while let Some(instruction) = instruction_iter.next() {
+    while let Some(instruction) = instruction_iter.next_inspection() {
         let instruction = instruction?;
 
         if *instruction.program_id != crate::SYSTEM_PROGRAM_ID {
@@ -1190,15 +1190,15 @@ where
             continue;
         }
 
-        if instruction.accounts.len() < 2 {
+        if instruction.indexes.len() < 2 {
             continue;
         }
 
-        if instruction.accounts[0].pubkey != source_account_bytes {
+        if all_accounts[instruction.indexes[0] as usize].key() != source_account_bytes {
             continue;
         }
 
-        let destination_pubkey = instruction.accounts[1].pubkey;
+        let destination_pubkey = all_accounts[instruction.indexes[1] as usize].key();
         let amount = u64::from_le_bytes([
             instruction.data[4],
             instruction.data[5],
@@ -1244,7 +1244,7 @@ where
     let mut instruction_iter =
         InstructionIterator::new(all_accounts, instruction_payload, signer, restricted_keys)?;
 
-    while let Some(instruction) = instruction_iter.next() {
+    while let Some(instruction) = instruction_iter.next_inspection() {
         let instruction = instruction?;
 
         let is_token_program = *instruction.program_id == crate::SPL_TOKEN_ID
@@ -1260,16 +1260,16 @@ where
             _ => continue,
         };
 
-        if instruction.data.len() < min_data_len || instruction.accounts.len() <= destination_index
-        {
+        if instruction.data.len() < min_data_len || instruction.indexes.len() <= destination_index {
             continue;
         }
 
-        if instruction.accounts[0].pubkey != source_account_bytes {
+        if all_accounts[instruction.indexes[0] as usize].key() != source_account_bytes {
             continue;
         }
 
-        let destination_pubkey = instruction.accounts[destination_index].pubkey;
+        let destination_pubkey =
+            all_accounts[instruction.indexes[destination_index] as usize].key();
         let amount = u64::from_le_bytes([
             instruction.data[1],
             instruction.data[2],

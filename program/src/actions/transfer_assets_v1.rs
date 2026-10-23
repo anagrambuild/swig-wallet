@@ -318,7 +318,7 @@ pub fn transfer_assets_v1(
     let swig_lamports = ctx.accounts.swig.lamports();
     let rent = pinocchio::sysvars::rent::Rent::get()?;
     let swig_data_len = ctx.accounts.swig.data_len();
-    let min_rent = rent.minimum_balance(swig_data_len);
+    let min_rent = crate::util::rent::minimum_balance(&rent, swig_data_len);
 
     if swig_lamports > min_rent {
         let transfer_amount = swig_lamports - min_rent;

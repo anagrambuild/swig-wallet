@@ -216,7 +216,7 @@ fn validate_wsol_value(before: &TokenSnapshot, data: &[u8], amount: u64) -> Prog
             .map_err(|_| SwigError::PermissionDeniedAuthorityExternalAssetChange)?,
     );
     if reserve != previous_reserve
-        && reserve != Rent::get()?.minimum_balance(TOKEN_ACCOUNT_BASE_DATA_LEN)
+        && reserve != crate::util::rent::minimum_balance(&Rent::get()?, TOKEN_ACCOUNT_BASE_DATA_LEN)
     {
         return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
     }

@@ -213,7 +213,7 @@ pub fn create_sub_account_v2(
     // pre-funded destination. Top up, allocate, and assign separately so that
     // pre-funding cannot permanently pin the Swig's next counter value.
     let rent = Rent::get()?;
-    let state_rent = rent.minimum_balance(SubAccountV2::LEN);
+    let state_rent = crate::util::rent::minimum_balance(&rent, SubAccountV2::LEN);
     let state_current = unsafe { *ctx.accounts.sub_account_state.borrow_lamports_unchecked() };
     let state_lamports = state_rent.saturating_sub(state_current);
     if state_lamports > 0 {
@@ -252,7 +252,7 @@ pub fn create_sub_account_v2(
     }
 
     // Fund the system-owned asset account to rent-exemption (0 data).
-    let asset_rent = rent.minimum_balance(0);
+    let asset_rent = crate::util::rent::minimum_balance(&rent, 0);
     let asset_current = unsafe { *ctx.accounts.sub_account.borrow_lamports_unchecked() };
     let asset_lamports = asset_rent.saturating_sub(asset_current);
     if asset_lamports > 0 {
