@@ -9,9 +9,11 @@ use pinocchio::{
     account_info::AccountInfo,
     memory::sol_memcmp,
     program_error::ProgramError,
+    pubkey::Pubkey,
     sysvars::{clock::Clock, Sysvar},
     ProgramResult,
 };
+use pinocchio_pubkey::from_str;
 use swig_assertions::check_self_owned;
 use swig_state::{
     action::{
@@ -29,7 +31,9 @@ use swig_state::{
 
 use crate::{
     actions::sign_v2::{
-        has_token_destination_limits, read_wsol_reserve, wsol_accounted_balance, WSOL_MINT,
+        has_token_destination_limits, read_wsol_reserve, wsol_accounted_balance,
+        TOKEN_ACCOUNT_BASE_DATA_LEN, TOKEN_ACCOUNT_INITIALIZED_STATE, TOKEN_NATIVE_RESERVE_RANGE,
+        TOKEN_STATE_INDEX, WSOL_MINT,
     },
     error::SwigError,
     instruction::{
@@ -89,6 +93,45 @@ impl<'a> CloseTokenAccountV1<'a> {
             authority_payload,
         })
     }
+}
+
+/// Token-2022's wrapped-native-SOL mint.
+///
+/// Token-2022 represents wrapped native SOL under its own native mint, which
+/// is distinct from the legacy SPL Token program's native mint (`WSOL_MINT`
+/// in `sign_v2`). Both must receive identical spend accounting.
+pub(crate) const TOKEN_2022_NATIVE_MINT: Pubkey =
+    from_str("9pan9bMn5HatX4EJdBwg9VgCa7Uz5HL8N1m5D3NdXejP");
+
+/// Resolves the wrapped-native mint for the (already validated) token
+/// program handling this close.
+pub(super) fn native_wsol_mint(token_program_id: &Pubkey) -> Pubkey {
+    if token_program_id == &SPL_TOKEN_ID {
+        WSOL_MINT
+    } else {
+        TOKEN_2022_NATIVE_MINT
+    }
+}
+
+/// Reads the native reserve of a Token-2022 native token account.
+///
+/// Token-2022 keeps the legacy SPL token account base layout — the wrapped
+/// native reserve sits behind the `is_native` COption tag at bytes 109..121 —
+/// but real accounts may carry trailing extension data, so only the base
+/// prefix is validated here (unlike `read_wsol_reserve`, which requires the
+/// exact legacy 165-byte layout).
+pub(crate) fn read_token_2022_native_reserve(data: &[u8]) -> Result<u64, ProgramError> {
+    if data.len() < TOKEN_ACCOUNT_BASE_DATA_LEN
+        || data[TOKEN_STATE_INDEX] != TOKEN_ACCOUNT_INITIALIZED_STATE
+        || data[109..113] != [1, 0, 0, 0]
+    {
+        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+    }
+    Ok(u64::from_le_bytes(
+        data[TOKEN_NATIVE_RESERVE_RANGE]
+            .try_into()
+            .map_err(|_| SwigError::AccountDataModifiedUnexpectedly)?,
+    ))
 }
 
 /// Closes one or more token accounts owned by the Swig wallet.
@@ -243,28 +286,37 @@ pub fn close_token_account_v1(
             return Err(SwigError::InvalidSwigTokenAccountOwner.into());
         }
 
-        if token_program_id == &SPL_TOKEN_ID && token_data.get(..32) == Some(WSOL_MINT.as_slice()) {
-            let reserve = read_wsol_reserve(token_program_id, token_data)?;
+        // Wrapped-native value exists under both supported token programs.
+        // Enforce identical allowance and destination accounting against the
+        // handling program's own native mint before any CPI so a closer
+        // cannot withdraw wrapped SOL outside its delegated budget.
+        let native_mint = native_wsol_mint(token_program_id);
+        if token_data.get(..32) == Some(native_mint.as_slice()) {
+            let reserve = if token_program_id == &SPL_TOKEN_ID {
+                read_wsol_reserve(token_program_id, token_data)?
+            } else {
+                read_token_2022_native_reserve(token_data)?
+            };
             let amount = u64::from_le_bytes(token_data[64..72].try_into().unwrap());
             let spent = wsol_accounted_balance(amount, reserve, token_account.lamports())?;
             if !unrestricted_spend {
                 let general_limit = if let Some(limit) =
-                    RoleMut::get_action_mut::<TokenLimit>(role.actions, &WSOL_MINT)?
+                    RoleMut::get_action_mut::<TokenLimit>(role.actions, &native_mint)?
                 {
                     limit.run(spent)?;
                     true
                 } else if let Some(limit) =
-                    RoleMut::get_action_mut::<TokenRecurringLimit>(role.actions, &WSOL_MINT)?
+                    RoleMut::get_action_mut::<TokenRecurringLimit>(role.actions, &native_mint)?
                 {
                     limit.run(spent, current_slot)?;
                     true
                 } else {
                     false
                 };
-                let destination_limit = has_token_destination_limits(role.actions, &WSOL_MINT)?;
+                let destination_limit = has_token_destination_limits(role.actions, &native_mint)?;
                 if destination_limit {
                     let mut key = [0u8; 64];
-                    key[..32].copy_from_slice(&WSOL_MINT);
+                    key[..32].copy_from_slice(&native_mint);
                     key[32..].copy_from_slice(ctx.accounts.destination.key());
                     if let Some(limit) = RoleMut::get_action_mut::<TokenRecurringDestinationLimit>(
                         role.actions,
