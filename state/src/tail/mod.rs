@@ -25,13 +25,17 @@
 //! no changes to `swig.rs`.
 
 pub mod active_sub_account_count;
+pub mod config_seed_prefix;
 pub mod rent_claimer;
 
-use crate::SwigStateError;
 use core::convert::TryInto;
+
 use pinocchio::program_error::ProgramError;
 
-/// Length of every tail entry header: `[kind][version][value_len:u16][reserved:u8;4]`.
+use crate::SwigStateError;
+
+/// Length of every tail entry header:
+/// `[kind][version][value_len:u16][reserved:u8;4]`.
 pub const TAIL_HEADER_LEN: usize = 8;
 
 /// Structured view of the 8-byte header common to each tail entry.
@@ -80,11 +84,18 @@ pub enum TailReadError {
     LengthOverflow,
     InvalidKind { expected: u8, found: u8 },
     InvalidValueLen { expected: usize, found: usize },
+    InvalidSeedPrefixLength(usize),
+    InvalidSeedPrefix,
 }
 
 impl From<TailReadError> for ProgramError {
-    fn from(_: TailReadError) -> Self {
-        SwigStateError::InvalidRentClaimerLayout.into()
+    fn from(error: TailReadError) -> Self {
+        match error {
+            TailReadError::InvalidSeedPrefixLength(_) | TailReadError::InvalidSeedPrefix => {
+                SwigStateError::InvalidSeedPrefix.into()
+            },
+            _ => SwigStateError::InvalidRentClaimerLayout.into(),
+        }
     }
 }
 
@@ -124,6 +135,7 @@ pub struct UnknownTailEntry<'a> {
 /// A parsed tail entry, dispatching to known concrete types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnyTailEntry<'a> {
+    ConfigSeedPrefix(config_seed_prefix::ConfigSeedPrefixEntry<'a>),
     ActiveSubAccountCount(active_sub_account_count::ActiveSubAccountCountEntry<'a>),
     RentClaimer(rent_claimer::RentClaimerEntry<'a>),
     Unknown(UnknownTailEntry<'a>),
@@ -132,8 +144,12 @@ pub enum AnyTailEntry<'a> {
 impl<'a> AnyTailEntry<'a> {
     /// Reads the first entry from `buf`.
     pub fn read(buf: &'a [u8]) -> Result<(Self, usize), TailReadError> {
-        let header = TailHeader::parse(buf)?;
-        match TailKind::from_u8(header.kind) {
+        match buf.first().copied().and_then(TailKind::from_u8) {
+            Some(TailKind::ConfigSeedPrefix) => {
+                let (entry, consumed) = config_seed_prefix::ConfigSeedPrefixEntry::read(buf)
+                    .map_err(|_| TailReadError::InvalidSeedPrefix)?;
+                Ok((Self::ConfigSeedPrefix(entry), consumed))
+            },
             Some(TailKind::ActiveSubAccountCount) => {
                 let (entry, consumed) =
                     active_sub_account_count::ActiveSubAccountCountEntry::read(buf)?;
@@ -144,6 +160,7 @@ impl<'a> AnyTailEntry<'a> {
                 Ok((Self::RentClaimer(entry), consumed))
             },
             None => {
+                let header = TailHeader::parse(buf)?;
                 let end = header.total_len()?;
                 if buf.len() < end {
                     return Err(TailReadError::TooShort);
@@ -200,12 +217,15 @@ pub enum TailKind {
     RentClaimer = 1,
     /// Number of live V1 and V2 sub-accounts.
     ActiveSubAccountCount = 2,
+    /// Immutable first seed of the config PDA.
+    ConfigSeedPrefix = 3,
 }
 
 impl TailKind {
     /// Parses a kind byte, or `None` for an unknown kind.
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {
+            x if x == TailKind::ConfigSeedPrefix as u8 => Some(TailKind::ConfigSeedPrefix),
             x if x == TailKind::RentClaimer as u8 => Some(TailKind::RentClaimer),
             x if x == TailKind::ActiveSubAccountCount as u8 => {
                 Some(TailKind::ActiveSubAccountCount)
@@ -220,17 +240,29 @@ impl TailKind {
 }
 
 /// The largest tail any current tail type can produce. Used to allocate a scratch buffer for realloc handlers.
-pub const MAX_TAIL_LEN: usize = rent_claimer::ENTRY_LEN + active_sub_account_count::ENTRY_LEN;
+pub const MAX_TAIL_LEN: usize = rent_claimer::ENTRY_LEN
+    + active_sub_account_count::ENTRY_LEN
+    + config_seed_prefix::MAX_ENTRY_LEN;
 
 /// Validates the complete tail. Each known kind may occur at most once;
 /// unknown kinds, malformed versions, and non-zero reserved bytes fail closed.
 pub fn validate_strict(mut tail_data: &[u8]) -> Result<(), ProgramError> {
     let mut seen_rent_claimer = false;
     let mut seen_active_count = false;
+    let mut seen_config_prefix = false;
 
     while !tail_data.is_empty() {
         let (entry, consumed) = AnyTailEntry::read(tail_data)?;
         match entry {
+            AnyTailEntry::ConfigSeedPrefix(entry) => {
+                if seen_config_prefix
+                    || entry.header.version != config_seed_prefix::VERSION
+                    || entry.header.payload != [0u8; 4]
+                {
+                    return Err(SwigStateError::InvalidSeedPrefix.into());
+                }
+                seen_config_prefix = true;
+            },
             AnyTailEntry::RentClaimer(entry) => {
                 if seen_rent_claimer
                     || entry.header.version != rent_claimer::VERSION
@@ -372,9 +404,9 @@ mod tests {
             [count_entry.as_slice(), rent_entry.as_slice()].concat(),
         ] {
             let saved = SavedTail::take(&tail).expect("both known entries are valid");
-            assert_eq!(saved.len(), MAX_TAIL_LEN);
+            assert_eq!(saved.len(), tail.len());
 
-            let mut account = vec![0u8; 8 + MAX_TAIL_LEN];
+            let mut account = vec![0u8; 8 + tail.len()];
             saved.restore(&mut account).expect("restore");
             assert_eq!(&account[8..], tail.as_slice());
         }

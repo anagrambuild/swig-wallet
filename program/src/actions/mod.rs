@@ -10,6 +10,7 @@ pub mod close_sub_account_v1;
 pub mod close_sub_account_v2;
 pub mod close_swig_v1;
 pub mod close_token_account_v1;
+pub mod create_reserved_v1;
 pub mod create_session_v1;
 pub mod create_sub_account_v1;
 pub mod create_sub_account_v2;
@@ -53,9 +54,9 @@ use crate::{
     instruction::{
         accounts::{
             AddAuthorityV1Accounts, CloseSubAccountV1Accounts, CloseSubAccountV2Accounts,
-            CloseSwigV1Accounts, CloseTokenAccountV1Accounts, CreateSessionV1Accounts,
-            CreateSubAccountV1Accounts, CreateSubAccountV2Accounts, CreateV1Accounts,
-            MigrateToWalletAddressV1Accounts, RemoveAuthorityV1Accounts,
+            CloseSwigV1Accounts, CloseTokenAccountV1Accounts, CreateReservedV1Accounts,
+            CreateSessionV1Accounts, CreateSubAccountV1Accounts, CreateSubAccountV2Accounts,
+            CreateV1Accounts, MigrateToWalletAddressV1Accounts, RemoveAuthorityV1Accounts,
             ReplaceAuthorityV1Accounts, SetRentClaimerV1Accounts, SignV2Accounts,
             SubAccountSignV1Accounts, SubAccountSignV2Accounts, ToggleSubAccountV1Accounts,
             ToggleSubAccountV2Accounts, TransferAssetsV1Accounts, UpdateAuthorityV1Accounts,
@@ -109,9 +110,12 @@ pub fn process_action(
     } else {
         check_top_level_or_signers(accounts, &AUTHORIZED_CPI_SIGNERS, SwigError::Cpi)?;
     }
-    // V1 sub-accounts share the parent ID, so reject preexisting alternate
-    // configs. V2 binds its PDAs to the actual config address and needs no
-    // canonical-parent search. All sub-account paths consume config account 0.
+    // V1 sub-account PDAs use ["sub-account", swig.id, role_id], so only
+    // canonical ["swig", swig.id] configs may access them. Alternate and
+    // reserved configs are intentionally rejected: configs with the same
+    // stored ID would otherwise share V1 child addresses.
+    // Reserved wallets must use V2 sub-accounts, whose PDAs bind to the actual
+    // config address. All sub-account paths consume config account 0.
     let requires_canonical_config = matches!(
         ix,
         SwigInstruction::CreateSubAccountV1
@@ -150,6 +154,10 @@ pub fn process_action(
     }
     match ix {
         SwigInstruction::CreateV1 => process_create_v1(accounts, data),
+        SwigInstruction::CreateReservedV1 => create_reserved_v1::create_reserved_v1(
+            CreateReservedV1Accounts::context(accounts)?,
+            data,
+        ),
         SwigInstruction::DeprecatedSignV1 => {
             msg!(
                 "DEPRECATED. Use SignV2 instead. https://build.onswig.com/examples/v2_features \
