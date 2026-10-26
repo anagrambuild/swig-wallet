@@ -26,6 +26,7 @@ use crate::{
         SwigInstruction,
     },
     isolation::IsolationGuard,
+    util::assert_system_account_invariants,
     AccountClassification,
 };
 
@@ -234,6 +235,7 @@ pub fn sub_account_sign_v1(
     }
 
     isolation.validate()?;
+    assert_system_account_invariants(ctx.accounts.sub_account)?;
 
     // Check that the sub-account maintains sufficient lamports for rent exemption
     // Ensure the account has some minimum balance for rent exemption

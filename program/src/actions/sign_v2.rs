@@ -52,12 +52,14 @@ use crate::{
     },
     isolation::IsolationGuard,
     util::{
-        hash_except,
+        assert_system_account_invariants, hash_except,
         rent::minimum_balance,
         token_integrity::{hash_with_transfer_fee, transfer_fee_amount_offset},
     },
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
 };
+
+use super::close_token_account_v1::{read_token_2022_native_reserve, TOKEN_2022_NATIVE_MINT};
 // use swig_instructions::InstructionIterator;
 
 pub const INSTRUCTION_SYSVAR_ACCOUNT: Pubkey =
@@ -67,7 +69,7 @@ pub const INSTRUCTION_SYSVAR_ACCOUNT: Pubkey =
 const TOKEN_BALANCE_EXCLUDE_RANGE: core::ops::Range<usize> = 64..72;
 
 // Only the reserve payload is mutable. The COption tag stays protected.
-const TOKEN_NATIVE_RESERVE_RANGE: core::ops::Range<usize> = 113..121;
+pub(super) const TOKEN_NATIVE_RESERVE_RANGE: core::ops::Range<usize> = 113..121;
 pub(super) const WSOL_MINT: Pubkey = from_str("So11111111111111111111111111111111111111112");
 const TOKEN_EXCLUDE_RANGES: &[core::ops::Range<usize>] = &[TOKEN_BALANCE_EXCLUDE_RANGE];
 const WSOL_EXCLUDE_RANGES: &[core::ops::Range<usize>] =
@@ -99,17 +101,17 @@ const STAKE_STATE_EXCLUDE_RANGE: core::ops::Range<usize> = 0..4;
 const STAKE_DELEGATION_EXCLUDE_RANGE: core::ops::Range<usize> = 124..200;
 
 /// Token account field ranges
-const TOKEN_ACCOUNT_BASE_DATA_LEN: usize = 165;
+pub(super) const TOKEN_ACCOUNT_BASE_DATA_LEN: usize = 165;
 const TOKEN_MINT_RANGE: core::ops::Range<usize> = 0..32;
 const TOKEN_AUTHORITY_RANGE: core::ops::Range<usize> = 32..64;
 const TOKEN_BALANCE_RANGE: core::ops::Range<usize> = 64..72;
-const TOKEN_STATE_INDEX: usize = 108;
+pub(super) const TOKEN_STATE_INDEX: usize = 108;
 
 /// Stake account field ranges
 const STAKE_BALANCE_RANGE: core::ops::Range<usize> = 156..164;
 
 /// Account state constants
-const TOKEN_ACCOUNT_INITIALIZED_STATE: u8 = 1;
+pub(super) const TOKEN_ACCOUNT_INITIALIZED_STATE: u8 = 1;
 
 /// Empty exclude ranges for hash_except when no exclusions are needed
 const NO_EXCLUDE_RANGES: &[core::ops::Range<usize>] = &[];
@@ -331,7 +333,7 @@ pub fn sign_v2(
                 &[signer.into()],
             )?;
             if check_shape {
-                assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
+                assert_system_account_invariants(ctx.accounts.swig_wallet_address)?;
             }
         }
 
@@ -384,12 +386,21 @@ pub fn sign_v2(
                 ..
             } => {
                 let data = unsafe { account.borrow_data_unchecked() };
-                // Choose the policy once, from pre-CPI identity. Token-2022 and
+                // Choose the policy once, from pre-CPI identity. Wrapped-native
+                // accounts of either token program get wrapped-SOL accounting;
                 // non-native mints keep their existing amount-only policy.
-                let exclude_ranges = if account.owner() == &SPL_TOKEN_ID
-                    && data.get(TOKEN_MINT_RANGE) == Some(WSOL_MINT.as_slice())
+                let native_mint = if account.owner() == &SPL_TOKEN_ID {
+                    Some(WSOL_MINT)
+                } else if account.owner() == &SPL_TOKEN_2022_ID {
+                    Some(TOKEN_2022_NATIVE_MINT)
+                } else {
+                    None
+                };
+                let exclude_ranges = if native_mint
+                    .map(|mint| data.get(TOKEN_MINT_RANGE) == Some(mint.as_slice()))
+                    .unwrap_or(false)
                 {
-                    let reserve = read_wsol_reserve(account.owner(), data)?;
+                    let reserve = read_native_reserve(account.owner(), data)?;
                     if &data[TOKEN_AUTHORITY_RANGE] != ctx.accounts.swig_wallet_address.key() {
                         return Err(
                             SwigAuthenticateError::PermissionDeniedTokenAccountAuthorityNotSwig
@@ -539,11 +550,11 @@ pub fn sign_v2(
                         });
 
                         if let Some(previous_reserve) = native_reserve {
-                            let reserve = read_wsol_reserve(account.owner(), data)?;
+                            let reserve = read_native_reserve(account.owner(), data)?;
                             if reserve != *previous_reserve {
                                 let required = minimum_balance(
                                     &pinocchio::sysvars::rent::Rent::get()?,
-                                    TOKEN_ACCOUNT_BASE_DATA_LEN,
+                                    data.len(),
                                 );
                                 validate_wsol_reserve_change(*previous_reserve, reserve, required)?;
                             }
@@ -958,15 +969,28 @@ pub fn sign_v2(
     }
 
     if check_wallet_shape {
-        assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
+        assert_system_account_invariants(ctx.accounts.swig_wallet_address)?;
     }
 
     isolation.validate()?;
     Ok(())
 }
 
-/// The reserve exception is limited to the legacy Token program's native mint.
-/// Check every byte of the option tag; the pinned zero-copy token accessor only
+/// Reads the wrapped-native reserve for a token account of either token
+/// program. Both keep the legacy base layout with the reserve behind the
+/// `is_native` COption tag at bytes 109..121, but Token-2022 accounts may
+/// carry trailing extension data, so only the base prefix is validated there.
+pub(super) fn read_native_reserve(owner: &Pubkey, data: &[u8]) -> Result<u64, ProgramError> {
+    if owner == &SPL_TOKEN_ID {
+        read_wsol_reserve(owner, data)
+    } else {
+        read_token_2022_native_reserve(data)
+    }
+}
+
+/// The reserve exception is limited to the wrapped-native mints. For the
+/// legacy program this is the exact 165-byte layout; check every byte of the
+/// option tag either way, since the pinned zero-copy token accessor only
 /// inspects its first byte and is not a canonical option decoder.
 pub(super) fn read_wsol_reserve(owner: &Pubkey, data: &[u8]) -> Result<u64, ProgramError> {
     if owner != &SPL_TOKEN_ID
@@ -1006,12 +1030,6 @@ pub(super) fn wsol_accounted_balance(
         return Err(SwigError::AccountDataModifiedUnexpectedly.into());
     }
     Ok(lamports)
-}
-
-fn assert_wallet_address_invariants(wallet: &AccountInfo) -> ProgramResult {
-    check_system_owner(wallet, SwigError::WalletAddressInvariantViolation)?;
-    check_zero_data(wallet, SwigError::WalletAddressInvariantViolation)?;
-    Ok(())
 }
 
 // Track gross debits across CPI boundaries; credits cannot erase prior spend.

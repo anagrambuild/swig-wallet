@@ -28,6 +28,7 @@ use crate::{
         SwigInstruction,
     },
     isolation::IsolationGuard,
+    util::assert_system_account_invariants,
     AccountClassification,
 };
 
@@ -286,6 +287,7 @@ pub fn sub_account_sign_v2(
     }
 
     isolation.validate()?;
+    assert_system_account_invariants(ctx.accounts.sub_account)?;
 
     // Ensure the asset account remains rent-exempt.
     let account_data = unsafe { ctx.accounts.sub_account.borrow_data_unchecked() };
