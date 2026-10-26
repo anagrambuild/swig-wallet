@@ -67,9 +67,10 @@ use crate::{
 };
 
 // TODO: Remove once authorized CPI signers have migrated their apps.
-const AUTHORIZED_CPI_SIGNERS: [[u8; 32]; 2] = [
+const AUTHORIZED_CPI_SIGNERS: [[u8; 32]; 3] = [
     pinocchio_pubkey::pubkey!("X4o2kSLzqEQjnAzhq3L3BW92aawMV2n2F37EXd2GMpy"),
     pinocchio_pubkey::pubkey!("HSrst4iSVPLuKtV8qzmFDLkHTNhKPf5rjg5D8tL6KVCX"),
+    pinocchio_pubkey::pubkey!("DeXterR2kQm8AvRHnNPatWkE46TfAcMeBDjb6FySoAb8"),
 ];
 
 /// Main entry point for processing Swig wallet instructions.
