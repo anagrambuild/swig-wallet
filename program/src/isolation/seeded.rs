@@ -10,7 +10,7 @@ impl IsolationGuard<'_> {
     /// program validates the seed derivation; a successful with-seed operation
     /// using a protected base signer must preserve the target's existing assets.
     /// Nested CPI instruction data is not visible here.
-    #[inline(never)]
+    #[inline(always)]
     pub fn capture_seeded_accounts(&mut self, payload: &[u8]) -> ProgramResult {
         if self.signers.as_slice().is_empty()
             || !self.accounts.iter().any(|account| {
