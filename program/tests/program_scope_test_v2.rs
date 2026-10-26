@@ -245,12 +245,12 @@ fn test_token_transfer_with_program_scope_v2() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    // Preserve the existing overhead ceiling and bound total SignV2 cost by
-    // main ff2929b (SBPF v1, platform-tools v1.53, LiteSVM 0.16).
-    assert!(swig_transfer_cu - regular_transfer_cu <= 6450);
+    // Required wallet-PDA validation, measured at 76a48d1 with CI's scope
+    // fixture (SBPF v3, platform-tools v1.53, LiteSVM 0.16): 7,837 total CU.
+    assert!(swig_transfer_cu - regular_transfer_cu <= 7761);
     assert!(
-        swig_transfer_cu <= 6_408,
-        "ProgramScope SignV2 consumed {swig_transfer_cu} CU, exceeding the main baseline of 6408 CU"
+        swig_transfer_cu <= 7_837,
+        "ProgramScope SignV2 consumed {swig_transfer_cu} CU, exceeding the wallet-validation baseline of 7837 CU"
     );
 }
 
