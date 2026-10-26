@@ -200,6 +200,9 @@ pub enum SwigError {
     DeveloperSignerMismatch,
     /// The registered developer signer did not sign the transaction
     MissingDeveloperSignature,
+    /// A premium permission was used without the Developer Account and
+    /// developer signer as the last two accounts
+    MissingDeveloperProofAccounts,
 }
 
 /// Implements conversion from SwigError to ProgramError.

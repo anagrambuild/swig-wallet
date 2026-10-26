@@ -31,6 +31,31 @@ pub fn validate_developer_account(
     )
 }
 
+// Demo only: the Developer Account PDA and signer K travel as the last two
+// accounts of the Swig instruction, as in the Phase 4 account contract.
+pub fn require_developer_sponsorship(
+    all_accounts: &[AccountInfo],
+    permission: Permission,
+    unix_timestamp: i64,
+) -> Result<(), SwigError> {
+    let Some(required_tier) = required_developer_tier(permission) else {
+        return Ok(());
+    };
+    let [.., developer_account, developer_signer] = all_accounts else {
+        return Err(SwigError::MissingDeveloperProofAccounts);
+    };
+    if !developer_account.is_owned_by(&developer_account_registry_state::ID) {
+        return Err(SwigError::MissingDeveloperProofAccounts);
+    }
+
+    validate_developer_account(
+        developer_account,
+        developer_signer,
+        required_tier,
+        unix_timestamp,
+    )
+}
+
 pub fn check_developer_sponsorship(
     account: &DeveloperAccount,
     signer_key: &Pubkey,
@@ -65,7 +90,6 @@ pub fn required_developer_tier(permission: Permission) -> Option<DeveloperTier> 
         | Permission::SolRecurringLimit
         | Permission::Program
         | Permission::ProgramScope
-        | Permission::TokenLimit
         | Permission::TokenRecurringLimit
         | Permission::All
         | Permission::ManageAuthority
@@ -87,6 +111,7 @@ pub fn required_developer_tier(permission: Permission) -> Option<DeveloperTier> 
         | Permission::SubAccountV2Sign
         | Permission::SubAccountV2Withdraw
         | Permission::SubAccountV2Toggle => None,
+        Permission::TokenLimit => Some(DeveloperTier::Pro),
     }
 }
 

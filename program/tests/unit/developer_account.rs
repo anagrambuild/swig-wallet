@@ -244,10 +244,15 @@ fn sponsorship_checks_run_in_order() {
 }
 
 #[test]
-fn every_permission_is_free() {
+fn only_token_limit_is_premium() {
     let mut value = 0;
     while let Ok(permission) = Permission::try_from(value) {
-        assert_eq!(required_developer_tier(permission), None, "{permission:?}");
+        let expected = (permission == Permission::TokenLimit).then_some(DeveloperTier::Pro);
+        assert_eq!(
+            required_developer_tier(permission),
+            expected,
+            "{permission:?}"
+        );
         value += 1;
     }
 }
@@ -262,4 +267,5 @@ fn developer_account_error_codes_are_stable() {
     assert_eq!(SwigError::DeveloperSignerNotSet as u32, 84);
     assert_eq!(SwigError::DeveloperSignerMismatch as u32, 85);
     assert_eq!(SwigError::MissingDeveloperSignature as u32, 86);
+    assert_eq!(SwigError::MissingDeveloperProofAccounts as u32, 87);
 }

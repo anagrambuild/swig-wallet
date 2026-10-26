@@ -45,6 +45,7 @@ use swig_state::{
 };
 
 use crate::{
+    developer_account::require_developer_sponsorship,
     error::SwigError,
     instruction::{
         accounts::{Context, SignV2Accounts},
@@ -805,6 +806,11 @@ pub fn sign_v2(
 
                 let general_token_limit_applied =
                     if let Some(action) = RoleMut::get_action_mut::<TokenLimit>(actions, mint)? {
+                        require_developer_sponsorship(
+                            all_accounts,
+                            Permission::TokenLimit,
+                            clock.unix_timestamp,
+                        )?;
                         action.run(total_token_spent)?;
                         true
                     } else if let Some(action) =
