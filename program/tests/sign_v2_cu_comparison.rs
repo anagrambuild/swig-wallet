@@ -42,15 +42,15 @@ fn compare_sign_v2_role_compute_units() {
         token_limit_destination
     );
 
-    // Main ff2929b built for SBPF v1 with platform-tools v1.53, measured on
-    // LiteSVM 0.16. Token ceilings allow a small increase for seeded-stake
-    // isolation: PR #71 measured 6_302 and 7_219 CU on the token paths.
+    // All/SOL ceilings retain the ff2929b SBPF v1 baseline. The token paths with
+    // shared authentication measure 6,332/7,252 CU on SBPF v3, platform-tools v1.53
+    // and LiteSVM 0.16; those ceilings retain 18 CU of headroom.
     for (path, actual, ceiling) in [
         ("All", all, 3_618),
         ("SOL limit", sol_limit, 5_116),
         ("SOL destination limit", sol_limit_destination, 5_834),
-        ("Token limit", token_limit, 6_325),
-        ("Token destination limit", token_limit_destination, 7_225),
+        ("Token limit", token_limit, 6_350),
+        ("Token destination limit", token_limit_destination, 7_270),
     ] {
         assert!(
             actual <= ceiling,

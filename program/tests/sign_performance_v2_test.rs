@@ -190,9 +190,9 @@ fn test_token_transfer_performance_comparison_v2() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    // SignV2 token overhead with fee snapshots is 3,825 CU locally and 3,858 in CI.
-    // Keep a small margin above the measured cost in supported build environments.
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3900);
+    // SignV2 token overhead with shared authentication is 3,902 CU on SBPF v3,
+    // platform-tools v1.53 and LiteSVM 0.16. Retain 18 CU of headroom.
+    assert!(swig_transfer_cu - regular_transfer_cu <= 3920);
 }
 
 #[test_log::test]
