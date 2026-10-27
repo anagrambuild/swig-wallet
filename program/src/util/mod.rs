@@ -343,5 +343,15 @@ pub fn hash_except(
     #[cfg(not(target_os = "solana"))]
     let res = 0;
 
+    // Host unit tests must exercise metadata changes as well as balance changes.
+    #[cfg(all(test, not(target_os = "solana")))]
+    {
+        // The prefix is fully initialized, as for the syscall above.
+        let initialized_segments = unsafe {
+            core::slice::from_raw_parts(segments.as_ptr().cast::<&[u8]>(), segment_count)
+        };
+        data_payload_hash = solana_sdk::hash::hashv(initialized_segments).to_bytes();
+    }
+
     data_payload_hash
 }

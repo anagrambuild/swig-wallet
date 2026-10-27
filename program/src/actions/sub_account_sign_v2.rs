@@ -237,6 +237,7 @@ pub fn sub_account_sign_v2(
     };
     let mut isolation = IsolationGuard::new(all_accounts);
     isolation.capture_signers(ctx.accounts.sub_account.key())?;
+    isolation.capture_seeded_accounts(sign.instruction_payload)?;
     for (index, account) in all_accounts.iter().enumerate() {
         if account.is_writable() && account.key() != ctx.accounts.sub_account.key() {
             isolation.snapshot(index)?;

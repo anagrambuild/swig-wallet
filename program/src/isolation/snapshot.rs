@@ -28,6 +28,9 @@ pub struct IsolationGuard<'a> {
     pub(super) creation_overflow: bool,
     pub(super) tokens: Snapshots<TokenSnapshot, MAX_PROTECTED_TOKENS>,
     pub(super) frozen: Snapshots<FrozenSnapshot, MAX_FROZEN>,
+    // Compact account indexes are u8. Select before CPI; snapshot at the normal
+    // account boundary so wallet/role exclusions and capacity limits still apply.
+    pub(super) seeded: [u8; 32],
 }
 
 #[derive(Clone, Copy)]
@@ -108,6 +111,7 @@ impl<'a> IsolationGuard<'a> {
             creation_overflow: false,
             tokens: Snapshots::new(),
             frozen: Snapshots::new(),
+            seeded: [0; 32],
         }
     }
 
@@ -195,6 +199,7 @@ impl<'a> IsolationGuard<'a> {
             // Signed accounts and known authority-bearing layouts retain their
             // complete data/control. Token accounts use balance-aware checks.
             if signed_existing
+                || guard.seeded[index / 8] & (1 << (index % 8)) != 0
                 || any_signer_controls_frozen(account, all_accounts, guard.signers.as_slice())
             {
                 return guard.snapshot_frozen(index, account, data);

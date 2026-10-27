@@ -283,3 +283,174 @@ fn zero_signers_need_no_asset_snapshots_and_limits_fail_closed() {
         );
     });
 }
+
+#[test]
+fn seeded_stake_authorities_keep_their_pre_cpi_control_and_balance() {
+    use solana_stake_interface::{
+        instruction::{authorize_checked_with_seed, authorize_with_seed},
+        stake_flags::StakeFlags,
+        state::{Authorized, Meta, Stake, StakeAuthorize, StakeStateV2},
+    };
+    use swig_compact_instructions::compact_instructions;
+
+    let base = Pubkey::new_unique();
+    let stake_key = Pubkey::new_unique();
+    let wallet = Pubkey::new_unique();
+    let replacement = Pubkey::new_unique();
+    let owner = Pubkey::new_unique();
+    for checked in [false, true] {
+        for delegated in [false, true] {
+            for kind in [StakeAuthorize::Staker, StakeAuthorize::Withdrawer] {
+                let seed = "s".repeat(32);
+                let authority = Pubkey::create_with_seed(&base, &seed, &owner).unwrap();
+                let meta = Meta {
+                    authorized: Authorized::auto(&authority),
+                    ..Meta::default()
+                };
+                let state = if delegated {
+                    StakeStateV2::Stake(meta, Stake::default(), StakeFlags::empty())
+                } else {
+                    StakeStateV2::Initialized(meta)
+                };
+                let original_data = bincode::serialize(&state).unwrap();
+                let instruction = if checked {
+                    authorize_checked_with_seed(
+                        &stake_key,
+                        &base,
+                        seed,
+                        &owner,
+                        &replacement,
+                        kind,
+                        None,
+                    )
+                } else {
+                    authorize_with_seed(&stake_key, &base, seed, &owner, &replacement, kind, None)
+                };
+                // Repeated uses of the same account must keep one original baseline.
+                let (metas, compact) =
+                    compact_instructions(wallet, vec![], vec![instruction.clone(), instruction])
+                        .unwrap();
+                let states: Vec<_> = metas
+                    .iter()
+                    .map(|meta| {
+                        let state = if meta.pubkey == stake_key {
+                            account(crate::STAKING_ID, original_data.clone())
+                        } else {
+                            account(SYSTEM_PROGRAM_ID, vec![])
+                        };
+                        (meta.pubkey, state, meta.is_signer)
+                    })
+                    .collect();
+                let payload = compact.into_bytes().unwrap();
+                let stake_index = metas
+                    .iter()
+                    .position(|meta| meta.pubkey == stake_key)
+                    .unwrap();
+                with_accounts(&states, |accounts| {
+                    let mut guard = IsolationGuard::new(accounts);
+                    guard.capture_signers(&wallet.to_bytes()).unwrap();
+                    guard.capture_seeded_accounts(&payload).unwrap();
+                    for index in 0..accounts.len() {
+                        guard.snapshot(index).unwrap();
+                    }
+                    assert_eq!(guard.frozen.as_slice().len(), 1);
+                    assert_eq!(guard.validate(), Ok(()), "no-op remains allowed");
+                    let stake = &accounts[stake_index];
+                    let offset = match kind {
+                        StakeAuthorize::Staker => 12,
+                        StakeAuthorize::Withdrawer => 44,
+                    };
+                    stake.try_borrow_mut_data().unwrap()[offset..offset + 32]
+                        .copy_from_slice(replacement.as_ref());
+                    assert_eq!(
+                        guard.validate(),
+                        Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into()),
+                        "authority changes must be rejected without any balance decrease"
+                    );
+                    stake
+                        .try_borrow_mut_data()
+                        .unwrap()
+                        .copy_from_slice(&original_data);
+                    *stake.try_borrow_mut_lamports().unwrap() += 1;
+                    assert_eq!(guard.validate(), Ok(()), "credits remain allowed");
+                    *stake.try_borrow_mut_lamports().unwrap() -= 2;
+                    assert_eq!(
+                        guard.validate(),
+                        Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into()),
+                        "the derived account cannot lose SOL while the base is unchanged"
+                    );
+                });
+            }
+        }
+    }
+}
+
+#[test]
+fn seeded_stake_selection_excludes_wallet_and_unsigned_bases_and_rejects_truncation() {
+    use solana_stake_interface::instruction::authorize_with_seed;
+    use solana_stake_interface::state::StakeAuthorize;
+    use swig_compact_instructions::compact_instructions;
+
+    let base = Pubkey::new_unique();
+    let wallet = Pubkey::new_unique();
+    let stake_key = Pubkey::new_unique();
+    let instruction = authorize_with_seed(
+        &stake_key,
+        &base,
+        String::new(),
+        &Pubkey::new_unique(),
+        &Pubkey::new_unique(),
+        StakeAuthorize::Withdrawer,
+        None,
+    );
+    let (metas, compact) = compact_instructions(wallet, vec![], vec![instruction]).unwrap();
+    let payload = compact.into_bytes().unwrap();
+    let stake_index = metas
+        .iter()
+        .position(|meta| meta.pubkey == stake_key)
+        .unwrap();
+    for (signer, pda) in [(false, wallet), (true, base), (true, wallet)] {
+        let states: Vec<_> = metas
+            .iter()
+            .map(|meta| {
+                let state = if meta.pubkey == stake_key {
+                    account(crate::STAKING_ID, vec![0; 200])
+                } else {
+                    account(SYSTEM_PROGRAM_ID, vec![])
+                };
+                (meta.pubkey, state, signer && meta.pubkey == base)
+            })
+            .collect();
+        with_accounts(&states, |accounts| {
+            let mut guard = IsolationGuard::new(accounts);
+            guard.capture_signers(&pda.to_bytes()).unwrap();
+            guard.capture_seeded_accounts(&payload).unwrap();
+            guard.snapshot(stake_index).unwrap();
+            assert_eq!(
+                guard.frozen.as_slice().len(),
+                usize::from(signer && pda != base)
+            );
+            if signer && pda != base {
+                for end in 0..payload.len() {
+                    let mut guard = IsolationGuard::new(accounts);
+                    guard.capture_signers(&pda.to_bytes()).unwrap();
+                    assert_eq!(
+                        guard.capture_seeded_accounts(&payload[..end]),
+                        Err(SwigError::InstructionExecutionError.into())
+                    );
+                }
+                // Corrupt only an index in the production compact encoding.
+                for offset in [1, 3, 4] {
+                    let mut malformed = payload.clone();
+                    malformed[offset] = u8::MAX;
+                    let mut guard = IsolationGuard::new(accounts);
+                    guard.capture_signers(&pda.to_bytes()).unwrap();
+                    assert_eq!(
+                        guard.capture_seeded_accounts(&malformed),
+                        Err(SwigError::InstructionExecutionError.into())
+                    );
+                }
+            }
+        });
+    }
+}
