@@ -454,3 +454,191 @@ fn seeded_stake_selection_excludes_wallet_and_unsigned_bases_and_rejects_truncat
         });
     }
 }
+
+#[test]
+fn seeded_system_source_keeps_sol_and_control_without_charging_the_base() {
+    use solana_system_interface::instruction::transfer_with_seed;
+    use swig_compact_instructions::compact_instructions;
+
+    let base = Pubkey::new_unique();
+    let wallet = Pubkey::new_unique();
+    let recipient = Pubkey::new_unique();
+    let owner = Pubkey::new_unique();
+    let seed = "s".repeat(32);
+    let source = Pubkey::create_with_seed(&base, &seed, &owner).unwrap();
+    let instruction = transfer_with_seed(&source, &base, seed, &owner, &recipient, 1);
+    let (metas, compact) = compact_instructions(wallet, vec![], vec![instruction]).unwrap();
+    let payload = compact.into_bytes().unwrap();
+    let states: Vec<_> = metas
+        .iter()
+        .map(|meta| {
+            (
+                meta.pubkey,
+                account(SYSTEM_PROGRAM_ID, vec![]),
+                meta.is_signer,
+            )
+        })
+        .collect();
+    let source_index = metas.iter().position(|meta| meta.pubkey == source).unwrap();
+    let recipient_index = metas
+        .iter()
+        .position(|meta| meta.pubkey == recipient)
+        .unwrap();
+    with_accounts(&states, |accounts| {
+        let mut guard = IsolationGuard::new(accounts);
+        guard.capture_signers(&wallet.to_bytes()).unwrap();
+        guard.capture_seeded_accounts(&payload).unwrap();
+        for index in 0..accounts.len() {
+            guard.snapshot(index).unwrap();
+        }
+        assert_eq!(guard.frozen.as_slice().len(), 1);
+        assert_eq!(guard.validate(), Ok(()), "no-op remains allowed");
+        let source = &accounts[source_index];
+        *source.try_borrow_mut_lamports().unwrap() += 1;
+        assert_eq!(guard.validate(), Ok(()), "credits remain allowed");
+        *source.try_borrow_mut_lamports().unwrap() -= 2;
+        assert_eq!(
+            guard.validate(),
+            Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into()),
+            "a seeded source cannot lose SOL even when the base is unchanged"
+        );
+        *source.try_borrow_mut_lamports().unwrap() += 1;
+        unsafe { source.assign(&owner.to_bytes()) };
+        assert_eq!(
+            guard.validate(),
+            Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into()),
+            "reassignment must not bypass protection of the funded source"
+        );
+        unsafe { source.assign(&SYSTEM_PROGRAM_ID) };
+        *accounts[recipient_index].try_borrow_mut_lamports().unwrap() -= 1;
+        assert_eq!(
+            guard.validate(),
+            Ok(()),
+            "unrelated accounts remain unprotected"
+        );
+    });
+}
+
+#[test]
+fn seeded_system_selection_covers_native_variants_and_preserves_creation_and_pda_exclusions() {
+    use solana_system_interface::instruction::{
+        allocate_with_seed, assign_with_seed, create_account_with_seed, transfer_with_seed,
+    };
+    use swig_compact_instructions::compact_instructions;
+
+    let base = Pubkey::new_unique();
+    let wallet = Pubkey::new_unique();
+    let funder = Pubkey::new_unique();
+    let owner = Pubkey::new_unique();
+    let target = Pubkey::create_with_seed(&base, "", &owner).unwrap();
+    let mut instructions = vec![
+        transfer_with_seed(&target, &base, String::new(), &owner, &funder, 1),
+        assign_with_seed(&target, &base, "", &owner),
+        allocate_with_seed(&target, &base, "", 8, &owner),
+        create_account_with_seed(&funder, &target, &base, "", 1, 8, &owner),
+        create_account_with_seed(&base, &target, &base, "", 1, 8, &owner),
+    ];
+    // These variants find their base in instruction data and accept its signer
+    // anywhere in the account list, not just the SDK builder's usual position.
+    for mut instruction in instructions.clone().into_iter().skip(1) {
+        let position = if instruction.data[0] == 3 { 2 } else { 1 };
+        instruction.accounts.insert(
+            position,
+            solana_sdk::instruction::AccountMeta::new_readonly(Pubkey::new_unique(), false),
+        );
+        instructions.push(instruction);
+    }
+    for instruction in instructions {
+        let (metas, compact) = compact_instructions(wallet, vec![], vec![instruction]).unwrap();
+        let payload = compact.into_bytes().unwrap();
+        let target_index = metas.iter().position(|meta| meta.pubkey == target).unwrap();
+        for (funded, signer, pda) in [
+            (true, true, wallet),
+            (false, true, wallet),
+            (true, false, wallet),
+            (true, true, base),
+        ] {
+            let states: Vec<_> = metas
+                .iter()
+                .map(|meta| {
+                    let mut state = account(SYSTEM_PROGRAM_ID, vec![]);
+                    if meta.pubkey == target && !funded {
+                        state.lamports = 0;
+                    }
+                    (meta.pubkey, state, signer && meta.pubkey == base)
+                })
+                .collect();
+            with_accounts(&states, |accounts| {
+                let mut guard = IsolationGuard::new(accounts);
+                guard.capture_signers(&pda.to_bytes()).unwrap();
+                guard.capture_seeded_accounts(&payload).unwrap();
+                guard.snapshot(target_index).unwrap();
+                assert_eq!(
+                    guard.frozen.as_slice().len(),
+                    usize::from(funded && signer && pda != base)
+                );
+                if !funded && signer && pda != base {
+                    assert_eq!(
+                        guard.creations.as_slice().len(),
+                        1,
+                        "new accounts can still receive rent"
+                    );
+                }
+                assert_eq!(guard.validate(), Ok(()));
+            });
+        }
+    }
+}
+
+#[test]
+fn seeded_system_snapshot_capacity_fails_closed() {
+    use solana_system_interface::instruction::transfer_with_seed;
+    use swig_compact_instructions::compact_instructions;
+
+    let base = Pubkey::new_unique();
+    let wallet = Pubkey::new_unique();
+    let owner = Pubkey::new_unique();
+    let recipient = Pubkey::new_unique();
+    let sources: Vec<_> = (0..=MAX_FROZEN)
+        .map(|index| Pubkey::create_with_seed(&base, &index.to_string(), &owner).unwrap())
+        .collect();
+    let instructions = sources
+        .iter()
+        .enumerate()
+        .map(|(index, source)| {
+            transfer_with_seed(source, &base, index.to_string(), &owner, &recipient, 1)
+        })
+        .collect();
+    let (metas, compact) = compact_instructions(wallet, vec![], instructions).unwrap();
+    let payload = compact.into_bytes().unwrap();
+    let states: Vec<_> = metas
+        .iter()
+        .map(|meta| {
+            (
+                meta.pubkey,
+                account(SYSTEM_PROGRAM_ID, vec![]),
+                meta.is_signer,
+            )
+        })
+        .collect();
+    with_accounts(&states, |accounts| {
+        let mut guard = IsolationGuard::new(accounts);
+        guard.capture_signers(&wallet.to_bytes()).unwrap();
+        guard.capture_seeded_accounts(&payload).unwrap();
+        for (count, source) in sources.iter().enumerate() {
+            let index = metas
+                .iter()
+                .position(|meta| meta.pubkey == *source)
+                .unwrap();
+            if count < MAX_FROZEN {
+                guard.snapshot(index).unwrap();
+            } else {
+                assert_eq!(
+                    guard.snapshot(index),
+                    Err(SwigError::InvalidAccountsLength.into())
+                );
+            }
+        }
+        assert_eq!(guard.frozen.as_slice().len(), MAX_FROZEN);
+    });
+}
