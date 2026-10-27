@@ -264,8 +264,7 @@ unsafe fn execute(
 
     match acc {
         MaybeAccount::Account(account) => {
-            let classification = classify_account(0, &account, accounts, account_classification)?;
-            account_classification[0].write(classification);
+            classify_account(0, &account, accounts, account_classification)?;
             accounts[0].write(account);
         },
         MaybeAccount::Duplicated(_) => return Err(SwigError::InvalidAccountsLength.into()),
@@ -284,21 +283,14 @@ unsafe fn execute(
         let acc = ctx
             .next_account()
             .map_err(|_| SwigError::InvalidAccountsLength)?;
-        let (account, classification) = match acc {
-            MaybeAccount::Account(account) => {
-                let classification =
-                    classify_account(index, &account, accounts, account_classification)?;
-                (account, classification)
-            },
+        let account = match acc {
+            MaybeAccount::Account(account) => account,
             MaybeAccount::Duplicated(account_index) => {
                 let account_index = validated_duplicate_account_index(account_index, index)?;
-                let account = accounts[account_index].assume_init_ref().clone();
-                let classification =
-                    classify_account(index, &account, accounts, account_classification)?;
-                (account, classification)
+                accounts[account_index].assume_init_ref().clone()
             },
         };
-        account_classification[index].write(classification);
+        classify_account(index, &account, accounts, account_classification)?;
         accounts[index].write(account);
         index += 1;
     }
@@ -335,30 +327,34 @@ unsafe fn execute(
 /// * `accounts` - Array of all accounts in the instruction
 ///
 /// # Returns
-/// * `Result<AccountClassification, ProgramError>` - The account classification
-///   or error
+/// * `ProgramResult` - Success after initializing this account's classification, or error
 #[inline(always)]
 unsafe fn classify_account(
     index: usize,
     account: &AccountInfo,
     accounts: &[MaybeUninit<AccountInfo>],
-    account_classifications: &[MaybeUninit<AccountClassification>],
-) -> Result<AccountClassification, ProgramError> {
+    account_classifications: &mut [MaybeUninit<AccountClassification>],
+) -> Result<(), ProgramError> {
+    // Write directly into the dispatch scratch slot instead of returning a
+    // large classification value for the caller to copy. Only the successfully
+    // initialized account prefix is ever exposed to an action handler.
+    account_classifications[index].write(AccountClassification::None);
     match account.owner() {
         &crate::ID => {
             if !is_swig_config_account(account) {
-                return Ok(AccountClassification::None);
+                return Ok(());
             }
 
             if index == 0 {
-                return Ok(AccountClassification::ThisSwigV2 {
+                account_classifications[index].write(AccountClassification::ThisSwigV2 {
                     lamports: account.lamports(),
                 });
+                return Ok(());
             }
 
             let first_account = accounts.get_unchecked(0).assume_init_ref();
             if is_swig_config_account(first_account) {
-                Ok(AccountClassification::None)
+                Ok(())
             } else {
                 Err(SwigError::InvalidAccountsSwigMustBeFirst.into())
             }
@@ -366,18 +362,19 @@ unsafe fn classify_account(
         &SYSTEM_PROGRAM_ID if index == 1 => {
             let first_account = accounts.get_unchecked(0).assume_init_ref();
             if is_swig_config_account(first_account) {
-                return Ok(AccountClassification::SwigWalletAddress);
+                account_classifications[index].write(AccountClassification::SwigWalletAddress);
+                return Ok(());
             }
-            Ok(AccountClassification::None)
+            Ok(())
         },
         &STAKING_ID => {
             if index == 0 {
-                return Ok(AccountClassification::None);
+                return Ok(());
             }
 
             let data = account.borrow_data_unchecked();
             if data.len() < 200 {
-                return Ok(AccountClassification::None);
+                return Ok(());
             }
 
             // Stake account authorized withdrawer is at offset 44 for 32 bytes.
@@ -404,7 +401,7 @@ unsafe fn classify_account(
                 ) == 0;
 
             if !matches_swig_account && !matches_swig_wallet_address {
-                return Ok(AccountClassification::None);
+                return Ok(());
             }
 
             // `StakeStateV2` is bincode: the state discriminant is the leading
@@ -428,12 +425,13 @@ unsafe fn classify_account(
                     .map_err(|_| ProgramError::InvalidAccountData)?,
             );
 
-            Ok(AccountClassification::SwigStakeAccount {
+            account_classifications[index].write(AccountClassification::SwigStakeAccount {
                 state,
                 balance: stake_amount,
                 lamports: account.lamports(),
                 spent: 0,
-            })
+            });
+            Ok(())
         },
         #[cfg(not(feature = "program_scope_test"))]
         &SPL_TOKEN_2022_ID | &SPL_TOKEN_ID if index > 0 && account.data_len() >= 165 => {
@@ -458,10 +456,10 @@ unsafe fn classify_account(
                 ) == 0;
 
             if !matches_swig_account && !matches_swig_wallet_address {
-                return Ok(AccountClassification::None);
+                return Ok(());
             }
 
-            Ok(AccountClassification::SwigTokenAccount {
+            account_classifications[index].write(AccountClassification::SwigTokenAccount {
                 mint: data[..32]
                     .try_into()
                     .map_err(|_| ProgramError::InvalidAccountData)?,
@@ -472,9 +470,10 @@ unsafe fn classify_account(
                 ),
                 native_reserve: None,
                 spent: 0,
-            })
+            });
+            Ok(())
         },
-        _ => Ok(AccountClassification::None),
+        _ => Ok(()),
     }
 }
 

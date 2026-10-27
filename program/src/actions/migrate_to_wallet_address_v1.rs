@@ -289,7 +289,7 @@ pub fn migrate_to_wallet_address_v1(
     }
 
     // Create the wallet address account by transferring rent-exempt lamports
-    let wallet_address_rent_exemption = Rent::get()?.minimum_balance(0); // 0 space for system account
+    let wallet_address_rent_exemption = crate::util::rent::minimum_balance(&Rent::get()?, 0); // 0 space for system account
 
     // Get current lamports in wallet address account
     let current_wallet_lamports =

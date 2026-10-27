@@ -169,8 +169,10 @@ pub fn close_sub_account_v1(
 
     let lamports = ctx.accounts.sub_account.lamports();
     if lamports > 0 {
-        let rent_lamports =
-            lamports.min(Rent::get()?.minimum_balance(ctx.accounts.sub_account.data_len()));
+        let rent_lamports = lamports.min(crate::util::rent::minimum_balance(
+            &Rent::get()?,
+            ctx.accounts.sub_account.data_len(),
+        ));
         let operational_lamports = lamports.saturating_sub(rent_lamports);
         let signer = sub_account_signer(&swig_id, &role_id, &bump);
         if rent_destination.key() == ctx.accounts.swig_wallet_address.key() {

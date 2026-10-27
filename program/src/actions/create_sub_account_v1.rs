@@ -195,7 +195,7 @@ pub fn create_sub_account_v1(
 
     // Transfer lamports to the sub_account to make it system-owned and rent-exempt
     // This follows the same pattern as swig_wallet_address creation in create_v1.rs
-    let sub_account_rent_exemption = Rent::get()?.minimum_balance(0); // 0 space for system account
+    let sub_account_rent_exemption = crate::util::rent::minimum_balance(&Rent::get()?, 0); // 0 space for system account
 
     // Get current lamports in sub-account
     let current_sub_account_lamports =

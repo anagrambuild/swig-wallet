@@ -296,24 +296,23 @@ pub fn hash_except(
     // Maximum possible segments: owner + one before each exclude range + one after
     // all ranges
     const MAX_SEGMENTS: usize = 17; // 1 for owner + 16 for data segments
-    let mut segments: [&[u8]; MAX_SEGMENTS] = [&[]; MAX_SEGMENTS];
-    let mut segment_count = 0;
+    let mut segments = [const { MaybeUninit::<&[u8]>::uninit() }; MAX_SEGMENTS];
 
     // Always include the owner as the first segment
-    segments[0] = owner.as_ref();
-    segment_count = 1;
+    segments[0].write(owner.as_ref());
+    let mut segment_count = 1;
 
     let mut position = 0;
 
     // If no exclude ranges, hash the entire data after owner
     if exclude_ranges.is_empty() {
-        segments[segment_count] = data;
+        segments[segment_count].write(data);
         segment_count += 1;
     } else {
         for range in exclude_ranges {
             // Add bytes before this exclusion range
             if position < range.start {
-                segments[segment_count] = &data[position..range.start];
+                segments[segment_count].write(&data[position..range.start]);
                 segment_count += 1;
             }
             // Skip to end of exclusion range
@@ -322,7 +321,7 @@ pub fn hash_except(
 
         // Add any remaining bytes after the last exclusion range
         if position < data.len() {
-            segments[segment_count] = &data[position..];
+            segments[segment_count].write(&data[position..]);
             segment_count += 1;
         }
     }
@@ -331,6 +330,9 @@ pub fn hash_except(
 
     #[cfg(target_os = "solana")]
     unsafe {
+        // Every entry below segment_count was written before advancing it.
+        // MaybeUninit has the slice reference layout and alignment. The syscall
+        // receives only this initialized prefix.
         let res = sol_sha256(
             segments.as_ptr() as *const u8,
             segment_count as u64,

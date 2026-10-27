@@ -240,8 +240,8 @@ pub fn remove_authority_v1(
 
     let new_size = data_len - removed.1;
     let rent = Rent::get()?;
-    let old_rent_lamports = rent.minimum_balance(data_len);
-    let new_rent_lamports = rent.minimum_balance(new_size);
+    let old_rent_lamports = crate::util::rent::minimum_balance(&rent, data_len);
+    let new_rent_lamports = crate::util::rent::minimum_balance(&rent, new_size);
     let diff = old_rent_lamports
         .saturating_sub(new_rent_lamports)
         .min(swig_lamports.saturating_sub(new_rent_lamports));

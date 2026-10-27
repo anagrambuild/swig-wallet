@@ -53,6 +53,7 @@ use crate::{
     isolation::IsolationGuard,
     util::{
         assert_system_account_invariants, hash_except,
+        rent::minimum_balance,
         token_integrity::{hash_with_transfer_fee, transfer_fee_amount_offset},
     },
     AccountClassification, SPL_TOKEN_2022_ID, SPL_TOKEN_ID, SYSTEM_PROGRAM_ID,
@@ -551,8 +552,10 @@ pub fn sign_v2(
                         if let Some(previous_reserve) = native_reserve {
                             let reserve = read_native_reserve(account.owner(), data)?;
                             if reserve != *previous_reserve {
-                                let required = pinocchio::sysvars::rent::Rent::get()?
-                                    .minimum_balance(data.len());
+                                let required = minimum_balance(
+                                    &pinocchio::sysvars::rent::Rent::get()?,
+                                    data.len(),
+                                );
                                 validate_wsol_reserve_change(*previous_reserve, reserve, required)?;
                             }
                             // A SyncNative rent refresh changes amount and reserve
@@ -661,8 +664,10 @@ pub fn sign_v2(
                 }
 
                 let swig_wallet_balance = ctx.accounts.swig_wallet_address.lamports();
-                let swig_wallet_rent_exempt_minimum =
-                    pinocchio::sysvars::rent::Rent::get()?.minimum_balance(WALLET_ADDRESS_DATA_LEN);
+                let swig_wallet_rent_exempt_minimum = minimum_balance(
+                    &pinocchio::sysvars::rent::Rent::get()?,
+                    WALLET_ADDRESS_DATA_LEN,
+                );
                 if swig_wallet_balance < swig_wallet_rent_exempt_minimum {
                     return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
                 }
@@ -1181,7 +1186,7 @@ where
     let mut instruction_iter =
         InstructionIterator::new(all_accounts, instruction_payload, signer, restricted_keys)?;
 
-    while let Some(instruction) = instruction_iter.next() {
+    while let Some(instruction) = instruction_iter.next_inspection() {
         let instruction = instruction?;
 
         if *instruction.program_id != crate::SYSTEM_PROGRAM_ID {
@@ -1203,15 +1208,15 @@ where
             continue;
         }
 
-        if instruction.accounts.len() < 2 {
+        if instruction.indexes.len() < 2 {
             continue;
         }
 
-        if instruction.accounts[0].pubkey != source_account_bytes {
+        if all_accounts[instruction.indexes[0] as usize].key() != source_account_bytes {
             continue;
         }
 
-        let destination_pubkey = instruction.accounts[1].pubkey;
+        let destination_pubkey = all_accounts[instruction.indexes[1] as usize].key();
         let amount = u64::from_le_bytes([
             instruction.data[4],
             instruction.data[5],
@@ -1257,7 +1262,7 @@ where
     let mut instruction_iter =
         InstructionIterator::new(all_accounts, instruction_payload, signer, restricted_keys)?;
 
-    while let Some(instruction) = instruction_iter.next() {
+    while let Some(instruction) = instruction_iter.next_inspection() {
         let instruction = instruction?;
 
         let is_token_program = *instruction.program_id == crate::SPL_TOKEN_ID
@@ -1273,16 +1278,16 @@ where
             _ => continue,
         };
 
-        if instruction.data.len() < min_data_len || instruction.accounts.len() <= destination_index
-        {
+        if instruction.data.len() < min_data_len || instruction.indexes.len() <= destination_index {
             continue;
         }
 
-        if instruction.accounts[0].pubkey != source_account_bytes {
+        if all_accounts[instruction.indexes[0] as usize].key() != source_account_bytes {
             continue;
         }
 
-        let destination_pubkey = instruction.accounts[destination_index].pubkey;
+        let destination_pubkey =
+            all_accounts[instruction.indexes[destination_index] as usize].key();
         let amount = u64::from_le_bytes([
             instruction.data[1],
             instruction.data[2],

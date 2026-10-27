@@ -226,7 +226,9 @@ fn validate_wsol_value(before: &TokenSnapshot, data: &[u8], amount: u64) -> Prog
             .try_into()
             .map_err(|_| SwigError::PermissionDeniedAuthorityExternalAssetChange)?,
     );
-    if reserve != previous_reserve && reserve != Rent::get()?.minimum_balance(data.len()) {
+    if reserve != previous_reserve
+        && reserve != crate::util::rent::minimum_balance(&Rent::get()?, data.len())
+    {
         return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
     }
     let previous_value = before
