@@ -90,6 +90,96 @@ fn signing_account_postcondition_rejects_reassignment_and_allocation() {
 }
 
 #[test]
+fn seeded_vote_authorities_preserve_control_and_sol() {
+    use solana_vote_interface::{
+        instruction::{authorize_checked_with_seed, authorize_with_seed},
+        state::{VoteAuthorize, VoteStateV3, VoteStateVersions},
+    };
+    use swig_compact_instructions::compact_instructions;
+
+    let base = Pubkey::new_unique();
+    let wallet = Pubkey::new_unique();
+    let vote_key = Pubkey::new_unique();
+    let owner = Pubkey::new_unique();
+    let replacement = Pubkey::new_unique();
+    let authority = Pubkey::create_with_seed(&base, "vote", &owner).unwrap();
+    let original = bincode::serialize(&VoteStateVersions::new_v3(VoteStateV3 {
+        authorized_withdrawer: authority,
+        ..Default::default()
+    }))
+    .unwrap();
+    for checked in [false, true] {
+        let build = if checked {
+            authorize_checked_with_seed
+        } else {
+            authorize_with_seed
+        };
+        let instruction = build(
+            &vote_key,
+            &base,
+            &owner,
+            "vote",
+            &replacement,
+            VoteAuthorize::Withdrawer,
+        );
+        let (metas, compact) = compact_instructions(wallet, vec![], vec![instruction]).unwrap();
+        let payload = compact.into_bytes().unwrap();
+        let vote_index = metas
+            .iter()
+            .position(|meta| meta.pubkey == vote_key)
+            .unwrap();
+        for (signed, excluded) in [(true, wallet), (false, wallet), (true, base)] {
+            let states: Vec<_> = metas
+                .iter()
+                .map(|meta| {
+                    let state = if meta.pubkey == vote_key {
+                        account(crate::VOTE_PROGRAM_ID, original.clone())
+                    } else {
+                        account(SYSTEM_PROGRAM_ID, vec![])
+                    };
+                    (meta.pubkey, state, signed && meta.is_signer)
+                })
+                .collect();
+            with_accounts(&states, |accounts| {
+                let mut guard = IsolationGuard::new(accounts);
+                guard.capture_signers(&excluded.to_bytes()).unwrap();
+                guard.capture_seeded_accounts(&payload).unwrap();
+                guard.snapshot(vote_index).unwrap();
+                let protected = signed && excluded != base;
+                assert_eq!(guard.frozen.as_slice().len(), usize::from(protected));
+                assert_eq!(guard.validate(), Ok(()));
+                if protected {
+                    let vote = &accounts[vote_index];
+                    vote.try_borrow_mut_data().unwrap()[36..68]
+                        .copy_from_slice(replacement.as_ref());
+                    assert_eq!(
+                        guard.validate(),
+                        Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into())
+                    );
+                    vote.try_borrow_mut_data()
+                        .unwrap()
+                        .copy_from_slice(&original);
+                    *vote.try_borrow_mut_lamports().unwrap() += 1;
+                    assert_eq!(guard.validate(), Ok(()));
+                    *vote.try_borrow_mut_lamports().unwrap() -= 2;
+                    assert_eq!(
+                        guard.validate(),
+                        Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into())
+                    );
+                    // Vote's base is account 2, after the clock sysvar.
+                    let mut malformed = payload.clone();
+                    malformed[5] = u8::MAX;
+                    assert_eq!(
+                        guard.capture_seeded_accounts(&malformed),
+                        Err(SwigError::InstructionExecutionError.into())
+                    );
+                }
+            });
+        }
+    }
+}
+
+#[test]
 fn snapshots_cover_extended_mints_and_multisig_token_owners() {
     let signer = Pubkey::new_unique();
     let multisig_key = Pubkey::new_unique();

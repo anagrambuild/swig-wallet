@@ -10225,6 +10225,7 @@ dependencies = [
  "solana-security-txt",
  "solana-stake-interface 3.1.0",
  "solana-system-interface 3.2.0",
+ "solana-vote-interface",
  "spl-memo",
  "spl-token-2022-interface 2.1.0",
  "static_assertions",
