@@ -6,10 +6,7 @@ use core::mem::MaybeUninit;
 
 use no_padding::NoPadding;
 use pinocchio::{
-    account_info::AccountInfo,
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    sysvars::{clock::Clock, Sysvar},
+    account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, sysvars::Sysvar,
     ProgramResult,
 };
 use pinocchio_pubkey::from_str;
@@ -265,28 +262,19 @@ pub fn sign_v2(
     let parts = Swig::split_parts_mut(swig_account_data)?;
     let swig = parts.state;
     let swig_roles = parts.roles;
-    // The generic account classifier already identified account 0 as Swig config.
-    // Keep this hot-path discriminator check as a local unsafe-read precondition.
-    let Some(role) = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)? else {
+
+    let Some((role, slot)) = swig_state::authority::counter::authenticate_role(
+        swig_roles,
+        sign_v2.args.role_id,
+        all_accounts,
+        sign_v2.authority_payload,
+        sign_v2.instruction_payload,
+        false,
+    )?
+    else {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     };
-    let clock = Clock::get()?;
-    let slot = clock.slot;
-    if role.authority.session_based() {
-        role.authority.authenticate_session(
-            all_accounts,
-            sign_v2.authority_payload,
-            sign_v2.instruction_payload,
-            slot,
-        )?;
-    } else {
-        role.authority.authenticate(
-            all_accounts,
-            sign_v2.authority_payload,
-            sign_v2.instruction_payload,
-            slot,
-        )?;
-    }
+
     // Intentionally no restricted keys: SignV2 forwards existing outer signer
     // bits in compact CPI metas in addition to the Swig wallet PDA signer.
     let mut isolation = IsolationGuard::new(all_accounts);

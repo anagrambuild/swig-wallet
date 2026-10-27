@@ -13,7 +13,6 @@ use pinocchio::{
     pubkey::find_program_address,
     syscalls::sol_sha256,
     sysvars::{
-        clock::Clock,
         instructions::{Instructions, INSTRUCTIONS_ID},
         Sysvar,
     },
@@ -144,25 +143,16 @@ pub fn replace_authority_v1(
     let swig_roles = parts.roles;
 
     let acting_authority_type = {
-        let acting_role = Swig::get_mut_role(replace.args.acting_role_id, swig_roles)?
-            .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
+        let (acting_role, _) = swig_state::authority::counter::authenticate_role(
+            swig_roles,
+            replace.args.acting_role_id,
+            all_accounts,
+            replace.authority_payload,
+            replace.data_payload,
+            false,
+        )?
+        .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
         let acting_authority_type = acting_role.authority.authority_type();
-        let slot = Clock::get()?.slot;
-        if acting_role.authority.session_based() {
-            acting_role.authority.authenticate_session(
-                all_accounts,
-                replace.authority_payload,
-                replace.data_payload,
-                slot,
-            )?;
-        } else {
-            acting_role.authority.authenticate(
-                all_accounts,
-                replace.authority_payload,
-                replace.data_payload,
-                slot,
-            )?;
-        }
 
         let has_permission = acting_role.get_action::<All>(&[])?.is_some()
             || acting_role.get_action::<ManageAuthority>(&[])?.is_some()
@@ -248,6 +238,32 @@ fn replace_target_signer(
                 return Err(SwigError::ReplaceAuthorityInvalidSignerLength.into());
             }
 
+            let inherited_counter = match target_signer_type {
+                AuthorityType::Secp256k1
+                | AuthorityType::Secp256k1Session
+                | AuthorityType::Secp256r1
+                | AuthorityType::Secp256r1Session => {
+                    let public_key = if matches!(
+                        target_signer_type,
+                        AuthorityType::Secp256k1 | AuthorityType::Secp256k1Session
+                    ) {
+                        normalize_secp256k1_authority(new_authority)?
+                    } else {
+                        new_authority
+                            .try_into()
+                            .map_err(|_| SwigError::ReplaceAuthorityInvalidSignerLength)?
+                    };
+                    swig_state::authority::counter::inherited_counter(
+                        swig_roles,
+                        &swig_state::authority::counter::SecpCounter {
+                            authority_type: target_signer_type,
+                            public_key,
+                            counter: 0,
+                        },
+                    )?
+                },
+                _ => 0,
+            };
             let authority_start = cursor + Position::LEN;
             match target_signer_type {
                 AuthorityType::Ed25519 => {
@@ -315,7 +331,7 @@ fn replace_target_signer(
                     )?;
                     reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
-                    authority.signature_odometer = 0;
+                    authority.signature_odometer = inherited_counter;
                 },
                 AuthorityType::Secp256k1Session => {
                     let new_signer = normalize_secp256k1_authority(new_authority)?;
@@ -336,7 +352,7 @@ fn replace_target_signer(
                     )?;
                     reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
-                    authority.signature_odometer = 0;
+                    authority.signature_odometer = inherited_counter;
                     authority.session_key = [0; 32];
                     authority.current_session_expiration = 0;
                 },
@@ -361,7 +377,7 @@ fn replace_target_signer(
                     )?;
                     reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
-                    authority.signature_odometer = 0;
+                    authority.signature_odometer = inherited_counter;
                 },
                 AuthorityType::Secp256r1Session => {
                     let new_signer: [u8; 33] = new_authority
@@ -384,7 +400,7 @@ fn replace_target_signer(
                     )?;
                     reject_same_signer(&authority.public_key, &new_signer)?;
                     authority.public_key = new_signer;
-                    authority.signature_odometer = 0;
+                    authority.signature_odometer = inherited_counter;
                     authority.session_key = [0; 32];
                     authority.current_session_expiration = 0;
                 },
@@ -658,5 +674,61 @@ mod tests {
 
         assert_eq!(normalized[0], 0x03);
         assert_eq!(&normalized[1..], &uncompressed[..32]);
+    }
+}
+
+#[cfg(test)]
+mod counter_tests {
+    use super::*;
+
+    #[test]
+    fn replacement_inherits_the_existing_same_key_counter_for_all_secp_types() {
+        #[repr(C, align(8))]
+        struct Buffer([u8; 256]);
+        let old_key: [u8; 33] =
+            hex::decode("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
+                .unwrap()
+                .try_into()
+                .unwrap();
+        let new_key: [u8; 33] =
+            hex::decode("02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5")
+                .unwrap()
+                .try_into()
+                .unwrap();
+        for kind in [
+            AuthorityType::Secp256k1,
+            AuthorityType::Secp256k1Session,
+            AuthorityType::Secp256r1,
+            AuthorityType::Secp256r1Session,
+        ] {
+            let mut data = Buffer([0; 256]);
+            let len = swig_state::authority::authority_type_to_length(&kind).unwrap();
+            let role_len = Position::LEN + len;
+            for (i, (key, counter)) in [(old_key, 99u32), (new_key, 31u32)].iter().enumerate() {
+                let at = i * role_len;
+                data.0[at..at + 2].copy_from_slice(&(kind as u16).to_le_bytes());
+                data.0[at + 2..at + 4].copy_from_slice(&(len as u16).to_le_bytes());
+                data.0[at + 8..at + 12].copy_from_slice(&(i as u32).to_le_bytes());
+                data.0[at + 12..at + 16].copy_from_slice(&((at + role_len) as u32).to_le_bytes());
+                data.0[at + 16..at + 49].copy_from_slice(key);
+                data.0[at + 52..at + 56].copy_from_slice(&counter.to_le_bytes());
+            }
+            let mut swig = Swig::new([1; 32], 255, 254);
+            swig.roles = 2;
+            let mut expected = data.0;
+            expected[16..49].copy_from_slice(&new_key);
+            expected[52..56].copy_from_slice(&31u32.to_le_bytes());
+            replace_target_signer(
+                &swig,
+                &mut data.0[..2 * role_len],
+                &[2; 32],
+                1,
+                0,
+                &new_key,
+                None,
+            )
+            .unwrap();
+            assert_eq!(data.0, expected);
+        }
     }
 }
