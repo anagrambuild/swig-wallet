@@ -90,6 +90,179 @@ fn signing_account_postcondition_rejects_reassignment_and_allocation() {
 }
 
 #[test]
+fn native_authority_layouts_preserve_control_and_sol() {
+    use solana_loader_v3_interface::state::UpgradeableLoaderState;
+    use solana_nonce::{
+        state::{Data, State},
+        versions::Versions,
+    };
+    use solana_vote_interface::state::{
+        vote_state_1_14_11::VoteState1_14_11, VoteStateV3, VoteStateV4, VoteStateVersions,
+    };
+
+    let authority = Pubkey::new_unique();
+    let other = Pubkey::new_unique();
+    let nonce = State::Initialized(Data {
+        authority,
+        ..Default::default()
+    });
+    let states = [
+        (
+            crate::VOTE_PROGRAM_ID,
+            bincode::serialize(&VoteStateVersions::V1_14_11(Box::new(VoteState1_14_11 {
+                authorized_withdrawer: authority,
+                ..Default::default()
+            })))
+            .unwrap(),
+        ),
+        (
+            crate::VOTE_PROGRAM_ID,
+            bincode::serialize(&VoteStateVersions::new_v3(VoteStateV3 {
+                authorized_withdrawer: authority,
+                ..Default::default()
+            }))
+            .unwrap(),
+        ),
+        (
+            crate::VOTE_PROGRAM_ID,
+            bincode::serialize(&VoteStateVersions::new_v4(VoteStateV4 {
+                authorized_withdrawer: authority,
+                ..Default::default()
+            }))
+            .unwrap(),
+        ),
+        (
+            SYSTEM_PROGRAM_ID,
+            bincode::serialize(&Versions::Legacy(Box::new(nonce.clone()))).unwrap(),
+        ),
+        (
+            SYSTEM_PROGRAM_ID,
+            bincode::serialize(&Versions::new(nonce)).unwrap(),
+        ),
+        (
+            crate::BPF_LOADER_UPGRADEABLE_ID,
+            bincode::serialize(&UpgradeableLoaderState::ProgramData {
+                slot: 42,
+                upgrade_authority_address: Some(authority),
+            })
+            .unwrap(),
+        ),
+    ];
+    for (owner, original) in states {
+        with_accounts(
+            &[
+                (authority, account(SYSTEM_PROGRAM_ID, vec![]), true),
+                (
+                    Pubkey::new_unique(),
+                    account(owner, original.clone()),
+                    false,
+                ),
+            ],
+            |accounts| {
+                assert!(!frozen::signer_controls_frozen_account(
+                    &accounts[1],
+                    &other.to_bytes()
+                ));
+                let mut guard = IsolationGuard::new(accounts);
+                guard.capture_signers(&[9; 32]).unwrap();
+                guard.snapshot(1).unwrap();
+                assert_eq!(guard.frozen.as_slice().len(), 1, "native owner: {owner:?}");
+                assert_eq!(guard.validate(), Ok(()));
+                *accounts[1].try_borrow_mut_lamports().unwrap() += 1;
+                assert_eq!(guard.validate(), Ok(()));
+                *accounts[1].try_borrow_mut_lamports().unwrap() -= 2;
+                assert_eq!(
+                    guard.validate(),
+                    Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into())
+                );
+                *accounts[1].try_borrow_mut_lamports().unwrap() += 1;
+                let authority_offset = original
+                    .windows(32)
+                    .position(|bytes| bytes == authority.as_ref())
+                    .unwrap();
+                accounts[1].try_borrow_mut_data().unwrap()[authority_offset..authority_offset + 32]
+                    .copy_from_slice(other.as_ref());
+                assert_eq!(
+                    guard.validate(),
+                    Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into())
+                );
+            },
+        );
+    }
+}
+
+#[test]
+fn native_authority_selection_checks_tags_and_bounds() {
+    use solana_loader_v3_interface::state::UpgradeableLoaderState;
+    use solana_nonce::{
+        state::{Data, State},
+        versions::Versions,
+    };
+    use solana_vote_interface::state::{VoteStateV3, VoteStateVersions};
+
+    let authority = Pubkey::new_unique();
+    let vote = bincode::serialize(&VoteStateVersions::new_v3(VoteStateV3 {
+        authorized_withdrawer: authority,
+        ..Default::default()
+    }))
+    .unwrap();
+    let nonce = bincode::serialize(&Versions::new(State::Initialized(Data {
+        authority,
+        ..Default::default()
+    })))
+    .unwrap();
+    let program_data = bincode::serialize(&UpgradeableLoaderState::ProgramData {
+        slot: 42,
+        upgrade_authority_address: Some(authority),
+    })
+    .unwrap();
+    for (owner, original, required, invalid_tags) in [
+        (
+            crate::VOTE_PROGRAM_ID,
+            vote,
+            68,
+            vec![(0, 0), (0, 4), (1, 1)],
+        ),
+        (SYSTEM_PROGRAM_ID, nonce, 80, vec![(0, 2), (4, 0), (5, 1)]),
+        (
+            crate::BPF_LOADER_UPGRADEABLE_ID,
+            program_data,
+            45,
+            vec![(0, 1), (1, 1), (12, 0), (12, 2)],
+        ),
+    ] {
+        for end in 0..required {
+            with_accounts(
+                &[(
+                    Pubkey::new_unique(),
+                    account(owner, original[..end].to_vec()),
+                    false,
+                )],
+                |accounts| {
+                    assert!(!frozen::signer_controls_frozen_account(
+                        &accounts[0],
+                        &authority.to_bytes()
+                    ));
+                },
+            );
+        }
+        for (offset, value) in invalid_tags {
+            let mut data = original.clone();
+            data[offset] = value;
+            with_accounts(
+                &[(Pubkey::new_unique(), account(owner, data), false)],
+                |accounts| {
+                    assert!(!frozen::signer_controls_frozen_account(
+                        &accounts[0],
+                        &authority.to_bytes()
+                    ));
+                },
+            );
+        }
+    }
+}
+
+#[test]
 fn seeded_vote_authorities_preserve_control_and_sol() {
     use solana_vote_interface::{
         instruction::{authorize_checked_with_seed, authorize_with_seed},
