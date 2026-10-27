@@ -42,19 +42,19 @@ fn compare_sign_v2_role_compute_units() {
         token_limit_destination
     );
 
-    // All/SOL ceilings retain the ff2929b SBPF v1 baseline. The token paths with
-    // shared authentication measure 6,332/7,252 CU on SBPF v3, platform-tools v1.53
-    // and LiteSVM 0.16; those ceilings retain 18 CU of headroom.
-    for (path, actual, ceiling) in [
-        ("All", all, 3_618),
-        ("SOL limit", sol_limit, 5_116),
-        ("SOL destination limit", sol_limit_destination, 5_834),
-        ("Token limit", token_limit, 6_350),
-        ("Token destination limit", token_limit_destination, 7_270),
+    // Wallet-PDA validation is required before personal-asset isolation.
+    // Merged isolation/authentication baseline: f90d4c5, CI run 40584412799.
+    // Measured with CI's pinned SBPF v3 release build and LiteSVM 0.16.
+    for (path, actual, baseline) in [
+        ("All", all, 5_076),
+        ("SOL limit", sol_limit, 6_203),
+        ("SOL destination limit", sol_limit_destination, 6_563),
+        ("Token limit", token_limit, 7_237),
+        ("Token destination limit", token_limit_destination, 7_703),
     ] {
         assert!(
-            actual <= ceiling,
-            "SignV2 {path} consumed {actual} CU, exceeding the ceiling of {ceiling} CU"
+            actual <= baseline,
+            "SignV2 {path} consumed {actual} CU, exceeding the wallet-validation baseline of {baseline} CU"
         );
     }
 }

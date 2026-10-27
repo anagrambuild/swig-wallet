@@ -90,6 +90,76 @@ fn signing_account_postcondition_rejects_reassignment_and_allocation() {
 }
 
 #[test]
+fn sign_v2_rejects_substituted_wallet_before_role_dispatch() {
+    use crate::{
+        actions::sign_v2::{sign_v2, SignV2Args},
+        instruction::accounts::SignV2Accounts,
+        AccountClassification,
+    };
+    use swig_state::{
+        swig::{swig_wallet_address_seeds, Swig},
+        IntoBytes,
+    };
+
+    let config = Pubkey::new_unique();
+    let (wallet, bump) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(config.as_ref()),
+        &Pubkey::new_from_array(crate::ID),
+    );
+    let (other_wallet, _) = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(Pubkey::new_unique().as_ref()),
+        &Pubkey::new_from_array(crate::ID),
+    );
+    // No role is installed: the genuine wallet must pass structural validation
+    // and reach role lookup, while substitutes must fail at the PDA boundary.
+    let config_data = Swig::new([1; 32], 255, bump).into_bytes().unwrap().to_vec();
+    let args = SignV2Args::new(0, 0);
+    for (supplied_wallet, signed) in [
+        (wallet, false),
+        (Pubkey::new_unique(), true),
+        (other_wallet, false),
+    ] {
+        with_accounts(
+            &[
+                (config, account(crate::ID, config_data.clone()), false),
+                (supplied_wallet, account(SYSTEM_PROGRAM_ID, vec![]), signed),
+                (
+                    Pubkey::new_from_array(SYSTEM_PROGRAM_ID),
+                    account(SYSTEM_PROGRAM_ID, vec![]),
+                    false,
+                ),
+            ],
+            |accounts| {
+                let before = accounts[0].try_borrow_data().unwrap().to_vec();
+                let mut classifications = [
+                    AccountClassification::ThisSwigV2 {
+                        lamports: accounts[0].lamports(),
+                    },
+                    AccountClassification::SwigWalletAddress,
+                    AccountClassification::None,
+                ];
+                let mut snapshots = std::array::from_fn(|_| MaybeUninit::uninit());
+                let result = sign_v2(
+                    SignV2Accounts::context(accounts).unwrap(),
+                    accounts,
+                    args.into_bytes().unwrap(),
+                    &mut classifications,
+                    &mut snapshots,
+                );
+                let error = if supplied_wallet == wallet {
+                    SwigError::InvalidAuthorityNotFoundByRoleId
+                } else {
+                    SwigError::InvalidSeedSwigAccount
+                };
+                assert_eq!(result, Err(error.into()));
+                assert_eq!(&*accounts[0].try_borrow_data().unwrap(), before.as_slice());
+                assert_eq!(accounts[1].lamports(), 10_000_000);
+            },
+        );
+    }
+}
+
+#[test]
 fn native_authority_layouts_preserve_control_and_sol() {
     use solana_loader_v3_interface::state::UpgradeableLoaderState;
     use solana_nonce::{

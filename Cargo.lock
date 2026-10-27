@@ -10248,6 +10248,7 @@ dependencies = [
  "pinocchio 0.9.0",
  "pinocchio-pubkey 0.3.0",
  "pinocchio-system",
+ "solana-pubkey 4.2.1",
 ]
 
 [[package]]

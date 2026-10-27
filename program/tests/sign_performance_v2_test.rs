@@ -190,9 +190,9 @@ fn test_token_transfer_performance_comparison_v2() {
         "Account difference (swig - regular): {} accounts",
         account_difference
     );
-    // SignV2 token overhead with shared authentication is 3,902 CU on SBPF v3,
-    // platform-tools v1.53 and LiteSVM 0.16. Retain 18 CU of headroom.
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3920);
+    // Merged wallet-PDA/isolation/authentication: 5,263 total minus 76 token CU.
+    // Measured at f90d4c5, CI run 40584412799, with the pinned SBPF v3 release.
+    assert!(swig_transfer_cu - regular_transfer_cu <= 5187);
 }
 
 #[test_log::test]
@@ -312,7 +312,7 @@ fn test_sol_transfer_performance_comparison_v2() {
         account_difference
     );
 
-    // SignV2 SOL overhead with fee snapshots is 3,462 CU locally.
-    // Retain the parent refactor's allowance for the measured CI helper-call cost.
-    assert!(swig_transfer_cu - regular_transfer_cu <= 3550);
+    // Merged wallet-PDA/isolation/authentication: 5,076 total minus 150 SOL CU.
+    // Measured at f90d4c5, CI run 40584412799, with the pinned SBPF v3 release.
+    assert!(swig_transfer_cu - regular_transfer_cu <= 4926);
 }
