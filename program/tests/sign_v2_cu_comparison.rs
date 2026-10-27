@@ -43,13 +43,14 @@ fn compare_sign_v2_role_compute_units() {
     );
 
     // Wallet-PDA validation is required before personal-asset isolation.
-    // Measured at 76a48d1 with CI's pinned SBPF v3 release build and LiteSVM 0.16.
+    // Merged isolation/authentication baseline: f90d4c5, CI run 40584412799.
+    // Measured with CI's pinned SBPF v3 release build and LiteSVM 0.16.
     for (path, actual, baseline) in [
-        ("All", all, 4_898),
-        ("SOL limit", sol_limit, 6_337),
-        ("SOL destination limit", sol_limit_destination, 7_018),
-        ("Token limit", token_limit, 7_553),
-        ("Token destination limit", token_limit_destination, 8_424),
+        ("All", all, 5_076),
+        ("SOL limit", sol_limit, 6_203),
+        ("SOL destination limit", sol_limit_destination, 6_563),
+        ("Token limit", token_limit, 7_237),
+        ("Token destination limit", token_limit_destination, 7_703),
     ] {
         assert!(
             actual <= baseline,
