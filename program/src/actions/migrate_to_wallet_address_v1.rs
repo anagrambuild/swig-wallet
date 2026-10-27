@@ -9,7 +9,7 @@ use pinocchio::{
     account_info::AccountInfo,
     msg,
     program_error::ProgramError,
-    sysvars::{clock::Clock, rent::Rent, Sysvar},
+    sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
 use swig_assertions::{check_bytes_match, check_self_owned, check_system_owner, check_zero_data};
@@ -180,25 +180,16 @@ pub fn migrate_to_wallet_address_v1(
     {
         let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
         let swig_roles = Swig::split_parts_mut(swig_account_data)?.roles;
-        let role = Swig::get_mut_role(migrate.args.role_id, swig_roles)?
-            .ok_or(SwigStateError::RoleNotFound)?;
 
-        let slot = Clock::get()?.slot;
-        if role.authority.session_based() {
-            role.authority.authenticate_session(
-                all_accounts,
-                migrate.authority_payload,
-                migrate.data_payload,
-                slot,
-            )?;
-        } else {
-            role.authority.authenticate(
-                all_accounts,
-                migrate.authority_payload,
-                migrate.data_payload,
-                slot,
-            )?;
-        }
+        let (role, _) = swig_state::authority::counter::authenticate_role(
+            swig_roles,
+            migrate.args.role_id,
+            all_accounts,
+            migrate.authority_payload,
+            migrate.data_payload,
+            false,
+        )?
+        .ok_or(SwigStateError::RoleNotFound)?;
 
         let has_all_permission = role.get_action::<All>(&[])?.is_some();
         let has_manage_authority = role.get_action::<ManageAuthority>(&[])?.is_some();
