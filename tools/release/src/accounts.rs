@@ -66,6 +66,25 @@ pub fn validate_capacity(binary_len: usize, capacity: usize) -> Result<()> {
 }
 
 pub fn validate_buffer(account: &Account, binary: &[u8], authority: Pubkey) -> Result<()> {
+    validate_buffer_authority(account, authority)?;
+    let payload = account
+        .data
+        .get(UpgradeableLoaderState::size_of_buffer_metadata()..)
+        .context("Missing buffer payload")?;
+    ensure!(
+        payload.len() == binary.len(),
+        "Buffer payload size does not match the binary"
+    );
+    ensure!(
+        payload == binary,
+        "Uploaded buffer contents do not match the built binary"
+    );
+    Ok(())
+}
+
+/// Check ownership without requiring a complete upload, so failed uploads can
+/// be reclaimed by their original signer.
+pub fn validate_buffer_authority(account: &Account, authority: Pubkey) -> Result<()> {
     ensure!(
         account.owner == bpf_loader_upgradeable::id() && !account.executable,
         "Buffer has an incorrect owner or executable flag"
@@ -80,18 +99,6 @@ pub fn validate_buffer(account: &Account, binary: &[u8], authority: Pubkey) -> R
     ensure!(
         matches!(state, UpgradeableLoaderState::Buffer { authority_address: Some(key) } if key == authority),
         "Buffer authority does not match the expected signer"
-    );
-    let payload = account
-        .data
-        .get(metadata_size..)
-        .context("Missing buffer payload")?;
-    ensure!(
-        payload.len() == binary.len(),
-        "Buffer payload size does not match the binary"
-    );
-    ensure!(
-        payload == binary,
-        "Uploaded buffer contents do not match the built binary"
     );
     Ok(())
 }

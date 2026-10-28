@@ -3,14 +3,170 @@ use std::{
     io::Write,
     path::Path,
     process::{Command, Stdio},
+    time::Duration,
 };
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
+use serde::Serialize;
+use solana_loader_v3_interface::instruction;
 use solana_sdk::{
+    commitment_config::CommitmentConfig,
+    hash::Hash,
+    message::Message,
     pubkey::Pubkey,
     signature::{Keypair, Signer},
+    transaction::Transaction,
+};
+use squads_multisig::{
+    solana_rpc_client::nonblocking::rpc_client::RpcClient,
+    solana_rpc_client_api::config::RpcSendTransactionConfig,
 };
 use zeroize::Zeroizing;
+
+use crate::{
+    accounts::validate_buffer_authority,
+    devnet::DEVNET_GENESIS_HASH,
+    ottersec::{Cluster, MAINNET_GENESIS_HASH},
+};
+
+#[serde_with::serde_as]
+#[derive(Serialize)]
+pub struct BufferCloseReceipt {
+    #[serde_as(as = "serde_with::DisplayFromStr")]
+    pub buffer: Pubkey,
+    #[serde_as(as = "serde_with::DisplayFromStr")]
+    pub authority_and_recipient: Pubkey,
+    pub genesis_hash: String,
+    /// Observed before submission; the loader refunds the entire balance at
+    /// execution. The authority also pays the transaction fee.
+    pub lamports_before_close: u64,
+    pub signature: String,
+}
+
+/// Close one signer-controlled buffer. Never accepts a separate refund
+/// recipient or closes program accounts, even if the signer controls them.
+pub async fn close_buffer(
+    rpc: &RpcClient,
+    cluster: Cluster,
+    buffer: Pubkey,
+    authority: &Keypair,
+    output_dir: &Path,
+) -> Result<BufferCloseReceipt> {
+    ensure!(
+        buffer != authority.pubkey(),
+        "Buffer cannot be the refund recipient"
+    );
+    fs::create_dir(output_dir)
+        .context("Output directory must be new; inspect any earlier attempt before retrying")?;
+    let expected_genesis = match cluster {
+        Cluster::Mainnet => MAINNET_GENESIS_HASH,
+        Cluster::Devnet => DEVNET_GENESIS_HASH,
+    };
+    let genesis = rpc
+        .get_genesis_hash()
+        .await
+        .map_err(|_| anyhow!("Could not read cluster genesis hash"))?;
+    ensure!(
+        genesis == expected_genesis.parse::<Hash>()?,
+        "RPC network does not match selected cluster"
+    );
+    let account = rpc
+        .get_account_with_commitment(&buffer, CommitmentConfig::confirmed())
+        .await
+        .map_err(|_| anyhow!("Could not read buffer account"))?
+        .value
+        .context("Buffer does not exist or is already closed")?;
+    validate_buffer_authority(&account, authority.pubkey())?;
+    ensure!(account.lamports > 0, "Buffer is already drained");
+    let blockhash = rpc
+        .get_latest_blockhash()
+        .await
+        .map_err(|_| anyhow!("Could not fetch a recent blockhash"))?;
+    let instruction = instruction::close(&buffer, &authority.pubkey(), &authority.pubkey());
+    let message =
+        Message::new_with_blockhash(&[instruction], Some(&authority.pubkey()), &blockhash);
+    let mut transaction = Transaction::new_unsigned(message);
+    transaction.try_sign(&[authority], blockhash)?;
+    let signature = *transaction
+        .signatures
+        .first()
+        .context("Missing transaction signature")?;
+    let receipt = BufferCloseReceipt {
+        buffer,
+        authority_and_recipient: authority.pubkey(),
+        genesis_hash: genesis.to_string(),
+        lamports_before_close: account.lamports,
+        signature: signature.to_string(),
+    };
+    let json = serde_json::to_vec_pretty(&receipt)?;
+    // Preserve the exact public transaction identifier even if submission or
+    // confirmation fails. A submission file is not proof of confirmation.
+    fs::write(output_dir.join("buffer-close-submission.json"), &json)
+        .context("Could not save buffer close submission")?;
+    eprintln!(
+        "Closing buffer {buffer}; recipient={} signature={signature}",
+        authority.pubkey()
+    );
+    let returned = rpc
+        .send_transaction_with_config(
+            &transaction,
+            RpcSendTransactionConfig {
+                skip_preflight: false,
+                preflight_commitment: Some(CommitmentConfig::confirmed().commitment),
+                max_retries: Some(0),
+                ..RpcSendTransactionConfig::default()
+            },
+        )
+        .await
+        .map_err(|_| anyhow!(
+            "Buffer close submission failed or is uncertain; inspect transaction {signature} before retrying"
+        ))?;
+    ensure!(
+        returned == signature,
+        "RPC returned an unexpected signature; inspect {signature}"
+    );
+    tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            match rpc
+                .get_signature_status_with_commitment_and_history(
+                    &signature,
+                    CommitmentConfig::confirmed(),
+                    true,
+                )
+                .await
+                .map_err(|_| {
+                    anyhow!(
+                    "Buffer close confirmation is uncertain; inspect {signature} before retrying"
+                )
+                })? {
+                Some(Ok(())) => break Ok(()),
+                Some(Err(_)) => anyhow::bail!(
+                    "Buffer close failed on-chain; inspect {signature} before retrying"
+                ),
+                None => tokio::time::sleep(Duration::from_secs(2)).await,
+            }
+        }
+    })
+    .await
+    .map_err(|_| {
+        anyhow!("Buffer close confirmation timed out; inspect {signature} before retrying")
+    })??;
+    let remaining = rpc
+        .get_account_with_commitment(&buffer, CommitmentConfig::confirmed())
+        .await
+        .map_err(|_| {
+            anyhow!("Could not verify buffer closure; inspect {signature} before retrying")
+        })?
+        .value;
+    ensure!(
+        remaining.is_none_or(|account| account.lamports == 0),
+        "Buffer still has lamports after confirmation; inspect {signature} before retrying"
+    );
+    fs::write(output_dir.join("buffer-close-receipt.json"), json).context(
+        "Buffer close confirmed, but could not save its receipt; inspect the logged signature",
+    )?;
+    Ok(receipt)
+}
 
 #[derive(Clone, Copy)]
 pub enum UploadProfile {
