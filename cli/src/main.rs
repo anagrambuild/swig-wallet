@@ -112,7 +112,8 @@ pub enum Command {
         new_authority: Option<String>,
         #[arg(short, long)]
         new_authority_type: Option<String>,
-        #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ',')]
+        /// Permission JSON objects; repeat the flag or pass several values
+        #[arg(short, long, value_parser, num_args = 1..)]
         permissions: Vec<String>,
     },
     /// Remove an authority from a wallet
@@ -152,7 +153,7 @@ pub enum Command {
         #[arg(short, long)]
         operation: String,
         // New permissions (for ReplaceAll and AddActions operations)
-        #[arg(short, long, value_parser, num_args = 0.., value_delimiter = ',')]
+        #[arg(short, long, value_parser, num_args = 0..)]
         permissions: Vec<String>,
         // Action types to remove (for RemoveActionsByType operation)
         #[arg(short, long, value_parser, num_args = 0.., value_delimiter = ',')]
@@ -256,6 +257,64 @@ pub enum Command {
         sub_account: String,
         #[arg(short, long)]
         amount: u64,
+    },
+    /// Reserve part of the wallet's SOL or token balance until an expiry slot
+    AddAuthorizationLock {
+        #[arg(long)]
+        authority_type: Option<String>,
+        #[arg(long)]
+        authority: Option<String>,
+        #[arg(long)]
+        authority_kp: Option<String>,
+        #[arg(long)]
+        fee_payer: Option<String>,
+        #[arg(long = "swig-id")]
+        id: String,
+        /// Amount to reserve, in lamports or token base units
+        #[arg(long)]
+        amount: u64,
+        /// Token mint to lock; omit to lock native SOL
+        #[arg(long)]
+        mint: Option<String>,
+        /// Absolute slot at which the lock expires
+        #[arg(
+            long,
+            conflicts_with = "duration_slots",
+            required_unless_present = "duration_slots"
+        )]
+        expiry_slot: Option<u64>,
+        /// Number of slots from now until the lock expires
+        #[arg(long)]
+        duration_slots: Option<u64>,
+    },
+    /// Release an authorization lock, or prune an expired one
+    RemoveAuthorizationLock {
+        #[arg(long)]
+        authority_type: Option<String>,
+        #[arg(long)]
+        authority: Option<String>,
+        #[arg(long)]
+        authority_kp: Option<String>,
+        #[arg(long)]
+        fee_payer: Option<String>,
+        #[arg(long = "swig-id")]
+        id: String,
+        #[arg(long)]
+        lock_id: u32,
+    },
+    /// List the wallet's authorization locks
+    ListAuthorizationLocks {
+        #[arg(long)]
+        authority_type: Option<String>,
+        #[arg(long)]
+        authority: Option<String>,
+        #[arg(long)]
+        authority_kp: Option<String>,
+        #[arg(long = "swig-id")]
+        id: String,
+        /// Include expired locks that have not been pruned yet
+        #[arg(long)]
+        all: bool,
     },
     /// Generate keypairs for different authority types
     Generate {

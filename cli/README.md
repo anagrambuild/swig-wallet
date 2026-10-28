@@ -113,16 +113,53 @@ The CLI supports multiple authority types:
 
 ## Permissions
 
-When adding authorities, you can specify their permissions:
+When adding or updating authorities, each permission is a JSON object with a
+`type` field, for example:
 
-- `all` - Full access to all operations
-- `sol` - Permission to transfer SOL (with optional limits)
+- `{"type":"all"}` - Full access to all operations
+- `{"type":"sol","amount":1000000000}` - Transfer up to an amount of SOL (add
+  `"recurring":{"window":<slots>}` for a recurring limit)
+- `{"type":"manageAuthorizationLocks","maxDurationSlots":216000}` - Place
+  authorization locks within the role's own spending limits, for at most
+  `maxDurationSlots` slots
 
-Multiple permissions can be specified using commas:
+Pass several permissions by repeating the flag (JSON is not split on commas):
 
 ```bash
---permissions all,sol
+--permissions '{"type":"manageAuthorizationLocks","maxDurationSlots":216000}' \
+--permissions '{"type":"sol","amount":1000000000}'
 ```
+
+## Authorization Locks
+
+An authorization lock reserves part of the wallet's SOL or token balance until an
+expiry slot. While the lock is active, no role (including `All`) can spend that
+asset below the reserved amount, and only the role that created the lock can
+release it early. Every lock needs the `manageAuthorizationLocks` permission,
+and no lock can last longer than that role's `maxDurationSlots`, even for `All`.
+Roles that also have `All` or `AllButManageAuthority` can lock up to the
+wallet's balance. Other roles can lock any token up to their own spending limit
+for it. A role cannot change its own `maxDurationSlots`; another manager sets
+it (the root role can set its own).
+
+```bash
+# Reserve 1.5 SOL for the next 400 slots
+swig add-authorization-lock --swig-id <ID> --amount 1500000000 --duration-slots 400
+
+# Reserve tokens in the wallet's associated token account until a given slot
+swig add-authorization-lock --swig-id <ID> --mint <MINT> --amount 600 --expiry-slot <SLOT>
+
+# List active locks (add --all to include expired, unpruned locks)
+swig list-authorization-locks --swig-id <ID>
+
+# Release your own lock, or prune an expired one (needs All, AllButManageAuthority,
+# ManageAuthority, or manageAuthorizationLocks)
+swig remove-authorization-lock --swig-id <ID> --lock-id <LOCK_ID>
+```
+
+All three commands also take `--authority-type`, `--authority`, `--authority-kp`
+(and `--fee-payer` for the write commands), or fall back to the saved default
+authority. In interactive mode, use the "Authorization Locks" menu.
 
 ## Examples
 
