@@ -217,8 +217,9 @@ pub enum TailKind {
     RentClaimer = 1,
     /// Number of live V1 and V2 sub-accounts.
     ActiveSubAccountCount = 2,
+    // Kind 3 is allocated to AuthorizationLocks (PR #226).
     /// Immutable first seed of the config PDA.
-    ConfigSeedPrefix = 3,
+    ConfigSeedPrefix = 4,
 }
 
 impl TailKind {
