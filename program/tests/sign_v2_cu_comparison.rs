@@ -43,17 +43,21 @@ fn compare_sign_v2_role_compute_units() {
     );
 
     // Main ff2929b built for SBPF v1 with platform-tools v1.53, measured on
-    // LiteSVM 0.16. Keep the v3 migration within those existing SignV2 costs.
+    // LiteSVM 0.16. Token ceilings also account for paired-limit charging
+    // (#226/#228) and the wildcard scope checks below.
     for (path, actual, baseline) in [
         ("All", all, 3_618),
         ("SOL limit", sol_limit, 5_116),
         ("SOL destination limit", sol_limit_destination, 5_834),
-        ("Token limit", token_limit, 6_281),
-        ("Token destination limit", token_limit_destination, 7_199),
+        ("Token limit", token_limit, 6_287),
+        // Wildcard scopes compose with exact scopes, so the token walker must
+        // visit all applicable keys rather than stop at the first exact hit.
+        // This adds 25 CU to the paired-limit ceiling of 7,218.
+        ("Token destination limit", token_limit_destination, 7_243),
     ] {
         assert!(
             actual <= baseline,
-            "SignV2 {path} consumed {actual} CU, exceeding the main baseline of {baseline} CU"
+            "SignV2 {path} consumed {actual} CU, exceeding the budget of {baseline} CU"
         );
     }
 }
