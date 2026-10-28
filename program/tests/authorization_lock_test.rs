@@ -47,7 +47,7 @@ const NATIVE: [u8; 32] = authorization_locks::NATIVE_SOL_MINT;
 const MAX_DURATION: u64 = 1_000;
 
 #[test_log::test]
-fn wildcard_pairs_back_locks_across_mints_and_block_spending_the_shared_reserve() {
+fn wildcard_pairs_back_independent_mint_locks_without_a_shared_spend_budget() {
     let mut w = Wallet::with_card_actions(vec![
         ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(MAX_DURATION)),
         ClientAction::Program(Program {
@@ -71,34 +71,22 @@ fn wildcard_pairs_back_locks_across_mints_and_block_spending_the_shared_reserve(
     let expiry = w.slot() + 100;
     ok(w.add_lock(&card, CARD_ROLE, account_a, a.to_bytes(), 4, expiry));
     ok(w.add_lock(&card, CARD_ROLE, account_b, b.to_bytes(), 4, expiry));
-    let denied = w
-        .add_lock(&card, CARD_ROLE, account_b, b.to_bytes(), 1, expiry)
-        .unwrap_err();
-    assert_eq!(
-        denied.err,
-        TransactionError::InstructionError(
-            1,
-            InstructionError::Custom(SwigError::AuthorizationLockExceedsSpendLimit as u32)
-        )
-    );
+    ok(w.add_lock(&card, CARD_ROLE, account_b, b.to_bytes(), 1, expiry));
 
-    // The account balance remains above its lock. It is the *shared allowance*
-    // backing both mint reservations that makes this otherwise-valid spend fail.
-    let before = w.data();
+    // Wildcard ledgers do not impose any cross-mint spend allowance.
     let spend = w.token_transfer_ix(&card, CARD_ROLE, &a, &account_a, 1);
-    let denied = w.send(&[spend], &[&card]).unwrap_err();
-    assert_eq!(
-        denied.err,
-        TransactionError::InstructionError(
-            1,
-            InstructionError::Custom(SwigError::AuthorizationLockExceedsSpendLimit as u32)
-        )
-    );
+    ok(w.send(&[spend], &[&card]));
+    assert_eq!(w.token_balance(&account_a), 99);
+
+    // Actual locked token balances remain protected, even with unlimited spend.
+    let before = w.data();
+    let spend = w.token_transfer_ix(&card, CARD_ROLE, &a, &account_a, 96);
+    assert!(w.send(&[spend], &[&card]).is_err());
     assert_eq!(w.data(), before);
-    assert_eq!(w.token_balance(&account_a), 100);
+    assert_eq!(w.token_balance(&account_a), 99);
 
     ok(w.remove_lock(&card, CARD_ROLE, 0));
-    let spend = w.token_transfer_ix(&card, CARD_ROLE, &a, &account_a, 1);
+    let spend = w.token_transfer_ix(&card, CARD_ROLE, &a, &account_a, 96);
     ok(w.send(&[spend], &[&card]));
     ok(w.add_lock(&card, CARD_ROLE, account_a, a.to_bytes(), 3, expiry));
     assert!(w
@@ -107,7 +95,7 @@ fn wildcard_pairs_back_locks_across_mints_and_block_spending_the_shared_reserve(
 }
 
 #[test_log::test]
-fn shared_wildcard_destination_pools_back_simultaneous_token_reservations() {
+fn wildcard_destination_permissions_do_not_pool_token_reservations() {
     let mut w = Wallet::new(100);
     let (a, account_a) = w.token_setup(100);
     let (b, account_b) = w.token_setup(100);
@@ -125,7 +113,7 @@ fn shared_wildcard_destination_pools_back_simultaneous_token_reservations() {
             amount: 5,
         }));
     }
-    // B can only capture against X; A and C can use either pool. Destination
+    // B can only capture against X; A and C can use either destination. Destination
     // capacity remains abstract, just as for destination-only roles in #226.
     actions.push(ClientAction::TokenDestinationLimit(TokenDestinationLimit {
         token_mint: b.to_bytes(),
@@ -145,18 +133,9 @@ fn shared_wildcard_destination_pools_back_simultaneous_token_reservations() {
     .unwrap();
     let expiry = w.slot() + 100;
     ok(w.add_lock(&issuer, 2, account_a, a.to_bytes(), 5, expiry));
-    // The first reservation may be reassigned from X to Y to make room for B.
+    // There is no finite shared allowance between A, B, and C.
     ok(w.add_lock(&issuer, 2, account_b, b.to_bytes(), 5, expiry));
-    let error = w
-        .add_lock(&issuer, 2, account_c, c.to_bytes(), 1, expiry)
-        .unwrap_err();
-    assert_eq!(
-        error.err,
-        TransactionError::InstructionError(
-            1,
-            InstructionError::Custom(SwigError::AuthorizationLockExceedsSpendLimit as u32)
-        )
-    );
+    ok(w.add_lock(&issuer, 2, account_c, c.to_bytes(), 100, expiry));
 }
 
 struct Wallet {

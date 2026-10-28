@@ -1237,8 +1237,9 @@ fn charge_general_stake_recurring_limit(
     }
 }
 
-/// Charges every applicable exact and wildcard scope in one actions scan.
-/// Both one-shot and recurring ledgers apply. As with
+/// Applies every matching exact and wildcard scope in one actions scan.
+/// Wildcard mints authorize unlimited spend without changing their ledgers;
+/// all matching exact-mint one-shot and recurring ledgers are charged. As with
 /// exact lookups, only the first action of each type and key is charged for
 /// legacy roles containing duplicate actions.
 #[inline(always)]

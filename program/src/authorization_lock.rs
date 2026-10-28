@@ -150,8 +150,8 @@ pub(crate) fn check_lockable_mint(
 /// limits back its reservations, so it cannot lock more than it may spend nor
 /// spend what it has reserved.
 ///
-/// SignV2 charges both ledgers of every applicable general/destination scope,
-/// including wildcards. Capacity follows those same minimum bounds.
+/// SignV2 charges both ledgers of every applicable exact-mint scope. Wildcard
+/// mints authorize unlimited spend. Capacity follows those same bounds.
 /// Recurring limits count what is left in
 /// the current window, or the full allowance once SignV2 would reset it.
 pub(crate) fn remaining_spend_capacity(
@@ -384,7 +384,7 @@ enum LimitKind {
 }
 
 /// Identifies a native SOL destination. Token scope capacity is handled by
-/// `TokenCapacity`, which also accounts for overlapping wildcard budgets.
+/// `TokenCapacity`, which also accounts for overlapping destination scopes.
 #[derive(PartialEq)]
 enum DestinationKey {
     Sol([u8; 32]),

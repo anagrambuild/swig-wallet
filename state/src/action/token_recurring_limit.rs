@@ -46,6 +46,9 @@ impl TokenRecurringLimit {
     /// * `Ok(())` - If the operation is within limits
     /// * `Err(ProgramError)` - If the operation would exceed the limit
     pub fn run(&mut self, amount: u64, current_slot: u64) -> Result<(), ProgramError> {
+        if super::wildcard::is_wildcard(&self.token_mint) {
+            return Ok(());
+        }
         if self.window == 0 {
             return Err(ProgramError::InvalidArgument);
         }

@@ -1,6 +1,5 @@
 //! Token capacity mirrors SignV2's restrictive exact/wildcard charging.
-//! Shared wildcard-mint budgets must back all the creator's token locks,
-//! rather than being counted afresh for every locked mint.
+//! Wildcard mints authorize unlimited spend; exact-mint budgets back locks.
 
 extern crate alloc;
 use crate::error::SwigError;
@@ -99,6 +98,7 @@ impl TokenCapacity {
                     continue;
                 },
             };
+            let amount = if mint == WILDCARD { u64::MAX } else { amount };
             let index = if let Some(index) = budgets
                 .iter()
                 .position(|b| b.mint == mint && b.destination == destination)
@@ -218,11 +218,7 @@ impl TokenCapacity {
         locks: impl Iterator<Item = AuthorizationLock>,
     ) -> Result<(), ProgramError> {
         let mut mints: Vec<([u8; 32], u64)> = Vec::new();
-        let mut total = 0u64;
         for lock in locks.filter(|l| l.mint != NATIVE_SOL_MINT) {
-            total = total
-                .checked_add(lock.amount)
-                .ok_or(ProgramError::ArithmeticOverflow)?;
             if let Some((_, reserved)) = mints.iter_mut().find(|(m, _)| m == &lock.mint) {
                 *reserved = reserved
                     .checked_add(lock.amount)
@@ -238,9 +234,19 @@ impl TokenCapacity {
         {
             return Err(denied());
         }
-        if mints.len() < 2 || !self.budgets.iter().any(|b| b.mint == WILDCARD) {
+        if mints.len() < 2
+            || !self
+                .budgets
+                .iter()
+                .any(|b| b.mint == WILDCARD && b.capacity() != u64::MAX)
+        {
             return Ok(());
         }
+        let total = mints.iter().try_fold(0u64, |total, (_, reserved)| {
+            total
+                .checked_add(*reserved)
+                .ok_or(ProgramError::ArithmeticOverflow)
+        })?;
         if total > self.aggregate_bound(&WILDCARD) {
             return Err(denied());
         }

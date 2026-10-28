@@ -2,13 +2,13 @@
 //!
 //! Token limit actions can carry wildcard keys so a single action covers
 //! "any mint" and/or "any destination". A wildcard key is a 32-byte key of
-//! all `0xFF` bytes, reserved here to mean any key. Wildcards let a role trade any token program-native asset
-//! (up to a spend limit) without enumerating every mint, as long as the
-//! interacting programs are scoped through program permissions.
+//! all `0xFF` bytes, reserved here to mean any key. A wildcard mint grants
+//! unlimited token spend within its destination scope. Its amount and recurring
+//! ledger fields are ignored.
 //!
-//! Every applicable scope is charged: exact and wildcard limits compose
-//! restrictively, including both one-shot and recurring ledgers. Amounts
-//! are shared raw token base units, not prices or decimal-normalized values.
+//! Exact-mint limits still apply; other mints remain unlimited. A wildcard
+//! destination with an exact mint tracks amounts normally in that mint's base
+//! units. No amounts are pooled across different mints.
 
 /// The wildcard key: 32 `0xFF` bytes.
 pub const WILDCARD: [u8; 32] = [0xFF; 32];

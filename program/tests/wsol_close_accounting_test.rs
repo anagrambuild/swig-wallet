@@ -86,7 +86,7 @@ enum ClosePath {
 
 #[test]
 #[cfg(not(feature = "program_scope_test"))]
-fn dedicated_wsol_close_charges_exact_and_wildcard_pairs_atomically() {
+fn dedicated_wsol_close_charges_exact_pairs_but_not_mint_wildcards() {
     for allowance in [999, 1_010] {
         let mut context = setup_test_context().unwrap();
         let root = Keypair::new();
@@ -116,13 +116,13 @@ fn dedicated_wsol_close_charges_exact_and_wildcard_pairs_atomically() {
         }
         for dest in [destination.to_bytes(), WILDCARD] {
             actions.push(ClientAction::TokenDestinationLimit(TokenDestinationLimit {
-                token_mint: WILDCARD,
+                token_mint: spl_token::native_mint::ID.to_bytes(),
                 destination: dest,
                 amount: reserve + allowance,
             }));
             actions.push(ClientAction::TokenRecurringDestinationLimit(
                 TokenRecurringDestinationLimit {
-                    token_mint: WILDCARD,
+                    token_mint: spl_token::native_mint::ID.to_bytes(),
                     destination: dest,
                     recurring_amount: reserve + allowance,
                     current_amount: reserve + allowance,
@@ -184,18 +184,26 @@ fn dedicated_wsol_close_charges_exact_and_wildcard_pairs_atomically() {
                         .unwrap()
                         .unwrap()
                         .current_amount,
-                    1_000
+                    if mint == WILDCARD {
+                        reserve + 2_000
+                    } else {
+                        1_000
+                    }
                 );
                 assert_eq!(
                     role.get_action::<TokenRecurringLimit>(&mint)
                         .unwrap()
                         .unwrap()
                         .current,
-                    1_000
+                    if mint == WILDCARD {
+                        reserve + 2_000
+                    } else {
+                        1_000
+                    }
                 );
             }
             for dest in [destination.to_bytes(), WILDCARD] {
-                let key = [WILDCARD, dest].concat();
+                let key = [spl_token::native_mint::ID.to_bytes(), dest].concat();
                 assert_eq!(
                     role.get_action::<TokenDestinationLimit>(&key)
                         .unwrap()
