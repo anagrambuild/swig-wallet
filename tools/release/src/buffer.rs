@@ -125,19 +125,32 @@ pub async fn close_buffer(
         returned == signature,
         "RPC returned an unexpected signature; inspect {signature}"
     );
-    tokio::time::timeout(
-        Duration::from_secs(120),
-        rpc.confirm_transaction_with_spinner(&signature, &blockhash, CommitmentConfig::confirmed()),
-    )
+    tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            match rpc
+                .get_signature_status_with_commitment_and_history(
+                    &signature,
+                    CommitmentConfig::confirmed(),
+                    true,
+                )
+                .await
+                .map_err(|_| {
+                    anyhow!(
+                    "Buffer close confirmation is uncertain; inspect {signature} before retrying"
+                )
+                })? {
+                Some(Ok(())) => break Ok(()),
+                Some(Err(_)) => anyhow::bail!(
+                    "Buffer close failed on-chain; inspect {signature} before retrying"
+                ),
+                None => tokio::time::sleep(Duration::from_secs(2)).await,
+            }
+        }
+    })
     .await
     .map_err(|_| {
         anyhow!("Buffer close confirmation timed out; inspect {signature} before retrying")
-    })?
-    .map_err(|_| {
-        anyhow!(
-            "Buffer close failed or confirmation is uncertain; inspect {signature} before retrying"
-        )
-    })?;
+    })??;
     let remaining = rpc
         .get_account_with_commitment(&buffer, CommitmentConfig::confirmed())
         .await

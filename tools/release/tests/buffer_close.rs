@@ -38,6 +38,7 @@ struct TestRpc {
     inner: MockSender,
     genesis: Value,
     status: Value,
+    previous_statuses: Mutex<VecDeque<Value>>,
     accounts: Mutex<VecDeque<Option<Account>>>,
     requests: Arc<Mutex<Vec<(RpcRequest, Value)>>>,
     fail_on: Option<RpcRequest>,
@@ -55,7 +56,12 @@ impl RpcSender for TestRpc {
         }
         match request {
             RpcRequest::GetGenesisHash => Ok(self.genesis.clone()),
-            RpcRequest::GetSignatureStatuses => Ok(self.status.clone()),
+            RpcRequest::GetSignatureStatuses => Ok(self
+                .previous_statuses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| self.status.clone())),
             RpcRequest::GetAccountInfo => {
                 let account = self
                     .accounts
@@ -133,6 +139,7 @@ impl Fixture {
                 inner: MockSender::new_with_mocks("succeeds", mocks),
                 genesis,
                 status,
+                previous_statuses: Mutex::default(),
                 accounts: Mutex::new(accounts.into()),
                 requests: self.requests.clone(),
                 fail_on,
@@ -140,6 +147,45 @@ impl Fixture {
             RpcClientConfig::with_commitment(CommitmentConfig::confirmed()),
         )
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn processed_success_then_confirmed_failure_cannot_issue_a_success_receipt() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let rpc = RpcClient::new_sender(
+        TestRpc {
+            inner: MockSender::new("succeeds"),
+            genesis: json!(DEVNET_GENESIS_HASH),
+            previous_statuses: Mutex::new(VecDeque::from([json!({
+                "context":{"slot":50},"value":[{"slot":50,"confirmations":0,"err":null,
+                "status":{"Ok":null},"confirmationStatus":"processed"}]
+            })])),
+            status: json!({"context":{"slot":51},"value":[{"slot":51,"confirmations":1,
+                "err":"AccountNotFound","status":{"Err":"AccountNotFound"},"confirmationStatus":"confirmed"}]}),
+            // A concurrent close can drain the account even though our transaction fails.
+            accounts: Mutex::new(VecDeque::from([Some(fixture.account.clone()), None])),
+            requests: fixture.requests.clone(),
+            fail_on: None,
+        },
+        RpcClientConfig::with_commitment(CommitmentConfig::confirmed()),
+    );
+    let directory = tempfile::tempdir()?;
+    let output = directory.path().join("close");
+    let result = close_buffer(
+        &rpc,
+        Cluster::Devnet,
+        fixture.buffer,
+        &fixture.authority,
+        &output,
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "A confirmed failure must not become a successful close receipt"
+    );
+    assert!(output.join("buffer-close-submission.json").exists());
+    assert!(!output.join("buffer-close-receipt.json").exists());
+    Ok(())
 }
 
 #[tokio::test]
