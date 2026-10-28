@@ -19,6 +19,7 @@ fn entry(prefix: &[u8]) -> Vec<u8> {
 fn prefix_round_trips_and_absence_preserves_legacy_default() {
     for prefix in [b"x".as_slice(), DOMAIN, &[7; 32]] {
         let bytes = entry(prefix);
+        assert_eq!(bytes[0], 4); // Kind 3 is allocated to authorization locks.
         assert_eq!(config_seed_prefix::read(&bytes).unwrap(), prefix);
     }
     assert_eq!(config_seed_prefix::read(&[]).unwrap(), b"swig");
