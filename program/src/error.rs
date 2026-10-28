@@ -209,6 +209,8 @@ pub enum SwigError {
     /// The transaction would spend a locked asset account below its reserved
     /// amount, or change its token account authority, delegate, or state
     AuthorizationLockViolated,
+    /// A role may not set or change its own maximum lock duration
+    AuthorizationLockDurationSelfUpdate,
 }
 
 /// Implements conversion from SwigError to ProgramError.

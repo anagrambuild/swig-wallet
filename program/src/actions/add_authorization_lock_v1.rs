@@ -1,9 +1,10 @@
 //! Add authorization lock instruction.
 //!
-//! Reserves `amount` of one wallet asset account until `expiry_slot`. Roles
-//! with `All` or `AllButManageAuthority` may lock any balance for any duration.
-//! A role with `ManageAuthorizationLocks` may lock at most what its own limits
-//! would let it spend of that asset, for at most its configured duration.
+//! Reserves `amount` of one wallet asset account until `expiry_slot`. Every
+//! lock requires `ManageAuthorizationLocks`, and no lock may outlast the role's
+//! `max_duration_slots`. A role that may spend everything (`All` or
+//! `AllButManageAuthority`) may lock any balance; any other role may lock at
+//! most what its own limits would let it spend of that asset.
 
 extern crate alloc;
 use alloc::vec::Vec;
@@ -177,17 +178,17 @@ pub fn add_authorization_lock_v1(
             )?;
         }
 
+        let Some(manage) = acting_role.get_action::<ManageAuthorizationLocks>(&[])? else {
+            return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+        };
+        if args.expiry_slot - slot > manage.max_duration_slots {
+            return Err(SwigError::InvalidAuthorizationLockExpiry.into());
+        }
         let unrestricted = acting_role.get_action::<All>(&[])?.is_some()
             || acting_role
                 .get_action::<AllButManageAuthority>(&[])?
                 .is_some();
         if !unrestricted {
-            let Some(manage) = acting_role.get_action::<ManageAuthorizationLocks>(&[])? else {
-                return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
-            };
-            if args.expiry_slot - slot > manage.max_duration_slots {
-                return Err(SwigError::InvalidAuthorizationLockExpiry.into());
-            }
             let role_reserved = sum_active(locks.iter().copied(), slot, |lock| {
                 lock.role_id == args.acting_role_id && lock.mint == args.mint
             })?;

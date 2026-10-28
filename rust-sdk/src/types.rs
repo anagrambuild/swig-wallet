@@ -70,9 +70,11 @@ pub enum Permission {
     /// permissions.
     ReplaceAuthority { role_id: u32 },
 
-    /// Permission to place authorization locks (holds) on wallet assets, up to
-    /// this role's own spending limits for each asset and for at most
-    /// `max_duration_slots`, and to release its own locks.
+    /// Permission to place authorization locks (holds) on wallet assets for at
+    /// most `max_duration_slots`, and to release its own locks. Required for
+    /// every lock, even with `All`. Amounts are capped by the role's own
+    /// spending limits for each asset, or by the wallet balance for roles with
+    /// `All` or `AllButManageAuthority`. A role cannot change its own bound.
     ManageAuthorizationLocks { max_duration_slots: u64 },
 
     /// Permission to interact with specific tokens. Can be configured with

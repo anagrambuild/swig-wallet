@@ -5,9 +5,12 @@
 //! that account below the reserved amount, and the wallet cannot strip the
 //! creating role of the permissions it needs to capture the reservation.
 //!
-//! Because a lock constrains every other role, a delegated role may only lock
-//! funds within the spending allowance it already holds for that asset, and
-//! never for longer than `max_duration_slots`.
+//! Every lock requires this action, and no lock may outlast
+//! `max_duration_slots`. Because a lock constrains every other role, a role
+//! that cannot spend everything may only lock funds within the spending
+//! allowance it already holds for that asset. A role may not set or change its
+//! own `max_duration_slots`; another manager grants it (the root, which no
+//! other role may manage, is the exception).
 
 use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
@@ -15,8 +18,8 @@ use pinocchio::program_error::ProgramError;
 use super::{Actionable, Permission};
 use crate::{IntoBytes, Transmutable, TransmutableMut};
 
-/// Permission to create authorization locks bounded by the role's own spending
-/// limits, and to release its own locks.
+/// Permission to create authorization locks of at most `max_duration_slots`,
+/// bounded by the role's own spending limits unless it may spend everything.
 #[repr(C, align(8))]
 #[derive(Debug, NoPadding)]
 pub struct ManageAuthorizationLocks {

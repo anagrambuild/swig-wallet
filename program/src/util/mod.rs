@@ -21,8 +21,9 @@ use pinocchio::{
 };
 use swig_state::{
     action::{
-        all::All, manage_authority::ManageAuthority, replace_authority::ReplaceAuthority, Action,
-        ActionLoader, Permission,
+        all::All, manage_authority::ManageAuthority,
+        manage_authorization_locks::ManageAuthorizationLocks, replace_authority::ReplaceAuthority,
+        Action, ActionLoader, Permission,
     },
     authority::AuthorityType,
     role::{Position, RoleMut},
@@ -55,6 +56,32 @@ pub(crate) fn reject_root_recovery_grants(mut actions: &[u8]) -> ProgramResult {
         actions = &actions[end..];
     }
     Ok(())
+}
+
+/// Returns the `max_duration_slots` a `ManageAuthorizationLocks` action in
+/// `actions` (instruction-encoded) would grant, if any.
+pub(crate) fn requested_lock_duration(mut actions: &[u8]) -> Result<Option<u64>, ProgramError> {
+    while !actions.is_empty() {
+        let header = actions
+            .get(..Action::LEN)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        let action = unsafe { Action::load_unchecked(header)? };
+        let end = Action::LEN
+            .checked_add(action.length() as usize)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        let action_data = actions
+            .get(Action::LEN..end)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        if action.permission()? == Permission::ManageAuthorizationLocks {
+            if action_data.len() != ManageAuthorizationLocks::LEN {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let manage = unsafe { ManageAuthorizationLocks::load_unchecked(action_data)? };
+            return Ok(Some(manage.max_duration_slots));
+        }
+        actions = &actions[end..];
+    }
+    Ok(None)
 }
 
 /// Ensures the current role buffer still contains an administrator.

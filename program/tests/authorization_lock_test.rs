@@ -25,7 +25,7 @@ use swig_interface::{
 };
 use swig_state::{
     action::{
-        manage_authorization_locks::ManageAuthorizationLocks, program::Program,
+        all::All, manage_authorization_locks::ManageAuthorizationLocks, program::Program,
         sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
         sol_recurring_destination_limit::SolRecurringDestinationLimit,
         sol_recurring_limit::SolRecurringLimit, token_destination_limit::TokenDestinationLimit,
@@ -45,6 +45,7 @@ const ROOT_ROLE: u32 = 0;
 const CARD_ROLE: u32 = 1;
 const NATIVE: [u8; 32] = authorization_locks::NATIVE_SOL_MINT;
 const MAX_DURATION: u64 = 1_000;
+const ROOT_MAX_DURATION: u64 = 1_000_000;
 
 struct Wallet {
     context: SwigTestContext,
@@ -55,8 +56,9 @@ struct Wallet {
 }
 
 impl Wallet {
-    /// Root role 0 holds `All`. Role 1 is a card issuer that may lock SOL and
-    /// spend up to `card_sol_limit`.
+    /// Root role 0 holds `All` and may lock for up to `ROOT_MAX_DURATION`.
+    /// Role 1 is a card issuer that may lock SOL and spend up to
+    /// `card_sol_limit`.
     fn new(card_sol_limit: u64) -> Self {
         Self::with_card_actions(vec![
             ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(MAX_DURATION)),
@@ -87,6 +89,20 @@ impl Wallet {
             Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id())
                 .0;
         create_swig_ed25519(&mut context, &root, id).unwrap();
+        // The root may grant itself a lock bound; no other role can manage it.
+        update_authority_replace_with_ed25519_root(
+            &mut context,
+            &swig,
+            &root,
+            ROOT_ROLE,
+            vec![
+                ClientAction::All(All {}),
+                ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(
+                    ROOT_MAX_DURATION,
+                )),
+            ],
+        )
+        .unwrap();
         add_authority_with_ed25519_root(
             &mut context,
             &swig,
@@ -644,9 +660,37 @@ fn delegated_lock_duration_is_bounded() {
         SwigError::InvalidAuthorizationLockExpiry,
     );
     ok(w.add_sol_lock(&card, CARD_ROLE, 1, now + MAX_DURATION));
-    // Unrestricted roles have no duration bound.
+    // Unrestricted roles are bounded by their own duration too.
     let root = w.root.insecure_clone();
-    ok(w.add_sol_lock(&root, ROOT_ROLE, 1, u64::MAX));
+    assert_swig_error(
+        w.add_sol_lock(&root, ROOT_ROLE, 1, u64::MAX),
+        SwigError::InvalidAuthorizationLockExpiry,
+    );
+    assert_swig_error(
+        w.add_sol_lock(&root, ROOT_ROLE, 1, now + ROOT_MAX_DURATION + 1),
+        SwigError::InvalidAuthorizationLockExpiry,
+    );
+    ok(w.add_sol_lock(&root, ROOT_ROLE, 1, now + ROOT_MAX_DURATION));
+}
+
+#[test]
+fn all_without_lock_permission_cannot_lock() {
+    let mut w = Wallet::new(LAMPORTS_PER_SOL);
+    let root = w.root.insecure_clone();
+    let swig = w.swig;
+    update_authority_replace_with_ed25519_root(
+        &mut w.context,
+        &swig,
+        &root,
+        ROOT_ROLE,
+        vec![ClientAction::All(All {})],
+    )
+    .unwrap();
+    let expiry = w.slot() + 10;
+    assert_eq!(
+        custom_error(w.add_sol_lock(&root, ROOT_ROLE, 1, expiry)),
+        SwigAuthenticateError::PermissionDeniedMissingPermission as u32
+    );
 }
 
 #[test]
@@ -1854,13 +1898,116 @@ fn creator_may_rotate_its_own_signer_while_locked() {
 }
 
 #[test]
-fn all_but_manage_authority_role_locks_without_bounds() {
-    let mut w = Wallet::with_card_actions(vec![ClientAction::AllButManageAuthority(
-        swig_state::action::all_but_manage_authority::AllButManageAuthority {},
-    )]);
+fn all_but_manage_authority_role_locks_whole_balance_within_its_duration() {
+    let abma = || {
+        ClientAction::AllButManageAuthority(
+            swig_state::action::all_but_manage_authority::AllButManageAuthority {},
+        )
+    };
+    // Without the lock permission it cannot lock at all.
+    let mut w = Wallet::with_card_actions(vec![abma()]);
+    let card = w.card.insecure_clone();
+    let expiry = w.slot() + 10;
+    assert_eq!(
+        custom_error(w.add_sol_lock(&card, CARD_ROLE, 1, expiry)),
+        SwigAuthenticateError::PermissionDeniedMissingPermission as u32
+    );
+
+    // With it, it may lock the whole balance without spend limits, but only
+    // for its granted duration.
+    let mut w = Wallet::with_card_actions(vec![
+        abma(),
+        ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(MAX_DURATION)),
+    ]);
     let card = w.card.insecure_clone();
     let lockable = w.lockable_sol();
-    ok(w.add_sol_lock(&card, CARD_ROLE, lockable, u64::MAX));
+    let now = w.slot();
+    assert_swig_error(
+        w.add_sol_lock(&card, CARD_ROLE, lockable, u64::MAX),
+        SwigError::InvalidAuthorizationLockExpiry,
+    );
+    ok(w.add_sol_lock(&card, CARD_ROLE, lockable, now + MAX_DURATION));
+}
+
+#[test]
+fn role_cannot_change_its_own_lock_duration() {
+    use swig_interface::{UpdateAuthorityData, UpdateAuthorityInstruction};
+    use swig_state::action::{manage_authority::ManageAuthority, Permission};
+    let card_actions = |duration: u64| {
+        vec![
+            ClientAction::ManageAuthority(ManageAuthority {}),
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(duration)),
+            ClientAction::SolLimit(SolLimit {
+                amount: LAMPORTS_PER_SOL,
+            }),
+        ]
+    };
+    let mut w = Wallet::with_card_actions(card_actions(MAX_DURATION));
+    let card = w.card.insecure_clone();
+    let root = w.root.insecure_clone();
+    let update = |w: &Wallet, signer: &Keypair, acting: u32, data: UpdateAuthorityData| {
+        UpdateAuthorityInstruction::new_with_ed25519_authority(
+            w.swig,
+            w.context.default_payer.pubkey(),
+            signer.pubkey(),
+            acting,
+            CARD_ROLE,
+            data,
+        )
+        .unwrap()
+    };
+
+    // Raising its own bound, by either update form, is rejected.
+    let raise = update(
+        &w,
+        &card,
+        CARD_ROLE,
+        UpdateAuthorityData::ReplaceAll(card_actions(MAX_DURATION * 10)),
+    );
+    assert_swig_error(
+        w.send(&[raise], &[&card]),
+        SwigError::AuthorizationLockDurationSelfUpdate,
+    );
+    // Rewriting its actions with the same bound is allowed.
+    let same = update(
+        &w,
+        &card,
+        CARD_ROLE,
+        UpdateAuthorityData::ReplaceAll(card_actions(MAX_DURATION)),
+    );
+    ok(w.send(&[same], &[&card]));
+    // Dropping its own lock permission is allowed...
+    let drop = update(
+        &w,
+        &card,
+        CARD_ROLE,
+        UpdateAuthorityData::RemoveActionsByType(vec![Permission::ManageAuthorizationLocks as u8]),
+    );
+    ok(w.send(&[drop], &[&card]));
+    // ...but granting it back to itself is not.
+    let regrant = update(
+        &w,
+        &card,
+        CARD_ROLE,
+        UpdateAuthorityData::AddActions(vec![ClientAction::ManageAuthorizationLocks(
+            ManageAuthorizationLocks::new(MAX_DURATION),
+        )]),
+    );
+    assert_swig_error(
+        w.send(&[regrant], &[&card]),
+        SwigError::AuthorizationLockDurationSelfUpdate,
+    );
+
+    // Another manager may grant or change the bound.
+    let grant = update(
+        &w,
+        &root,
+        ROOT_ROLE,
+        UpdateAuthorityData::ReplaceAll(card_actions(MAX_DURATION * 10)),
+    );
+    ok(w.send(&[grant], &[&root]));
+    let now = w.slot();
+    ok(w.add_sol_lock(&card, CARD_ROLE, 1, now + MAX_DURATION * 10));
 }
 
 #[test]

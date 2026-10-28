@@ -6,12 +6,21 @@ use solana_system_interface::instruction as system_instruction;
 use swig_state::tail::authorization_locks::NATIVE_SOL_MINT;
 
 use super::*;
-use crate::client_role::Ed25519ClientRole;
+use crate::{client_role::Ed25519ClientRole, types::UpdateAuthorityData};
 
 #[test_log::test]
 fn should_lock_enforce_and_release_sol_through_wallet() {
     let (litesvm, main_authority) = setup_test_environment();
     let mut wallet = create_test_wallet(litesvm, &main_authority);
+    // Locking needs the explicit permission, even for the root `All` role.
+    wallet
+        .update_authority(
+            0,
+            UpdateAuthorityData::AddActions(vec![Permission::ManageAuthorizationLocks {
+                max_duration_slots: 10_000,
+            }]),
+        )
+        .unwrap();
     let wallet_address = wallet.get_swig_wallet_address().unwrap();
     wallet
         .litesvm()

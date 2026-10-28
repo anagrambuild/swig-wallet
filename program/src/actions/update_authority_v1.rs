@@ -12,7 +12,10 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, Action, ActionLoader},
+    action::{
+        all::All, manage_authority::ManageAuthority,
+        manage_authorization_locks::ManageAuthorizationLocks, Action, ActionLoader,
+    },
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::Swig,
@@ -26,7 +29,7 @@ use crate::{
         accounts::{Context, UpdateAuthorityV1Accounts},
         SwigInstruction,
     },
-    util::{ensure_admin_remains, reject_root_recovery_grants},
+    util::{ensure_admin_remains, reject_root_recovery_grants, requested_lock_duration},
 };
 
 /// Calculates the actual number of actions in the provided actions data.
@@ -796,6 +799,30 @@ pub fn update_authority_v1(
             && update_authority_v1.args.acting_role_id != 0
         {
             return Err(SwigAuthenticateError::PermissionDeniedCannotUpdateRootAuthority.into());
+        }
+
+        // A role may not set or change its own lock duration bound, so a lock
+        // holder cannot extend how long it may pin funds and itself. The root
+        // is exempt because no other role may manage it. Dropping the action
+        // is always allowed.
+        if update_authority_v1.args.authority_to_update_id
+            == update_authority_v1.args.acting_role_id
+            && update_authority_v1.args.acting_role_id != 0
+            && matches!(
+                operation,
+                AuthorityUpdateOperation::ReplaceAll | AuthorityUpdateOperation::AddActions
+            )
+        {
+            if let Some(requested) =
+                requested_lock_duration(update_authority_v1.get_actions_data()?)?
+            {
+                let current = acting_role
+                    .get_action::<ManageAuthorizationLocks>(&[])?
+                    .map(|manage| manage.max_duration_slots);
+                if current != Some(requested) {
+                    return Err(SwigError::AuthorizationLockDurationSelfUpdate.into());
+                }
+            }
         }
 
         // A role holding an active authorization lock must keep the permissions
