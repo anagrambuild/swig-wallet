@@ -1,0 +1,72 @@
+name: Close Solana Buffer
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster:
+        description: Network containing the buffer
+        type: choice
+        options:
+          - devnet
+          - mainnet
+        default: devnet
+        required: true
+      buffer_address:
+        description: Buffer to close; all SOL returns to the configured network signer
+        type: string
+        required: true
+
+# Serialize with this repository's deployment/proposal workflow on each network.
+concurrency:
+  group: ${{ inputs.cluster == 'mainnet' && 'swig-upgrade' || 'swig-upgrade-devnet' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  close:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: ${{ inputs.cluster == 'mainnet' && 'swig-upgrade' || 'swig-upgrade-devnet' }}
+    steps:
+      - name: Require a fresh dispatch from main
+        run: |
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          if [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
+            echo "::error::Reruns are disabled. Inspect the original receipt and transaction before starting another run."
+            exit 1
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f
+        with:
+          toolchain: 1.96.1
+
+      - name: Build release CLI
+        run: cargo build --manifest-path tools/release/Cargo.toml --locked --release
+
+      - name: Validate and close the supplied buffer
+        env:
+          CLUSTER: ${{ inputs.cluster }}
+          BUFFER_ADDRESS: ${{ inputs.buffer_address }}
+          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+          PROPOSER_KEYPAIR: ${{ inputs.cluster == 'mainnet' && secrets.PROPOSER_KEYPAIR || '' }}
+          PROGRAM_AUTHORITY_KEYPAIR: ${{ inputs.cluster == 'devnet' && secrets.PROGRAM_AUTHORITY_KEYPAIR || '' }}
+        run: |
+          tools/release/target/release/swig-release close-buffer \
+            --cluster "$CLUSTER" --buffer "$BUFFER_ADDRESS" --output-dir buffer-cleanup
+          cat buffer-cleanup/buffer-close-receipt.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve public receipt and recovery information
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: buffer-close-${{ github.run_id }}-${{ github.run_attempt }}
+          path: buffer-cleanup/
+          if-no-files-found: ignore
+          retention-days: 90
