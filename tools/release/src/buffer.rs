@@ -212,12 +212,14 @@ pub fn upload_buffer(
         .arg(&binary_path)
         .args(["--url", rpc_url, "--max-len", &binary.len().to_string()]);
     match profile {
+        // Mainnet RPC uploads can outlive three blockhash windows. Retry only
+        // unconfirmed writes with fresh blockhashes before giving up.
         UploadProfile::Mainnet => command.args([
             "--commitment",
             "confirmed",
             "--use-rpc",
             "--max-sign-attempts",
-            "3",
+            "20",
         ]),
         UploadProfile::Devnet => command.args([
             "--commitment",
