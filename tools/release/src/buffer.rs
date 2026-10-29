@@ -1,8 +1,8 @@
 use std::{
     fs,
-    io::Write,
+    io::{self, Read, Write},
     path::Path,
-    process::{Command, Stdio},
+    process::{ChildStderr, Command, Stdio},
     time::Duration,
 };
 
@@ -204,8 +204,8 @@ pub fn upload_buffer(
         .open(output_dir.join("buffer-address.txt"))?;
     writeln!(recovery, "{address}")?;
     eprintln!("Uploading buffer: address={address} bytes={}", binary.len());
-    // Raw uploader output can contain the credential-bearing RPC URL. Emit our
-    // own progress/errors; never forward or save that output.
+    // Raw uploader output can contain RPC credentials or signing material.
+    // Drain stderr privately and report only recognized, fixed diagnostics.
     let mut command = Command::new(solana_cli);
     command
         .args(["program", "write-buffer"])
@@ -229,7 +229,7 @@ pub fn upload_buffer(
             "--use-tpu-client",
         ]),
     };
-    let status = command
+    let mut child = command
         .arg("--keypair")
         .arg(authority_file.path())
         .arg("--buffer")
@@ -240,14 +240,82 @@ pub fn upload_buffer(
         .env_remove("GITHUB_TOKEN")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .stderr(Stdio::piped())
+        .spawn()
         .context("Could not start Solana CLI; install the pinned version or set --solana-cli")?;
+    let diagnostics = match child.stderr.take() {
+        Some(mut stderr) => match read_upload_diagnostics(&mut stderr) {
+            Ok(diagnostics) => diagnostics,
+            Err(error) => format!("diagnostics unavailable: {:?}", error.kind()),
+        },
+        None => "diagnostics unavailable: stderr pipe missing".to_owned(),
+    };
+    let status = child.wait().context("Could not wait for Solana CLI")?;
     ensure!(
         status.success(),
-        "Buffer upload failed ({status}); inspect buffer {address}. The signer retains \
-         authority for recovery"
+        "Buffer upload failed ({status}); inspect buffer {address}. The signer retains authority \
+         for recovery. Solana CLI diagnostics: {diagnostics}"
     );
     eprintln!("Buffer upload complete: address={address}");
     Ok(address)
+}
+
+fn read_upload_diagnostics(stderr: &mut ChildStderr) -> io::Result<String> {
+    const MAX_STDERR_BYTES: usize = 16 * 1024;
+    let mut tail = Zeroizing::new(Vec::with_capacity(MAX_STDERR_BYTES + 4096));
+    let mut chunk = Zeroizing::new([0_u8; 4096]);
+    let mut truncated = false;
+    loop {
+        let count = match stderr.read(&mut *chunk) {
+            Ok(0) => break,
+            Ok(count) => count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        tail.extend(chunk.iter().take(count));
+        let excess = tail.len().saturating_sub(MAX_STDERR_BYTES);
+        if excess > 0 {
+            tail.drain(..excess);
+            truncated = true;
+        }
+    }
+    // Never echo arbitrary CLI text: it may include a provider response body,
+    // credential-bearing URLs, or recovery material. These markers come from
+    // the pinned Agave CLI and its transaction sender; unknown text stays private.
+    let output = String::from_utf8_lossy(&tail);
+    let mut diagnostics = Vec::new();
+    for (marker, diagnostic) in [
+        ("Account allocation failed", "buffer allocation failed"),
+        ("Data writes to account failed", "data writes failed"),
+        ("write transactions failed", "write transactions failed"),
+        ("Max retries exceeded", "retry limit exceeded"),
+        ("Blockhash expired", "blockhash expired"),
+        ("BlockhashNotFound", "blockhash not found"),
+        (
+            "Transaction simulation failed",
+            "transaction simulation failed",
+        ),
+        ("insufficient funds", "insufficient funds"),
+        ("error sending request", "RPC request failed"),
+        ("timed out", "request timed out"),
+        ("401 Unauthorized", "HTTP 401"),
+        ("403 Forbidden", "HTTP 403"),
+        ("408 Request Timeout", "HTTP 408"),
+        ("429 Too Many Requests", "HTTP 429"),
+        ("500 Internal Server Error", "HTTP 500"),
+        ("502 Bad Gateway", "HTTP 502"),
+        ("503 Service Unavailable", "HTTP 503"),
+        ("504 Gateway Timeout", "HTTP 504"),
+    ] {
+        if output.contains(marker) {
+            diagnostics.push(diagnostic);
+        }
+    }
+    if diagnostics.is_empty() {
+        diagnostics.push("unrecognized or empty CLI error; raw output withheld");
+    }
+    if truncated {
+        diagnostics.push("only the final 16 KiB of stderr inspected");
+    }
+    Ok(diagnostics.join("; "))
 }

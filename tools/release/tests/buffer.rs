@@ -104,3 +104,108 @@ exit {exit_code}
     }
     Ok(())
 }
+
+#[test]
+fn upload_failure_reports_safe_diagnostics_without_raw_output() -> Result<()> {
+    for (message, expected) in [
+        (
+            "Error: Data writes to account failed: Custom error: Max retries exceeded",
+            "data writes failed; retry limit exceeded",
+        ),
+        (
+            "Error: Account allocation failed: HTTP status client error (429 Too Many Requests)",
+            "buffer allocation failed; HTTP 429",
+        ),
+        (
+            "Error: error sending request: operation timed out",
+            "RPC request failed; request timed out",
+        ),
+        (
+            "Error: unknown provider response with signing-canary",
+            "unrecognized or empty CLI error; raw output withheld",
+        ),
+    ] {
+        let directory = tempfile::tempdir()?;
+        let script = directory.path().join("solana");
+        fs::write(
+            &script,
+            format!(
+                r##"#!/bin/sh
+echo 'stdout-canary'
+echo 'https://rpc-user:rpc-password@rpc.invalid/path-canary?api-key=query-canary' >&2
+echo 'Authorization: Bearer token-canary; signing-canary; [1,2,3,4]' >&2
+echo '{message}' >&2
+exit 1
+"##
+            ),
+        )?;
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700))?;
+        let output = directory.path().join("public");
+        fs::create_dir(&output)?;
+        let error = upload_buffer(
+            "https://rpc-user:rpc-password@rpc.invalid/path-canary?api-key=query-canary",
+            UploadProfile::Mainnet,
+            &Keypair::new(),
+            b"\x7fELFabc",
+            &script,
+            &output,
+        )
+        .err()
+        .context("Expected uploader failure")?
+        .to_string();
+        assert!(error.ends_with(expected), "{error}");
+        for secret in [
+            "rpc-user",
+            "rpc-password",
+            "rpc.invalid",
+            "path-canary",
+            "query-canary",
+            "token-canary",
+            "signing-canary",
+            "stdout-canary",
+            "[1,2,3,4]",
+        ] {
+            assert!(!error.contains(secret), "CLI output must stay private");
+        }
+        assert_eq!(fs::read_dir(&output)?.count(), 1);
+    }
+    Ok(())
+}
+
+#[test]
+fn upload_drains_large_output_and_inspects_only_the_bounded_tail() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let script = directory.path().join("solana");
+    fs::write(
+        &script,
+        r##"#!/bin/sh
+echo '401 Unauthorized prefix-secret' >&2
+dd if=/dev/zero bs=1024 count=256 2>/dev/null
+dd if=/dev/zero bs=1024 count=256 2>/dev/null | tr '\000' x >&2
+echo 'Data writes to account failed: Max retries exceeded tail-secret' >&2
+exit 1
+"##,
+    )?;
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700))?;
+    let output = directory.path().join("public");
+    fs::create_dir(&output)?;
+    let error = upload_buffer(
+        "https://rpc.invalid/private-rpc-credential",
+        UploadProfile::Mainnet,
+        &Keypair::new(),
+        b"\x7fELFabc",
+        &script,
+        &output,
+    )
+    .err()
+    .context("Expected uploader failure")?
+    .to_string();
+    assert!(error.ends_with(
+        "data writes failed; retry limit exceeded; only the final 16 KiB of stderr inspected"
+    ));
+    assert!(!error.contains("HTTP 401"));
+    assert!(!error.contains("prefix-secret") && !error.contains("tail-secret"));
+    assert!(error.len() < 512);
+    assert_eq!(fs::read_dir(&output)?.count(), 1);
+    Ok(())
+}
