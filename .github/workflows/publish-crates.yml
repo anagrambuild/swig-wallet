@@ -10,19 +10,26 @@ on:
       - assertions/**
       - instructions/**
       - state/**
-  release:
-    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-crates.yml
+      - Cargo.toml
+      - Cargo.lock
+      - no-padding/**
+      - assertions/**
+      - instructions/**
+      - state/**
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'release' && 'publish' || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   verify:
-    if: github.event_name == 'pull_request' || startsWith(github.event.release.tag_name, 'rust-crates-v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +50,7 @@ jobs:
           done
 
   publish:
-    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'rust-crates-v')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: verify
     runs-on: ubuntu-latest
     permissions:
@@ -51,20 +58,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@1.96.1
-      - name: Require a versioned release from main
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          git merge-base --is-ancestor HEAD origin/main
-          python3 - <<'PY'
-          import os, tomllib
-          version = tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"]
-          if os.environ["RELEASE_TAG"] != f"rust-crates-v{version}":
-              raise SystemExit("Release tag must match the workspace crate version")
-          PY
       # New crate names need an initial owner-authenticated publish. Configure
       # this workflow as trusted publisher for all four crates afterward.
       - uses: rust-lang/crates-io-auth-action@v1
