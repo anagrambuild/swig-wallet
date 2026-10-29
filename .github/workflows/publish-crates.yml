@@ -27,6 +27,7 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   verify:
@@ -63,7 +64,8 @@ jobs:
       # this workflow as trusted publisher for all four crates afterward.
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
-      - name: Publish existing dependency crates in order
+      # New releases require a workspace version bump and matching dependency versions.
+      - name: Publish unpublished dependency versions in order
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
