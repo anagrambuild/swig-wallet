@@ -3,6 +3,8 @@ name = "no-padding"
 version.workspace = true
 edition = "2021"
 license = "AGPL-3.0"
+description = "Compile-time padding checks for Swig protocol state"
+repository = "https://github.com/anagrambuild/swig-wallet"
 authors.workspace = true
 documentation.workspace = true
 
