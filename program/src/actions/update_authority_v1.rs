@@ -529,11 +529,17 @@ pub(crate) fn append_actions_to_role(
 
     if size_diff > 0 {
         let new_size = (account_len as i64 + size_diff) as usize;
+        // Align role storage only; padding the typed tail makes it invalid.
+        let roles_size = new_size
+            .checked_sub(saved_tail.len())
+            .ok_or(ProgramError::InvalidAccountData)?;
         let aligned_size =
-            core::alloc::Layout::from_size_align(new_size, core::mem::size_of::<u64>())
+            core::alloc::Layout::from_size_align(roles_size, core::mem::size_of::<u64>())
                 .map_err(|_| SwigError::InvalidAlignment)?
                 .pad_to_align()
-                .size();
+                .size()
+                .checked_add(saved_tail.len())
+                .ok_or(ProgramError::InvalidAccountData)?;
 
         let previous_len = account_len;
         swig_account.realloc(aligned_size, false)?;
@@ -952,11 +958,17 @@ pub fn update_authority_v1(
     // Handle account reallocation if size changed (before operations)
     if prealloc_size_diff > 0 {
         let new_size = (account_len as i64 + prealloc_size_diff) as usize;
+        // Align role storage only; padding the typed tail makes it invalid.
+        let roles_size = new_size
+            .checked_sub(saved_tail.len())
+            .ok_or(ProgramError::InvalidAccountData)?;
         let aligned_size =
-            core::alloc::Layout::from_size_align(new_size, core::mem::size_of::<u64>())
+            core::alloc::Layout::from_size_align(roles_size, core::mem::size_of::<u64>())
                 .map_err(|_| SwigError::InvalidAlignment)?
                 .pad_to_align()
-                .size();
+                .size()
+                .checked_add(saved_tail.len())
+                .ok_or(ProgramError::InvalidAccountData)?;
 
         let previous_len = account_len;
         ctx.accounts.swig.realloc(aligned_size, false)?;
@@ -1060,11 +1072,17 @@ pub fn update_authority_v1(
 
     if size_diff < 0 {
         let new_size = (account_len as i64 + size_diff) as usize;
+        // Align role storage only; padding the typed tail makes it invalid.
+        let roles_size = new_size
+            .checked_sub(saved_tail.len())
+            .ok_or(ProgramError::InvalidAccountData)?;
         let aligned_size =
-            core::alloc::Layout::from_size_align(new_size, core::mem::size_of::<u64>())
+            core::alloc::Layout::from_size_align(roles_size, core::mem::size_of::<u64>())
                 .map_err(|_| SwigError::InvalidAlignment)?
                 .pad_to_align()
-                .size();
+                .size()
+                .checked_add(saved_tail.len())
+                .ok_or(ProgramError::InvalidAccountData)?;
 
         ctx.accounts.swig.resize(aligned_size)?;
 

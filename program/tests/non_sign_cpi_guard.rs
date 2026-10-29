@@ -28,9 +28,10 @@ const TEST_PROGRAM_ID: solana_sdk::pubkey::Pubkey =
     solana_sdk::pubkey!("BXAu5ZWHnGun2XZjUZ9nqwiZ5dNVmofPGYdMC4rx4qLV");
 const TEST_PROGRAM_PATH: &str = "../target/deploy/test_program_authority.so";
 const INVOKE_SWIG_NON_SIGN: [u8; 8] = *b"swigcpi1";
-const AUTHORIZED_CPI_SIGNERS: [solana_sdk::pubkey::Pubkey; 2] = [
+const AUTHORIZED_CPI_SIGNERS: [solana_sdk::pubkey::Pubkey; 3] = [
     solana_sdk::pubkey!("X4o2kSLzqEQjnAzhq3L3BW92aawMV2n2F37EXd2GMpy"),
     solana_sdk::pubkey!("HSrst4iSVPLuKtV8qzmFDLkHTNhKPf5rjg5D8tL6KVCX"),
+    solana_sdk::pubkey!("DeXterR2kQm8AvRHnNPatWkE46TfAcMeBDjb6FySoAb8"),
 ];
 
 fn deploy_test_program(context: &mut SwigTestContext) {
@@ -160,6 +161,7 @@ fn send_instruction_without_signature_verification(
 fn authorized_cpi_signer_address_types() {
     assert!(AUTHORIZED_CPI_SIGNERS[0].is_on_curve());
     assert!(!AUTHORIZED_CPI_SIGNERS[1].is_on_curve());
+    assert!(AUTHORIZED_CPI_SIGNERS[2].is_on_curve());
 }
 
 #[test_log::test]

@@ -790,6 +790,22 @@ pub struct CurrentRole {
     pub session_based: bool,
 }
 
+impl CurrentRole {
+    pub(crate) fn from_role(role_id: u32, role: &Role) -> Result<Self, SwigError> {
+        Ok(Self {
+            role_id,
+            authority_type: role.authority.authority_type(),
+            authority_identity: role
+                .authority
+                .identity()
+                .map_err(|_| SwigError::InvalidSwigData)?
+                .to_vec(),
+            permissions: Permission::from_role(role)?,
+            session_based: role.authority.session_based(),
+        })
+    }
+}
+
 /// Represents the data that can be updated for an authority
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateAuthorityData {

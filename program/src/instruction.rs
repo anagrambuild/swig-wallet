@@ -365,6 +365,14 @@ pub enum SwigInstruction {
     #[account(6, name="system_program", desc="the system program")]
     CloseSubAccountV2 = 23,
 
+    /// Activates a reserved wallet from its canonical binary package.
+    /// Data is opcode:u16 LE followed by the 99/100-byte package.
+    #[account(0, writable, name="swig", desc="the reserved config PDA")]
+    #[account(1, writable, signer, name="payer", desc="the external rent payer")]
+    #[account(2, writable, name="swig_wallet_address", desc="the deposit PDA")]
+    #[account(3, name="system_program", desc="the system program")]
+    CreateReservedV1 = 24,
+
     /// Reserves part of one wallet asset account until an expiry slot.
     ///
     /// While active, no role can spend the asset account below the reserved
@@ -383,7 +391,7 @@ pub enum SwigInstruction {
     #[account(2, name="system_program", desc="the system program")]
     #[account(3, name="swig_wallet_address", desc="the swig wallet address")]
     #[account(4, name="asset_account", desc="the wallet address or token account to lock")]
-    AddAuthorizationLockV1 = 24,
+    AddAuthorizationLockV1 = 25,
 
     /// Releases an authorization lock. The creating role may release its own
     /// lock at any time; once expired, a role with All, AllButManageAuthority,
@@ -399,5 +407,5 @@ pub enum SwigInstruction {
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
     #[account(1, writable, signer, name="payer", desc="the payer")]
     #[account(2, name="system_program", desc="the system program")]
-    RemoveAuthorizationLockV1 = 25,
+    RemoveAuthorizationLockV1 = 26,
 }

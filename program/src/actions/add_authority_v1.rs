@@ -233,13 +233,19 @@ pub fn add_authority_v1(
         let new_authority_length = authority_type_to_length(&new_authority_type)?;
         let role_size = Position::LEN + new_authority_length + add_authority_v1.actions.len();
 
+        // Align role storage only: the typed tail has an exact, unpadded length.
         let account_size = core::alloc::Layout::from_size_align(
-            swig_data_len + role_size,
+            swig_data_len
+                .checked_sub(saved_tail.len())
+                .and_then(|len| len.checked_add(role_size))
+                .ok_or(ProgramError::InvalidAccountData)?,
             core::mem::size_of::<u64>(),
         )
         .map_err(|_| SwigError::InvalidAlignment)?
         .pad_to_align()
-        .size();
+        .size()
+        .checked_add(saved_tail.len())
+        .ok_or(ProgramError::InvalidAccountData)?;
         (saved_tail, account_size)
     };
     ctx.accounts.swig.realloc(account_size, false)?;

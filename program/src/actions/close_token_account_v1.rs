@@ -22,7 +22,7 @@ use swig_state::{
         token_recurring_limit::TokenRecurringLimit,
     },
     role::RoleMut,
-    swig::{swig_account_signer, swig_wallet_address_seeds, swig_wallet_address_signer, Swig},
+    swig::{swig_wallet_address_seeds, swig_wallet_address_signer, Swig},
     tail::{authorization_locks, rent_claimer},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
@@ -174,10 +174,6 @@ pub fn close_token_account_v1(
     // Use is_swig_v2 to determine expected authority
     let is_v2 = unsafe { is_swig_v2(swig_account_data) };
 
-    // Extract swig values we need before releasing the borrow
-    let swig_id = swig.id;
-    let swig_bump = swig.bump;
-
     // Verify the token program is valid
     let token_program_id = ctx.accounts.token_program.key();
     if token_program_id != &SPL_TOKEN_ID && token_program_id != &SPL_TOKEN_2022_ID {
@@ -210,8 +206,7 @@ pub fn close_token_account_v1(
     let wallet_bump_bytes = [wallet_bump];
     let wallet_seeds =
         swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &wallet_bump_bytes);
-    let swig_bump_bytes = [swig_bump];
-    let swig_seeds = swig_account_signer(&swig_id, &swig_bump_bytes);
+    let swig_seeds = crate::util::config_signer(swig_account_data, *ctx.accounts.swig.key())?;
 
     let unrestricted_spend = has_all || has_all_but_manage;
     let lock_entry = authorization_locks::read_strict(Swig::split_parts(swig_account_data)?.tail)?;
