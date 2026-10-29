@@ -9,8 +9,8 @@ use swig_release::buffer::{upload_buffer, UploadProfile};
 #[test]
 fn upload_owns_exact_bytes_private_files_cleanup_and_public_recovery() -> Result<()> {
     for (profile, commitment, transport, attempts, price, exit_code) in [
-        (UploadProfile::Mainnet, "confirmed", "rpc", 3, "none", 0),
-        (UploadProfile::Mainnet, "confirmed", "rpc", 3, "none", 9),
+        (UploadProfile::Mainnet, "confirmed", "rpc", 20, "none", 0),
+        (UploadProfile::Mainnet, "confirmed", "rpc", 20, "none", 9),
         (UploadProfile::Devnet, "confirmed", "tpu", 100, "100", 0),
         (UploadProfile::Devnet, "confirmed", "tpu", 100, "100", 9),
     ] {
