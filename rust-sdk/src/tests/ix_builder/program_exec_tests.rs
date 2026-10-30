@@ -559,3 +559,120 @@ fn test_program_exec_with_multiple_authorities() {
     println!("✓ Successfully added multiple ProgramExec authorities");
     println!("  - Total roles: {}", swig_data.state.roles);
 }
+
+#[test_log::test]
+fn test_program_exec_adds_and_removes_authorization_locks() -> anyhow::Result<()> {
+    let mut context = setup_test_context().unwrap();
+    context
+        .svm
+        .add_program_from_file(
+            TEST_PROGRAM_ID,
+            "../target/deploy/test_program_authority.so",
+        )
+        .unwrap();
+    let swig_id = [43u8; 32];
+    let root = Keypair::new();
+    let state_account = Pubkey::new_unique();
+    context
+        .svm
+        .set_account(
+            state_account,
+            solana_sdk::account::Account {
+                lamports: 1_000_000,
+                data: vec![0],
+                owner: TEST_PROGRAM_ID,
+                executable: false,
+                rent_epoch: 0,
+            },
+        )
+        .unwrap();
+    let (swig_key, _, _) = create_swig_ed25519(&mut context, &root, swig_id).unwrap();
+    let payer = context.default_payer.pubkey();
+    let (swig_wallet_address, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id());
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 2_000_000_000)
+        .unwrap();
+
+    let role = move || {
+        ProgramExecClientRole::new(TEST_PROGRAM_ID, VALID_DISCRIMINATOR.to_vec(), move || {
+            Instruction {
+                program_id: TEST_PROGRAM_ID,
+                accounts: vec![
+                    AccountMeta::new_readonly(swig_key, false),
+                    AccountMeta::new_readonly(swig_wallet_address, false),
+                    AccountMeta::new_readonly(state_account, false),
+                    AccountMeta::new_readonly(program_id(), false),
+                ],
+                data: VALID_DISCRIMINATOR.to_vec(),
+            }
+        })
+    };
+
+    let mut root_builder = SwigInstructionBuilder::new(
+        swig_id,
+        Box::new(Ed25519ClientRole::new(root.pubkey())),
+        payer,
+        0,
+    );
+    let current_slot = context.svm.get_sysvar::<Clock>().slot;
+    let add_role = root_builder
+        .add_authority_instruction(
+            AuthorityType::ProgramExec,
+            &role().authority_data(),
+            vec![
+                Permission::Sol {
+                    amount: 1_000_000_000,
+                    recurring: None,
+                },
+                Permission::ManageAuthorizationLocks {
+                    max_duration_slots: 1_000,
+                },
+            ],
+            Some(current_slot),
+        )
+        .unwrap();
+    let msg =
+        v0::Message::try_compile(&payer, &add_role, &[], context.svm.latest_blockhash()).unwrap();
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(msg), &[&context.default_payer, &root])
+            .unwrap();
+    context.svm.send_transaction(tx).unwrap();
+
+    // The builder puts the proof first and binds it to config and wallet.
+    let builder = SwigInstructionBuilder::new(swig_id, Box::new(role()), payer, 1);
+    let ixs = builder
+        .add_authorization_lock(
+            swig_wallet_address,
+            [0; 32],
+            1_000,
+            current_slot + 100,
+            None,
+        )
+        .unwrap();
+    assert_eq!(ixs.len(), 2);
+    assert_eq!(ixs[0].program_id, TEST_PROGRAM_ID);
+    assert_eq!(ixs[1].accounts[0].pubkey, swig_key);
+    assert_eq!(ixs[1].accounts[1].pubkey, swig_wallet_address);
+    assert_eq!(ixs[1].accounts[2].pubkey, payer);
+
+    let mut wallet = crate::SwigWallet::new(
+        swig_id,
+        Box::new(role()),
+        &context.default_payer,
+        "http://unused.invalid".to_string(),
+        None,
+        context.svm,
+    )?;
+    let slot = wallet.get_current_slot()?;
+    wallet.add_sol_authorization_lock(500_000_000, slot + 100)?;
+    let locks = wallet.get_authorization_locks()?;
+    assert_eq!(locks.len(), 1);
+    assert_eq!(locks[0].role_id, 1);
+    assert_eq!(locks[0].amount, 500_000_000);
+
+    wallet.remove_authorization_lock(locks[0].lock_id)?;
+    assert!(wallet.get_authorization_locks()?.is_empty());
+    Ok(())
+}
