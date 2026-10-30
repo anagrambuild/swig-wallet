@@ -111,7 +111,7 @@ fn build_malformed_program_curated_update_instruction(
     data.push(3); // Ed25519 authority account index
 
     Ok(Instruction {
-        program_id: Pubkey::from(swig_interface::swig::ID),
+        program_id: Pubkey::from(swig_interface::PROGRAM_ID),
         accounts: vec![
             AccountMeta::new(swig_account, false),
             AccountMeta::new(payer, true),

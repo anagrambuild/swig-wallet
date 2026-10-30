@@ -21,7 +21,7 @@ use solana_sdk::{
     transaction::{TransactionError, VersionedTransaction},
 };
 use swig_interface::{
-    swig, AuthorityConfig, ClientAction, TransferAssetsV1Instruction, TransferAssetsV1SplMigration,
+    AuthorityConfig, ClientAction, TransferAssetsV1Instruction, TransferAssetsV1SplMigration,
 };
 use swig_state::{
     action::all::All,

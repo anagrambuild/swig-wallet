@@ -11,8 +11,8 @@ documentation.workspace = true
 [dependencies]
 pinocchio = { version = "0.9", features = ["std"] }
 pinocchio-pubkey = { version = "0.3" }
-swig-assertions = { path = "../assertions", version = "3.0.0" }
-no-padding = { package = "swig-no-padding", path = "../no-padding", version = "3.0.0" }
+swig-assertions = { path = "../assertions", version = "4.0.0" }
+no-padding = { package = "swig-no-padding", path = "../no-padding", version = "4.0.0" }
 libsecp256k1 = { version = "0.7.2", default-features = false }
 solana-curve25519 = "3.1.11"
 p256 = { version = "0.13.2", default-features = false, features = ["arithmetic"] }

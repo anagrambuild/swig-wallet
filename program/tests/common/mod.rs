@@ -12,7 +12,7 @@ use solana_sdk::{
     transaction::VersionedTransaction,
 };
 use swig_interface::{
-    swig, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
+    AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
     CreateSubAccountInstruction, RemoveAuthorityInstruction, SetRentClaimerV1Instruction,
     SubAccountSignInstruction, ToggleSubAccountInstruction, UpdateAuthorityData,
     UpdateAuthorityInstruction, WithdrawFromSubAccountInstruction,

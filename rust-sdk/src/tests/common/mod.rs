@@ -9,9 +9,7 @@ use solana_sdk::{
     signer::Signer,
     transaction::VersionedTransaction,
 };
-use swig_interface::{
-    swig, AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction,
-};
+use swig_interface::{AddAuthorityInstruction, AuthorityConfig, ClientAction, CreateInstruction};
 use swig_state::{
     action::all::All,
     authority::AuthorityType,
@@ -42,8 +40,11 @@ pub fn setup_test_context() -> Result<SwigTestContext> {
 }
 
 pub fn load_program(svm: &mut LiteSVM) -> Result<()> {
-    svm.add_program_from_file(Pubkey::new_from_array(swig::ID), "../target/deploy/swig.so")
-        .map_err(|_| anyhow::anyhow!("Failed to load program"))
+    svm.add_program_from_file(
+        Pubkey::new_from_array(swig_interface::PROGRAM_ID),
+        "../target/deploy/swig.so",
+    )
+    .map_err(|_| anyhow::anyhow!("Failed to load program"))
 }
 
 pub fn create_swig_ed25519(
@@ -51,11 +52,13 @@ pub fn create_swig_ed25519(
     authority: &Keypair,
     id: [u8; 32],
 ) -> Result<(Pubkey, Pubkey, TransactionMetadata)> {
-    let (swig, bump) =
-        Pubkey::find_program_address(&swig_account_seeds(&id), &Pubkey::new_from_array(swig::ID));
+    let (swig, bump) = Pubkey::find_program_address(
+        &swig_account_seeds(&id),
+        &Pubkey::new_from_array(swig_interface::PROGRAM_ID),
+    );
     let (swig_wallet_address, wallet_address_bump) = Pubkey::find_program_address(
         &swig_wallet_address_seeds(swig.as_ref()),
-        &Pubkey::new_from_array(swig::ID),
+        &Pubkey::new_from_array(swig_interface::PROGRAM_ID),
     );
 
     let create_ix = CreateInstruction::new(
@@ -256,11 +259,13 @@ pub fn create_swig_secp256k1(
     wallet: &PrivateKeySigner,
     id: [u8; 32],
 ) -> Result<(Pubkey, TransactionMetadata)> {
-    let (swig, bump) =
-        Pubkey::find_program_address(&swig_account_seeds(&id), &Pubkey::new_from_array(swig::ID));
+    let (swig, bump) = Pubkey::find_program_address(
+        &swig_account_seeds(&id),
+        &Pubkey::new_from_array(swig_interface::PROGRAM_ID),
+    );
     let (swig_wallet_address, wallet_address_bump) = Pubkey::find_program_address(
         &swig_wallet_address_seeds(swig.as_ref()),
-        &Pubkey::new_from_array(swig::ID),
+        &Pubkey::new_from_array(swig_interface::PROGRAM_ID),
     );
 
     // Get the uncompressed public key and remove the 0x04 prefix
@@ -308,11 +313,13 @@ pub fn create_swig_secp256r1(
     public_key: &[u8; 33],
     id: [u8; 32],
 ) -> Result<(Pubkey, TransactionMetadata)> {
-    let (swig, bump) =
-        Pubkey::find_program_address(&swig_account_seeds(&id), &Pubkey::new_from_array(swig::ID));
+    let (swig, bump) = Pubkey::find_program_address(
+        &swig_account_seeds(&id),
+        &Pubkey::new_from_array(swig_interface::PROGRAM_ID),
+    );
     let (swig_wallet_address, wallet_address_bump) = Pubkey::find_program_address(
         &swig_wallet_address_seeds(swig.as_ref()),
-        &Pubkey::new_from_array(swig::ID),
+        &Pubkey::new_from_array(swig_interface::PROGRAM_ID),
     );
 
     let create_ix = CreateInstruction::new(
@@ -384,11 +391,13 @@ pub fn create_swig_secp256r1_session(
     use swig_state::authority::secp256r1::CreateSecp256r1SessionAuthority;
 
     let payer_pubkey = context.default_payer.pubkey();
-    let (swig, bump) =
-        Pubkey::find_program_address(&swig_account_seeds(&id), &Pubkey::new_from_array(swig::ID));
+    let (swig, bump) = Pubkey::find_program_address(
+        &swig_account_seeds(&id),
+        &Pubkey::new_from_array(swig_interface::PROGRAM_ID),
+    );
     let (swig_wallet_address, wallet_address_bump) = Pubkey::find_program_address(
         &swig_wallet_address_seeds(swig.as_ref()),
-        &Pubkey::new_from_array(swig::ID),
+        &Pubkey::new_from_array(swig_interface::PROGRAM_ID),
     );
 
     // Create the session authority data

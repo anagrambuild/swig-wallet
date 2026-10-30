@@ -1,11 +1,11 @@
+use crate::instruction_data::{
+    ReplaceAuthorityV1Args, REPLACE_AUTHORITY_PROOF_V1_DISCRIMINATOR,
+    REPLACE_AUTHORITY_PROOF_V1_DOMAIN,
+};
 use solana_sdk::{
     hash::hashv,
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
-};
-use swig::actions::replace_authority_v1::{
-    ReplaceAuthorityV1Args, REPLACE_AUTHORITY_PROOF_V1_DISCRIMINATOR,
-    REPLACE_AUTHORITY_PROOF_V1_DOMAIN,
 };
 use swig_state::{
     authority::{secp256k1::compress, AuthorityType},
@@ -110,7 +110,7 @@ impl ReplaceAuthorityInstruction {
         let data_payload = Self::build_data_payload(acting_role_id, target_role_id, new_authority)?;
 
         Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(crate::PROGRAM_ID),
             accounts,
             data: [data_payload.as_slice(), &authority_payload].concat(),
         })
@@ -139,7 +139,7 @@ impl ReplaceAuthorityInstruction {
         )?;
 
         Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(crate::PROGRAM_ID),
             accounts,
             data: [data_payload.as_slice(), &authority_payload].concat(),
         })
@@ -174,7 +174,7 @@ impl ReplaceAuthorityInstruction {
             public_key,
         )?;
         let main_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(crate::PROGRAM_ID),
             accounts,
             data: [data_payload.as_slice(), &authorization.authority_payload].concat(),
         };
@@ -201,7 +201,7 @@ impl ReplaceAuthorityInstruction {
         let data_payload = Self::build_data_payload(acting_role_id, target_role_id, new_authority)?;
 
         let main_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(crate::PROGRAM_ID),
             accounts,
             data: [data_payload, authority_payload].concat(),
         };

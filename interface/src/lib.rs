@@ -7,28 +7,8 @@ use solana_sdk::{
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
 };
-pub use swig;
-use swig::actions::{
-    add_authority_v1::AddAuthorityV1Args,
-    close_sub_account_v1::CloseSubAccountV1Args,
-    close_sub_account_v2::CloseSubAccountV2Args,
-    close_swig_v1::CloseSwigV1Args,
-    close_token_account_v1::CloseTokenAccountV1Args,
-    create_session_v1::CreateSessionV1Args,
-    create_sub_account_v1::CreateSubAccountV1Args,
-    create_sub_account_v2::CreateSubAccountV2Args,
-    create_v1::CreateV1Args,
-    remove_authority_v1::RemoveAuthorityV1Args,
-    set_rent_claimer_v1::SetRentClaimerV1Args,
-    sub_account_sign_v1::SubAccountSignV1Args,
-    sub_account_sign_v2::SubAccountSignV2Args,
-    toggle_sub_account_v1::ToggleSubAccountV1Args,
-    toggle_sub_account_v2::ToggleSubAccountV2Args,
-    transfer_assets_v1::TransferAssetsV1Args,
-    update_authority_v1::{AuthorityUpdateOperation, UpdateAuthorityV1Args},
-    withdraw_from_sub_account_v1::WithdrawFromSubAccountV1Args,
-    withdraw_from_sub_account_v2::WithdrawFromSubAccountV2Args,
-};
+pub mod instruction_data;
+use instruction_data::*;
 pub use swig_compact_instructions::*;
 use swig_state::{
     action::{
@@ -36,6 +16,7 @@ use swig_state::{
         all_but_manage_authority::AllButManageAuthority,
         close_swig_authority::CloseSwigAuthority,
         manage_authority::ManageAuthority,
+        manage_authorization_locks::ManageAuthorizationLocks,
         program::Program,
         program_all::ProgramAll,
         program_curated::ProgramCurated,
@@ -81,6 +62,7 @@ pub enum ClientAction {
     AllButManageAuthority(AllButManageAuthority),
     ManageAuthority(ManageAuthority),
     ReplaceAuthority(ReplaceAuthority),
+    ManageAuthorizationLocks(ManageAuthorizationLocks),
     CloseSwigAuthority(CloseSwigAuthority),
     SubAccount(SubAccount),
     SubAccountV2Create(SubAccountV2Create),
@@ -129,6 +111,10 @@ impl ClientAction {
                 AllButManageAuthority::LEN,
             ),
             ClientAction::ManageAuthority(_) => (Permission::ManageAuthority, ManageAuthority::LEN),
+            ClientAction::ManageAuthorizationLocks(_) => (
+                Permission::ManageAuthorizationLocks,
+                ManageAuthorizationLocks::LEN,
+            ),
             ClientAction::ReplaceAuthority(_) => {
                 (Permission::ReplaceAuthority, ReplaceAuthority::LEN)
             },
@@ -182,6 +168,7 @@ impl ClientAction {
             ClientAction::AllButManageAuthority(action) => action.into_bytes(),
             ClientAction::ManageAuthority(action) => action.into_bytes(),
             ClientAction::ReplaceAuthority(action) => action.into_bytes(),
+            ClientAction::ManageAuthorizationLocks(action) => action.into_bytes(),
             ClientAction::CloseSwigAuthority(action) => action.into_bytes(),
             ClientAction::SubAccount(action) => action.into_bytes(),
             ClientAction::SubAccountV2Create(action) => action.into_bytes(),
@@ -201,10 +188,11 @@ impl ClientAction {
 }
 
 pub fn program_id() -> Pubkey {
-    swig::ID.into()
+    PROGRAM_ID.into()
 }
 
-pub const PROGRAM_ID: [u8; 32] = swig::ID;
+pub const PROGRAM_ID: [u8; 32] =
+    solana_sdk::pubkey!("swigypWHEksbC64pWKwah1WTeh9JXwx8H1rJHLdbQMB").to_bytes();
 
 /// Derives a legacy config address using `["swig", id]`. A reserved commitment
 /// is also stored as an ID, but belongs to a different namespace: use the
@@ -277,7 +265,7 @@ impl CreateInstruction {
         }
         write.append(&mut action_bytes);
         Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts: vec![
                 AccountMeta::new(swig_account, false),
                 AccountMeta::new(payer, true),
@@ -327,7 +315,7 @@ impl AddAuthorityInstruction {
         write.extend_from_slice(&action_bytes);
         write.extend_from_slice(&[3]);
         Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: write,
         })
@@ -382,7 +370,7 @@ impl AddAuthorityInstruction {
         )?;
 
         Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [
                 arg_bytes,
@@ -448,7 +436,7 @@ impl AddAuthorityInstruction {
         )?;
 
         let main_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [
                 args_bytes,
@@ -506,7 +494,7 @@ impl AddAuthorityInstruction {
             build_program_exec_authority_payload(instruction_sysvar_index, None);
 
         let main_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [
                 arg_bytes,
@@ -565,7 +553,7 @@ impl AddAuthorityInstruction {
             build_program_exec_authority_payload(instruction_sysvar_index, Some(target_ix_index));
 
         let main_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [
                 arg_bytes,
@@ -624,12 +612,12 @@ impl SignV2Instruction {
         }
         let ix_bytes = ixs.into_bytes()?;
         let instruction_payload_len = u16::try_from(ix_bytes.len())?;
-        let args = swig::actions::sign_v2::SignV2Args::new(role_id, instruction_payload_len);
+        let args = SignV2Args::new(role_id, instruction_payload_len);
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
         Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [arg_bytes, &ix_bytes, &[2]].concat(),
         })
@@ -663,7 +651,7 @@ impl SignV2Instruction {
 
         let ix_bytes = ixs.into_bytes()?;
         let instruction_payload_len = u16::try_from(ix_bytes.len())?;
-        let args = swig::actions::sign_v2::SignV2Args::new(role_id, instruction_payload_len);
+        let args = SignV2Args::new(role_id, instruction_payload_len);
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -672,7 +660,7 @@ impl SignV2Instruction {
             build_program_exec_authority_payload(instruction_sysvar_index, None);
 
         let sign_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [arg_bytes, &ix_bytes, &authority_payload].concat(),
         };
@@ -709,7 +697,7 @@ impl SignV2Instruction {
 
         let ix_bytes = ixs.into_bytes()?;
         let instruction_payload_len = u16::try_from(ix_bytes.len())?;
-        let args = swig::actions::sign_v2::SignV2Args::new(role_id, instruction_payload_len);
+        let args = SignV2Args::new(role_id, instruction_payload_len);
         let arg_bytes = args
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
@@ -718,7 +706,7 @@ impl SignV2Instruction {
             build_program_exec_authority_payload(instruction_sysvar_index, Some(target_ix_index));
 
         let sign_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [arg_bytes, &ix_bytes, &authority_payload].concat(),
         };
@@ -780,7 +768,7 @@ impl SignV2Instruction {
         }
         let ix_bytes = ixs.into_bytes()?;
         let instruction_payload_len = u16::try_from(ix_bytes.len())?;
-        let args = swig::actions::sign_v2::SignV2Args::new(role_id, instruction_payload_len);
+        let args = SignV2Args::new(role_id, instruction_payload_len);
 
         let arg_bytes = args
             .into_bytes()
@@ -795,7 +783,7 @@ impl SignV2Instruction {
         )?;
 
         Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [arg_bytes, &ix_bytes, &authority_payload].concat(),
         })
@@ -859,7 +847,7 @@ impl SignV2Instruction {
         }
         let ix_bytes = ixs.into_bytes()?;
         let instruction_payload_len = u16::try_from(ix_bytes.len())?;
-        let args = swig::actions::sign_v2::SignV2Args::new(role_id, instruction_payload_len);
+        let args = SignV2Args::new(role_id, instruction_payload_len);
 
         let arg_bytes = args
             .into_bytes()
@@ -875,7 +863,7 @@ impl SignV2Instruction {
         )?;
 
         let main_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [arg_bytes, &ix_bytes, &authorization.authority_payload].concat(),
         };
@@ -940,7 +928,7 @@ impl RemoveAuthorityInstruction {
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
         Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [arg_bytes, &[3]].concat(),
         })
@@ -979,7 +967,7 @@ impl RemoveAuthorityInstruction {
         )?;
 
         Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [arg_bytes, &authority_payload].concat(),
         })
@@ -1021,7 +1009,7 @@ impl RemoveAuthorityInstruction {
         )?;
 
         let main_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [arg_bytes, &authorization.authority_payload].concat(),
         };
@@ -1059,7 +1047,7 @@ impl RemoveAuthorityInstruction {
             build_program_exec_authority_payload(instruction_sysvar_index, None);
 
         let main_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [arg_bytes, &authority_payload].concat(),
         };
@@ -1098,7 +1086,7 @@ impl RemoveAuthorityInstruction {
             build_program_exec_authority_payload(instruction_sysvar_index, Some(target_ix_index));
 
         let main_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [arg_bytes, &authority_payload].concat(),
         };
@@ -1207,7 +1195,7 @@ impl UpdateAuthorityInstruction {
         write.extend_from_slice(&[3]); // Ed25519 authority type
 
         Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: write,
         })
@@ -1290,7 +1278,7 @@ impl UpdateAuthorityInstruction {
         )?;
 
         Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [arg_bytes, &encoded_data, &authority_payload].concat(),
         })
@@ -1378,7 +1366,7 @@ impl UpdateAuthorityInstruction {
         )?;
 
         let main_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [args_bytes, &encoded_data, &authorization.authority_payload].concat(),
         };
@@ -1429,7 +1417,7 @@ impl UpdateAuthorityInstruction {
             build_program_exec_authority_payload(instruction_sysvar_index, None);
 
         let main_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [arg_bytes, &encoded_data, &authority_payload].concat(),
         };
@@ -1480,7 +1468,7 @@ impl UpdateAuthorityInstruction {
             build_program_exec_authority_payload(instruction_sysvar_index, Some(target_ix_index));
 
         let main_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [arg_bytes, &encoded_data, &authority_payload].concat(),
         };
@@ -1512,7 +1500,7 @@ impl CreateSessionInstruction {
             .into_bytes()
             .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
         Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [args_bytes, &[2]].concat(),
         })
@@ -1551,7 +1539,7 @@ impl CreateSessionInstruction {
         )?;
 
         Ok(Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [args_bytes, &authority_payload].concat(),
         })
@@ -1593,7 +1581,7 @@ impl CreateSessionInstruction {
         )?;
 
         let main_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [args_bytes, &authorization.authority_payload].concat(),
         };
@@ -1631,7 +1619,7 @@ impl CreateSessionInstruction {
             build_program_exec_authority_payload(instruction_sysvar_index, None);
 
         let main_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [args_bytes, &authority_payload].concat(),
         };
@@ -1670,7 +1658,7 @@ impl CreateSessionInstruction {
             build_program_exec_authority_payload(instruction_sysvar_index, Some(target_ix_index));
 
         let main_ix = Instruction {
-            program_id: Pubkey::from(swig::ID),
+            program_id: Pubkey::from(PROGRAM_ID),
             accounts,
             data: [args_bytes, &authority_payload].concat(),
         };
@@ -4785,5 +4773,312 @@ mod tests {
                 AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
             ]
         );
+    }
+}
+
+/// Instruction builders for authorization locks.
+///
+/// A lock reserves `amount` of `asset_account` until `expiry_slot`. For native
+/// SOL pass the swig wallet address as the asset account and an all-zero mint;
+/// for tokens pass a token account owned by the swig wallet address and its
+/// mint.
+pub struct AddAuthorizationLockV1Instruction;
+
+impl AddAuthorizationLockV1Instruction {
+    /// Token locks also pass the mint, which Token-2022 locks require so the
+    /// program can reject mints with a permanent delegate.
+    fn accounts(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        mint: [u8; 32],
+    ) -> Vec<AccountMeta> {
+        let mut accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            AccountMeta::new_readonly(swig_wallet_address, false),
+            AccountMeta::new_readonly(asset_account, false),
+        ];
+        if mint != [0u8; 32] {
+            accounts.push(AccountMeta::new_readonly(
+                Pubkey::new_from_array(mint),
+                false,
+            ));
+        }
+        accounts
+    }
+
+    /// Create an add-lock instruction signed by an Ed25519 authority.
+    pub fn new_with_ed25519_authority(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority: Pubkey,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        acting_role_id: u32,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+    ) -> anyhow::Result<Instruction> {
+        let mut accounts = Self::accounts(
+            swig_account,
+            payer,
+            swig_wallet_address,
+            asset_account,
+            mint,
+        );
+        let authority_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(authority, true));
+
+        let args = AddAuthorizationLockV1Args::new(
+            acting_role_id,
+            asset_account.to_bytes(),
+            mint,
+            amount,
+            expiry_slot,
+        );
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &[authority_index]].concat(),
+        })
+    }
+
+    /// Create an add-lock instruction signed by a Secp256k1 authority.
+    pub fn new_with_secp256k1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        acting_role_id: u32,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let accounts = Self::accounts(
+            swig_account,
+            payer,
+            swig_wallet_address,
+            asset_account,
+            mint,
+        );
+        let args = AddAuthorizationLockV1Args::new(
+            acting_role_id,
+            asset_account.to_bytes(),
+            mint,
+            amount,
+            expiry_slot,
+        );
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authority_payload = authority::secp256k1::build_authority_payload(
+            &accounts,
+            args_bytes,
+            current_slot,
+            counter,
+            &mut authority_payload_fn,
+        )?;
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        })
+    }
+
+    /// Create an add-lock instruction signed by a Secp256r1 authority. Returns
+    /// the precompile verification instruction followed by the lock instruction.
+    pub fn new_with_secp256r1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        acting_role_id: u32,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let mut accounts = Self::accounts(
+            swig_account,
+            payer,
+            swig_wallet_address,
+            asset_account,
+            mint,
+        );
+        accounts.push(AccountMeta::new_readonly(
+            solana_sdk::sysvar::instructions::ID,
+            false,
+        ));
+        let args = AddAuthorizationLockV1Args::new(
+            acting_role_id,
+            asset_account.to_bytes(),
+            mint,
+            amount,
+            expiry_slot,
+        );
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authorization = authority::secp256r1::build_authorization(
+            &accounts,
+            args_bytes,
+            current_slot,
+            counter,
+            &mut authority_payload_fn,
+            public_key,
+        )?;
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authorization.authority_payload].concat(),
+        };
+        Ok(vec![authorization.verification_instruction, main_ix])
+    }
+}
+
+/// Instruction builders for releasing or pruning an authorization lock.
+pub struct RemoveAuthorizationLockV1Instruction;
+
+impl RemoveAuthorizationLockV1Instruction {
+    fn accounts(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        rent_claimer: Option<Pubkey>,
+    ) -> Vec<AccountMeta> {
+        let mut accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+        ];
+        if let Some(rent_claimer) = rent_claimer {
+            accounts.push(AccountMeta::new(rent_claimer, false));
+        }
+        accounts
+    }
+
+    /// Create a remove-lock instruction signed by an Ed25519 authority. Pass
+    /// the wallet's rent claimer when one is configured.
+    pub fn new_with_ed25519_authority(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority: Pubkey,
+        acting_role_id: u32,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+    ) -> anyhow::Result<Instruction> {
+        let mut accounts = Self::accounts(swig_account, payer, rent_claimer);
+        let authority_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(authority, true));
+
+        let args = RemoveAuthorizationLockV1Args::new(acting_role_id, lock_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &[authority_index]].concat(),
+        })
+    }
+
+    /// Create a remove-lock instruction signed by a Secp256k1 authority.
+    pub fn new_with_secp256k1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        acting_role_id: u32,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let accounts = Self::accounts(swig_account, payer, rent_claimer);
+        let args = RemoveAuthorizationLockV1Args::new(acting_role_id, lock_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authority_payload = authority::secp256k1::build_authority_payload(
+            &accounts,
+            args_bytes,
+            current_slot,
+            counter,
+            &mut authority_payload_fn,
+        )?;
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        })
+    }
+
+    /// Create a remove-lock instruction signed by a Secp256r1 authority.
+    pub fn new_with_secp256r1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        acting_role_id: u32,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let mut accounts = Self::accounts(swig_account, payer, rent_claimer);
+        accounts.push(AccountMeta::new_readonly(
+            solana_sdk::sysvar::instructions::ID,
+            false,
+        ));
+        let args = RemoveAuthorizationLockV1Args::new(acting_role_id, lock_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authorization = authority::secp256r1::build_authorization(
+            &accounts,
+            args_bytes,
+            current_slot,
+            counter,
+            &mut authority_payload_fn,
+            public_key,
+        )?;
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authorization.authority_payload].concat(),
+        };
+        Ok(vec![authorization.verification_instruction, main_ix])
     }
 }

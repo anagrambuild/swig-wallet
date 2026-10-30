@@ -10201,7 +10201,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "swig"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-signer",
@@ -10248,7 +10248,7 @@ dependencies = [
 
 [[package]]
 name = "swig-assertions"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "pinocchio 0.9.0",
  "pinocchio-pubkey 0.3.0",
@@ -10257,7 +10257,7 @@ dependencies = [
 
 [[package]]
 name = "swig-cli"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-signer",
@@ -10287,7 +10287,7 @@ dependencies = [
 
 [[package]]
 name = "swig-compact-instructions"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "bs58",
  "pinocchio 0.9.0",
@@ -10297,12 +10297,13 @@ dependencies = [
 
 [[package]]
 name = "swig-interface"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "bytemuck",
  "hex",
  "openssl",
+ "pinocchio 0.9.0",
  "serde",
  "serde_json",
  "solana-sdk",
@@ -10316,7 +10317,7 @@ dependencies = [
 
 [[package]]
 name = "swig-no-padding"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "proc-macro2 1.0.106",
  "quote 1.0.45",
@@ -10325,7 +10326,7 @@ dependencies = [
 
 [[package]]
 name = "swig-sdk"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-signer",
@@ -10358,7 +10359,7 @@ dependencies = [
 
 [[package]]
 name = "swig-state"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "agave-precompiles 3.1.11",
  "hex",
@@ -10552,7 +10553,7 @@ dependencies = [
 
 [[package]]
 name = "test-program-authority"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "solana-program 3.0.0",
  "solana-program-test",

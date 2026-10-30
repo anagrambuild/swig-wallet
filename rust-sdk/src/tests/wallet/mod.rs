@@ -19,7 +19,6 @@ use alloy_signer_local::LocalSigner;
 use litesvm::LiteSVM;
 use solana_program::pubkey::Pubkey;
 use solana_sdk::signature::{Keypair, Signer};
-use swig_interface::swig;
 use swig_state::{
     authority::{
         ed25519::{CreateEd25519SessionAuthority, Ed25519SessionAuthority},
@@ -47,7 +46,10 @@ fn setup_test_environment() -> (LiteSVM, Keypair) {
     let main_authority = Keypair::new();
 
     litesvm
-        .add_program_from_file(Pubkey::new_from_array(swig::ID), "../target/deploy/swig.so")
+        .add_program_from_file(
+            Pubkey::new_from_array(swig_interface::PROGRAM_ID),
+            "../target/deploy/swig.so",
+        )
         .map_err(|_| anyhow::anyhow!("Failed to load program"))
         .unwrap();
     litesvm

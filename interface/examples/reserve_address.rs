@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07,
         0x51, 0x1a,
     ]);
-    let program_id = Pubkey::new_from_array(swig_interface::swig::ID);
+    let program_id = Pubkey::new_from_array(swig_interface::PROGRAM_ID);
     let reservation = ReservationV1::new(
         program_id,
         AuthorityType::Ed25519,

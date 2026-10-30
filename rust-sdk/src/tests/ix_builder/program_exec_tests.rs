@@ -103,8 +103,8 @@ fn program_exec_sign_v2_preserves_inner_instructions_and_transaction_signers() {
         (&instructions[3], second_program, &[12][..]),
     ] {
         assert_eq!(sign.program_id, program_id());
-        let compact = &sign.data
-            [core::mem::size_of::<swig_interface::swig::actions::sign_v2::SignV2Args>()..];
+        let compact =
+            &sign.data[core::mem::size_of::<swig_interface::instruction_data::SignV2Args>()..];
         assert_eq!(compact[0], 1);
         assert_eq!(sign.accounts[compact[1] as usize].pubkey, program);
         let data_offset = 3 + compact[2] as usize;
