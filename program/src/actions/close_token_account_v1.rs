@@ -23,7 +23,7 @@ use swig_state::{
     },
     role::RoleMut,
     swig::{swig_wallet_address_seeds, swig_wallet_address_signer, Swig},
-    tail::rent_claimer,
+    tail::{authorization_locks, rent_claimer},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
@@ -31,6 +31,7 @@ use crate::{
     actions::sign_v2::{
         has_token_destination_limits, read_wsol_reserve, wsol_accounted_balance, WSOL_MINT,
     },
+    authorization_lock::check_role_locks_within_limits,
     error::SwigError,
     instruction::{
         accounts::{CloseTokenAccountV1Accounts, Context},
@@ -208,9 +209,19 @@ pub fn close_token_account_v1(
     let swig_seeds = crate::util::config_signer(swig_account_data, *ctx.accounts.swig.key())?;
 
     let unrestricted_spend = has_all || has_all_but_manage;
+    let lock_entry = authorization_locks::read_strict(Swig::split_parts(swig_account_data)?.tail)?;
     // Validate every source and consume bounded WSOL spend before the first CPI.
     // A later error rolls back authentication and every permission update.
     for token_account in &accounts[token_account_offset..] {
+        // Closing would void a reservation on this account.
+        if lock_entry.is_some_and(|entry| {
+            entry.iter().any(|lock| {
+                &lock.asset_account == token_account.key() && lock.is_active(current_slot)
+            })
+        }) {
+            return Err(SwigError::AuthorizationLockActive.into());
+        }
+
         // Verify token account is owned by the token program
         let token_account_owner = token_account.owner();
         if token_account_owner != token_program_id {
@@ -279,6 +290,17 @@ pub fn close_token_account_v1(
                 }
             }
         }
+    }
+
+    // Closing WSOL accounts consumes the role's limits, which must still back
+    // its own active authorization locks.
+    if !unrestricted_spend {
+        check_role_locks_within_limits(
+            Swig::split_parts(swig_account_data)?.tail,
+            close_ix.args.role_id,
+            role.actions,
+            current_slot,
+        )?;
     }
 
     for token_account in &accounts[token_account_offset..] {

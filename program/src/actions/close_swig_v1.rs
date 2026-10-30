@@ -18,7 +18,7 @@ use swig_state::{
         all::All, close_swig_authority::CloseSwigAuthority, manage_authority::ManageAuthority,
     },
     swig::{swig_wallet_address_seeds, swig_wallet_address_signer, Swig},
-    tail::rent_claimer,
+    tail::{authorization_locks, rent_claimer},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
@@ -141,6 +141,10 @@ pub fn close_swig_v1(
     let swig = parts.state;
     let swig_roles = parts.roles;
     let configured_rent_claimer = rent_claimer::read_strict(parts.tail)?;
+    // Closing drains the wallet address, which would void active reservations.
+    if authorization_locks::has_active_locks(parts.tail, Clock::get()?.slot)? {
+        return Err(SwigError::AuthorizationLockActive.into());
+    }
 
     // Verify swig_wallet_address is the correct PDA
     let (expected_wallet_address, _wallet_bump) = pinocchio::pubkey::find_program_address(

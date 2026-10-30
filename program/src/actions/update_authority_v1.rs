@@ -12,11 +12,14 @@ use pinocchio::{
 use pinocchio_system::instructions::Transfer;
 use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
-    action::{all::All, manage_authority::ManageAuthority, Action, ActionLoader},
+    action::{
+        all::All, manage_authority::ManageAuthority,
+        manage_authorization_locks::ManageAuthorizationLocks, Action, ActionLoader,
+    },
     authority::{authority_type_to_length, AuthorityType},
     role::Position,
     swig::Swig,
-    tail::{active_sub_account_count, rent_claimer, SavedTail},
+    tail::{active_sub_account_count, authorization_locks, rent_claimer, SavedTail},
     Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable, TransmutableMut,
 };
 
@@ -26,7 +29,7 @@ use crate::{
         accounts::{Context, UpdateAuthorityV1Accounts},
         SwigInstruction,
     },
-    util::{ensure_admin_remains, reject_root_recovery_grants},
+    util::{ensure_admin_remains, reject_root_recovery_grants, requested_lock_duration},
 };
 
 /// Calculates the actual number of actions in the provided actions data.
@@ -417,6 +420,13 @@ fn perform_add_actions_operation(
     authority_to_update_id: u32,
     sub_account_counter: u32,
 ) -> Result<i64, ProgramError> {
+    // Only the appended actions may not duplicate a keyed spend limit; roles
+    // created before that rule keep any duplicates they already hold.
+    ActionLoader::validate_added_limit_duplicates(
+        &swig_roles[actions_offset..actions_offset + current_actions_size],
+        new_actions,
+    )?;
+
     // For add operation, we need to append new actions to existing ones
     let mut combined_actions = Vec::new();
 
@@ -797,6 +807,51 @@ pub fn update_authority_v1(
             return Err(SwigAuthenticateError::PermissionDeniedCannotUpdateRootAuthority.into());
         }
 
+        // A role may not set or change its own lock duration bound, so a lock
+        // holder cannot extend how long it may pin funds and itself. The root
+        // is exempt because no other role may manage it. Dropping the action
+        // is always allowed.
+        if update_authority_v1.args.authority_to_update_id
+            == update_authority_v1.args.acting_role_id
+            && update_authority_v1.args.acting_role_id != 0
+            && matches!(
+                operation,
+                AuthorityUpdateOperation::ReplaceAll | AuthorityUpdateOperation::AddActions
+            )
+        {
+            if let Some(requested) =
+                requested_lock_duration(update_authority_v1.get_actions_data()?)?
+            {
+                let current = acting_role
+                    .get_action::<ManageAuthorizationLocks>(&[])?
+                    .map(|manage| manage.max_duration_slots);
+                if current != Some(requested) {
+                    return Err(SwigError::AuthorizationLockDurationSelfUpdate.into());
+                }
+            }
+        }
+
+        // A role holding an active authorization lock must keep the permissions
+        // and signer it needs to capture the reservation. Stripping only its
+        // ManageAuthorizationLocks action is allowed, so a delegate cannot make
+        // itself irrevocable by continually renewing locks; existing locks
+        // still run to expiry and the creator can still release them.
+        let revokes_only_lock_permission =
+            matches!(operation, AuthorityUpdateOperation::RemoveActionsByType)
+                && update_authority_v1.get_remove_types()?
+                    == [swig_state::action::Permission::ManageAuthorizationLocks as u8];
+        if update_authority_v1.args.authority_to_update_id
+            != update_authority_v1.args.acting_role_id
+            && !revokes_only_lock_permission
+            && authorization_locks::role_has_active_locks(
+                parts.tail,
+                update_authority_v1.args.authority_to_update_id,
+                slot,
+            )?
+        {
+            return Err(SwigError::AuthorizationLockActive.into());
+        }
+
         // Verify the authority to update exists and calculate offsets.
         let (current_actions_size, authority_offset, actions_offset) = {
             let mut cursor = 0usize;
@@ -952,6 +1007,7 @@ pub fn update_authority_v1(
     let size_diff = match operation {
         AuthorityUpdateOperation::ReplaceAll => {
             let new_actions = update_authority_v1.get_actions_data()?;
+            ActionLoader::validate_destination_limit_duplicates(new_actions)?;
             perform_replace_all_operation(
                 swig_roles,
                 current_roles_len,

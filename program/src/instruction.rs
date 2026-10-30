@@ -372,4 +372,48 @@ pub enum SwigInstruction {
     #[account(2, writable, name="swig_wallet_address", desc="the deposit PDA")]
     #[account(3, name="system_program", desc="the system program")]
     CreateReservedV1 = 24,
+
+    /// Reserves part of one wallet asset account until an expiry slot.
+    ///
+    /// While active, no role can spend the asset account below the reserved
+    /// amount. Only the creating role may release the lock before it expires.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. Swig wallet address PDA
+    /// 3. `[writable, signer]` Payer for the lock's rent
+    /// 4. System program account
+    /// 5. Asset account: the swig wallet address for native SOL, or a token
+    ///    account owned by it
+    /// 6. Token mint (trailing; required for Token-2022 asset accounts)
+    ///
+    /// Authority accounts follow. The config and wallet address come first so
+    /// ProgramExec authorities can bind to them.
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, name="swig_wallet_address", desc="the swig wallet address")]
+    #[account(2, writable, signer, name="payer", desc="the payer")]
+    #[account(3, name="system_program", desc="the system program")]
+    #[account(4, name="asset_account", desc="the wallet address or token account to lock")]
+    AddAuthorizationLockV1 = 25,
+
+    /// Releases an authorization lock. The creating role may release its own
+    /// lock at any time; once expired, a role with All, AllButManageAuthority,
+    /// ManageAuthority, or ManageAuthorizationLocks may remove it. Rent returns
+    /// to the configured rent claimer, or to the payer when none is set.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. Swig wallet address PDA
+    /// 3. `[writable, signer]` Payer, and the refund destination without a
+    ///    rent claimer
+    /// 4. System program account
+    /// 5. `[writable]` Configured rent claimer (trailing; required when one is set)
+    ///
+    /// Authority accounts follow. The config and wallet address come first so
+    /// ProgramExec authorities can bind to them.
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, name="swig_wallet_address", desc="the swig wallet address")]
+    #[account(2, writable, signer, name="payer", desc="the payer")]
+    #[account(3, name="system_program", desc="the system program")]
+    RemoveAuthorizationLockV1 = 26,
 }

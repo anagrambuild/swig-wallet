@@ -10,6 +10,7 @@ use solana_sdk::{
 pub use swig;
 use swig::actions::{
     add_authority_v1::AddAuthorityV1Args,
+    add_authorization_lock_v1::AddAuthorizationLockV1Args,
     close_sub_account_v1::CloseSubAccountV1Args,
     close_sub_account_v2::CloseSubAccountV2Args,
     close_swig_v1::CloseSwigV1Args,
@@ -19,6 +20,7 @@ use swig::actions::{
     create_sub_account_v2::CreateSubAccountV2Args,
     create_v1::CreateV1Args,
     remove_authority_v1::RemoveAuthorityV1Args,
+    remove_authorization_lock_v1::RemoveAuthorizationLockV1Args,
     set_rent_claimer_v1::SetRentClaimerV1Args,
     sub_account_sign_v1::SubAccountSignV1Args,
     sub_account_sign_v2::SubAccountSignV2Args,
@@ -36,6 +38,7 @@ use swig_state::{
         all_but_manage_authority::AllButManageAuthority,
         close_swig_authority::CloseSwigAuthority,
         manage_authority::ManageAuthority,
+        manage_authorization_locks::ManageAuthorizationLocks,
         program::Program,
         program_all::ProgramAll,
         program_curated::ProgramCurated,
@@ -81,6 +84,7 @@ pub enum ClientAction {
     AllButManageAuthority(AllButManageAuthority),
     ManageAuthority(ManageAuthority),
     ReplaceAuthority(ReplaceAuthority),
+    ManageAuthorizationLocks(ManageAuthorizationLocks),
     CloseSwigAuthority(CloseSwigAuthority),
     SubAccount(SubAccount),
     SubAccountV2Create(SubAccountV2Create),
@@ -129,6 +133,10 @@ impl ClientAction {
                 AllButManageAuthority::LEN,
             ),
             ClientAction::ManageAuthority(_) => (Permission::ManageAuthority, ManageAuthority::LEN),
+            ClientAction::ManageAuthorizationLocks(_) => (
+                Permission::ManageAuthorizationLocks,
+                ManageAuthorizationLocks::LEN,
+            ),
             ClientAction::ReplaceAuthority(_) => {
                 (Permission::ReplaceAuthority, ReplaceAuthority::LEN)
             },
@@ -182,6 +190,7 @@ impl ClientAction {
             ClientAction::AllButManageAuthority(action) => action.into_bytes(),
             ClientAction::ManageAuthority(action) => action.into_bytes(),
             ClientAction::ReplaceAuthority(action) => action.into_bytes(),
+            ClientAction::ManageAuthorizationLocks(action) => action.into_bytes(),
             ClientAction::CloseSwigAuthority(action) => action.into_bytes(),
             ClientAction::SubAccount(action) => action.into_bytes(),
             ClientAction::SubAccountV2Create(action) => action.into_bytes(),
@@ -4785,5 +4794,609 @@ mod tests {
                 AccountMeta::new_readonly(solana_sdk::sysvar::instructions::ID, false),
             ]
         );
+    }
+
+    #[test]
+    fn authorization_lock_builders_put_config_and_wallet_first() {
+        let swig = Pubkey::new_unique();
+        let wallet = Pubkey::new_unique();
+        let payer = Pubkey::new_unique();
+        let authority = Pubkey::new_unique();
+        let asset = Pubkey::new_unique();
+        let claimer = Pubkey::new_unique();
+        let mint = Pubkey::new_unique().to_bytes();
+        let system = solana_system_interface::program::ID;
+        let sysvar = solana_sdk::sysvar::instructions::ID;
+
+        let add = AddAuthorizationLockV1Instruction::new_with_ed25519_authority(
+            swig, payer, authority, wallet, asset, 1, mint, 10, 100,
+        )
+        .unwrap();
+        assert_eq!(
+            add.accounts,
+            vec![
+                AccountMeta::new(swig, false),
+                AccountMeta::new_readonly(wallet, false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new_readonly(system, false),
+                AccountMeta::new_readonly(asset, false),
+                AccountMeta::new_readonly(Pubkey::new_from_array(mint), false),
+                AccountMeta::new_readonly(authority, true),
+            ]
+        );
+        assert_eq!(*add.data.last().unwrap(), 6);
+
+        let add = AddAuthorizationLockV1Instruction::new_with_program_exec_ix_index(
+            swig,
+            payer,
+            test_inner_instruction(),
+            wallet,
+            wallet,
+            1,
+            [0; 32],
+            10,
+            100,
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            add[1].accounts,
+            vec![
+                AccountMeta::new(swig, false),
+                AccountMeta::new_readonly(wallet, false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new_readonly(system, false),
+                AccountMeta::new_readonly(wallet, false),
+                AccountMeta::new_readonly(sysvar, false),
+            ]
+        );
+        assert_eq!(&add[1].data[AddAuthorizationLockV1Args::LEN..], &[5, 0]);
+
+        let remove = RemoveAuthorizationLockV1Instruction::new_with_ed25519_authority(
+            swig,
+            payer,
+            authority,
+            wallet,
+            1,
+            0,
+            Some(claimer),
+        )
+        .unwrap();
+        assert_eq!(
+            remove.accounts,
+            vec![
+                AccountMeta::new(swig, false),
+                AccountMeta::new_readonly(wallet, false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new_readonly(system, false),
+                AccountMeta::new(claimer, false),
+                AccountMeta::new_readonly(authority, true),
+            ]
+        );
+        assert_eq!(*remove.data.last().unwrap(), 5);
+
+        let remove = RemoveAuthorizationLockV1Instruction::new_with_program_exec(
+            swig,
+            payer,
+            test_inner_instruction(),
+            wallet,
+            1,
+            0,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            remove[1].accounts,
+            vec![
+                AccountMeta::new(swig, false),
+                AccountMeta::new_readonly(wallet, false),
+                AccountMeta::new(payer, true),
+                AccountMeta::new_readonly(system, false),
+                AccountMeta::new_readonly(sysvar, false),
+            ]
+        );
+        assert_eq!(&remove[1].data[RemoveAuthorizationLockV1Args::LEN..], &[4]);
+    }
+}
+
+/// Instruction builders for authorization locks.
+///
+/// A lock reserves `amount` of `asset_account` until `expiry_slot`. For native
+/// SOL pass the swig wallet address as the asset account and an all-zero mint;
+/// for tokens pass a token account owned by the swig wallet address and its
+/// mint.
+///
+/// Account layout: swig, swig wallet address, payer, system program, asset
+/// account, then the mint for token locks, then authority accounts.
+pub struct AddAuthorizationLockV1Instruction;
+
+impl AddAuthorizationLockV1Instruction {
+    /// Token locks also pass the mint, which Token-2022 locks require so the
+    /// program can reject mints with a permanent delegate.
+    fn accounts(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        mint: [u8; 32],
+    ) -> Vec<AccountMeta> {
+        let mut accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new_readonly(swig_wallet_address, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+            AccountMeta::new_readonly(asset_account, false),
+        ];
+        if mint != [0u8; 32] {
+            accounts.push(AccountMeta::new_readonly(
+                Pubkey::new_from_array(mint),
+                false,
+            ));
+        }
+        accounts
+    }
+
+    /// Create an add-lock instruction signed by an Ed25519 authority.
+    pub fn new_with_ed25519_authority(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority: Pubkey,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        acting_role_id: u32,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+    ) -> anyhow::Result<Instruction> {
+        let mut accounts = Self::accounts(
+            swig_account,
+            payer,
+            swig_wallet_address,
+            asset_account,
+            mint,
+        );
+        let authority_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(authority, true));
+
+        let args = AddAuthorizationLockV1Args::new(
+            acting_role_id,
+            asset_account.to_bytes(),
+            mint,
+            amount,
+            expiry_slot,
+        );
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &[authority_index]].concat(),
+        })
+    }
+
+    /// Create an add-lock instruction signed by a Secp256k1 authority.
+    pub fn new_with_secp256k1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        acting_role_id: u32,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let accounts = Self::accounts(
+            swig_account,
+            payer,
+            swig_wallet_address,
+            asset_account,
+            mint,
+        );
+        let args = AddAuthorizationLockV1Args::new(
+            acting_role_id,
+            asset_account.to_bytes(),
+            mint,
+            amount,
+            expiry_slot,
+        );
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authority_payload = authority::secp256k1::build_authority_payload(
+            &accounts,
+            args_bytes,
+            current_slot,
+            counter,
+            &mut authority_payload_fn,
+        )?;
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        })
+    }
+
+    /// Create an add-lock instruction signed by a Secp256r1 authority. Returns
+    /// the precompile verification instruction followed by the lock instruction.
+    pub fn new_with_secp256r1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        acting_role_id: u32,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let mut accounts = Self::accounts(
+            swig_account,
+            payer,
+            swig_wallet_address,
+            asset_account,
+            mint,
+        );
+        accounts.push(AccountMeta::new_readonly(
+            solana_sdk::sysvar::instructions::ID,
+            false,
+        ));
+        let args = AddAuthorizationLockV1Args::new(
+            acting_role_id,
+            asset_account.to_bytes(),
+            mint,
+            amount,
+            expiry_slot,
+        );
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authorization = authority::secp256r1::build_authorization(
+            &accounts,
+            args_bytes,
+            current_slot,
+            counter,
+            &mut authority_payload_fn,
+            public_key,
+        )?;
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authorization.authority_payload].concat(),
+        };
+        Ok(vec![authorization.verification_instruction, main_ix])
+    }
+
+    /// Create an add-lock instruction authorized by a ProgramExec authority.
+    /// The preceding instruction must pass the swig and the swig wallet
+    /// address as its first two accounts.
+    pub fn new_with_program_exec(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        acting_role_id: u32,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        Self::program_exec(
+            swig_account,
+            payer,
+            preceding_instruction,
+            swig_wallet_address,
+            asset_account,
+            acting_role_id,
+            mint,
+            amount,
+            expiry_slot,
+            None,
+        )
+    }
+
+    /// Like [`Self::new_with_program_exec`], but authenticates against the
+    /// transaction instruction at `target_ix_index`.
+    pub fn new_with_program_exec_ix_index(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        acting_role_id: u32,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+        target_ix_index: u8,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        Self::program_exec(
+            swig_account,
+            payer,
+            preceding_instruction,
+            swig_wallet_address,
+            asset_account,
+            acting_role_id,
+            mint,
+            amount,
+            expiry_slot,
+            Some(target_ix_index),
+        )
+    }
+
+    fn program_exec(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        acting_role_id: u32,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+        target_ix_index: Option<u8>,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        let mut accounts = Self::accounts(
+            swig_account,
+            payer,
+            swig_wallet_address,
+            asset_account,
+            mint,
+        );
+        let instruction_sysvar_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(
+            solana_sdk::sysvar::instructions::ID,
+            false,
+        ));
+
+        let args = AddAuthorizationLockV1Args::new(
+            acting_role_id,
+            asset_account.to_bytes(),
+            mint,
+            amount,
+            expiry_slot,
+        );
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authority_payload =
+            build_program_exec_authority_payload(instruction_sysvar_index, target_ix_index);
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        };
+        Ok(vec![preceding_instruction, main_ix])
+    }
+}
+
+/// Instruction builders for releasing or pruning an authorization lock.
+///
+/// Account layout: swig, swig wallet address, payer, system program, then the
+/// rent claimer when one is configured, then authority accounts.
+pub struct RemoveAuthorizationLockV1Instruction;
+
+impl RemoveAuthorizationLockV1Instruction {
+    fn accounts(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        swig_wallet_address: Pubkey,
+        rent_claimer: Option<Pubkey>,
+    ) -> Vec<AccountMeta> {
+        let mut accounts = vec![
+            AccountMeta::new(swig_account, false),
+            AccountMeta::new_readonly(swig_wallet_address, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
+        ];
+        if let Some(rent_claimer) = rent_claimer {
+            accounts.push(AccountMeta::new(rent_claimer, false));
+        }
+        accounts
+    }
+
+    /// Create a remove-lock instruction signed by an Ed25519 authority. Pass
+    /// the wallet's rent claimer when one is configured.
+    pub fn new_with_ed25519_authority(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        authority: Pubkey,
+        swig_wallet_address: Pubkey,
+        acting_role_id: u32,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+    ) -> anyhow::Result<Instruction> {
+        let mut accounts = Self::accounts(swig_account, payer, swig_wallet_address, rent_claimer);
+        let authority_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(authority, true));
+
+        let args = RemoveAuthorizationLockV1Args::new(acting_role_id, lock_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &[authority_index]].concat(),
+        })
+    }
+
+    /// Create a remove-lock instruction signed by a Secp256k1 authority.
+    pub fn new_with_secp256k1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        swig_wallet_address: Pubkey,
+        acting_role_id: u32,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+    ) -> anyhow::Result<Instruction>
+    where
+        F: FnMut(&[u8]) -> [u8; 65],
+    {
+        let accounts = Self::accounts(swig_account, payer, swig_wallet_address, rent_claimer);
+        let args = RemoveAuthorizationLockV1Args::new(acting_role_id, lock_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authority_payload = authority::secp256k1::build_authority_payload(
+            &accounts,
+            args_bytes,
+            current_slot,
+            counter,
+            &mut authority_payload_fn,
+        )?;
+
+        Ok(Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        })
+    }
+
+    /// Create a remove-lock instruction signed by a Secp256r1 authority.
+    pub fn new_with_secp256r1_authority<F>(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        mut authority_payload_fn: F,
+        current_slot: u64,
+        counter: u32,
+        swig_wallet_address: Pubkey,
+        acting_role_id: u32,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+        public_key: &[u8; 33],
+    ) -> anyhow::Result<Vec<Instruction>>
+    where
+        F: FnMut(&[u8]) -> [u8; 64],
+    {
+        let mut accounts = Self::accounts(swig_account, payer, swig_wallet_address, rent_claimer);
+        accounts.push(AccountMeta::new_readonly(
+            solana_sdk::sysvar::instructions::ID,
+            false,
+        ));
+        let args = RemoveAuthorizationLockV1Args::new(acting_role_id, lock_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authorization = authority::secp256r1::build_authorization(
+            &accounts,
+            args_bytes,
+            current_slot,
+            counter,
+            &mut authority_payload_fn,
+            public_key,
+        )?;
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authorization.authority_payload].concat(),
+        };
+        Ok(vec![authorization.verification_instruction, main_ix])
+    }
+
+    /// Create a remove-lock instruction authorized by a ProgramExec authority.
+    /// The preceding instruction must pass the swig and the swig wallet
+    /// address as its first two accounts.
+    pub fn new_with_program_exec(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        swig_wallet_address: Pubkey,
+        acting_role_id: u32,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        Self::program_exec(
+            swig_account,
+            payer,
+            preceding_instruction,
+            swig_wallet_address,
+            acting_role_id,
+            lock_id,
+            rent_claimer,
+            None,
+        )
+    }
+
+    /// Like [`Self::new_with_program_exec`], but authenticates against the
+    /// transaction instruction at `target_ix_index`.
+    pub fn new_with_program_exec_ix_index(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        swig_wallet_address: Pubkey,
+        acting_role_id: u32,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+        target_ix_index: u8,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        Self::program_exec(
+            swig_account,
+            payer,
+            preceding_instruction,
+            swig_wallet_address,
+            acting_role_id,
+            lock_id,
+            rent_claimer,
+            Some(target_ix_index),
+        )
+    }
+
+    fn program_exec(
+        swig_account: Pubkey,
+        payer: Pubkey,
+        preceding_instruction: Instruction,
+        swig_wallet_address: Pubkey,
+        acting_role_id: u32,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+        target_ix_index: Option<u8>,
+    ) -> anyhow::Result<Vec<Instruction>> {
+        let mut accounts = Self::accounts(swig_account, payer, swig_wallet_address, rent_claimer);
+        let instruction_sysvar_index = accounts.len() as u8;
+        accounts.push(AccountMeta::new_readonly(
+            solana_sdk::sysvar::instructions::ID,
+            false,
+        ));
+
+        let args = RemoveAuthorizationLockV1Args::new(acting_role_id, lock_id);
+        let args_bytes = args
+            .into_bytes()
+            .map_err(|e| anyhow::anyhow!("Failed to serialize args {:?}", e))?;
+
+        let authority_payload =
+            build_program_exec_authority_payload(instruction_sysvar_index, target_ix_index);
+
+        let main_ix = Instruction {
+            program_id: program_id(),
+            accounts,
+            data: [args_bytes, &authority_payload].concat(),
+        };
+        Ok(vec![preceding_instruction, main_ix])
     }
 }

@@ -13,7 +13,7 @@ use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
     swig::{Swig, SwigBuilder},
-    tail::{active_sub_account_count, rent_claimer, SavedTail},
+    tail::{active_sub_account_count, authorization_locks, rent_claimer, SavedTail},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -221,6 +221,14 @@ pub fn remove_authority_v1(
             if active_sub_account_count::has_active_v1(role_to_remove.actions)? {
                 return Err(SwigError::ActiveV1SubAccountMustBeClosed.into());
             }
+        }
+        // Every active lock must keep a creator able to release it.
+        if authorization_locks::role_has_active_locks(
+            parts.tail,
+            remove_authority_v1.args.authority_to_remove_id,
+            Clock::get()?.slot,
+        )? {
+            return Err(SwigError::AuthorizationLockActive.into());
         }
         let mut swig_builder = SwigBuilder {
             role_buffer: swig_roles,

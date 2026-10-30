@@ -347,6 +347,59 @@ impl SwigInstructionBuilder {
         )
     }
 
+    /// Creates instruction(s) reserving `amount` of `asset_account` until
+    /// `expiry_slot`. Use the swig wallet address and an all-zero mint for
+    /// native SOL, or a token account owned by the wallet address and its mint.
+    pub fn add_authorization_lock(
+        &self,
+        asset_account: Pubkey,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let swig_wallet_address = Pubkey::find_program_address(
+            &swig_wallet_address_seeds(self.swig_account.as_ref()),
+            &swig_interface::program_id(),
+        )
+        .0;
+        self.client_role.add_authorization_lock_instruction(
+            self.swig_account,
+            self.payer,
+            self.role_id,
+            swig_wallet_address,
+            asset_account,
+            mint,
+            amount,
+            expiry_slot,
+            current_slot,
+        )
+    }
+
+    /// Creates instruction(s) releasing (or pruning, once expired) a lock.
+    /// Pass the wallet's rent claimer when one is configured.
+    pub fn remove_authorization_lock(
+        &self,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let swig_wallet_address = Pubkey::find_program_address(
+            &swig_wallet_address_seeds(self.swig_account.as_ref()),
+            &swig_interface::program_id(),
+        )
+        .0;
+        self.client_role.remove_authorization_lock_instruction(
+            self.swig_account,
+            self.payer,
+            self.role_id,
+            swig_wallet_address,
+            lock_id,
+            rent_claimer,
+            current_slot,
+        )
+    }
+
     /// Returns the actual config PDA for either namespace, cached at
     /// construction. Use this address to identify the wallet; its ID alone
     /// is insufficient.

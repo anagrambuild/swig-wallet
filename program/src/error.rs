@@ -185,6 +185,32 @@ pub enum SwigError {
     NoAdminAuthorityWouldRemain,
     /// The payer must be a writable signer even when no rent top-up is needed
     PayerMustBeWritableSigner,
+    /// Authorization lock instruction data is too short
+    InvalidAuthorizationLockInstructionDataTooShort,
+    /// Authorization lock amount must be non-zero
+    InvalidAuthorizationLockAmount,
+    /// Authorization lock expiry must be a future slot within the role's
+    /// maximum lock duration
+    InvalidAuthorizationLockExpiry,
+    /// Authorization lock asset must be the swig wallet address (native SOL)
+    /// or an initialized token account of the given mint owned by it, with no
+    /// delegate or foreign close authority
+    InvalidAuthorizationLockAsset,
+    /// Active locks on the asset account would exceed its balance
+    AuthorizationLockExceedsBalance,
+    /// The role's active locks for this asset would exceed its spending limit
+    AuthorizationLockExceedsSpendLimit,
+    /// No authorization lock exists with the given id
+    AuthorizationLockNotFound,
+    /// Only the creating role may release an active authorization lock
+    AuthorizationLockNotOwner,
+    /// The operation is blocked while an authorization lock is active
+    AuthorizationLockActive,
+    /// The transaction would spend a locked asset account below its reserved
+    /// amount, or change its token account authority, delegate, or state
+    AuthorizationLockViolated,
+    /// A role may not set or change its own maximum lock duration
+    AuthorizationLockDurationSelfUpdate,
 }
 
 /// Implements conversion from SwigError to ProgramError.
