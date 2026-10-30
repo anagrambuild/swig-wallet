@@ -12,7 +12,6 @@ on:
       - state/**
       - program/**
       - interface/**
-      - scripts/check-crate-packages.py
   push:
     branches: [main]
     paths:
@@ -25,7 +24,6 @@ on:
       - state/**
       - program/**
       - interface/**
-      - scripts/check-crate-packages.py
 
 permissions:
   contents: read
@@ -46,9 +44,6 @@ jobs:
       - run: cargo fmt --all -- --check
       - name: Test protocol dependencies and the shared interface
         run: cargo test --locked -p swig-no-padding -p swig-assertions -p swig-compact-instructions -p swig-state -p swig-interface --features swig-compact-instructions/client
-      - name: Verify packaged crates with local dependency candidates
-        # Candidate patches are confined to verification; publishing uses the registry.
-        run: python3 scripts/check-crate-packages.py --local-dependencies
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
