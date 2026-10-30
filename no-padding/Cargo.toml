@@ -1,5 +1,5 @@
 [package]
-name = "no-padding"
+name = "swig-no-padding"
 version.workspace = true
 edition = "2021"
 license = "AGPL-3.0"

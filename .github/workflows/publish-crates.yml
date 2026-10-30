@@ -39,14 +39,14 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
       - name: Test the four publishable protocol dependencies
-        run: cargo test --locked -p no-padding -p swig-assertions -p swig-compact-instructions -p swig-state --features swig-compact-instructions/client
+        run: cargo test --locked -p swig-no-padding -p swig-assertions -p swig-compact-instructions -p swig-state --features swig-compact-instructions/client
       - name: Verify packaged crates with local dependency candidates
         # Local replacements let the first release be checked before names exist
         # on crates.io. They are not used by the publishing job.
         run: |
-          for crate in no-padding swig-assertions swig-compact-instructions swig-state; do
+          for crate in swig-no-padding swig-assertions swig-compact-instructions swig-state; do
             cargo package --locked -p "$crate" \
-              --config "patch.crates-io.no-padding.path=\"$GITHUB_WORKSPACE/no-padding\"" \
+              --config "patch.crates-io.swig-no-padding.path=\"$GITHUB_WORKSPACE/no-padding\"" \
               --config "patch.crates-io.swig-assertions.path=\"$GITHUB_WORKSPACE/assertions\""
           done
 
@@ -70,7 +70,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
-          for crate in no-padding swig-assertions swig-compact-instructions swig-state; do
+          for crate in swig-no-padding swig-assertions swig-compact-instructions swig-state; do
             if cargo info "$crate@$version" --registry crates-io >/dev/null 2>&1; then
               echo "$crate@$version is already published"
             else
