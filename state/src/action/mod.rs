@@ -11,7 +11,6 @@ pub mod all;
 pub mod all_but_manage_authority;
 pub mod close_swig_authority;
 pub mod manage_authority;
-pub mod manage_authorization_locks;
 pub mod program;
 pub mod program_all;
 pub mod program_curated;
@@ -34,7 +33,6 @@ use all::All;
 use all_but_manage_authority::AllButManageAuthority;
 use close_swig_authority::CloseSwigAuthority;
 use manage_authority::ManageAuthority;
-use manage_authorization_locks::ManageAuthorizationLocks;
 use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 use program::Program;
@@ -191,8 +189,6 @@ pub enum Permission {
     SubAccountV2Withdraw = 25,
     /// Scoped permission to toggle a V2 sub-account for a single `subacc_id`
     SubAccountV2Toggle = 26,
-    /// Permission to create bounded authorization locks and release own locks
-    ManageAuthorizationLocks = 27,
 }
 
 impl TryFrom<u16> for Permission {
@@ -202,7 +198,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=27 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=26 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -251,7 +247,6 @@ impl Permission {
             Permission::SubAccountV2Sign => SubAccountV2Sign::REPEATABLE,
             Permission::SubAccountV2Withdraw => SubAccountV2Withdraw::REPEATABLE,
             Permission::SubAccountV2Toggle => SubAccountV2Toggle::REPEATABLE,
-            Permission::ManageAuthorizationLocks => ManageAuthorizationLocks::REPEATABLE,
         }
     }
 }
@@ -337,7 +332,6 @@ impl ActionLoader {
             Permission::SubAccountV2Sign => SubAccountV2Sign::valid_layout(data),
             Permission::SubAccountV2Withdraw => SubAccountV2Withdraw::valid_layout(data),
             Permission::SubAccountV2Toggle => SubAccountV2Toggle::valid_layout(data),
-            Permission::ManageAuthorizationLocks => ManageAuthorizationLocks::valid_layout(data),
             _ => Ok(false),
         }
     }

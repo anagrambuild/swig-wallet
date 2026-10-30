@@ -160,7 +160,7 @@ impl ReservationV1 {
                 .try_into()
                 .map_err(|_| ReservationError::InvalidPackage)?,
         );
-        let mut data = (crate::instruction_data::SwigInstruction::CreateReservedV1 as u16)
+        let mut data = (swig::instruction::SwigInstruction::CreateReservedV1 as u16)
             .to_le_bytes()
             .to_vec();
         data.extend_from_slice(&self.package_bytes);

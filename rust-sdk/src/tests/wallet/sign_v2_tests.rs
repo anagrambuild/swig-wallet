@@ -105,10 +105,7 @@ fn should_sign_v2_transfer_between_swig_accounts() {
     let other_auth = Keypair::new();
     let mut other_litesvm = LiteSVM::new();
     other_litesvm
-        .add_program_from_file(
-            Pubkey::new_from_array(swig_interface::PROGRAM_ID),
-            "../target/deploy/swig.so",
-        )
+        .add_program_from_file(Pubkey::new_from_array(swig::ID), "../target/deploy/swig.so")
         .unwrap();
     other_litesvm
         .airdrop(&other_auth.pubkey(), 10_000_000_000)
