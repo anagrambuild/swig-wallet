@@ -6,7 +6,11 @@ use solana_system_interface::instruction as system_instruction;
 use swig_state::tail::authorization_locks::NATIVE_SOL_MINT;
 
 use super::*;
-use crate::{client_role::Ed25519ClientRole, types::UpdateAuthorityData};
+use crate::{
+    client_role::Ed25519ClientRole,
+    tests::common::{mint_to, setup_mint},
+    types::UpdateAuthorityData,
+};
 
 #[test_log::test]
 fn should_lock_enforce_and_release_sol_through_wallet() {
@@ -115,4 +119,56 @@ fn should_round_trip_manage_authorization_locks_permission() {
         )
         .unwrap();
     assert_eq!(wallet.get_authorization_locks().unwrap()[0].role_id, 1);
+}
+
+#[test_log::test]
+fn should_lock_sol_and_tokens_through_convenience_helpers() {
+    let (mut litesvm, main_authority) = setup_test_environment();
+    let mint = setup_mint(&mut litesvm, &main_authority).unwrap();
+    let mut wallet = create_test_wallet(litesvm, &main_authority);
+    wallet
+        .update_authority(
+            0,
+            UpdateAuthorityData::AddActions(vec![Permission::ManageAuthorizationLocks {
+                max_duration_slots: 10_000,
+            }]),
+        )
+        .unwrap();
+    let wallet_address = wallet.get_swig_wallet_address().unwrap();
+    wallet
+        .litesvm()
+        .airdrop(&wallet_address, 2 * LAMPORTS_PER_SOL)
+        .unwrap();
+    let token_account = wallet.create_ata(&mint).unwrap();
+    mint_to(
+        wallet.litesvm(),
+        &mint,
+        &main_authority,
+        &token_account,
+        1_000,
+    )
+    .unwrap();
+    let slot = wallet.get_current_slot().unwrap();
+
+    wallet
+        .add_sol_authorization_lock(LAMPORTS_PER_SOL, slot + 10)
+        .unwrap();
+    wallet
+        .add_token_authorization_lock(&mint, 600, slot + 1_000)
+        .unwrap();
+
+    let locks = wallet.get_authorization_locks().unwrap();
+    assert_eq!(locks.len(), 2);
+    assert!(locks[0].is_native_sol());
+    assert_eq!(locks[0].asset_account, wallet_address.to_bytes());
+    assert_eq!(locks[1].mint, mint.to_bytes());
+    assert_eq!(locks[1].asset_account, token_account.to_bytes());
+    assert_eq!(locks[1].amount, 600);
+
+    // The SOL lock expires first; expired locks stay stored until pruned.
+    wallet.litesvm().warp_to_slot(slot + 10);
+    let active = wallet.get_active_authorization_locks().unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].lock_id, locks[1].lock_id);
+    assert_eq!(wallet.get_authorization_locks().unwrap().len(), 2);
 }

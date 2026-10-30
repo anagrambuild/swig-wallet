@@ -160,6 +160,17 @@ pub fn parse_permission_from_json(permission_json: &Value) -> Result<Permission>
         },
         Some("allButManageAuthority") => Ok(Permission::AllButManageAuthority),
         Some("manageAuthority") => Ok(Permission::ManageAuthority),
+        Some("manageAuthorizationLocks") => {
+            let max_duration_slots =
+                permission_json["maxDurationSlots"]
+                    .as_u64()
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "maxDurationSlots is required for manageAuthorizationLocks permission"
+                        )
+                    })?;
+            Ok(Permission::ManageAuthorizationLocks { max_duration_slots })
+        },
         Some("program") => {
             let program_id = permission_json["programId"]
                 .as_str()
@@ -582,6 +593,114 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
             println!("Successfully withdrew {} lamports from sub-account", amount);
             Ok(())
         },
+        Command::AddAuthorizationLock {
+            authority_type,
+            authority,
+            authority_kp,
+            fee_payer,
+            id,
+            amount,
+            mint,
+            expiry_slot,
+            duration_slots,
+        } => {
+            let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
+
+            create_swig_instance(
+                ctx,
+                swig_id,
+                parse_authority_type(
+                    authority_type
+                        .unwrap_or_else(|| ctx.config.default_authority.authority_type.clone()),
+                )?,
+                authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
+                authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+                fee_payer,
+            )?;
+
+            let wallet = ctx.wallet.as_mut().unwrap();
+            let expiry_slot = match (expiry_slot, duration_slots) {
+                (Some(expiry_slot), _) => expiry_slot,
+                (None, Some(duration)) => wallet.get_current_slot()? + duration,
+                (None, None) => return Err(anyhow!("Provide --expiry-slot or --duration-slots")),
+            };
+            let signature = match mint {
+                Some(mint) => wallet.add_token_authorization_lock(
+                    &Pubkey::from_str(&mint)?,
+                    amount,
+                    expiry_slot,
+                )?,
+                None => wallet.add_sol_authorization_lock(amount, expiry_slot)?,
+            };
+            let role_id = wallet.get_current_role_id()?;
+            let lock_id = wallet
+                .get_authorization_locks()?
+                .iter()
+                .filter(|lock| lock.role_id == role_id && lock.expiry_slot == expiry_slot)
+                .map(|lock| lock.lock_id)
+                .max();
+            println!("Authorization lock created!");
+            if let Some(lock_id) = lock_id {
+                println!("Lock ID: {}", lock_id);
+            }
+            println!("Expires at slot: {}", expiry_slot);
+            println!("Signature: {}", signature);
+            Ok(())
+        },
+        Command::RemoveAuthorizationLock {
+            authority_type,
+            authority,
+            authority_kp,
+            fee_payer,
+            id,
+            lock_id,
+        } => {
+            let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
+
+            create_swig_instance(
+                ctx,
+                swig_id,
+                parse_authority_type(
+                    authority_type
+                        .unwrap_or_else(|| ctx.config.default_authority.authority_type.clone()),
+                )?,
+                authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
+                authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+                fee_payer,
+            )?;
+
+            let signature = ctx
+                .wallet
+                .as_mut()
+                .unwrap()
+                .remove_authorization_lock(lock_id)?;
+            println!("Authorization lock {} removed!", lock_id);
+            println!("Signature: {}", signature);
+            Ok(())
+        },
+        Command::ListAuthorizationLocks {
+            authority_type,
+            authority,
+            authority_kp,
+            id,
+            all,
+        } => {
+            let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
+
+            create_swig_instance(
+                ctx,
+                swig_id,
+                parse_authority_type(
+                    authority_type
+                        .unwrap_or_else(|| ctx.config.default_authority.authority_type.clone()),
+                )?,
+                authority.unwrap_or_else(|| ctx.config.default_authority.authority.clone()),
+                authority_kp.unwrap_or_else(|| ctx.config.default_authority.authority_kp.clone()),
+                None,
+            )?;
+
+            print_authorization_locks(ctx.wallet.as_ref().unwrap(), all)
+        },
         Command::Generate {
             authority_type,
             output_format,
@@ -877,6 +996,11 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
                             "All" => Ok(Permission::All),
                             "AllButManageAuthority" => Ok(Permission::AllButManageAuthority),
                             "ManageAuthority" => Ok(Permission::ManageAuthority),
+                            "ManageAuthorizationLocks" => {
+                                Ok(Permission::ManageAuthorizationLocks {
+                                    max_duration_slots: 0,
+                                })
+                            },
                             "Sol" => Ok(Permission::Sol {
                                 amount: 0,
                                 recurring: None,
@@ -950,6 +1074,43 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
             Ok(())
         },
     }
+}
+
+/// Prints the wallet's authorization locks; expired locks only when `all`.
+pub fn print_authorization_locks(wallet: &SwigWallet, all: bool) -> Result<()> {
+    let slot = wallet.get_current_slot()?;
+    let locks: Vec<_> = wallet
+        .get_authorization_locks()?
+        .into_iter()
+        .filter(|lock| all || lock.is_active(slot))
+        .collect();
+    if locks.is_empty() {
+        println!("No authorization locks.");
+        return Ok(());
+    }
+    println!("Current slot: {}", slot);
+    for lock in locks {
+        let asset = if lock.is_native_sol() {
+            format!("{} lamports (SOL)", lock.amount)
+        } else {
+            format!(
+                "{} of mint {} in {}",
+                lock.amount,
+                Pubkey::new_from_array(lock.mint),
+                Pubkey::new_from_array(lock.asset_account)
+            )
+        };
+        let status = if lock.is_active(slot) {
+            "active"
+        } else {
+            "expired"
+        };
+        println!(
+            "Lock {}: {} | role {} | expires at slot {} ({})",
+            lock.lock_id, asset, lock.role_id, lock.expiry_slot, status
+        );
+    }
+    Ok(())
 }
 
 pub fn parse_authority_type(authority_type: String) -> Result<AuthorityType> {
