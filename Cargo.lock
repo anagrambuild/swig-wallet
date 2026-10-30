@@ -6183,17 +6183,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "shank"
-version = "0.4.2"
-source = "git+https://github.com/anagrambuild/shank.git#d4f046b22b87c896fdb77e55256d74dad6a13a68"
-dependencies = [
- "shank_macro",
-]
-
-[[package]]
 name = "shank_idl"
 version = "0.4.2"
-source = "git+https://github.com/anagrambuild/shank.git#d4f046b22b87c896fdb77e55256d74dad6a13a68"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b2d15f5074691d1cd7987376ffbb85bd3fd3a5a5bdd68284e0c120968cdd554"
 dependencies = [
  "anyhow",
  "cargo_toml",
@@ -6205,37 +6198,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "shank_macro"
-version = "0.4.2"
-source = "git+https://github.com/anagrambuild/shank.git#d4f046b22b87c896fdb77e55256d74dad6a13a68"
-dependencies = [
- "proc-macro2 1.0.106",
- "quote 1.0.45",
- "shank_macro_impl",
- "shank_render",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "shank_macro_impl"
 version = "0.4.2"
-source = "git+https://github.com/anagrambuild/shank.git#d4f046b22b87c896fdb77e55256d74dad6a13a68"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93d0593f48acb0a722906416b1f6b8926f6571eb9af16d566a7c65427f269f50"
 dependencies = [
  "anyhow",
  "proc-macro2 1.0.106",
  "quote 1.0.45",
  "serde",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "shank_render"
-version = "0.4.2"
-source = "git+https://github.com/anagrambuild/shank.git#d4f046b22b87c896fdb77e55256d74dad6a13a68"
-dependencies = [
- "proc-macro2 1.0.106",
- "quote 1.0.45",
- "shank_macro_impl",
 ]
 
 [[package]]
@@ -10223,7 +10195,6 @@ dependencies = [
  "pinocchio-system",
  "pinocchio-token",
  "rand 0.9.5",
- "shank",
  "shank_idl",
  "solana-client",
  "solana-clock",
@@ -10242,6 +10213,7 @@ dependencies = [
  "swig-compact-instructions",
  "swig-interface",
  "swig-no-padding",
+ "swig-shank-macro",
  "swig-state",
  "test-log",
 ]
@@ -10354,6 +10326,28 @@ dependencies = [
  "swig-state",
  "test-log",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "swig-shank-macro"
+version = "0.4.2"
+source = "git+https://github.com/anagrambuild/shank.git?rev=87bd89c69f8ade77535dca18d838389b1140a9f7#87bd89c69f8ade77535dca18d838389b1140a9f7"
+dependencies = [
+ "proc-macro2 1.0.106",
+ "quote 1.0.45",
+ "shank_macro_impl",
+ "swig-shank-render",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "swig-shank-render"
+version = "0.4.2"
+source = "git+https://github.com/anagrambuild/shank.git?rev=87bd89c69f8ade77535dca18d838389b1140a9f7#87bd89c69f8ade77535dca18d838389b1140a9f7"
+dependencies = [
+ "proc-macro2 1.0.106",
+ "quote 1.0.45",
+ "shank_macro_impl",
 ]
 
 [[package]]
