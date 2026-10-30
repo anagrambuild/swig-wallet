@@ -9,7 +9,7 @@ use pinocchio::{
     memory::sol_memset,
     program_error::ProgramError,
     pubkey::Pubkey,
-    sysvars::{clock::Clock, rent::Rent, Sysvar},
+    sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
 use swig_assertions::{check_bytes_match, check_self_owned};
@@ -152,29 +152,19 @@ pub fn close_swig_v1(
     }
 
     // Get and authenticate role
-    let role_opt = Swig::get_mut_role(close_ix.args.role_id, swig_roles)?;
+
+    let role_opt = swig_state::authority::counter::authenticate_role(
+        swig_roles,
+        close_ix.args.role_id,
+        accounts,
+        close_ix.authority_payload,
+        close_ix.args.into_bytes()?,
+        false,
+    )?;
     if role_opt.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
-    let role = role_opt.unwrap();
-
-    // Authenticate
-    let current_slot = Clock::get()?.slot;
-    if role.authority.session_based() {
-        role.authority.authenticate_session(
-            accounts,
-            close_ix.authority_payload,
-            close_ix.args.into_bytes()?,
-            current_slot,
-        )?;
-    } else {
-        role.authority.authenticate(
-            accounts,
-            close_ix.authority_payload,
-            close_ix.args.into_bytes()?,
-            current_slot,
-        )?;
-    }
+    let (role, _) = role_opt.unwrap();
 
     // Check permissions: must have All, ManageAuthority, or CloseSwigAuthority
     let has_all = role.get_action::<All>(&[])?.is_some();
@@ -197,7 +187,7 @@ pub fn close_swig_v1(
 
     // Check that swig account only has rent-exempt minimum (no excess SOL balance)
     let rent = Rent::get()?;
-    let swig_rent_exempt = rent.minimum_balance(swig_data_len);
+    let swig_rent_exempt = crate::util::rent::minimum_balance(&rent, swig_data_len);
     let swig_lamports = ctx.accounts.swig.lamports();
     if swig_lamports > swig_rent_exempt {
         return Err(SwigError::WalletNotEmpty.into());
@@ -206,7 +196,7 @@ pub fn close_swig_v1(
     // Check that swig_wallet_address only has rent-exempt minimum (no excess SOL
     // balance) swig_wallet_address is a 0-size system account, so rent exempt
     // is for 0 bytes
-    let wallet_rent_exempt = rent.minimum_balance(0);
+    let wallet_rent_exempt = crate::util::rent::minimum_balance(&rent, 0);
     let wallet_lamports = ctx.accounts.swig_wallet_address.lamports();
     if wallet_lamports > wallet_rent_exempt {
         return Err(SwigError::WalletNotEmpty.into());
@@ -225,7 +215,7 @@ pub fn close_swig_v1(
     }
 
     // Calculate rent for closed account (1 byte for discriminator)
-    let closed_account_rent = rent.minimum_balance(1);
+    let closed_account_rent = crate::util::rent::minimum_balance(&rent, 1);
 
     // Transfer excess lamports to destination, keeping rent for 1 byte
     let lamports_to_transfer = swig_lamports.saturating_sub(closed_account_rent);

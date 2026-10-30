@@ -45,6 +45,13 @@ pub(crate) fn config_signer(
     Ok(seeds.map(Seed::from))
 }
 
+/// Signing asset accounts must remain usable by the System program.
+pub(crate) fn assert_system_account_invariants(account: &AccountInfo) -> ProgramResult {
+    swig_assertions::check_system_owner(account, SwigError::WalletAddressInvariantViolation)?;
+    swig_assertions::check_zero_data(account, SwigError::WalletAddressInvariantViolation)?;
+    Ok(())
+}
+
 /// Reject grants targeting root in a non-root caller's add/update payload.
 /// Instruction action boundaries are normalized when stored, so scan by header
 /// lengths here. Stored actions still use the stricter ActionLoader decoder.
@@ -302,24 +309,23 @@ pub fn hash_except(
     // Maximum possible segments: owner + one before each exclude range + one after
     // all ranges
     const MAX_SEGMENTS: usize = 17; // 1 for owner + 16 for data segments
-    let mut segments: [&[u8]; MAX_SEGMENTS] = [&[]; MAX_SEGMENTS];
-    let mut segment_count = 0;
+    let mut segments = [const { MaybeUninit::<&[u8]>::uninit() }; MAX_SEGMENTS];
 
     // Always include the owner as the first segment
-    segments[0] = owner.as_ref();
-    segment_count = 1;
+    segments[0].write(owner.as_ref());
+    let mut segment_count = 1;
 
     let mut position = 0;
 
     // If no exclude ranges, hash the entire data after owner
     if exclude_ranges.is_empty() {
-        segments[segment_count] = data;
+        segments[segment_count].write(data);
         segment_count += 1;
     } else {
         for range in exclude_ranges {
             // Add bytes before this exclusion range
             if position < range.start {
-                segments[segment_count] = &data[position..range.start];
+                segments[segment_count].write(&data[position..range.start]);
                 segment_count += 1;
             }
             // Skip to end of exclusion range
@@ -328,7 +334,7 @@ pub fn hash_except(
 
         // Add any remaining bytes after the last exclusion range
         if position < data.len() {
-            segments[segment_count] = &data[position..];
+            segments[segment_count].write(&data[position..]);
             segment_count += 1;
         }
     }
@@ -337,6 +343,9 @@ pub fn hash_except(
 
     #[cfg(target_os = "solana")]
     unsafe {
+        // Every entry below segment_count was written before advancing it.
+        // MaybeUninit has the slice reference layout and alignment. The syscall
+        // receives only this initialized prefix.
         let res = sol_sha256(
             segments.as_ptr() as *const u8,
             segment_count as u64,
@@ -346,6 +355,16 @@ pub fn hash_except(
 
     #[cfg(not(target_os = "solana"))]
     let res = 0;
+
+    // Host unit tests must exercise metadata changes as well as balance changes.
+    #[cfg(all(test, not(target_os = "solana")))]
+    {
+        // The prefix is fully initialized, as for the syscall above.
+        let initialized_segments = unsafe {
+            core::slice::from_raw_parts(segments.as_ptr().cast::<&[u8]>(), segment_count)
+        };
+        data_payload_hash = solana_sdk::hash::hashv(initialized_segments).to_bytes();
+    }
 
     data_payload_hash
 }

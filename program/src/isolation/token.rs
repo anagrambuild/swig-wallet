@@ -9,7 +9,10 @@ use pinocchio::{
 use pinocchio_pubkey::from_str;
 
 use super::snapshot::{IsolationGuard, SignerSnapshot, TokenSnapshot};
-use crate::{error::SwigError, util::token_integrity::hash_with_transfer_fee};
+use crate::{
+    actions::close_token_account_v1::TOKEN_2022_NATIVE_MINT, error::SwigError,
+    util::token_integrity::hash_with_transfer_fee,
+};
 
 pub(super) const TOKEN_ACCOUNT_BASE_DATA_LEN: usize = 165;
 pub(super) const TOKEN_MINT_BASE_LEN: usize = 82;
@@ -152,9 +155,15 @@ impl IsolationGuard<'_> {
             }
             let data = unsafe { account.borrow_data_unchecked() };
 
-            // Preserve identity and authorities. The WSOL reserve has its own rule below.
+            // Preserve identity and authorities. The wrapped-SOL reserve has its
+            // own rule below. Each token program keeps the reserve in the same
+            // base-layout slot behind its own native mint.
             let rest = &before.rest;
-            let is_wsol = before.is_legacy && rest[..32] == WSOL_MINT;
+            let is_wsol = if before.is_legacy {
+                rest[..32] == *WSOL_MINT.as_slice()
+            } else {
+                rest[..32] == *TOKEN_2022_NATIVE_MINT.as_slice()
+            };
             let metadata_matches = if is_wsol {
                 data[72..TOKEN_NATIVE_RESERVE_RANGE.start]
                     == rest[64..TOKEN_REST_RESERVE_RANGE.start]
@@ -196,10 +205,12 @@ impl IsolationGuard<'_> {
     }
 }
 
-/// Permit canonical SyncNative reserve refreshes without reducing total WSOL value.
+/// Permit canonical SyncNative reserve refreshes without reducing total
+/// wrapped-SOL value. Token-2022 native accounts may carry trailing extension
+/// data, so only the base prefix is validated here.
 #[inline(never)]
 fn validate_wsol_value(before: &TokenSnapshot, data: &[u8], amount: u64) -> ProgramResult {
-    if data.len() != TOKEN_ACCOUNT_BASE_DATA_LEN
+    if data.len() < TOKEN_ACCOUNT_BASE_DATA_LEN
         || data[TOKEN_STATE_OFF] != 1
         || data[TOKEN_NATIVE_TAG_RANGE] != [1, 0, 0, 0]
     {
@@ -216,7 +227,7 @@ fn validate_wsol_value(before: &TokenSnapshot, data: &[u8], amount: u64) -> Prog
             .map_err(|_| SwigError::PermissionDeniedAuthorityExternalAssetChange)?,
     );
     if reserve != previous_reserve
-        && reserve != Rent::get()?.minimum_balance(TOKEN_ACCOUNT_BASE_DATA_LEN)
+        && reserve != crate::util::rent::minimum_balance(&Rent::get()?, data.len())
     {
         return Err(SwigError::PermissionDeniedAuthorityExternalAssetChange.into());
     }

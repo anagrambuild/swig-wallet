@@ -3,15 +3,9 @@
 /// allow authorities to authenticate without providing full credentials each
 /// time.
 use no_padding::NoPadding;
-use pinocchio::{
-    account_info::AccountInfo,
-    msg,
-    program_error::ProgramError,
-    sysvars::{clock::Clock, Sysvar},
-    ProgramResult,
-};
+use pinocchio::{account_info::AccountInfo, msg, program_error::ProgramError, ProgramResult};
 use swig_assertions::check_self_owned;
-use swig_state::{swig::Swig, Discriminator, IntoBytes, SwigAuthenticateError, Transmutable};
+use swig_state::{swig::Swig, Discriminator, IntoBytes, Transmutable};
 
 use crate::{
     error::SwigError,
@@ -138,22 +132,16 @@ pub fn create_session_v1(
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
     let swig_roles = Swig::split_parts_mut(swig_account_data)?.roles;
-    let role = Swig::get_mut_role(create_session_v1.args.role_id, swig_roles)?;
-    if role.is_none() {
-        return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-    }
-    let role = role.unwrap();
-    let clock = Clock::get()?;
-    let slot = clock.slot;
-    if !role.authority.session_based() {
-        return Err(SwigAuthenticateError::AuthorityDoesNotSupportSessionBasedAuth.into());
-    }
-    role.authority.authenticate(
+
+    let (role, slot) = swig_state::authority::counter::authenticate_role(
+        swig_roles,
+        create_session_v1.args.role_id,
         account_infos,
         create_session_v1.authority_payload,
         create_session_v1.data_payload,
-        slot,
-    )?;
+        true,
+    )?
+    .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
 
     role.authority.start_session(
         create_session_v1.args.session_key,
