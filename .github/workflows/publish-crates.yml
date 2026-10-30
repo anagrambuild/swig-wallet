@@ -1,0 +1,79 @@
+name: Publish Rust Protocol Crates
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/publish-crates.yml
+      - Cargo.toml
+      - Cargo.lock
+      - no-padding/**
+      - assertions/**
+      - instructions/**
+      - state/**
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-crates.yml
+      - Cargo.toml
+      - Cargo.lock
+      - no-padding/**
+      - assertions/**
+      - instructions/**
+      - state/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.1
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+      - name: Test the four publishable protocol dependencies
+        run: cargo test --locked -p no-padding -p swig-assertions -p swig-compact-instructions -p swig-state --features swig-compact-instructions/client
+      - name: Verify packaged crates with local dependency candidates
+        # Local replacements let the first release be checked before names exist
+        # on crates.io. They are not used by the publishing job.
+        run: |
+          for crate in no-padding swig-assertions swig-compact-instructions swig-state; do
+            cargo package --locked -p "$crate" \
+              --config "patch.crates-io.no-padding.path=\"$GITHUB_WORKSPACE/no-padding\"" \
+              --config "patch.crates-io.swig-assertions.path=\"$GITHUB_WORKSPACE/assertions\""
+          done
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.1
+      # New crate names need an initial owner-authenticated publish. Configure
+      # this workflow as trusted publisher for all four crates afterward.
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+      # New releases require a workspace version bump and matching dependency versions.
+      - name: Publish unpublished dependency versions in order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          for crate in no-padding swig-assertions swig-compact-instructions swig-state; do
+            if cargo info "$crate@$version" --registry crates-io >/dev/null 2>&1; then
+              echo "$crate@$version is already published"
+            else
+              cargo publish --locked -p "$crate"
+            fi
+          done
