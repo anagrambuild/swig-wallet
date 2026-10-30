@@ -21,7 +21,7 @@ swig-compact-instructions = { version = "=3.0.0", path = "../instructions" }
 swig-state = { version = "=3.0.0", path = "../state" }
 swig-assertions = { version = "=3.0.0", path = "../assertions" }
 static_assertions = "1.1.0"
-bs58 = "*"
+bs58 = "0.5.1"
 num_enum = "0.7.3"
 bytemuck = { version = "1.13.1", features = ["derive"] }
 no-padding = { package = "swig-no-padding", version = "=3.0.0", path = "../no-padding" }

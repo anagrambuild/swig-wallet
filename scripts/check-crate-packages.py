@@ -57,6 +57,7 @@ with tempfile.TemporaryDirectory(prefix="swig-crate-packages-") as directory:
                 for kind in ["dependencies", "build-dependencies"]:
                     for dependency in section.get(kind, {}).values():
                         assert "git" not in dependency and "path" not in dependency
+                        assert dependency.get("version") != "*", "crates.io rejects bare wildcard versions"
             if name in ["swig", "swig-interface"]:
                 assert prefix + "LICENSE.txt" in tar.getnames()
             if name == "swig-interface":
