@@ -380,16 +380,19 @@ pub enum SwigInstruction {
     ///
     /// Required accounts:
     /// 1. `[writable]` Swig wallet account
-    /// 2. `[writable, signer]` Payer for the lock's rent
-    /// 3. System program account
-    /// 4. Swig wallet address PDA
+    /// 2. Swig wallet address PDA
+    /// 3. `[writable, signer]` Payer for the lock's rent
+    /// 4. System program account
     /// 5. Asset account: the swig wallet address for native SOL, or a token
     ///    account owned by it
     /// 6. Token mint (trailing; required for Token-2022 asset accounts)
+    ///
+    /// Authority accounts follow. The config and wallet address come first so
+    /// ProgramExec authorities can bind to them.
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
-    #[account(1, writable, signer, name="payer", desc="the payer")]
-    #[account(2, name="system_program", desc="the system program")]
-    #[account(3, name="swig_wallet_address", desc="the swig wallet address")]
+    #[account(1, name="swig_wallet_address", desc="the swig wallet address")]
+    #[account(2, writable, signer, name="payer", desc="the payer")]
+    #[account(3, name="system_program", desc="the system program")]
     #[account(4, name="asset_account", desc="the wallet address or token account to lock")]
     AddAuthorizationLockV1 = 25,
 
@@ -400,12 +403,17 @@ pub enum SwigInstruction {
     ///
     /// Required accounts:
     /// 1. `[writable]` Swig wallet account
-    /// 2. `[writable, signer]` Payer, and the refund destination without a
+    /// 2. Swig wallet address PDA
+    /// 3. `[writable, signer]` Payer, and the refund destination without a
     ///    rent claimer
-    /// 3. System program account
-    /// 4. `[writable]` Configured rent claimer (trailing; required when one is set)
+    /// 4. System program account
+    /// 5. `[writable]` Configured rent claimer (trailing; required when one is set)
+    ///
+    /// Authority accounts follow. The config and wallet address come first so
+    /// ProgramExec authorities can bind to them.
     #[account(0, writable, name="swig", desc="the swig smart wallet")]
-    #[account(1, writable, signer, name="payer", desc="the payer")]
-    #[account(2, name="system_program", desc="the system program")]
+    #[account(1, name="swig_wallet_address", desc="the swig wallet address")]
+    #[account(2, writable, signer, name="payer", desc="the payer")]
+    #[account(3, name="system_program", desc="the system program")]
     RemoveAuthorizationLockV1 = 26,
 }

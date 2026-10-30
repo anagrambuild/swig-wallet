@@ -384,10 +384,16 @@ impl SwigInstructionBuilder {
         rent_claimer: Option<Pubkey>,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError> {
+        let swig_wallet_address = Pubkey::find_program_address(
+            &swig_wallet_address_seeds(self.swig_account.as_ref()),
+            &swig_interface::program_id(),
+        )
+        .0;
         self.client_role.remove_authorization_lock_instruction(
             self.swig_account,
             self.payer,
             self.role_id,
+            swig_wallet_address,
             lock_id,
             rent_claimer,
             current_slot,

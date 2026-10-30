@@ -20,8 +20,8 @@ use solana_sdk::{
 use solana_system_interface::instruction as system_instruction;
 use swig_interface::{
     swig::error::SwigError, AddAuthorizationLockV1Instruction, AuthorityConfig, ClientAction,
-    CloseSwigV1Instruction, CloseTokenAccountV1Instruction, RemoveAuthorizationLockV1Instruction,
-    ReplaceAuthorityInstruction, SignV2Instruction,
+    CloseSwigV1Instruction, CloseTokenAccountV1Instruction, CreateSessionInstruction,
+    RemoveAuthorizationLockV1Instruction, ReplaceAuthorityInstruction, SignV2Instruction,
 };
 use swig_state::{
     action::{
@@ -32,13 +32,16 @@ use swig_state::{
         token_limit::TokenLimit, token_recurring_destination_limit::TokenRecurringDestinationLimit,
         token_recurring_limit::TokenRecurringLimit,
     },
-    authority::AuthorityType,
+    authority::{
+        programexec::{session::CreateProgramExecSessionAuthority, ProgramExecAuthority},
+        AuthorityType,
+    },
     swig::{swig_account_seeds, swig_wallet_address_seeds, Swig},
     tail::{
         authorization_locks::{self, AuthorizationLock, LOCK_LEN, MAX_AUTHORIZATION_LOCKS},
         rent_claimer,
     },
-    SwigAuthenticateError, SwigStateError,
+    IntoBytes, SwigAuthenticateError, SwigStateError,
 };
 
 const ROOT_ROLE: u32 = 0;
@@ -211,6 +214,7 @@ impl Wallet {
             self.swig,
             self.context.default_payer.pubkey(),
             signer.pubkey(),
+            self.wallet,
             role_id,
             lock_id,
             self.rent_claimer(),
@@ -1256,6 +1260,7 @@ fn secp256k1_role_can_create_and_release_locks() {
         make_sign(),
         slot,
         2,
+        w.wallet,
         role_id,
         0,
         None,
@@ -1343,9 +1348,9 @@ fn removal_refunds_the_configured_rent_claimer() {
 
     // Without the claimer account the refund destination is missing.
     let mut ix = w.remove_lock_ix(&root, ROOT_ROLE, 0);
-    ix.accounts.remove(3);
+    ix.accounts.remove(4);
     ix.data.pop();
-    ix.data.push(3);
+    ix.data.push(4);
     assert_swig_error(
         w.send(&[ix], &[&root]),
         SwigError::InvalidRentClaimerDestination,
@@ -2341,4 +2346,342 @@ fn spend_capacity_composes_general_and_destination_pairs() {
         w.add_sol_lock(&card, CARD_ROLE, 2 * LAMPORTS_PER_SOL, expiry),
         SwigError::AuthorizationLockExceedsSpendLimit,
     );
+}
+
+// ---------------------------------------------------------------------------
+// ProgramExec authorities
+// ---------------------------------------------------------------------------
+
+const TEST_PROGRAM_ID: Pubkey =
+    Pubkey::from_str_const("BXAu5ZWHnGun2XZjUZ9nqwiZ5dNVmofPGYdMC4rx4qLV");
+const TEST_PROGRAM_PATH: &str = "../target/deploy/test_program_authority.so";
+const TEST_PROGRAM_DISCRIMINATOR: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+const PROGRAM_EXEC_ROLE: u32 = 2;
+
+fn program_exec_lock_actions() -> Vec<ClientAction> {
+    vec![
+        ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(MAX_DURATION)),
+        ClientAction::SolLimit(SolLimit {
+            amount: LAMPORTS_PER_SOL,
+        }),
+    ]
+}
+
+impl Wallet {
+    /// Deploys the test program, creates its (succeeding) state account and
+    /// returns it.
+    fn deploy_test_program(&mut self) -> Pubkey {
+        let program = std::fs::read(TEST_PROGRAM_PATH)
+            .expect("test program missing; run `cargo build-sbf` first");
+        self.context.svm.add_program(TEST_PROGRAM_ID, &program);
+        let state = Keypair::new().pubkey();
+        self.context
+            .svm
+            .set_account(
+                state,
+                solana_sdk::account::Account {
+                    lamports: 1_000_000,
+                    data: vec![0],
+                    owner: TEST_PROGRAM_ID,
+                    executable: false,
+                    rent_epoch: 0,
+                },
+            )
+            .unwrap();
+        state
+    }
+
+    /// Adds a ProgramExec role bound to the test program as role 2.
+    fn add_program_exec_role(&mut self, actions: Vec<ClientAction>) -> Pubkey {
+        let state = self.deploy_test_program();
+        let authority = ProgramExecAuthority::create_authority_data(
+            &TEST_PROGRAM_ID.to_bytes(),
+            &TEST_PROGRAM_DISCRIMINATOR,
+        );
+        let root = self.root.insecure_clone();
+        add_authority_with_ed25519_root(
+            &mut self.context,
+            &self.swig,
+            &root,
+            AuthorityConfig {
+                authority_type: AuthorityType::ProgramExec,
+                authority: &authority,
+            },
+            actions,
+        )
+        .unwrap();
+        state
+    }
+
+    /// The test program instruction a ProgramExec role authenticates against.
+    /// Its first two accounts are what the authority binds to.
+    fn program_exec_proof(&self, first: Pubkey, second: Pubkey, state: Pubkey) -> Instruction {
+        Instruction {
+            program_id: TEST_PROGRAM_ID,
+            accounts: vec![
+                solana_sdk::instruction::AccountMeta::new_readonly(first, false),
+                solana_sdk::instruction::AccountMeta::new_readonly(second, false),
+                solana_sdk::instruction::AccountMeta::new_readonly(state, false),
+                solana_sdk::instruction::AccountMeta::new_readonly(program_id(), false),
+            ],
+            data: TEST_PROGRAM_DISCRIMINATOR.to_vec(),
+        }
+    }
+
+    fn program_exec_add_lock_ixs(
+        &self,
+        proof: Instruction,
+        asset: Pubkey,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+    ) -> Vec<Instruction> {
+        AddAuthorizationLockV1Instruction::new_with_program_exec(
+            self.swig,
+            self.context.default_payer.pubkey(),
+            proof,
+            self.wallet,
+            asset,
+            PROGRAM_EXEC_ROLE,
+            mint,
+            amount,
+            expiry_slot,
+        )
+        .unwrap()
+    }
+
+    fn program_exec_remove_lock_ixs(&self, proof: Instruction, lock_id: u32) -> Vec<Instruction> {
+        RemoveAuthorizationLockV1Instruction::new_with_program_exec(
+            self.swig,
+            self.context.default_payer.pubkey(),
+            proof,
+            self.wallet,
+            PROGRAM_EXEC_ROLE,
+            lock_id,
+            self.rent_claimer(),
+        )
+        .unwrap()
+    }
+}
+
+#[test]
+fn program_exec_role_can_add_and_remove_locks() {
+    let mut w = Wallet::new(LAMPORTS_PER_SOL);
+    let mut actions = program_exec_lock_actions();
+    let (mint, ata) = w.token_setup(1_000);
+    actions.push(ClientAction::TokenLimit(TokenLimit {
+        token_mint: mint.to_bytes(),
+        current_amount: 1_000,
+    }));
+    let state = w.add_program_exec_role(actions);
+    let expiry = w.slot() + 100;
+    let proof = w.program_exec_proof(w.swig, w.wallet, state);
+
+    // SOL lock: the instructions sysvar follows the asset account.
+    let wallet = w.wallet;
+    let ixs = w.program_exec_add_lock_ixs(proof.clone(), wallet, NATIVE, 1_000, expiry);
+    ok(w.send(&ixs, &[]));
+    // Token lock: the instructions sysvar follows the trailing mint.
+    let ixs = w.program_exec_add_lock_ixs(proof.clone(), ata, mint.to_bytes(), 600, expiry);
+    ok(w.send(&ixs, &[]));
+
+    let (_, locks) = w.locks();
+    assert_eq!(locks.len(), 2);
+    assert!(locks.iter().all(|lock| lock.role_id == PROGRAM_EXEC_ROLE));
+    assert_eq!(locks[0].asset_account, w.wallet.to_bytes());
+    assert_eq!(locks[1].asset_account, ata.to_bytes());
+
+    // The lock binds every role, root included.
+    let root = w.root.insecure_clone();
+    let spendable = w.lockable_sol() - 1_000;
+    assert_swig_error(
+        w.spend_sol(&root, ROOT_ROLE, spendable + 1),
+        SwigError::AuthorizationLockViolated,
+    );
+
+    let ixs = w.program_exec_remove_lock_ixs(proof.clone(), 0);
+    ok(w.send(&ixs, &[]));
+    // Explicit target index: compute budget (0), proof (1), remove (2).
+    let ixs = RemoveAuthorizationLockV1Instruction::new_with_program_exec_ix_index(
+        w.swig,
+        w.context.default_payer.pubkey(),
+        proof,
+        w.wallet,
+        PROGRAM_EXEC_ROLE,
+        1,
+        None,
+        1,
+    )
+    .unwrap();
+    ok(w.send(&ixs, &[]));
+    assert!(w.locks().1.is_empty());
+}
+
+#[test]
+fn program_exec_session_role_can_add_and_remove_locks() {
+    let mut w = Wallet::new(LAMPORTS_PER_SOL);
+    let state = w.deploy_test_program();
+    let mut prefix = [0u8; 40];
+    prefix[..8].copy_from_slice(&TEST_PROGRAM_DISCRIMINATOR);
+    let session_authority = CreateProgramExecSessionAuthority::new(
+        TEST_PROGRAM_ID.to_bytes(),
+        8,
+        prefix,
+        [0; 32],
+        1_000,
+    );
+    let root = w.root.insecure_clone();
+    add_authority_with_ed25519_root(
+        &mut w.context,
+        &w.swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::ProgramExecSession,
+            authority: session_authority.into_bytes().unwrap(),
+        },
+        program_exec_lock_actions(),
+    )
+    .unwrap();
+
+    // The program proves itself once to open a session; CreateSessionV1's
+    // second account is the payer.
+    let session = Keypair::new();
+    let payer = w.context.default_payer.pubkey();
+    let create_session = CreateSessionInstruction::new_with_program_exec(
+        w.swig,
+        payer,
+        w.program_exec_proof(w.swig, payer, state),
+        PROGRAM_EXEC_ROLE,
+        500,
+        session.pubkey(),
+    )
+    .unwrap();
+    ok(w.send(&create_session, &[]));
+
+    // Session-based roles authorize locks with the session key.
+    let expiry = w.slot() + 100;
+    ok(w.add_sol_lock(&session, PROGRAM_EXEC_ROLE, 1_000, expiry));
+    let (_, locks) = w.locks();
+    assert_eq!(locks.len(), 1);
+    assert_eq!(locks[0].role_id, PROGRAM_EXEC_ROLE);
+
+    // A stranger cannot use the role.
+    assert!(w
+        .remove_lock(&Keypair::new(), PROGRAM_EXEC_ROLE, 0)
+        .is_err());
+    ok(w.remove_lock(&session, PROGRAM_EXEC_ROLE, 0));
+    assert!(w.locks().1.is_empty());
+
+    // Once the session expires the key no longer works.
+    let expiry = w.slot() + 1_000;
+    ok(w.add_sol_lock(&session, PROGRAM_EXEC_ROLE, 1_000, expiry));
+    let slot = w.slot();
+    w.warp(slot + 501);
+    assert_eq!(
+        custom_error(w.remove_lock(&session, PROGRAM_EXEC_ROLE, 1)),
+        SwigAuthenticateError::PermissionDeniedSessionExpired as u32
+    );
+}
+
+#[test]
+fn remove_requires_the_canonical_wallet_address() {
+    let mut w = Wallet::new(LAMPORTS_PER_SOL);
+    let root = w.root.insecure_clone();
+    let expiry = w.slot() + 100;
+    ok(w.add_sol_lock(&root, ROOT_ROLE, 1, expiry));
+
+    let mut ix = w.remove_lock_ix(&root, ROOT_ROLE, 0);
+    ix.accounts[1].pubkey = Keypair::new().pubkey();
+    assert_swig_error(w.send(&[ix], &[&root]), SwigError::InvalidSeedSwigAccount);
+
+    // Another swig's wallet address is rejected too.
+    let other_swig = Keypair::new().pubkey();
+    let other_wallet = Pubkey::find_program_address(
+        &swig_wallet_address_seeds(other_swig.as_ref()),
+        &program_id(),
+    )
+    .0;
+    let mut ix = w.remove_lock_ix(&root, ROOT_ROLE, 0);
+    ix.accounts[1].pubkey = other_wallet;
+    assert_swig_error(w.send(&[ix], &[&root]), SwigError::InvalidSeedSwigAccount);
+    assert_eq!(w.locks().1.len(), 1);
+
+    // A ProgramExec proof bound to a fake wallet address cannot pass either.
+    let state = w.add_program_exec_role(program_exec_lock_actions());
+    let expiry = w.slot() + 100;
+    let wallet = w.wallet;
+    let proof = w.program_exec_proof(w.swig, wallet, state);
+    let ixs = w.program_exec_add_lock_ixs(proof, wallet, NATIVE, 1, expiry);
+    ok(w.send(&ixs, &[]));
+    let fake = Keypair::new().pubkey();
+    let mut ixs = w.program_exec_remove_lock_ixs(w.program_exec_proof(w.swig, fake, state), 1);
+    ixs[1].accounts[1].pubkey = fake;
+    assert_swig_error(w.send(&ixs, &[]), SwigError::InvalidSeedSwigAccount);
+
+    ok(w.remove_lock(&root, ROOT_ROLE, 0));
+    let ixs = w.program_exec_remove_lock_ixs(w.program_exec_proof(w.swig, wallet, state), 1);
+    ok(w.send(&ixs, &[]));
+    assert!(w.locks().1.is_empty());
+}
+
+#[test]
+fn program_exec_lock_rejects_mismatched_proof_accounts() {
+    let mut w = Wallet::new(LAMPORTS_PER_SOL);
+    let state = w.add_program_exec_role(program_exec_lock_actions());
+    let expiry = w.slot() + 100;
+    let (swig, wallet) = (w.swig, w.wallet);
+    let payer = w.context.default_payer.pubkey();
+    let invalid_wallet =
+        SwigAuthenticateError::PermissionDeniedProgramExecInvalidWalletAccount as u32;
+    let invalid_config =
+        SwigAuthenticateError::PermissionDeniedProgramExecInvalidConfigAccount as u32;
+
+    // The pre-reorder binding (config, payer) no longer matches.
+    let ixs = w.program_exec_add_lock_ixs(
+        w.program_exec_proof(swig, payer, state),
+        wallet,
+        NATIVE,
+        1,
+        expiry,
+    );
+    assert_eq!(custom_error(w.send(&ixs, &[])), invalid_wallet);
+    let ixs = w.program_exec_add_lock_ixs(
+        w.program_exec_proof(Keypair::new().pubkey(), wallet, state),
+        wallet,
+        NATIVE,
+        1,
+        expiry,
+    );
+    assert_eq!(custom_error(w.send(&ixs, &[])), invalid_config);
+    let ixs = w.program_exec_add_lock_ixs(
+        w.program_exec_proof(wallet, swig, state),
+        wallet,
+        NATIVE,
+        1,
+        expiry,
+    );
+    assert_eq!(custom_error(w.send(&ixs, &[])), invalid_config);
+    assert!(w.locks().1.is_empty());
+
+    let ixs = w.program_exec_add_lock_ixs(
+        w.program_exec_proof(swig, wallet, state),
+        wallet,
+        NATIVE,
+        1,
+        expiry,
+    );
+    ok(w.send(&ixs, &[]));
+
+    let ixs = w.program_exec_remove_lock_ixs(w.program_exec_proof(swig, payer, state), 0);
+    assert_eq!(custom_error(w.send(&ixs, &[])), invalid_wallet);
+    let ixs = w.program_exec_remove_lock_ixs(
+        w.program_exec_proof(Keypair::new().pubkey(), wallet, state),
+        0,
+    );
+    assert_eq!(custom_error(w.send(&ixs, &[])), invalid_config);
+    assert_eq!(w.locks().1.len(), 1);
+
+    let ixs = w.program_exec_remove_lock_ixs(w.program_exec_proof(swig, wallet, state), 0);
+    ok(w.send(&ixs, &[]));
+    assert!(w.locks().1.is_empty());
 }

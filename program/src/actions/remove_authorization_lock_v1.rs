@@ -16,13 +16,13 @@ use pinocchio::{
     sysvars::{clock::Clock, rent::Rent, Sysvar},
     ProgramResult,
 };
-use swig_assertions::{check_bytes_match, check_self_owned, check_writable_signer};
+use swig_assertions::{check_bytes_match, check_self_owned, check_self_pda, check_writable_signer};
 use swig_state::{
     action::{
         all::All, all_but_manage_authority::AllButManageAuthority,
         manage_authority::ManageAuthority, manage_authorization_locks::ManageAuthorizationLocks,
     },
-    swig::Swig,
+    swig::{swig_wallet_address_seeds_with_bump, Swig},
     tail::{
         authorization_locks::{self, AuthorizationLock},
         rent_claimer,
@@ -118,6 +118,13 @@ pub fn remove_authorization_lock_v1(
 
     let (roles_end, new_tail, refund_destination) = {
         let parts = Swig::split_parts_mut(swig_account_data)?;
+        let bump = [parts.state.wallet_bump];
+        check_self_pda(
+            &swig_wallet_address_seeds_with_bump(ctx.accounts.swig.key().as_ref(), &bump),
+            ctx.accounts.swig_wallet_address.key(),
+            SwigError::InvalidSeedSwigAccount,
+        )?;
+
         let entry = authorization_locks::read_strict(parts.tail)?
             .ok_or(SwigError::AuthorizationLockNotFound)?;
         let target = entry
