@@ -6,9 +6,6 @@ on:
   pull_request:
     branches:
       - main
-      - codex/isolate-seeded-stake-authorities
-      - codex/isolate-seeded-system-accounts
-      - codex/isolate-seeded-vote-authorities
 
 env:
   RUST_VERSION: 1.96.1
