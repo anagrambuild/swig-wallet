@@ -12,12 +12,12 @@ use pinocchio::{account_info::AccountInfo, pubkey::Pubkey, ProgramResult};
 
 const STAKE_STAKER_OFF: usize = 12;
 const STAKE_WITHDRAWER_OFF: usize = 44;
-const VOTE_WITHDRAWER_OFF: usize = 32;
-const NONCE_AUTHORITY_OFF_A: usize = 4;
-const NONCE_AUTHORITY_OFF_B: usize = 40;
+// Bincode prefixes: Vote version + node key; Nonce version + initialized tag.
+const VOTE_WITHDRAWER_OFF: usize = 36;
+const NONCE_AUTHORITY_OFF: usize = 8;
 const NONCE_ACCOUNT_LEN: usize = 80;
 const PROGRAMDATA_AUTHORITY_TAG_OFF: usize = 12;
-const PROGRAMDATA_AUTHORITY_OFF: usize = 16;
+const PROGRAMDATA_AUTHORITY_OFF: usize = 13;
 
 #[inline(always)]
 pub(super) fn any_signer_controls_frozen(
@@ -58,17 +58,21 @@ pub(super) fn signer_controls_frozen_account(
     }
     if owner == &crate::VOTE_PROGRAM_ID && len >= VOTE_WITHDRAWER_OFF + 32 {
         let data = unsafe { account.borrow_data_unchecked() };
-        return &data[VOTE_WITHDRAWER_OFF..VOTE_WITHDRAWER_OFF + 32] == authority_key.as_ref();
+        // V1_14_11, V3 and V4 share this prefix. Tag 0 is uninitialized.
+        return matches!(data[..4], [1..=3, 0, 0, 0])
+            && &data[VOTE_WITHDRAWER_OFF..VOTE_WITHDRAWER_OFF + 32] == authority_key.as_ref();
     }
     if owner == &crate::SYSTEM_PROGRAM_ID && len == NONCE_ACCOUNT_LEN {
         let data = unsafe { account.borrow_data_unchecked() };
-        return &data[NONCE_AUTHORITY_OFF_A..NONCE_AUTHORITY_OFF_A + 32] == authority_key.as_ref()
-            || &data[NONCE_AUTHORITY_OFF_B..NONCE_AUTHORITY_OFF_B + 32] == authority_key.as_ref();
+        return matches!(data[..4], [0 | 1, 0, 0, 0])
+            && data[4..8] == [1, 0, 0, 0]
+            && &data[NONCE_AUTHORITY_OFF..NONCE_AUTHORITY_OFF + 32] == authority_key.as_ref();
     }
     if owner == &crate::BPF_LOADER_UPGRADEABLE_ID && len >= PROGRAMDATA_AUTHORITY_OFF + 32 {
         let data = unsafe { account.borrow_data_unchecked() };
-        return data[PROGRAMDATA_AUTHORITY_TAG_OFF..PROGRAMDATA_AUTHORITY_TAG_OFF + 4]
-            == [1, 0, 0, 0]
+        // ProgramData discriminant, slot, then a one-byte Option tag.
+        return data[..4] == [3, 0, 0, 0]
+            && data[PROGRAMDATA_AUTHORITY_TAG_OFF] == 1
             && &data[PROGRAMDATA_AUTHORITY_OFF..PROGRAMDATA_AUTHORITY_OFF + 32]
                 == authority_key.as_ref();
     }

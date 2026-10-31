@@ -57,6 +57,13 @@ pub struct InstructionHolder<'a> {
     pub uses_swig_signer: bool,
 }
 
+/// Validated instruction bytes for policy inspection, without CPI allocations.
+pub struct InstructionInspection<'a> {
+    pub program_id: &'a Pubkey,
+    pub indexes: &'a [u8],
+    pub data: &'a [u8],
+}
+
 impl<'a> InstructionHolder<'a> {
     pub fn execute(
         &self,
@@ -255,7 +262,7 @@ where
             return None;
         }
         self.remaining -= 1;
-        Some(self.parse_next_instruction())
+        Some(self.parse_next_instruction::<true>())
     }
 }
 
@@ -265,6 +272,23 @@ where
     RK: RestrictedKeys,
     P: AccountProxy<'a>,
 {
+    pub fn next_inspection(
+        &mut self,
+    ) -> Option<Result<InstructionInspection<'a>, InstructionError>> {
+        if self.remaining == 0 {
+            return None;
+        }
+        self.remaining -= 1;
+        Some(
+            self.parse_next_instruction::<false>()
+                .map(|instruction| InstructionInspection {
+                    program_id: instruction.program_id,
+                    indexes: instruction.indexes,
+                    data: instruction.data,
+                }),
+        )
+    }
+
     /// Parses the next instruction from the compact format.
     ///
     /// This method handles the parsing of:
@@ -275,7 +299,9 @@ where
     /// # Returns
     /// * `Result<InstructionHolder<'a>, InstructionError>` - Parsed instruction
     ///   or error
-    fn parse_next_instruction(&mut self) -> Result<InstructionHolder<'a>, InstructionError> {
+    fn parse_next_instruction<const FOR_CPI: bool>(
+        &mut self,
+    ) -> Result<InstructionHolder<'a>, InstructionError> {
         // Parse program_id
         let (program_id_index, cursor) = self.read_u8()?;
         self.cursor = cursor;
@@ -292,23 +318,29 @@ where
         }
         let (indexes, cursor) = self.read_slice(num_accounts)?;
         self.cursor = cursor;
-        let mut accounts = Vec::with_capacity(num_accounts);
-        let mut infos = Vec::with_capacity(num_accounts);
+        // Policy inspection validates the same bytes and indexes, but never
+        // constructs CPI metas or account infos. The const flag removes this
+        // work from the inspection specialization without a second parser.
+        let capacity = if FOR_CPI { num_accounts } else { 0 };
+        let mut accounts = Vec::with_capacity(capacity);
+        let mut infos = Vec::with_capacity(capacity);
         let mut uses_swig_signer = false;
         for pubkey_index in indexes {
             let account = self.accounts.get_account(*pubkey_index as usize)?;
-            let pubkey = account.pubkey();
-            let is_signer = (pubkey == self.signer || account.signer())
-                && !self.restricted_keys.is_restricted(pubkey);
-            if is_signer && pubkey == self.signer {
-                uses_swig_signer = true;
+            if FOR_CPI {
+                let pubkey = account.pubkey();
+                let is_signer = (pubkey == self.signer || account.signer())
+                    && !self.restricted_keys.is_restricted(pubkey);
+                if is_signer && pubkey == self.signer {
+                    uses_swig_signer = true;
+                }
+                accounts.push(AccountMeta {
+                    pubkey,
+                    is_signer,
+                    is_writable: account.writable(),
+                });
+                infos.push(account.into_account());
             }
-            accounts.push(AccountMeta {
-                pubkey,
-                is_signer,
-                is_writable: account.writable(),
-            });
-            infos.push(account.into_account());
         }
 
         // Parse data
@@ -380,3 +412,6 @@ where
         Ok((slice, end))
     }
 }
+
+#[cfg(test)]
+mod inspection_tests;

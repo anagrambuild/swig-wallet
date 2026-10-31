@@ -6,14 +6,8 @@
 /// old swig account to the new wallet address structure.
 use no_padding::NoPadding;
 use pinocchio::{
-    account_info::AccountInfo,
-    instruction::Signer,
-    memory::sol_memcmp,
-    msg,
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    sysvars::{clock::Clock, Sysvar},
-    ProgramResult,
+    account_info::AccountInfo, instruction::Signer, memory::sol_memcmp, msg,
+    program_error::ProgramError, pubkey::Pubkey, sysvars::Sysvar, ProgramResult,
 };
 use swig_assertions::{check_self_owned, check_self_pda};
 use swig_state::{
@@ -243,30 +237,19 @@ pub fn transfer_assets_v1(
 
     // Get the role and authenticate the authority
     let role_id = transfer_ix.args.role_id;
-    let role_opt = Swig::get_mut_role(role_id, swig_roles)?;
+
+    let role_opt = swig_state::authority::counter::authenticate_role(
+        swig_roles,
+        role_id,
+        accounts,
+        transfer_ix.authority_payload,
+        transfer_ix.args.into_bytes()?,
+        false,
+    )?;
     if role_opt.is_none() {
         return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
     }
-    let role = role_opt.unwrap();
-
-    // Authenticate the authority
-    let current_slot = Clock::get()?.slot;
-
-    if role.authority.session_based() {
-        role.authority.authenticate_session(
-            accounts,
-            transfer_ix.authority_payload,
-            transfer_ix.args.into_bytes()?,
-            current_slot,
-        )?;
-    } else {
-        role.authority.authenticate(
-            accounts,
-            transfer_ix.authority_payload,
-            transfer_ix.args.into_bytes()?,
-            current_slot,
-        )?;
-    }
+    let (role, _) = role_opt.unwrap();
 
     // Check if the role has All or ManageAuthority permissions
     let has_all_permission = role.get_action::<All>(&[])?.is_some();
@@ -310,7 +293,7 @@ pub fn transfer_assets_v1(
     let swig_lamports = ctx.accounts.swig.lamports();
     let rent = pinocchio::sysvars::rent::Rent::get()?;
     let swig_data_len = ctx.accounts.swig.data_len();
-    let min_rent = rent.minimum_balance(swig_data_len);
+    let min_rent = crate::util::rent::minimum_balance(&rent, swig_data_len);
 
     // Transfer SPL tokens from the validated variadic account tail.
     for migration_accounts in spl_accounts.chunks_exact(SPL_MIGRATION_ACCOUNT_COUNT) {
