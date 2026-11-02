@@ -8,9 +8,6 @@
 //! no limit: the role's limits are charged when SignV2 spends the funds, which
 //! also captures the lock.
 
-extern crate alloc;
-use alloc::vec::Vec;
-
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
@@ -26,14 +23,15 @@ use swig_state::{
         manage_authorization_locks::ManageAuthorizationLocks,
     },
     swig::{swig_wallet_address_seeds_with_bump, Swig},
-    tail::authorization_locks::{self, AuthorizationLock, MAX_AUTHORIZATION_LOCKS},
+    tail::authorization_locks::{
+        self, AuthorizationLock, LockRecord, LOCK_LEN, MAX_AUTHORIZATION_LOCKS,
+    },
     Discriminator, IntoBytes, SwigAuthenticateError, SwigStateError, Transmutable,
 };
 
 use crate::{
     authorization_lock::{
         check_lockable_mint, lockable_lamports, lockable_token_balance, remaining_spend_capacity,
-        sum_active,
     },
     error::SwigError,
     instruction::{
@@ -144,7 +142,7 @@ pub fn add_authorization_lock_v1(
     crate::require_swig_v2(swig_account_data)?;
     let old_len = swig_account_data.len();
 
-    let (roles_end, new_tail) = {
+    let (tail_start, tail_len, growth, new_lock) = {
         let parts = Swig::split_parts_mut(swig_account_data)?;
         let bump = [parts.state.wallet_bump];
         check_self_pda(
@@ -153,12 +151,13 @@ pub fn add_authorization_lock_v1(
             SwigError::InvalidSeedSwigAccount,
         )?;
 
+        // Validate the tail once; every later read uses its raw records.
         let entry = authorization_locks::read_strict(parts.tail)?;
-        let (next_lock_id, mut locks): (u32, Vec<AuthorizationLock>) = match entry {
-            Some(entry) => (entry.next_lock_id(), entry.iter().collect()),
-            None => (0, Vec::new()),
+        let (next_lock_id, records) = match entry {
+            Some(entry) => (entry.next_lock_id(), entry.records()),
+            None => (0, &[][..]),
         };
-        if locks.len() >= MAX_AUTHORIZATION_LOCKS {
+        if records.len() / LOCK_LEN >= MAX_AUTHORIZATION_LOCKS {
             return Err(SwigStateError::AuthorizationLockLimitReached.into());
         }
 
@@ -190,10 +189,29 @@ pub fn add_authorization_lock_v1(
             || acting_role
                 .get_action::<AllButManageAuthority>(&[])?
                 .is_some();
+
+        // One pass: the role's active total for this mint, and every role's
+        // active total on this asset account.
+        let mut role_reserved = 0u64;
+        let mut account_reserved = 0u64;
+        for bytes in records.chunks_exact(LOCK_LEN) {
+            let lock = LockRecord::new(bytes).ok_or(ProgramError::InvalidAccountData)?;
+            let amount = lock.amount();
+            if amount == 0 || lock.expiry_slot() <= slot {
+                continue;
+            }
+            if lock.asset_account() == &args.asset_account {
+                account_reserved = account_reserved
+                    .checked_add(amount)
+                    .ok_or(ProgramError::ArithmeticOverflow)?;
+            }
+            if !unrestricted && lock.role_id() == args.acting_role_id && lock.mint() == &args.mint {
+                role_reserved = role_reserved
+                    .checked_add(amount)
+                    .ok_or(ProgramError::ArithmeticOverflow)?;
+            }
+        }
         if !unrestricted {
-            let role_reserved = sum_active(locks.iter().copied(), slot, |lock| {
-                lock.role_id == args.acting_role_id && lock.mint == args.mint
-            })?;
             let reserved_with_new = role_reserved
                 .checked_add(args.amount)
                 .ok_or(ProgramError::ArithmeticOverflow)?;
@@ -223,9 +241,6 @@ pub fn add_authorization_lock_v1(
             )?;
             balance
         };
-        let account_reserved = sum_active(locks.iter().copied(), slot, |lock| {
-            lock.asset_account == args.asset_account
-        })?;
         if account_reserved
             .checked_add(args.amount)
             .ok_or(ProgramError::ArithmeticOverflow)?
@@ -234,26 +249,24 @@ pub fn add_authorization_lock_v1(
             return Err(SwigError::AuthorizationLockExceedsBalance.into());
         }
 
-        locks.push(AuthorizationLock {
+        let new_lock = AuthorizationLock {
             asset_account: args.asset_account,
             mint: args.mint,
             amount: args.amount,
             expiry_slot: args.expiry_slot,
             role_id: args.acting_role_id,
             lock_id: next_lock_id,
-        });
-        let next_lock_id = next_lock_id
-            .checked_add(1)
-            .ok_or(ProgramError::ArithmeticOverflow)?;
-        let roles_end = Swig::LEN + parts.roles.len();
+        };
         (
-            roles_end,
-            authorization_locks::rebuild_tail(parts.tail, next_lock_id, &locks)?,
+            Swig::LEN + parts.roles.len(),
+            parts.tail.len(),
+            authorization_locks::append_growth(parts.tail)?,
+            new_lock,
         )
     };
 
-    let new_len = roles_end
-        .checked_add(new_tail.len())
+    let new_len = old_len
+        .checked_add(growth)
         .ok_or(ProgramError::InvalidAccountData)?;
     ctx.accounts.swig.resize(new_len)?;
 
@@ -272,8 +285,16 @@ pub fn add_authorization_lock_v1(
         .invoke()?;
     }
 
+    // Append the record in place; only the bytes after the lock entry move.
     let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
-    swig_account_data[roles_end..new_len].copy_from_slice(&new_tail);
+    let written = authorization_locks::append_in_place(
+        &mut swig_account_data[tail_start..],
+        tail_len,
+        &new_lock,
+    )?;
+    if tail_start + written != new_len {
+        return Err(ProgramError::InvalidAccountData);
+    }
     Ok(())
 }
 

@@ -491,24 +491,6 @@ fn load<T: Transmutable>(data: &[u8]) -> Result<&T, ProgramError> {
     unsafe { T::load_unchecked(data) }
 }
 
-/// Sums active lock amounts matching `filter`.
-pub(crate) fn sum_active<F>(
-    locks: impl Iterator<Item = AuthorizationLock>,
-    slot: u64,
-    filter: F,
-) -> Result<u64, ProgramError>
-where
-    F: Fn(&AuthorizationLock) -> bool,
-{
-    let mut total = 0u64;
-    for lock in locks.filter(|lock| lock.is_active(slot) && filter(lock)) {
-        total = total
-            .checked_add(lock.amount)
-            .ok_or(ProgramError::ArithmeticOverflow)?;
-    }
-    Ok(total)
-}
-
 #[derive(Clone, Copy)]
 struct GuardedAccount {
     /// Balance before execution, then the net outflow during settlement.
