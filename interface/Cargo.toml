@@ -3,8 +3,8 @@ name = "swig-interface"
 version.workspace = true
 edition = "2021"
 license = "AGPL-3.0"
-description = "Solana program for the Swig protocol"
-publish = false
+description = "Instruction builders using the Swig Solana program types"
+repository = "https://github.com/anagrambuild/swig-wallet"
 authors.workspace = true
 documentation.workspace = true
 
@@ -12,13 +12,13 @@ documentation.workspace = true
 bytemuck = { version = "1.19.0", features = ["derive"] }
 solana-sdk = { version = "4.0.1" }
 solana-system-interface = "3.1.0"
-swig = { path = "../program", default-features = false, features = [
+swig = { version = "=3.0.0", path = "../program", default-features = false, features = [
     "no-entrypoint",
 ] }
-swig-compact-instructions = { path = "../instructions", default-features = false, features = [
+swig-compact-instructions = { version = "=3.0.0", path = "../instructions", default-features = false, features = [
     "client",
 ] }
-swig-state = { path = "../state" }
+swig-state = { version = "=3.0.0", path = "../state" }
 anyhow = "1.0.75"
 solana-secp256r1-program = "3.0.0"
 thiserror = "2.0.20"
