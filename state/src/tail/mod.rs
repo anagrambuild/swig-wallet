@@ -328,6 +328,13 @@ impl SavedTail {
         })
     }
 
+    /// Replaces the captured tail with `bytes`, which must be a valid tail.
+    pub fn replace(&mut self, bytes: Vec<u8>) -> Result<(), ProgramError> {
+        validate_strict(&bytes)?;
+        self.bytes = bytes;
+        Ok(())
+    }
+
     /// Length of the captured tail (`0` when the wallet has no tail).
     pub fn len(&self) -> usize {
         self.bytes.len()

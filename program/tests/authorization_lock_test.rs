@@ -3640,3 +3640,377 @@ fn sign_v2_needs_no_extra_accounts_for_locks() {
     assert_eq!(w.lock(0).amount, 1_000_000);
     assert_eq!(w.lock(1).amount, LAMPORTS_PER_SOL - 1_000_000);
 }
+
+// ---------------------------------------------------------------------------
+// Removing and changing a holder once its locks are inactive
+// ---------------------------------------------------------------------------
+
+const EXPIRES_SOON: u64 = 10;
+
+impl Wallet {
+    fn rent_accounts(&self) -> swig_interface::AuthorityRentAccounts {
+        swig_interface::AuthorityRentAccounts {
+            payer: self.context.default_payer.pubkey(),
+            rent_claimer: self.rent_claimer(),
+        }
+    }
+
+    fn remove_role(
+        &mut self,
+        signer: &Keypair,
+        acting_role: u32,
+        target: u32,
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
+        let ix = swig_interface::RemoveAuthorityInstruction::new_with_ed25519_authority(
+            self.swig,
+            self.rent_accounts(),
+            signer.pubkey(),
+            acting_role,
+            target,
+        )
+        .unwrap();
+        self.send(&[ix], &[signer])
+    }
+
+    fn update_role(
+        &mut self,
+        signer: &Keypair,
+        acting_role: u32,
+        target: u32,
+        data: swig_interface::UpdateAuthorityData,
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
+        let ix = swig_interface::UpdateAuthorityInstruction::new_with_ed25519_authority(
+            self.swig,
+            self.rent_accounts(),
+            signer.pubkey(),
+            acting_role,
+            target,
+            data,
+        )
+        .unwrap();
+        self.send(&[ix], &[signer])
+    }
+
+    fn replace_signer(
+        &mut self,
+        signer: &Keypair,
+        acting_role: u32,
+        target: u32,
+        new_signer: &Pubkey,
+    ) -> Result<TransactionMetadata, FailedTransactionMetadata> {
+        let ix = ReplaceAuthorityInstruction::new_with_ed25519_authority(
+            self.swig,
+            signer.pubkey(),
+            acting_role,
+            target,
+            new_signer.as_ref(),
+        )
+        .unwrap();
+        self.send(&[ix], &[signer])
+    }
+
+    fn role_exists(&self, role_id: u32) -> bool {
+        let data = self.data();
+        swig_state::swig::SwigWithRoles::from_bytes(&data)
+            .unwrap()
+            .get_role(role_id)
+            .unwrap()
+            .is_some()
+    }
+
+    fn roles_end(&self) -> usize {
+        Swig::roles_end_offset(&self.data()).unwrap()
+    }
+
+    fn add_manage_authority_admin(&mut self) -> (Keypair, u32) {
+        self.add_role(vec![ClientAction::ManageAuthority(
+            swig_state::action::manage_authority::ManageAuthority {},
+        )])
+    }
+}
+
+/// The card holds a short SOL lock (id 0); the root holds a long one (id 1).
+fn wallet_with_expiring_card_lock() -> (Wallet, u64) {
+    let mut w = Wallet::new(5 * LAMPORTS_PER_SOL);
+    let card = w.card.insecure_clone();
+    let root = w.root.insecure_clone();
+    let expiry = w.slot() + EXPIRES_SOON;
+    ok(w.add_sol_lock(&card, CARD_ROLE, LAMPORTS_PER_SOL, expiry));
+    let root_expiry = w.slot() + 500;
+    ok(w.add_sol_lock(&root, ROOT_ROLE, LAMPORTS_PER_SOL, root_expiry));
+    (w, expiry)
+}
+
+/// Removes the card with `actor` and checks that its inactive lock went with
+/// it: the tail shrank by one record, rent went to the payer, and the root's
+/// lock and the lock-id counter are untouched.
+fn remove_card_and_check_pruning(w: &mut Wallet, actor: &Keypair, actor_role: u32) {
+    let (next_before, locks_before) = w.locks();
+    let root_lock = *locks_before
+        .iter()
+        .find(|lock| lock.role_id == ROOT_ROLE)
+        .unwrap();
+    let len_before = w.data().len();
+    let roles_end_before = w.roles_end();
+    let swig_before = w.context.svm.get_balance(&w.swig).unwrap();
+    let payer = w.context.default_payer.pubkey();
+    let payer_before = w.context.svm.get_balance(&payer).unwrap();
+
+    let meta = ok(w.remove_role(actor, actor_role, CARD_ROLE));
+
+    assert!(!w.role_exists(CARD_ROLE));
+    let (next_after, locks_after) = w.locks();
+    assert_eq!(next_after, next_before);
+    assert_eq!(locks_after, vec![root_lock]);
+    let role_bytes = roles_end_before - w.roles_end();
+    let len_after = w.data().len();
+    assert_eq!(len_after, len_before - role_bytes - LOCK_LEN);
+    let rent = Rent::default();
+    let refund = (rent.minimum_balance(len_before) - rent.minimum_balance(len_after))
+        .min(swig_before - rent.minimum_balance(len_after));
+    let swig_after = w.context.svm.get_balance(&w.swig).unwrap();
+    assert_eq!(swig_after, swig_before - refund);
+    assert!(swig_after >= rent.minimum_balance(len_after));
+    assert_eq!(
+        w.context.svm.get_balance(&payer).unwrap(),
+        payer_before - meta.fee + refund
+    );
+}
+
+#[test]
+fn manage_authority_removes_a_holder_once_its_lock_expires() {
+    let (mut w, expiry) = wallet_with_expiring_card_lock();
+    let (admin, admin_role) = w.add_manage_authority_admin();
+    assert_swig_error(
+        w.remove_role(&admin, admin_role, CARD_ROLE),
+        SwigError::AuthorizationLockActive,
+    );
+    w.warp(expiry - 1);
+    assert_swig_error(
+        w.remove_role(&admin, admin_role, CARD_ROLE),
+        SwigError::AuthorizationLockActive,
+    );
+    w.warp(expiry);
+    remove_card_and_check_pruning(&mut w, &admin, admin_role);
+}
+
+#[test]
+fn manage_authority_removes_a_holder_whose_lock_was_captured_to_zero() {
+    let (mut w, expiry) = wallet_with_expiring_card_lock();
+    let (admin, admin_role) = w.add_manage_authority_admin();
+    let card = w.card.insecure_clone();
+    ok(w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL));
+    let card_lock = w.lock(0);
+    assert_eq!(card_lock.amount, 0);
+    assert!(w.slot() < expiry);
+    remove_card_and_check_pruning(&mut w, &admin, admin_role);
+}
+
+#[test]
+fn all_removes_a_holder_once_its_lock_expires() {
+    let (mut w, expiry) = wallet_with_expiring_card_lock();
+    let root = w.root.insecure_clone();
+    assert_swig_error(
+        w.remove_role(&root, ROOT_ROLE, CARD_ROLE),
+        SwigError::AuthorizationLockActive,
+    );
+    w.warp(expiry);
+    remove_card_and_check_pruning(&mut w, &root, ROOT_ROLE);
+}
+
+#[test]
+fn a_holder_may_remove_itself_once_its_lock_expires() {
+    let (mut w, expiry) = wallet_with_expiring_card_lock();
+    let card = w.card.insecure_clone();
+    assert_swig_error(
+        w.remove_role(&card, CARD_ROLE, CARD_ROLE),
+        SwigError::AuthorizationLockActive,
+    );
+    w.warp(expiry);
+    remove_card_and_check_pruning(&mut w, &card, CARD_ROLE);
+}
+
+#[test]
+fn all_but_manage_authority_cannot_remove_roles_locked_or_not() {
+    let (mut w, expiry) = wallet_with_expiring_card_lock();
+    let (actor, actor_role) = w.add_role(vec![ClientAction::AllButManageAuthority(
+        swig_state::action::all_but_manage_authority::AllButManageAuthority {},
+    )]);
+    let denied = SwigAuthenticateError::PermissionDeniedToManageAuthority as u32;
+    assert_eq!(
+        custom_error(w.remove_role(&actor, actor_role, CARD_ROLE)),
+        denied
+    );
+    w.warp(expiry);
+    assert_eq!(
+        custom_error(w.remove_role(&actor, actor_role, CARD_ROLE)),
+        denied
+    );
+    assert!(w.role_exists(CARD_ROLE));
+    assert_eq!(w.locks().1.len(), 2);
+}
+
+#[test]
+fn removal_refunds_pruned_lock_rent_to_the_rent_claimer() {
+    let (mut w, expiry) = wallet_with_expiring_card_lock();
+    let root = w.root.insecure_clone();
+    let claimer = Keypair::new().pubkey();
+    w.context.svm.airdrop(&claimer, LAMPORTS_PER_SOL).unwrap();
+    set_rent_claimer_with_ed25519(&mut w.context, &w.swig, &root, ROOT_ROLE, claimer).unwrap();
+    let (admin, admin_role) = w.add_manage_authority_admin();
+    w.warp(expiry);
+    let len_before = w.data().len();
+    let roles_end_before = w.roles_end();
+    let swig_before = w.context.svm.get_balance(&w.swig).unwrap();
+    let claimer_before = w.context.svm.get_balance(&claimer).unwrap();
+    let payer = w.context.default_payer.pubkey();
+    let payer_before = w.context.svm.get_balance(&payer).unwrap();
+    let meta = ok(w.remove_role(&admin, admin_role, CARD_ROLE));
+    let len_after = w.data().len();
+    assert_eq!(
+        len_after,
+        len_before - (roles_end_before - w.roles_end()) - LOCK_LEN
+    );
+    let refund = swig_before - w.context.svm.get_balance(&w.swig).unwrap();
+    let rent = Rent::default();
+    assert_eq!(
+        refund,
+        rent.minimum_balance(len_before) - rent.minimum_balance(len_after)
+    );
+    assert_eq!(
+        w.context.svm.get_balance(&claimer).unwrap(),
+        claimer_before + refund
+    );
+    assert_eq!(
+        w.context.svm.get_balance(&payer).unwrap(),
+        payer_before - meta.fee
+    );
+    assert_eq!(w.rent_claimer(), Some(claimer));
+    assert_eq!(w.locks().1.len(), 1);
+}
+
+#[test]
+fn a_new_role_inherits_nothing_from_a_removed_holder() {
+    let (mut w, expiry) = wallet_with_expiring_card_lock();
+    let (admin, admin_role) = w.add_manage_authority_admin();
+    w.warp(expiry);
+    ok(w.remove_role(&admin, admin_role, CARD_ROLE));
+
+    // Role ids come from a monotonic counter, so the card's id is never
+    // reused, and its records are gone anyway.
+    let (newcomer, new_role) = w.add_role(vec![
+        ClientAction::All(All {}),
+        ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(MAX_DURATION)),
+    ]);
+    assert!(new_role > admin_role);
+    assert!(w.locks().1.iter().all(|lock| lock.role_id == ROOT_ROLE));
+    // It cannot release the remaining lock, the card's old lock id is gone,
+    // and the root's lock still binds it.
+    assert_swig_error(
+        w.remove_lock(&newcomer, new_role, 1),
+        SwigError::AuthorizationLockNotOwner,
+    );
+    assert_swig_error(
+        w.remove_lock(&newcomer, new_role, 0),
+        SwigError::AuthorizationLockNotFound,
+    );
+    let available = w.lockable_sol() - LAMPORTS_PER_SOL;
+    assert_swig_error(
+        w.spend_sol(&newcomer, new_role, available + 1),
+        SwigError::AuthorizationLockViolated,
+    );
+    ok(w.spend_sol(&newcomer, new_role, available));
+    assert_eq!(w.lock(1).amount, LAMPORTS_PER_SOL);
+    // New locks continue the counter.
+    let wallet = w.wallet;
+    w.context.svm.airdrop(&wallet, LAMPORTS_PER_SOL).unwrap();
+    let expiry = w.slot() + 10;
+    ok(w.add_sol_lock(&newcomer, new_role, 1, expiry));
+    assert_eq!(w.locks().0, 3);
+}
+
+#[test]
+fn manage_authority_updates_or_replaces_a_holder_once_its_locks_are_inactive() {
+    use swig_interface::UpdateAuthorityData;
+    use swig_state::action::Permission;
+    let rewrite = || {
+        UpdateAuthorityData::ReplaceAll(vec![ClientAction::SolLimit(SolLimit {
+            amount: LAMPORTS_PER_SOL,
+        })])
+    };
+
+    // Expired.
+    let (mut w, expiry) = wallet_with_expiring_card_lock();
+    let (admin, admin_role) = w.add_manage_authority_admin();
+    assert_swig_error(
+        w.update_role(&admin, admin_role, CARD_ROLE, rewrite()),
+        SwigError::AuthorizationLockActive,
+    );
+    let takeover = Keypair::new().pubkey();
+    assert_swig_error(
+        w.replace_signer(&admin, admin_role, CARD_ROLE, &takeover),
+        SwigError::AuthorizationLockActive,
+    );
+    // Stripping only the lock permission was already allowed while active.
+    ok(w.update_role(
+        &admin,
+        admin_role,
+        CARD_ROLE,
+        UpdateAuthorityData::RemoveActionsByType(vec![Permission::ManageAuthorizationLocks as u8]),
+    ));
+    w.warp(expiry);
+    ok(w.update_role(&admin, admin_role, CARD_ROLE, rewrite()));
+    ok(w.replace_signer(&admin, admin_role, CARD_ROLE, &takeover));
+    // The records stay with the (still existing) role until pruned or the
+    // role is removed.
+    assert_eq!(w.locks().1.len(), 2);
+
+    // Captured to zero.
+    let (mut w, _) = wallet_with_expiring_card_lock();
+    let (admin, admin_role) = w.add_manage_authority_admin();
+    let card = w.card.insecure_clone();
+    ok(w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL));
+    ok(w.update_role(&admin, admin_role, CARD_ROLE, rewrite()));
+    let takeover = Keypair::new().pubkey();
+    ok(w.replace_signer(&admin, admin_role, CARD_ROLE, &takeover));
+}
+
+#[test]
+fn one_active_lock_still_blocks_removal_and_changes() {
+    let (mut w, expiry) = wallet_with_expiring_card_lock();
+    let card = w.card.insecure_clone();
+    let long_expiry = w.slot() + 500;
+    ok(w.add_sol_lock(&card, CARD_ROLE, LAMPORTS_PER_SOL, long_expiry));
+    let (admin, admin_role) = w.add_manage_authority_admin();
+    w.warp(expiry);
+    assert!(!w.lock(0).is_active(w.slot()));
+    assert!(w.lock(2).is_active(w.slot()));
+    assert_swig_error(
+        w.remove_role(&admin, admin_role, CARD_ROLE),
+        SwigError::AuthorizationLockActive,
+    );
+    assert_swig_error(
+        w.update_role(
+            &admin,
+            admin_role,
+            CARD_ROLE,
+            swig_interface::UpdateAuthorityData::ReplaceAll(vec![ClientAction::SolLimit(
+                SolLimit { amount: 1 },
+            )]),
+        ),
+        SwigError::AuthorizationLockActive,
+    );
+    let takeover = Keypair::new().pubkey();
+    assert_swig_error(
+        w.replace_signer(&admin, admin_role, CARD_ROLE, &takeover),
+        SwigError::AuthorizationLockActive,
+    );
+    assert!(w.role_exists(CARD_ROLE));
+    assert_eq!(w.locks().1.len(), 3);
+
+    // Once that one is captured to zero, removal prunes both.
+    ok(w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL));
+    let root_lock = w.lock(1);
+    ok(w.remove_role(&admin, admin_role, CARD_ROLE));
+    assert_eq!(w.locks(), (3, vec![root_lock]));
+}
