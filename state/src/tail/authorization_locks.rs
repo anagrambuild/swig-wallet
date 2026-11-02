@@ -41,12 +41,13 @@ pub const MAX_ENTRY_LEN: usize = TAIL_HEADER_LEN + MAX_VALUE_LEN;
 /// Mint value used by locks on the wallet address's native SOL balance.
 pub const NATIVE_SOL_MINT: [u8; 32] = [0u8; 32];
 
-const ASSET_ACCOUNT: core::ops::Range<usize> = 0..32;
-const MINT: core::ops::Range<usize> = 32..64;
-const AMOUNT: core::ops::Range<usize> = 64..72;
-const EXPIRY_SLOT: core::ops::Range<usize> = 72..80;
-const ROLE_ID: core::ops::Range<usize> = 80..84;
-const LOCK_ID: core::ops::Range<usize> = 84..88;
+/// Field byte ranges within one serialized lock record.
+pub const ASSET_ACCOUNT: core::ops::Range<usize> = 0..32;
+pub const MINT: core::ops::Range<usize> = 32..64;
+pub const AMOUNT: core::ops::Range<usize> = 64..72;
+pub const EXPIRY_SLOT: core::ops::Range<usize> = 72..80;
+pub const ROLE_ID: core::ops::Range<usize> = 80..84;
+pub const LOCK_ID: core::ops::Range<usize> = 84..88;
 
 /// A reservation of `amount` in `asset_account`, created by `role_id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +110,57 @@ impl AuthorizationLock {
     }
 }
 
+/// Zero-copy view of one stored lock record, for hot paths that only need a
+/// few fields of each lock.
+#[derive(Debug, Clone, Copy)]
+pub struct LockRecord<'a>(&'a [u8; LOCK_LEN]);
+
+impl<'a> LockRecord<'a> {
+    /// Views `bytes`, which must be exactly [`LOCK_LEN`] long.
+    pub fn new(bytes: &'a [u8]) -> Option<Self> {
+        bytes.try_into().ok().map(Self)
+    }
+
+    pub fn asset_account(&self) -> &'a [u8; 32] {
+        self.0[ASSET_ACCOUNT].try_into().expect("fixed-size field")
+    }
+
+    pub fn mint(&self) -> &'a [u8; 32] {
+        self.0[MINT].try_into().expect("fixed-size field")
+    }
+
+    pub fn amount(&self) -> u64 {
+        u64::from_le_bytes(self.0[AMOUNT].try_into().expect("fixed-size field"))
+    }
+
+    pub fn expiry_slot(&self) -> u64 {
+        u64::from_le_bytes(self.0[EXPIRY_SLOT].try_into().expect("fixed-size field"))
+    }
+
+    pub fn role_id(&self) -> u32 {
+        u32::from_le_bytes(self.0[ROLE_ID].try_into().expect("fixed-size field"))
+    }
+
+    pub fn lock_id(&self) -> u32 {
+        u32::from_le_bytes(self.0[LOCK_ID].try_into().expect("fixed-size field"))
+    }
+
+    /// Same rule as [`AuthorizationLock::is_active`].
+    pub fn is_active(&self, slot: u64) -> bool {
+        self.amount() != 0 && self.expiry_slot() > slot
+    }
+
+    pub fn is_native_sol(&self) -> bool {
+        self.mint() == &NATIVE_SOL_MINT
+    }
+}
+
+/// Returns the [`LockRecord`] at `index` of a packed records slice.
+pub fn record_at(records: &[u8], index: usize) -> Option<LockRecord<'_>> {
+    let start = index.checked_mul(LOCK_LEN)?;
+    LockRecord::new(records.get(start..start.checked_add(LOCK_LEN)?)?)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AuthorizationLocksEntry<'a> {
     pub header: TailHeader,
@@ -128,6 +180,11 @@ impl<'a> AuthorizationLocksEntry<'a> {
 
     pub fn is_empty(&self) -> bool {
         self.value.is_empty()
+    }
+
+    /// The packed lock records.
+    pub fn records(&self) -> &'a [u8] {
+        self.value
     }
 
     pub fn get(&self, index: usize) -> Option<AuthorizationLock> {
@@ -244,51 +301,14 @@ pub fn entry(next_lock_id: u32, locks: &[AuthorizationLock]) -> Result<Vec<u8>, 
     Ok(buf)
 }
 
-/// Lowers stored lock amounts in place, leaving the tail's length and every
-/// other byte unchanged. Each update is `(index, lock_id, amount)`: `index` is
-/// the lock's position in the entry, and `lock_id` must match the lock stored
-/// there. Fails when an update names a missing lock or would raise an amount.
-pub fn write_captured_amounts(
-    tail_data: &mut [u8],
-    updates: &[(usize, u32, u64)],
-) -> Result<(), ProgramError> {
-    if updates.is_empty() {
-        return Ok(());
-    }
-    let mut offset = 0usize;
-    let value_range = loop {
-        let rest = tail_data
-            .get(offset..)
-            .filter(|rest| !rest.is_empty())
-            .ok_or(SwigStateError::InvalidAuthorizationLockLayout)?;
-        let (parsed, consumed) = AnyTailEntry::read(rest)?;
-        let end = offset
-            .checked_add(consumed)
-            .ok_or(SwigStateError::InvalidAuthorizationLockLayout)?;
-        if matches!(parsed, AnyTailEntry::AuthorizationLocks(_)) {
-            break offset + TAIL_HEADER_LEN..end;
-        }
-        offset = end;
-    };
-    let value = &mut tail_data[value_range];
-    for &(index, lock_id, amount) in updates {
-        let start = index
-            .checked_mul(LOCK_LEN)
-            .ok_or(SwigStateError::InvalidAuthorizationLockLayout)?;
-        let record = start
-            .checked_add(LOCK_LEN)
-            .and_then(|end| value.get_mut(start..end))
-            .ok_or(SwigStateError::InvalidAuthorizationLockLayout)?;
-        if record[LOCK_ID] != lock_id.to_le_bytes() {
-            return Err(SwigStateError::InvalidAuthorizationLockLayout.into());
-        }
-        let current = u64::from_le_bytes(record[AMOUNT].try_into().expect("fixed-size field"));
-        if amount > current {
-            return Err(SwigStateError::InvalidAuthorizationLockLayout.into());
-        }
-        record[AMOUNT].copy_from_slice(&amount.to_le_bytes());
-    }
-    Ok(())
+/// Returns the byte range of the packed lock records within `tail_data`, or
+/// `None` when the tail has no lock entry. Like [`read`], callers that act on
+/// locks must also have validated the full tail.
+pub fn records_range(tail_data: &[u8]) -> Result<Option<core::ops::Range<usize>>, ProgramError> {
+    Ok(read(tail_data)?.map(|entry| {
+        let start = entry.value.as_ptr() as usize - tail_data.as_ptr() as usize;
+        start..start + entry.value.len()
+    }))
 }
 
 /// Rebuilds a validated tail with its lock entry replaced, preserving every
@@ -443,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    fn write_captured_amounts_lowers_in_place() {
+    fn records_are_located_and_viewed_and_zero_amounts_validate() {
         let rent = rent_claimer::entry(&[7u8; 32]);
         let locks = [lock(0, 1, 50), lock(1, 2, 60), lock(2, 1, 70)];
         let count = active_sub_account_count::entry(3);
@@ -454,22 +474,35 @@ mod tests {
         ]
         .concat();
         let len = tail.len();
-        write_captured_amounts(&mut tail, &[(0, 0, 0), (2, 2, 5)]).unwrap();
+        let range = records_range(&tail).unwrap().unwrap();
+        assert_eq!(range.len(), 3 * LOCK_LEN);
+        for (index, expected) in locks.iter().enumerate() {
+            let record = record_at(&tail[range.clone()], index).unwrap();
+            assert_eq!(record.asset_account(), &expected.asset_account);
+            assert_eq!(record.mint(), &expected.mint);
+            assert_eq!(record.amount(), expected.amount);
+            assert_eq!(record.expiry_slot(), expected.expiry_slot);
+            assert_eq!(record.role_id(), expected.role_id);
+            assert_eq!(record.lock_id(), expected.lock_id);
+            assert_eq!(record.is_active(49), expected.is_active(49));
+        }
+        assert!(record_at(&tail[range.clone()], 3).is_none());
+
+        let records = &mut tail[range.clone()];
+        records[AMOUNT].copy_from_slice(&0u64.to_le_bytes());
+        records[2 * LOCK_LEN + AMOUNT.start..2 * LOCK_LEN + AMOUNT.end]
+            .copy_from_slice(&5u64.to_le_bytes());
         assert_eq!(tail.len(), len);
         validate_strict(&tail).unwrap();
         let stored: Vec<_> = read(&tail).unwrap().unwrap().iter().collect();
         assert_eq!(stored[0].amount, 0);
+        assert!(!stored[0].is_active(0));
         assert_eq!(stored[1], locks[1]);
         assert_eq!(stored[2].amount, 5);
         assert_eq!(rent_claimer::read(&tail).unwrap(), Some(&[7u8; 32]));
         assert_eq!(active_sub_account_count::read(&tail).unwrap(), Some(3));
-
-        // Raising an amount, a mismatched id, or a missing lock fails.
-        assert!(write_captured_amounts(&mut tail, &[(2, 2, 6)]).is_err());
-        assert!(write_captured_amounts(&mut tail, &[(1, 2, 0)]).is_err());
-        assert!(write_captured_amounts(&mut tail, &[(3, 3, 0)]).is_err());
-        assert!(write_captured_amounts(&mut rent.clone(), &[(0, 0, 0)]).is_err());
-        write_captured_amounts(&mut [], &[]).unwrap();
+        assert_eq!(records_range(&rent).unwrap(), None);
+        assert_eq!(records_range(&[]).unwrap(), None);
     }
 
     #[test]
