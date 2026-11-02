@@ -165,7 +165,8 @@ pub fn close_token_account_v1(
     if !has_all && !has_all_but_manage && !has_manage && !has_close {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
-    if let Some(claimer) = rent_claimer::read_strict(Swig::split_parts(swig_account_data)?.tail)? {
+    let swig_tail = Swig::split_parts(swig_account_data)?.tail;
+    if let Some(claimer) = rent_claimer::read_strict(swig_tail)? {
         if ctx.accounts.destination.key().as_ref() != claimer.as_ref() {
             return Err(SwigError::InvalidRentClaimerDestination.into());
         }
@@ -209,15 +210,21 @@ pub fn close_token_account_v1(
     let swig_seeds = crate::util::config_signer(swig_account_data, *ctx.accounts.swig.key())?;
 
     let unrestricted_spend = has_all || has_all_but_manage;
-    let lock_entry = authorization_locks::read_strict(Swig::split_parts(swig_account_data)?.tail)?;
+    // `rent_claimer::read_strict` above validated the tail.
+    let lock_records =
+        authorization_locks::records_range(swig_tail)?.map(|range| &swig_tail[range]);
     // Validate every source and consume bounded WSOL spend before the first CPI.
     // A later error rolls back authentication and every permission update.
     for token_account in &accounts[token_account_offset..] {
         // Closing would void a reservation on this account.
-        if lock_entry.is_some_and(|entry| {
-            entry.iter().any(|lock| {
-                &lock.asset_account == token_account.key() && lock.is_active(current_slot)
-            })
+        if lock_records.is_some_and(|records| {
+            records
+                .chunks_exact(authorization_locks::LOCK_LEN)
+                .any(|bytes| {
+                    authorization_locks::LockRecord::new(bytes).is_some_and(|lock| {
+                        lock.asset_account() == token_account.key() && lock.is_active(current_slot)
+                    })
+                })
         }) {
             return Err(SwigError::AuthorizationLockActive.into());
         }
@@ -296,7 +303,7 @@ pub fn close_token_account_v1(
     // its own active authorization locks.
     if !unrestricted_spend {
         check_role_locks_within_limits(
-            Swig::split_parts(swig_account_data)?.tail,
+            swig_tail,
             close_ix.args.role_id,
             role.actions,
             current_slot,

@@ -3,18 +3,36 @@ use swig_state::swig::swig_wallet_address_seeds;
 
 use crate::error::SwigError;
 
+/// How [`refund_destination`] learns the swig's wallet address, which a rent
+/// claimer may never be.
+pub(crate) enum WalletAddress<'a> {
+    /// Already checked against the swig's canonical wallet PDA.
+    Verified(&'a pinocchio::pubkey::Pubkey),
+    /// Derive the canonical wallet PDA (one or more PDA hashes).
+    Derive,
+}
+
 pub(crate) fn refund_destination<'a>(
     configured_claimer: Option<&[u8; 32]>,
     swig: &AccountInfo,
+    wallet_address: WalletAddress<'_>,
     payer: &'a AccountInfo,
     accounts: &'a [AccountInfo],
 ) -> Result<&'a AccountInfo, ProgramError> {
     let Some(claimer) = configured_claimer else {
         return Ok(payer);
     };
-    let (wallet_address, _) =
-        pinocchio::pubkey::find_program_address(&swig_wallet_address_seeds(swig.key()), &crate::ID);
-    if claimer == &[0; 32] || claimer == swig.key() || claimer == &wallet_address {
+    let is_wallet_address = match wallet_address {
+        WalletAddress::Verified(wallet_address) => claimer == wallet_address,
+        WalletAddress::Derive => {
+            let (wallet_address, _) = pinocchio::pubkey::find_program_address(
+                &swig_wallet_address_seeds(swig.key()),
+                &crate::ID,
+            );
+            claimer == &wallet_address
+        },
+    };
+    if claimer == &[0; 32] || claimer == swig.key() || is_wallet_address {
         return Err(SwigError::InvalidRentClaimerDestination.into());
     }
     accounts

@@ -141,8 +141,9 @@ pub fn close_swig_v1(
     let swig = parts.state;
     let swig_roles = parts.roles;
     let configured_rent_claimer = rent_claimer::read_strict(parts.tail)?;
+    let current_slot = Clock::get()?.slot;
     // Closing drains the wallet address, which would void active reservations.
-    if authorization_locks::has_active_locks(parts.tail, Clock::get()?.slot)? {
+    if authorization_locks::has_active_locks(parts.tail, current_slot)? {
         return Err(SwigError::AuthorizationLockActive.into());
     }
 
@@ -163,7 +164,6 @@ pub fn close_swig_v1(
     let role = role_opt.unwrap();
 
     // Authenticate
-    let current_slot = Clock::get()?.slot;
     if role.authority.session_based() {
         role.authority.authenticate_session(
             accounts,

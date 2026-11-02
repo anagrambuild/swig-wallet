@@ -86,7 +86,9 @@ impl Wallet {
             .svm
             .airdrop(&card.pubkey(), LAMPORTS_PER_SOL)
             .unwrap();
-        let id = rand::random::<[u8; 32]>();
+        // A fixed id keeps PDA bump searches, and so compute costs,
+        // deterministic; every wallet lives in its own SVM.
+        let id = [7u8; 32];
         let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
         let wallet =
             Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id())
@@ -4013,4 +4015,241 @@ fn one_active_lock_still_blocks_removal_and_changes() {
     let root_lock = w.lock(1);
     ok(w.remove_role(&admin, admin_role, CARD_ROLE));
     assert_eq!(w.locks(), (3, vec![root_lock]));
+}
+
+// ---------------------------------------------------------------------------
+// Compute cost of every lock-aware instruction
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum LockAsset {
+    Sol,
+    Spl,
+    Token2022,
+}
+
+/// Compute units of one AddAuthorizationLockV1 (amount 1) by an `All` or a
+/// limited role that already holds `existing` locks on the same asset.
+fn add_lock_cu(asset: LockAsset, limited: bool, existing: usize) -> u64 {
+    let mut w = Wallet::new(5 * LAMPORTS_PER_SOL);
+    let (account, mint) = match asset {
+        LockAsset::Sol => (w.wallet, NATIVE),
+        LockAsset::Spl => {
+            let (mint, ata) = w.token_setup(1_000_000);
+            (ata, mint.to_bytes())
+        },
+        LockAsset::Token2022 => {
+            let (mint, account) = token_2022_fixture(&mut w, false);
+            (account, mint.to_bytes())
+        },
+    };
+    let (actor, role) = match (limited, asset) {
+        (false, _) => w.add_issuer(),
+        (true, LockAsset::Sol) => (w.card.insecure_clone(), CARD_ROLE),
+        (true, _) => w.add_token_card(&Pubkey::new_from_array(mint), 1_000_000),
+    };
+    let expiry = w.slot() + 500;
+    for _ in 0..existing {
+        ok(w.add_lock(&actor, role, account, mint, 1, expiry));
+    }
+    ok(w.add_lock(&actor, role, account, mint, 1, expiry)).compute_units_consumed
+}
+
+/// Compute units of removing lock 0 out of `count`, by its creator while
+/// active or by the root after expiry, with or without a rent claimer.
+fn remove_lock_cu(by_admin: bool, claimer: bool, count: usize) -> u64 {
+    let mut w = Wallet::new(5 * LAMPORTS_PER_SOL);
+    let card = w.card.insecure_clone();
+    let root = w.root.insecure_clone();
+    if claimer {
+        let claimer = Keypair::new().pubkey();
+        w.context.svm.airdrop(&claimer, LAMPORTS_PER_SOL).unwrap();
+        set_rent_claimer_with_ed25519(&mut w.context, &w.swig, &root, ROOT_ROLE, claimer).unwrap();
+    }
+    let expiry = w.slot() + 50;
+    for _ in 0..count {
+        ok(w.add_sol_lock(&card, CARD_ROLE, 1, expiry));
+    }
+    let meta = if by_admin {
+        w.warp(expiry);
+        ok(w.remove_lock(&root, ROOT_ROLE, 0))
+    } else {
+        ok(w.remove_lock(&card, CARD_ROLE, 0))
+    };
+    meta.compute_units_consumed
+}
+
+#[derive(Clone, Copy, Debug)]
+enum AdminOp {
+    RemoveAuthority,
+    UpdateAuthority,
+    ReplaceAuthority,
+}
+
+/// Compute units of an admin (root) operation on the card, which holds
+/// `inactive` expired locks; the root holds `others` active locks.
+fn admin_op_cu(op: AdminOp, inactive: usize, others: usize) -> u64 {
+    let mut w = Wallet::new(5 * LAMPORTS_PER_SOL);
+    let card = w.card.insecure_clone();
+    let root = w.root.insecure_clone();
+    let expiry = w.slot() + 50;
+    for _ in 0..inactive {
+        ok(w.add_sol_lock(&card, CARD_ROLE, 1, expiry));
+    }
+    for _ in 0..others {
+        ok(w.add_sol_lock(&root, ROOT_ROLE, 1, expiry + 1_000));
+    }
+    w.warp(expiry);
+    let meta = match op {
+        AdminOp::RemoveAuthority => ok(w.remove_role(&root, ROOT_ROLE, CARD_ROLE)),
+        AdminOp::UpdateAuthority => ok(w.update_role(
+            &root,
+            ROOT_ROLE,
+            CARD_ROLE,
+            swig_interface::UpdateAuthorityData::ReplaceAll(vec![ClientAction::SolLimit(
+                SolLimit { amount: 2 },
+            )]),
+        )),
+        AdminOp::ReplaceAuthority => {
+            let replacement = Keypair::new().pubkey();
+            ok(w.replace_signer(&root, ROOT_ROLE, CARD_ROLE, &replacement))
+        },
+    };
+    meta.compute_units_consumed
+}
+
+/// Closes an empty token account, with `locks` active locks on another one.
+fn close_token_account_cu(locks: usize) -> u64 {
+    let mut w = Wallet::new(LAMPORTS_PER_SOL);
+    let root = w.root.insecure_clone();
+    let (mint, locked) = w.token_setup(1_000);
+    let expiry = w.slot() + 500;
+    for _ in 0..locks {
+        ok(w.add_lock(&root, ROOT_ROLE, locked, mint.to_bytes(), 1, expiry));
+    }
+    let payer = w.context.default_payer.insecure_clone();
+    let wallet = w.wallet;
+    let empty = litesvm_token::CreateAccount::new(&mut w.context.svm, &payer, &mint)
+        .owner(&wallet)
+        .account_kp(Keypair::new())
+        .send()
+        .unwrap();
+    let ix = CloseTokenAccountV1Instruction::new_with_ed25519_authority(
+        w.swig,
+        w.wallet,
+        root.pubkey(),
+        Keypair::new().pubkey(),
+        spl_token::ID,
+        vec![empty],
+        ROOT_ROLE,
+    )
+    .unwrap();
+    ok(w.send(&[ix], &[&root])).compute_units_consumed
+}
+
+/// Closes the swig with `locks` expired locks left in its tail.
+fn close_swig_cu(locks: usize) -> u64 {
+    let mut w = Wallet::new(LAMPORTS_PER_SOL);
+    let root = w.root.insecure_clone();
+    let expiry = w.slot() + 50;
+    for _ in 0..locks {
+        ok(w.add_sol_lock(&root, ROOT_ROLE, 1, expiry));
+    }
+    w.warp(expiry);
+    let lockable = w.lockable_sol();
+    ok(w.spend_sol(&root, ROOT_ROLE, lockable));
+    let ix = CloseSwigV1Instruction::new_with_ed25519_authority(
+        w.swig,
+        w.wallet,
+        root.pubkey(),
+        Keypair::new().pubkey(),
+        ROOT_ROLE,
+    )
+    .unwrap();
+    ok(w.send(&[ix], &[&root])).compute_units_consumed
+}
+
+#[test]
+fn lock_instruction_cu_table() {
+    for asset in [LockAsset::Sol, LockAsset::Spl, LockAsset::Token2022] {
+        for limited in [false, true] {
+            for existing in [0, 1, 16, 31] {
+                let cu = add_lock_cu(asset, limited, existing);
+                let signer = if limited { "limited" } else { "All" };
+                println!("ADD_LOCK_CU {asset:?} {signer} existing={existing} {cu}");
+            }
+        }
+    }
+    for by_admin in [false, true] {
+        for claimer in [false, true] {
+            for count in [1, 32] {
+                let cu = remove_lock_cu(by_admin, claimer, count);
+                let who = if by_admin {
+                    "admin-prune"
+                } else {
+                    "creator-release"
+                };
+                println!("REMOVE_LOCK_CU {who} claimer={claimer} locks={count} {cu}");
+            }
+        }
+    }
+    for op in [
+        AdminOp::RemoveAuthority,
+        AdminOp::UpdateAuthority,
+        AdminOp::ReplaceAuthority,
+    ] {
+        for (inactive, others) in [(0, 0), (1, 0), (16, 16)] {
+            let cu = admin_op_cu(op, inactive, others);
+            println!("ADMIN_LOCK_CU {op:?} inactive={inactive} others={others} {cu}");
+        }
+    }
+    for locks in [0, 1, 32] {
+        println!(
+            "CLOSE_CU CloseTokenAccountV1 locks={locks} {}",
+            close_token_account_cu(locks)
+        );
+    }
+    for locks in [0, 1, 32] {
+        println!(
+            "CLOSE_CU CloseSwigV1 expired_locks={locks} {}",
+            close_swig_cu(locks)
+        );
+    }
+
+    // Budgets for the busiest wallets: each stored lock costs one pass over
+    // its record, never a rebuild of the whole tail.
+    let per_lock = |many: u64, few: u64, locks: u64| (many - few) / locks;
+    let add = per_lock(
+        add_lock_cu(LockAsset::Spl, true, 31),
+        add_lock_cu(LockAsset::Spl, true, 0),
+        31,
+    );
+    assert!(
+        add < 150,
+        "AddAuthorizationLockV1 costs {add} CU per stored lock"
+    );
+    let remove = per_lock(
+        remove_lock_cu(false, true, 32),
+        remove_lock_cu(false, true, 1),
+        31,
+    );
+    assert!(
+        remove < 50,
+        "RemoveAuthorizationLockV1 costs {remove} CU per stored lock"
+    );
+    let prune = per_lock(
+        admin_op_cu(AdminOp::RemoveAuthority, 16, 16),
+        admin_op_cu(AdminOp::RemoveAuthority, 0, 0),
+        32,
+    );
+    assert!(
+        prune < 100,
+        "RemoveAuthorityV1 costs {prune} CU per stored lock"
+    );
+    // The verified wallet address spares the claimer path a PDA search.
+    let claimer_extra = remove_lock_cu(false, true, 1) - remove_lock_cu(false, false, 1);
+    assert!(
+        claimer_extra < 600,
+        "a rent claimer adds {claimer_extra} CU"
+    );
 }

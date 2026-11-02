@@ -259,6 +259,9 @@ pub fn role_has_active_locks(
     role_id: u32,
     slot: u64,
 ) -> Result<bool, ProgramError> {
+    if tail_data.is_empty() {
+        return Ok(false);
+    }
     Ok(read_strict(tail_data)?.is_some_and(|entry| {
         entry
             .iter()
@@ -268,6 +271,9 @@ pub fn role_has_active_locks(
 
 /// True when any lock is still active at `slot`.
 pub fn has_active_locks(tail_data: &[u8], slot: u64) -> Result<bool, ProgramError> {
+    if tail_data.is_empty() {
+        return Ok(false);
+    }
     Ok(read_strict(tail_data)?.is_some_and(|entry| entry.iter().any(|l| l.is_active(slot))))
 }
 
@@ -311,29 +317,144 @@ pub fn records_range(tail_data: &[u8]) -> Result<Option<core::ops::Range<usize>>
     }))
 }
 
-/// Rebuilds a validated tail without any lock created by `role_id`, keeping
-/// every other lock, entry, and the lock-id counter. Returns `None` when the
-/// role has no stored lock, so the caller can keep the tail as is. Callers
-/// must first ensure none of the role's locks is active.
-pub fn tail_without_role_locks(
+/// Bytes the tail grows by when one lock is appended: a record, plus an entry
+/// header when the wallet has no lock entry yet.
+pub fn append_growth(tail_data: &[u8]) -> Result<usize, ProgramError> {
+    Ok(match records_range(tail_data)? {
+        Some(_) => LOCK_LEN,
+        None => TAIL_HEADER_LEN + LOCK_LEN,
+    })
+}
+
+/// Appends `lock` in place to the validated tail held in `buf[..tail_len]`,
+/// where `buf` has room for [`append_growth`] more bytes: the record goes at
+/// the end of the lock entry (later entries move up), the entry's length
+/// grows, and its counter becomes `lock.lock_id + 1`. A wallet without a lock
+/// entry gets one at the end of the tail. Returns the new tail length.
+pub fn append_in_place(
+    buf: &mut [u8],
+    tail_len: usize,
+    lock: &AuthorizationLock,
+) -> Result<usize, ProgramError> {
+    let tail = buf
+        .get(..tail_len)
+        .ok_or(SwigStateError::InvalidAuthorizationLockLayout)?;
+    let next_lock_id = lock
+        .lock_id
+        .checked_add(1)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
+    match records_range(tail)? {
+        Some(records) => {
+            let value_len = records.len() + LOCK_LEN;
+            if value_len > MAX_VALUE_LEN {
+                return Err(SwigStateError::AuthorizationLockLimitReached.into());
+            }
+            let new_len = tail_len + LOCK_LEN;
+            if buf.len() < new_len {
+                return Err(SwigStateError::InvalidAuthorizationLockLayout.into());
+            }
+            let record_end = records.end + LOCK_LEN;
+            buf.copy_within(records.end..tail_len, record_end);
+            buf[records.end..record_end].copy_from_slice(&lock.to_bytes());
+            let header = records.start - TAIL_HEADER_LEN;
+            buf[header + 2..header + 4].copy_from_slice(&(value_len as u16).to_le_bytes());
+            buf[header + 4..header + 8].copy_from_slice(&next_lock_id.to_le_bytes());
+            Ok(new_len)
+        },
+        None => {
+            let added = entry(next_lock_id, core::slice::from_ref(lock))?;
+            let new_len = tail_len + added.len();
+            buf.get_mut(tail_len..new_len)
+                .ok_or(SwigStateError::InvalidAuthorizationLockLayout)?
+                .copy_from_slice(&added);
+            Ok(new_len)
+        },
+    }
+}
+
+/// Removes the record at `index` in place from the validated tail in
+/// `buf[..tail_len]`: later records and entries move down, the entry shrinks,
+/// and the freed bytes at the end are zeroed. The counter is unchanged.
+/// Returns the new tail length.
+pub fn remove_in_place(
+    buf: &mut [u8],
+    tail_len: usize,
+    index: usize,
+) -> Result<usize, ProgramError> {
+    let tail = buf
+        .get(..tail_len)
+        .ok_or(SwigStateError::InvalidAuthorizationLockLayout)?;
+    let records = records_range(tail)?.ok_or(SwigStateError::InvalidAuthorizationLockLayout)?;
+    let start = index
+        .checked_mul(LOCK_LEN)
+        .map(|offset| records.start + offset)
+        .filter(|&start| start + LOCK_LEN <= records.end)
+        .ok_or(SwigStateError::InvalidAuthorizationLockLayout)?;
+    buf.copy_within(start + LOCK_LEN..tail_len, start);
+    let new_len = tail_len - LOCK_LEN;
+    buf[new_len..tail_len].fill(0);
+    let header = records.start - TAIL_HEADER_LEN;
+    let value_len = (records.len() - LOCK_LEN) as u16;
+    buf[header + 2..header + 4].copy_from_slice(&value_len.to_le_bytes());
+    Ok(new_len)
+}
+
+/// Whether `role_id` holds any stored lock, and any active one at `slot`, in
+/// one pass over the raw records. Callers must have validated the tail.
+pub fn role_lock_state(
     tail_data: &[u8],
     role_id: u32,
-) -> Result<Option<Vec<u8>>, ProgramError> {
-    let Some(entry) = read_strict(tail_data)? else {
-        return Ok(None);
-    };
-    if !entry.iter().any(|lock| lock.role_id == role_id) {
-        return Ok(None);
+    slot: u64,
+) -> Result<(bool, bool), ProgramError> {
+    if tail_data.is_empty() {
+        return Ok((false, false));
     }
-    let remaining: Vec<AuthorizationLock> = entry
-        .iter()
-        .filter(|lock| lock.role_id != role_id)
-        .collect();
-    Ok(Some(rebuild_tail(
-        tail_data,
-        entry.next_lock_id(),
-        &remaining,
-    )?))
+    let Some(records) = records_range(tail_data)? else {
+        return Ok((false, false));
+    };
+    let mut stored = false;
+    for bytes in tail_data[records].chunks_exact(LOCK_LEN) {
+        let lock = LockRecord::new(bytes).ok_or(SwigStateError::InvalidAuthorizationLockLayout)?;
+        if lock.role_id() == role_id {
+            if lock.is_active(slot) {
+                return Ok((true, true));
+            }
+            stored = true;
+        }
+    }
+    Ok((stored, false))
+}
+
+/// Drops every lock of `role_id` in place from a validated tail held in a
+/// `Vec`, keeping all other bytes, entries and the counter. Returns how many
+/// bytes the tail shrank by. Callers must first ensure none of the role's
+/// locks is active.
+pub fn prune_role_locks(tail: &mut Vec<u8>, role_id: u32) -> Result<usize, ProgramError> {
+    let Some(records) = records_range(tail)? else {
+        return Ok(0);
+    };
+    let mut kept = records.start;
+    let mut cursor = records.start;
+    while cursor < records.end {
+        let lock = LockRecord::new(&tail[cursor..cursor + LOCK_LEN])
+            .ok_or(SwigStateError::InvalidAuthorizationLockLayout)?;
+        if lock.role_id() != role_id {
+            if kept != cursor {
+                tail.copy_within(cursor..cursor + LOCK_LEN, kept);
+            }
+            kept += LOCK_LEN;
+        }
+        cursor += LOCK_LEN;
+    }
+    let removed = records.end - kept;
+    if removed == 0 {
+        return Ok(0);
+    }
+    tail.drain(kept..records.end);
+    let header = records.start - TAIL_HEADER_LEN;
+    let value_len = (kept - records.start) as u16;
+    tail[header + 2..header + 4].copy_from_slice(&value_len.to_le_bytes());
+    Ok(removed)
 }
 
 /// Rebuilds a validated tail with its lock entry replaced, preserving every
@@ -531,26 +652,72 @@ mod tests {
     }
 
     #[test]
-    fn tail_without_role_locks_prunes_only_that_role() {
+    fn in_place_edits_match_a_rebuild() {
         let rent = rent_claimer::entry(&[7u8; 32]);
+        let count = active_sub_account_count::entry(3);
         let locks = [lock(0, 1, 50), lock(1, 2, 60), lock(2, 1, 70)];
-        let tail = [rent.as_slice(), entry(5, &locks).unwrap().as_slice()].concat();
-        let pruned = tail_without_role_locks(&tail, 1).unwrap().unwrap();
+        let tail = [
+            rent.as_slice(),
+            entry(3, &locks).unwrap().as_slice(),
+            count.as_slice(),
+        ]
+        .concat();
+
+        // Append, with a later entry to move.
+        let added = lock(3, 2, 80);
+        assert_eq!(append_growth(&tail).unwrap(), LOCK_LEN);
+        let mut buf = tail.clone();
+        buf.resize(tail.len() + LOCK_LEN, 0);
+        let len = append_in_place(&mut buf, tail.len(), &added).unwrap();
+        assert_eq!(len, buf.len());
+        let all = [locks[0], locks[1], locks[2], added];
+        assert_eq!(buf, rebuild_tail(&tail, 4, &all).unwrap());
+
+        // Append to a tail without a lock entry.
+        let plain = [rent.as_slice(), count.as_slice()].concat();
+        assert_eq!(append_growth(&plain).unwrap(), TAIL_HEADER_LEN + LOCK_LEN);
+        let mut buf = plain.clone();
+        buf.resize(plain.len() + TAIL_HEADER_LEN + LOCK_LEN, 0);
+        let first = lock(0, 1, 50);
+        append_in_place(&mut buf, plain.len(), &first).unwrap();
+        assert_eq!(buf, rebuild_tail(&plain, 1, &[first]).unwrap());
+
+        // Remove from the middle; the counter stays.
+        let mut buf = tail.clone();
+        let len = remove_in_place(&mut buf, tail.len(), 1).unwrap();
+        assert_eq!(
+            &buf[..len],
+            rebuild_tail(&tail, 3, &[locks[0], locks[2]]).unwrap()
+        );
+        assert!(buf[len..].iter().all(|&byte| byte == 0));
+        assert!(remove_in_place(&mut tail.clone(), tail.len(), 3).is_err());
+
+        // A full entry cannot grow.
+        let full: Vec<_> = (0..MAX_AUTHORIZATION_LOCKS as u32)
+            .map(|id| lock(id, 0, 10))
+            .collect();
+        let full_tail = entry(40, &full).unwrap();
+        let mut buf = full_tail.clone();
+        buf.resize(full_tail.len() + LOCK_LEN, 0);
+        assert!(append_in_place(&mut buf, full_tail.len(), &lock(40, 0, 10)).is_err());
+
+        // Role state and pruning.
+        assert_eq!(role_lock_state(&tail, 1, 0).unwrap(), (true, true));
+        assert_eq!(role_lock_state(&tail, 1, 70).unwrap(), (true, false));
+        assert_eq!(role_lock_state(&tail, 9, 0).unwrap(), (false, false));
+        assert_eq!(role_lock_state(&[], 1, 0).unwrap(), (false, false));
+        let mut pruned = tail.clone();
+        assert_eq!(prune_role_locks(&mut pruned, 1).unwrap(), 2 * LOCK_LEN);
+        assert_eq!(pruned, rebuild_tail(&tail, 3, &[locks[1]]).unwrap());
+        assert_eq!(prune_role_locks(&mut pruned, 9).unwrap(), 0);
+        // The last lock goes; the entry and its counter stay.
+        assert_eq!(prune_role_locks(&mut pruned, 2).unwrap(), LOCK_LEN);
         validate_strict(&pruned).unwrap();
-        let entry = read(&pruned).unwrap().unwrap();
-        assert_eq!(entry.next_lock_id(), 5);
-        assert_eq!(entry.iter().collect::<Vec<_>>(), vec![locks[1]]);
-        assert_eq!(pruned.len(), tail.len() - 2 * LOCK_LEN);
-        assert_eq!(rent_claimer::read(&pruned).unwrap(), Some(&[7u8; 32]));
-        // The last lock goes, the entry and its counter stay.
-        let emptied = tail_without_role_locks(&pruned, 2).unwrap().unwrap();
-        let entry = read(&emptied).unwrap().unwrap();
-        assert!(entry.is_empty());
-        assert_eq!(entry.next_lock_id(), 5);
-        // Nothing to prune.
-        assert_eq!(tail_without_role_locks(&tail, 9).unwrap(), None);
-        assert_eq!(tail_without_role_locks(&rent, 1).unwrap(), None);
-        assert_eq!(tail_without_role_locks(&[], 1).unwrap(), None);
+        let emptied = read(&pruned).unwrap().unwrap();
+        assert!(emptied.is_empty());
+        assert_eq!(emptied.next_lock_id(), 3);
+        assert_eq!(active_sub_account_count::read(&pruned).unwrap(), Some(3));
+        assert_eq!(prune_role_locks(&mut rent.to_vec(), 1).unwrap(), 0);
     }
 
     #[test]

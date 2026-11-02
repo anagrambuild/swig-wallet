@@ -167,11 +167,11 @@ pub fn remove_authority_v1(
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
         let parts = Swig::split_parts_mut(swig_account_data)?;
+        // Validates the tail; the lock checks below read it unvalidated.
         let mut saved_tail = SavedTail::take(parts.tail)?;
-        let original_tail_len = saved_tail.len();
         let swig = parts.state;
         let swig_roles = parts.roles;
-        {
+        let slot = {
             let acting_role =
                 Swig::get_mut_role(remove_authority_v1.args.acting_role_id, swig_roles)?;
             if acting_role.is_none() {
@@ -180,8 +180,7 @@ pub fn remove_authority_v1(
             let acting_role = acting_role.unwrap();
 
             // Authenticate the caller
-            let clock = Clock::get()?;
-            let slot = clock.slot;
+            let slot = Clock::get()?.slot;
             if acting_role.authority.session_based() {
                 acting_role.authority.authenticate_session(
                     all_accounts,
@@ -206,11 +205,13 @@ pub fn remove_authority_v1(
             if no_permission && not_self {
                 return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
             }
-        }
+            slot
+        };
 
         let refund_destination = crate::util::rent::refund_destination(
             rent_claimer::read_strict(parts.tail)?,
             ctx.accounts.swig,
+            crate::util::rent::WalletAddress::Derive,
             ctx.accounts.payer,
             all_accounts,
         )?;
@@ -226,23 +227,23 @@ pub fn remove_authority_v1(
                 return Err(SwigError::ActiveV1SubAccountMustBeClosed.into());
             }
         }
-        // Every active lock must keep a creator able to release it.
-        if authorization_locks::role_has_active_locks(
+        // Every active lock must keep a creator able to release it. Once all
+        // of the role's locks are inactive (expired or captured to zero),
+        // prune them with the role so no record outlives its creator; their
+        // rent is refunded with the role's.
+        let (has_locks, has_active_locks) = authorization_locks::role_lock_state(
             parts.tail,
             remove_authority_v1.args.authority_to_remove_id,
-            Clock::get()?.slot,
-        )? {
+            slot,
+        )?;
+        if has_active_locks {
             return Err(SwigError::AuthorizationLockActive.into());
         }
-        // The role's remaining locks are all inactive (expired or captured to
-        // zero). Prune them with the role so no record outlives its creator;
-        // their rent is refunded with the role's.
-        if let Some(pruned) = authorization_locks::tail_without_role_locks(
-            parts.tail,
-            remove_authority_v1.args.authority_to_remove_id,
-        )? {
-            saved_tail.replace(pruned)?;
-        }
+        let pruned_tail_bytes = if has_locks {
+            saved_tail.prune_role_locks(remove_authority_v1.args.authority_to_remove_id)?
+        } else {
+            0
+        };
         let mut swig_builder = SwigBuilder {
             role_buffer: swig_roles,
             swig,
@@ -255,9 +256,6 @@ pub fn remove_authority_v1(
             .get(..removed.0)
             .ok_or(ProgramError::InvalidAccountData)?;
         ensure_admin_remains(remaining_roles, swig_builder.swig.roles)?;
-        let pruned_tail_bytes = original_tail_len
-            .checked_sub(saved_tail.len())
-            .ok_or(ProgramError::InvalidAccountData)?;
         (saved_tail, pruned_tail_bytes, removed, refund_destination)
     };
     // realloc the account

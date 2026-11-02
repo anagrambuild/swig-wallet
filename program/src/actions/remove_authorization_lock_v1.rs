@@ -7,9 +7,6 @@
 //! `AllButManageAuthority`, `ManageAuthority`, or `ManageAuthorizationLocks`
 //! may also remove it to reclaim space.
 
-extern crate alloc;
-use alloc::vec::Vec;
-
 use no_padding::NoPadding;
 use pinocchio::{
     account_info::AccountInfo,
@@ -25,7 +22,7 @@ use swig_state::{
     },
     swig::{swig_wallet_address_seeds_with_bump, Swig},
     tail::{
-        authorization_locks::{self, AuthorizationLock},
+        authorization_locks::{self, LockRecord, LOCK_LEN},
         rent_claimer,
     },
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
@@ -117,7 +114,7 @@ pub fn remove_authorization_lock_v1(
     crate::require_swig_v2(swig_account_data)?;
     let old_len = swig_account_data.len();
 
-    let (roles_end, new_tail, refund_destination) = {
+    let (new_len, refund_destination) = {
         let parts = Swig::split_parts_mut(swig_account_data)?;
         let bump = [parts.state.wallet_bump];
         check_self_pda(
@@ -128,9 +125,16 @@ pub fn remove_authorization_lock_v1(
 
         let entry = authorization_locks::read_strict(parts.tail)?
             .ok_or(SwigError::AuthorizationLockNotFound)?;
-        let target = entry
-            .iter()
-            .find(|lock| lock.lock_id == args.lock_id)
+        // Locate the target by its id without decoding the other records.
+        let (index, target_role_id, target_active) = entry
+            .records()
+            .chunks_exact(LOCK_LEN)
+            .enumerate()
+            .find_map(|(index, bytes)| {
+                LockRecord::new(bytes)
+                    .filter(|lock| lock.lock_id() == args.lock_id)
+                    .map(|lock| (index, lock.role_id(), lock.is_active(slot)))
+            })
             .ok_or(SwigError::AuthorizationLockNotFound)?;
 
         let acting_role = Swig::get_mut_role(args.acting_role_id, parts.roles)?
@@ -151,8 +155,8 @@ pub fn remove_authorization_lock_v1(
             )?;
         }
 
-        if target.role_id != args.acting_role_id {
-            if target.is_active(slot) {
+        if target_role_id != args.acting_role_id {
+            if target_active {
                 return Err(SwigError::AuthorizationLockNotOwner.into());
             }
             let may_prune = acting_role.get_action::<All>(&[])?.is_some()
@@ -168,26 +172,23 @@ pub fn remove_authorization_lock_v1(
             }
         }
 
-        let remaining: Vec<AuthorizationLock> = entry
-            .iter()
-            .filter(|lock| lock.lock_id != args.lock_id)
-            .collect();
-        let new_tail =
-            authorization_locks::rebuild_tail(parts.tail, entry.next_lock_id(), &remaining)?;
         let refund_destination = crate::util::rent::refund_destination(
             rent_claimer::read_strict(parts.tail)?,
             ctx.accounts.swig,
+            // Checked against the canonical wallet PDA above.
+            crate::util::rent::WalletAddress::Verified(ctx.accounts.swig_wallet_address.key()),
             ctx.accounts.payer,
             all_accounts,
         )?;
-        (Swig::LEN + parts.roles.len(), new_tail, refund_destination)
+        // Close the gap in place; later bytes move down and the freed end is
+        // zeroed before the account shrinks.
+        let tail_len = parts.tail.len();
+        let new_tail_len = authorization_locks::remove_in_place(parts.tail, tail_len, index)?;
+        (
+            Swig::LEN + parts.roles.len() + new_tail_len,
+            refund_destination,
+        )
     };
-
-    let new_len = roles_end
-        .checked_add(new_tail.len())
-        .ok_or(ProgramError::InvalidAccountData)?;
-    swig_account_data[roles_end..new_len].copy_from_slice(&new_tail);
-    swig_account_data[new_len..].fill(0);
 
     let rent = Rent::get()?;
     let swig_lamports = ctx.accounts.swig.lamports();

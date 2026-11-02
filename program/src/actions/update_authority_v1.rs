@@ -843,11 +843,13 @@ pub fn update_authority_v1(
         if update_authority_v1.args.authority_to_update_id
             != update_authority_v1.args.acting_role_id
             && !revokes_only_lock_permission
-            && authorization_locks::role_has_active_locks(
+            // `SavedTail::take` above validated the tail.
+            && authorization_locks::role_lock_state(
                 parts.tail,
                 update_authority_v1.args.authority_to_update_id,
                 slot,
             )?
+            .1
         {
             return Err(SwigError::AuthorizationLockActive.into());
         }
@@ -926,6 +928,7 @@ pub fn update_authority_v1(
             crate::util::rent::refund_destination(
                 rent_claimer::read_strict(parts.tail)?,
                 ctx.accounts.swig,
+                crate::util::rent::WalletAddress::Derive,
                 ctx.accounts.payer,
                 all_accounts,
             )?

@@ -328,11 +328,11 @@ impl SavedTail {
         })
     }
 
-    /// Replaces the captured tail with `bytes`, which must be a valid tail.
-    pub fn replace(&mut self, bytes: Vec<u8>) -> Result<(), ProgramError> {
-        validate_strict(&bytes)?;
-        self.bytes = bytes;
-        Ok(())
+    /// Drops every authorization lock of `role_id` from the captured tail in
+    /// place ([`authorization_locks::prune_role_locks`]) and returns how many
+    /// bytes it shrank by.
+    pub fn prune_role_locks(&mut self, role_id: u32) -> Result<usize, ProgramError> {
+        authorization_locks::prune_role_locks(&mut self.bytes, role_id)
     }
 
     /// Length of the captured tail (`0` when the wallet has no tail).
