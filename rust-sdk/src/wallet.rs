@@ -1601,8 +1601,12 @@ impl<'c> SwigWallet<'c> {
     ///
     /// For native SOL pass the swig wallet address and an all-zero mint; for
     /// tokens pass a token account owned by the swig wallet address and its
-    /// mint. While the lock is active no role can spend the account below the
-    /// reserved amount; only this role can release it early.
+    /// mint. Like a card authorization hold: while the lock is active every
+    /// other role (including `All`) can spend only the account's balance minus
+    /// the locks it does not hold. This role may still spend the reserved
+    /// funds; each SignV2 it signs lowers ("captures") its locks on the account
+    /// by the net outflow, oldest first, and its spend limits are charged then,
+    /// not when locking. Only this role can release the lock early.
     pub fn add_authorization_lock(
         &mut self,
         asset_account: Pubkey,
@@ -1622,7 +1626,7 @@ impl<'c> SwigWallet<'c> {
     }
 
     /// Releases an authorization lock created by the current role, or prunes
-    /// an expired lock.
+    /// an expired or fully captured (amount 0) lock.
     pub fn remove_authorization_lock(&mut self, lock_id: u32) -> Result<Signature, SwigError> {
         let swig_data = self.get_swig_account_data()?;
         let parts = Swig::split_parts(&swig_data).map_err(|_| SwigError::InvalidSwigData)?;
@@ -1638,7 +1642,10 @@ impl<'c> SwigWallet<'c> {
         self.send_authority_instructions(instructions)
     }
 
-    /// Returns every stored authorization lock, including expired ones.
+    /// Returns every stored authorization lock, including expired ones and
+    /// fully captured ones (amount 0). `amount` is what is still reserved: it
+    /// falls as the creating role spends from the account. Use
+    /// [`AuthorizationLock::is_active`] to filter the locks that still bind.
     pub fn get_authorization_locks(&self) -> Result<Vec<AuthorizationLock>, SwigError> {
         let swig_data = self.get_swig_account_data()?;
         let parts = Swig::split_parts(&swig_data).map_err(|_| SwigError::InvalidSwigData)?;

@@ -1,14 +1,18 @@
 //! Manage authorization locks action type.
 //!
 //! An authorization lock reserves part of one wallet asset account until an
-//! expiry slot. While a lock is active, no role (including `All`) may spend
-//! that account below the reserved amount, and the wallet cannot strip the
-//! creating role of the permissions it needs to capture the reservation.
+//! expiry slot, like a card authorization hold. While a lock is active, no
+//! other role (including `All`) may spend that account below the amount
+//! reserved by locks it does not hold, and the wallet cannot strip the creating
+//! role of the permissions it needs to capture the reservation. The creating
+//! role may spend its reserved funds; SignV2 captures (lowers) its locks as it
+//! does, and charges its spend limits at that point.
 //!
 //! Every lock requires this action, and no lock may outlast
 //! `max_duration_slots`. Because a lock constrains every other role, a role
 //! that cannot spend everything may only lock funds within the spending
-//! allowance it already holds for that asset. A role may not set or change its
+//! allowance it already holds for that asset, and its remaining locks must
+//! keep fitting that allowance after it spends. A role may not set or change its
 //! own `max_duration_slots`; another manager grants it (the root, which no
 //! other role may manage, is the exception).
 

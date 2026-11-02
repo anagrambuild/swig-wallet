@@ -4,7 +4,9 @@
 //! lock requires `ManageAuthorizationLocks`, and no lock may outlast the role's
 //! `max_duration_slots`. A role that may spend everything (`All` or
 //! `AllButManageAuthority`) may lock any balance; any other role may lock at
-//! most what its own limits would let it spend of that asset.
+//! most what its own limits would let it spend of that asset. Locking charges
+//! no limit: the role's limits are charged when SignV2 spends the funds, which
+//! also captures the lock.
 
 extern crate alloc;
 use alloc::vec::Vec;

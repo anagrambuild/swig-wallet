@@ -2,11 +2,22 @@
 //!
 //! A lock reserves part of one wallet asset account: the swig wallet address
 //! for native SOL, or one token account whose authority is the wallet address.
-//! [`LockGuard`] enforces active locks around SignV2 execution for every role,
-//! including `All`: an account may receive funds freely, but may not end a
-//! transaction below `min(balance_before, reserved)`, and a locked token account
-//! must keep the wallet as its authority with no delegate or foreign close
-//! authority.
+//! Locks follow card-authorization semantics:
+//!
+//! - Every role other than the lock's creator, including `All`, is held off
+//!   the reserved funds. [`LockGuard`] enforces this around SignV2: an account
+//!   may receive funds freely, but may not end a transaction below
+//!   `min(balance_before, reserved by locks the signing role does not hold)`.
+//! - The creating role may spend its own reserved funds. SignV2 then captures
+//!   its locks on that account: their amounts drop by the account's net
+//!   outflow, oldest lock first, never below zero. A lock captured to zero is
+//!   inactive and may be pruned.
+//! - Limits are charged when funds are spent, not when they are locked. After
+//!   charging and capturing, a limited role's remaining locks must still fit
+//!   what its limits let it spend ([`check_role_locks_within_limits`]).
+//!
+//! Every locked account in a SignV2, whoever signs, must keep the wallet as
+//! its token authority with no delegate or foreign close authority.
 
 extern crate alloc;
 use alloc::vec::Vec;
@@ -148,9 +159,8 @@ pub(crate) fn check_lockable_mint(
 /// `slot`. A role without any applicable limit has no capacity, so it cannot
 /// reserve an asset it could never capture.
 ///
-/// A role's active locks must always fit within this amount: the creator's
-/// limits back its reservations, so it cannot lock more than it may spend nor
-/// spend what it has reserved.
+/// A role's active locks must always fit within this amount, so it cannot hold
+/// a reservation it could never spend.
 ///
 /// SignV2 charges one general limit (one-shot before recurring) and, when
 /// destination limits exist, requires every debit to also match one, so the
@@ -378,8 +388,8 @@ fn recurring_remaining(window: u64, last_reset: u64, full: u64, current: u64, sl
 }
 
 /// Fails when the role's active locks on any mint exceed what its limits still
-/// let it spend. SignV2 runs this after charging the role's limits, so a role
-/// can neither spend the allowance backing its reservations nor keep locks its
+/// let it spend. Callers run this after charging the role's limits (and, in
+/// SignV2, after capturing its locks), so a role cannot keep reservations its
 /// limits can no longer cover.
 #[inline(never)]
 pub(crate) fn check_role_locks_within_limits(
@@ -391,8 +401,20 @@ pub(crate) fn check_role_locks_within_limits(
     let Some(entry) = authorization_locks::read(tail)? else {
         return Ok(());
     };
+    let locks: Vec<AuthorizationLock> = entry.iter().collect();
+    check_locks_within_limits(&locks, role_id, actions, slot)
+}
+
+/// [`check_role_locks_within_limits`] over an in-memory lock list.
+#[inline(never)]
+pub(crate) fn check_locks_within_limits(
+    locks: &[AuthorizationLock],
+    role_id: u32,
+    actions: &[u8],
+    slot: u64,
+) -> Result<(), ProgramError> {
     let mut checked: Vec<[u8; 32]> = Vec::new();
-    for lock in entry
+    for lock in locks
         .iter()
         .filter(|lock| lock.role_id == role_id && lock.is_active(slot))
     {
@@ -400,7 +422,7 @@ pub(crate) fn check_role_locks_within_limits(
             continue;
         }
         checked.push(lock.mint);
-        let reserved = sum_active(entry.iter(), slot, |other| {
+        let reserved = sum_active(locks.iter().copied(), slot, |other| {
             other.role_id == role_id && other.mint == lock.mint
         })?;
         if reserved > remaining_spend_capacity(actions, &lock.mint, slot)? {
@@ -470,69 +492,110 @@ struct GuardedAccount {
     index: usize,
     native: bool,
     mint: [u8; 32],
-    reserved: u64,
+    /// Sum of active locks held by roles other than the signer.
+    reserved_by_others: u64,
+    /// Indexes into [`LockGuard::locks`] of the signer's active locks on this
+    /// account, in storage order (oldest first).
+    signer_locks: Vec<usize>,
     before: u64,
 }
 
-/// Pre-CPI snapshot of every writable account that carries an active lock.
+/// Pre-CPI snapshot of the wallet's locks and of every writable account in the
+/// transaction that carries an active lock.
 pub(crate) struct LockGuard {
+    signer_role_id: u32,
+    /// Every stored lock, in storage order.
+    locks: Vec<AuthorizationLock>,
     accounts: Vec<GuardedAccount>,
+    /// `(storage index, lock_id)` of the signer's locks lowered by `settle`.
+    captured: Vec<(usize, u32)>,
 }
 
 impl LockGuard {
-    /// Captures the locked accounts present and writable in this transaction.
-    /// Read-only and absent accounts cannot change, so they need no check.
+    /// Snapshots the wallet's locks and the locked accounts present and
+    /// writable in this transaction. Read-only and absent accounts cannot
+    /// change, so they need no check. `signer_role_id` is the role SignV2
+    /// authenticated as: its own locks do not restrict it, and its spending
+    /// captures them. Returns `None` when no lock is active.
     #[inline(never)]
-    pub(crate) fn capture(
+    pub(crate) fn snapshot(
         tail: &[u8],
         all_accounts: &[AccountInfo],
         wallet: &AccountInfo,
         slot: u64,
+        signer_role_id: u32,
     ) -> Result<Option<Self>, ProgramError> {
         let Some(entry) = authorization_locks::read(tail)? else {
             return Ok(None);
         };
+        let locks: Vec<AuthorizationLock> = entry.iter().collect();
         let mut accounts: Vec<GuardedAccount> = Vec::new();
-        for lock in entry.iter().filter(|lock| lock.is_active(slot)) {
-            if let Some(guarded) = accounts
-                .iter_mut()
-                .find(|g| all_accounts[g.index].key() == &lock.asset_account)
-            {
-                guarded.reserved = guarded
-                    .reserved
+        let mut any_active = false;
+        for (lock_index, lock) in locks.iter().enumerate() {
+            if !lock.is_active(slot) {
+                continue;
+            }
+            any_active = true;
+            let position = accounts
+                .iter()
+                .position(|g| all_accounts[g.index].key() == &lock.asset_account);
+            let guarded = match position {
+                Some(position) => &mut accounts[position],
+                None => {
+                    let Some(index) = all_accounts
+                        .iter()
+                        .position(|account| account.key() == &lock.asset_account)
+                    else {
+                        continue;
+                    };
+                    if !all_accounts[index].is_writable() {
+                        continue;
+                    }
+                    let native = lock.is_native_sol();
+                    let before = Self::balance(&all_accounts[index], native, &lock.mint, wallet)?;
+                    accounts.push(GuardedAccount {
+                        index,
+                        native,
+                        mint: lock.mint,
+                        reserved_by_others: 0,
+                        signer_locks: Vec::new(),
+                        before,
+                    });
+                    let last = accounts.len() - 1;
+                    &mut accounts[last]
+                },
+            };
+            if lock.role_id == signer_role_id {
+                guarded.signer_locks.push(lock_index);
+            } else {
+                guarded.reserved_by_others = guarded
+                    .reserved_by_others
                     .checked_add(lock.amount)
                     .ok_or(ProgramError::ArithmeticOverflow)?;
-                continue;
             }
-            let Some(index) = all_accounts
-                .iter()
-                .position(|account| account.key() == &lock.asset_account)
-            else {
-                continue;
-            };
-            if !all_accounts[index].is_writable() {
-                continue;
-            }
-            let native = lock.is_native_sol();
-            let before = Self::balance(&all_accounts[index], native, &lock.mint, wallet)?;
-            accounts.push(GuardedAccount {
-                index,
-                native,
-                mint: lock.mint,
-                reserved: lock.amount,
-                before,
-            });
         }
-        if accounts.is_empty() {
+        if !any_active {
             return Ok(None);
         }
-        Ok(Some(Self { accounts }))
+        Ok(Some(Self {
+            signer_role_id,
+            locks,
+            accounts,
+            captured: Vec::new(),
+        }))
     }
 
-    /// Verifies that no locked account lost reserved funds or its identity.
+    /// Verifies that no locked account lost its identity or funds reserved by
+    /// other roles, then captures the signer's locks.
+    ///
+    /// Each account's net outflow (`before - after`, never negative) is
+    /// charged against the signer's locks on it, oldest first, never below
+    /// zero. Outflow beyond the signer's locks came from unreserved funds; the
+    /// floor check already guarantees it did not touch other roles'
+    /// reservations. Inflows never raise a lock.
     #[inline(never)]
-    pub(crate) fn validate(
-        &self,
+    pub(crate) fn settle(
+        &mut self,
         all_accounts: &[AccountInfo],
         wallet: &AccountInfo,
     ) -> Result<(), ProgramError> {
@@ -543,11 +606,46 @@ impl LockGuard {
                 &guarded.mint,
                 wallet,
             )?;
-            if after < guarded.before.min(guarded.reserved) {
+            if after < guarded.before.min(guarded.reserved_by_others) {
                 return Err(SwigError::AuthorizationLockViolated.into());
+            }
+            let mut outflow = guarded.before.saturating_sub(after);
+            for &lock_index in &guarded.signer_locks {
+                if outflow == 0 {
+                    break;
+                }
+                let lock = &mut self.locks[lock_index];
+                let take = lock.amount.min(outflow);
+                outflow -= take;
+                lock.amount -= take;
+                self.captured.push((lock_index, lock.lock_id));
             }
         }
         Ok(())
+    }
+
+    /// Fails when the signer's remaining active locks exceed what its limits
+    /// still let it spend. Run after charging limits and [`Self::settle`].
+    #[inline(never)]
+    pub(crate) fn check_signer_within_limits(
+        &self,
+        actions: &[u8],
+        slot: u64,
+    ) -> Result<(), ProgramError> {
+        check_locks_within_limits(&self.locks, self.signer_role_id, actions, slot)
+    }
+
+    /// Writes the captured amounts back to the lock entry in `tail`.
+    #[inline(never)]
+    pub(crate) fn write_back(&self, tail: &mut [u8]) -> Result<(), ProgramError> {
+        if self.captured.is_empty() {
+            return Ok(());
+        }
+        let mut updates: Vec<(usize, u32, u64)> = Vec::with_capacity(self.captured.len());
+        for &(lock_index, lock_id) in &self.captured {
+            updates.push((lock_index, lock_id, self.locks[lock_index].amount));
+        }
+        authorization_locks::write_captured_amounts(tail, &updates)
     }
 
     fn balance(

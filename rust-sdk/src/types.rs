@@ -75,6 +75,9 @@ pub enum Permission {
     /// every lock, even with `All`. Amounts are capped by the role's own
     /// spending limits for each asset, or by the wallet balance for roles with
     /// `All` or `AllButManageAuthority`. A role cannot change its own bound.
+    /// Locks act like card authorization holds: other roles cannot spend the
+    /// reserved funds, while the holder can, and its spending captures (lowers)
+    /// its locks and is charged to its limits at that point.
     ManageAuthorizationLocks { max_duration_slots: u64 },
 
     /// Permission to interact with specific tokens. Can be configured with
