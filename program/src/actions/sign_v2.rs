@@ -45,7 +45,7 @@ use swig_state::{
 };
 
 use crate::{
-    authorization_lock::{check_role_locks_within_limits, LockGuard},
+    authorization_lock::{check_locks_within_limits, LockGuard},
     error::SwigError,
     instruction::{
         accounts::{Context, SignV2Accounts},
@@ -260,10 +260,11 @@ pub fn sign_v2(
     if unsafe { *swig_account_data.get_unchecked(0) } != Discriminator::SwigConfigAccount as u8 {
         return Err(SwigError::InvalidSwigAccountDiscriminator.into());
     }
+    let config_len = swig_account_data.len();
     let parts = Swig::split_parts_mut(swig_account_data)?;
     let swig = parts.state;
     let swig_roles = parts.roles;
-    let swig_tail: &[u8] = parts.tail;
+    let swig_tail: &mut [u8] = parts.tail;
     // The generic account classifier already identified account 0 as Swig config.
     // Keep this hot-path discriminator check as a local unsafe-read precondition.
     let Some(role) = Swig::get_mut_role(sign_v2.args.role_id, swig_roles)? else {
@@ -286,16 +287,19 @@ pub fn sign_v2(
             slot,
         )?;
     }
-    // Authorization locks bind every role, so capture locked balances before
-    // any CPI on both the unrestricted and the limited paths.
-    let lock_guard = if swig_tail.is_empty() {
+    // Other roles' authorization locks bind every role, `All` included, so
+    // snapshot locked balances before any CPI on both the unrestricted and the
+    // limited paths. The signer's own locks do not restrict it; its spending
+    // captures them after execution.
+    let mut lock_guard = if swig_tail.is_empty() {
         None
     } else {
-        LockGuard::capture(
+        LockGuard::snapshot(
             swig_tail,
             all_accounts,
             ctx.accounts.swig_wallet_address,
             slot,
+            sign_v2.args.role_id,
         )?
     };
     // Intentionally no restricted keys: SignV2 forwards existing outer signer
@@ -349,8 +353,16 @@ pub fn sign_v2(
         }
 
         isolation.validate()?;
-        if let Some(lock_guard) = &lock_guard {
-            lock_guard.validate(all_accounts, ctx.accounts.swig_wallet_address)?;
+        if let Some(lock_guard) = &mut lock_guard {
+            // Unrestricted roles have no spend limits to keep their locks
+            // within; their locks were bounded by the balance when created.
+            lock_guard.settle(all_accounts, ctx.accounts.swig_wallet_address)?;
+            // The tail is written through the pre-CPI view of the config, so
+            // the config must not have been resized in between.
+            if ctx.accounts.swig.data_len() != config_len {
+                return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+            }
+            lock_guard.write_back(swig_tail)?;
         }
 
         return Ok(());
@@ -953,15 +965,15 @@ pub fn sign_v2(
         assert_wallet_address_invariants(ctx.accounts.swig_wallet_address)?;
     }
 
-    // The acting role's limits back its own reservations, so after charging
-    // this transaction's spending they must still cover its active locks.
-    if !swig_tail.is_empty() {
-        check_role_locks_within_limits(swig_tail, sign_v2.args.role_id, actions, slot)?;
-    }
-
     isolation.validate()?;
-    if let Some(lock_guard) = &lock_guard {
-        lock_guard.validate(all_accounts, ctx.accounts.swig_wallet_address)?;
+    // Limits were charged above. Capture the signer's locks with this
+    // transaction's net outflow, then require its remaining locks to fit what
+    // its limits still let it spend, so it cannot hold a reservation it could
+    // never spend.
+    if let Some(lock_guard) = &mut lock_guard {
+        lock_guard.settle(all_accounts, ctx.accounts.swig_wallet_address)?;
+        lock_guard.check_signer_within_limits(actions, slot)?;
+        lock_guard.write_back(swig_tail)?;
     }
     Ok(())
 }

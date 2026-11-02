@@ -1,11 +1,15 @@
 //! Authorization-lock tail entry.
 //!
 //! An authorization lock reserves `amount` of one wallet asset account until
-//! `expiry_slot`. The asset account is either the swig wallet address (native
-//! SOL, `mint == NATIVE_SOL_MINT`) or one SPL Token / Token-2022 account owned
-//! by the swig wallet address. While any lock on an account is active, SignV2
-//! rejects transactions that move that account's balance below the total
-//! reserved amount, regardless of the signing role's permissions.
+//! `expiry_slot`, like a card authorization hold. The asset account is either
+//! the swig wallet address (native SOL, `mint == NATIVE_SOL_MINT`) or one SPL
+//! Token / Token-2022 account owned by the swig wallet address. While a lock is
+//! active, SignV2 rejects transactions by any other role that move that
+//! account's balance below the amount reserved by locks that role does not
+//! hold, regardless of its permissions. The creating role may spend its own
+//! reserved funds; SignV2 then captures its locks by lowering `amount` by the
+//! account's net outflow, oldest lock first. A lock captured down to zero
+//! stays stored, inactive, until it is removed.
 //!
 //! The entry is a single typed tail record whose value is a packed array of
 //! [`AuthorizationLock`] records. The header's 4-byte payload stores the next
@@ -62,9 +66,11 @@ pub struct AuthorizationLock {
 }
 
 impl AuthorizationLock {
-    /// A lock is enforced through `expiry_slot - 1`.
+    /// A lock is enforced through `expiry_slot - 1` while it still reserves a
+    /// non-zero amount. A fully captured lock (amount 0) is inactive and may
+    /// be pruned like an expired one.
     pub fn is_active(&self, slot: u64) -> bool {
-        self.expiry_slot > slot
+        self.amount != 0 && self.expiry_slot > slot
     }
 
     pub fn is_native_sol(&self) -> bool {
@@ -140,7 +146,8 @@ impl<'a> AuthorizationLocksEntry<'a> {
     ///
     /// Locks are appended with the next id and removed in place, so stored ids
     /// are strictly increasing and below the counter. Checking that ordering
-    /// proves uniqueness in one pass.
+    /// proves uniqueness in one pass. A zero amount is valid: it marks a lock
+    /// that SignV2 captured in full.
     pub fn validate(&self) -> Result<(), ProgramError> {
         if self.header.version != VERSION
             || !self.value.len().is_multiple_of(LOCK_LEN)
@@ -151,7 +158,7 @@ impl<'a> AuthorizationLocksEntry<'a> {
         let mut previous: Option<u32> = None;
         for record in self.value.chunks_exact(LOCK_LEN) {
             let lock_id = u32::from_le_bytes(record[LOCK_ID].try_into().expect("fixed-size field"));
-            if previous.is_some_and(|previous| lock_id <= previous) || record[AMOUNT] == [0u8; 8] {
+            if previous.is_some_and(|previous| lock_id <= previous) {
                 return Err(SwigStateError::InvalidAuthorizationLockLayout.into());
             }
             previous = Some(lock_id);
@@ -235,6 +242,53 @@ pub fn entry(next_lock_id: u32, locks: &[AuthorizationLock]) -> Result<Vec<u8>, 
         buf.extend_from_slice(&lock.to_bytes());
     }
     Ok(buf)
+}
+
+/// Lowers stored lock amounts in place, leaving the tail's length and every
+/// other byte unchanged. Each update is `(index, lock_id, amount)`: `index` is
+/// the lock's position in the entry, and `lock_id` must match the lock stored
+/// there. Fails when an update names a missing lock or would raise an amount.
+pub fn write_captured_amounts(
+    tail_data: &mut [u8],
+    updates: &[(usize, u32, u64)],
+) -> Result<(), ProgramError> {
+    if updates.is_empty() {
+        return Ok(());
+    }
+    let mut offset = 0usize;
+    let value_range = loop {
+        let rest = tail_data
+            .get(offset..)
+            .filter(|rest| !rest.is_empty())
+            .ok_or(SwigStateError::InvalidAuthorizationLockLayout)?;
+        let (parsed, consumed) = AnyTailEntry::read(rest)?;
+        let end = offset
+            .checked_add(consumed)
+            .ok_or(SwigStateError::InvalidAuthorizationLockLayout)?;
+        if matches!(parsed, AnyTailEntry::AuthorizationLocks(_)) {
+            break offset + TAIL_HEADER_LEN..end;
+        }
+        offset = end;
+    };
+    let value = &mut tail_data[value_range];
+    for &(index, lock_id, amount) in updates {
+        let start = index
+            .checked_mul(LOCK_LEN)
+            .ok_or(SwigStateError::InvalidAuthorizationLockLayout)?;
+        let record = start
+            .checked_add(LOCK_LEN)
+            .and_then(|end| value.get_mut(start..end))
+            .ok_or(SwigStateError::InvalidAuthorizationLockLayout)?;
+        if record[LOCK_ID] != lock_id.to_le_bytes() {
+            return Err(SwigStateError::InvalidAuthorizationLockLayout.into());
+        }
+        let current = u64::from_le_bytes(record[AMOUNT].try_into().expect("fixed-size field"));
+        if amount > current {
+            return Err(SwigStateError::InvalidAuthorizationLockLayout.into());
+        }
+        record[AMOUNT].copy_from_slice(&amount.to_le_bytes());
+    }
+    Ok(())
 }
 
 /// Rebuilds a validated tail with its lock entry replaced, preserving every
@@ -361,10 +415,10 @@ mod tests {
         let tail = entry(5, &[lock(1, 0, 10), lock(3, 0, 20)]).unwrap();
         assert!(validate_strict(&tail).is_ok());
 
-        // Zero amount.
+        // A zero amount marks a fully captured lock and is valid.
         let mut zero = lock(0, 0, 10);
         zero.amount = 0;
-        assert!(validate_strict(&entry(1, &[zero]).unwrap()).is_err());
+        assert!(validate_strict(&entry(1, &[zero]).unwrap()).is_ok());
 
         // Value not a multiple of the record size.
         let mut tail = entry(1, &[lock(0, 0, 10)]).unwrap();
@@ -376,6 +430,46 @@ mod tests {
         let mut tail = entry(1, &[lock(0, 0, 10)]).unwrap();
         tail.extend_from_slice(&entry(1, &[]).unwrap());
         assert!(validate_strict(&tail).is_err());
+    }
+
+    #[test]
+    fn captured_locks_are_inactive() {
+        let mut l = lock(0, 0, 100);
+        l.amount = 0;
+        assert!(!l.is_active(0));
+        let tail = entry(1, &[l]).unwrap();
+        assert!(!has_active_locks(&tail, 0).unwrap());
+        assert!(!role_has_active_locks(&tail, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn write_captured_amounts_lowers_in_place() {
+        let rent = rent_claimer::entry(&[7u8; 32]);
+        let locks = [lock(0, 1, 50), lock(1, 2, 60), lock(2, 1, 70)];
+        let count = active_sub_account_count::entry(3);
+        let mut tail = [
+            rent.as_slice(),
+            entry(3, &locks).unwrap().as_slice(),
+            count.as_slice(),
+        ]
+        .concat();
+        let len = tail.len();
+        write_captured_amounts(&mut tail, &[(0, 0, 0), (2, 2, 5)]).unwrap();
+        assert_eq!(tail.len(), len);
+        validate_strict(&tail).unwrap();
+        let stored: Vec<_> = read(&tail).unwrap().unwrap().iter().collect();
+        assert_eq!(stored[0].amount, 0);
+        assert_eq!(stored[1], locks[1]);
+        assert_eq!(stored[2].amount, 5);
+        assert_eq!(rent_claimer::read(&tail).unwrap(), Some(&[7u8; 32]));
+        assert_eq!(active_sub_account_count::read(&tail).unwrap(), Some(3));
+
+        // Raising an amount, a mismatched id, or a missing lock fails.
+        assert!(write_captured_amounts(&mut tail, &[(2, 2, 6)]).is_err());
+        assert!(write_captured_amounts(&mut tail, &[(1, 2, 0)]).is_err());
+        assert!(write_captured_amounts(&mut tail, &[(3, 3, 0)]).is_err());
+        assert!(write_captured_amounts(&mut rent.clone(), &[(0, 0, 0)]).is_err());
+        write_captured_amounts(&mut [], &[]).unwrap();
     }
 
     #[test]

@@ -144,6 +144,11 @@ pub enum SwigInstruction {
     /// - Authority payload with offset and length
     /// Additional accounts may be required for CPI calls.
     ///
+    /// Active authorization locks held by other roles bound how far each
+    /// writable locked account may fall. The signing role's own locks do not
+    /// restrict it; its net outflow from a locked account captures (lowers)
+    /// those locks, which SignV2 writes back to the Swig account.
+    ///
     /// Required accounts:
     /// 1. `[writable]` Swig wallet account
     /// 2. `[writable, signer]` Swig wallet address account
@@ -373,10 +378,16 @@ pub enum SwigInstruction {
     #[account(3, name="system_program", desc="the system program")]
     CreateReservedV1 = 24,
 
-    /// Reserves part of one wallet asset account until an expiry slot.
+    /// Reserves part of one wallet asset account until an expiry slot, like a
+    /// card authorization hold.
     ///
-    /// While active, no role can spend the asset account below the reserved
-    /// amount. Only the creating role may release the lock before it expires.
+    /// While active, every other role (`All` included) may spend only the
+    /// account's balance minus the locks it does not hold. The creating role
+    /// may spend the reserved funds; SignV2 captures its locks by the
+    /// account's net outflow, and a lock captured to zero becomes inactive.
+    /// A limited role may lock at most what its limits would let it spend;
+    /// limits are charged when the funds are spent, not when they are locked.
+    /// Only the creating role may release the lock before it expires.
     ///
     /// Required accounts:
     /// 1. `[writable]` Swig wallet account
@@ -397,8 +408,9 @@ pub enum SwigInstruction {
     AddAuthorizationLockV1 = 25,
 
     /// Releases an authorization lock. The creating role may release its own
-    /// lock at any time; once expired, a role with All, AllButManageAuthority,
-    /// ManageAuthority, or ManageAuthorizationLocks may remove it. Rent returns
+    /// lock at any time; once expired or fully captured, a role with All,
+    /// AllButManageAuthority, ManageAuthority, or ManageAuthorizationLocks may
+    /// remove it. Rent returns
     /// to the configured rent claimer, or to the payer when none is set.
     ///
     /// Required accounts:

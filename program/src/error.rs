@@ -206,8 +206,9 @@ pub enum SwigError {
     AuthorizationLockNotOwner,
     /// The operation is blocked while an authorization lock is active
     AuthorizationLockActive,
-    /// The transaction would spend a locked asset account below its reserved
-    /// amount, or change its token account authority, delegate, or state
+    /// The transaction would spend a locked asset account below the amount
+    /// reserved by locks the signing role does not hold, or change its token
+    /// account authority, delegate, or state
     AuthorizationLockViolated,
     /// A role may not set or change its own maximum lock duration
     AuthorizationLockDurationSelfUpdate,

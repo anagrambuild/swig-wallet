@@ -13,7 +13,7 @@ use crate::{
 };
 
 #[test_log::test]
-fn should_lock_enforce_and_release_sol_through_wallet() {
+fn should_lock_enforce_capture_and_release_sol_through_wallet() {
     let (litesvm, main_authority) = setup_test_environment();
     let mut wallet = create_test_wallet(litesvm, &main_authority);
     // Locking needs the explicit permission, even for the root `All` role.
@@ -24,6 +24,18 @@ fn should_lock_enforce_and_release_sol_through_wallet() {
                 max_duration_slots: 10_000,
             }]),
         )
+        .unwrap();
+    let other = Keypair::new();
+    wallet
+        .add_authority(
+            AuthorityType::Ed25519,
+            other.pubkey().as_ref(),
+            vec![Permission::All],
+        )
+        .unwrap();
+    wallet
+        .litesvm()
+        .airdrop(&other.pubkey(), LAMPORTS_PER_SOL)
         .unwrap();
     let wallet_address = wallet.get_swig_wallet_address().unwrap();
     wallet
@@ -45,13 +57,42 @@ fn should_lock_enforce_and_release_sol_through_wallet() {
     assert_eq!(locks[0].amount, 4 * LAMPORTS_PER_SOL);
     assert_eq!(locks[0].role_id, 0);
 
+    // The holder spends from its own hold, which captures it.
     let recipient = Keypair::new().pubkey();
+    let spend = system_instruction::transfer(&wallet_address, &recipient, LAMPORTS_PER_SOL);
+    wallet.sign_v2(vec![spend], None).unwrap();
+    wallet.litesvm().expire_blockhash();
+    let locks = wallet.get_authorization_locks().unwrap();
+    assert_eq!(locks[0].amount, 3 * LAMPORTS_PER_SOL);
+
+    // Another `All` role cannot spend into the remaining hold.
+    wallet
+        .switch_authority(
+            1,
+            Box::new(Ed25519ClientRole::new(other.pubkey())),
+            Some(&other),
+        )
+        .unwrap();
     let overspend = system_instruction::transfer(&wallet_address, &recipient, 2 * LAMPORTS_PER_SOL);
     assert!(wallet.sign_v2(vec![overspend.clone()], None).is_err());
 
+    wallet
+        .switch_authority(
+            0,
+            Box::new(Ed25519ClientRole::new(main_authority.pubkey())),
+            Some(&main_authority),
+        )
+        .unwrap();
     wallet.remove_authorization_lock(locks[0].lock_id).unwrap();
     wallet.litesvm().expire_blockhash();
     assert!(wallet.get_authorization_locks().unwrap().is_empty());
+    wallet
+        .switch_authority(
+            1,
+            Box::new(Ed25519ClientRole::new(other.pubkey())),
+            Some(&other),
+        )
+        .unwrap();
     wallet.sign_v2(vec![overspend], None).unwrap();
 }
 

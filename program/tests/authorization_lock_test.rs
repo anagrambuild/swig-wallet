@@ -312,6 +312,67 @@ impl Wallet {
         let data = self.context.svm.get_account(account).unwrap().data;
         u64::from_le_bytes(data[64..72].try_into().unwrap())
     }
+
+    /// Adds an Ed25519 role with `actions` and returns its key and role id.
+    fn add_role(&mut self, actions: Vec<ClientAction>) -> (Keypair, u32) {
+        let signer = Keypair::new();
+        self.context
+            .svm
+            .airdrop(&signer.pubkey(), LAMPORTS_PER_SOL)
+            .unwrap();
+        let root = self.root.insecure_clone();
+        add_authority_with_ed25519_root(
+            &mut self.context,
+            &self.swig,
+            &root,
+            AuthorityConfig {
+                authority_type: AuthorityType::Ed25519,
+                authority: signer.pubkey().as_ref(),
+            },
+            actions,
+        )
+        .unwrap();
+        let data = self.data();
+        let role_id = swig_state::swig::SwigWithRoles::from_bytes(&data)
+            .unwrap()
+            .lookup_role_id(signer.pubkey().as_ref())
+            .unwrap()
+            .unwrap();
+        (signer, role_id)
+    }
+
+    /// Adds a second unrestricted role that may lock, so tests can separate
+    /// the lock holder from the spender.
+    fn add_issuer(&mut self) -> (Keypair, u32) {
+        self.add_role(vec![
+            ClientAction::All(All {}),
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(
+                ROOT_MAX_DURATION,
+            )),
+        ])
+    }
+
+    /// A limited role that may lock and spend up to `limit` of `mint`.
+    fn add_token_card(&mut self, mint: &Pubkey, limit: u64) -> (Keypair, u32) {
+        self.add_role(vec![
+            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(MAX_DURATION)),
+            ClientAction::TokenLimit(TokenLimit {
+                token_mint: mint.to_bytes(),
+                current_amount: limit,
+            }),
+            ClientAction::Program(Program {
+                program_id: spl_token::ID.to_bytes(),
+            }),
+        ])
+    }
+
+    fn lock(&self, lock_id: u32) -> AuthorizationLock {
+        self.locks()
+            .1
+            .into_iter()
+            .find(|lock| lock.lock_id == lock_id)
+            .unwrap()
+    }
 }
 
 fn custom_error(result: Result<TransactionMetadata, FailedTransactionMetadata>) -> u32 {
@@ -367,16 +428,58 @@ fn sol_lock_binds_all_role_to_the_reserved_floor() {
 }
 
 #[test]
-fn sol_lock_binds_the_creating_role_until_released() {
-    let mut w = Wallet::new(20 * LAMPORTS_PER_SOL);
+fn holder_spends_within_its_lock_and_the_lock_is_captured() {
+    let mut w = Wallet::new(5 * LAMPORTS_PER_SOL);
     let card = w.card.insecure_clone();
+    let root = w.root.insecure_clone();
     let expiry = w.slot() + 500;
-    let lockable = w.lockable_sol();
-    ok(w.add_sol_lock(&card, CARD_ROLE, lockable, expiry));
+    ok(w.add_sol_lock(&card, CARD_ROLE, 3 * LAMPORTS_PER_SOL, expiry));
+    // The owner drains everything else.
+    let spendable = w.lockable_sol() - 3 * LAMPORTS_PER_SOL;
+    ok(w.spend_sol(&root, ROOT_ROLE, spendable));
+
+    // No release needed: the holder spends its reserved funds directly.
+    ok(w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL));
+    assert_eq!(w.lockable_sol(), 2 * LAMPORTS_PER_SOL);
+    assert_eq!(w.lock(0).amount, 2 * LAMPORTS_PER_SOL);
+    // What is still reserved stays out of other roles' reach.
     assert_swig_error(
-        w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL),
+        w.spend_sol(&root, ROOT_ROLE, 1),
         SwigError::AuthorizationLockViolated,
     );
+
+    // Capturing the rest leaves a zero-amount lock that no longer binds and
+    // that an admin role may prune.
+    ok(w.spend_sol(&card, CARD_ROLE, 2 * LAMPORTS_PER_SOL));
+    let lock = w.lock(0);
+    assert_eq!(lock.amount, 0);
+    assert!(!lock.is_active(w.slot()));
+    let deposit = system_instruction::transfer(
+        &w.context.default_payer.pubkey(),
+        &w.wallet,
+        LAMPORTS_PER_SOL,
+    );
+    ok(w.send(&[deposit], &[]));
+    ok(w.spend_sol(&root, ROOT_ROLE, LAMPORTS_PER_SOL));
+    ok(w.remove_lock(&root, ROOT_ROLE, 0));
+    assert!(w.locks().1.is_empty());
+}
+
+#[test]
+fn holder_may_spend_beyond_its_lock_from_free_balance() {
+    let mut w = Wallet::new(5 * LAMPORTS_PER_SOL);
+    let card = w.card.insecure_clone();
+    let expiry = w.slot() + 500;
+    ok(w.add_sol_lock(&card, CARD_ROLE, 2 * LAMPORTS_PER_SOL, expiry));
+    let before = w.lockable_sol();
+    ok(w.spend_sol(&card, CARD_ROLE, 3 * LAMPORTS_PER_SOL));
+    assert_eq!(w.lockable_sol(), before - 3 * LAMPORTS_PER_SOL);
+    assert_eq!(w.lock(0).amount, 0);
+    // 5 SOL limit, 3 SOL spent: the limit, not the lock, bounds what is left.
+    assert!(w
+        .spend_sol(&card, CARD_ROLE, 2 * LAMPORTS_PER_SOL + 1)
+        .is_err());
+    ok(w.spend_sol(&card, CARD_ROLE, 2 * LAMPORTS_PER_SOL));
 }
 
 #[test]
@@ -399,41 +502,38 @@ fn capture_releases_and_spends_atomically() {
 }
 
 #[test]
-fn partial_capture_cannot_dip_into_a_second_lock() {
+fn capture_consumes_the_holders_oldest_lock_first() {
     let mut w = Wallet::new(5 * LAMPORTS_PER_SOL);
     let card = w.card.insecure_clone();
-    let root = w.root.insecure_clone();
     let expiry = w.slot() + 500;
     ok(w.add_sol_lock(&card, CARD_ROLE, LAMPORTS_PER_SOL, expiry));
     ok(w.add_sol_lock(&card, CARD_ROLE, LAMPORTS_PER_SOL, expiry));
-    let spendable = w.lockable_sol() - 2 * LAMPORTS_PER_SOL;
-    ok(w.spend_sol(&root, ROOT_ROLE, spendable));
-
-    let release = w.remove_lock_ix(&card, CARD_ROLE, 0);
-    let overspend = w.sol_transfer_ix(&card, CARD_ROLE, LAMPORTS_PER_SOL + 1);
-    assert_swig_error(
-        w.send(&[release.clone(), overspend], &[&card]),
-        SwigError::AuthorizationLockViolated,
-    );
-    let spend = w.sol_transfer_ix(&card, CARD_ROLE, LAMPORTS_PER_SOL);
-    ok(w.send(&[release, spend], &[&card]));
+    ok(w.spend_sol(&card, CARD_ROLE, 3 * LAMPORTS_PER_SOL / 2));
+    assert_eq!(w.lock(0).amount, 0);
+    assert_eq!(w.lock(1).amount, LAMPORTS_PER_SOL / 2);
+    // Releasing the remainder voids the rest of the hold.
+    ok(w.remove_lock(&card, CARD_ROLE, 1));
     assert_eq!(w.locks().1.len(), 1);
 }
 
 #[test]
-fn locks_from_several_roles_are_summed() {
+fn locks_from_several_roles_are_summed_for_everyone_else() {
     let mut w = Wallet::new(5 * LAMPORTS_PER_SOL);
     let card = w.card.insecure_clone();
     let root = w.root.insecure_clone();
+    let (issuer, issuer_role) = w.add_issuer();
     let expiry = w.slot() + 500;
     ok(w.add_sol_lock(&card, CARD_ROLE, 2 * LAMPORTS_PER_SOL, expiry));
-    ok(w.add_sol_lock(&root, ROOT_ROLE, 3 * LAMPORTS_PER_SOL, expiry));
+    ok(w.add_sol_lock(&issuer, issuer_role, 3 * LAMPORTS_PER_SOL, expiry));
     let spendable = w.lockable_sol() - 5 * LAMPORTS_PER_SOL;
     assert_swig_error(
         w.spend_sol(&root, ROOT_ROLE, spendable + 1),
         SwigError::AuthorizationLockViolated,
     );
     ok(w.spend_sol(&root, ROOT_ROLE, spendable));
+    // Neither lock was captured by a role that does not hold it.
+    assert_eq!(w.lock(0).amount, 2 * LAMPORTS_PER_SOL);
+    assert_eq!(w.lock(1).amount, 3 * LAMPORTS_PER_SOL);
 }
 
 #[test]
@@ -468,11 +568,11 @@ fn expired_locks_stop_binding_at_the_expiry_slot() {
 #[test]
 fn deposits_are_never_blocked_by_locks() {
     let mut w = Wallet::new(5 * LAMPORTS_PER_SOL);
-    let card = w.card.insecure_clone();
     let root = w.root.insecure_clone();
+    let (issuer, issuer_role) = w.add_issuer();
     let expiry = w.slot() + 500;
     let lockable = w.lockable_sol();
-    ok(w.add_sol_lock(&root, ROOT_ROLE, lockable, expiry));
+    ok(w.add_sol_lock(&issuer, issuer_role, lockable, expiry));
 
     // New deposits are unreserved and can be spent in the same transaction.
     let payer = w.context.default_payer.pubkey();
@@ -484,18 +584,42 @@ fn deposits_are_never_blocked_by_locks() {
         w.spend_sol(&root, ROOT_ROLE, 1),
         SwigError::AuthorizationLockViolated,
     );
+
+    // A holder's SignV2 with a net inflow to a locked account neither
+    // captures nor raises its lock.
+    let (mint, ata) = w.token_setup(1_000);
+    let payer_kp = w.context.default_payer.insecure_clone();
+    let wallet = w.wallet;
+    let second = litesvm_token::CreateAccount::new(&mut w.context.svm, &payer_kp, &mint)
+        .owner(&wallet)
+        .account_kp(Keypair::new())
+        .send()
+        .unwrap();
+    mint_to(&mut w.context.svm, &mint, &payer_kp, &second, 500).unwrap();
+    ok(w.add_lock(&issuer, issuer_role, ata, mint.to_bytes(), 400, expiry));
+    let inflow =
+        spl_token::instruction::transfer(&spl_token::ID, &second, &ata, &w.wallet, &[], 500)
+            .unwrap();
+    let ix = w.sign_ix(&issuer, issuer_role, inflow);
+    ok(w.send(&[ix], &[&issuer]));
+    assert_eq!(w.token_balance(&ata), 1_500);
+    assert_eq!(w.lock(1).amount, 400);
+    // Each SignV2 is measured on its own: a deposit in an earlier instruction
+    // is free balance, and the holder's later spend is a net outflow.
+    let deposit = system_instruction::transfer(&payer, &w.wallet, LAMPORTS_PER_SOL);
+    let spend = w.sol_transfer_ix(&issuer, issuer_role, LAMPORTS_PER_SOL / 2);
+    ok(w.send(&[deposit, spend], &[&issuer]));
+    assert_eq!(w.lock(0).amount, lockable - LAMPORTS_PER_SOL / 2);
 }
 
 #[test]
 fn underfunded_locked_account_may_not_shrink_further() {
     let mut w = Wallet::new(5 * LAMPORTS_PER_SOL);
-    let card = w.card.insecure_clone();
     let root = w.root.insecure_clone();
+    let (issuer, issuer_role) = w.add_issuer();
     let (mint, ata) = w.token_setup(1_000);
     let expiry = w.slot() + 500;
-    let wallet = w.wallet;
-    let _ = wallet;
-    ok(w.add_lock(&root, ROOT_ROLE, ata, mint.to_bytes(), 800, expiry));
+    ok(w.add_lock(&issuer, issuer_role, ata, mint.to_bytes(), 800, expiry));
 
     // Simulate an external debit (e.g. a permanent delegate) below the lock.
     let mut account = w.context.svm.get_account(&ata).unwrap();
@@ -507,13 +631,13 @@ fn underfunded_locked_account_may_not_shrink_further() {
         w.send(&[ix], &[&root]),
         SwigError::AuthorizationLockViolated,
     );
-    let _ = card;
 }
 
 #[test]
 fn token_lock_binds_all_role_and_only_the_locked_account() {
     let mut w = Wallet::new(5 * LAMPORTS_PER_SOL);
     let root = w.root.insecure_clone();
+    let (issuer, issuer_role) = w.add_issuer();
     let (mint, ata) = w.token_setup(1_000);
     let payer = w.context.default_payer.insecure_clone();
     let other = Keypair::new();
@@ -526,7 +650,7 @@ fn token_lock_binds_all_role_and_only_the_locked_account() {
     mint_to(&mut w.context.svm, &mint, &payer, &second, 1_000).unwrap();
 
     let expiry = w.slot() + 500;
-    ok(w.add_lock(&root, ROOT_ROLE, ata, mint.to_bytes(), 600, expiry));
+    ok(w.add_lock(&issuer, issuer_role, ata, mint.to_bytes(), 600, expiry));
 
     let ix = w.token_transfer_ix(&root, ROOT_ROLE, &mint, &ata, 401);
     assert_swig_error(
@@ -540,10 +664,16 @@ fn token_lock_binds_all_role_and_only_the_locked_account() {
     // A second account of the same mint is unaffected.
     let ix = w.token_transfer_ix(&root, ROOT_ROLE, &mint, &second, 1_000);
     ok(w.send(&[ix], &[&root]));
+
+    // The unrestricted holder spends its own hold and captures it.
+    let ix = w.token_transfer_ix(&issuer, issuer_role, &mint, &ata, 250);
+    ok(w.send(&[ix], &[&issuer]));
+    assert_eq!(w.lock(0).amount, 350);
 }
 
 #[test]
 fn locked_token_account_cannot_change_authority_delegate_or_close_authority() {
+    // Identity checks bind the lock holder too.
     let mut w = Wallet::new(5 * LAMPORTS_PER_SOL);
     let root = w.root.insecure_clone();
     let (mint, ata) = w.token_setup(1_000);
@@ -597,35 +727,76 @@ fn limited_role_cannot_spend_locked_tokens() {
     let mut w = Wallet::new(5 * LAMPORTS_PER_SOL);
     let root = w.root.insecure_clone();
     let (mint, ata) = w.token_setup(1_000);
-    let spender = Keypair::new();
-    add_authority_with_ed25519_root(
-        &mut w.context,
-        &w.swig,
-        &root,
-        AuthorityConfig {
-            authority_type: AuthorityType::Ed25519,
-            authority: spender.pubkey().as_ref(),
-        },
-        vec![
-            ClientAction::TokenLimit(TokenLimit {
-                token_mint: mint.to_bytes(),
-                current_amount: 1_000,
-            }),
-            ClientAction::Program(Program {
-                program_id: spl_token::ID.to_bytes(),
-            }),
-        ],
-    )
-    .unwrap();
+    let (spender, spender_role) = w.add_role(vec![
+        ClientAction::TokenLimit(TokenLimit {
+            token_mint: mint.to_bytes(),
+            current_amount: 1_000,
+        }),
+        ClientAction::Program(Program {
+            program_id: spl_token::ID.to_bytes(),
+        }),
+    ]);
     let expiry = w.slot() + 500;
     ok(w.add_lock(&root, ROOT_ROLE, ata, mint.to_bytes(), 900, expiry));
-    let ix = w.token_transfer_ix(&spender, 2, &mint, &ata, 101);
+    let ix = w.token_transfer_ix(&spender, spender_role, &mint, &ata, 101);
     assert_swig_error(
         w.send(&[ix], &[&spender]),
         SwigError::AuthorizationLockViolated,
     );
-    let ix = w.token_transfer_ix(&spender, 2, &mint, &ata, 100);
+    let ix = w.token_transfer_ix(&spender, spender_role, &mint, &ata, 100);
     ok(w.send(&[ix], &[&spender]));
+    assert_eq!(w.lock(0).amount, 900);
+}
+
+#[test]
+fn holder_cannot_dig_into_another_holders_lock() {
+    // Bob holds 50 and Carol 30 of a 100-token account. Bob may end at >= 30,
+    // Carol at >= 50, and everyone else at >= 80.
+    let mut w = Wallet::new(5 * LAMPORTS_PER_SOL);
+    let root = w.root.insecure_clone();
+    let (mint, ata) = w.token_setup(100);
+    let (bob, bob_role) = w.add_token_card(&mint, 1_000);
+    let (carol, carol_role) = w.add_token_card(&mint, 1_000);
+    let expiry = w.slot() + 500;
+    ok(w.add_lock(&bob, bob_role, ata, mint.to_bytes(), 50, expiry));
+    ok(w.add_lock(&carol, carol_role, ata, mint.to_bytes(), 30, expiry));
+
+    let ix = w.token_transfer_ix(&bob, bob_role, &mint, &ata, 71);
+    assert_swig_error(w.send(&[ix], &[&bob]), SwigError::AuthorizationLockViolated);
+    let ix = w.token_transfer_ix(&carol, carol_role, &mint, &ata, 51);
+    assert_swig_error(
+        w.send(&[ix], &[&carol]),
+        SwigError::AuthorizationLockViolated,
+    );
+    let ix = w.token_transfer_ix(&root, ROOT_ROLE, &mint, &ata, 21);
+    assert_swig_error(
+        w.send(&[ix], &[&root]),
+        SwigError::AuthorizationLockViolated,
+    );
+
+    let ix = w.token_transfer_ix(&root, ROOT_ROLE, &mint, &ata, 20);
+    ok(w.send(&[ix], &[&root]));
+    assert_eq!((w.lock(0).amount, w.lock(1).amount), (50, 30));
+
+    // Bob spends his whole hold; Carol's is untouched.
+    let ix = w.token_transfer_ix(&bob, bob_role, &mint, &ata, 51);
+    assert_swig_error(w.send(&[ix], &[&bob]), SwigError::AuthorizationLockViolated);
+    let ix = w.token_transfer_ix(&bob, bob_role, &mint, &ata, 50);
+    ok(w.send(&[ix], &[&bob]));
+    assert_eq!((w.lock(0).amount, w.lock(1).amount), (0, 30));
+    assert_eq!(w.token_balance(&ata), 30);
+
+    // Only Carol may now spend the remaining 30.
+    let ix = w.token_transfer_ix(&root, ROOT_ROLE, &mint, &ata, 1);
+    assert_swig_error(
+        w.send(&[ix], &[&root]),
+        SwigError::AuthorizationLockViolated,
+    );
+    let ix = w.token_transfer_ix(&bob, bob_role, &mint, &ata, 1);
+    assert_swig_error(w.send(&[ix], &[&bob]), SwigError::AuthorizationLockViolated);
+    let ix = w.token_transfer_ix(&carol, carol_role, &mint, &ata, 30);
+    ok(w.send(&[ix], &[&carol]));
+    assert_eq!((w.lock(0).amount, w.lock(1).amount), (0, 0));
 }
 
 // ---------------------------------------------------------------------------
@@ -1535,14 +1706,17 @@ fn locks_survive_role_and_tail_changes() {
     assert_eq!(w.locks(), before);
     assert_eq!(w.rent_claimer(), Some(claimer));
 
-    // Enforcement and release still work afterwards.
-    let spendable = w.lockable_sol() - 3 * LAMPORTS_PER_SOL;
+    // Enforcement, capture, and release still work afterwards. The root's
+    // own lock does not restrict it; the card's does.
+    let spendable = w.lockable_sol() - 2 * LAMPORTS_PER_SOL;
     assert_swig_error(
         w.spend_sol(&root, ROOT_ROLE, spendable + 1),
         SwigError::AuthorizationLockViolated,
     );
+    ok(w.spend_sol(&root, ROOT_ROLE, spendable));
+    assert_eq!(w.lock(1).amount, 0);
     ok(w.remove_lock(&card, CARD_ROLE, 0));
-    ok(w.spend_sol(&root, ROOT_ROLE, spendable + 2 * LAMPORTS_PER_SOL));
+    ok(w.spend_sol(&root, ROOT_ROLE, 2 * LAMPORTS_PER_SOL));
     assert_eq!(w.rent_claimer(), Some(claimer));
 }
 
@@ -1554,9 +1728,10 @@ fn locks_survive_role_and_tail_changes() {
 fn blocked_wallet_funded_create_account_cannot_spend_locked_sol() {
     let mut w = Wallet::new(LAMPORTS_PER_SOL);
     let root = w.root.insecure_clone();
+    let (issuer, issuer_role) = w.add_issuer();
     let expiry = w.slot() + 100;
     let lockable = w.lockable_sol();
-    ok(w.add_sol_lock(&root, ROOT_ROLE, lockable, expiry));
+    ok(w.add_sol_lock(&issuer, issuer_role, lockable, expiry));
     let new_account = Keypair::new();
     let inner = system_instruction::create_account(
         &w.wallet,
@@ -1584,17 +1759,22 @@ fn blocked_wallet_funded_create_account_cannot_spend_locked_sol() {
 fn blocked_burning_locked_tokens() {
     let mut w = Wallet::new(LAMPORTS_PER_SOL);
     let root = w.root.insecure_clone();
+    let (issuer, issuer_role) = w.add_issuer();
     let (mint, ata) = w.token_setup(1_000);
     let expiry = w.slot() + 100;
-    ok(w.add_lock(&root, ROOT_ROLE, ata, mint.to_bytes(), 1_000, expiry));
+    ok(w.add_lock(&issuer, issuer_role, ata, mint.to_bytes(), 1_000, expiry));
     let inner =
         spl_token::instruction::burn(&spl_token::ID, &ata, &mint, &w.wallet, &[], 1).unwrap();
-    let ix = w.sign_ix(&root, ROOT_ROLE, inner);
+    let ix = w.sign_ix(&root, ROOT_ROLE, inner.clone());
     assert_swig_error(
         w.send(&[ix], &[&root]),
         SwigError::AuthorizationLockViolated,
     );
     assert_eq!(w.token_balance(&ata), 1_000);
+    // A burn by the holder is an outflow it may make, and it captures.
+    let ix = w.sign_ix(&issuer, issuer_role, inner);
+    ok(w.send(&[ix], &[&issuer]));
+    assert_eq!(w.lock(0).amount, 999);
 }
 
 #[test]
@@ -1641,6 +1821,7 @@ fn blocked_closing_a_locked_wsol_account_through_sign_v2() {
         expiry,
     ));
 
+    // Even the holder cannot close the locked account through SignV2.
     let inner =
         spl_token::instruction::close_account(&spl_token::ID, &ata, &w.wallet, &w.wallet, &[])
             .unwrap();
@@ -1678,6 +1859,7 @@ fn externally_frozen_locked_account_does_not_brick_sign_v2() {
 fn blocked_thaw_and_drain_of_a_frozen_locked_account() {
     let mut w = Wallet::new(LAMPORTS_PER_SOL);
     let root = w.root.insecure_clone();
+    let (issuer, issuer_role) = w.add_issuer();
     let payer = w.context.default_payer.insecure_clone();
     let freezer = Keypair::new();
     w.context
@@ -1693,7 +1875,7 @@ fn blocked_thaw_and_drain_of_a_frozen_locked_account() {
     let ata = setup_ata(&mut w.context.svm, &mint, &wallet, &payer).unwrap();
     mint_to(&mut w.context.svm, &mint, &payer, &ata, 1_000).unwrap();
     let expiry = w.slot() + 100;
-    ok(w.add_lock(&root, ROOT_ROLE, ata, mint.to_bytes(), 1_000, expiry));
+    ok(w.add_lock(&issuer, issuer_role, ata, mint.to_bytes(), 1_000, expiry));
 
     let freeze =
         spl_token::instruction::freeze_account(&spl_token::ID, &ata, &mint, &freezer_key, &[])
@@ -1782,9 +1964,8 @@ fn renewing_delegate_can_be_stripped_of_lock_permission() {
         w.spend_sol(&root, ROOT_ROLE, spendable + 1),
         SwigError::AuthorizationLockViolated,
     );
-    let release = w.remove_lock_ix(&card, CARD_ROLE, 0);
-    let capture = w.sol_transfer_ix(&card, CARD_ROLE, LAMPORTS_PER_SOL);
-    ok(w.send(&[release, capture], &[&card]));
+    ok(w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL));
+    assert_eq!(w.lock(0).amount, 0);
     // With no active locks left, root can remove the role.
     remove_authority_with_ed25519_root(&mut w.context, &w.swig, &root, CARD_ROLE).unwrap();
 }
@@ -2081,20 +2262,48 @@ fn add_then_remove_is_rent_neutral_for_an_overfunded_config_account() {
 
 #[test]
 fn sign_v2_cost_with_maximum_locks_is_bounded() {
+    // Another role's locks: the guard only.
     let mut w = Wallet::new(LAMPORTS_PER_SOL);
     let root = w.root.insecure_clone();
+    let (issuer, issuer_role) = w.add_issuer();
     let expiry = w.slot() + 100;
     let baseline = ok(w.spend_sol(&root, ROOT_ROLE, LAMPORTS_PER_SOL)).compute_units_consumed;
     for _ in 0..MAX_AUTHORIZATION_LOCKS {
-        ok(w.add_sol_lock(&root, ROOT_ROLE, 1, expiry));
+        ok(w.add_sol_lock(&issuer, issuer_role, 1, expiry));
     }
-    let locked = ok(w.spend_sol(&root, ROOT_ROLE, LAMPORTS_PER_SOL)).compute_units_consumed;
-    println!("AUTH_LOCK_CU baseline {baseline} with_max_locks {locked}");
+    let guarded = ok(w.spend_sol(&root, ROOT_ROLE, LAMPORTS_PER_SOL)).compute_units_consumed;
+    // The holder's own locks: every one of them is captured and written back.
+    let captured = ok(w.spend_sol(&issuer, issuer_role, LAMPORTS_PER_SOL)).compute_units_consumed;
+    assert!(w.locks().1.iter().all(|lock| lock.amount == 0));
+    println!("AUTH_LOCK_CU baseline {baseline} guarded {guarded} captured {captured}");
     // Covers the ComputeBudget instruction plus SignV2.
     assert!(
-        locked - baseline < 10_000,
+        guarded - baseline < 10_000,
         "32 locks added {} CU",
-        locked - baseline
+        guarded - baseline
+    );
+    assert!(
+        captured - baseline < 20_000,
+        "capturing 32 locks added {} CU",
+        captured - baseline
+    );
+
+    // A limited holder also re-checks its remaining locks against its limits.
+    let mut w = Wallet::new(10 * LAMPORTS_PER_SOL);
+    let card = w.card.insecure_clone();
+    let expiry = w.slot() + 100;
+    let step = LAMPORTS_PER_SOL / 10;
+    let baseline = ok(w.spend_sol(&card, CARD_ROLE, step)).compute_units_consumed;
+    for _ in 0..MAX_AUTHORIZATION_LOCKS {
+        ok(w.add_sol_lock(&card, CARD_ROLE, 1_000, expiry));
+    }
+    let captured = ok(w.spend_sol(&card, CARD_ROLE, step)).compute_units_consumed;
+    assert_eq!(w.lock(0).amount, 0);
+    println!("AUTH_LOCK_CU limited baseline {baseline} captured {captured}");
+    assert!(
+        captured - baseline < 20_000,
+        "capturing with 32 limited locks added {} CU",
+        captured - baseline
     );
 }
 
@@ -2103,30 +2312,52 @@ fn sign_v2_cost_with_maximum_locks_is_bounded() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn creator_cannot_spend_the_limit_backing_its_locks() {
+fn limits_are_charged_on_spend_and_locks_captured_before_the_capacity_check() {
+    // Bob with a 2 SOL limit and a 2 SOL lock spends 2 SOL: the limit falls
+    // to 0, the lock is captured to 0, and the capacity check passes.
     let mut w = Wallet::new(2 * LAMPORTS_PER_SOL);
     let card = w.card.insecure_clone();
     let expiry = w.slot() + 500;
-    ok(w.add_sol_lock(&card, CARD_ROLE, 3 * LAMPORTS_PER_SOL / 2, expiry));
-
-    // 2 SOL limit, 1.5 SOL held: only 0.5 SOL is free to spend elsewhere,
-    // even though the wallet balance is far above the lock floor.
-    assert_swig_error(
-        w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL),
-        SwigError::AuthorizationLockExceedsSpendLimit,
-    );
-    ok(w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL / 2));
-    assert_swig_error(
-        w.spend_sol(&card, CARD_ROLE, 1),
-        SwigError::AuthorizationLockExceedsSpendLimit,
-    );
-
-    // Capturing the hold uses exactly the reserved allowance.
-    let release = w.remove_lock_ix(&card, CARD_ROLE, 0);
-    let capture = w.sol_transfer_ix(&card, CARD_ROLE, 3 * LAMPORTS_PER_SOL / 2);
-    ok(w.send(&[release, capture], &[&card]));
-    // The limit is now exhausted.
+    ok(w.add_sol_lock(&card, CARD_ROLE, 2 * LAMPORTS_PER_SOL, expiry));
+    ok(w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL));
+    assert_eq!(w.lock(0).amount, LAMPORTS_PER_SOL);
+    ok(w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL));
+    assert_eq!(w.lock(0).amount, 0);
+    // The limit, charged on spend, is now exhausted.
     assert!(w.spend_sol(&card, CARD_ROLE, 1).is_err());
+}
+
+#[test]
+fn holder_cannot_keep_locks_beyond_its_remaining_capacity() {
+    // A 600 hold on one account and a 1000 token limit: spending elsewhere
+    // may not leave the hold larger than the limit that remains.
+    let mut w = Wallet::new(LAMPORTS_PER_SOL);
+    let (mint, ata) = w.token_setup(1_000);
+    let payer = w.context.default_payer.insecure_clone();
+    let wallet = w.wallet;
+    let second = litesvm_token::CreateAccount::new(&mut w.context.svm, &payer, &mint)
+        .owner(&wallet)
+        .account_kp(Keypair::new())
+        .send()
+        .unwrap();
+    mint_to(&mut w.context.svm, &mint, &payer, &second, 1_000).unwrap();
+    let (card, role) = w.add_token_card(&mint, 1_000);
+    let expiry = w.slot() + 500;
+    ok(w.add_lock(&card, role, ata, mint.to_bytes(), 600, expiry));
+
+    let ix = w.token_transfer_ix(&card, role, &mint, &second, 401);
+    assert_swig_error(
+        w.send(&[ix], &[&card]),
+        SwigError::AuthorizationLockExceedsSpendLimit,
+    );
+    let ix = w.token_transfer_ix(&card, role, &mint, &second, 400);
+    ok(w.send(&[ix], &[&card]));
+    assert_eq!(w.lock(0).amount, 600);
+    // Spending from the locked account captures as it charges, so the hold
+    // and the limit fall together.
+    let ix = w.token_transfer_ix(&card, role, &mint, &ata, 600);
+    ok(w.send(&[ix], &[&card]));
+    assert_eq!(w.lock(0).amount, 0);
 }
 
 #[test]
@@ -2154,20 +2385,17 @@ fn locks_count_against_the_remaining_recurring_window() {
         SwigError::AuthorizationLockExceedsSpendLimit,
     );
     ok(w.add_sol_lock(&card, CARD_ROLE, LAMPORTS_PER_SOL, expiry));
-    assert_swig_error(
-        w.spend_sol(&card, CARD_ROLE, 1),
-        SwigError::AuthorizationLockExceedsSpendLimit,
-    );
+    // Spending the hold uses the window's last 1 SOL and captures it.
+    assert!(w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL + 1).is_err());
+    ok(w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL));
+    assert_eq!(w.lock(0).amount, 0);
 
-    // A fresh window restores the full allowance; the hold still reserves 1.
+    // A fresh window restores the full allowance.
     let next_window = w.slot() + window + 1;
     w.warp(next_window);
-    ok(w.add_sol_lock(&card, CARD_ROLE, LAMPORTS_PER_SOL, expiry));
-    assert_swig_error(
-        w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL + 1),
-        SwigError::AuthorizationLockExceedsSpendLimit,
-    );
-    ok(w.spend_sol(&card, CARD_ROLE, LAMPORTS_PER_SOL));
+    ok(w.add_sol_lock(&card, CARD_ROLE, 2 * LAMPORTS_PER_SOL, expiry));
+    ok(w.spend_sol(&card, CARD_ROLE, 3 * LAMPORTS_PER_SOL));
+    assert_eq!(w.lock(1).amount, 0);
 }
 
 #[test]
@@ -2187,63 +2415,45 @@ fn destination_limits_back_locks_too() {
     let expiry = w.slot() + 500;
     ok(w.add_sol_lock(&card, CARD_ROLE, LAMPORTS_PER_SOL, expiry));
 
-    let pay = |w: &Wallet, lamports| {
+    let pay = |w: &Wallet, to: &Pubkey, lamports| {
         w.sign_ix(
             &card,
             CARD_ROLE,
-            system_instruction::transfer(&w.wallet, &merchant, lamports),
+            system_instruction::transfer(&w.wallet, to, lamports),
         )
     };
-    let early = pay(&w, LAMPORTS_PER_SOL / 2);
-    assert_swig_error(
-        w.send(&[early], &[&card]),
-        SwigError::AuthorizationLockExceedsSpendLimit,
-    );
-    let release = w.remove_lock_ix(&card, CARD_ROLE, 0);
-    let capture = pay(&w, LAMPORTS_PER_SOL);
-    ok(w.send(&[release, capture], &[&card]));
+    // Only the merchant can be paid.
+    let elsewhere = pay(&w, &Keypair::new().pubkey(), LAMPORTS_PER_SOL / 2);
+    assert!(w.send(&[elsewhere], &[&card]).is_err());
+    let first = pay(&w, &merchant, LAMPORTS_PER_SOL / 2);
+    ok(w.send(&[first], &[&card]));
+    assert_eq!(w.lock(0).amount, LAMPORTS_PER_SOL / 2);
+    let rest = pay(&w, &merchant, LAMPORTS_PER_SOL / 2);
+    ok(w.send(&[rest], &[&card]));
+    assert_eq!(w.lock(0).amount, 0);
 }
 
 #[test]
 fn token_limits_back_token_locks() {
     let mut w = Wallet::new(LAMPORTS_PER_SOL);
-    let root = w.root.insecure_clone();
     let (mint, ata) = w.token_setup(10_000);
-    let card = Keypair::new();
-    add_authority_with_ed25519_root(
-        &mut w.context,
-        &w.swig,
-        &root,
-        AuthorityConfig {
-            authority_type: AuthorityType::Ed25519,
-            authority: card.pubkey().as_ref(),
-        },
-        vec![
-            ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(MAX_DURATION)),
-            ClientAction::TokenLimit(TokenLimit {
-                token_mint: mint.to_bytes(),
-                current_amount: 1_000,
-            }),
-            ClientAction::Program(Program {
-                program_id: spl_token::ID.to_bytes(),
-            }),
-        ],
-    )
-    .unwrap();
-    let role = 2;
+    let (card, role) = w.add_token_card(&mint, 1_000);
     let expiry = w.slot() + 500;
     ok(w.add_lock(&card, role, ata, mint.to_bytes(), 600, expiry));
 
+    // Spending within the hold captures it and is charged to the limit.
     let ix = w.token_transfer_ix(&card, role, &mint, &ata, 401);
-    assert_swig_error(
-        w.send(&[ix], &[&card]),
-        SwigError::AuthorizationLockExceedsSpendLimit,
-    );
-    let ix = w.token_transfer_ix(&card, role, &mint, &ata, 400);
     ok(w.send(&[ix], &[&card]));
-    let release = w.remove_lock_ix(&card, role, 0);
-    let capture = w.token_transfer_ix(&card, role, &mint, &ata, 600);
-    ok(w.send(&[release, capture], &[&card]));
+    assert_eq!(w.lock(0).amount, 199);
+    // Spending past the hold comes from free balance, within the limit.
+    let ix = w.token_transfer_ix(&card, role, &mint, &ata, 500);
+    ok(w.send(&[ix], &[&card]));
+    assert_eq!(w.lock(0).amount, 0);
+    // 901 of the 1000 limit is spent.
+    let ix = w.token_transfer_ix(&card, role, &mint, &ata, 100);
+    assert!(w.send(&[ix], &[&card]).is_err());
+    let ix = w.token_transfer_ix(&card, role, &mint, &ata, 99);
+    ok(w.send(&[ix], &[&card]));
 }
 
 #[test]
@@ -2684,4 +2894,170 @@ fn program_exec_lock_rejects_mismatched_proof_accounts() {
     let ixs = w.program_exec_remove_lock_ixs(w.program_exec_proof(swig, wallet, state), 0);
     ok(w.send(&ixs, &[]));
     assert!(w.locks().1.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Holder exemption across asset programs and authority kinds
+// ---------------------------------------------------------------------------
+
+/// A Token-2022 account of `mint` owned by `owner`, holding `amount`.
+fn token_2022_account(w: &mut Wallet, mint: &Pubkey, owner: &Pubkey, amount: u64) -> Pubkey {
+    use solana_sdk::{account::Account, program_pack::Pack};
+    let account = Pubkey::new_unique();
+    let mut data = vec![0u8; spl_token::state::Account::LEN];
+    spl_token::state::Account::pack(
+        spl_token::state::Account {
+            mint: *mint,
+            owner: *owner,
+            amount,
+            state: spl_token::state::AccountState::Initialized,
+            ..Default::default()
+        },
+        &mut data,
+    )
+    .unwrap();
+    w.context
+        .svm
+        .set_account(
+            account,
+            Account {
+                lamports: Rent::default().minimum_balance(data.len()),
+                data,
+                owner: spl_token_2022_interface::ID,
+                executable: false,
+                rent_epoch: 0,
+            },
+        )
+        .unwrap();
+    account
+}
+
+#[test]
+fn token_2022_holder_spends_and_captures_while_others_are_held_off() {
+    let mut w = Wallet::new(LAMPORTS_PER_SOL);
+    let root = w.root.insecure_clone();
+    let (issuer, issuer_role) = w.add_issuer();
+    let (mint, account) = token_2022_fixture(&mut w, false);
+    let destination = token_2022_account(&mut w, &mint, &Keypair::new().pubkey(), 0);
+    let expiry = w.slot() + 100;
+    ok(w.add_lock(&issuer, issuer_role, account, mint.to_bytes(), 600, expiry));
+
+    let transfer = |w: &Wallet, signer: &Keypair, role: u32, amount: u64| {
+        #[allow(deprecated)]
+        let inner = spl_token_2022_interface::instruction::transfer(
+            &spl_token_2022_interface::ID,
+            &account,
+            &destination,
+            &w.wallet,
+            &[],
+            amount,
+        )
+        .unwrap();
+        w.sign_ix(signer, role, inner)
+    };
+    let ix = transfer(&w, &root, ROOT_ROLE, 401);
+    assert_swig_error(
+        w.send(&[ix], &[&root]),
+        SwigError::AuthorizationLockViolated,
+    );
+    let ix = transfer(&w, &root, ROOT_ROLE, 400);
+    ok(w.send(&[ix], &[&root]));
+    assert_eq!(w.lock(0).amount, 600);
+
+    let ix = transfer(&w, &issuer, issuer_role, 450);
+    ok(w.send(&[ix], &[&issuer]));
+    assert_eq!(w.token_balance(&account), 150);
+    assert_eq!(w.lock(0).amount, 150);
+}
+
+#[test]
+fn session_holder_spends_and_captures_its_lock() {
+    let mut w = Wallet::new(LAMPORTS_PER_SOL);
+    let state = w.deploy_test_program();
+    let mut prefix = [0u8; 40];
+    prefix[..8].copy_from_slice(&TEST_PROGRAM_DISCRIMINATOR);
+    let session_authority = CreateProgramExecSessionAuthority::new(
+        TEST_PROGRAM_ID.to_bytes(),
+        8,
+        prefix,
+        [0; 32],
+        1_000,
+    );
+    let root = w.root.insecure_clone();
+    add_authority_with_ed25519_root(
+        &mut w.context,
+        &w.swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::ProgramExecSession,
+            authority: session_authority.into_bytes().unwrap(),
+        },
+        program_exec_spend_actions(),
+    )
+    .unwrap();
+    let session = Keypair::new();
+    let payer = w.context.default_payer.pubkey();
+    let create_session = CreateSessionInstruction::new_with_program_exec(
+        w.swig,
+        payer,
+        w.program_exec_proof(w.swig, payer, state),
+        PROGRAM_EXEC_ROLE,
+        500,
+        session.pubkey(),
+    )
+    .unwrap();
+    ok(w.send(&create_session, &[]));
+
+    let expiry = w.slot() + 100;
+    ok(w.add_sol_lock(&session, PROGRAM_EXEC_ROLE, LAMPORTS_PER_SOL, expiry));
+    let spendable = w.lockable_sol() - LAMPORTS_PER_SOL;
+    ok(w.spend_sol(&root, ROOT_ROLE, spendable));
+
+    // The session key signs as the role that holds the lock.
+    ok(w.spend_sol(&session, PROGRAM_EXEC_ROLE, 3 * LAMPORTS_PER_SOL / 5));
+    assert_eq!(w.lock(0).amount, 2 * LAMPORTS_PER_SOL / 5);
+    assert_swig_error(
+        w.spend_sol(&root, ROOT_ROLE, 1),
+        SwigError::AuthorizationLockViolated,
+    );
+}
+
+#[test]
+fn program_exec_holder_spends_and_captures_its_lock() {
+    let mut w = Wallet::new(LAMPORTS_PER_SOL);
+    let root = w.root.insecure_clone();
+    let state = w.add_program_exec_role(program_exec_spend_actions());
+    let expiry = w.slot() + 100;
+    let wallet = w.wallet;
+    let proof = w.program_exec_proof(w.swig, wallet, state);
+    let ixs = w.program_exec_add_lock_ixs(proof.clone(), wallet, NATIVE, LAMPORTS_PER_SOL, expiry);
+    ok(w.send(&ixs, &[]));
+    let spendable = w.lockable_sol() - LAMPORTS_PER_SOL;
+    ok(w.spend_sol(&root, ROOT_ROLE, spendable));
+
+    let spend = |w: &Wallet, lamports| {
+        SignV2Instruction::new_program_exec(
+            w.swig,
+            w.wallet,
+            w.context.default_payer.pubkey(),
+            proof.clone(),
+            system_instruction::transfer(&w.wallet, &Keypair::new().pubkey(), lamports),
+            PROGRAM_EXEC_ROLE,
+        )
+        .unwrap()
+    };
+    let ixs = spend(&w, LAMPORTS_PER_SOL + 1);
+    assert!(w.send(&ixs, &[]).is_err());
+    let ixs = spend(&w, LAMPORTS_PER_SOL);
+    ok(w.send(&ixs, &[]));
+    assert_eq!(w.lock(0).amount, 0);
+    assert_eq!(w.lockable_sol(), 0);
+}
+
+fn program_exec_spend_actions() -> Vec<ClientAction> {
+    let mut actions = program_exec_lock_actions();
+    actions.push(ClientAction::Program(Program {
+        program_id: solana_system_interface::program::ID.to_bytes(),
+    }));
+    actions
 }

@@ -1,8 +1,9 @@
 //! Remove authorization lock instruction.
 //!
-//! The creating role may release its lock at any time; this is how a
-//! reservation is captured (release and spend in one transaction) or voided.
-//! Once a lock has expired it no longer binds anything, so a role with `All`,
+//! The creating role may release its lock at any time to void the rest of the
+//! reservation. (It does not need to release a lock to spend it: SignV2
+//! captures the creator's locks as it spends.) Once a lock has expired or been
+//! captured to zero it no longer binds anything, so a role with `All`,
 //! `AllButManageAuthority`, `ManageAuthority`, or `ManageAuthorizationLocks`
 //! may also remove it to reclaim space.
 
