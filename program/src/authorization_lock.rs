@@ -20,7 +20,7 @@
 //! its token authority with no delegate or foreign close authority.
 
 extern crate alloc;
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 
 use pinocchio::{
     account_info::AccountInfo,
@@ -36,7 +36,9 @@ use swig_state::{
         token_limit::TokenLimit, token_recurring_destination_limit::TokenRecurringDestinationLimit,
         token_recurring_limit::TokenRecurringLimit, Action, Permission,
     },
-    tail::authorization_locks::{self, AuthorizationLock},
+    tail::authorization_locks::{
+        self, record_at, AuthorizationLock, LockRecord, LOCK_LEN, MAX_AUTHORIZATION_LOCKS,
+    },
     Transmutable,
 };
 
@@ -391,41 +393,60 @@ fn recurring_remaining(window: u64, last_reset: u64, full: u64, current: u64, sl
 /// let it spend. Callers run this after charging the role's limits (and, in
 /// SignV2, after capturing its locks), so a role cannot keep reservations its
 /// limits can no longer cover.
-#[inline(never)]
 pub(crate) fn check_role_locks_within_limits(
     tail: &[u8],
     role_id: u32,
     actions: &[u8],
     slot: u64,
 ) -> Result<(), ProgramError> {
-    let Some(entry) = authorization_locks::read(tail)? else {
+    let Some(range) = authorization_locks::records_range(tail)? else {
         return Ok(());
     };
-    let locks: Vec<AuthorizationLock> = entry.iter().collect();
-    check_locks_within_limits(&locks, role_id, actions, slot)
+    check_records_within_limits(&tail[range], role_id, actions, slot)
 }
 
-/// [`check_role_locks_within_limits`] over an in-memory lock list.
+/// [`check_role_locks_within_limits`] over the packed lock records, in one
+/// pass and without allocating.
 #[inline(never)]
-pub(crate) fn check_locks_within_limits(
-    locks: &[AuthorizationLock],
+fn check_records_within_limits(
+    records: &[u8],
     role_id: u32,
     actions: &[u8],
     slot: u64,
 ) -> Result<(), ProgramError> {
-    let mut checked: Vec<[u8; 32]> = Vec::new();
-    for lock in locks
-        .iter()
-        .filter(|lock| lock.role_id == role_id && lock.is_active(slot))
-    {
-        if checked.contains(&lock.mint) {
+    // Per distinct mint: the record holding it and the role's active total.
+    let mut mint_records = [0usize; MAX_AUTHORIZATION_LOCKS];
+    let mut totals = [0u64; MAX_AUTHORIZATION_LOCKS];
+    let mut mints = 0usize;
+    for (index, bytes) in records.chunks_exact(LOCK_LEN).enumerate() {
+        let lock = LockRecord::new(bytes).ok_or(ProgramError::InvalidAccountData)?;
+        if lock.role_id() != role_id || !lock.is_active(slot) {
             continue;
         }
-        checked.push(lock.mint);
-        let reserved = sum_active(locks.iter().copied(), slot, |other| {
-            other.role_id == role_id && other.mint == lock.mint
-        })?;
-        if reserved > remaining_spend_capacity(actions, &lock.mint, slot)? {
+        let mint = lock.mint();
+        let known = (0..mints).find(|&m| {
+            record_at(records, mint_records[m]).is_some_and(|other| other.mint() == mint)
+        });
+        let m = match known {
+            Some(m) => m,
+            None => {
+                if mints == MAX_AUTHORIZATION_LOCKS {
+                    return Err(ProgramError::InvalidAccountData);
+                }
+                mint_records[mints] = index;
+                mints += 1;
+                mints - 1
+            },
+        };
+        totals[m] = totals[m]
+            .checked_add(lock.amount())
+            .ok_or(ProgramError::ArithmeticOverflow)?;
+    }
+    for m in 0..mints {
+        let mint = record_at(records, mint_records[m])
+            .ok_or(ProgramError::InvalidAccountData)?
+            .mint();
+        if totals[m] > remaining_spend_capacity(actions, mint, slot)? {
             return Err(SwigError::AuthorizationLockExceedsSpendLimit.into());
         }
     }
@@ -488,166 +509,285 @@ where
     Ok(total)
 }
 
+#[derive(Clone, Copy)]
 struct GuardedAccount {
-    index: usize,
-    native: bool,
-    mint: [u8; 32],
+    /// Balance before execution, then the net outflow during settlement.
+    before: u64,
     /// Sum of active locks held by roles other than the signer.
     reserved_by_others: u64,
-    /// Indexes into [`LockGuard::locks`] of the signer's active locks on this
-    /// account, in storage order (oldest first).
-    signer_locks: Vec<usize>,
-    before: u64,
+    /// Id of the first lock seen on this account, stored at `record`.
+    lock_id: u32,
+    /// Index of the account in the instruction's accounts.
+    index: u16,
+    /// Index of that first lock among the packed records.
+    record: u8,
+    native: bool,
 }
 
-/// Pre-CPI snapshot of the wallet's locks and of every writable account in the
-/// transaction that carries an active lock.
+impl GuardedAccount {
+    const EMPTY: Self = Self {
+        before: 0,
+        reserved_by_others: 0,
+        lock_id: 0,
+        index: 0,
+        record: 0,
+        native: false,
+    };
+}
+
+/// One of the signer's active locks on a guarded account, in storage order.
+#[derive(Clone, Copy)]
+struct SignerLock {
+    lock_id: u32,
+    record: u8,
+    /// Slot of the account in [`LockGuard::guarded`].
+    account: u8,
+}
+
+impl SignerLock {
+    const EMPTY: Self = Self {
+        lock_id: 0,
+        record: 0,
+        account: 0,
+    };
+}
+
+/// Pre-CPI snapshot of the active locks that matter to one SignV2: those on
+/// writable accounts in the transaction, and whether the signer holds any.
+/// Uses fixed-size arrays (a wallet stores at most
+/// [`MAX_AUTHORIZATION_LOCKS`] locks) and keeps only the records' location in
+/// the tail, so it parses the tail once and allocates at most once, only when
+/// a lock matters to the transaction.
 pub(crate) struct LockGuard {
-    signer_role_id: u32,
-    /// Every stored lock, in storage order.
-    locks: Vec<AuthorizationLock>,
-    accounts: Vec<GuardedAccount>,
-    /// `(storage index, lock_id)` of the signer's locks lowered by `settle`.
-    captured: Vec<(usize, u32)>,
+    /// Byte range of the packed lock records within the config account data.
+    records: core::ops::Range<usize>,
+    /// Config account length at the snapshot. Settlement writes through the
+    /// pre-CPI view of the config, so the account must not have been resized.
+    config_len: usize,
+    signer_has_active_locks: bool,
+    guarded_len: usize,
+    guarded: [GuardedAccount; MAX_AUTHORIZATION_LOCKS],
+    signer_locks_len: usize,
+    signer_locks: [SignerLock; MAX_AUTHORIZATION_LOCKS],
 }
 
 impl LockGuard {
-    /// Snapshots the wallet's locks and the locked accounts present and
-    /// writable in this transaction. Read-only and absent accounts cannot
-    /// change, so they need no check. `signer_role_id` is the role SignV2
-    /// authenticated as: its own locks do not restrict it, and its spending
-    /// captures them. Returns `None` when no lock is active.
+    /// Snapshots the active locks on accounts that are present and writable
+    /// in this transaction. Read-only and absent accounts cannot change, so
+    /// they need no check. `signer_role_id` is the role SignV2 authenticated
+    /// as: its own locks do not restrict it, and its spending captures them.
+    ///
+    /// Returns `None`, having done no further work, when the tail has no lock
+    /// entry, or when no active lock is on a writable account here and the
+    /// signer holds no active lock.
     #[inline(never)]
     pub(crate) fn snapshot(
         tail: &[u8],
+        config: &AccountInfo,
         all_accounts: &[AccountInfo],
         wallet: &AccountInfo,
         slot: u64,
         signer_role_id: u32,
-    ) -> Result<Option<Self>, ProgramError> {
-        let Some(entry) = authorization_locks::read(tail)? else {
+    ) -> Result<Option<&'static mut Self>, ProgramError> {
+        let Some(range) = authorization_locks::records_range(tail)? else {
             return Ok(None);
         };
-        let locks: Vec<AuthorizationLock> = entry.iter().collect();
-        let mut accounts: Vec<GuardedAccount> = Vec::new();
-        let mut any_active = false;
-        for (lock_index, lock) in locks.iter().enumerate() {
-            if !lock.is_active(slot) {
+        let records = &tail[range.clone()];
+        // Locate the records within the config account, so settlement needs
+        // nothing from SignV2 but the account.
+        let tail_start = (tail.as_ptr() as usize)
+            .checked_sub(unsafe { config.borrow_data_unchecked() }.as_ptr() as usize)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        // Built in this frame and moved to the heap only when needed: SignV2's
+        // own frame has no room for it.
+        let mut guard = Self {
+            records: tail_start + range.start..tail_start + range.end,
+            config_len: config.data_len(),
+            signer_has_active_locks: false,
+            guarded_len: 0,
+            guarded: [GuardedAccount::EMPTY; MAX_AUTHORIZATION_LOCKS],
+            signer_locks_len: 0,
+            signer_locks: [SignerLock::EMPTY; MAX_AUTHORIZATION_LOCKS],
+        };
+        // Records whose asset account is absent or read-only here, so later
+        // locks on the same asset skip the account scan.
+        let mut skipped = [0usize; MAX_AUTHORIZATION_LOCKS];
+        let mut skipped_len = 0usize;
+        for (record, bytes) in records.chunks_exact(LOCK_LEN).enumerate() {
+            let lock = LockRecord::new(bytes).ok_or(ProgramError::InvalidAccountData)?;
+            let amount = lock.amount();
+            if amount == 0 || lock.expiry_slot() <= slot {
                 continue;
             }
-            any_active = true;
-            let position = accounts
+            let is_signer = lock.role_id() == signer_role_id;
+            guard.signer_has_active_locks |= is_signer;
+            let asset = lock.asset_account();
+            let account = match guard.guarded[..guard.guarded_len]
                 .iter()
-                .position(|g| all_accounts[g.index].key() == &lock.asset_account);
-            let guarded = match position {
-                Some(position) => &mut accounts[position],
+                .position(|g| all_accounts[g.index as usize].key() == asset)
+            {
+                Some(account) => account,
                 None => {
-                    let Some(index) = all_accounts
-                        .iter()
-                        .position(|account| account.key() == &lock.asset_account)
-                    else {
-                        continue;
-                    };
-                    if !all_accounts[index].is_writable() {
+                    if skipped[..skipped_len].iter().any(|&other| {
+                        record_at(records, other).is_some_and(|o| o.asset_account() == asset)
+                    }) {
                         continue;
                     }
+                    let found = all_accounts
+                        .iter()
+                        .position(|account| account.key() == asset)
+                        .filter(|&index| all_accounts[index].is_writable());
+                    let Some(index) = found else {
+                        skipped[skipped_len] = record;
+                        skipped_len += 1;
+                        continue;
+                    };
                     let native = lock.is_native_sol();
-                    let before = Self::balance(&all_accounts[index], native, &lock.mint, wallet)?;
-                    accounts.push(GuardedAccount {
-                        index,
-                        native,
-                        mint: lock.mint,
-                        reserved_by_others: 0,
-                        signer_locks: Vec::new(),
+                    let before = Self::balance(&all_accounts[index], native, lock.mint(), wallet)?;
+                    guard.guarded[guard.guarded_len] = GuardedAccount {
                         before,
-                    });
-                    let last = accounts.len() - 1;
-                    &mut accounts[last]
+                        reserved_by_others: 0,
+                        lock_id: lock.lock_id(),
+                        index: u16::try_from(index).map_err(|_| ProgramError::InvalidArgument)?,
+                        record: record as u8,
+                        native,
+                    };
+                    guard.guarded_len += 1;
+                    guard.guarded_len - 1
                 },
             };
-            if lock.role_id == signer_role_id {
-                guarded.signer_locks.push(lock_index);
+            if is_signer {
+                guard.signer_locks[guard.signer_locks_len] = SignerLock {
+                    lock_id: lock.lock_id(),
+                    record: record as u8,
+                    account: account as u8,
+                };
+                guard.signer_locks_len += 1;
             } else {
+                let guarded = &mut guard.guarded[account];
                 guarded.reserved_by_others = guarded
                     .reserved_by_others
-                    .checked_add(lock.amount)
+                    .checked_add(amount)
                     .ok_or(ProgramError::ArithmeticOverflow)?;
             }
         }
-        if !any_active {
+        if guard.guarded_len == 0 && !guard.signer_has_active_locks {
             return Ok(None);
         }
-        Ok(Some(Self {
-            signer_role_id,
-            locks,
-            accounts,
-            captured: Vec::new(),
-        }))
+        // Leaked rather than boxed: the program's bump allocator never frees,
+        // and a plain reference adds no drop glue to SignV2's many exits.
+        Ok(Some(Box::leak(Box::new(guard))))
     }
 
     /// Verifies that no locked account lost its identity or funds reserved by
-    /// other roles, then captures the signer's locks.
+    /// other roles, then captures the signer's locks in place in the config.
     ///
-    /// Each account's net outflow (`before - after`, never negative) is
-    /// charged against the signer's locks on it, oldest first, never below
-    /// zero. Outflow beyond the signer's locks came from unreserved funds; the
-    /// floor check already guarantees it did not touch other roles'
-    /// reservations. Inflows never raise a lock.
+    /// Each account's net outflow (`before - after`, never negative; lamports
+    /// for the wallet address) is taken off the signer's locks on it, oldest
+    /// first, never below zero. Outflow beyond the signer's locks came from
+    /// unreserved funds; the floor check already guarantees it did not touch
+    /// other roles' reservations. Inflows never raise a lock. Only lowered
+    /// amounts are written: the config is never resized, no lamports move, and
+    /// inactive locks are left for RemoveAuthorizationLockV1 to prune.
     #[inline(never)]
     pub(crate) fn settle(
         &mut self,
+        config: &AccountInfo,
         all_accounts: &[AccountInfo],
         wallet: &AccountInfo,
     ) -> Result<(), ProgramError> {
-        for guarded in &self.accounts {
+        if config.data_len() != self.config_len {
+            return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+        }
+        // SAFETY: SignV2 holds no other live borrow of the config's lock
+        // records; it only reads them through this guard.
+        let records = unsafe { config.borrow_mut_data_unchecked() }
+            .get_mut(self.records.clone())
+            .ok_or(SwigError::AccountDataModifiedUnexpectedly)?;
+        let mut wallet_rent: Option<u64> = None;
+        for guarded in &mut self.guarded[..self.guarded_len] {
+            let lock = record_at(records, guarded.record as usize)
+                .filter(|lock| lock.lock_id() == guarded.lock_id)
+                .ok_or(SwigError::AccountDataModifiedUnexpectedly)?;
             let after = Self::balance(
-                &all_accounts[guarded.index],
+                &all_accounts[guarded.index as usize],
                 guarded.native,
-                &guarded.mint,
+                lock.mint(),
                 wallet,
             )?;
-            if after < guarded.before.min(guarded.reserved_by_others) {
-                return Err(SwigError::AuthorizationLockViolated.into());
-            }
-            let mut outflow = guarded.before.saturating_sub(after);
-            for &lock_index in &guarded.signer_locks {
-                if outflow == 0 {
-                    break;
+            // Only an outflow can breach the floor, and only other roles'
+            // locks set one, so most accounts need no further work.
+            if after < guarded.before && guarded.reserved_by_others != 0 {
+                let (after, before) = if guarded.native {
+                    // Lamports above the rent-exempt minimum are what locks
+                    // reserve; read the rent sysvar at most once.
+                    let rent = match wallet_rent {
+                        Some(rent) => rent,
+                        None => *wallet_rent.insert(Rent::get()?.minimum_balance(0)),
+                    };
+                    (
+                        after.saturating_sub(rent),
+                        guarded.before.saturating_sub(rent),
+                    )
+                } else {
+                    (after, guarded.before)
+                };
+                if after < before.min(guarded.reserved_by_others) {
+                    return Err(SwigError::AuthorizationLockViolated.into());
                 }
-                let lock = &mut self.locks[lock_index];
-                let take = lock.amount.min(outflow);
-                outflow -= take;
-                lock.amount -= take;
-                self.captured.push((lock_index, lock.lock_id));
             }
+            guarded.before = guarded.before.saturating_sub(after);
+        }
+        for signer_lock in &self.signer_locks[..self.signer_locks_len] {
+            let outflow = &mut self.guarded[signer_lock.account as usize].before;
+            if *outflow == 0 {
+                continue;
+            }
+            let start = signer_lock.record as usize * LOCK_LEN;
+            let record: &mut [u8; LOCK_LEN] = records
+                .get_mut(start..start + LOCK_LEN)
+                .and_then(|record| record.try_into().ok())
+                .ok_or(SwigError::AccountDataModifiedUnexpectedly)?;
+            let mut lock_id = [0u8; 4];
+            lock_id.copy_from_slice(&record[authorization_locks::LOCK_ID]);
+            if u32::from_le_bytes(lock_id) != signer_lock.lock_id {
+                return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+            }
+            let mut amount_bytes = [0u8; 8];
+            amount_bytes.copy_from_slice(&record[authorization_locks::AMOUNT]);
+            let amount = u64::from_le_bytes(amount_bytes);
+            let take = amount.min(*outflow);
+            if take == 0 {
+                continue;
+            }
+            *outflow -= take;
+            record[authorization_locks::AMOUNT].copy_from_slice(&(amount - take).to_le_bytes());
         }
         Ok(())
     }
 
     /// Fails when the signer's remaining active locks exceed what its limits
-    /// still let it spend. Run after charging limits and [`Self::settle`].
-    #[inline(never)]
+    /// still let it spend. Run after charging limits and [`Self::settle`],
+    /// which has already written the captured amounts to the config.
     pub(crate) fn check_signer_within_limits(
         &self,
+        config: &AccountInfo,
+        signer_role_id: u32,
         actions: &[u8],
         slot: u64,
     ) -> Result<(), ProgramError> {
-        check_locks_within_limits(&self.locks, self.signer_role_id, actions, slot)
-    }
-
-    /// Writes the captured amounts back to the lock entry in `tail`.
-    #[inline(never)]
-    pub(crate) fn write_back(&self, tail: &mut [u8]) -> Result<(), ProgramError> {
-        if self.captured.is_empty() {
+        if !self.signer_has_active_locks {
             return Ok(());
         }
-        let mut updates: Vec<(usize, u32, u64)> = Vec::with_capacity(self.captured.len());
-        for &(lock_index, lock_id) in &self.captured {
-            updates.push((lock_index, lock_id, self.locks[lock_index].amount));
-        }
-        authorization_locks::write_captured_amounts(tail, &updates)
+        let records = unsafe { config.borrow_data_unchecked() }
+            .get(self.records.clone())
+            .ok_or(SwigError::AccountDataModifiedUnexpectedly)?;
+        check_records_within_limits(records, signer_role_id, actions, slot)
     }
 
+    /// The account's balance: raw lamports for the wallet address (the rent
+    /// reserve is applied only where a floor needs it), or the token amount.
+    /// Fails when the account no longer has the identity a lock requires.
     fn balance(
         account: &AccountInfo,
         native: bool,
@@ -658,7 +798,7 @@ impl LockGuard {
             if account.key() != wallet.key() {
                 return Err(SwigError::AuthorizationLockViolated.into());
             }
-            return lockable_lamports(account);
+            return Ok(account.lamports());
         }
         lockable_token_balance(account, mint, wallet.key(), true)
             .ok_or_else(|| SwigError::AuthorizationLockViolated.into())
