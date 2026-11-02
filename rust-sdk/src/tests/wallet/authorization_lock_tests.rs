@@ -213,3 +213,40 @@ fn should_lock_sol_and_tokens_through_convenience_helpers() {
     assert_eq!(active[0].lock_id, locks[1].lock_id);
     assert_eq!(wallet.get_authorization_locks().unwrap().len(), 2);
 }
+
+#[test_log::test]
+fn fully_captured_locks_are_stored_but_not_active() {
+    let (litesvm, main_authority) = setup_test_environment();
+    let mut wallet = create_test_wallet(litesvm, &main_authority);
+    wallet
+        .update_authority(
+            0,
+            UpdateAuthorityData::AddActions(vec![Permission::ManageAuthorizationLocks {
+                max_duration_slots: 10_000,
+            }]),
+        )
+        .unwrap();
+    let wallet_address = wallet.get_swig_wallet_address().unwrap();
+    wallet
+        .litesvm()
+        .airdrop(&wallet_address, 2 * LAMPORTS_PER_SOL)
+        .unwrap();
+    let slot = wallet.get_current_slot().unwrap();
+    wallet
+        .add_sol_authorization_lock(LAMPORTS_PER_SOL, slot + 1_000)
+        .unwrap();
+
+    // The holder spends its whole hold, which captures it to zero.
+    let spend =
+        system_instruction::transfer(&wallet_address, &Keypair::new().pubkey(), LAMPORTS_PER_SOL);
+    wallet.sign_v2(vec![spend], None).unwrap();
+    wallet.litesvm().expire_blockhash();
+    let locks = wallet.get_authorization_locks().unwrap();
+    assert_eq!(locks.len(), 1);
+    assert_eq!(locks[0].amount, 0);
+    assert!(wallet.get_active_authorization_locks().unwrap().is_empty());
+
+    // It can be pruned to reclaim its rent.
+    wallet.remove_authorization_lock(locks[0].lock_id).unwrap();
+    assert!(wallet.get_authorization_locks().unwrap().is_empty());
+}

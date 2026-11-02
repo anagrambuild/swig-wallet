@@ -1076,7 +1076,8 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
     }
 }
 
-/// Prints the wallet's authorization locks; expired locks only when `all`.
+/// Prints the wallet's authorization locks; expired and fully captured locks
+/// only when `all`. `amount` is what is still reserved.
 pub fn print_authorization_locks(wallet: &SwigWallet, all: bool) -> Result<()> {
     let slot = wallet.get_current_slot()?;
     let locks: Vec<_> = wallet
@@ -1100,7 +1101,9 @@ pub fn print_authorization_locks(wallet: &SwigWallet, all: bool) -> Result<()> {
                 Pubkey::new_from_array(lock.asset_account)
             )
         };
-        let status = if lock.is_active(slot) {
+        let status = if lock.amount == 0 {
+            "fully captured"
+        } else if lock.is_active(slot) {
             "active"
         } else {
             "expired"

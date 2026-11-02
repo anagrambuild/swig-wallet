@@ -133,9 +133,14 @@ Pass several permissions by repeating the flag (JSON is not split on commas):
 ## Authorization Locks
 
 An authorization lock reserves part of the wallet's SOL or token balance until an
-expiry slot. While the lock is active, no role (including `All`) can spend that
-asset below the reserved amount, and only the role that created the lock can
-release it early. Every lock needs the `manageAuthorizationLocks` permission,
+expiry slot, like a card authorization hold. While the lock is active, every
+other role (including `All`) can spend only the balance minus the locks it does
+not hold. The role that created the lock can still spend the held funds: each
+of its transactions lowers ("captures") its locks on that account by the net
+amount spent, oldest first, and a lock captured to zero no longer binds. Spend
+limits are charged when funds are spent, not when they are locked, and a
+limited role's remaining locks must always fit what its limits still allow.
+Only the creating role can release a lock early. Every lock needs the `manageAuthorizationLocks` permission,
 and no lock can last longer than that role's `maxDurationSlots`, even for `All`.
 Roles that also have `All` or `AllButManageAuthority` can lock up to the
 wallet's balance. Other roles can lock any token up to their own spending limit
@@ -149,11 +154,11 @@ swig add-authorization-lock --swig-id <ID> --amount 1500000000 --duration-slots 
 # Reserve tokens in the wallet's associated token account until a given slot
 swig add-authorization-lock --swig-id <ID> --mint <MINT> --amount 600 --expiry-slot <SLOT>
 
-# List active locks (add --all to include expired, unpruned locks)
+# List active locks (add --all to include expired and fully captured locks)
 swig list-authorization-locks --swig-id <ID>
 
-# Release your own lock, or prune an expired one (needs All, AllButManageAuthority,
-# ManageAuthority, or manageAuthorizationLocks)
+# Release your own lock, or prune an expired or fully captured one (needs All,
+# AllButManageAuthority, ManageAuthority, or manageAuthorizationLocks)
 swig remove-authorization-lock --swig-id <ID> --lock-id <LOCK_ID>
 ```
 

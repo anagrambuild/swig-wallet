@@ -1399,7 +1399,9 @@ impl<'c> SwigWallet<'c> {
                 println!(
                     "║ └─ Expiry: Slot {} ({})",
                     lock.expiry_slot,
-                    if lock.is_active(slot) {
+                    if lock.amount == 0 {
+                        "fully captured"
+                    } else if lock.is_active(slot) {
                         "active"
                     } else {
                         "expired"
@@ -1669,7 +1671,8 @@ impl<'c> SwigWallet<'c> {
     }
 
     /// Reserves `amount` lamports of the wallet's SOL balance until
-    /// `expiry_slot`.
+    /// `expiry_slot`. See [`Self::add_authorization_lock`] for how holds bind
+    /// other roles and are captured by this role's spending.
     pub fn add_sol_authorization_lock(
         &mut self,
         amount: u64,
@@ -1685,7 +1688,9 @@ impl<'c> SwigWallet<'c> {
     }
 
     /// Reserves `amount` of the wallet's associated token account for `mint`
-    /// until `expiry_slot`. Works for both SPL Token and Token-2022 mints.
+    /// until `expiry_slot`. Works for both SPL Token and Token-2022 mints. See
+    /// [`Self::add_authorization_lock`] for how holds bind other roles and are
+    /// captured by this role's spending.
     pub fn add_token_authorization_lock(
         &mut self,
         mint: &Pubkey,
@@ -1729,7 +1734,8 @@ impl<'c> SwigWallet<'c> {
             .unwrap_or_default())
     }
 
-    /// Returns the authorization locks that still bind at the current slot.
+    /// Returns the authorization locks that still bind at the current slot:
+    /// unexpired and not fully captured (non-zero `amount`).
     pub fn get_active_authorization_locks(&self) -> Result<Vec<AuthorizationLock>, SwigError> {
         let slot = self.get_current_slot()?;
         Ok(self

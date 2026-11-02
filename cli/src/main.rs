@@ -258,7 +258,9 @@ pub enum Command {
         #[arg(short, long)]
         amount: u64,
     },
-    /// Reserve part of the wallet's SOL or token balance until an expiry slot
+    /// Hold part of the wallet's SOL or token balance until an expiry slot.
+    /// Other roles cannot spend the held funds; this role can, which captures
+    /// the hold
     AddAuthorizationLock {
         #[arg(long)]
         authority_type: Option<String>,
@@ -287,7 +289,7 @@ pub enum Command {
         #[arg(long)]
         duration_slots: Option<u64>,
     },
-    /// Release an authorization lock, or prune an expired one
+    /// Release an authorization lock, or prune an expired or fully captured one
     RemoveAuthorizationLock {
         #[arg(long)]
         authority_type: Option<String>,
@@ -312,7 +314,7 @@ pub enum Command {
         authority_kp: Option<String>,
         #[arg(long = "swig-id")]
         id: String,
-        /// Include expired locks that have not been pruned yet
+        /// Include expired and fully captured locks that have not been pruned yet
         #[arg(long)]
         all: bool,
     },
