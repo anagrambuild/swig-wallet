@@ -47,6 +47,10 @@ pub enum SwigInstruction {
 
     /// Removes an authority from the wallet.
     ///
+    /// Blocked while the role holds an active authorization lock. Once its
+    /// locks are all inactive (expired or captured to zero), the removal also
+    /// prunes them, refunding their rent with the role's.
+    ///
     /// Required accounts:
     /// 1. `[writable, signer]` Swig wallet account
     /// 2. `[writable, signer]` Payer account

@@ -123,6 +123,9 @@ impl<'a> RemoveAuthorityV1<'a> {
 /// - Cannot remove root authority (ID 0)
 /// - Authority can remove itself without ManageAuthority permission
 /// - Only roles with All or ManageAuthority can remove other authorities
+/// - A role holding an active authorization lock cannot be removed; once all
+///   its locks are inactive (expired or captured to zero), removing it also
+///   prunes its lock records and refunds their rent with the role's
 ///
 /// # Arguments
 /// * `ctx` - The account context for authority removal
@@ -159,12 +162,13 @@ pub fn remove_authority_v1(
     let swig_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
     // All validation and processing as a closure to avoid borrowing
     // swig_account_data for too long
-    let (saved_tail, removed, refund_destination) = {
+    let (saved_tail, pruned_tail_bytes, removed, refund_destination) = {
         if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
         let parts = Swig::split_parts_mut(swig_account_data)?;
-        let saved_tail = SavedTail::take(parts.tail)?;
+        let mut saved_tail = SavedTail::take(parts.tail)?;
+        let original_tail_len = saved_tail.len();
         let swig = parts.state;
         let swig_roles = parts.roles;
         {
@@ -230,6 +234,15 @@ pub fn remove_authority_v1(
         )? {
             return Err(SwigError::AuthorizationLockActive.into());
         }
+        // The role's remaining locks are all inactive (expired or captured to
+        // zero). Prune them with the role so no record outlives its creator;
+        // their rent is refunded with the role's.
+        if let Some(pruned) = authorization_locks::tail_without_role_locks(
+            parts.tail,
+            remove_authority_v1.args.authority_to_remove_id,
+        )? {
+            saved_tail.replace(pruned)?;
+        }
         let mut swig_builder = SwigBuilder {
             role_buffer: swig_roles,
             swig,
@@ -242,11 +255,19 @@ pub fn remove_authority_v1(
             .get(..removed.0)
             .ok_or(ProgramError::InvalidAccountData)?;
         ensure_admin_remains(remaining_roles, swig_builder.swig.roles)?;
-        (saved_tail, removed, refund_destination)
+        let pruned_tail_bytes = original_tail_len
+            .checked_sub(saved_tail.len())
+            .ok_or(ProgramError::InvalidAccountData)?;
+        (saved_tail, pruned_tail_bytes, removed, refund_destination)
     };
     // realloc the account
 
-    let new_size = data_len - removed.1;
+    // The roles region shrank by `removed.1`, and pruning the role's inactive
+    // locks may have shrunk the tail as well.
+    let new_size = data_len
+        .checked_sub(removed.1)
+        .and_then(|size| size.checked_sub(pruned_tail_bytes))
+        .ok_or(ProgramError::InvalidAccountData)?;
     let rent = Rent::get()?;
     let old_rent_lamports = rent.minimum_balance(data_len);
     let new_rent_lamports = rent.minimum_balance(new_size);

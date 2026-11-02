@@ -311,6 +311,31 @@ pub fn records_range(tail_data: &[u8]) -> Result<Option<core::ops::Range<usize>>
     }))
 }
 
+/// Rebuilds a validated tail without any lock created by `role_id`, keeping
+/// every other lock, entry, and the lock-id counter. Returns `None` when the
+/// role has no stored lock, so the caller can keep the tail as is. Callers
+/// must first ensure none of the role's locks is active.
+pub fn tail_without_role_locks(
+    tail_data: &[u8],
+    role_id: u32,
+) -> Result<Option<Vec<u8>>, ProgramError> {
+    let Some(entry) = read_strict(tail_data)? else {
+        return Ok(None);
+    };
+    if !entry.iter().any(|lock| lock.role_id == role_id) {
+        return Ok(None);
+    }
+    let remaining: Vec<AuthorizationLock> = entry
+        .iter()
+        .filter(|lock| lock.role_id != role_id)
+        .collect();
+    Ok(Some(rebuild_tail(
+        tail_data,
+        entry.next_lock_id(),
+        &remaining,
+    )?))
+}
+
 /// Rebuilds a validated tail with its lock entry replaced, preserving every
 /// other entry and its order. A wallet without a lock entry gets one appended.
 pub fn rebuild_tail(
@@ -503,6 +528,29 @@ mod tests {
         assert_eq!(active_sub_account_count::read(&tail).unwrap(), Some(3));
         assert_eq!(records_range(&rent).unwrap(), None);
         assert_eq!(records_range(&[]).unwrap(), None);
+    }
+
+    #[test]
+    fn tail_without_role_locks_prunes_only_that_role() {
+        let rent = rent_claimer::entry(&[7u8; 32]);
+        let locks = [lock(0, 1, 50), lock(1, 2, 60), lock(2, 1, 70)];
+        let tail = [rent.as_slice(), entry(5, &locks).unwrap().as_slice()].concat();
+        let pruned = tail_without_role_locks(&tail, 1).unwrap().unwrap();
+        validate_strict(&pruned).unwrap();
+        let entry = read(&pruned).unwrap().unwrap();
+        assert_eq!(entry.next_lock_id(), 5);
+        assert_eq!(entry.iter().collect::<Vec<_>>(), vec![locks[1]]);
+        assert_eq!(pruned.len(), tail.len() - 2 * LOCK_LEN);
+        assert_eq!(rent_claimer::read(&pruned).unwrap(), Some(&[7u8; 32]));
+        // The last lock goes, the entry and its counter stay.
+        let emptied = tail_without_role_locks(&pruned, 2).unwrap().unwrap();
+        let entry = read(&emptied).unwrap().unwrap();
+        assert!(entry.is_empty());
+        assert_eq!(entry.next_lock_id(), 5);
+        // Nothing to prune.
+        assert_eq!(tail_without_role_locks(&tail, 9).unwrap(), None);
+        assert_eq!(tail_without_role_locks(&rent, 1).unwrap(), None);
+        assert_eq!(tail_without_role_locks(&[], 1).unwrap(), None);
     }
 
     #[test]

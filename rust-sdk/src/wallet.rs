@@ -321,6 +321,10 @@ impl<'c> SwigWallet<'c> {
 
     /// Removes an existing authority from the wallet
     ///
+    /// Fails with `AuthorizationLockActive` while the role holds an active
+    /// authorization lock. Once its locks are expired or fully captured, the
+    /// removal also deletes its lock records.
+    ///
     /// # Arguments
     ///
     /// * `authority` - The authority's public key as bytes to remove
