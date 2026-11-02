@@ -351,6 +351,7 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
             fee_payer,
             id,
             remove_authority,
+            remove_authority_type,
         } => {
             let swig_id = format!("{:0<32}", id).as_bytes()[..32].try_into().unwrap();
 
@@ -368,10 +369,13 @@ pub fn run_command_mode(ctx: &mut SwigCliContext, cmd: Command) -> Result<()> {
 
             let remove_authority =
                 remove_authority.ok_or_else(|| anyhow!("Remove authority is required"))?;
+            // Roles are stored by decoded key bytes, not the typed string.
+            let authority_bytes =
+                crate::remove_authority_bytes(&remove_authority, remove_authority_type)?;
             ctx.wallet
                 .as_mut()
                 .unwrap()
-                .remove_authority(remove_authority.as_bytes())?;
+                .remove_authority(&authority_bytes)?;
             println!("Authority removed successfully!");
             Ok(())
         },

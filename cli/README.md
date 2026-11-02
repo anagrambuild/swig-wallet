@@ -67,7 +67,10 @@ swig add-authority \
 #### Remove an Authority
 
 ```bash
-swig remove-authority --swig-id <ID> --authority <PUBKEY>
+swig remove-authority --swig-id <ID> --remove-authority <PUBKEY>
+
+# A Secp256k1 or Secp256r1 role: pass its hex public key and type
+swig remove-authority --swig-id <ID> --remove-authority <HEX_PUBKEY> --remove-authority-type Secp256k1
 ```
 
 #### View Wallet Details
