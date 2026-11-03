@@ -5,10 +5,7 @@
 //! Wallet-level `All` / `ManageAuthority` grant nothing here.
 use no_padding::NoPadding;
 use pinocchio::{
-    account_info::AccountInfo,
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    sysvars::{clock::Clock, Sysvar},
+    account_info::AccountInfo, program_error::ProgramError, pubkey::Pubkey, sysvars::Sysvar,
     ProgramResult,
 };
 use swig_assertions::*;
@@ -28,6 +25,7 @@ use crate::{
         SwigInstruction,
     },
     isolation::IsolationGuard,
+    util::assert_system_account_invariants,
     AccountClassification,
 };
 
@@ -221,32 +219,25 @@ pub fn sub_account_sign_v2(
         let swig_roles = parts.roles;
         let swig_address = *ctx.accounts.swig.key();
 
-        let role_opt = Swig::get_mut_role(sign.args.role_id, swig_roles)?;
+        let role_opt = swig_state::authority::counter::authenticate_role(
+            swig_roles,
+            sign.args.role_id,
+            all_accounts,
+            sign.authority_payload,
+            sign.data_payload,
+            false,
+        )?;
         if role_opt.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
-        let role = role_opt.unwrap();
-        let clock = Clock::get()?;
-        if role.authority.session_based() {
-            role.authority.authenticate_session(
-                all_accounts,
-                sign.authority_payload,
-                sign.data_payload,
-                clock.slot,
-            )?;
-        } else {
-            role.authority.authenticate(
-                all_accounts,
-                sign.authority_payload,
-                sign.data_payload,
-                clock.slot,
-            )?;
-        }
+        let (role, _) = role_opt.unwrap();
+
         authorize_scoped_v2(&role, Permission::SubAccountV2Sign, sign.args.subacc_id)?;
         swig_address
     };
     let mut isolation = IsolationGuard::new(all_accounts);
     isolation.capture_signers(ctx.accounts.sub_account.key())?;
+    isolation.capture_seeded_accounts(sign.instruction_payload)?;
     for (index, account) in all_accounts.iter().enumerate() {
         if account.is_writable() && account.key() != ctx.accounts.sub_account.key() {
             isolation.snapshot(index)?;
@@ -286,11 +277,14 @@ pub fn sub_account_sign_v2(
     }
 
     isolation.validate()?;
+    assert_system_account_invariants(ctx.accounts.sub_account)?;
 
     // Ensure the asset account remains rent-exempt.
     let account_data = unsafe { ctx.accounts.sub_account.borrow_data_unchecked() };
-    let rent_exempt_minimum =
-        pinocchio::sysvars::rent::Rent::get()?.minimum_balance(account_data.len());
+    let rent_exempt_minimum = crate::util::rent::minimum_balance(
+        &pinocchio::sysvars::rent::Rent::get()?,
+        account_data.len(),
+    );
     let current_lamports = unsafe { *ctx.accounts.sub_account.borrow_lamports_unchecked() };
     if current_lamports < rent_exempt_minimum {
         return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());

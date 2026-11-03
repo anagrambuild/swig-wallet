@@ -1142,7 +1142,7 @@ fn base64url_encode_no_pad(data: &[u8]) -> String {
     const BASE64URL_CHARS: &[u8] =
         b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-    let mut result = String::new();
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
     let mut i = 0;
 
     while i + 2 < data.len() {
@@ -1178,6 +1178,23 @@ fn base64url_encode_no_pad(data: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_base64url_encoding_preserves_alphabet_and_unpadded_tails() {
+        for (input, expected) in [
+            (b"".as_slice(), ""),
+            (b"f".as_slice(), "Zg"),
+            (b"fo".as_slice(), "Zm8"),
+            (b"foo".as_slice(), "Zm9v"),
+            (&[0xfb, 0xff, 0xff], "-___"),
+        ] {
+            assert_eq!(base64url_encode_no_pad(input), expected);
+        }
+        assert_eq!(
+            base64url_encode_no_pad(&[0; 32]),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        );
+    }
 
     /// Helper function to create real secp256r1 instruction data using the
     /// official Solana secp256r1 program

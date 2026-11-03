@@ -42,18 +42,19 @@ fn compare_sign_v2_role_compute_units() {
         token_limit_destination
     );
 
-    // Main ff2929b built for SBPF v1 with platform-tools v1.53, measured on
-    // LiteSVM 0.16. Keep the v3 migration within those existing SignV2 costs.
+    // Wallet-PDA validation is required before personal-asset isolation.
+    // Merged isolation/authentication baseline: f90d4c5, CI run 40584412799.
+    // Measured with CI's pinned SBPF v3 release build and LiteSVM 0.16.
     for (path, actual, baseline) in [
-        ("All", all, 3_618),
-        ("SOL limit", sol_limit, 5_116),
-        ("SOL destination limit", sol_limit_destination, 5_834),
-        ("Token limit", token_limit, 6_281),
-        ("Token destination limit", token_limit_destination, 7_199),
+        ("All", all, 5_076),
+        ("SOL limit", sol_limit, 6_203),
+        ("SOL destination limit", sol_limit_destination, 6_563),
+        ("Token limit", token_limit, 7_237),
+        ("Token destination limit", token_limit_destination, 7_703),
     ] {
         assert!(
             actual <= baseline,
-            "SignV2 {path} consumed {actual} CU, exceeding the main baseline of {baseline} CU"
+            "SignV2 {path} consumed {actual} CU, exceeding the wallet-validation baseline of {baseline} CU"
         );
     }
 }

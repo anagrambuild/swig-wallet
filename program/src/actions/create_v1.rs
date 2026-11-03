@@ -212,7 +212,8 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
     .map_err(|_| SwigError::InvalidAlignment)?
     .pad_to_align()
     .size();
-    let lamports_needed = Rent::get()?.minimum_balance(account_size);
+    let rent = Rent::get()?;
+    let lamports_needed = crate::util::rent::minimum_balance(&rent, account_size);
     let swig = Swig::new(create_v1.args.id, bump, wallet_address_bump);
 
     // Initialize the program-owned Swig account. Anyone can transfer SOL to
@@ -253,7 +254,7 @@ pub fn create_v1(ctx: Context<CreateV1Accounts>, create: &[u8]) -> ProgramResult
 
     // Transfer lamports to the swig_wallet_address via CPI to system program
     // This creates a system program owned account by transferring SOL to it
-    let wallet_address_rent_exemption = Rent::get()?.minimum_balance(0); // 0 space for system account
+    let wallet_address_rent_exemption = crate::util::rent::minimum_balance(&rent, 0); // 0 space for system account
 
     // Get current lamports in wallet address account
     let current_wallet_lamports =

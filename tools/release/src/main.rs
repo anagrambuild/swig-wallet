@@ -2,10 +2,10 @@ use std::{fs, path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
-use solana_sdk::commitment_config::CommitmentConfig;
+use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey};
 use squads_multisig::solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use swig_release::{
-    buffer::{upload_buffer, UploadProfile},
+    buffer::{close_buffer, upload_buffer, UploadProfile},
     build::build_release,
     config::{load_program_authority, load_proposer, load_rpc_url, DevnetConfig, ReleaseConfig},
     devnet::{self, DeploymentRequest, DevnetCheckReceipt},
@@ -27,6 +27,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Close one buffer and return its SOL to the configured network signer.
+    CloseBuffer {
+        #[arg(long)]
+        buffer: Pubkey,
+        #[arg(long, value_enum)]
+        cluster: Cluster,
+        /// New directory for the submission record and confirmed receipt.
+        #[arg(long)]
+        output_dir: PathBuf,
+    },
     /// Build the pinned verifiable binary and its release manifest.
     Build {
         #[arg(long)]
@@ -111,6 +121,23 @@ enum Command {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::CloseBuffer {
+            buffer,
+            cluster,
+            output_dir,
+        } => {
+            let authority = match cluster {
+                Cluster::Mainnet => load_proposer()?,
+                Cluster::Devnet => load_program_authority()?,
+            };
+            let rpc = RpcClient::new_with_timeout_and_commitment(
+                load_rpc_url()?,
+                Duration::from_secs(30),
+                CommitmentConfig::confirmed(),
+            );
+            let receipt = close_buffer(&rpc, cluster, buffer, &authority, &output_dir).await?;
+            println!("{}", serde_json::to_string_pretty(&receipt)?);
+        },
         Command::Build {
             source_commit,
             output_dir,

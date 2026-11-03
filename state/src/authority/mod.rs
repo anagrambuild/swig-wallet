@@ -5,6 +5,7 @@
 //! authentication methods like Ed25519 and Secp256k1, with both standard and
 //! session-based variants.
 
+pub mod counter;
 pub mod ed25519;
 pub mod programexec;
 pub mod secp256k1;

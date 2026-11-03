@@ -6,12 +6,10 @@
 
 use no_padding::NoPadding;
 use pinocchio::{
-    account_info::AccountInfo,
-    memory::sol_memcmp,
-    program_error::ProgramError,
-    sysvars::{clock::Clock, Sysvar},
+    account_info::AccountInfo, memory::sol_memcmp, program_error::ProgramError, pubkey::Pubkey,
     ProgramResult,
 };
+use pinocchio_pubkey::from_str;
 use swig_assertions::check_self_owned;
 use swig_state::{
     action::{
@@ -29,7 +27,9 @@ use swig_state::{
 
 use crate::{
     actions::sign_v2::{
-        has_token_destination_limits, read_wsol_reserve, wsol_accounted_balance, WSOL_MINT,
+        has_token_destination_limits, read_wsol_reserve, wsol_accounted_balance,
+        TOKEN_ACCOUNT_BASE_DATA_LEN, TOKEN_ACCOUNT_INITIALIZED_STATE, TOKEN_NATIVE_RESERVE_RANGE,
+        TOKEN_STATE_INDEX, WSOL_MINT,
     },
     error::SwigError,
     instruction::{
@@ -91,6 +91,45 @@ impl<'a> CloseTokenAccountV1<'a> {
     }
 }
 
+/// Token-2022's wrapped-native-SOL mint.
+///
+/// Token-2022 represents wrapped native SOL under its own native mint, which
+/// is distinct from the legacy SPL Token program's native mint (`WSOL_MINT`
+/// in `sign_v2`). Both must receive identical spend accounting.
+pub(crate) const TOKEN_2022_NATIVE_MINT: Pubkey =
+    from_str("9pan9bMn5HatX4EJdBwg9VgCa7Uz5HL8N1m5D3NdXejP");
+
+/// Resolves the wrapped-native mint for the (already validated) token
+/// program handling this close.
+pub(super) fn native_wsol_mint(token_program_id: &Pubkey) -> Pubkey {
+    if token_program_id == &SPL_TOKEN_ID {
+        WSOL_MINT
+    } else {
+        TOKEN_2022_NATIVE_MINT
+    }
+}
+
+/// Reads the native reserve of a Token-2022 native token account.
+///
+/// Token-2022 keeps the legacy SPL token account base layout — the wrapped
+/// native reserve sits behind the `is_native` COption tag at bytes 109..121 —
+/// but real accounts may carry trailing extension data, so only the base
+/// prefix is validated here (unlike `read_wsol_reserve`, which requires the
+/// exact legacy 165-byte layout).
+pub(crate) fn read_token_2022_native_reserve(data: &[u8]) -> Result<u64, ProgramError> {
+    if data.len() < TOKEN_ACCOUNT_BASE_DATA_LEN
+        || data[TOKEN_STATE_INDEX] != TOKEN_ACCOUNT_INITIALIZED_STATE
+        || data[109..113] != [1, 0, 0, 0]
+    {
+        return Err(SwigError::AccountDataModifiedUnexpectedly.into());
+    }
+    Ok(u64::from_le_bytes(
+        data[TOKEN_NATIVE_RESERVE_RANGE]
+            .try_into()
+            .map_err(|_| SwigError::AccountDataModifiedUnexpectedly)?,
+    ))
+}
+
 /// Closes one or more token accounts owned by the Swig wallet.
 ///
 /// All token accounts must belong to the same token program (SPL Token or
@@ -107,8 +146,7 @@ pub fn close_token_account_v1(
     let close_ix = CloseTokenAccountV1::from_instruction_bytes(data)?;
 
     // Load and validate swig account
-    let swig_account_data = unsafe { ctx.accounts.swig.borrow_data_unchecked() };
-    let swig = unsafe { Swig::load_unchecked(&swig_account_data[..Swig::LEN])? };
+    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
 
     // Verify discriminator
     if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
@@ -124,36 +162,19 @@ pub fn close_token_account_v1(
         return Err(SwigError::InvalidSeedSwigAccount.into());
     }
 
-    // Get and authenticate role
-    let swig_roles = Swig::split_parts(swig_account_data)?.roles;
-    let role_opt = unsafe {
-        let roles_ptr = swig_roles.as_ptr() as *mut u8;
-        let roles_mut = core::slice::from_raw_parts_mut(roles_ptr, swig_roles.len());
-        Swig::get_mut_role(close_ix.args.role_id, roles_mut)?
-    };
+    let is_v2 = unsafe { is_swig_v2(swig_account_data) };
+    let parts = Swig::split_parts_mut(swig_account_data)?;
+    let swig = parts.state;
 
-    if role_opt.is_none() {
-        return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
-    }
-    let role = role_opt.unwrap();
-
-    // Authenticate
-    let current_slot = Clock::get()?.slot;
-    if role.authority.session_based() {
-        role.authority.authenticate_session(
-            accounts,
-            close_ix.authority_payload,
-            close_ix.args.into_bytes()?,
-            current_slot,
-        )?;
-    } else {
-        role.authority.authenticate(
-            accounts,
-            close_ix.authority_payload,
-            close_ix.args.into_bytes()?,
-            current_slot,
-        )?;
-    }
+    let (role, current_slot) = swig_state::authority::counter::authenticate_role(
+        parts.roles,
+        close_ix.args.role_id,
+        accounts,
+        close_ix.authority_payload,
+        close_ix.args.into_bytes()?,
+        false,
+    )?
+    .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
 
     // Unrestricted asset permissions also authorize closing token accounts.
     let has_all = RoleMut::get_action_mut::<All>(role.actions, &[])?.is_some();
@@ -164,14 +185,11 @@ pub fn close_token_account_v1(
     if !has_all && !has_all_but_manage && !has_manage && !has_close {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
-    if let Some(claimer) = rent_claimer::read_strict(Swig::split_parts(swig_account_data)?.tail)? {
+    if let Some(claimer) = rent_claimer::read_strict(parts.tail)? {
         if ctx.accounts.destination.key().as_ref() != claimer.as_ref() {
             return Err(SwigError::InvalidRentClaimerDestination.into());
         }
     }
-
-    // Use is_swig_v2 to determine expected authority
-    let is_v2 = unsafe { is_swig_v2(swig_account_data) };
 
     // Verify the token program is valid
     let token_program_id = ctx.accounts.token_program.key();
@@ -205,8 +223,6 @@ pub fn close_token_account_v1(
     let wallet_bump_bytes = [wallet_bump];
     let wallet_seeds =
         swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &wallet_bump_bytes);
-    let swig_seeds = crate::util::config_signer(swig_account_data, *ctx.accounts.swig.key())?;
-
     let unrestricted_spend = has_all || has_all_but_manage;
     // Validate every source and consume bounded WSOL spend before the first CPI.
     // A later error rolls back authentication and every permission update.
@@ -238,28 +254,37 @@ pub fn close_token_account_v1(
             return Err(SwigError::InvalidSwigTokenAccountOwner.into());
         }
 
-        if token_program_id == &SPL_TOKEN_ID && token_data.get(..32) == Some(WSOL_MINT.as_slice()) {
-            let reserve = read_wsol_reserve(token_program_id, token_data)?;
+        // Wrapped-native value exists under both supported token programs.
+        // Enforce identical allowance and destination accounting against the
+        // handling program's own native mint before any CPI so a closer
+        // cannot withdraw wrapped SOL outside its delegated budget.
+        let native_mint = native_wsol_mint(token_program_id);
+        if token_data.get(..32) == Some(native_mint.as_slice()) {
+            let reserve = if token_program_id == &SPL_TOKEN_ID {
+                read_wsol_reserve(token_program_id, token_data)?
+            } else {
+                read_token_2022_native_reserve(token_data)?
+            };
             let amount = u64::from_le_bytes(token_data[64..72].try_into().unwrap());
             let spent = wsol_accounted_balance(amount, reserve, token_account.lamports())?;
             if !unrestricted_spend {
                 let general_limit = if let Some(limit) =
-                    RoleMut::get_action_mut::<TokenLimit>(role.actions, &WSOL_MINT)?
+                    RoleMut::get_action_mut::<TokenLimit>(role.actions, &native_mint)?
                 {
                     limit.run(spent)?;
                     true
                 } else if let Some(limit) =
-                    RoleMut::get_action_mut::<TokenRecurringLimit>(role.actions, &WSOL_MINT)?
+                    RoleMut::get_action_mut::<TokenRecurringLimit>(role.actions, &native_mint)?
                 {
                     limit.run(spent, current_slot)?;
                     true
                 } else {
                     false
                 };
-                let destination_limit = has_token_destination_limits(role.actions, &WSOL_MINT)?;
+                let destination_limit = has_token_destination_limits(role.actions, &native_mint)?;
                 if destination_limit {
                     let mut key = [0u8; 64];
-                    key[..32].copy_from_slice(&WSOL_MINT);
+                    key[..32].copy_from_slice(&native_mint);
                     key[32..].copy_from_slice(ctx.accounts.destination.key());
                     if let Some(limit) = RoleMut::get_action_mut::<TokenRecurringDestinationLimit>(
                         role.actions,
@@ -280,6 +305,8 @@ pub fn close_token_account_v1(
             }
         }
     }
+
+    let swig_seeds = crate::util::config_signer(swig_account_data, *ctx.accounts.swig.key())?;
 
     for token_account in &accounts[token_account_offset..] {
         let token_data = unsafe { token_account.borrow_data_unchecked() };

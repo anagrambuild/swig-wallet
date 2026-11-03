@@ -9,7 +9,7 @@ use pinocchio::{
     program::invoke_signed,
     program_error::ProgramError,
     pubkey::Pubkey,
-    sysvars::{clock::Clock, rent::Rent, Sysvar},
+    sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
 use pinocchio_system::instructions::Transfer;
@@ -158,24 +158,17 @@ pub fn create_sub_account_v1(
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
         let parts = Swig::split_parts_mut(swig_account_data)?;
-        let role = Swig::get_mut_role(create_sub_account.args.role_id, parts.roles)?
-            .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
-        let slot = Clock::get()?.slot;
-        if role.authority.session_based() {
-            role.authority.authenticate_session(
-                all_accounts,
-                create_sub_account.authority_payload,
-                create_sub_account.data_payload,
-                slot,
-            )?;
-        } else {
-            role.authority.authenticate(
-                all_accounts,
-                create_sub_account.authority_payload,
-                create_sub_account.data_payload,
-                slot,
-            )?;
-        }
+
+        let (role, _) = swig_state::authority::counter::authenticate_role(
+            parts.roles,
+            create_sub_account.args.role_id,
+            all_accounts,
+            create_sub_account.authority_payload,
+            create_sub_account.data_payload,
+            false,
+        )?
+        .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
+
         if RoleMut::get_action_mut::<SubAccount>(role.actions, &[])?.is_none() {
             return Err(SwigError::AuthorityCannotCreateSubAccount.into());
         }
@@ -195,7 +188,7 @@ pub fn create_sub_account_v1(
 
     // Transfer lamports to the sub_account to make it system-owned and rent-exempt
     // This follows the same pattern as swig_wallet_address creation in create_v1.rs
-    let sub_account_rent_exemption = Rent::get()?.minimum_balance(0); // 0 space for system account
+    let sub_account_rent_exemption = crate::util::rent::minimum_balance(&Rent::get()?, 0); // 0 space for system account
 
     // Get current lamports in sub-account
     let current_sub_account_lamports =
