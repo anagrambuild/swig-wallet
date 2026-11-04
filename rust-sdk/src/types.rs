@@ -4,6 +4,7 @@ use swig_state::{
     action::{
         all::All,
         all_but_manage_authority::AllButManageAuthority,
+        close_token_account::CloseTokenAccount,
         manage_authority::ManageAuthority,
         program::Program,
         program_all::ProgramAll,
@@ -64,6 +65,10 @@ pub enum Permission {
     /// Permission to manage authorities. This allows adding or removing
     /// authorities from the wallet and modifying their permissions.
     ManageAuthority,
+
+    /// Permission to close token accounts, including WSOL accounts, subject to
+    /// spending and destination limits. Does not authorize closing Swig.
+    CloseTokenAccount,
 
     /// Permission to replace one role's signer without changing its
     /// permissions.
@@ -206,6 +211,9 @@ impl Permission {
                 },
                 Permission::ManageAuthority => {
                     actions.push(ClientAction::ManageAuthority(ManageAuthority {}));
+                },
+                Permission::CloseTokenAccount => {
+                    actions.push(ClientAction::CloseTokenAccount(CloseTokenAccount));
                 },
                 Permission::ReplaceAuthority { role_id } => {
                     actions.push(ClientAction::ReplaceAuthority(ReplaceAuthority::new(
@@ -417,6 +425,14 @@ impl Permission {
             .is_some()
         {
             permissions.push(Permission::ManageAuthority);
+        }
+
+        if role
+            .get_action::<CloseTokenAccount>(&[])
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .is_some()
+        {
+            permissions.push(Permission::CloseTokenAccount);
         }
 
         for action in swig_state::role::Role::get_all_actions_of_type::<ReplaceAuthority>(role)
@@ -678,6 +694,9 @@ impl Permission {
         match self {
             Permission::All => 7,
             Permission::ManageAuthority => 8,
+            Permission::CloseTokenAccount => {
+                swig_state::action::Permission::CloseTokenAccount as u8
+            },
             Permission::ReplaceAuthority { role_id: _ } => 21,
             Permission::Sol {
                 amount: _,

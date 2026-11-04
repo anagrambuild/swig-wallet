@@ -10,6 +10,7 @@ extern crate alloc;
 pub mod all;
 pub mod all_but_manage_authority;
 pub mod close_swig_authority;
+pub mod close_token_account;
 pub mod manage_authority;
 pub mod program;
 pub mod program_all;
@@ -32,6 +33,7 @@ pub mod token_recurring_limit;
 use all::All;
 use all_but_manage_authority::AllButManageAuthority;
 use close_swig_authority::CloseSwigAuthority;
+use close_token_account::CloseTokenAccount;
 use manage_authority::ManageAuthority;
 use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
@@ -189,6 +191,10 @@ pub enum Permission {
     SubAccountV2Withdraw = 25,
     /// Scoped permission to toggle a V2 sub-account for a single `subacc_id`
     SubAccountV2Toggle = 26,
+    // Discriminant 27 is reserved for authorization locks.
+    /// Permission to close token accounts, subject to spending and destination
+    /// limits, without permission to close the Swig account.
+    CloseTokenAccount = 28,
 }
 
 impl TryFrom<u16> for Permission {
@@ -199,6 +205,7 @@ impl TryFrom<u16> for Permission {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
             0..=26 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            28 => Ok(Permission::CloseTokenAccount),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -241,6 +248,7 @@ impl Permission {
                 TokenRecurringDestinationLimit::REPEATABLE
             },
             Permission::CloseSwigAuthority => CloseSwigAuthority::REPEATABLE,
+            Permission::CloseTokenAccount => CloseTokenAccount::REPEATABLE,
             Permission::ReplaceAuthority => ReplaceAuthority::REPEATABLE,
             Permission::SubAccountV2Create => SubAccountV2Create::REPEATABLE,
             Permission::SubAccountV2All => SubAccountV2All::REPEATABLE,
@@ -322,6 +330,7 @@ impl ActionLoader {
             Permission::ProgramCurated => ProgramCurated::valid_layout(data),
             Permission::AllButManageAuthority => AllButManageAuthority::valid_layout(data),
             Permission::CloseSwigAuthority => CloseSwigAuthority::valid_layout(data),
+            Permission::CloseTokenAccount => CloseTokenAccount::valid_layout(data),
             Permission::ReplaceAuthority => ReplaceAuthority::valid_layout(data),
             Permission::TokenDestinationLimit => TokenDestinationLimit::valid_layout(data),
             Permission::TokenRecurringDestinationLimit => {

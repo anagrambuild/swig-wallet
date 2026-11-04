@@ -35,6 +35,7 @@ use swig_state::{
         all::All,
         all_but_manage_authority::AllButManageAuthority,
         close_swig_authority::CloseSwigAuthority,
+        close_token_account::CloseTokenAccount,
         manage_authority::ManageAuthority,
         program::Program,
         program_all::ProgramAll,
@@ -82,6 +83,7 @@ pub enum ClientAction {
     ManageAuthority(ManageAuthority),
     ReplaceAuthority(ReplaceAuthority),
     CloseSwigAuthority(CloseSwigAuthority),
+    CloseTokenAccount(CloseTokenAccount),
     SubAccount(SubAccount),
     SubAccountV2Create(SubAccountV2Create),
     SubAccountV2All(SubAccountV2All),
@@ -135,6 +137,9 @@ impl ClientAction {
             ClientAction::CloseSwigAuthority(_) => {
                 (Permission::CloseSwigAuthority, CloseSwigAuthority::LEN)
             },
+            ClientAction::CloseTokenAccount(_) => {
+                (Permission::CloseTokenAccount, CloseTokenAccount::LEN)
+            },
             ClientAction::SubAccount(_) => (Permission::SubAccount, SubAccount::LEN),
             ClientAction::SubAccountV2Create(_) => {
                 (Permission::SubAccountV2Create, SubAccountV2Create::LEN)
@@ -183,6 +188,7 @@ impl ClientAction {
             ClientAction::ManageAuthority(action) => action.into_bytes(),
             ClientAction::ReplaceAuthority(action) => action.into_bytes(),
             ClientAction::CloseSwigAuthority(action) => action.into_bytes(),
+            ClientAction::CloseTokenAccount(action) => action.into_bytes(),
             ClientAction::SubAccount(action) => action.into_bytes(),
             ClientAction::SubAccountV2Create(action) => action.into_bytes(),
             ClientAction::SubAccountV2All(action) => action.into_bytes(),
@@ -3203,9 +3209,11 @@ impl CloseTokenAccountV1Instruction {
     /// * `swig_account` - The swig wallet account
     /// * `swig_wallet_address` - The swig wallet address PDA
     /// * `authority` - The authority with All, AllButManageAuthority,
-    ///   ManageAuthority, or CloseSwigAuthority permission
-    /// * `token_account` - The token account to close (must have zero balance)
-    /// * `destination` - Where to send the rent
+    ///   ManageAuthority, CloseSwigAuthority, or CloseTokenAccount permission
+    /// * `token_accounts` - Token accounts to close; non-native accounts must be
+    ///   empty, while WSOL closure remains subject to spending limits
+    /// * `destination` - Receives the closed accounts' lamports, subject to
+    ///   destination limits and any configured rent claimer
     /// * `token_program` - SPL Token or Token-2022 program
     /// * `role_id` - The role ID of the authority
     pub fn new_with_ed25519_authority(
