@@ -1443,6 +1443,117 @@ fn secp256k1_role_can_create_and_release_locks() {
     assert!(w.locks().1.is_empty());
 }
 
+#[test]
+fn secp256k1_lock_signatures_cannot_be_replayed_through_a_same_key_role() {
+    use alloy_signer_local::{LocalSigner, PrivateKeySigner};
+    let mut w = Wallet::new(LAMPORTS_PER_SOL);
+    let root = w.root.insecure_clone();
+    let wallet_key: PrivateKeySigner = LocalSigner::random();
+    let eth_pubkey = wallet_key
+        .credential()
+        .verifying_key()
+        .to_encoded_point(false)
+        .to_bytes();
+    for _ in 0..2 {
+        add_authority_with_ed25519_root(
+            &mut w.context,
+            &w.swig,
+            &root,
+            AuthorityConfig {
+                authority_type: AuthorityType::Secp256k1,
+                authority: &eth_pubkey[1..],
+            },
+            vec![
+                ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(MAX_DURATION)),
+                ClientAction::SolLimit(SolLimit {
+                    amount: LAMPORTS_PER_SOL,
+                }),
+            ],
+        )
+        .unwrap();
+    }
+    let (first_role, second_role) = (2u32, 3u32);
+    let make_sign = || {
+        let signer = wallet_key.clone();
+        move |payload: &[u8]| -> [u8; 65] {
+            use alloy_signer::SignerSync;
+            let hash = alloy_primitives::B256::from_slice(&payload[..32]);
+            signer.sign_hash_sync(&hash).unwrap().as_bytes()
+        }
+    };
+    // The acting role id sits after the u16 discriminator and 2 padding bytes.
+    // Same-key roles share one counter, so a captured signature is rejected
+    // as reused before its (role-bound) signature is even checked.
+    let with_role = |ix: &Instruction, role_id: u32| {
+        let mut ix = ix.clone();
+        ix.data[4..8].copy_from_slice(&role_id.to_le_bytes());
+        ix
+    };
+
+    let slot = w.slot();
+    let add = AddAuthorizationLockV1Instruction::new_with_secp256k1_authority(
+        w.swig,
+        w.context.default_payer.pubkey(),
+        make_sign(),
+        slot,
+        1,
+        w.wallet,
+        w.wallet,
+        first_role,
+        NATIVE,
+        1_000,
+        slot + 100,
+    )
+    .unwrap();
+    ok(w.send(&[add.clone()], &[]));
+    let after_add = w.data();
+    assert_eq!(
+        custom_error(w.send(&[with_role(&add, second_role)], &[])),
+        SwigAuthenticateError::PermissionDeniedSecp256k1SignatureReused as u32,
+    );
+    assert_eq!(w.data(), after_add);
+
+    let remove = RemoveAuthorizationLockV1Instruction::new_with_secp256k1_authority(
+        w.swig,
+        w.context.default_payer.pubkey(),
+        make_sign(),
+        slot,
+        2,
+        w.wallet,
+        first_role,
+        0,
+        None,
+    )
+    .unwrap();
+    ok(w.send(&[remove.clone()], &[]));
+    let after_remove = w.data();
+    // The released lock no longer exists, so the replay fails its lookup
+    // before authentication; either way it must change nothing.
+    assert!(w.send(&[with_role(&remove, second_role)], &[]).is_err());
+    assert_eq!(w.data(), after_remove);
+
+    // The same-key role stays usable with a fresh signature on the shared
+    // next counter.
+    let fresh = AddAuthorizationLockV1Instruction::new_with_secp256k1_authority(
+        w.swig,
+        w.context.default_payer.pubkey(),
+        make_sign(),
+        slot,
+        3,
+        w.wallet,
+        w.wallet,
+        second_role,
+        NATIVE,
+        1_000,
+        slot + 100,
+    )
+    .unwrap();
+    ok(w.send(&[fresh], &[]));
+    let (_, locks) = w.locks();
+    assert_eq!(locks.len(), 1);
+    assert_eq!(locks[0].role_id, second_role);
+}
+
 // ---------------------------------------------------------------------------
 // Release and pruning
 // ---------------------------------------------------------------------------
