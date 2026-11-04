@@ -44,13 +44,16 @@ fn compare_sign_v2_role_compute_units() {
 
     // Wallet-PDA validation is required before personal-asset isolation.
     // Merged isolation/authentication baseline: f90d4c5, CI run 40584412799.
+    // Authorization locks add the lock-guard check on every SignV2 (+5 All)
+    // and charge both members of a one-shot/recurring limit pair (+18 to +31
+    // on limited roles): c0b621b, CI run 41861486794.
     // Measured with CI's pinned SBPF v3 release build and LiteSVM 0.16.
     for (path, actual, baseline) in [
-        ("All", all, 5_076),
-        ("SOL limit", sol_limit, 6_203),
-        ("SOL destination limit", sol_limit_destination, 6_563),
-        ("Token limit", token_limit, 7_237),
-        ("Token destination limit", token_limit_destination, 7_703),
+        ("All", all, 5_080),
+        ("SOL limit", sol_limit, 6_220),
+        ("SOL destination limit", sol_limit_destination, 6_593),
+        ("Token limit", token_limit, 7_253),
+        ("Token destination limit", token_limit_destination, 7_729),
     ] {
         assert!(
             actual <= baseline,
