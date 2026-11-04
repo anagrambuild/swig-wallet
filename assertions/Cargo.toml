@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2021"
 description = "Solana program assertion utilities"
 license = "AGPL-3.0"
+repository = "https://github.com/anagrambuild/swig-wallet"
 authors.workspace = true
 documentation.workspace = true
 
@@ -11,6 +12,9 @@ documentation.workspace = true
 pinocchio = { version = "0.9" }
 pinocchio-system = { version = "0.3" }
 pinocchio-pubkey = { version = "0.3" }
+
+[target.'cfg(not(target_os = "solana"))'.dependencies]
+solana-pubkey = { version = "=4.2.1", features = ["curve25519"] }
 
 [features]
 default = []

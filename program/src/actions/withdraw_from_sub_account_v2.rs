@@ -7,11 +7,7 @@
 //! the destination is always the swig wallet address.
 use no_padding::NoPadding;
 use pinocchio::{
-    account_info::AccountInfo,
-    memory::sol_memcmp,
-    program_error::ProgramError,
-    sysvars::{clock::Clock, Sysvar},
-    ProgramResult,
+    account_info::AccountInfo, memory::sol_memcmp, program_error::ProgramError, ProgramResult,
 };
 use swig_assertions::*;
 use swig_state::{
@@ -132,27 +128,19 @@ pub fn withdraw_from_sub_account_v2(
             return Err(SwigError::InvalidSwigSubAccountV2SwigIdMismatch.into());
         }
 
-        let role_opt = Swig::get_mut_role(withdraw.args.role_id, swig_roles)?;
+        let role_opt = swig_state::authority::counter::authenticate_role(
+            swig_roles,
+            withdraw.args.role_id,
+            all_accounts,
+            withdraw.authority_payload,
+            withdraw.data_payload,
+            false,
+        )?;
         if role_opt.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
-        let role = role_opt.unwrap();
-        let clock = Clock::get()?;
-        if role.authority.session_based() {
-            role.authority.authenticate_session(
-                all_accounts,
-                withdraw.authority_payload,
-                withdraw.data_payload,
-                clock.slot,
-            )?;
-        } else {
-            role.authority.authenticate(
-                all_accounts,
-                withdraw.authority_payload,
-                withdraw.data_payload,
-                clock.slot,
-            )?;
-        }
+        let (role, _) = role_opt.unwrap();
+
         authorize_scoped_v2(
             &role,
             Permission::SubAccountV2Withdraw,

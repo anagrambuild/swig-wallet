@@ -186,8 +186,10 @@ pub fn close_sub_account_v2(
     let rent = Rent::get()?;
     let asset_lamports = ctx.accounts.sub_account.lamports();
     if asset_lamports > 0 {
-        let asset_rent =
-            asset_lamports.min(rent.minimum_balance(ctx.accounts.sub_account.data_len()));
+        let asset_rent = asset_lamports.min(crate::util::rent::minimum_balance(
+            &rent,
+            ctx.accounts.sub_account.data_len(),
+        ));
         let asset_operational = asset_lamports.saturating_sub(asset_rent);
         let signer = sub_account_v2_asset_signer(swig_address, &id_le, &asset_bump_seed);
         if rent_destination.key() == ctx.accounts.swig_wallet_address.key() {
@@ -219,8 +221,10 @@ pub fn close_sub_account_v2(
 
     let state_lamports = ctx.accounts.sub_account_state.lamports();
     if state_lamports > 0 {
-        let state_rent =
-            state_lamports.min(rent.minimum_balance(ctx.accounts.sub_account_state.data_len()));
+        let state_rent = state_lamports.min(crate::util::rent::minimum_balance(
+            &rent,
+            ctx.accounts.sub_account_state.data_len(),
+        ));
         let state_operational = state_lamports.saturating_sub(state_rent);
         let wallet_lamports = ctx.accounts.swig_wallet_address.lamports();
         let destination_is_wallet =

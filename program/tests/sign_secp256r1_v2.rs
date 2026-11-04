@@ -745,6 +745,164 @@ fn test_secp256r1_counter_increment_v2() {
 }
 
 #[test_log::test]
+fn test_secp256r1_duplicate_role_signature_reuse_v2() {
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let (swig_key, _) = create_swig_ed25519(&mut context, &root, rand::random()).unwrap();
+    let (signing_key, public_key) = create_test_secp256r1_keypair();
+    for _ in 0..2 {
+        add_authority_with_ed25519_root(
+            &mut context,
+            &swig_key,
+            &root,
+            AuthorityConfig {
+                authority_type: AuthorityType::Secp256r1,
+                authority: &public_key,
+            },
+            vec![ClientAction::All(All {})],
+        )
+        .unwrap();
+    }
+
+    let swig_wallet_address =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig_key.as_ref()), &program_id())
+            .0;
+    let recipient = Pubkey::new_unique();
+    context
+        .svm
+        .airdrop(&swig_wallet_address, 10_000_000)
+        .unwrap();
+    context.svm.airdrop(&recipient, 1_000_000).unwrap();
+    let wallet_balance_before = context
+        .svm
+        .get_account(&swig_wallet_address)
+        .unwrap()
+        .lamports;
+    let transfer =
+        solana_system_interface::instruction::transfer(&swig_wallet_address, &recipient, 1_000_000);
+    let slot = context.svm.get_sysvar::<Clock>().slot;
+    let sign =
+        |payload: &[u8]| sign_message(payload, &signing_key.private_key_to_der().unwrap()).unwrap();
+    let signed_instructions = swig_interface::SignV2Instruction::new_secp256r1(
+        swig_key,
+        swig_wallet_address,
+        sign,
+        slot,
+        1,
+        transfer.clone(),
+        1,
+        &public_key,
+    )
+    .unwrap();
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &signed_instructions,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
+    context.svm.send_transaction(tx).unwrap();
+    assert_eq!(
+        context.svm.get_account(&recipient).unwrap().lamports,
+        2_000_000
+    );
+    assert_eq!(
+        context
+            .svm
+            .get_account(&swig_wallet_address)
+            .unwrap()
+            .lamports,
+        wallet_balance_before - 1_000_000
+    );
+    let accounts_after_transfer = [swig_key, swig_wallet_address, recipient]
+        .map(|key| (key, context.svm.get_account(&key).unwrap()));
+
+    // Keep the original precompile/signature and payload; change only the unsigned role ID.
+    let mut replay = signed_instructions;
+    let role_id_offset = std::mem::offset_of!(swig::actions::sign_v2::SignV2Args, role_id);
+    replay[1].data[role_id_offset..role_id_offset + 4].copy_from_slice(&2u32.to_le_bytes());
+    context.svm.expire_blockhash();
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &replay,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
+    let error = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(
+                swig_state::SwigAuthenticateError::PermissionDeniedSecp256r1SignatureReused as u32,
+            ),
+        ),
+    );
+    for (key, account) in &accounts_after_transfer {
+        assert_eq!(context.svm.get_account(key).unwrap(), *account);
+    }
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    for role_id in [1, 2] {
+        assert_eq!(
+            swig.get_role(role_id)
+                .unwrap()
+                .unwrap()
+                .authority
+                .signature_odometer(),
+            Some(1)
+        );
+    }
+
+    // The duplicate role remains usable with a fresh signature and the shared next counter.
+    let fresh = swig_interface::SignV2Instruction::new_secp256r1(
+        swig_key,
+        swig_wallet_address,
+        sign,
+        slot,
+        2,
+        transfer,
+        2,
+        &public_key,
+    )
+    .unwrap();
+    let message = v0::Message::try_compile(
+        &context.default_payer.pubkey(),
+        &fresh,
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.default_payer])
+            .unwrap();
+    context.svm.send_transaction(tx).unwrap();
+    assert_eq!(
+        context.svm.get_account(&recipient).unwrap().lamports,
+        3_000_000
+    );
+    let swig_account = context.svm.get_account(&swig_key).unwrap();
+    let swig = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    for role_id in [1, 2] {
+        assert_eq!(
+            swig.get_role(role_id)
+                .unwrap()
+                .unwrap()
+                .authority
+                .signature_odometer(),
+            Some(2)
+        );
+    }
+}
+
+#[test_log::test]
 fn test_secp256r1_replay_protection_v2() {
     let mut context = setup_test_context().unwrap();
 

@@ -1,9 +1,11 @@
 #[cfg(target_os = "solana")]
+use pinocchio::pubkey::create_program_address;
+#[cfg(target_os = "solana")]
 use pinocchio::syscalls::{sol_curve_validate_point, sol_get_stack_height, sol_memcmp_};
 use pinocchio::{
     account_info::AccountInfo,
     program_error::ProgramError,
-    pubkey::{create_program_address, find_program_address, Pubkey},
+    pubkey::{find_program_address, Pubkey},
     ProgramResult,
 };
 use pinocchio_pubkey::declare_id;
@@ -93,7 +95,11 @@ sol_assert_return!(check_any_pda, u8, seeds: &[&[u8]], target_key: &Pubkey, prog
 });
 
 sol_assert_return!(check_self_pda, u8, seeds: &[&[u8]], target_key: &Pubkey | {
+#[cfg(target_os = "solana")]
 let pda = create_program_address(seeds, &crate::ID)?;
+#[cfg(not(target_os = "solana"))]
+let pda = solana_pubkey::Pubkey::create_program_address(seeds, &solana_pubkey::Pubkey::new_from_array(crate::ID))
+    .map_err(|_| ProgramError::InvalidSeeds)?.to_bytes();
 if sol_assert_bytes_eq(pda.as_ref(), target_key.as_ref(), 32) {
   Some(seeds[seeds.len()-1][0])
 } else {

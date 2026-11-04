@@ -137,23 +137,15 @@ pub fn remove_authorization_lock_v1(
             })
             .ok_or(SwigError::AuthorizationLockNotFound)?;
 
-        let acting_role = Swig::get_mut_role(args.acting_role_id, parts.roles)?
-            .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
-        if acting_role.authority.session_based() {
-            acting_role.authority.authenticate_session(
-                all_accounts,
-                remove.authority_payload,
-                remove.data_payload,
-                slot,
-            )?;
-        } else {
-            acting_role.authority.authenticate(
-                all_accounts,
-                remove.authority_payload,
-                remove.data_payload,
-                slot,
-            )?;
-        }
+        let (acting_role, _) = swig_state::authority::counter::authenticate_role(
+            parts.roles,
+            args.acting_role_id,
+            all_accounts,
+            remove.authority_payload,
+            remove.data_payload,
+            false,
+        )?
+        .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
 
         if target_role_id != args.acting_role_id {
             if target_active {
@@ -192,9 +184,8 @@ pub fn remove_authorization_lock_v1(
 
     let rent = Rent::get()?;
     let swig_lamports = ctx.accounts.swig.lamports();
-    let new_rent = rent.minimum_balance(new_len);
-    let refund = rent
-        .minimum_balance(old_len)
+    let new_rent = crate::util::rent::minimum_balance(&rent, new_len);
+    let refund = crate::util::rent::minimum_balance(&rent, old_len)
         .saturating_sub(new_rent)
         .min(swig_lamports.saturating_sub(new_rent));
     unsafe {
