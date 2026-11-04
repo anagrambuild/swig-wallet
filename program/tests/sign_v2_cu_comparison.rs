@@ -42,19 +42,19 @@ fn compare_sign_v2_role_compute_units() {
         token_limit_destination
     );
 
-    // Wallet-PDA validation is required before personal-asset isolation.
-    // Merged isolation/authentication baseline: f90d4c5, CI run 40584412799.
-    // Measured with CI's pinned SBPF v3 release build and LiteSVM 0.16.
+    // Per-CPI destination enforcement with the full 254-position destination bitmap.
+    // Restricted ceilings equal the approved measurements from CI's pinned SBPF v3
+    // release image and LiteSVM 0.16. The existing All-role ceiling is unchanged.
     for (path, actual, baseline) in [
         ("All", all, 5_076),
-        ("SOL limit", sol_limit, 6_203),
-        ("SOL destination limit", sol_limit_destination, 6_563),
-        ("Token limit", token_limit, 7_237),
-        ("Token destination limit", token_limit_destination, 7_703),
+        ("SOL limit", sol_limit, 6_324),
+        ("SOL destination limit", sol_limit_destination, 6_718),
+        ("Token limit", token_limit, 7_416),
+        ("Token destination limit", token_limit_destination, 7_944),
     ] {
         assert!(
             actual <= baseline,
-            "SignV2 {path} consumed {actual} CU, exceeding the wallet-validation baseline of {baseline} CU"
+            "SignV2 {path} consumed {actual} CU, exceeding the approved baseline of {baseline} CU"
         );
     }
 }
