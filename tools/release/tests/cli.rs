@@ -4,6 +4,70 @@ use anyhow::Result;
 use solana_sdk::signature::Keypair;
 
 #[test]
+fn close_buffer_selects_only_the_network_signer_and_preserves_existing_output() -> Result<()> {
+    let keypair = serde_json::to_string(&Keypair::new().to_bytes().to_vec())?;
+    let directory = tempfile::tempdir()?;
+    for (cluster, secret) in [
+        ("mainnet", "PROPOSER_KEYPAIR"),
+        ("devnet", "PROGRAM_AUTHORITY_KEYPAIR"),
+    ] {
+        for supplied in [false, true] {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_swig-release"));
+            command
+                .env_clear()
+                .env("SOLANA_RPC_URL", "https://rpc.invalid")
+                .args([
+                    "close-buffer",
+                    "--cluster",
+                    cluster,
+                    "--buffer",
+                    "3ggpgBmfx1Xbp4XUcGA2MBhrBCBnCLJmmuG98uev3J5V",
+                    "--output-dir",
+                ])
+                .arg(directory.path());
+            if supplied {
+                command.env(secret, &keypair);
+            }
+            let output = command.output()?;
+            assert!(!output.status.success());
+            let error = String::from_utf8(output.stderr)?;
+            let expected = if supplied {
+                "Output directory must be new".into()
+            } else {
+                format!("{secret} is required")
+            };
+            assert!(error.contains(&expected), "{error}");
+            assert!(output.stdout.is_empty());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn close_buffer_rejects_invalid_address_and_network_before_configuration() -> Result<()> {
+    for (cluster, buffer) in [
+        ("mainnet", "not-a-public-key"),
+        ("testnet", "11111111111111111111111111111111"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_swig-release"))
+            .env_clear()
+            .args([
+                "close-buffer",
+                "--cluster",
+                cluster,
+                "--buffer",
+                buffer,
+                "--output-dir",
+                "/unused",
+            ])
+            .output()?;
+        assert_eq!(output.status.code(), Some(2));
+        assert!(String::from_utf8(output.stderr)?.contains("invalid value"));
+    }
+    Ok(())
+}
+
+#[test]
 fn missing_configuration_fails_before_reading_binary_or_sending_requests() -> Result<()> {
     let output = Command::new(env!("CARGO_BIN_EXE_swig-release"))
         .env_clear()

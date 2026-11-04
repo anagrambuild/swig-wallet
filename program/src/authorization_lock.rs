@@ -64,7 +64,7 @@ const COPTION_SOME: [u8; 4] = [1, 0, 0, 0];
 pub(crate) fn lockable_lamports(wallet: &AccountInfo) -> Result<u64, ProgramError> {
     Ok(wallet
         .lamports()
-        .saturating_sub(Rent::get()?.minimum_balance(0)))
+        .saturating_sub(crate::util::rent::minimum_balance(&Rent::get()?, 0)))
 }
 
 /// Returns the balance of a token account that can carry a lock, or `None`
@@ -705,7 +705,8 @@ impl LockGuard {
                     // reserve; read the rent sysvar at most once.
                     let rent = match wallet_rent {
                         Some(rent) => rent,
-                        None => *wallet_rent.insert(Rent::get()?.minimum_balance(0)),
+                        None => *wallet_rent
+                            .insert(crate::util::rent::minimum_balance(&Rent::get()?, 0)),
                     };
                     (
                         after.saturating_sub(rent),

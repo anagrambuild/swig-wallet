@@ -46,7 +46,7 @@ impl IsolationGuard<'_> {
             if account.is_owned_by(&crate::SYSTEM_PROGRAM_ID) || account.executable() {
                 continue;
             }
-            let required_rent = rent.minimum_balance(account.data_len());
+            let required_rent = crate::util::rent::minimum_balance(&rent, account.data_len());
             if account.lamports() < required_rent {
                 continue;
             }

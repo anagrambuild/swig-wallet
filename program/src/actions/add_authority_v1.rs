@@ -6,7 +6,7 @@ use pinocchio::{
     account_info::AccountInfo,
     msg,
     program_error::ProgramError,
-    sysvars::{clock::Clock, rent::Rent, Sysvar},
+    sysvars::{rent::Rent, Sysvar},
     ProgramResult,
 };
 use pinocchio_system::instructions::Transfer;
@@ -193,31 +193,20 @@ pub fn add_authority_v1(
         let saved_tail = SavedTail::take(parts.tail)?;
         let swig = parts.state;
         let swig_roles = parts.roles;
-        let acting_role = Swig::get_mut_role(add_authority_v1.args.acting_role_id, swig_roles)?;
+
+        let acting_role = swig_state::authority::counter::authenticate_role(
+            swig_roles,
+            add_authority_v1.args.acting_role_id,
+            all_accounts,
+            add_authority_v1.authority_payload,
+            add_authority_v1.data_payload,
+            false,
+        )?;
         if acting_role.is_none() {
             return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
         }
-        let acting_role = acting_role.unwrap();
+        let (acting_role, _) = acting_role.unwrap();
 
-        // Authenticate the caller
-        let clock = Clock::get()?;
-        let slot = clock.slot;
-
-        if acting_role.authority.session_based() {
-            acting_role.authority.authenticate_session(
-                all_accounts,
-                add_authority_v1.authority_payload,
-                add_authority_v1.data_payload,
-                slot,
-            )?;
-        } else {
-            acting_role.authority.authenticate(
-                all_accounts,
-                add_authority_v1.authority_payload,
-                add_authority_v1.data_payload,
-                slot,
-            )?;
-        }
         let all = acting_role.get_action::<All>(&[])?;
         let manage_authority = acting_role.get_action::<ManageAuthority>(&[])?;
 

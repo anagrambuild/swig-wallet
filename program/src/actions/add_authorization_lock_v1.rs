@@ -161,23 +161,15 @@ pub fn add_authorization_lock_v1(
             return Err(SwigStateError::AuthorizationLockLimitReached.into());
         }
 
-        let acting_role = Swig::get_mut_role(args.acting_role_id, parts.roles)?
-            .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
-        if acting_role.authority.session_based() {
-            acting_role.authority.authenticate_session(
-                all_accounts,
-                add.authority_payload,
-                add.data_payload,
-                slot,
-            )?;
-        } else {
-            acting_role.authority.authenticate(
-                all_accounts,
-                add.authority_payload,
-                add.data_payload,
-                slot,
-            )?;
-        }
+        let (acting_role, _) = swig_state::authority::counter::authenticate_role(
+            parts.roles,
+            args.acting_role_id,
+            all_accounts,
+            add.authority_payload,
+            add.data_payload,
+            false,
+        )?
+        .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
 
         let Some(manage) = acting_role.get_action::<ManageAuthorizationLocks>(&[])? else {
             return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
