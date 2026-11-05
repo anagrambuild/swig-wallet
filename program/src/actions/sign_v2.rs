@@ -11,7 +11,7 @@ use pinocchio::{
 };
 use pinocchio_pubkey::from_str;
 use swig_assertions::*;
-use swig_compact_instructions::InstructionIterator;
+use swig_compact_instructions::{InstructionHolder, InstructionIterator, MAX_ACCOUNTS};
 use swig_state::{
     action::{
         all::All,
@@ -116,6 +116,10 @@ const NO_EXCLUDE_RANGES: &[core::ops::Range<usize>] = &[];
 
 /// Maximum number of accounts that can have pre-CPI snapshot hashes.
 pub(super) const MAX_ACCOUNT_SNAPSHOTS: usize = 100;
+
+// Destination flags cover every account position, independently of snapshot capacity.
+const DESTINATION_LIMIT_BITS_PER_WORD: usize = u64::BITS as usize;
+const DESTINATION_LIMIT_WORD_COUNT: usize = MAX_ACCOUNTS.div_ceil(DESTINATION_LIMIT_BITS_PER_WORD);
 
 const SYSTEM_TRANSFER_DISCRIMINATOR: u32 = 2;
 const SYSTEM_CREATE_ACCOUNT_DISCRIMINATOR: u32 = 0;
@@ -369,6 +373,16 @@ pub fn sign_v2(
     let has_program_curated_permission = !has_program_all_permission
         && RoleMut::get_action_mut::<ProgramCurated>(role.actions, &[])?.is_some();
     let mut check_wallet_shape = false;
+    // Charge encoded transfer amounts before the config integrity snapshot.
+    // Each CPI's actual debit is checked separately against its own transfer.
+    let destination_limits = preflight_destination_limits(
+        role.actions,
+        slot,
+        sign_v2.instruction_payload,
+        all_accounts,
+        ctx.accounts.swig_wallet_address.key(),
+        account_classifiers,
+    )?;
     // Snapshot hashes are the pre-CPI integrity baseline for writable accounts.
     // SignV2 permits specific balance fields to change, then verifies the rest
     // of each protected account is unchanged after CPI execution.
@@ -527,6 +541,13 @@ pub fn sign_v2(
             if swig_wallet_address_balance_after < swig_wallet_address_balance_before {
                 let amount_spent = swig_wallet_address_balance_before
                     .saturating_sub(swig_wallet_address_balance_after);
+                if account_has_destination_limit(&destination_limits, 0) {
+                    require_destination_debit(
+                        sol_transfer(&instruction, ctx.accounts.swig_wallet_address.key()),
+                        ctx.accounts.swig_wallet_address.key(),
+                        amount_spent,
+                    )?;
+                }
                 total_sol_spent = total_sol_spent.saturating_add(amount_spent);
             }
 
@@ -551,6 +572,13 @@ pub fn sign_v2(
                         // when one outer CPI hides the intermediate transfer.
                         // For WSOL this includes unsynchronized lamport deposits.
                         if data.is_empty() || account.lamports() == 0 {
+                            if account_has_destination_limit(&destination_limits, account_index) {
+                                require_destination_debit(
+                                    token_transfer(&instruction, account.key()),
+                                    account.key(),
+                                    *balance,
+                                )?;
+                            }
                             record_token_debit(balance, spent, 0)?;
                             continue;
                         }
@@ -580,6 +608,13 @@ pub fn sign_v2(
                             *previous_reserve = reserve;
                         }
 
+                        if account_has_destination_limit(&destination_limits, account_index) {
+                            require_destination_debit(
+                                token_transfer(&instruction, account.key()),
+                                account.key(),
+                                balance.saturating_sub(current),
+                            )?;
+                        }
                         record_token_debit(balance, spent, current)?;
                     },
                     AccountClassification::SwigStakeAccount {
@@ -655,6 +690,7 @@ pub fn sign_v2(
         }
     }
 
+    // After execution, verify integrity and deduct actual spending from general limits.
     let actions = role.actions;
     for (index, account) in account_classifiers.iter_mut().enumerate() {
         match account {
@@ -663,8 +699,8 @@ pub fn sign_v2(
                 // 1. Verify writable Swig account data/owner did not change unexpectedly.
                 // 2. Verify the Swig wallet PDA remains rent-exempt after CPIs.
                 // 3. If SOL was spent, charge a general SOL limit when present.
-                // 4. If any SOL destination limits exist, every actual debit must be
-                //    parsed and charged to a matching destination limit.
+                // 4. Destination amounts were charged before CPI execution, and each
+                //    actual debit was checked against its own recognized transfer.
                 // 5. If SOL was spent but neither a general nor destination limit applies,
                 //    reject the instruction.
                 let account_info = unsafe { all_accounts.get_unchecked(index) };
@@ -691,63 +727,12 @@ pub fn sign_v2(
                     continue;
                 }
 
-                // A role may hold both a general one-shot and a general
-                // recurring limit for the same asset: within the general
-                // family (as between destination limits) the recurring
-                // allowance is the per-window budget and the one-shot the
-                // total budget, so each debit must fit both and drains both.
-                let sol_one_shot_charged = charge_general_sol_limit(actions, total_sol_spent)?;
-                let sol_recurring_charged =
-                    charge_general_sol_recurring_limit(actions, total_sol_spent, slot)?;
-                let general_sol_limit_applied = sol_one_shot_charged || sol_recurring_charged;
-
-                let has_destination_sol_limits = has_sol_destination_limits(actions)?;
-                let destination_sol_limit_applied = if has_destination_sol_limits {
-                    let mut matched_any_destination_limit = false;
-                    let mut parsed_sol_spent = 0u64;
-
-                    process_sol_transfers(
-                        sign_v2.instruction_payload,
-                        ctx.accounts.swig_wallet_address.key(),
-                        all_accounts,
-                        ctx.accounts.swig_wallet_address.key(),
-                        |destination_pubkey, amount| -> Result<(), ProgramError> {
-                            parsed_sol_spent = parsed_sol_spent
-                                .checked_add(amount)
-                                .ok_or(SwigAuthenticateError::PermissionDeniedMissingPermission)?;
-
-                            let dest_pubkey = destination_pubkey.as_ref();
-
-                            let recurring_matched = charge_sol_recurring_destination_limit(
-                                actions,
-                                dest_pubkey,
-                                amount,
-                                slot,
-                            )?;
-                            let regular_matched =
-                                charge_sol_destination_limit(actions, dest_pubkey, amount)?;
-                            if !recurring_matched && !regular_matched {
-                                return Err(
-                                    SwigAuthenticateError::PermissionDeniedMissingPermission.into(),
-                                );
-                            }
-                            matched_any_destination_limit = true;
-                            Ok(())
-                        },
-                    )?;
-
-                    if !matched_any_destination_limit || parsed_sol_spent != total_sol_spent {
-                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
-                    }
-
-                    true
-                } else {
-                    false
-                };
-
-                if !general_sol_limit_applied && !destination_sol_limit_applied {
-                    return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
-                }
+                consume_general_sol_limit(
+                    actions,
+                    total_sol_spent,
+                    slot,
+                    account_has_destination_limit(&destination_limits, index),
+                )?;
 
                 continue;
             },
@@ -826,64 +811,13 @@ pub fn sign_v2(
                     continue;
                 }
 
-                // General token limits follow the same pair rule as the
-                // general SOL limits above.
-                let token_one_shot_charged =
-                    charge_general_token_limit(actions, mint, total_token_spent)?;
-                let token_recurring_charged =
-                    charge_general_token_recurring_limit(actions, mint, total_token_spent, slot)?;
-                let general_token_limit_applied = token_one_shot_charged || token_recurring_charged;
-
-                let has_destination_token_limits = has_token_destination_limits(actions, mint)?;
-                let destination_token_limit_applied = if has_destination_token_limits {
-                    let source_account_key = account_info.key();
-                    let mut matched_any_destination_limit = false;
-                    let mut parsed_token_spent = 0u64;
-
-                    process_token_destinations(
-                        sign_v2.instruction_payload,
-                        source_account_key,
-                        all_accounts,
-                        ctx.accounts.swig_wallet_address.key(),
-                        |destination, amount| -> Result<(), ProgramError> {
-                            parsed_token_spent = parsed_token_spent
-                                .checked_add(amount)
-                                .ok_or(SwigAuthenticateError::PermissionDeniedMissingPermission)?;
-
-                            let mut combined_key = [0u8; 64];
-                            combined_key[..32].copy_from_slice(mint);
-                            combined_key[32..].copy_from_slice(destination.as_ref());
-
-                            let recurring_matched = charge_token_recurring_destination_limit(
-                                actions,
-                                &combined_key,
-                                amount,
-                                slot,
-                            )?;
-                            let regular_matched =
-                                charge_token_destination_limit(actions, &combined_key, amount)?;
-                            if !recurring_matched && !regular_matched {
-                                return Err(
-                                    SwigAuthenticateError::PermissionDeniedMissingPermission.into(),
-                                );
-                            }
-                            matched_any_destination_limit = true;
-                            Ok(())
-                        },
-                    )?;
-
-                    if !matched_any_destination_limit || parsed_token_spent != total_token_spent {
-                        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
-                    }
-
-                    true
-                } else {
-                    false
-                };
-
-                if !general_token_limit_applied && !destination_token_limit_applied {
-                    return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
-                }
+                consume_general_token_limit(
+                    actions,
+                    mint,
+                    total_token_spent,
+                    slot,
+                    account_has_destination_limit(&destination_limits, index),
+                )?;
 
                 continue;
             },
@@ -1170,149 +1104,6 @@ pub(super) fn has_token_destination_limits(
     Ok(false)
 }
 
-/// Charges one debit against the role's first recurring destination limit for
-/// `match_key` (destination for SOL, mint+destination for tokens), if present.
-///
-/// With both a regular and a recurring limit matching the same key, the debit
-/// must fit within each: the recurring allowance acts as the per-window budget
-/// and the regular amount as the total budget, so both are charged by the
-/// caller. Each helper call owns `actions`' borrow only for its duration, so
-/// sequential calls cannot alias.
-///
-/// Returns whether an action was found and charged.
-#[inline]
-fn charge_sol_recurring_destination_limit(
-    actions: &mut [u8],
-    match_key: &[u8],
-    amount: u64,
-    slot: u64,
-) -> Result<bool, ProgramError> {
-    match RoleMut::get_action_mut::<SolRecurringDestinationLimit>(actions, match_key)? {
-        Some(action) => {
-            action.run(amount, slot)?;
-            Ok(true)
-        },
-        None => Ok(false),
-    }
-}
-
-/// Charges one debit against the role's first SOL destination limit for
-/// `match_key`. Returns whether an action was found and charged.
-#[inline]
-fn charge_sol_destination_limit(
-    actions: &mut [u8],
-    match_key: &[u8],
-    amount: u64,
-) -> Result<bool, ProgramError> {
-    match RoleMut::get_action_mut::<SolDestinationLimit>(actions, match_key)? {
-        Some(action) => {
-            action.run(amount)?;
-            Ok(true)
-        },
-        None => Ok(false),
-    }
-}
-
-/// Charges one debit against the role's first token recurring destination
-/// limit for `match_key`. Returns whether an action was found and charged.
-#[inline]
-fn charge_token_recurring_destination_limit(
-    actions: &mut [u8],
-    match_key: &[u8],
-    amount: u64,
-    slot: u64,
-) -> Result<bool, ProgramError> {
-    match RoleMut::get_action_mut::<TokenRecurringDestinationLimit>(actions, match_key)? {
-        Some(action) => {
-            action.run(amount, slot)?;
-            Ok(true)
-        },
-        None => Ok(false),
-    }
-}
-
-/// Charges one debit against the role's first token destination limit for
-/// `match_key`. Returns whether an action was found and charged.
-#[inline]
-fn charge_token_destination_limit(
-    actions: &mut [u8],
-    match_key: &[u8],
-    amount: u64,
-) -> Result<bool, ProgramError> {
-    match RoleMut::get_action_mut::<TokenDestinationLimit>(actions, match_key)? {
-        Some(action) => {
-            action.run(amount)?;
-            Ok(true)
-        },
-        None => Ok(false),
-    }
-}
-
-/// Charges the debit against the role's general SOL one-shot limit, if
-/// present. Returns whether an action was found and charged.
-#[inline]
-fn charge_general_sol_limit(actions: &mut [u8], amount: u64) -> Result<bool, ProgramError> {
-    match RoleMut::get_action_mut::<SolLimit>(actions, &[])? {
-        Some(action) => {
-            action.run(amount)?;
-            Ok(true)
-        },
-        None => Ok(false),
-    }
-}
-
-/// Charges the debit against the role's general SOL recurring limit, if
-/// present. Returns whether an action was found and charged.
-#[inline]
-fn charge_general_sol_recurring_limit(
-    actions: &mut [u8],
-    amount: u64,
-    slot: u64,
-) -> Result<bool, ProgramError> {
-    match RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])? {
-        Some(action) => {
-            action.run(amount, slot)?;
-            Ok(true)
-        },
-        None => Ok(false),
-    }
-}
-
-/// Charges the debit against the role's general token one-shot limit for
-/// `mint`, if present. Returns whether an action was found and charged.
-#[inline]
-fn charge_general_token_limit(
-    actions: &mut [u8],
-    mint: &[u8],
-    amount: u64,
-) -> Result<bool, ProgramError> {
-    match RoleMut::get_action_mut::<TokenLimit>(actions, mint)? {
-        Some(action) => {
-            action.run(amount)?;
-            Ok(true)
-        },
-        None => Ok(false),
-    }
-}
-
-/// Charges the debit against the role's general token recurring limit for
-/// `mint`, if present. Returns whether an action was found and charged.
-#[inline]
-fn charge_general_token_recurring_limit(
-    actions: &mut [u8],
-    mint: &[u8],
-    amount: u64,
-    slot: u64,
-) -> Result<bool, ProgramError> {
-    match RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)? {
-        Some(action) => {
-            action.run(amount, slot)?;
-            Ok(true)
-        },
-        None => Ok(false),
-    }
-}
-
 /// Charges the debit against the role's stake one-shot limit, if present.
 /// Returns whether an action was found and charged.
 #[inline]
@@ -1340,6 +1131,195 @@ fn charge_general_stake_recurring_limit(
             Ok(true)
         },
         None => Ok(false),
+    }
+}
+
+fn consume_general_sol_limit(
+    actions: &mut [u8],
+    spent: u64,
+    slot: u64,
+    has_destination_limit: bool,
+) -> ProgramResult {
+    let mut general_limit_applied = false;
+    if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])? {
+        action.run(spent)?;
+        general_limit_applied = true;
+    }
+    if let Some(action) = RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])? {
+        action.run(spent, slot)?;
+        general_limit_applied = true;
+    }
+
+    if !general_limit_applied && !has_destination_limit {
+        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+    }
+
+    Ok(())
+}
+
+#[inline(always)]
+fn consume_general_token_limit(
+    actions: &mut [u8],
+    mint: &[u8],
+    spent: u64,
+    slot: u64,
+    has_destination_limit: bool,
+) -> ProgramResult {
+    let mut general_limit_applied = false;
+    if let Some(action) = RoleMut::get_action_mut::<TokenLimit>(actions, mint)? {
+        action.run(spent)?;
+        general_limit_applied = true;
+    }
+    if let Some(action) = RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)? {
+        action.run(spent, slot)?;
+        general_limit_applied = true;
+    }
+
+    if !general_limit_applied && !has_destination_limit {
+        return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+    }
+
+    Ok(())
+}
+
+// Division selects the u64 word; remainder selects the account's bit within it.
+// A set bit means this account requires destination-limit enforcement.
+// Preflight bounds account indexes by MAX_ACCOUNTS before these lookups.
+#[inline(always)]
+fn account_has_destination_limit(
+    destination_limits: &[u64; DESTINATION_LIMIT_WORD_COUNT],
+    account_index: usize,
+) -> bool {
+    let word_index = account_index / DESTINATION_LIMIT_BITS_PER_WORD;
+    let bit_mask = 1u64 << (account_index % DESTINATION_LIMIT_BITS_PER_WORD);
+    destination_limits[word_index] & bit_mask != 0
+}
+
+// Destination accounting is independent of observed debits, including self-transfers.
+// Finish these config mutations before taking the protected-account snapshots.
+#[inline(always)]
+fn preflight_destination_limits(
+    actions: &mut [u8],
+    slot: u64,
+    instruction_payload: &[u8],
+    all_accounts: &[AccountInfo],
+    signer: &Pubkey,
+    classifiers: &[AccountClassification],
+) -> Result<[u64; DESTINATION_LIMIT_WORD_COUNT], ProgramError> {
+    if classifiers.len() > MAX_ACCOUNTS || classifiers.len() > all_accounts.len() {
+        return Err(SwigError::InvalidAccountsLength.into());
+    }
+    let mut destination_limits = [0u64; DESTINATION_LIMIT_WORD_COUNT];
+    for (index, classifier) in classifiers.iter().enumerate() {
+        match classifier {
+            AccountClassification::ThisSwigV2 { .. } => {
+                if has_sol_destination_limits(actions)? {
+                    // Mark wallet SOL for destination checks after each CPI.
+                    // Division selects the word; remainder selects the bit.
+                    // Shifting 1 creates its mask; OR sets the bit while preserving
+                    // every other account's flag.
+                    destination_limits[index / DESTINATION_LIMIT_BITS_PER_WORD] |=
+                        1u64 << (index % DESTINATION_LIMIT_BITS_PER_WORD);
+                    process_sol_transfers(
+                        instruction_payload,
+                        signer,
+                        all_accounts,
+                        signer,
+                        |destination_pubkey, amount| {
+                            let dest_pubkey = destination_pubkey.as_ref();
+                            let mut matched = false;
+
+                            if let Some(action) = RoleMut::get_action_mut::<
+                                SolRecurringDestinationLimit,
+                            >(
+                                actions, dest_pubkey
+                            )? {
+                                action.run(amount, slot)?;
+                                matched = true;
+                            }
+
+                            if let Some(action) = RoleMut::get_action_mut::<SolDestinationLimit>(
+                                actions,
+                                dest_pubkey,
+                            )? {
+                                action.run(amount)?;
+                                matched = true;
+                            }
+
+                            if matched {
+                                Ok(())
+                            } else {
+                                Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into())
+                            }
+                        },
+                    )?;
+                }
+            },
+            AccountClassification::SwigTokenAccount { mint, .. } => {
+                if has_token_destination_limits(actions, mint)? {
+                    // Mark this token account for destination checks after each CPI.
+                    // Division selects the word; remainder selects the bit.
+                    // Shifting 1 creates its mask; OR sets the bit while preserving
+                    // every other account's flag.
+                    destination_limits[index / DESTINATION_LIMIT_BITS_PER_WORD] |=
+                        1u64 << (index % DESTINATION_LIMIT_BITS_PER_WORD);
+                    process_token_destinations(
+                        instruction_payload,
+                        all_accounts[index].key(),
+                        all_accounts,
+                        signer,
+                        |destination, amount| {
+                            let mut combined_key = [0u8; 64];
+                            combined_key[..32].copy_from_slice(mint);
+                            combined_key[32..].copy_from_slice(destination.as_ref());
+                            let mut matched = false;
+
+                            if let Some(action) = RoleMut::get_action_mut::<
+                                TokenRecurringDestinationLimit,
+                            >(
+                                actions, &combined_key
+                            )? {
+                                action.run(amount, slot)?;
+                                matched = true;
+                            }
+
+                            if let Some(action) = RoleMut::get_action_mut::<TokenDestinationLimit>(
+                                actions,
+                                &combined_key,
+                            )? {
+                                action.run(amount)?;
+                                matched = true;
+                            }
+
+                            if matched {
+                                Ok(())
+                            } else {
+                                Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into())
+                            }
+                        },
+                    )?;
+                }
+            },
+            _ => {},
+        }
+    }
+    Ok(destination_limits)
+}
+
+// A transfer elsewhere in the batch cannot explain this CPI's debit. Self-transfers
+// consume destination quota but cannot explain any balance loss.
+#[inline(always)]
+fn require_destination_debit(
+    transfer: Option<(&Pubkey, u64)>,
+    source: &Pubkey,
+    debit: u64,
+) -> ProgramResult {
+    if debit == 0 {
+        return Ok(());
+    }
+    match transfer {
+        Some((destination, amount)) if destination != source && amount == debit => Ok(()),
+        _ => Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into()),
     }
 }
 
@@ -1419,6 +1399,22 @@ where
     Ok(())
 }
 
+fn sol_transfer<'a>(
+    instruction: &'a InstructionHolder,
+    source: &Pubkey,
+) -> Option<(&'a Pubkey, u64)> {
+    if *instruction.program_id != SYSTEM_PROGRAM_ID
+        || instruction.data.len() < SYSTEM_TRANSFER_DATA_LEN
+        || instruction.accounts.len() < 2
+        || instruction.accounts[0].pubkey != source
+        || instruction.data[..4] != SYSTEM_TRANSFER_DISCRIMINATOR.to_le_bytes()
+    {
+        return None;
+    }
+    let amount = u64::from_le_bytes(instruction.data[4..12].try_into().ok()?);
+    Some((instruction.accounts[1].pubkey, amount))
+}
+
 /// Processes token destination accounts from instruction payload using a
 /// callback. This zero-copy approach avoids allocations by calling the provided
 /// function for each destination.
@@ -1488,6 +1484,34 @@ where
     }
 
     Ok(())
+}
+
+#[inline(always)]
+fn token_transfer<'a>(
+    instruction: &'a InstructionHolder,
+    source: &Pubkey,
+) -> Option<(&'a Pubkey, u64)> {
+    if *instruction.program_id != SPL_TOKEN_ID && *instruction.program_id != SPL_TOKEN_2022_ID {
+        return None;
+    }
+    let (min_data_len, destination_index) = match *instruction.data.first()? {
+        TOKEN_TRANSFER_DISCRIMINATOR => (TOKEN_TRANSFER_DATA_LEN, 1),
+        TOKEN_TRANSFER_CHECKED_DISCRIMINATOR => (TOKEN_TRANSFER_CHECKED_DATA_LEN, 2),
+        _ => return None,
+    };
+    if instruction.data.len() < min_data_len
+        || instruction.accounts.len() <= destination_index
+        || instruction.accounts[0].pubkey != source
+    {
+        return None;
+    }
+    let amount = u64::from_le_bytes(instruction.data[1..9].try_into().ok()?);
+    Some((instruction.accounts[destination_index].pubkey, amount))
+}
+
+#[cfg(test)]
+mod destination_transfer_tests {
+    include!("../../tests/unit/sign_v2_destination_transfers.rs");
 }
 
 #[cfg(test)]

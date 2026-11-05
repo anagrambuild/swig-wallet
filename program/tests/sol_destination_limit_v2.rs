@@ -1024,3 +1024,151 @@ fn test_sol_destination_limit_cpi_enforcement_v2() {
 
     println!("✅ Balances verified: No funds were transferred due to spending limit enforcement");
 }
+
+fn setup_self_destination_limit() -> (Context, Keypair, Pubkey, Pubkey) {
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let authority = Keypair::new();
+    for key in [root.pubkey(), authority.pubkey()] {
+        context.svm.airdrop(&key, LAMPORTS_PER_SOL).unwrap();
+    }
+    let id = rand::random::<[u8; 32]>();
+    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
+    let wallet =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id()).0;
+    create_swig_ed25519(&mut context, &root, id).unwrap();
+    add_authority_with_ed25519_root(
+        &mut context,
+        &swig,
+        &root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: authority.pubkey().as_ref(),
+        },
+        vec![
+            ClientAction::ProgramAll(ProgramAll {}),
+            ClientAction::SolLimit(SolLimit {
+                amount: LAMPORTS_PER_SOL,
+            }),
+            ClientAction::SolDestinationLimit(SolDestinationLimit {
+                destination: wallet.to_bytes(),
+                amount: LAMPORTS_PER_SOL,
+            }),
+        ],
+    )
+    .unwrap();
+    context.svm.airdrop(&wallet, 2 * LAMPORTS_PER_SOL).unwrap();
+    (context, authority, swig, wallet)
+}
+
+fn assert_self_transfer_cannot_cover_account_creation(create_first: bool) {
+    let (mut context, authority, swig, wallet) = setup_self_destination_limit();
+    let created = Keypair::new();
+    let amount = 100_000_000;
+    let create = solana_system_interface::instruction::create_account(
+        &wallet,
+        &created.pubkey(),
+        amount,
+        0,
+        &solana_system_interface::program::ID,
+    );
+    let self_transfer = solana_system_interface::instruction::transfer(&wallet, &wallet, amount);
+    let inner = if create_first {
+        vec![create, self_transfer]
+    } else {
+        vec![self_transfer, create]
+    };
+    // Use the production batch compactor, preserving the new account's signer.
+    let (accounts, compact) = compact_instructions(
+        wallet,
+        vec![
+            AccountMeta::new(swig, false),
+            AccountMeta::new(wallet, false),
+            AccountMeta::new_readonly(authority.pubkey(), true),
+        ],
+        inner,
+    )
+    .unwrap();
+    let payload = compact.into_bytes().unwrap();
+    let args = SignV2Args::new(1, u16::try_from(payload.len()).unwrap());
+    let sign = Instruction {
+        program_id: program_id(),
+        accounts,
+        data: [args.into_bytes().unwrap(), &payload, &[2]].concat(),
+    };
+    let before_swig = context.svm.get_account(&swig).unwrap();
+    let before_wallet = context.svm.get_account(&wallet).unwrap();
+    let before_created = context.svm.get_account(&created.pubkey());
+    assert!(before_created.is_none());
+    let message = v0::Message::try_compile(
+        &authority.pubkey(),
+        &[sign],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&authority, &created])
+        .unwrap();
+    let error = context.svm.send_transaction(tx).unwrap_err();
+    assert_eq!(
+        error.err,
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(
+                SwigAuthenticateError::PermissionDeniedMissingPermission as u32
+            ),
+        )
+    );
+    assert_eq!(context.svm.get_account(&swig), Some(before_swig));
+    assert_eq!(context.svm.get_account(&wallet), Some(before_wallet));
+    assert_eq!(context.svm.get_account(&created.pubkey()), before_created);
+}
+
+#[test_log::test]
+fn test_self_destination_limit_rejects_create_then_self_transfer_v2() {
+    assert_self_transfer_cannot_cover_account_creation(true);
+}
+
+#[test_log::test]
+fn test_self_destination_limit_rejects_self_transfer_then_create_v2() {
+    assert_self_transfer_cannot_cover_account_creation(false);
+}
+
+#[test_log::test]
+fn test_self_destination_limit_only_consumes_destination_allowance_v2() {
+    let (mut context, authority, swig, wallet) = setup_self_destination_limit();
+    let amount = 100_000_000;
+    let before_wallet = context.svm.get_account(&wallet).unwrap();
+    let sign = SignV2Instruction::new_ed25519(
+        swig,
+        wallet,
+        authority.pubkey(),
+        solana_system_interface::instruction::transfer(&wallet, &wallet, amount),
+        1,
+    )
+    .unwrap();
+    let message = v0::Message::try_compile(
+        &authority.pubkey(),
+        &[sign],
+        &[],
+        context.svm.latest_blockhash(),
+    )
+    .unwrap();
+    let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[&authority]).unwrap();
+    context.svm.send_transaction(tx).unwrap();
+    assert_eq!(context.svm.get_account(&wallet), Some(before_wallet));
+    let swig_account = context.svm.get_account(&swig).unwrap();
+    let state = SwigWithRoles::from_bytes(&swig_account.data).unwrap();
+    let role = state.get_role(1).unwrap().unwrap();
+    assert_eq!(
+        role.get_action::<SolLimit>(&[]).unwrap().unwrap().amount,
+        LAMPORTS_PER_SOL
+    );
+    assert_eq!(
+        role.get_action::<SolDestinationLimit>(&wallet.to_bytes())
+            .unwrap()
+            .unwrap()
+            .amount,
+        LAMPORTS_PER_SOL - amount
+    );
+}
