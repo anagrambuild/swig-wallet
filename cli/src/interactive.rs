@@ -26,7 +26,7 @@ use swig_sdk::{
     Secp256k1SessionClientRole, SwigError, SwigWallet,
 };
 
-use crate::SwigCliContext;
+use crate::{commands::print_authorization_locks, SwigCliContext};
 
 pub fn run_interactive_mode(ctx: &mut SwigCliContext) -> Result<()> {
     println!(
@@ -46,6 +46,7 @@ pub fn run_interactive_mode(ctx: &mut SwigCliContext) -> Result<()> {
                 "Transfer",
                 "Switch Authority",
                 "Sub Accounts",
+                "Authorization Locks",
                 "Exit",
             ]
         };
@@ -71,7 +72,8 @@ pub fn run_interactive_mode(ctx: &mut SwigCliContext) -> Result<()> {
                 4 => transfer_interactive(ctx)?,
                 5 => switch_authority_interactive(ctx)?,
                 6 => sub_accounts_interactive(ctx)?,
-                7 => break,
+                7 => authorization_locks_interactive(ctx)?,
+                8 => break,
                 _ => unreachable!(),
             }
         }
@@ -470,6 +472,7 @@ fn update_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                 "Stake All",
                 "All But Manage Authority",
                 "Program Curated",
+                "Manage Authorization Locks",
             ];
 
             let mut selected_types = Vec::new();
@@ -526,6 +529,9 @@ fn update_authority_interactive(ctx: &mut SwigCliContext) -> Result<()> {
                     11 => Permission::StakeAll,
                     12 => Permission::AllButManageAuthority,
                     13 => Permission::ProgramCurated,
+                    14 => Permission::ManageAuthorizationLocks {
+                        max_duration_slots: 0,
+                    },
                     _ => unreachable!(),
                 };
 
@@ -851,6 +857,7 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
         "Sub Account (Sub-account management)",
         "Stake (Stake management permissions)",
         "Stake All (All stake management permissions)",
+        "Manage Authorization Locks (Reserve funds within this role's own limits)",
     ];
 
     let mut permissions = Vec::new();
@@ -1065,6 +1072,19 @@ pub fn get_permissions_interactive() -> Result<Vec<Permission>> {
                 recurring: None,
             },
             13 => Permission::StakeAll,
+            14 => {
+                let max_duration_slots: u64 = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter maximum lock duration in slots")
+                    .validate_with(|value: &u64| {
+                        if *value == 0 {
+                            Err("Duration must be greater than zero")
+                        } else {
+                            Ok(())
+                        }
+                    })
+                    .interact_text()?;
+                Permission::ManageAuthorizationLocks { max_duration_slots }
+            },
             _ => unreachable!(),
         };
 
@@ -1111,6 +1131,72 @@ pub fn sub_accounts_interactive(ctx: &mut SwigCliContext) -> Result<()> {
             toggle_sub_account_interactive(ctx, sub_account_role_id)?;
         },
         3 => withdraw_from_sub_account_interactive(ctx)?,
+        _ => unreachable!(),
+    }
+    Ok(())
+}
+
+pub fn authorization_locks_interactive(ctx: &mut SwigCliContext) -> Result<()> {
+    println!("\n{}", "Authorization Locks...".bright_blue().bold());
+
+    let actions = vec![
+        "List active locks",
+        "List all locks (including expired)",
+        "Lock SOL",
+        "Lock tokens",
+        "Release or prune a lock",
+        "Exit",
+    ];
+
+    let selection = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("Choose an action")
+        .items(&actions)
+        .default(0)
+        .interact()?;
+
+    let wallet = ctx.wallet.as_mut().unwrap();
+    match selection {
+        0 => print_authorization_locks(wallet, false)?,
+        1 => print_authorization_locks(wallet, true)?,
+        2 | 3 => {
+            let mint = if selection == 3 {
+                let mint_str: String = Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter token mint address")
+                    .interact_text()?;
+                Some(Pubkey::from_str(&mint_str)?)
+            } else {
+                None
+            };
+            let amount: u64 = Input::with_theme(&ColorfulTheme::default())
+                .with_prompt(if mint.is_some() {
+                    "Enter amount to lock (token base units)"
+                } else {
+                    "Enter amount to lock (in lamports)"
+                })
+                .interact_text()?;
+            let duration: u64 = Input::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter lock duration in slots")
+                .interact_text()?;
+            let expiry_slot = wallet.get_current_slot()? + duration;
+            let signature = match mint {
+                Some(mint) => wallet.add_token_authorization_lock(&mint, amount, expiry_slot)?,
+                None => wallet.add_sol_authorization_lock(amount, expiry_slot)?,
+            };
+            println!(
+                "Authorization lock created, expiring at slot {}",
+                expiry_slot
+            );
+            println!("Signature: {}", signature);
+        },
+        4 => {
+            let lock_id: u32 = Input::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter lock ID")
+                .interact_text()?;
+            let signature = wallet.remove_authorization_lock(lock_id)?;
+            println!("Authorization lock {} removed", lock_id);
+            println!("Signature: {}", signature);
+        },
+        5 => {},
         _ => unreachable!(),
     }
     Ok(())

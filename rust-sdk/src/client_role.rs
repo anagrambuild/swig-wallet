@@ -4158,6 +4158,58 @@ where
         ))
     }
 
+    fn add_authorization_lock_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let preceding_instruction = (self.preceding_instruction_fn)();
+
+        AddAuthorizationLockV1Instruction::new_with_program_exec(
+            swig_account,
+            payer,
+            preceding_instruction,
+            swig_wallet_address,
+            asset_account,
+            role_id,
+            mint,
+            amount,
+            expiry_slot,
+        )
+        .map_err(|e| SwigError::InterfaceError(e.to_string()))
+    }
+
+    fn remove_authorization_lock_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        swig_wallet_address: Pubkey,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let preceding_instruction = (self.preceding_instruction_fn)();
+
+        RemoveAuthorizationLockV1Instruction::new_with_program_exec(
+            swig_account,
+            payer,
+            preceding_instruction,
+            swig_wallet_address,
+            role_id,
+            lock_id,
+            rent_claimer,
+        )
+        .map_err(|e| SwigError::InterfaceError(e.to_string()))
+    }
+
     fn authority_type(&self) -> AuthorityType {
         AuthorityType::ProgramExec
     }

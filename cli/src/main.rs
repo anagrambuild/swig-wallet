@@ -112,7 +112,8 @@ pub enum Command {
         new_authority: Option<String>,
         #[arg(short, long)]
         new_authority_type: Option<String>,
-        #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ',')]
+        /// Permission JSON objects; repeat the flag or pass several values
+        #[arg(short, long, value_parser, num_args = 1..)]
         permissions: Vec<String>,
     },
     /// Remove an authority from a wallet
@@ -128,9 +129,13 @@ pub enum Command {
         fee_payer: Option<String>,
         #[arg(short, long = "swig-id")]
         id: String,
-        // Remove authority
+        /// Authority to remove: a base58 pubkey for Ed25519 roles, or a hex
+        /// public key for Secp256k1/Secp256r1 roles
         #[arg(short, long)]
         remove_authority: Option<String>,
+        /// Type of the authority to remove (default Ed25519)
+        #[arg(long)]
+        remove_authority_type: Option<String>,
     },
     /// Update an existing authority in a wallet
     UpdateAuthority {
@@ -152,7 +157,7 @@ pub enum Command {
         #[arg(short, long)]
         operation: String,
         // New permissions (for ReplaceAll and AddActions operations)
-        #[arg(short, long, value_parser, num_args = 0.., value_delimiter = ',')]
+        #[arg(short, long, value_parser, num_args = 0..)]
         permissions: Vec<String>,
         // Action types to remove (for RemoveActionsByType operation)
         #[arg(short, long, value_parser, num_args = 0.., value_delimiter = ',')]
@@ -256,6 +261,66 @@ pub enum Command {
         sub_account: String,
         #[arg(short, long)]
         amount: u64,
+    },
+    /// Hold part of the wallet's SOL or token balance until an expiry slot.
+    /// Other roles cannot spend the held funds; this role can, which captures
+    /// the hold
+    AddAuthorizationLock {
+        #[arg(long)]
+        authority_type: Option<String>,
+        #[arg(long)]
+        authority: Option<String>,
+        #[arg(long)]
+        authority_kp: Option<String>,
+        #[arg(long)]
+        fee_payer: Option<String>,
+        #[arg(long = "swig-id")]
+        id: String,
+        /// Amount to reserve, in lamports or token base units
+        #[arg(long)]
+        amount: u64,
+        /// Token mint to lock; omit to lock native SOL
+        #[arg(long)]
+        mint: Option<String>,
+        /// Absolute slot at which the lock expires
+        #[arg(
+            long,
+            conflicts_with = "duration_slots",
+            required_unless_present = "duration_slots"
+        )]
+        expiry_slot: Option<u64>,
+        /// Number of slots from now until the lock expires
+        #[arg(long)]
+        duration_slots: Option<u64>,
+    },
+    /// Release an authorization lock, or prune an expired or fully captured one
+    RemoveAuthorizationLock {
+        #[arg(long)]
+        authority_type: Option<String>,
+        #[arg(long)]
+        authority: Option<String>,
+        #[arg(long)]
+        authority_kp: Option<String>,
+        #[arg(long)]
+        fee_payer: Option<String>,
+        #[arg(long = "swig-id")]
+        id: String,
+        #[arg(long)]
+        lock_id: u32,
+    },
+    /// List the wallet's authorization locks
+    ListAuthorizationLocks {
+        #[arg(long)]
+        authority_type: Option<String>,
+        #[arg(long)]
+        authority: Option<String>,
+        #[arg(long)]
+        authority_kp: Option<String>,
+        #[arg(long = "swig-id")]
+        id: String,
+        /// Include expired and fully captured locks that have not been pruned yet
+        #[arg(long)]
+        all: bool,
     },
     /// Generate keypairs for different authority types
     Generate {
@@ -671,6 +736,14 @@ fn get_permissions_interactive() -> Result<Vec<Permission>> {
     Ok(permissions)
 }
 
+/// Decodes the `--remove-authority` value into the authority bytes a role is
+/// stored and looked up by, as `add-authority` does for a new authority.
+pub fn remove_authority_bytes(authority: &str, authority_type: Option<String>) -> Result<Vec<u8>> {
+    let authority_type =
+        commands::parse_authority_type(authority_type.unwrap_or_else(|| "Ed25519".into()))?;
+    format_authority(authority, &authority_type)
+}
+
 pub fn format_authority(authority: &str, authority_type: &AuthorityType) -> Result<Vec<u8>> {
     match authority_type {
         AuthorityType::Ed25519 | AuthorityType::Ed25519Session => {
@@ -781,4 +854,38 @@ fn get_authorities(ctx: &mut SwigCliContext) -> Result<HashMap<String, Vec<u8>>>
     }
 
     Ok(authorities)
+}
+
+#[cfg(test)]
+mod tests {
+    use solana_sdk::signature::{Keypair, Signer};
+
+    use super::*;
+
+    #[test]
+    fn remove_authority_decodes_base58_pubkeys() {
+        let key = Keypair::new().pubkey();
+        let base58 = key.to_string();
+        let bytes = remove_authority_bytes(&base58, None).unwrap();
+        // The role is stored by its 32 decoded bytes, not the 44-character
+        // string.
+        assert_eq!(bytes, key.to_bytes().to_vec());
+        assert_ne!(bytes, base58.as_bytes());
+        assert_eq!(
+            remove_authority_bytes(&base58, Some("Ed25519".into())).unwrap(),
+            bytes
+        );
+        assert!(remove_authority_bytes("not-a-pubkey", None).is_err());
+    }
+
+    #[test]
+    fn remove_authority_decodes_hex_secp256k1_keys() {
+        let mut uncompressed = vec![0x04];
+        uncompressed.extend_from_slice(&[7u8; 64]);
+        let hex_key = format!("0x{}", hex::encode(&uncompressed));
+        assert_eq!(
+            remove_authority_bytes(&hex_key, Some("Secp256k1".into())).unwrap(),
+            vec![7u8; 64]
+        );
+    }
 }
