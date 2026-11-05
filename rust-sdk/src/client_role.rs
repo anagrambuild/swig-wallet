@@ -1,8 +1,9 @@
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 use swig_interface::{
-    AddAuthorityInstruction, AuthorityConfig, AuthorityRentAccounts, ClientAction,
-    CreateSessionInstruction, CreateSubAccountInstruction, CreateSubAccountV2Instruction,
-    RemoveAuthorityInstruction, SetRentClaimerV1Instruction, SignV2Instruction,
+    AddAuthorityInstruction, AddAuthorizationLockV1Instruction, AuthorityConfig,
+    AuthorityRentAccounts, ClientAction, CreateSessionInstruction, CreateSubAccountInstruction,
+    CreateSubAccountV2Instruction, RemoveAuthorityInstruction,
+    RemoveAuthorizationLockV1Instruction, SetRentClaimerV1Instruction, SignV2Instruction,
     SubAccountSignInstruction, SubAccountSignV2Instruction, ToggleSubAccountInstruction,
     ToggleSubAccountV2Instruction, UpdateAuthorityData, UpdateAuthorityInstruction,
     WithdrawFromSubAccountInstruction, WithdrawFromSubAccountV2Instruction,
@@ -183,6 +184,48 @@ pub trait ClientRole {
         rent_claimer: Pubkey,
         current_slot: Option<u64>,
     ) -> Result<Vec<Instruction>, SwigError>;
+
+    /// Creates an add-authorization-lock instruction reserving `amount` of
+    /// `asset_account` (the swig wallet address for native SOL, or a token
+    /// account it owns) until `expiry_slot`.
+    ///
+    /// Defaults to unsupported; authority types that support locks override this.
+    #[allow(clippy::too_many_arguments)]
+    fn add_authorization_lock_instruction(
+        &self,
+        _swig_account: Pubkey,
+        _payer: Pubkey,
+        _role_id: u32,
+        _swig_wallet_address: Pubkey,
+        _asset_account: Pubkey,
+        _mint: [u8; 32],
+        _amount: u64,
+        _expiry_slot: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "Authorization locks not supported for this authority type".to_string(),
+        ))
+    }
+
+    /// Creates a remove-authorization-lock instruction. Pass the wallet's rent
+    /// claimer when one is configured.
+    ///
+    /// Defaults to unsupported; authority types that support locks override this.
+    fn remove_authorization_lock_instruction(
+        &self,
+        _swig_account: Pubkey,
+        _payer: Pubkey,
+        _role_id: u32,
+        _swig_wallet_address: Pubkey,
+        _lock_id: u32,
+        _rent_claimer: Option<Pubkey>,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Err(SwigError::InterfaceError(
+            "Authorization locks not supported for this authority type".to_string(),
+        ))
+    }
 
     /// Creates a V2 create-sub-account instruction. `sub_account_state` and
     /// `sub_account` are the (already derived) state and asset PDAs for the
@@ -574,6 +617,56 @@ impl ClientRole for Ed25519ClientRole {
                 self.authority,
                 role_id,
                 rent_claimer.to_bytes(),
+            )?,
+        ])
+    }
+
+    fn add_authorization_lock_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Ok(vec![
+            AddAuthorizationLockV1Instruction::new_with_ed25519_authority(
+                swig_account,
+                payer,
+                self.authority,
+                swig_wallet_address,
+                asset_account,
+                role_id,
+                mint,
+                amount,
+                expiry_slot,
+            )?,
+        ])
+    }
+
+    fn remove_authorization_lock_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        swig_wallet_address: Pubkey,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Ok(vec![
+            RemoveAuthorizationLockV1Instruction::new_with_ed25519_authority(
+                swig_account,
+                payer,
+                self.authority,
+                swig_wallet_address,
+                role_id,
+                lock_id,
+                rent_claimer,
             )?,
         ])
     }
@@ -1096,6 +1189,64 @@ impl ClientRole for Secp256k1ClientRole {
                 new_odometer,
                 role_id,
                 rent_claimer.to_bytes(),
+            )?,
+        ])
+    }
+
+    fn add_authorization_lock_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+        Ok(vec![
+            AddAuthorizationLockV1Instruction::new_with_secp256k1_authority(
+                swig_account,
+                payer,
+                &self.signing_fn,
+                current_slot,
+                new_odometer,
+                swig_wallet_address,
+                asset_account,
+                role_id,
+                mint,
+                amount,
+                expiry_slot,
+            )?,
+        ])
+    }
+
+    fn remove_authorization_lock_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        swig_wallet_address: Pubkey,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+        Ok(vec![
+            RemoveAuthorizationLockV1Instruction::new_with_secp256k1_authority(
+                swig_account,
+                payer,
+                &self.signing_fn,
+                current_slot,
+                new_odometer,
+                swig_wallet_address,
+                role_id,
+                lock_id,
+                rent_claimer,
             )?,
         ])
     }
@@ -1668,6 +1819,66 @@ impl ClientRole for Secp256r1ClientRole {
         )?)
     }
 
+    fn add_authorization_lock_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+        Ok(
+            AddAuthorizationLockV1Instruction::new_with_secp256r1_authority(
+                swig_account,
+                payer,
+                &self.signing_fn,
+                current_slot,
+                new_odometer,
+                swig_wallet_address,
+                asset_account,
+                role_id,
+                mint,
+                amount,
+                expiry_slot,
+                &self.authority,
+            )?,
+        )
+    }
+
+    fn remove_authorization_lock_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        swig_wallet_address: Pubkey,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+        current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        let current_slot = current_slot.ok_or(SwigError::CurrentSlotNotSet)?;
+        let new_odometer = self.odometer.wrapping_add(1);
+        Ok(
+            RemoveAuthorizationLockV1Instruction::new_with_secp256r1_authority(
+                swig_account,
+                payer,
+                &self.signing_fn,
+                current_slot,
+                new_odometer,
+                swig_wallet_address,
+                role_id,
+                lock_id,
+                rent_claimer,
+                &self.authority,
+            )?,
+        )
+    }
+
     fn create_sub_account_v2_instruction(
         &self,
         swig_account: Pubkey,
@@ -2163,6 +2374,56 @@ impl ClientRole for Ed25519SessionClientRole {
                 session_key,
                 role_id,
                 rent_claimer.to_bytes(),
+            )?,
+        ])
+    }
+
+    fn add_authorization_lock_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Ok(vec![
+            AddAuthorizationLockV1Instruction::new_with_ed25519_authority(
+                swig_account,
+                payer,
+                Pubkey::new_from_array(self.session_authority.session_key),
+                swig_wallet_address,
+                asset_account,
+                role_id,
+                mint,
+                amount,
+                expiry_slot,
+            )?,
+        ])
+    }
+
+    fn remove_authorization_lock_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        swig_wallet_address: Pubkey,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Ok(vec![
+            RemoveAuthorizationLockV1Instruction::new_with_ed25519_authority(
+                swig_account,
+                payer,
+                Pubkey::new_from_array(self.session_authority.session_key),
+                swig_wallet_address,
+                role_id,
+                lock_id,
+                rent_claimer,
             )?,
         ])
     }
@@ -2675,6 +2936,56 @@ impl ClientRole for Secp256k1SessionClientRole {
                 session_key,
                 role_id,
                 rent_claimer.to_bytes(),
+            )?,
+        ])
+    }
+
+    fn add_authorization_lock_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Ok(vec![
+            AddAuthorizationLockV1Instruction::new_with_ed25519_authority(
+                swig_account,
+                payer,
+                Pubkey::new_from_array(self.session_authority.session_key),
+                swig_wallet_address,
+                asset_account,
+                role_id,
+                mint,
+                amount,
+                expiry_slot,
+            )?,
+        ])
+    }
+
+    fn remove_authorization_lock_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        swig_wallet_address: Pubkey,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Ok(vec![
+            RemoveAuthorizationLockV1Instruction::new_with_ed25519_authority(
+                swig_account,
+                payer,
+                Pubkey::new_from_array(self.session_authority.session_key),
+                swig_wallet_address,
+                role_id,
+                lock_id,
+                rent_claimer,
             )?,
         ])
     }
@@ -3192,6 +3503,56 @@ impl ClientRole for Secp256r1SessionClientRole {
                 session_key,
                 role_id,
                 rent_claimer.to_bytes(),
+            )?,
+        ])
+    }
+
+    fn add_authorization_lock_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        swig_wallet_address: Pubkey,
+        asset_account: Pubkey,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Ok(vec![
+            AddAuthorizationLockV1Instruction::new_with_ed25519_authority(
+                swig_account,
+                payer,
+                Pubkey::new_from_array(self.session_authority.session_key),
+                swig_wallet_address,
+                asset_account,
+                role_id,
+                mint,
+                amount,
+                expiry_slot,
+            )?,
+        ])
+    }
+
+    fn remove_authorization_lock_instruction(
+        &self,
+        swig_account: Pubkey,
+        payer: Pubkey,
+        role_id: u32,
+        swig_wallet_address: Pubkey,
+        lock_id: u32,
+        rent_claimer: Option<Pubkey>,
+        _current_slot: Option<u64>,
+    ) -> Result<Vec<Instruction>, SwigError> {
+        Ok(vec![
+            RemoveAuthorizationLockV1Instruction::new_with_ed25519_authority(
+                swig_account,
+                payer,
+                Pubkey::new_from_array(self.session_authority.session_key),
+                swig_wallet_address,
+                role_id,
+                lock_id,
+                rent_claimer,
             )?,
         ])
     }

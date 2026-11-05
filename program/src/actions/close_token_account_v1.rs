@@ -21,7 +21,7 @@ use swig_state::{
     },
     role::RoleMut,
     swig::{swig_wallet_address_seeds, swig_wallet_address_signer, Swig},
-    tail::rent_claimer,
+    tail::{authorization_locks, rent_claimer},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
 };
 
@@ -31,6 +31,7 @@ use crate::{
         TOKEN_ACCOUNT_BASE_DATA_LEN, TOKEN_ACCOUNT_INITIALIZED_STATE, TOKEN_NATIVE_RESERVE_RANGE,
         TOKEN_STATE_INDEX, WSOL_MINT,
     },
+    authorization_lock::check_role_locks_within_limits,
     error::SwigError,
     instruction::{
         accounts::{CloseTokenAccountV1Accounts, Context},
@@ -185,7 +186,8 @@ pub fn close_token_account_v1(
     if !has_all && !has_all_but_manage && !has_manage && !has_close {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
     }
-    if let Some(claimer) = rent_claimer::read_strict(parts.tail)? {
+    let swig_tail: &[u8] = parts.tail;
+    if let Some(claimer) = rent_claimer::read_strict(swig_tail)? {
         if ctx.accounts.destination.key().as_ref() != claimer.as_ref() {
             return Err(SwigError::InvalidRentClaimerDestination.into());
         }
@@ -224,9 +226,25 @@ pub fn close_token_account_v1(
     let wallet_seeds =
         swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &wallet_bump_bytes);
     let unrestricted_spend = has_all || has_all_but_manage;
+    // `rent_claimer::read_strict` above validated the tail.
+    let lock_records =
+        authorization_locks::records_range(swig_tail)?.map(|range| &swig_tail[range]);
     // Validate every source and consume bounded WSOL spend before the first CPI.
     // A later error rolls back authentication and every permission update.
     for token_account in &accounts[token_account_offset..] {
+        // Closing would void a reservation on this account.
+        if lock_records.is_some_and(|records| {
+            records
+                .chunks_exact(authorization_locks::LOCK_LEN)
+                .any(|bytes| {
+                    authorization_locks::LockRecord::new(bytes).is_some_and(|lock| {
+                        lock.asset_account() == token_account.key() && lock.is_active(current_slot)
+                    })
+                })
+        }) {
+            return Err(SwigError::AuthorizationLockActive.into());
+        }
+
         // Verify token account is owned by the token program
         let token_account_owner = token_account.owner();
         if token_account_owner != token_program_id {
@@ -304,6 +322,17 @@ pub fn close_token_account_v1(
                 }
             }
         }
+    }
+
+    // Closing WSOL accounts consumes the role's limits, which must still back
+    // its own active authorization locks.
+    if !unrestricted_spend {
+        check_role_locks_within_limits(
+            swig_tail,
+            close_ix.args.role_id,
+            role.actions,
+            current_slot,
+        )?;
     }
 
     let swig_seeds = crate::util::config_signer(swig_account_data, *ctx.accounts.swig.key())?;

@@ -3,8 +3,9 @@ use swig_state::{
     reservation::DOMAIN,
     swig::{config_seeds, Swig},
     tail::{
-        active_sub_account_count, config_seed_prefix, rent_claimer, SavedTail, TailKind,
-        MAX_TAIL_LEN, TAIL_HEADER_LEN,
+        active_sub_account_count,
+        authorization_locks::{self, AuthorizationLock, MAX_AUTHORIZATION_LOCKS},
+        config_seed_prefix, rent_claimer, SavedTail, TailKind, MAX_TAIL_LEN, TAIL_HEADER_LEN,
     },
     IntoBytes, SwigStateError,
 };
@@ -71,19 +72,37 @@ fn strict_prefix_reader_rejects_malformed_and_duplicate_entries() {
 
 #[test]
 fn all_tail_kinds_survive_growth_and_shrink_in_any_order_at_maximum_size() {
+    let locks: Vec<AuthorizationLock> = (0..MAX_AUTHORIZATION_LOCKS as u32)
+        .map(|lock_id| AuthorizationLock {
+            asset_account: [3; 32],
+            mint: authorization_locks::NATIVE_SOL_MINT,
+            amount: 1,
+            expiry_slot: 100,
+            role_id: 1,
+            lock_id,
+        })
+        .collect();
     let entries = [
         entry(&[7; 32]),
         rent_claimer::entry(&[1; 32]).to_vec(),
         active_sub_account_count::entry(2).to_vec(),
+        authorization_locks::entry(MAX_AUTHORIZATION_LOCKS as u32, &locks).unwrap(),
     ];
-    for order in [
-        [0, 1, 2],
-        [0, 2, 1],
-        [1, 0, 2],
-        [1, 2, 0],
-        [2, 0, 1],
-        [2, 1, 0],
-    ] {
+    let mut orders = Vec::new();
+    for a in 0..4 {
+        for b in 0..4 {
+            for c in 0..4 {
+                for d in 0..4 {
+                    let order = [a, b, c, d];
+                    if (0..4).all(|i| order.contains(&i)) {
+                        orders.push(order);
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(orders.len(), 24);
+    for order in orders {
         let tail = order
             .into_iter()
             .flat_map(|i| entries[i].clone())
@@ -97,6 +116,13 @@ fn all_tail_kinds_survive_growth_and_shrink_in_any_order_at_maximum_size() {
             assert_eq!(
                 config_seed_prefix::read(&account[roles_end..]).unwrap(),
                 &[7; 32]
+            );
+            assert_eq!(
+                authorization_locks::read_strict(&account[roles_end..])
+                    .unwrap()
+                    .unwrap()
+                    .len(),
+                MAX_AUTHORIZATION_LOCKS
             );
         }
     }

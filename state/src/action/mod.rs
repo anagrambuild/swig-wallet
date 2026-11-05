@@ -11,6 +11,7 @@ pub mod all;
 pub mod all_but_manage_authority;
 pub mod close_swig_authority;
 pub mod manage_authority;
+pub mod manage_authorization_locks;
 pub mod program;
 pub mod program_all;
 pub mod program_curated;
@@ -33,6 +34,7 @@ use all::All;
 use all_but_manage_authority::AllButManageAuthority;
 use close_swig_authority::CloseSwigAuthority;
 use manage_authority::ManageAuthority;
+use manage_authorization_locks::ManageAuthorizationLocks;
 use no_padding::NoPadding;
 use pinocchio::program_error::ProgramError;
 use program::Program;
@@ -189,6 +191,8 @@ pub enum Permission {
     SubAccountV2Withdraw = 25,
     /// Scoped permission to toggle a V2 sub-account for a single `subacc_id`
     SubAccountV2Toggle = 26,
+    /// Permission to create bounded authorization locks and release own locks
+    ManageAuthorizationLocks = 27,
 }
 
 impl TryFrom<u16> for Permission {
@@ -198,7 +202,7 @@ impl TryFrom<u16> for Permission {
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: `value` is guaranteed to be in the range of the enum variants.
-            0..=26 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
+            0..=27 => Ok(unsafe { core::mem::transmute::<u16, Permission>(value) }),
             _ => Err(SwigStateError::PermissionLoadError.into()),
         }
     }
@@ -247,6 +251,7 @@ impl Permission {
             Permission::SubAccountV2Sign => SubAccountV2Sign::REPEATABLE,
             Permission::SubAccountV2Withdraw => SubAccountV2Withdraw::REPEATABLE,
             Permission::SubAccountV2Toggle => SubAccountV2Toggle::REPEATABLE,
+            Permission::ManageAuthorizationLocks => ManageAuthorizationLocks::REPEATABLE,
         }
     }
 }
@@ -332,6 +337,7 @@ impl ActionLoader {
             Permission::SubAccountV2Sign => SubAccountV2Sign::valid_layout(data),
             Permission::SubAccountV2Withdraw => SubAccountV2Withdraw::valid_layout(data),
             Permission::SubAccountV2Toggle => SubAccountV2Toggle::valid_layout(data),
+            Permission::ManageAuthorizationLocks => ManageAuthorizationLocks::valid_layout(data),
             _ => Ok(false),
         }
     }
@@ -400,6 +406,95 @@ impl ActionLoader {
         }
         if has_duplicate_non_repeatable {
             return Err(SwigStateError::DuplicateNonRepeatableAction.into());
+        }
+        Ok(())
+    }
+
+    /// Rejects duplicate keyed spend limits in a complete action list. See
+    /// [`Self::validate_added_limit_duplicates`].
+    pub fn validate_destination_limit_duplicates(actions_data: &[u8]) -> Result<(), ProgramError> {
+        Self::validate_added_limit_duplicates(&[], actions_data)
+    }
+
+    /// Rejects keyed spend limits in `added` that duplicate one in `existing`
+    /// or another in `added`.
+    ///
+    /// SignV2 charges a debit against only the first matching action of each
+    /// type: per destination (SOL) or mint + destination (tokens) for
+    /// destination limits, and per mint for general token limits. A same-type
+    /// duplicate is never charged but would inflate authorization-lock
+    /// capacity. Different types for the same key (one-shot + recurring) form
+    /// a pair and stay allowed. Duplicate general SOL and stake limits are
+    /// already rejected as non-repeatable actions.
+    ///
+    /// Only newly added actions are checked, so roles created before this rule
+    /// keep any duplicates they already hold and remain updatable.
+    pub fn validate_added_limit_duplicates(
+        existing: &[u8],
+        added: &[u8],
+    ) -> Result<(), ProgramError> {
+        let mut existing_keys = alloc::vec::Vec::new();
+        Self::collect_limit_keys(existing, &mut existing_keys)?;
+        let mut added_keys = alloc::vec::Vec::new();
+        Self::collect_limit_keys(added, &mut added_keys)?;
+        existing_keys.sort_unstable();
+        added_keys.sort_unstable();
+        let duplicate = added_keys
+            .windows(2)
+            .find(|pair| pair[0] == pair[1])
+            .map(|p| p[0])
+            .or_else(|| {
+                added_keys
+                    .iter()
+                    .copied()
+                    .find(|key| existing_keys.binary_search(key).is_ok())
+            });
+        match duplicate {
+            Some((_, _, true)) => Err(SwigStateError::DuplicateDestinationLimit.into()),
+            Some((_, _, false)) => Err(SwigStateError::DuplicateTokenLimit.into()),
+            None => Ok(()),
+        }
+    }
+
+    /// Appends `(len, key, is_destination)` for every keyed spend limit.
+    fn collect_limit_keys(
+        actions_data: &[u8],
+        keys: &mut alloc::vec::Vec<(usize, [u8; 68], bool)>,
+    ) -> Result<(), ProgramError> {
+        let mut cursor = 0;
+        while cursor + Action::LEN <= actions_data.len() {
+            let header =
+                unsafe { Action::load_unchecked(&actions_data[cursor..cursor + Action::LEN])? };
+            let data_start = cursor + Action::LEN;
+            let data_end = data_start
+                .checked_add(header.length() as usize)
+                .ok_or(ProgramError::InvalidInstructionData)?;
+            if data_end > actions_data.len() {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let permission = header.permission()?;
+            let (key_len, is_destination) = match permission {
+                Permission::SolDestinationLimit | Permission::SolRecurringDestinationLimit => {
+                    (32, true)
+                },
+                Permission::TokenDestinationLimit | Permission::TokenRecurringDestinationLimit => {
+                    (64, true)
+                },
+                Permission::TokenLimit | Permission::TokenRecurringLimit => (32, false),
+                _ => {
+                    cursor = data_end;
+                    continue;
+                },
+            };
+            let data = &actions_data[data_start..data_end];
+            if data.len() < key_len {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let mut key = [0u8; 68];
+            key[..4].copy_from_slice(&(permission as u32).to_le_bytes());
+            key[4..4 + key_len].copy_from_slice(&data[..key_len]);
+            keys.push((4 + key_len, key, is_destination));
+            cursor = data_end;
         }
         Ok(())
     }

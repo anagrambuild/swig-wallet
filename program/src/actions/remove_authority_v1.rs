@@ -13,7 +13,7 @@ use swig_assertions::{check_bytes_match, check_self_owned};
 use swig_state::{
     action::{all::All, manage_authority::ManageAuthority},
     swig::{Swig, SwigBuilder},
-    tail::{active_sub_account_count, rent_claimer, SavedTail},
+    tail::{active_sub_account_count, authorization_locks, rent_claimer, SavedTail},
     Discriminator, IntoBytes, SwigAuthenticateError, Transmutable, TransmutableMut,
 };
 
@@ -123,6 +123,9 @@ impl<'a> RemoveAuthorityV1<'a> {
 /// - Cannot remove root authority (ID 0)
 /// - Authority can remove itself without ManageAuthority permission
 /// - Only roles with All or ManageAuthority can remove other authorities
+/// - A role holding an active authorization lock cannot be removed; once all
+///   its locks are inactive (expired or captured to zero), removing it also
+///   prunes its lock records and refunds their rent with the role's
 ///
 /// # Arguments
 /// * `ctx` - The account context for authority removal
@@ -159,15 +162,16 @@ pub fn remove_authority_v1(
     let swig_lamports = unsafe { *ctx.accounts.swig.borrow_lamports_unchecked() };
     // All validation and processing as a closure to avoid borrowing
     // swig_account_data for too long
-    let (saved_tail, removed, refund_destination) = {
+    let (saved_tail, pruned_tail_bytes, removed, refund_destination) = {
         if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
             return Err(SwigError::InvalidSwigAccountDiscriminator.into());
         }
         let parts = Swig::split_parts_mut(swig_account_data)?;
-        let saved_tail = SavedTail::take(parts.tail)?;
+        // Validates the tail; the lock checks below read it unvalidated.
+        let mut saved_tail = SavedTail::take(parts.tail)?;
         let swig = parts.state;
         let swig_roles = parts.roles;
-        {
+        let slot = {
             let acting_role = swig_state::authority::counter::authenticate_role(
                 swig_roles,
                 remove_authority_v1.args.acting_role_id,
@@ -179,7 +183,7 @@ pub fn remove_authority_v1(
             if acting_role.is_none() {
                 return Err(SwigError::InvalidAuthorityNotFoundByRoleId.into());
             }
-            let (acting_role, _) = acting_role.unwrap();
+            let (acting_role, slot) = acting_role.unwrap();
 
             let all = acting_role.get_action::<All>(&[])?;
             let manage_authority = acting_role.get_action::<ManageAuthority>(&[])?;
@@ -190,11 +194,13 @@ pub fn remove_authority_v1(
             if no_permission && not_self {
                 return Err(SwigAuthenticateError::PermissionDeniedToManageAuthority.into());
             }
-        }
+            slot
+        };
 
         let refund_destination = crate::util::rent::refund_destination(
             rent_claimer::read_strict(parts.tail)?,
             ctx.accounts.swig,
+            crate::util::rent::WalletAddress::Derive,
             ctx.accounts.payer,
             all_accounts,
         )?;
@@ -210,6 +216,23 @@ pub fn remove_authority_v1(
                 return Err(SwigError::ActiveV1SubAccountMustBeClosed.into());
             }
         }
+        // Every active lock must keep a creator able to release it. Once all
+        // of the role's locks are inactive (expired or captured to zero),
+        // prune them with the role so no record outlives its creator; their
+        // rent is refunded with the role's.
+        let (has_locks, has_active_locks) = authorization_locks::role_lock_state(
+            parts.tail,
+            remove_authority_v1.args.authority_to_remove_id,
+            slot,
+        )?;
+        if has_active_locks {
+            return Err(SwigError::AuthorizationLockActive.into());
+        }
+        let pruned_tail_bytes = if has_locks {
+            saved_tail.prune_role_locks(remove_authority_v1.args.authority_to_remove_id)?
+        } else {
+            0
+        };
         let mut swig_builder = SwigBuilder {
             role_buffer: swig_roles,
             swig,
@@ -222,11 +245,16 @@ pub fn remove_authority_v1(
             .get(..removed.0)
             .ok_or(ProgramError::InvalidAccountData)?;
         ensure_admin_remains(remaining_roles, swig_builder.swig.roles)?;
-        (saved_tail, removed, refund_destination)
+        (saved_tail, pruned_tail_bytes, removed, refund_destination)
     };
     // realloc the account
 
-    let new_size = data_len - removed.1;
+    // The roles region shrank by `removed.1`, and pruning the role's inactive
+    // locks may have shrunk the tail as well.
+    let new_size = data_len
+        .checked_sub(removed.1)
+        .and_then(|size| size.checked_sub(pruned_tail_bytes))
+        .ok_or(ProgramError::InvalidAccountData)?;
     let rent = Rent::get()?;
     let old_rent_lamports = crate::util::rent::minimum_balance(&rent, data_len);
     let new_rent_lamports = crate::util::rent::minimum_balance(&rent, new_size);

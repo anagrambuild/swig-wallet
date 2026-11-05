@@ -1,4 +1,5 @@
 pub mod authority_tests;
+pub mod authorization_lock_tests;
 pub mod creation_tests;
 pub mod destination_tests;
 pub mod helper_tests;

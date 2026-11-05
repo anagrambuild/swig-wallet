@@ -47,6 +47,10 @@ pub enum SwigInstruction {
 
     /// Removes an authority from the wallet.
     ///
+    /// Blocked while the role holds an active authorization lock. Once its
+    /// locks are all inactive (expired or captured to zero), the removal also
+    /// prunes them, refunding their rent with the role's.
+    ///
     /// Required accounts:
     /// 1. `[writable, signer]` Swig wallet account
     /// 2. `[writable, signer]` Payer account
@@ -143,6 +147,11 @@ pub enum SwigInstruction {
     /// - Instruction payload with offset and length
     /// - Authority payload with offset and length
     /// Additional accounts may be required for CPI calls.
+    ///
+    /// Active authorization locks held by other roles bound how far each
+    /// writable locked account may fall. The signing role's own locks do not
+    /// restrict it; its net outflow from a locked account captures (lowers)
+    /// those locks, which SignV2 writes back to the Swig account.
     ///
     /// Required accounts:
     /// 1. `[writable]` Swig wallet account
@@ -372,4 +381,55 @@ pub enum SwigInstruction {
     #[account(2, writable, name="swig_wallet_address", desc="the deposit PDA")]
     #[account(3, name="system_program", desc="the system program")]
     CreateReservedV1 = 24,
+
+    /// Reserves part of one wallet asset account until an expiry slot, like a
+    /// card authorization hold.
+    ///
+    /// While active, every other role (`All` included) may spend only the
+    /// account's balance minus the locks it does not hold. The creating role
+    /// may spend the reserved funds; SignV2 captures its locks by the
+    /// account's net outflow, and a lock captured to zero becomes inactive.
+    /// A limited role may lock at most what its limits would let it spend;
+    /// limits are charged when the funds are spent, not when they are locked.
+    /// Only the creating role may release the lock before it expires.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. Swig wallet address PDA
+    /// 3. `[writable, signer]` Payer for the lock's rent
+    /// 4. System program account
+    /// 5. Asset account: the swig wallet address for native SOL, or a token
+    ///    account owned by it
+    /// 6. Token mint (trailing; required for Token-2022 asset accounts)
+    ///
+    /// Authority accounts follow. The config and wallet address come first so
+    /// ProgramExec authorities can bind to them.
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, name="swig_wallet_address", desc="the swig wallet address")]
+    #[account(2, writable, signer, name="payer", desc="the payer")]
+    #[account(3, name="system_program", desc="the system program")]
+    #[account(4, name="asset_account", desc="the wallet address or token account to lock")]
+    AddAuthorizationLockV1 = 25,
+
+    /// Releases an authorization lock. The creating role may release its own
+    /// lock at any time; once expired or fully captured, a role with All,
+    /// AllButManageAuthority, ManageAuthority, or ManageAuthorizationLocks may
+    /// remove it. Rent returns
+    /// to the configured rent claimer, or to the payer when none is set.
+    ///
+    /// Required accounts:
+    /// 1. `[writable]` Swig wallet account
+    /// 2. Swig wallet address PDA
+    /// 3. `[writable, signer]` Payer, and the refund destination without a
+    ///    rent claimer
+    /// 4. System program account
+    /// 5. `[writable]` Configured rent claimer (trailing; required when one is set)
+    ///
+    /// Authority accounts follow. The config and wallet address come first so
+    /// ProgramExec authorities can bind to them.
+    #[account(0, writable, name="swig", desc="the swig smart wallet")]
+    #[account(1, name="swig_wallet_address", desc="the swig wallet address")]
+    #[account(2, writable, signer, name="payer", desc="the payer")]
+    #[account(3, name="system_program", desc="the system program")]
+    RemoveAuthorizationLockV1 = 26,
 }

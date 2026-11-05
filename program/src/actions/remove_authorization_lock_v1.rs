@@ -1,0 +1,220 @@
+//! Remove authorization lock instruction.
+//!
+//! The creating role may release its lock at any time to void the rest of the
+//! reservation. (It does not need to release a lock to spend it: SignV2
+//! captures the creator's locks as it spends.) Once a lock has expired or been
+//! captured to zero it no longer binds anything, so a role with `All`,
+//! `AllButManageAuthority`, `ManageAuthority`, or `ManageAuthorizationLocks`
+//! may also remove it to reclaim space.
+
+use no_padding::NoPadding;
+use pinocchio::{
+    account_info::AccountInfo,
+    program_error::ProgramError,
+    sysvars::{clock::Clock, rent::Rent, Sysvar},
+    ProgramResult,
+};
+use swig_assertions::{check_bytes_match, check_self_owned, check_self_pda, check_writable_signer};
+use swig_state::{
+    action::{
+        all::All, all_but_manage_authority::AllButManageAuthority,
+        manage_authority::ManageAuthority, manage_authorization_locks::ManageAuthorizationLocks,
+    },
+    swig::{swig_wallet_address_seeds_with_bump, Swig},
+    tail::{
+        authorization_locks::{self, LockRecord, LOCK_LEN},
+        rent_claimer,
+    },
+    Discriminator, IntoBytes, SwigAuthenticateError, Transmutable,
+};
+
+use crate::{
+    error::SwigError,
+    instruction::{
+        accounts::{Context, RemoveAuthorizationLockV1Accounts},
+        SwigInstruction,
+    },
+};
+
+#[repr(C, align(8))]
+#[derive(Debug, NoPadding)]
+pub struct RemoveAuthorizationLockV1Args {
+    pub instruction: SwigInstruction,
+    _padding: [u8; 2],
+    pub acting_role_id: u32,
+    pub lock_id: u32,
+    _reserved: [u8; 4],
+}
+
+impl RemoveAuthorizationLockV1Args {
+    pub fn new(acting_role_id: u32, lock_id: u32) -> Self {
+        Self {
+            instruction: SwigInstruction::RemoveAuthorizationLockV1,
+            _padding: [0; 2],
+            acting_role_id,
+            lock_id,
+            _reserved: [0; 4],
+        }
+    }
+}
+
+impl Transmutable for RemoveAuthorizationLockV1Args {
+    const LEN: usize = core::mem::size_of::<Self>();
+}
+
+impl IntoBytes for RemoveAuthorizationLockV1Args {
+    fn into_bytes(&self) -> Result<&[u8], ProgramError> {
+        Ok(unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) })
+    }
+}
+
+pub struct RemoveAuthorizationLockV1<'a> {
+    pub args: &'a RemoveAuthorizationLockV1Args,
+    pub authority_payload: &'a [u8],
+    pub data_payload: &'a [u8],
+}
+
+impl<'a> RemoveAuthorizationLockV1<'a> {
+    pub fn from_instruction_bytes(data: &'a [u8]) -> Result<Self, ProgramError> {
+        if data.len() < RemoveAuthorizationLockV1Args::LEN {
+            return Err(SwigError::InvalidAuthorizationLockInstructionDataTooShort.into());
+        }
+        let (args_data, authority_payload) = data.split_at(RemoveAuthorizationLockV1Args::LEN);
+        let args = unsafe { RemoveAuthorizationLockV1Args::load_unchecked(args_data)? };
+        Ok(Self {
+            args,
+            authority_payload,
+            data_payload: args_data,
+        })
+    }
+}
+
+pub fn remove_authorization_lock_v1(
+    ctx: Context<RemoveAuthorizationLockV1Accounts>,
+    data: &[u8],
+    all_accounts: &[AccountInfo],
+) -> ProgramResult {
+    check_self_owned(ctx.accounts.swig, SwigError::OwnerMismatchSwigAccount)?;
+    check_writable_signer(ctx.accounts.payer, SwigError::PayerMustBeWritableSigner)?;
+    check_bytes_match(
+        ctx.accounts.system_program.key(),
+        &pinocchio_system::ID,
+        32,
+        SwigError::InvalidSystemProgram,
+    )?;
+
+    let remove = RemoveAuthorizationLockV1::from_instruction_bytes(data)?;
+    let args = remove.args;
+    let slot = Clock::get()?.slot;
+
+    let swig_account_data = unsafe { ctx.accounts.swig.borrow_mut_data_unchecked() };
+    if swig_account_data[0] != Discriminator::SwigConfigAccount as u8 {
+        return Err(SwigError::InvalidSwigAccountDiscriminator.into());
+    }
+    crate::require_swig_v2(swig_account_data)?;
+    let old_len = swig_account_data.len();
+
+    let (new_len, refund_destination) = {
+        let parts = Swig::split_parts_mut(swig_account_data)?;
+        let bump = [parts.state.wallet_bump];
+        check_self_pda(
+            &swig_wallet_address_seeds_with_bump(ctx.accounts.swig.key().as_ref(), &bump),
+            ctx.accounts.swig_wallet_address.key(),
+            SwigError::InvalidSeedSwigAccount,
+        )?;
+
+        let entry = authorization_locks::read_strict(parts.tail)?
+            .ok_or(SwigError::AuthorizationLockNotFound)?;
+        // Locate the target by its id without decoding the other records.
+        let (index, target_role_id, target_active) = entry
+            .records()
+            .chunks_exact(LOCK_LEN)
+            .enumerate()
+            .find_map(|(index, bytes)| {
+                LockRecord::new(bytes)
+                    .filter(|lock| lock.lock_id() == args.lock_id)
+                    .map(|lock| (index, lock.role_id(), lock.is_active(slot)))
+            })
+            .ok_or(SwigError::AuthorizationLockNotFound)?;
+
+        let (acting_role, _) = swig_state::authority::counter::authenticate_role(
+            parts.roles,
+            args.acting_role_id,
+            all_accounts,
+            remove.authority_payload,
+            remove.data_payload,
+            false,
+        )?
+        .ok_or(SwigError::InvalidAuthorityNotFoundByRoleId)?;
+
+        if target_role_id != args.acting_role_id {
+            if target_active {
+                return Err(SwigError::AuthorizationLockNotOwner.into());
+            }
+            let may_prune = acting_role.get_action::<All>(&[])?.is_some()
+                || acting_role
+                    .get_action::<AllButManageAuthority>(&[])?
+                    .is_some()
+                || acting_role.get_action::<ManageAuthority>(&[])?.is_some()
+                || acting_role
+                    .get_action::<ManageAuthorizationLocks>(&[])?
+                    .is_some();
+            if !may_prune {
+                return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
+            }
+        }
+
+        let refund_destination = crate::util::rent::refund_destination(
+            rent_claimer::read_strict(parts.tail)?,
+            ctx.accounts.swig,
+            // Checked against the canonical wallet PDA above.
+            crate::util::rent::WalletAddress::Verified(ctx.accounts.swig_wallet_address.key()),
+            ctx.accounts.payer,
+            all_accounts,
+        )?;
+        // Close the gap in place; later bytes move down and the freed end is
+        // zeroed before the account shrinks.
+        let tail_len = parts.tail.len();
+        let new_tail_len = authorization_locks::remove_in_place(parts.tail, tail_len, index)?;
+        (
+            Swig::LEN + parts.roles.len() + new_tail_len,
+            refund_destination,
+        )
+    };
+
+    let rent = Rent::get()?;
+    let swig_lamports = ctx.accounts.swig.lamports();
+    let new_rent = crate::util::rent::minimum_balance(&rent, new_len);
+    let refund = crate::util::rent::minimum_balance(&rent, old_len)
+        .saturating_sub(new_rent)
+        .min(swig_lamports.saturating_sub(new_rent));
+    unsafe {
+        *ctx.accounts.swig.borrow_mut_lamports_unchecked() = swig_lamports - refund;
+        *refund_destination.borrow_mut_lamports_unchecked() = refund_destination
+            .lamports()
+            .checked_add(refund)
+            .ok_or(ProgramError::ArithmeticOverflow)?;
+    }
+    ctx.accounts.swig.resize(new_len)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn args_layout_is_stable() {
+        assert_eq!(RemoveAuthorizationLockV1Args::LEN, 16);
+    }
+
+    #[test]
+    fn from_instruction_bytes_rejects_short_data() {
+        let data = [0u8; RemoveAuthorizationLockV1Args::LEN - 1];
+        assert!(matches!(
+            RemoveAuthorizationLockV1::from_instruction_bytes(&data),
+            Err(ProgramError::Custom(code))
+                if code == SwigError::InvalidAuthorizationLockInstructionDataTooShort as u32
+        ));
+    }
+}

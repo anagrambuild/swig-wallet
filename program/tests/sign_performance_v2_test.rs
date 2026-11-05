@@ -192,7 +192,9 @@ fn test_token_transfer_performance_comparison_v2() {
     );
     // Merged wallet-PDA/isolation/authentication: 5,263 total minus 76 token CU.
     // Measured at f90d4c5, CI run 40584412799, with the pinned SBPF v3 release.
-    assert!(swig_transfer_cu - regular_transfer_cu <= 5187);
+    // Authorization-lock guard: 5,267 total minus 76 token CU, measured at
+    // c0b621b, CI run 41861486794.
+    assert!(swig_transfer_cu - regular_transfer_cu <= 5191);
 }
 
 #[test_log::test]
@@ -314,5 +316,7 @@ fn test_sol_transfer_performance_comparison_v2() {
 
     // Merged wallet-PDA/isolation/authentication: 5,076 total minus 150 SOL CU.
     // Measured at f90d4c5, CI run 40584412799, with the pinned SBPF v3 release.
-    assert!(swig_transfer_cu - regular_transfer_cu <= 4926);
+    // Authorization-lock guard: 5,080 total minus 150 SOL CU, measured at
+    // c0b621b, CI run 41861486794.
+    assert!(swig_transfer_cu - regular_transfer_cu <= 4930);
 }

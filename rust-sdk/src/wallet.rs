@@ -41,7 +41,10 @@ use swig_state::{
         sub_account_seeds, sub_account_v2_asset_seeds, sub_account_v2_state_seeds, Swig,
         SwigWithRoles,
     },
-    tail::rent_claimer,
+    tail::{
+        authorization_locks::{self, AuthorizationLock},
+        rent_claimer,
+    },
     Transmutable,
 };
 const TOKEN_22_PROGRAM_ID: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
@@ -317,6 +320,10 @@ impl<'c> SwigWallet<'c> {
     }
 
     /// Removes an existing authority from the wallet
+    ///
+    /// Fails with `AuthorizationLockActive` while the role holds an active
+    /// authorization lock. Once its locks are expired or fully captured, the
+    /// removal also deletes its lock records.
     ///
     /// # Arguments
     ///
@@ -1587,6 +1594,96 @@ impl<'c> SwigWallet<'c> {
             &[self.fee_payer.insecure_clone()],
         )?;
 
+        let tx_result = self.send_and_confirm_transaction(tx);
+        if tx_result.is_ok() {
+            self.instruction_builder.increment_odometer()?;
+        }
+        tx_result
+    }
+
+    /// Reserves `amount` of `asset_account` until `expiry_slot`.
+    ///
+    /// For native SOL pass the swig wallet address and an all-zero mint; for
+    /// tokens pass a token account owned by the swig wallet address and its
+    /// mint. Like a card authorization hold: while the lock is active every
+    /// other role (including `All`) can spend only the account's balance minus
+    /// the locks it does not hold. This role may still spend the reserved
+    /// funds; each SignV2 it signs lowers ("captures") its locks on the account
+    /// by the net outflow, oldest first, and its spend limits are charged then,
+    /// not when locking. Only this role can release the lock early.
+    pub fn add_authorization_lock(
+        &mut self,
+        asset_account: Pubkey,
+        mint: [u8; 32],
+        amount: u64,
+        expiry_slot: u64,
+    ) -> Result<Signature, SwigError> {
+        let current_slot = self.get_current_slot()?;
+        let instructions = self.instruction_builder.add_authorization_lock(
+            asset_account,
+            mint,
+            amount,
+            expiry_slot,
+            Some(current_slot),
+        )?;
+        self.send_authority_instructions(instructions)
+    }
+
+    /// Releases an authorization lock created by the current role, or prunes
+    /// an expired or fully captured (amount 0) lock.
+    pub fn remove_authorization_lock(&mut self, lock_id: u32) -> Result<Signature, SwigError> {
+        let swig_data = self.get_swig_account_data()?;
+        let parts = Swig::split_parts(&swig_data).map_err(|_| SwigError::InvalidSwigData)?;
+        let rent_claimer = rent_claimer::read_strict(parts.tail)
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .map(|key| Pubkey::new_from_array(*key));
+        let current_slot = self.get_current_slot()?;
+        let instructions = self.instruction_builder.remove_authorization_lock(
+            lock_id,
+            rent_claimer,
+            Some(current_slot),
+        )?;
+        self.send_authority_instructions(instructions)
+    }
+
+    /// Returns every stored authorization lock, including expired ones and
+    /// fully captured ones (amount 0). `amount` is what is still reserved: it
+    /// falls as the creating role spends from the account. Use
+    /// [`AuthorizationLock::is_active`] to filter the locks that still bind.
+    pub fn get_authorization_locks(&self) -> Result<Vec<AuthorizationLock>, SwigError> {
+        let swig_data = self.get_swig_account_data()?;
+        let parts = Swig::split_parts(&swig_data).map_err(|_| SwigError::InvalidSwigData)?;
+        Ok(authorization_locks::read_strict(parts.tail)
+            .map_err(|_| SwigError::InvalidSwigData)?
+            .map(|entry| entry.iter().collect())
+            .unwrap_or_default())
+    }
+
+    fn get_swig_account_data(&self) -> Result<Vec<u8>, SwigError> {
+        let swig_pubkey = self.get_swig_account()?;
+        #[cfg(not(all(feature = "rust_sdk_test", test)))]
+        let swig_data = self.rpc_client.get_account_data(&swig_pubkey)?;
+        #[cfg(all(feature = "rust_sdk_test", test))]
+        let swig_data = self
+            .litesvm
+            .get_account(&swig_pubkey)
+            .ok_or(SwigError::InvalidSwigData)?
+            .data;
+        Ok(swig_data)
+    }
+
+    fn send_authority_instructions(
+        &mut self,
+        instructions: Vec<Instruction>,
+    ) -> Result<Signature, SwigError> {
+        let msg = v0::Message::try_compile(
+            &self.fee_payer.pubkey(),
+            &instructions,
+            &[],
+            self.get_current_blockhash()?,
+        )?;
+        let keypairs = self.get_keypairs()?;
+        let tx = VersionedTransaction::try_new(VersionedMessage::V0(msg), &keypairs)?;
         let tx_result = self.send_and_confirm_transaction(tx);
         if tx_result.is_ok() {
             self.instruction_builder.increment_odometer()?;

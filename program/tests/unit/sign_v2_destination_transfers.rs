@@ -658,7 +658,7 @@ fn token_destination_limits_check_mint_recipient_and_amount_before_execution() {
 }
 
 #[test]
-fn recurring_destination_priority_and_reset_are_preserved() {
+fn paired_destination_limits_charge_both_and_preserve_recurring_reset() {
     for program in [SYSTEM_PROGRAM_ID, SPL_TOKEN_ID, SPL_TOKEN_2022_ID] {
         with_accounts(&[CONFIG, EDWARD, ALICE, BOB, MINT, program], |accounts| {
             let sol_fixed = SolDestinationLimit {
@@ -739,7 +739,7 @@ fn recurring_destination_priority_and_reset_are_preserved() {
                             .unwrap()
                             .unwrap()
                             .amount,
-                        999
+                        899
                     );
                 } else {
                     let key = [MINT, ALICE].concat();
@@ -753,7 +753,7 @@ fn recurring_destination_priority_and_reset_are_preserved() {
                             .unwrap()
                             .unwrap()
                             .amount,
-                        999
+                        899
                     );
                 }
                 assert!(preflight_destination_limits(

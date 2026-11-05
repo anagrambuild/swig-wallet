@@ -42,6 +42,7 @@ use swig_state::{
 };
 
 use crate::{
+    authorization_lock::LockGuard,
     error::SwigError,
     instruction::{
         accounts::{Context, SignV2Accounts},
@@ -266,6 +267,7 @@ pub fn sign_v2(
     let parts = Swig::split_parts_mut(swig_account_data)?;
     let swig = parts.state;
     let swig_roles = parts.roles;
+    let swig_tail: &[u8] = parts.tail;
     // Bind the wallet slot before excluding it from personal-asset isolation.
     let b = [swig.wallet_bump];
     check_self_pda(
@@ -301,6 +303,22 @@ pub fn sign_v2(
     let seeds = swig_wallet_address_signer(ctx.accounts.swig.key().as_ref(), &b);
     let signer = seeds.as_slice();
 
+    // Other roles' authorization locks bind every role, `All` included, so
+    // snapshot locked balances before any CPI on both the unrestricted and the
+    // limited paths. The signer's own locks do not restrict it; its spending
+    // captures them after execution.
+    let lock_guard = if swig_tail.is_empty() {
+        None
+    } else {
+        LockGuard::snapshot(
+            swig_tail,
+            ctx.accounts.swig,
+            all_accounts,
+            ctx.accounts.swig_wallet_address,
+            slot,
+            sign_v2.args.role_id,
+        )?
+    };
     let has_unrestricted_sign_permission = RoleMut::get_action_mut::<All>(role.actions, &[])?
         .is_some()
         || RoleMut::get_action_mut::<AllButManageAuthority>(role.actions, &[])?.is_some();
@@ -337,6 +355,15 @@ pub fn sign_v2(
         }
 
         isolation.validate()?;
+        if let Some(lock_guard) = lock_guard {
+            // Unrestricted roles have no spend limits to keep their locks
+            // within; their locks were bounded by the balance when created.
+            lock_guard.settle(
+                ctx.accounts.swig,
+                all_accounts,
+                ctx.accounts.swig_wallet_address,
+            )?;
+        }
 
         return Ok(());
     }
@@ -819,18 +846,16 @@ pub fn sign_v2(
                     continue;
                 }
 
-                if let Some(action) = RoleMut::get_action_mut::<StakeLimit>(actions, &[])? {
-                    action.run(total_stake_spent)?;
-                    continue;
+                // Stake general limits follow the pair rule. (StakeAll
+                // short-circuits above; locks cover only SOL and tokens, so
+                // stake capacity reservations cannot occur.)
+                let stake_one_shot_charged =
+                    charge_general_stake_limit(actions, total_stake_spent)?;
+                let stake_recurring_charged =
+                    charge_general_stake_recurring_limit(actions, total_stake_spent, slot)?;
+                if !stake_one_shot_charged && !stake_recurring_charged {
+                    return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                 }
-
-                if let Some(action) = RoleMut::get_action_mut::<StakeRecurringLimit>(actions, &[])?
-                {
-                    action.run(total_stake_spent, slot)?;
-                    continue;
-                }
-
-                return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
             },
             AccountClassification::SwigWalletAddress => {
                 continue;
@@ -877,6 +902,23 @@ pub fn sign_v2(
     }
 
     isolation.validate()?;
+    // Limits were charged above. Capture the signer's locks with this
+    // transaction's net outflow, then require its remaining locks to fit what
+    // its limits still let it spend, so it cannot hold a reservation it could
+    // never spend.
+    if let Some(lock_guard) = lock_guard {
+        lock_guard.settle(
+            ctx.accounts.swig,
+            all_accounts,
+            ctx.accounts.swig_wallet_address,
+        )?;
+        lock_guard.check_signer_within_limits(
+            ctx.accounts.swig,
+            sign_v2.args.role_id,
+            actions,
+            slot,
+        )?;
+    }
     Ok(())
 }
 
@@ -1062,22 +1104,51 @@ pub(super) fn has_token_destination_limits(
     Ok(false)
 }
 
+/// Charges the debit against the role's stake one-shot limit, if present.
+/// Returns whether an action was found and charged.
+#[inline]
+fn charge_general_stake_limit(actions: &mut [u8], amount: u64) -> Result<bool, ProgramError> {
+    match RoleMut::get_action_mut::<StakeLimit>(actions, &[])? {
+        Some(action) => {
+            action.run(amount)?;
+            Ok(true)
+        },
+        None => Ok(false),
+    }
+}
+
+/// Charges the debit against the role's stake recurring limit, if present.
+/// Returns whether an action was found and charged.
+#[inline]
+fn charge_general_stake_recurring_limit(
+    actions: &mut [u8],
+    amount: u64,
+    slot: u64,
+) -> Result<bool, ProgramError> {
+    match RoleMut::get_action_mut::<StakeRecurringLimit>(actions, &[])? {
+        Some(action) => {
+            action.run(amount, slot)?;
+            Ok(true)
+        },
+        None => Ok(false),
+    }
+}
+
 fn consume_general_sol_limit(
     actions: &mut [u8],
     spent: u64,
     slot: u64,
     has_destination_limit: bool,
 ) -> ProgramResult {
-    let general_limit_applied =
-        if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])? {
-            action.run(spent)?;
-            true
-        } else if let Some(action) = RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])? {
-            action.run(spent, slot)?;
-            true
-        } else {
-            false
-        };
+    let mut general_limit_applied = false;
+    if let Some(action) = RoleMut::get_action_mut::<SolLimit>(actions, &[])? {
+        action.run(spent)?;
+        general_limit_applied = true;
+    }
+    if let Some(action) = RoleMut::get_action_mut::<SolRecurringLimit>(actions, &[])? {
+        action.run(spent, slot)?;
+        general_limit_applied = true;
+    }
 
     if !general_limit_applied && !has_destination_limit {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
@@ -1094,17 +1165,15 @@ fn consume_general_token_limit(
     slot: u64,
     has_destination_limit: bool,
 ) -> ProgramResult {
-    let general_limit_applied = if let Some(action) =
-        RoleMut::get_action_mut::<TokenLimit>(actions, mint)?
-    {
+    let mut general_limit_applied = false;
+    if let Some(action) = RoleMut::get_action_mut::<TokenLimit>(actions, mint)? {
         action.run(spent)?;
-        true
-    } else if let Some(action) = RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)? {
+        general_limit_applied = true;
+    }
+    if let Some(action) = RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)? {
         action.run(spent, slot)?;
-        true
-    } else {
-        false
-    };
+        general_limit_applied = true;
+    }
 
     if !general_limit_applied && !has_destination_limit {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
@@ -1158,6 +1227,7 @@ fn preflight_destination_limits(
                         signer,
                         |destination_pubkey, amount| {
                             let dest_pubkey = destination_pubkey.as_ref();
+                            let mut matched = false;
 
                             if let Some(action) = RoleMut::get_action_mut::<
                                 SolRecurringDestinationLimit,
@@ -1165,7 +1235,7 @@ fn preflight_destination_limits(
                                 actions, dest_pubkey
                             )? {
                                 action.run(amount, slot)?;
-                                return Ok(());
+                                matched = true;
                             }
 
                             if let Some(action) = RoleMut::get_action_mut::<SolDestinationLimit>(
@@ -1173,10 +1243,14 @@ fn preflight_destination_limits(
                                 dest_pubkey,
                             )? {
                                 action.run(amount)?;
-                                return Ok(());
+                                matched = true;
                             }
 
-                            Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into())
+                            if matched {
+                                Ok(())
+                            } else {
+                                Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into())
+                            }
                         },
                     )?;
                 }
@@ -1198,6 +1272,7 @@ fn preflight_destination_limits(
                             let mut combined_key = [0u8; 64];
                             combined_key[..32].copy_from_slice(mint);
                             combined_key[32..].copy_from_slice(destination.as_ref());
+                            let mut matched = false;
 
                             if let Some(action) = RoleMut::get_action_mut::<
                                 TokenRecurringDestinationLimit,
@@ -1205,7 +1280,7 @@ fn preflight_destination_limits(
                                 actions, &combined_key
                             )? {
                                 action.run(amount, slot)?;
-                                return Ok(());
+                                matched = true;
                             }
 
                             if let Some(action) = RoleMut::get_action_mut::<TokenDestinationLimit>(
@@ -1213,10 +1288,14 @@ fn preflight_destination_limits(
                                 &combined_key,
                             )? {
                                 action.run(amount)?;
-                                return Ok(());
+                                matched = true;
                             }
 
-                            Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into())
+                            if matched {
+                                Ok(())
+                            } else {
+                                Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into())
+                            }
                         },
                     )?;
                 }
