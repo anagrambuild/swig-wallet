@@ -42,15 +42,16 @@ fn compare_sign_v2_role_compute_units() {
         token_limit_destination
     );
 
-    // Per-CPI destination enforcement with the full 254-position destination bitmap.
-    // Restricted ceilings equal the approved measurements from CI's pinned SBPF v3
-    // release image and LiteSVM 0.16. All retains the authorization-lock ceiling.
+    // Authorization locks, paired limits and per-CPI destination enforcement.
+    // Restricted ceilings equal the approved measurements from the pinned SBPF v3
+    // release build at e786993, CI run 42046809735. No additional margin is added.
+    // All retains its existing authorization-lock ceiling.
     for (path, actual, baseline) in [
         ("All", all, 5_080),
-        ("SOL limit", sol_limit, 6_324),
-        ("SOL destination limit", sol_limit_destination, 6_718),
-        ("Token limit", token_limit, 7_416),
-        ("Token destination limit", token_limit_destination, 7_944),
+        ("SOL limit", sol_limit, 6_371),
+        ("SOL destination limit", sol_limit_destination, 6_775),
+        ("Token limit", token_limit, 7_475),
+        ("Token destination limit", token_limit_destination, 8_006),
     ] {
         assert!(
             actual <= baseline,
