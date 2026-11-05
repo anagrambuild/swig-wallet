@@ -123,7 +123,7 @@ jobs:
           sh -c "$(curl -sSfL "https://release.anza.xyz/v${SOLANA_VERSION}/install")"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
 
-      - name: Validate deployment before tagging or uploading
+      - name: Validate deployment and expand program if needed
         env:
           SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
           PROPOSER_KEYPAIR: ${{ secrets.PROPOSER_KEYPAIR }}
@@ -131,7 +131,10 @@ jobs:
           SQUADS_MULTISIG_ADDRESS: ${{ secrets.SQUADS_MULTISIG_ADDRESS }}
           SQUADS_VAULT_INDEX: ${{ secrets.SQUADS_VAULT_INDEX }}
           SWIG_PROGRAM_ID: ${{ secrets.SWIG_PROGRAM_ID }}
-        run: ./release-inputs/swig-release check --binary release-inputs/swig.so --verification release-inputs/verification.json > preflight.json
+        run: |
+          ./release-inputs/swig-release prepare --binary release-inputs/swig.so \
+            --verification release-inputs/verification.json \
+            --output-dir preparation > preflight.json
 
       - name: Tag latest main and publish release candidate
         run: |
@@ -170,6 +173,7 @@ jobs:
           name: upgrade-receipts-${{ github.run_id }}
           path: |
             preflight.json
+            preparation/
             proposal/
           if-no-files-found: ignore
           retention-days: 90

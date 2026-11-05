@@ -5,13 +5,16 @@ use clap::{Parser, Subcommand};
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey};
 use squads_multisig::solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use swig_release::{
+    accounts::validate_capacity,
     buffer::{close_buffer, upload_buffer, UploadProfile},
     build::build_release,
     config::{load_program_authority, load_proposer, load_rpc_url, DevnetConfig, ReleaseConfig},
     devnet::{self, DeploymentRequest, DevnetCheckReceipt},
     ottersec::{check_deployed_release, submit_ottersec, Cluster, SubmissionReceipt},
     proposal::validate_release_identity,
-    release::{check, propose, read_binary, validate_preflight, CheckReceipt, ProposalRequest},
+    release::{
+        check, prepare, propose, read_binary, validate_preflight, CheckReceipt, ProposalRequest,
+    },
     verification::VerificationManifest,
 };
 
@@ -71,6 +74,16 @@ enum Command {
         binary: PathBuf,
         #[arg(long)]
         verification: PathBuf,
+    },
+    /// Expand ProgramData if needed and produce the preflight for a proposal.
+    Prepare {
+        #[arg(long)]
+        binary: PathBuf,
+        #[arg(long)]
+        verification: PathBuf,
+        /// New directory for public expansion recovery information.
+        #[arg(long)]
+        output_dir: PathBuf,
     },
     /// Upload the binary and create an active proposal; never votes or
     /// executes.
@@ -254,6 +267,7 @@ async fn main() -> Result<()> {
             manifest.validate(&binary, &source_commit)?;
             let current = check(&rpc, &config, &proposer, &binary, &manifest).await?;
             validate_preflight(&saved, &current)?;
+            validate_capacity(binary.len(), current.program_capacity_bytes)?;
             // An existing directory may contain an earlier submission. Never
             // overwrite its recovery evidence or silently start another attempt.
             fs::create_dir(&output_dir).context(
@@ -291,6 +305,26 @@ async fn main() -> Result<()> {
                 receipt.proposal, receipt.signature
             );
             println!("{json}");
+        },
+        Command::Prepare {
+            binary,
+            verification,
+            output_dir,
+        } => {
+            let config = ReleaseConfig::from_env()?;
+            let proposer = load_proposer()?;
+            let rpc = RpcClient::new_with_timeout_and_commitment(
+                config.rpc_url.clone(),
+                Duration::from_secs(30),
+                CommitmentConfig::confirmed(),
+            );
+            let binary = read_binary(&binary)?;
+            let manifest: VerificationManifest = serde_json::from_slice(
+                &fs::read(verification).context("Could not read verification manifest")?,
+            )?;
+            let receipt =
+                prepare(&rpc, &config, &proposer, &binary, &manifest, &output_dir).await?;
+            println!("{}", serde_json::to_string_pretty(&receipt)?);
         },
         Command::CheckDevnet { binary } => {
             let config = DevnetConfig::from_env()?;

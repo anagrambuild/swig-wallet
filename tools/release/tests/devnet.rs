@@ -623,7 +623,7 @@ fn expansion_rounds_the_shortfall_and_respects_the_total_account_limit() -> Resu
         (10_485_715, 10_475_475, 10_240),
     ] {
         assert_eq!(
-            devnet::required_program_extension(binary, capacity)?,
+            swig_release::program::required_program_extension(binary, capacity)?,
             additional
         );
     }
@@ -634,7 +634,7 @@ fn expansion_rounds_the_shortfall_and_respects_the_total_account_limit() -> Resu
         (usize::MAX, 17),
         (17, usize::MAX),
     ] {
-        assert!(devnet::required_program_extension(binary, capacity).is_err());
+        assert!(swig_release::program::required_program_extension(binary, capacity).is_err());
     }
     Ok(())
 }

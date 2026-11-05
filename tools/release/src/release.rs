@@ -3,7 +3,7 @@ use std::{fs, path::Path, time::Duration};
 use anyhow::{anyhow, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use solana_loader_v3_interface::state::UpgradeableLoaderState;
+use solana_loader_v3_interface::{instruction, state::UpgradeableLoaderState};
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     pubkey::Pubkey,
@@ -21,6 +21,9 @@ use squads_multisig::{
 use crate::{
     accounts::{read_upgrade_accounts, validate_buffer, validate_capacity},
     config::ReleaseConfig,
+    program::{
+        required_program_extension, send_and_confirm, ProgramExtensionReceipt, ProgramTransaction,
+    },
     proposal::{
         build_proposal, confirmation_complete, require_next_index, validate_release_identity,
     },
@@ -46,6 +49,9 @@ pub struct CheckReceipt {
     pub binary_sha256: String,
     pub program_capacity_bytes: usize,
     pub additional_bytes_required: usize,
+    pub program_extension_bytes: u32,
+    pub program_extension_rent_lamports: u64,
+    pub extension_fee_reserve_lamports: u64,
     pub transaction_index: u64,
     pub buffer_rent_lamports: u64,
     pub proposal_rent_lamports: u64,
@@ -98,21 +104,22 @@ pub async fn check(
     );
     let accounts = read_upgrade_accounts(rpc, config, proposer.pubkey()).await?;
     require_no_pending_initializer(rpc, config, &accounts.multisig, &verification).await?;
-    if binary.len() > accounts.program_capacity {
-        let rent = rpc
-            .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
-                binary.len(),
-            ))
-            .await
-            .map_err(|_| anyhow!("Program is too small; could not calculate extension rent"))?;
-        anyhow::bail!(
-            "Program needs {} additional bytes and {} additional rent lamports; extend it through \
-             an approved operation before retrying",
-            binary.len() - accounts.program_capacity,
-            rent.saturating_sub(accounts.program_data_balance),
-        );
-    }
-    validate_capacity(binary.len(), accounts.program_capacity)?;
+    let extension_bytes = required_program_extension(binary.len(), accounts.program_capacity)?;
+    let extension_rent = if extension_bytes == 0 {
+        0
+    } else {
+        rpc.get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_programdata(
+            accounts.program_capacity + usize::try_from(extension_bytes)?,
+        ))
+        .await
+        .map_err(|_| anyhow!("Could not calculate extension rent"))?
+        .saturating_sub(accounts.program_data_balance)
+    };
+    let extension_fee_reserve = if extension_bytes == 0 {
+        0
+    } else {
+        UPLOAD_FEE_RESERVE
+    };
     let transaction_index = accounts
         .multisig
         .transaction_index
@@ -146,12 +153,14 @@ pub async fn check(
         .context("Rent calculation overflow")?;
     let minimum_balance = buffer_rent
         .checked_add(combined_rent)
+        .and_then(|sum| sum.checked_add(extension_rent))
+        .and_then(|sum| sum.checked_add(extension_fee_reserve))
         .and_then(|sum| sum.checked_add(UPLOAD_FEE_RESERVE))
         .context("Funding calculation overflow")?;
     ensure!(
         accounts.proposer_balance >= minimum_balance,
-        "Proposer needs at least {minimum_balance} lamports for buffer/proposal rent and upload \
-         fee reserve; has {}",
+        "Proposer needs at least {minimum_balance} lamports for buffer/proposal rent, program \
+         expansion rent and transaction fee reserves; has {}",
         accounts.proposer_balance
     );
     Ok(CheckReceipt {
@@ -164,13 +173,73 @@ pub async fn check(
         binary_bytes: binary.len(),
         binary_sha256: format!("{:x}", Sha256::digest(binary)),
         program_capacity_bytes: accounts.program_capacity,
-        additional_bytes_required: 0,
+        additional_bytes_required: binary.len().saturating_sub(accounts.program_capacity),
+        program_extension_bytes: extension_bytes,
+        program_extension_rent_lamports: extension_rent,
+        extension_fee_reserve_lamports: extension_fee_reserve,
         transaction_index,
         buffer_rent_lamports: buffer_rent,
         proposal_rent_lamports: combined_rent,
         upload_fee_reserve_lamports: UPLOAD_FEE_RESERVE,
         minimum_proposer_balance_lamports: minimum_balance,
     })
+}
+
+/// Complete any required allocation before freezing the verification metadata.
+pub async fn prepare(
+    rpc: &RpcClient,
+    config: &ReleaseConfig,
+    proposer: &Keypair,
+    binary: &[u8],
+    manifest: &VerificationManifest,
+    output_dir: &Path,
+) -> Result<CheckReceipt> {
+    fs::create_dir(output_dir)
+        .context("Output directory must be new; inspect any earlier attempt before retrying")?;
+    let current = check(rpc, config, proposer, binary, manifest).await?;
+    if current.program_extension_bytes == 0 {
+        return Ok(current);
+    }
+    eprintln!(
+        "Program expansion: allocated={} additional={} rent={}",
+        current.program_capacity_bytes,
+        current.program_extension_bytes,
+        current.program_extension_rent_lamports
+    );
+    let signature = send_and_confirm(
+        rpc,
+        proposer,
+        instruction::extend_program(
+            &config.program,
+            Some(&proposer.pubkey()),
+            current.program_extension_bytes,
+        ),
+        ProgramTransaction::Extension,
+        output_dir,
+    )
+    .await?;
+    // ExtendProgram changes ProgramData's slot. Rebuild the verification
+    // instruction and recheck authority, pending proposals and remaining funds
+    // before publishing the preflight used for tagging and buffer upload.
+    let expanded = check(rpc, config, proposer, binary, manifest).await?;
+    ensure!(
+        expanded.program_capacity_bytes
+            >= current.program_capacity_bytes + usize::try_from(current.program_extension_bytes)?,
+        "Program expansion {signature} confirmed, but the allocated capacity is below the target"
+    );
+    validate_capacity(binary.len(), expanded.program_capacity_bytes)?;
+    fs::write(
+        output_dir.join("extension-receipt.json"),
+        serde_json::to_vec_pretty(&ProgramExtensionReceipt {
+            program: config.program,
+            previous_capacity_bytes: current.program_capacity_bytes,
+            additional_bytes: current.program_extension_bytes,
+            program_capacity_bytes: expanded.program_capacity_bytes,
+            signature: signature.to_string(),
+        })?,
+    )
+    .context("Program expansion confirmed, but could not save its receipt")?;
+    Ok(expanded)
 }
 
 /// Bind the saved preflight to this binary, deployment and still-unused index.
