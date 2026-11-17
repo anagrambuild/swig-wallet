@@ -23,7 +23,8 @@ use swig_state::{
     action::{
         close_swig_authority::CloseSwigAuthority, program_all::ProgramAll,
         token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
-        token_recurring_limit::TokenRecurringLimit,
+        token_recurring_destination_limit::TokenRecurringDestinationLimit,
+        token_recurring_limit::TokenRecurringLimit, wildcard::WILDCARD,
     },
     authority::AuthorityType,
     swig::{swig_wallet_address_seeds, SwigWithRoles},
@@ -81,6 +82,145 @@ enum ClosePath {
     Direct,
     Nested,
     Dedicated,
+}
+
+#[test]
+#[cfg(not(feature = "program_scope_test"))]
+fn dedicated_wsol_close_charges_exact_pairs_but_not_mint_wildcards() {
+    for allowance in [999, 1_010] {
+        let mut context = setup_test_context().unwrap();
+        let root = Keypair::new();
+        let authority = Keypair::new();
+        let (swig, _) = create_swig_ed25519(&mut context, &root, rand::random()).unwrap();
+        let wallet =
+            Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id())
+                .0;
+        let destination = Pubkey::new_unique();
+        context.svm.airdrop(&destination, 1_000_000).unwrap();
+        set_rent_claimer_with_ed25519(&mut context, &swig, &root, 0, destination).unwrap();
+        let reserve = Rent::default().minimum_balance(165);
+        let actual = reserve + 1_000;
+        let mut actions = vec![ClientAction::CloseSwigAuthority(CloseSwigAuthority)];
+        for mint in [spl_token::native_mint::ID.to_bytes(), WILDCARD] {
+            actions.push(ClientAction::TokenLimit(TokenLimit {
+                token_mint: mint,
+                current_amount: reserve + 2_000,
+            }));
+            actions.push(ClientAction::TokenRecurringLimit(TokenRecurringLimit {
+                token_mint: mint,
+                limit: reserve + 2_000,
+                current: reserve + 2_000,
+                window: 100,
+                last_reset: 0,
+            }));
+        }
+        for dest in [destination.to_bytes(), WILDCARD] {
+            actions.push(ClientAction::TokenDestinationLimit(TokenDestinationLimit {
+                token_mint: spl_token::native_mint::ID.to_bytes(),
+                destination: dest,
+                amount: reserve + allowance,
+            }));
+            actions.push(ClientAction::TokenRecurringDestinationLimit(
+                TokenRecurringDestinationLimit {
+                    token_mint: spl_token::native_mint::ID.to_bytes(),
+                    destination: dest,
+                    recurring_amount: reserve + allowance,
+                    current_amount: reserve + allowance,
+                    window: 100,
+                    last_reset: 0,
+                },
+            ));
+        }
+        add_role(&mut context, &swig, &root, &authority, actions);
+        let source = Pubkey::new_unique();
+        let token = spl_token::state::Account {
+            mint: spl_token::native_mint::ID,
+            owner: wallet,
+            amount: 1_000,
+            state: spl_token::state::AccountState::Initialized,
+            is_native: COption::Some(reserve),
+            ..Default::default()
+        };
+        let mut data = vec![0; spl_token::state::Account::LEN];
+        spl_token::state::Account::pack(token, &mut data).unwrap();
+        context
+            .svm
+            .set_account(
+                source,
+                Account {
+                    lamports: actual,
+                    data,
+                    owner: spl_token::ID,
+                    executable: false,
+                    rent_epoch: 0,
+                },
+            )
+            .unwrap();
+        let before = context.svm.get_account(&swig).unwrap().data;
+        let ix = CloseTokenAccountV1Instruction::new_with_ed25519_authority(
+            swig,
+            wallet,
+            authority.pubkey(),
+            destination,
+            spl_token::ID,
+            vec![source],
+            1,
+        )
+        .unwrap();
+        let result = send(&mut context, ix, &authority);
+        if allowance < 1_000 {
+            assert!(result.is_err());
+            assert_eq!(context.svm.get_account(&swig).unwrap().data, before);
+            assert_eq!(context.svm.get_account(&source).unwrap().lamports, actual);
+        } else {
+            result.unwrap();
+            assert_eq!(context.svm.get_balance(&source).unwrap_or(0), 0);
+            let account = context.svm.get_account(&swig).unwrap();
+            let state = SwigWithRoles::from_bytes(&account.data).unwrap();
+            let role = state.get_role(1).unwrap().unwrap();
+            for mint in [spl_token::native_mint::ID.to_bytes(), WILDCARD] {
+                assert_eq!(
+                    role.get_action::<TokenLimit>(&mint)
+                        .unwrap()
+                        .unwrap()
+                        .current_amount,
+                    if mint == WILDCARD {
+                        reserve + 2_000
+                    } else {
+                        1_000
+                    }
+                );
+                assert_eq!(
+                    role.get_action::<TokenRecurringLimit>(&mint)
+                        .unwrap()
+                        .unwrap()
+                        .current,
+                    if mint == WILDCARD {
+                        reserve + 2_000
+                    } else {
+                        1_000
+                    }
+                );
+            }
+            for dest in [destination.to_bytes(), WILDCARD] {
+                let key = [spl_token::native_mint::ID.to_bytes(), dest].concat();
+                assert_eq!(
+                    role.get_action::<TokenDestinationLimit>(&key)
+                        .unwrap()
+                        .unwrap()
+                        .amount,
+                    10
+                );
+                assert_eq!(
+                    role.get_action::<TokenRecurringDestinationLimit>(&key)
+                        .unwrap()
+                        .unwrap()
+                        .current_amount,
+                    10
+                );
+            }
+        }
+    }
 }
 
 // Native token classification is deliberately disabled by this existing

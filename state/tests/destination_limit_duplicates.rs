@@ -4,8 +4,8 @@ use swig_state::{
         sol_destination_limit::SolDestinationLimit, sol_limit::SolLimit,
         sol_recurring_destination_limit::SolRecurringDestinationLimit,
         token_destination_limit::TokenDestinationLimit,
-        token_recurring_destination_limit::TokenRecurringDestinationLimit, Action, ActionLoader,
-        Permission,
+        token_recurring_destination_limit::TokenRecurringDestinationLimit, wildcard::WILDCARD,
+        Action, ActionLoader, Permission,
     },
     IntoBytes, SwigStateError, Transmutable,
 };
@@ -65,6 +65,40 @@ fn token_recurring_destination_limit(mint: [u8; 32], destination: [u8; 32]) -> V
             current_amount: 100,
         },
     )
+}
+
+#[test]
+fn wildcard_scopes_can_stack_but_same_type_same_scope_duplicates_are_rejected() {
+    let scopes = [
+        ([1; 32], [2; 32]),
+        ([1; 32], WILDCARD),
+        (WILDCARD, [2; 32]),
+        (WILDCARD, WILDCARD),
+    ];
+    let mut actions = Vec::new();
+    for (mint, dest) in scopes {
+        actions.extend(token_destination_limit(mint, dest));
+        actions.extend(token_recurring_destination_limit(mint, dest));
+    }
+    assert_eq!(
+        ActionLoader::validate_destination_limit_duplicates(&actions),
+        Ok(())
+    );
+    for (mint, dest) in scopes {
+        for duplicate in [
+            token_destination_limit(mint, dest),
+            token_recurring_destination_limit(mint, dest),
+        ] {
+            let mut duplicate_actions = actions.clone();
+            duplicate_actions.extend(duplicate);
+            assert_eq!(
+                ActionLoader::validate_destination_limit_duplicates(&duplicate_actions),
+                Err(ProgramError::Custom(
+                    SwigStateError::DuplicateDestinationLimit as u32
+                ))
+            );
+        }
+    }
 }
 
 #[test]

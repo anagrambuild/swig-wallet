@@ -46,12 +46,15 @@ fn compare_sign_v2_role_compute_units() {
     // Restricted ceilings equal the approved measurements from the pinned SBPF v3
     // release build at e786993, CI run 42046809735. No additional margin is added.
     // All retains its existing authorization-lock ceiling.
+    // Wildcard scopes compose with exact scopes, so the token destination
+    // walker visits every applicable key instead of stopping at the first exact
+    // hit. That adds ~25 CU in the pinned build (+23 locally).
     for (path, actual, baseline) in [
         ("All", all, 5_080),
         ("SOL limit", sol_limit, 6_371),
         ("SOL destination limit", sol_limit_destination, 6_775),
         ("Token limit", token_limit, 7_475),
-        ("Token destination limit", token_limit_destination, 8_006),
+        ("Token destination limit", token_limit_destination, 8_035),
     ] {
         assert!(
             actual <= baseline,

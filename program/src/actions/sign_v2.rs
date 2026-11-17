@@ -32,6 +32,7 @@ use swig_state::{
         token_limit::TokenLimit,
         token_recurring_destination_limit::TokenRecurringDestinationLimit,
         token_recurring_limit::TokenRecurringLimit,
+        wildcard::{covers_field, is_wildcard},
         Action, Permission,
     },
     role::RoleMut,
@@ -1093,7 +1094,7 @@ pub(super) fn has_token_destination_limits(
             || permission == Permission::TokenRecurringDestinationLimit)
             && boundary >= action_start + 32
             && actions_data.len() >= action_start + 32
-            && token_mint == &actions_data[action_start..action_start + 32]
+            && covers_field(&actions_data[action_start..action_start + 32], token_mint)
         {
             return Ok(true);
         }
@@ -1165,15 +1166,7 @@ fn consume_general_token_limit(
     slot: u64,
     has_destination_limit: bool,
 ) -> ProgramResult {
-    let mut general_limit_applied = false;
-    if let Some(action) = RoleMut::get_action_mut::<TokenLimit>(actions, mint)? {
-        action.run(spent)?;
-        general_limit_applied = true;
-    }
-    if let Some(action) = RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)? {
-        action.run(spent, slot)?;
-        general_limit_applied = true;
-    }
+    let general_limit_applied = charge_token_limits(actions, mint, None, spent, slot)?;
 
     if !general_limit_applied && !has_destination_limit {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
@@ -1269,29 +1262,13 @@ fn preflight_destination_limits(
                         all_accounts,
                         signer,
                         |destination, amount| {
-                            let mut combined_key = [0u8; 64];
-                            combined_key[..32].copy_from_slice(mint);
-                            combined_key[32..].copy_from_slice(destination.as_ref());
-                            let mut matched = false;
-
-                            if let Some(action) = RoleMut::get_action_mut::<
-                                TokenRecurringDestinationLimit,
-                            >(
-                                actions, &combined_key
-                            )? {
-                                action.run(amount, slot)?;
-                                matched = true;
-                            }
-
-                            if let Some(action) = RoleMut::get_action_mut::<TokenDestinationLimit>(
+                            if charge_token_limits(
                                 actions,
-                                &combined_key,
+                                mint,
+                                Some(destination.as_ref()),
+                                amount,
+                                slot,
                             )? {
-                                action.run(amount)?;
-                                matched = true;
-                            }
-
-                            if matched {
                                 Ok(())
                             } else {
                                 Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into())
@@ -1321,6 +1298,90 @@ fn require_destination_debit(
         Some((destination, amount)) if destination != source && amount == debit => Ok(()),
         _ => Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into()),
     }
+}
+
+/// Charges every applicable token limit for one debit.
+///
+/// Exact and wildcard scopes both charge. Wildcard-mint actions are unlimited,
+/// so their ledgers are left untouched. For legacy action sets with duplicate
+/// scopes, only the first action of each ledger type is charged.
+#[inline(always)]
+pub(super) fn charge_token_limits(
+    actions: &mut [u8],
+    mint: &[u8],
+    destination: Option<&[u8]>,
+    amount: u64,
+    slot: u64,
+) -> Result<bool, ProgramError> {
+    let mut cursor = 0;
+    let mut seen = 0u16;
+    let destination_scoped = destination.is_some();
+    while cursor < actions.len() {
+        let header_end = cursor + Action::LEN;
+        let header = actions
+            .get(cursor..header_end)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        let action = unsafe { Action::load_unchecked(header)? };
+        let permission = action.permission()?;
+        let end = header_end + action.length() as usize;
+        if action.boundary() as usize != end || end > actions.len() {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let recurring = match (destination_scoped, permission) {
+            (false, Permission::TokenLimit) | (true, Permission::TokenDestinationLimit) => false,
+            (false, Permission::TokenRecurringLimit)
+            | (true, Permission::TokenRecurringDestinationLimit) => true,
+            _ => {
+                cursor = end;
+                continue;
+            },
+        };
+        let data = &actions[header_end..end];
+        let action_mint = data.get(..32).ok_or(ProgramError::InvalidAccountData)?;
+        let mint_exact = action_mint == mint;
+        let mint_wild = !mint_exact && is_wildcard(action_mint);
+        if !mint_exact && !mint_wild {
+            cursor = end;
+            continue;
+        }
+        let scope = if let Some(destination) = destination {
+            let action_dest = data.get(32..64).ok_or(ProgramError::InvalidAccountData)?;
+            let dest_exact = action_dest == destination;
+            let dest_wild = !dest_exact && is_wildcard(action_dest);
+            if !dest_exact && !dest_wild {
+                cursor = end;
+                continue;
+            }
+            (mint_wild as u16) * 2 + dest_wild as u16
+        } else {
+            mint_wild as u16
+        };
+        let bit = 1u16 << (scope * 2 + recurring as u16);
+        if seen & bit != 0 {
+            cursor = end;
+            continue;
+        }
+        let data = &mut actions[header_end..end];
+        match permission {
+            Permission::TokenLimit => {
+                unsafe { TokenLimit::load_mut_unchecked(data)? }.run(amount)?
+            },
+            Permission::TokenRecurringLimit => {
+                unsafe { TokenRecurringLimit::load_mut_unchecked(data)? }.run(amount, slot)?
+            },
+            Permission::TokenDestinationLimit => {
+                unsafe { TokenDestinationLimit::load_mut_unchecked(data)? }.run(amount)?
+            },
+            Permission::TokenRecurringDestinationLimit => {
+                unsafe { TokenRecurringDestinationLimit::load_mut_unchecked(data)? }
+                    .run(amount, slot)?
+            },
+            _ => unreachable!(),
+        }
+        seen |= bit;
+        cursor = end;
+    }
+    Ok(seen != 0)
 }
 
 /// Processes SOL transfer destinations and amounts from instruction payload

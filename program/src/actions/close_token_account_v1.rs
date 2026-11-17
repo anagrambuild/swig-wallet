@@ -15,9 +15,6 @@ use swig_state::{
     action::{
         all::All, all_but_manage_authority::AllButManageAuthority,
         close_swig_authority::CloseSwigAuthority, manage_authority::ManageAuthority,
-        token_destination_limit::TokenDestinationLimit, token_limit::TokenLimit,
-        token_recurring_destination_limit::TokenRecurringDestinationLimit,
-        token_recurring_limit::TokenRecurringLimit,
     },
     role::RoleMut,
     swig::{swig_wallet_address_seeds, swig_wallet_address_signer, Swig},
@@ -27,9 +24,9 @@ use swig_state::{
 
 use crate::{
     actions::sign_v2::{
-        has_token_destination_limits, read_wsol_reserve, wsol_accounted_balance,
-        TOKEN_ACCOUNT_BASE_DATA_LEN, TOKEN_ACCOUNT_INITIALIZED_STATE, TOKEN_NATIVE_RESERVE_RANGE,
-        TOKEN_STATE_INDEX, WSOL_MINT,
+        charge_token_limits, has_token_destination_limits, read_wsol_reserve,
+        wsol_accounted_balance, TOKEN_ACCOUNT_BASE_DATA_LEN, TOKEN_ACCOUNT_INITIALIZED_STATE,
+        TOKEN_NATIVE_RESERVE_RANGE, TOKEN_STATE_INDEX, WSOL_MINT,
     },
     authorization_lock::check_role_locks_within_limits,
     error::SwigError,
@@ -286,34 +283,18 @@ pub fn close_token_account_v1(
             let amount = u64::from_le_bytes(token_data[64..72].try_into().unwrap());
             let spent = wsol_accounted_balance(amount, reserve, token_account.lamports())?;
             if !unrestricted_spend {
-                let general_limit = if let Some(limit) =
-                    RoleMut::get_action_mut::<TokenLimit>(role.actions, &native_mint)?
-                {
-                    limit.run(spent)?;
-                    true
-                } else if let Some(limit) =
-                    RoleMut::get_action_mut::<TokenRecurringLimit>(role.actions, &native_mint)?
-                {
-                    limit.run(spent, current_slot)?;
-                    true
-                } else {
-                    false
-                };
+                let general_limit =
+                    charge_token_limits(role.actions, &native_mint, None, spent, current_slot)?;
                 let destination_limit = has_token_destination_limits(role.actions, &native_mint)?;
                 if destination_limit {
-                    let mut key = [0u8; 64];
-                    key[..32].copy_from_slice(&native_mint);
-                    key[32..].copy_from_slice(ctx.accounts.destination.key());
-                    if let Some(limit) = RoleMut::get_action_mut::<TokenRecurringDestinationLimit>(
+                    let matched = charge_token_limits(
                         role.actions,
-                        &key,
-                    )? {
-                        limit.run(spent, current_slot)?;
-                    } else if let Some(limit) =
-                        RoleMut::get_action_mut::<TokenDestinationLimit>(role.actions, &key)?
-                    {
-                        limit.run(spent)?;
-                    } else {
+                        &native_mint,
+                        Some(ctx.accounts.destination.key()),
+                        spent,
+                        current_slot,
+                    )?;
+                    if !matched {
                         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
                     }
                 }

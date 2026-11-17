@@ -748,12 +748,15 @@ fn paired_destination_limits_charge_both_and_preserve_recurring_reset() {
                             .unwrap()
                             .unwrap();
                     assert_eq!((recurring.current_amount, recurring.last_reset), (0, 11));
+                    // Token scopes are charged in action order, so this direct
+                    // helper call keeps the debit from the rejected slot-10
+                    // attempt. A failed transaction discards it.
                     assert_eq!(
                         RoleMut::get_action_mut::<TokenDestinationLimit>(actions, &key)
                             .unwrap()
                             .unwrap()
                             .amount,
-                        899
+                        799
                     );
                 }
                 assert!(preflight_destination_limits(

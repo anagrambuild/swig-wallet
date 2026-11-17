@@ -30,7 +30,7 @@ use swig_state::{
         sol_recurring_destination_limit::SolRecurringDestinationLimit,
         sol_recurring_limit::SolRecurringLimit, token_destination_limit::TokenDestinationLimit,
         token_limit::TokenLimit, token_recurring_destination_limit::TokenRecurringDestinationLimit,
-        token_recurring_limit::TokenRecurringLimit,
+        token_recurring_limit::TokenRecurringLimit, wildcard::WILDCARD,
     },
     authority::{
         programexec::{session::CreateProgramExecSessionAuthority, ProgramExecAuthority},
@@ -49,6 +49,95 @@ const CARD_ROLE: u32 = 1;
 const NATIVE: [u8; 32] = authorization_locks::NATIVE_SOL_MINT;
 const MAX_DURATION: u64 = 1_000;
 const ROOT_MAX_DURATION: u64 = 1_000_000;
+
+#[test_log::test]
+fn wildcard_mint_backs_locks_on_independent_mints() {
+    let mut w = Wallet::with_card_actions(vec![
+        ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(MAX_DURATION)),
+        ClientAction::Program(Program {
+            program_id: spl_token::ID.to_bytes(),
+        }),
+        ClientAction::TokenLimit(TokenLimit {
+            token_mint: WILDCARD,
+            current_amount: 10,
+        }),
+        ClientAction::TokenRecurringLimit(TokenRecurringLimit {
+            token_mint: WILDCARD,
+            window: 1_000,
+            limit: 8,
+            current: 8,
+            last_reset: 0,
+        }),
+    ]);
+    let card = w.card.insecure_clone();
+    let (a, account_a) = w.token_setup(100);
+    let (b, account_b) = w.token_setup(100);
+    let expiry = w.slot() + 100;
+    ok(w.add_lock(&card, CARD_ROLE, account_a, a.to_bytes(), 4, expiry));
+    ok(w.add_lock(&card, CARD_ROLE, account_b, b.to_bytes(), 4, expiry));
+    ok(w.add_lock(&card, CARD_ROLE, account_b, b.to_bytes(), 1, expiry));
+
+    // Wildcard ledgers do not impose a shared cross-mint allowance.
+    let spend = w.token_transfer_ix(&card, CARD_ROLE, &a, &account_a, 1);
+    ok(w.send(&[spend], &[&card]));
+    assert_eq!(w.token_balance(&account_a), 99);
+
+    // The holder may spend its own reservation, which captures the lock.
+    let before = w.token_balance(&account_a);
+    let spend = w.token_transfer_ix(&card, CARD_ROLE, &a, &account_a, 96);
+    ok(w.send(&[spend], &[&card]));
+    assert_eq!(w.token_balance(&account_a), before - 96);
+
+    ok(w.remove_lock(&card, CARD_ROLE, 0));
+    ok(w.add_lock(&card, CARD_ROLE, account_a, a.to_bytes(), 3, expiry));
+    assert!(w
+        .add_lock(&card, CARD_ROLE, account_a, a.to_bytes(), 1, expiry)
+        .is_err());
+}
+
+#[test_log::test]
+fn wildcard_mint_destination_limits_do_not_pool_reservations() {
+    let mut w = Wallet::new(100);
+    let (a, account_a) = w.token_setup(100);
+    let (b, account_b) = w.token_setup(100);
+    let (c, account_c) = w.token_setup(100);
+    let issuer = Keypair::new();
+    let x = Pubkey::new_unique().to_bytes();
+    let y = Pubkey::new_unique().to_bytes();
+    let mut actions = vec![ClientAction::ManageAuthorizationLocks(
+        ManageAuthorizationLocks::new(MAX_DURATION),
+    )];
+    for dest in [x, y] {
+        actions.push(ClientAction::TokenDestinationLimit(TokenDestinationLimit {
+            token_mint: WILDCARD,
+            destination: dest,
+            amount: 5,
+        }));
+    }
+    // B has a finite exact-mint limit for Y, while the wildcard-mint scopes
+    // stay unlimited for A and C.
+    actions.push(ClientAction::TokenDestinationLimit(TokenDestinationLimit {
+        token_mint: b.to_bytes(),
+        destination: y,
+        amount: 0,
+    }));
+    add_authority_with_ed25519_root(
+        &mut w.context,
+        &w.swig,
+        &w.root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: issuer.pubkey().as_ref(),
+        },
+        actions,
+    )
+    .unwrap();
+    let expiry = w.slot() + 100;
+    ok(w.add_lock(&issuer, 2, account_a, a.to_bytes(), 5, expiry));
+    // There is no finite shared allowance between A, B, and C.
+    ok(w.add_lock(&issuer, 2, account_b, b.to_bytes(), 5, expiry));
+    ok(w.add_lock(&issuer, 2, account_c, c.to_bytes(), 100, expiry));
+}
 
 struct Wallet {
     context: SwigTestContext,
