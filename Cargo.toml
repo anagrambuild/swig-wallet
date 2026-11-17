@@ -11,6 +11,7 @@ members = [
   "rust-sdk",
   "cli",
   "test-program-authority",
+  "slippage-oracle",
 ]
 
 [workspace.package]
