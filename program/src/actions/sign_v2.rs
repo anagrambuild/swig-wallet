@@ -1165,18 +1165,7 @@ fn consume_general_token_limit(
     slot: u64,
     has_destination_limit: bool,
 ) -> ProgramResult {
-    let mut general_limit_applied = false;
-    if let Some(action) = RoleMut::get_action_mut::<TokenLimit>(actions, mint)? {
-        action.run(spent)?;
-        general_limit_applied = true;
-    }
-    if let Some(action) = RoleMut::get_action_mut::<TokenRecurringLimit>(actions, mint)? {
-        action.run(spent, slot)?;
-        general_limit_applied = true;
-    }
-    if charge_token_wildcards(actions, mint, None, spent, slot)? {
-        general_limit_applied = true;
-    }
+    let general_limit_applied = charge_token_limits(actions, mint, None, spent, slot)?;
 
     if !general_limit_applied && !has_destination_limit {
         return Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into());
@@ -1272,39 +1261,13 @@ fn preflight_destination_limits(
                         all_accounts,
                         signer,
                         |destination, amount| {
-                            let mut combined_key = [0u8; 64];
-                            combined_key[..32].copy_from_slice(mint);
-                            combined_key[32..].copy_from_slice(destination.as_ref());
-                            let mut matched = false;
-
-                            if let Some(action) = RoleMut::get_action_mut::<
-                                TokenRecurringDestinationLimit,
-                            >(
-                                actions, &combined_key
-                            )? {
-                                action.run(amount, slot)?;
-                                matched = true;
-                            }
-
-                            if let Some(action) = RoleMut::get_action_mut::<TokenDestinationLimit>(
-                                actions,
-                                &combined_key,
-                            )? {
-                                action.run(amount)?;
-                                matched = true;
-                            }
-
-                            if charge_token_wildcards(
+                            if charge_token_limits(
                                 actions,
                                 mint,
                                 Some(destination.as_ref()),
                                 amount,
                                 slot,
                             )? {
-                                matched = true;
-                            }
-
-                            if matched {
                                 Ok(())
                             } else {
                                 Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into())
@@ -1334,12 +1297,14 @@ fn require_destination_debit(
         Some((destination, amount)) if destination != source && amount == debit => Ok(()),
         _ => Err(SwigAuthenticateError::PermissionDeniedMissingPermission.into()),
     }
-/// Charges every applicable wildcard scope, in addition to the exact limits
-/// charged by the caller. Both one-shot and recurring ledgers apply. As with
+}
+
+/// Charges every applicable exact and wildcard scope in one actions scan.
+/// Both one-shot and recurring ledgers apply. As with
 /// exact lookups, only the first action of each type and key is charged for
 /// legacy roles containing duplicate actions.
-#[inline]
-fn charge_token_wildcards(
+#[inline(always)]
+pub(super) fn charge_token_limits(
     actions: &mut [u8],
     mint: &[u8],
     destination: Option<&[u8]>,
@@ -1350,7 +1315,8 @@ fn charge_token_wildcards(
     let mut seen = 0u16;
     while cursor < actions.len() {
         let header_end = cursor + Action::LEN;
-        let header = actions.get(cursor..header_end)
+        let header = actions
+            .get(cursor..header_end)
             .ok_or(ProgramError::InvalidAccountData)?;
         let action = unsafe { Action::load_unchecked(header)? };
         let permission = action.permission()?;
@@ -1362,29 +1328,47 @@ fn charge_token_wildcards(
             (false, Permission::TokenLimit) | (true, Permission::TokenDestinationLimit) => false,
             (false, Permission::TokenRecurringLimit)
             | (true, Permission::TokenRecurringDestinationLimit) => true,
-            _ => { cursor = end; continue; },
+            _ => {
+                cursor = end;
+                continue;
+            },
         };
         let data = &actions[header_end..end];
         let action_mint = data.get(..32).ok_or(ProgramError::InvalidAccountData)?;
-        let mint_wild = is_wildcard(action_mint);
+        let mint_exact = action_mint == mint;
+        let mint_wild = !mint_exact && is_wildcard(action_mint);
+        if !mint_exact && !mint_wild {
+            cursor = end;
+            continue;
+        }
         let (matches, scope) = if let Some(destination) = destination {
             let action_dest = data.get(32..64).ok_or(ProgramError::InvalidAccountData)?;
-            let dest_wild = is_wildcard(action_dest);
-            ( (mint_wild || dest_wild)
-                && covers_field(action_mint, mint)
-                && covers_field(action_dest, destination),
-              (mint_wild as u16) * 2 + dest_wild as u16 )
+            let dest_exact = action_dest == destination;
+            let dest_wild = !dest_exact && is_wildcard(action_dest);
+            (
+                dest_exact || dest_wild,
+                (mint_wild as u16) * 2 + dest_wild as u16,
+            )
         } else {
-            (mint_wild, 0)
+            (true, mint_wild as u16)
         };
         let bit = 1u16 << (scope * 2 + recurring as u16);
         if matches && seen & bit == 0 {
             let data = &mut actions[header_end..end];
             match permission {
-                Permission::TokenLimit => unsafe { TokenLimit::load_mut_unchecked(data)? }.run(amount)?,
-                Permission::TokenRecurringLimit => unsafe { TokenRecurringLimit::load_mut_unchecked(data)? }.run(amount, slot)?,
-                Permission::TokenDestinationLimit => unsafe { TokenDestinationLimit::load_mut_unchecked(data)? }.run(amount)?,
-                Permission::TokenRecurringDestinationLimit => unsafe { TokenRecurringDestinationLimit::load_mut_unchecked(data)? }.run(amount, slot)?,
+                Permission::TokenLimit => {
+                    unsafe { TokenLimit::load_mut_unchecked(data)? }.run(amount)?
+                },
+                Permission::TokenRecurringLimit => {
+                    unsafe { TokenRecurringLimit::load_mut_unchecked(data)? }.run(amount, slot)?
+                },
+                Permission::TokenDestinationLimit => {
+                    unsafe { TokenDestinationLimit::load_mut_unchecked(data)? }.run(amount)?
+                },
+                Permission::TokenRecurringDestinationLimit => {
+                    unsafe { TokenRecurringDestinationLimit::load_mut_unchecked(data)? }
+                        .run(amount, slot)?
+                },
                 _ => unreachable!(),
             }
             seen |= bit;
