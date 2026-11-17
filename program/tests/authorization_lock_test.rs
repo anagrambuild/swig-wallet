@@ -51,7 +51,7 @@ const MAX_DURATION: u64 = 1_000;
 const ROOT_MAX_DURATION: u64 = 1_000_000;
 
 #[test_log::test]
-fn wildcard_pairs_back_independent_mint_locks_without_a_shared_spend_budget() {
+fn wildcard_mint_backs_locks_on_independent_mints() {
     let mut w = Wallet::with_card_actions(vec![
         ClientAction::ManageAuthorizationLocks(ManageAuthorizationLocks::new(MAX_DURATION)),
         ClientAction::Program(Program {
@@ -77,12 +77,12 @@ fn wildcard_pairs_back_independent_mint_locks_without_a_shared_spend_budget() {
     ok(w.add_lock(&card, CARD_ROLE, account_b, b.to_bytes(), 4, expiry));
     ok(w.add_lock(&card, CARD_ROLE, account_b, b.to_bytes(), 1, expiry));
 
-    // Wildcard ledgers do not impose any cross-mint spend allowance.
+    // Wildcard ledgers do not impose a shared cross-mint allowance.
     let spend = w.token_transfer_ix(&card, CARD_ROLE, &a, &account_a, 1);
     ok(w.send(&[spend], &[&card]));
     assert_eq!(w.token_balance(&account_a), 99);
 
-    // The holder spends from its own reserved balance, capturing the lock.
+    // The holder may spend its own reservation, which captures the lock.
     let before = w.token_balance(&account_a);
     let spend = w.token_transfer_ix(&card, CARD_ROLE, &a, &account_a, 96);
     ok(w.send(&[spend], &[&card]));
@@ -96,7 +96,7 @@ fn wildcard_pairs_back_independent_mint_locks_without_a_shared_spend_budget() {
 }
 
 #[test_log::test]
-fn wildcard_destination_permissions_do_not_pool_token_reservations() {
+fn wildcard_mint_destination_limits_do_not_pool_reservations() {
     let mut w = Wallet::new(100);
     let (a, account_a) = w.token_setup(100);
     let (b, account_b) = w.token_setup(100);
@@ -114,8 +114,8 @@ fn wildcard_destination_permissions_do_not_pool_token_reservations() {
             amount: 5,
         }));
     }
-    // B can only capture against X; A and C can use either destination. Destination
-    // capacity remains abstract, just as for destination-only roles in #226.
+    // B has a finite exact-mint limit for Y, while the wildcard-mint scopes
+    // stay unlimited for A and C.
     actions.push(ClientAction::TokenDestinationLimit(TokenDestinationLimit {
         token_mint: b.to_bytes(),
         destination: y,

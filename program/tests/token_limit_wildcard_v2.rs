@@ -1,10 +1,7 @@
 #![cfg(not(feature = "program_scope_test"))]
-//! Tests for wildcard token limits with SignV2.
-//!
-//! Wildcard keys (all-0xFF) in the mint and/or destination fields of token
-//! limit actions let a single action cover any mint and/or any destination.
-//! Wildcard mints grant unlimited spend; every applicable exact-mint one-shot
-//! and recurring ledger is charged. Rejected spends roll back all ledgers.
+//! Wildcard token limits: an all-0xFF mint or destination in any token limit
+//! action. Wildcard mints are unlimited; exact-mint ledgers are still charged,
+//! and rejected spends roll back every ledger.
 
 mod common;
 use common::*;
@@ -24,49 +21,86 @@ use swig_state::{
         token_recurring_limit::TokenRecurringLimit, wildcard::WILDCARD,
     },
     authority::AuthorityType,
-    swig::{swig_account_seeds, swig_wallet_address_seeds, SwigWithRoles},
+    swig::{swig_wallet_address_seeds, SwigWithRoles},
 };
 
-/// Sends a spl_token::transfer signed via SignV2 by `authority`.
-#[allow(clippy::type_complexity)]
+const SOL: u64 = 1_000_000_000;
+
+fn airdrop(context: &mut SwigTestContext, keys: &[&Keypair]) {
+    for key in keys {
+        context.svm.airdrop(&key.pubkey(), SOL).unwrap();
+    }
+}
+
+/// Creates a swig owned by `root` and funds its wallet address.
+fn new_swig(context: &mut SwigTestContext, root: &Keypair) -> (Pubkey, Pubkey) {
+    airdrop(context, &[root]);
+    let (swig, _) = create_swig_ed25519(context, root, rand::random()).unwrap();
+    let (wallet, _) =
+        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    context.svm.airdrop(&wallet, 2 * SOL).unwrap();
+    (swig, wallet)
+}
+
+/// Adds a second role with `actions` and returns its signer.
+fn add_role(
+    context: &mut SwigTestContext,
+    swig: &Pubkey,
+    root: &Keypair,
+    actions: Vec<ClientAction>,
+) -> Keypair {
+    let authority = Keypair::new();
+    airdrop(context, &[&authority]);
+    add_authority_with_ed25519_root(
+        context,
+        swig,
+        root,
+        AuthorityConfig {
+            authority_type: AuthorityType::Ed25519,
+            authority: authority.pubkey().as_ref(),
+        },
+        actions,
+    )
+    .unwrap();
+    authority
+}
+
+/// Creates an ATA and optionally mints `amount` into it.
+fn token_account(
+    context: &mut SwigTestContext,
+    mint: &Pubkey,
+    owner: &Pubkey,
+    amount: u64,
+) -> Pubkey {
+    let ata = setup_ata(&mut context.svm, mint, owner, &context.default_payer).unwrap();
+    if amount > 0 {
+        mint_to(&mut context.svm, mint, &context.default_payer, &ata, amount).unwrap();
+    }
+    ata
+}
+
 fn send_token_transfer(
     context: &mut SwigTestContext,
     swig: &Pubkey,
-    swig_wallet_address: &Pubkey,
+    wallet: &Pubkey,
     authority: &Keypair,
-    source_ata: &Pubkey,
-    destination_ata: &Pubkey,
+    source: &Pubkey,
+    destination: &Pubkey,
     amount: u64,
 ) -> anyhow::Result<std::result::Result<(), TransactionError>> {
-    let transfer_ix = spl_token::instruction::transfer(
-        &spl_token::ID,
-        source_ata,
-        destination_ata,
-        swig_wallet_address,
-        &[],
-        amount,
-    )
-    .unwrap();
-
-    let sign_ix = SignV2Instruction::new_ed25519(
-        *swig,
-        *swig_wallet_address,
-        authority.pubkey(),
-        transfer_ix,
-        1,
-    )
-    .unwrap();
-
+    let transfer =
+        spl_token::instruction::transfer(&spl_token::ID, source, destination, wallet, &[], amount)
+            .unwrap();
+    let sign =
+        SignV2Instruction::new_ed25519(*swig, *wallet, authority.pubkey(), transfer, 1).unwrap();
     let message = v0::Message::try_compile(
         &authority.pubkey(),
-        &[sign_ix],
+        &[sign],
         &[],
         context.svm.latest_blockhash(),
     )
     .unwrap();
-
     let tx = VersionedTransaction::try_new(VersionedMessage::V0(message), &[authority]).unwrap();
-
     Ok(context
         .svm
         .send_transaction(tx)
@@ -74,342 +108,128 @@ fn send_token_transfer(
         .map_err(|e| e.err))
 }
 
-/// Runs `f` against role 1 of the current swig state for readbacks.
 fn with_role_1<R>(
     context: &SwigTestContext,
     swig: &Pubkey,
     f: impl FnOnce(&swig_state::role::Role) -> R,
-) -> anyhow::Result<R> {
-    let swig_account = context
-        .svm
-        .get_account(swig)
-        .ok_or_else(|| anyhow::anyhow!("Swig account not found"))?;
-    let swig_state = SwigWithRoles::from_bytes(&swig_account.data)
-        .map_err(|e| anyhow::anyhow!("Failed to deserialize swig {:?}", e))?;
-    let role = swig_state
-        .get_role(1)
-        .map_err(|e| anyhow::anyhow!("Failed to get role {:?}", e))?
-        .ok_or_else(|| anyhow::anyhow!("role 1 missing"))?;
-    Ok(f(&role))
+) -> R {
+    let account = context.svm.get_account(swig).unwrap();
+    let state = SwigWithRoles::from_bytes(&account.data).unwrap();
+    let role = state.get_role(1).unwrap().unwrap();
+    f(&role)
 }
 
-/// Reads the token balance of a token account.
-fn token_balance(context: &SwigTestContext, ata: &Pubkey) -> u64 {
-    u64::from_le_bytes(
-        context
-            .svm
-            .get_account(ata)
-            .unwrap()
-            .data
-            .get(64..72)
-            .unwrap()
-            .try_into()
-            .unwrap(),
-    )
+fn token_balance(context: &SwigTestContext, account: &Pubkey) -> u64 {
+    let data = context.svm.get_account(account).unwrap().data;
+    u64::from_le_bytes(data[64..72].try_into().unwrap())
 }
 
-/// A wildcard mint authorizes unlimited spend without changing its amount.
+fn token_limit(context: &SwigTestContext, swig: &Pubkey, mint: &[u8]) -> u64 {
+    with_role_1(context, swig, |role| {
+        role.get_action::<TokenLimit>(mint)
+            .unwrap()
+            .unwrap()
+            .current_amount
+    })
+}
+
+/// Returns `(current, limit, window, last_reset)`.
+fn recurring_limit(context: &SwigTestContext, swig: &Pubkey, mint: &[u8]) -> (u64, u64, u64, u64) {
+    with_role_1(context, swig, |role| {
+        let limit = role
+            .get_action::<TokenRecurringLimit>(mint)
+            .unwrap()
+            .unwrap();
+        (limit.current, limit.limit, limit.window, limit.last_reset)
+    })
+}
+
+fn destination_limit(
+    context: &SwigTestContext,
+    swig: &Pubkey,
+    mint: &[u8],
+    destination: &[u8],
+) -> u64 {
+    let key = [mint, destination].concat();
+    with_role_1(context, swig, |role| {
+        role.get_action::<TokenDestinationLimit>(&key)
+            .unwrap()
+            .unwrap()
+            .amount
+    })
+}
+
 #[test_log::test]
-fn test_wildcard_general_limit_covers_any_mint() {
+fn wildcard_mint_is_unlimited() {
     let mut context = setup_test_context().unwrap();
-    let swig_authority = Keypair::new();
+    let root = Keypair::new();
     let recipient = Keypair::new();
-
-    context
-        .svm
-        .airdrop(&recipient.pubkey(), 1_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&swig_authority.pubkey(), 1_000_000_000)
-        .unwrap();
-
-    let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
-    let (swig_wallet_address, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    airdrop(&mut context, &[&recipient]);
+    let (swig, wallet) = new_swig(&mut context, &root);
 
     let mint_a = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let mint_b = setup_mint(&mut context.svm, &context.default_payer).unwrap();
-    let swig_ata_a = setup_ata(
-        &mut context.svm,
-        &mint_a,
-        &swig_wallet_address,
-        &context.default_payer,
-    )
-    .unwrap();
-    let swig_ata_b = setup_ata(
-        &mut context.svm,
-        &mint_b,
-        &swig_wallet_address,
-        &context.default_payer,
-    )
-    .unwrap();
-    let recipient_ata_a = setup_ata(
-        &mut context.svm,
-        &mint_a,
-        &recipient.pubkey(),
-        &context.default_payer,
-    )
-    .unwrap();
-    let recipient_ata_b = setup_ata(
-        &mut context.svm,
-        &mint_b,
-        &recipient.pubkey(),
-        &context.default_payer,
-    )
-    .unwrap();
+    let source_a = token_account(&mut context, &mint_a, &wallet, 1_000);
+    let source_b = token_account(&mut context, &mint_b, &wallet, 1_000);
+    let destination_a = token_account(&mut context, &mint_a, &recipient.pubkey(), 0);
+    let destination_b = token_account(&mut context, &mint_b, &recipient.pubkey(), 0);
 
-    mint_to(
-        &mut context.svm,
-        &mint_a,
-        &context.default_payer,
-        &swig_ata_a,
-        1000,
-    )
-    .unwrap();
-    mint_to(
-        &mut context.svm,
-        &mint_b,
-        &context.default_payer,
-        &swig_ata_b,
-        1000,
-    )
-    .unwrap();
-
-    let _ = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
-
-    let second_authority = Keypair::new();
-    context
-        .svm
-        .airdrop(&second_authority.pubkey(), 1_000_000_000)
-        .unwrap();
-
-    let wildcard_general_amount = 100u64;
-    let _txn = add_authority_with_ed25519_root(
+    let authority = add_role(
         &mut context,
         &swig,
-        &swig_authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::Ed25519,
-            authority: second_authority.pubkey().as_ref(),
-        },
+        &root,
         vec![
             ClientAction::ProgramAll(ProgramAll {}),
             ClientAction::TokenLimit(TokenLimit {
                 token_mint: WILDCARD,
-                current_amount: wildcard_general_amount,
+                current_amount: 100,
             }),
         ],
-    )
-    .unwrap();
+    );
 
-    context
-        .svm
-        .airdrop(&swig_wallet_address, 2_000_000_000)
+    // Any mint spends without changing the wildcard's stored amount.
+    for (source, destination, amount) in [
+        (&source_a, &destination_a, 30),
+        (&source_b, &destination_b, 20),
+        (&source_a, &destination_a, 101),
+        (&source_a, &destination_a, 50),
+    ] {
+        send_token_transfer(
+            &mut context,
+            &swig,
+            &wallet,
+            &authority,
+            source,
+            destination,
+            amount,
+        )
+        .unwrap()
         .unwrap();
-
-    // Sanity: the wildcard limit itself was stored.
-    let remaining = with_role_1(&context, &swig, |role| {
-        let count = {
-            let mut n = 0;
-            let mut cursor = 0usize;
-            let actions = role.actions;
-            while cursor + 8 <= actions.len() {
-                let len = u16::from_le_bytes(actions[cursor + 2..cursor + 4].try_into().unwrap())
-                    as usize;
-                n += 1;
-                cursor += 8 + len;
-            }
-            n
-        };
-        let wildcard = role
-            .get_action::<TokenLimit>(&WILDCARD)
-            .unwrap()
-            .map(|a| a.current_amount);
-        (count, wildcard)
-    })
-    .unwrap();
-    assert_eq!(remaining, (2, Some(100)));
-
-    // Both mints spend without decrementing the wildcard's stored amount.
-    send_token_transfer(
-        &mut context,
-        &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_a,
-        &recipient_ata_a,
-        30,
-    )
-    .unwrap()
-    .unwrap();
-
-    assert_eq!(token_balance(&context, &recipient_ata_a), 30);
-    let remaining = with_role_1(&context, &swig, |role| {
-        role.get_action::<TokenLimit>(&WILDCARD)
-            .unwrap()
-            .unwrap()
-            .current_amount
-    })
-    .unwrap();
-    assert_eq!(remaining, 100);
-
-    // A different mint is also unlimited.
-    send_token_transfer(
-        &mut context,
-        &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_b,
-        &recipient_ata_b,
-        20,
-    )
-    .unwrap()
-    .unwrap();
-
-    assert_eq!(token_balance(&context, &recipient_ata_b), 20);
-    let remaining = with_role_1(&context, &swig, |role| {
-        role.get_action::<TokenLimit>(&WILDCARD)
-            .unwrap()
-            .unwrap()
-            .current_amount
-    })
-    .unwrap();
-    assert_eq!(remaining, 100);
-
-    // The stored amount is not a cap, even for a single spend.
-    let res = send_token_transfer(
-        &mut context,
-        &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_a,
-        &recipient_ata_a,
-        101,
-    )
-    .unwrap();
-    res.unwrap();
-
-    // The ignored ledger stays unchanged.
-    let remaining = with_role_1(&context, &swig, |role| {
-        role.get_action::<TokenLimit>(&WILDCARD)
-            .unwrap()
-            .unwrap()
-            .current_amount
-    })
-    .unwrap();
-    assert_eq!(remaining, 100);
-
-    // Further spends remain allowed.
-    send_token_transfer(
-        &mut context,
-        &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_a,
-        &recipient_ata_a,
-        50,
-    )
-    .unwrap()
-    .unwrap();
-
-    let remaining = with_role_1(&context, &swig, |role| {
-        role.get_action::<TokenLimit>(&WILDCARD)
-            .unwrap()
-            .unwrap()
-            .current_amount
-    })
-    .unwrap();
-    assert_eq!(remaining, 100);
+        assert_eq!(token_limit(&context, &swig, &WILDCARD), 100);
+    }
+    assert_eq!(token_balance(&context, &destination_a), 181);
+    assert_eq!(token_balance(&context, &destination_b), 20);
 }
 
-/// Unlimited wildcard mints never bypass stacked exact-mint limits.
 #[test_log::test]
-fn test_exact_mint_limit_stacks_with_wildcard() {
+fn exact_mint_stacks_with_wildcard() {
     let mut context = setup_test_context().unwrap();
-    let swig_authority = Keypair::new();
+    let root = Keypair::new();
     let recipient = Keypair::new();
-
-    context
-        .svm
-        .airdrop(&recipient.pubkey(), 1_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&swig_authority.pubkey(), 1_000_000_000)
-        .unwrap();
-
-    let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
-    let (swig_wallet_address, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    airdrop(&mut context, &[&recipient]);
+    let (swig, wallet) = new_swig(&mut context, &root);
 
     let mint_a = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let mint_b = setup_mint(&mut context.svm, &context.default_payer).unwrap();
-    let swig_ata_a = setup_ata(
-        &mut context.svm,
-        &mint_a,
-        &swig_wallet_address,
-        &context.default_payer,
-    )
-    .unwrap();
-    let swig_ata_b = setup_ata(
-        &mut context.svm,
-        &mint_b,
-        &swig_wallet_address,
-        &context.default_payer,
-    )
-    .unwrap();
-    let recipient_ata_a = setup_ata(
-        &mut context.svm,
-        &mint_a,
-        &recipient.pubkey(),
-        &context.default_payer,
-    )
-    .unwrap();
-    let recipient_ata_b = setup_ata(
-        &mut context.svm,
-        &mint_b,
-        &recipient.pubkey(),
-        &context.default_payer,
-    )
-    .unwrap();
+    let source_a = token_account(&mut context, &mint_a, &wallet, 1_000);
+    let source_b = token_account(&mut context, &mint_b, &wallet, 1_000);
+    let destination_a = token_account(&mut context, &mint_a, &recipient.pubkey(), 0);
+    let destination_b = token_account(&mut context, &mint_b, &recipient.pubkey(), 0);
 
-    mint_to(
-        &mut context.svm,
-        &mint_a,
-        &context.default_payer,
-        &swig_ata_a,
-        1000,
-    )
-    .unwrap();
-    mint_to(
-        &mut context.svm,
-        &mint_b,
-        &context.default_payer,
-        &swig_ata_b,
-        1000,
-    )
-    .unwrap();
-
-    let _ = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
-
-    let second_authority = Keypair::new();
-    context
-        .svm
-        .airdrop(&second_authority.pubkey(), 1_000_000_000)
-        .unwrap();
-
-    // Any mint is unlimited; mint A gets a dedicated cap of 10.
-    let _txn = add_authority_with_ed25519_root(
+    let authority = add_role(
         &mut context,
         &swig,
-        &swig_authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::Ed25519,
-            authority: second_authority.pubkey().as_ref(),
-        },
+        &root,
         vec![
             ClientAction::ProgramAll(ProgramAll {}),
             ClientAction::TokenLimit(TokenLimit {
@@ -421,203 +241,91 @@ fn test_exact_mint_limit_stacks_with_wildcard() {
                 current_amount: 10,
             }),
         ],
-    )
-    .unwrap();
+    );
 
-    context
-        .svm
-        .airdrop(&swig_wallet_address, 2_000_000_000)
-        .unwrap();
-
-    // Mint A spends charge only its exact-mint ledger.
+    // Mint A charges its exact ledger even though the wildcard also matches.
     send_token_transfer(
         &mut context,
         &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_a,
-        &recipient_ata_a,
+        &wallet,
+        &authority,
+        &source_a,
+        &destination_a,
         7,
     )
     .unwrap()
     .unwrap();
+    assert_eq!(token_limit(&context, &swig, mint_a.to_bytes().as_ref()), 3);
+    assert_eq!(token_limit(&context, &swig, &WILDCARD), 0);
 
-    let exact = with_role_1(&context, &swig, |role| {
-        role.get_action::<TokenLimit>(mint_a.to_bytes().as_ref())
-            .unwrap()
-            .unwrap()
-            .current_amount
-    })
-    .unwrap();
-    assert_eq!(exact, 3);
-    let wildcard = with_role_1(&context, &swig, |role| {
-        role.get_action::<TokenLimit>(&WILDCARD)
-            .unwrap()
-            .unwrap()
-            .current_amount
-    })
-    .unwrap();
-    assert_eq!(wildcard, 0);
-
-    // The exact cap is enforced.
-    let res = send_token_transfer(
+    let over = send_token_transfer(
         &mut context,
         &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_a,
-        &recipient_ata_a,
+        &wallet,
+        &authority,
+        &source_a,
+        &destination_a,
         4,
     )
     .unwrap();
-    assert!(res.is_err());
+    assert!(over.is_err());
 
-    // Mint B has no exact limit, so it is unlimited.
+    // Mint B has no exact limit, so the wildcard leaves it unlimited.
     send_token_transfer(
         &mut context,
         &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_b,
-        &recipient_ata_b,
+        &wallet,
+        &authority,
+        &source_b,
+        &destination_b,
         30,
     )
     .unwrap()
     .unwrap();
-
-    let wildcard = with_role_1(&context, &swig, |role| {
-        role.get_action::<TokenLimit>(&WILDCARD)
-            .unwrap()
-            .unwrap()
-            .current_amount
-    })
-    .unwrap();
-    assert_eq!(wildcard, 0);
-    let exact = with_role_1(&context, &swig, |role| {
-        role.get_action::<TokenLimit>(mint_a.to_bytes().as_ref())
-            .unwrap()
-            .unwrap()
-            .current_amount
-    })
-    .unwrap();
-    assert_eq!(exact, 3);
+    assert_eq!(token_limit(&context, &swig, mint_a.to_bytes().as_ref()), 3);
+    assert_eq!(token_limit(&context, &swig, &WILDCARD), 0);
 }
 
-/// Wildcard recurring ledgers are neither charged nor reset across windows.
 #[test_log::test]
-fn test_wildcard_recurring_limit_is_unlimited_across_windows() {
+fn wildcard_recurring_is_unlimited() {
     let mut context = setup_test_context().unwrap();
-    let swig_authority = Keypair::new();
+    let root = Keypair::new();
     let recipient = Keypair::new();
-
-    context
-        .svm
-        .airdrop(&recipient.pubkey(), 1_000_000_000)
-        .unwrap();
-    context
-        .svm
-        .airdrop(&swig_authority.pubkey(), 1_000_000_000)
-        .unwrap();
-
-    let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
-    let (swig_wallet_address, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    airdrop(&mut context, &[&recipient]);
+    let (swig, wallet) = new_swig(&mut context, &root);
 
     let mint_a = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let mint_b = setup_mint(&mut context.svm, &context.default_payer).unwrap();
-    let swig_ata_a = setup_ata(
-        &mut context.svm,
-        &mint_a,
-        &swig_wallet_address,
-        &context.default_payer,
-    )
-    .unwrap();
-    let swig_ata_b = setup_ata(
-        &mut context.svm,
-        &mint_b,
-        &swig_wallet_address,
-        &context.default_payer,
-    )
-    .unwrap();
-    let recipient_ata_a = setup_ata(
-        &mut context.svm,
-        &mint_a,
-        &recipient.pubkey(),
-        &context.default_payer,
-    )
-    .unwrap();
-    let recipient_ata_b = setup_ata(
-        &mut context.svm,
-        &mint_b,
-        &recipient.pubkey(),
-        &context.default_payer,
-    )
-    .unwrap();
+    let source_a = token_account(&mut context, &mint_a, &wallet, 1_000);
+    let source_b = token_account(&mut context, &mint_b, &wallet, 1_000);
+    let destination_a = token_account(&mut context, &mint_a, &recipient.pubkey(), 0);
+    let destination_b = token_account(&mut context, &mint_b, &recipient.pubkey(), 0);
 
-    mint_to(
-        &mut context.svm,
-        &mint_a,
-        &context.default_payer,
-        &swig_ata_a,
-        1000,
-    )
-    .unwrap();
-    mint_to(
-        &mut context.svm,
-        &mint_b,
-        &context.default_payer,
-        &swig_ata_b,
-        1000,
-    )
-    .unwrap();
-
-    let _ = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
-
-    let second_authority = Keypair::new();
-    context
-        .svm
-        .airdrop(&second_authority.pubkey(), 1_000_000_000)
-        .unwrap();
-
-    let window = 10u64;
-    let recurring_amount = 5u64;
-    // litesvm boots at a high slot; capture it so warps always move forward.
     let start_slot = context.svm.get_sysvar::<solana_sdk::clock::Clock>().slot;
-    let _txn = add_authority_with_ed25519_root(
+    let (window, allowance) = (10u64, 5u64);
+    let authority = add_role(
         &mut context,
         &swig,
-        &swig_authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::Ed25519,
-            authority: second_authority.pubkey().as_ref(),
-        },
+        &root,
         vec![
             ClientAction::ProgramAll(ProgramAll {}),
             ClientAction::TokenRecurringLimit(TokenRecurringLimit {
                 token_mint: WILDCARD,
                 window,
-                limit: recurring_amount,
-                current: recurring_amount,
+                limit: allowance,
+                current: allowance,
                 last_reset: 0,
             }),
         ],
-    )
-    .unwrap();
+    );
 
-    context
-        .svm
-        .airdrop(&swig_wallet_address, 2_000_000_000)
-        .unwrap();
-
-    // Spend across both mints without changing the recurring ledger.
     send_token_transfer(
         &mut context,
         &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_a,
-        &recipient_ata_a,
+        &wallet,
+        &authority,
+        &source_a,
+        &destination_a,
         2,
     )
     .unwrap()
@@ -625,132 +333,70 @@ fn test_wildcard_recurring_limit_is_unlimited_across_windows() {
     send_token_transfer(
         &mut context,
         &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_b,
-        &recipient_ata_b,
+        &wallet,
+        &authority,
+        &source_b,
+        &destination_b,
         3,
     )
     .unwrap()
     .unwrap();
+    assert_eq!(
+        recurring_limit(&context, &swig, &WILDCARD),
+        (allowance, allowance, window, 0)
+    );
 
-    let recurring = with_role_1(&context, &swig, |role| {
-        let a = role
-            .get_action::<TokenRecurringLimit>(&WILDCARD)
-            .unwrap()
-            .unwrap();
-        (a.current, a.limit, a.window, a.last_reset)
-    })
-    .unwrap();
-    assert_eq!(recurring, (recurring_amount, recurring_amount, window, 0));
-
-    // Even a spend larger than the stored window allowance succeeds.
-    let res = send_token_transfer(
-        &mut context,
-        &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_a,
-        &recipient_ata_a,
-        6,
-    )
-    .unwrap();
-    res.unwrap();
-
-    // Crossing a window does not reset or mutate a wildcard ledger.
-    context.svm.warp_to_slot(start_slot + window + 1);
-
+    // A spend larger than the stored window allowance still succeeds.
     send_token_transfer(
         &mut context,
         &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_a,
-        &recipient_ata_a,
-        5,
+        &wallet,
+        &authority,
+        &source_a,
+        &destination_a,
+        6,
     )
     .unwrap()
     .unwrap();
 
-    assert_eq!(token_balance(&context, &recipient_ata_a), 13);
-    let recurring = with_role_1(&context, &swig, |role| {
-        let a = role
-            .get_action::<TokenRecurringLimit>(&WILDCARD)
-            .unwrap()
-            .unwrap();
-        (a.current, a.limit, a.window, a.last_reset)
-    })
-    .unwrap();
-    assert_eq!(recurring, (recurring_amount, recurring_amount, window, 0));
-}
-
-/// A token destination limit with a wildcard destination covers transfers
-/// of that mint to any recipient token account.
-#[test_log::test]
-fn test_wildcard_destination_limit_covers_any_destination() {
-    let mut context = setup_test_context().unwrap();
-    let swig_authority = Keypair::new();
-    let recipient_1 = Keypair::new();
-    let recipient_2 = Keypair::new();
-
-    for kp in [&recipient_1, &recipient_2, &swig_authority] {
-        context.svm.airdrop(&kp.pubkey(), 1_000_000_000).unwrap();
-    }
-
-    let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
-    let (swig_wallet_address, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
-
-    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
-    let swig_ata = setup_ata(
-        &mut context.svm,
-        &mint,
-        &swig_wallet_address,
-        &context.default_payer,
-    )
-    .unwrap();
-    let recipient_ata_1 = setup_ata(
-        &mut context.svm,
-        &mint,
-        &recipient_1.pubkey(),
-        &context.default_payer,
-    )
-    .unwrap();
-    let recipient_ata_2 = setup_ata(
-        &mut context.svm,
-        &mint,
-        &recipient_2.pubkey(),
-        &context.default_payer,
-    )
-    .unwrap();
-
-    mint_to(
-        &mut context.svm,
-        &mint,
-        &context.default_payer,
-        &swig_ata,
-        1000,
-    )
-    .unwrap();
-
-    let _ = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
-
-    let second_authority = Keypair::new();
-    context
-        .svm
-        .airdrop(&second_authority.pubkey(), 1_000_000_000)
-        .unwrap();
-
-    // 50 tokens of `mint` may go to ANY destination.
-    let _txn = add_authority_with_ed25519_root(
+    // Crossing a window neither resets nor debits a wildcard ledger.
+    context.svm.warp_to_slot(start_slot + window + 1);
+    send_token_transfer(
         &mut context,
         &swig,
-        &swig_authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::Ed25519,
-            authority: second_authority.pubkey().as_ref(),
-        },
+        &wallet,
+        &authority,
+        &source_a,
+        &destination_a,
+        5,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(token_balance(&context, &destination_a), 13);
+    assert_eq!(
+        recurring_limit(&context, &swig, &WILDCARD),
+        (allowance, allowance, window, 0)
+    );
+}
+
+#[test_log::test]
+fn wildcard_destination_covers_any_account() {
+    let mut context = setup_test_context().unwrap();
+    let root = Keypair::new();
+    let recipient_1 = Keypair::new();
+    let recipient_2 = Keypair::new();
+    airdrop(&mut context, &[&recipient_1, &recipient_2]);
+    let (swig, wallet) = new_swig(&mut context, &root);
+
+    let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
+    let source = token_account(&mut context, &mint, &wallet, 1_000);
+    let destination_1 = token_account(&mut context, &mint, &recipient_1.pubkey(), 0);
+    let destination_2 = token_account(&mut context, &mint, &recipient_2.pubkey(), 0);
+
+    let authority = add_role(
+        &mut context,
+        &swig,
+        &root,
         vec![
             ClientAction::ProgramAll(ProgramAll {}),
             ClientAction::TokenDestinationLimit(TokenDestinationLimit {
@@ -759,142 +405,60 @@ fn test_wildcard_destination_limit_covers_any_destination() {
                 amount: 50,
             }),
         ],
-    )
-    .unwrap();
+    );
 
-    context
-        .svm
-        .airdrop(&swig_wallet_address, 2_000_000_000)
+    for destination in [&destination_1, &destination_2] {
+        send_token_transfer(
+            &mut context,
+            &swig,
+            &wallet,
+            &authority,
+            &source,
+            destination,
+            20,
+        )
+        .unwrap()
         .unwrap();
+    }
+    let mint_bytes = mint.to_bytes();
+    assert_eq!(
+        destination_limit(&context, &swig, mint_bytes.as_ref(), &WILDCARD),
+        10
+    );
 
-    send_token_transfer(
+    let over = send_token_transfer(
         &mut context,
         &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata,
-        &recipient_ata_1,
-        20,
-    )
-    .unwrap()
-    .unwrap();
-    send_token_transfer(
-        &mut context,
-        &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata,
-        &recipient_ata_2,
-        20,
-    )
-    .unwrap()
-    .unwrap();
-
-    let limit_action = with_role_1(&context, &swig, |role| {
-        role.get_action::<TokenDestinationLimit>(&[mint.to_bytes(), WILDCARD].concat())
-            .unwrap()
-            .unwrap()
-            .amount
-    })
-    .unwrap();
-    assert_eq!(limit_action, 10);
-
-    // A transfer exceeding the remainder of the wildcard bucket fails.
-    let res = send_token_transfer(
-        &mut context,
-        &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata,
-        &recipient_ata_1,
+        &wallet,
+        &authority,
+        &source,
+        &destination_1,
         11,
     )
     .unwrap();
-    assert!(res.is_err());
+    assert!(over.is_err());
 }
 
-/// A destination limit with both fields wildcarded covers any mint to any
-/// destination.
 #[test_log::test]
-fn test_fully_wildcard_destination_limit() {
+fn fully_wildcarded_destination_is_unlimited() {
     let mut context = setup_test_context().unwrap();
-    let swig_authority = Keypair::new();
+    let root = Keypair::new();
     let recipient_1 = Keypair::new();
     let recipient_2 = Keypair::new();
-
-    for kp in [&recipient_1, &recipient_2, &swig_authority] {
-        context.svm.airdrop(&kp.pubkey(), 1_000_000_000).unwrap();
-    }
-
-    let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
-    let (swig_wallet_address, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    airdrop(&mut context, &[&recipient_1, &recipient_2]);
+    let (swig, wallet) = new_swig(&mut context, &root);
 
     let mint_a = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let mint_b = setup_mint(&mut context.svm, &context.default_payer).unwrap();
-    let swig_ata_a = setup_ata(
-        &mut context.svm,
-        &mint_a,
-        &swig_wallet_address,
-        &context.default_payer,
-    )
-    .unwrap();
-    let swig_ata_b = setup_ata(
-        &mut context.svm,
-        &mint_b,
-        &swig_wallet_address,
-        &context.default_payer,
-    )
-    .unwrap();
-    let recipient_ata_a = setup_ata(
-        &mut context.svm,
-        &mint_a,
-        &recipient_1.pubkey(),
-        &context.default_payer,
-    )
-    .unwrap();
-    let recipient_ata_b = setup_ata(
-        &mut context.svm,
-        &mint_b,
-        &recipient_2.pubkey(),
-        &context.default_payer,
-    )
-    .unwrap();
+    let source_a = token_account(&mut context, &mint_a, &wallet, 1_000);
+    let source_b = token_account(&mut context, &mint_b, &wallet, 1_000);
+    let destination_a = token_account(&mut context, &mint_a, &recipient_1.pubkey(), 0);
+    let destination_b = token_account(&mut context, &mint_b, &recipient_2.pubkey(), 0);
 
-    mint_to(
-        &mut context.svm,
-        &mint_a,
-        &context.default_payer,
-        &swig_ata_a,
-        1000,
-    )
-    .unwrap();
-    mint_to(
-        &mut context.svm,
-        &mint_b,
-        &context.default_payer,
-        &swig_ata_b,
-        1000,
-    )
-    .unwrap();
-
-    let _ = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
-
-    let second_authority = Keypair::new();
-    context
-        .svm
-        .airdrop(&second_authority.pubkey(), 1_000_000_000)
-        .unwrap();
-
-    let _txn = add_authority_with_ed25519_root(
+    let authority = add_role(
         &mut context,
         &swig,
-        &swig_authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::Ed25519,
-            authority: second_authority.pubkey().as_ref(),
-        },
+        &root,
         vec![
             ClientAction::ProgramAll(ProgramAll {}),
             ClientAction::TokenDestinationLimit(TokenDestinationLimit {
@@ -903,22 +467,15 @@ fn test_fully_wildcard_destination_limit() {
                 amount: 60,
             }),
         ],
-    )
-    .unwrap();
+    );
 
-    context
-        .svm
-        .airdrop(&swig_wallet_address, 2_000_000_000)
-        .unwrap();
-
-    // Any mint to any destination is unlimited.
     send_token_transfer(
         &mut context,
         &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_a,
-        &recipient_ata_a,
+        &wallet,
+        &authority,
+        &source_a,
+        &destination_a,
         30,
     )
     .unwrap()
@@ -926,147 +483,57 @@ fn test_fully_wildcard_destination_limit() {
     send_token_transfer(
         &mut context,
         &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_b,
-        &recipient_ata_b,
+        &wallet,
+        &authority,
+        &source_b,
+        &destination_b,
         20,
     )
     .unwrap()
     .unwrap();
+    assert_eq!(destination_limit(&context, &swig, &WILDCARD, &WILDCARD), 60);
 
-    let limit_action = with_role_1(&context, &swig, |role| {
-        role.get_action::<TokenDestinationLimit>(&[WILDCARD, WILDCARD].concat())
-            .unwrap()
-            .unwrap()
-            .amount
-    })
-    .unwrap();
-    assert_eq!(limit_action, 60);
-
-    // The stored amount does not cap spending.
-    let res = send_token_transfer(
+    // The stored amount does not cap a fully wildcarded destination.
+    send_token_transfer(
         &mut context,
         &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_b,
-        &recipient_ata_b,
+        &wallet,
+        &authority,
+        &source_b,
+        &destination_b,
         61,
     )
+    .unwrap()
     .unwrap();
-    res.unwrap();
 }
 
-/// Exact pairs stack with (mint, wildcard) and (wildcard, destination);
-/// uncovered destinations
-/// remain rejected even when wildcard limits for other pairs exist.
 #[test_log::test]
-fn test_destination_wildcard_specificity_and_coverage() {
+fn wildcard_destination_scopes_stack_and_stay_scoped() {
     let mut context = setup_test_context().unwrap();
-    let swig_authority = Keypair::new();
-    let recipient_1 = Keypair::new();
-    let recipient_2 = Keypair::new();
-    let recipient_3 = Keypair::new();
-    let recipient_4 = Keypair::new();
-
-    for kp in [
-        &recipient_1,
-        &recipient_2,
-        &recipient_3,
-        &recipient_4,
-        &swig_authority,
-    ] {
-        context.svm.airdrop(&kp.pubkey(), 1_000_000_000).unwrap();
-    }
-
-    let id = rand::random::<[u8; 32]>();
-    let swig = Pubkey::find_program_address(&swig_account_seeds(&id), &program_id()).0;
-    let (swig_wallet_address, _) =
-        Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id());
+    let root = Keypair::new();
+    let recipients = [
+        Keypair::new(),
+        Keypair::new(),
+        Keypair::new(),
+        Keypair::new(),
+    ];
+    let recipient_refs: Vec<&Keypair> = recipients.iter().collect();
+    airdrop(&mut context, &recipient_refs);
+    let (swig, wallet) = new_swig(&mut context, &root);
 
     let mint_x = setup_mint(&mut context.svm, &context.default_payer).unwrap();
     let mint_y = setup_mint(&mut context.svm, &context.default_payer).unwrap();
-    let swig_ata_x = setup_ata(
-        &mut context.svm,
-        &mint_x,
-        &swig_wallet_address,
-        &context.default_payer,
-    )
-    .unwrap();
-    let swig_ata_y = setup_ata(
-        &mut context.svm,
-        &mint_y,
-        &swig_wallet_address,
-        &context.default_payer,
-    )
-    .unwrap();
-    let dest_x_1 = setup_ata(
-        &mut context.svm,
-        &mint_x,
-        &recipient_1.pubkey(),
-        &context.default_payer,
-    )
-    .unwrap();
-    let dest_x_3 = setup_ata(
-        &mut context.svm,
-        &mint_x,
-        &recipient_3.pubkey(),
-        &context.default_payer,
-    )
-    .unwrap();
-    let dest_y_2 = setup_ata(
-        &mut context.svm,
-        &mint_y,
-        &recipient_2.pubkey(),
-        &context.default_payer,
-    )
-    .unwrap();
-    let dest_y_4 = setup_ata(
-        &mut context.svm,
-        &mint_y,
-        &recipient_4.pubkey(),
-        &context.default_payer,
-    )
-    .unwrap();
+    let source_x = token_account(&mut context, &mint_x, &wallet, 1_000);
+    let source_y = token_account(&mut context, &mint_y, &wallet, 1_000);
+    let dest_x_1 = token_account(&mut context, &mint_x, &recipients[0].pubkey(), 0);
+    let dest_x_3 = token_account(&mut context, &mint_x, &recipients[2].pubkey(), 0);
+    let dest_y_2 = token_account(&mut context, &mint_y, &recipients[1].pubkey(), 0);
+    let dest_y_4 = token_account(&mut context, &mint_y, &recipients[3].pubkey(), 0);
 
-    mint_to(
-        &mut context.svm,
-        &mint_x,
-        &context.default_payer,
-        &swig_ata_x,
-        1000,
-    )
-    .unwrap();
-    mint_to(
-        &mut context.svm,
-        &mint_y,
-        &context.default_payer,
-        &swig_ata_y,
-        1000,
-    )
-    .unwrap();
-
-    let _ = create_swig_ed25519(&mut context, &swig_authority, id).unwrap();
-
-    let second_authority = Keypair::new();
-    context
-        .svm
-        .airdrop(&second_authority.pubkey(), 1_000_000_000)
-        .unwrap();
-
-    // Tiers:
-    //   (mint_x, dest_x_1): 20   exact pair
-    //   (mint_x, WILD):     100  any destination for mint_x
-    //   (WILD, dest_y_2):   unlimited any mint into dest_y_2
-    let _txn = add_authority_with_ed25519_root(
+    let authority = add_role(
         &mut context,
         &swig,
-        &swig_authority,
-        AuthorityConfig {
-            authority_type: AuthorityType::Ed25519,
-            authority: second_authority.pubkey().as_ref(),
-        },
+        &root,
         vec![
             ClientAction::ProgramAll(ProgramAll {}),
             ClientAction::TokenDestinationLimit(TokenDestinationLimit {
@@ -1085,138 +552,93 @@ fn test_destination_wildcard_specificity_and_coverage() {
                 amount: 100,
             }),
         ],
-    )
-    .unwrap();
+    );
 
-    context
-        .svm
-        .airdrop(&swig_wallet_address, 2_000_000_000)
-        .unwrap();
+    let mint_x_bytes = mint_x.to_bytes();
+    let dest_x_1_bytes = dest_x_1.to_bytes();
+    let dest_y_2_bytes = dest_y_2.to_bytes();
 
-    // 1. The exact pair and the mint-wide wildcard both charge.
+    // The exact pair and the mint-wide wildcard both charge.
     send_token_transfer(
         &mut context,
         &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_x,
+        &wallet,
+        &authority,
+        &source_x,
         &dest_x_1,
         15,
     )
     .unwrap()
     .unwrap();
+    assert_eq!(
+        destination_limit(&context, &swig, &mint_x_bytes, &dest_x_1_bytes),
+        5
+    );
+    assert_eq!(
+        destination_limit(&context, &swig, &mint_x_bytes, &WILDCARD),
+        85
+    );
 
-    let exact = with_role_1(&context, &swig, |role| {
-        role.get_action::<TokenDestinationLimit>(
-            [mint_x.to_bytes(), dest_x_1.to_bytes()].concat().as_ref(),
-        )
-        .unwrap()
-        .unwrap()
-        .amount
-    })
-    .unwrap();
-    assert_eq!(exact, 5);
-    let mint_wild = with_role_1(&context, &swig, |role| {
-        role.get_action::<TokenDestinationLimit>([mint_x.to_bytes(), WILDCARD].concat().as_ref())
-            .unwrap()
-            .unwrap()
-            .amount
-    })
-    .unwrap();
-    assert_eq!(mint_wild, 85);
-
-    // 2. A different destination for mint_x drafts (mint_x, WILD).
+    // Another destination for mint X only charges the mint-wide wildcard.
     send_token_transfer(
         &mut context,
         &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_x,
+        &wallet,
+        &authority,
+        &source_x,
         &dest_x_3,
         40,
     )
     .unwrap()
     .unwrap();
+    assert_eq!(
+        destination_limit(&context, &swig, &mint_x_bytes, &WILDCARD),
+        45
+    );
 
-    let mint_wild = with_role_1(&context, &swig, |role| {
-        role.get_action::<TokenDestinationLimit>([mint_x.to_bytes(), WILDCARD].concat().as_ref())
-            .unwrap()
-            .unwrap()
-            .amount
-    })
-    .unwrap();
-    assert_eq!(mint_wild, 45);
-
-    // 3. mint_y into dest_y_2 is unlimited within that destination scope.
+    // Mint Y into dest_y_2 is unlimited within the wildcard-mint scope.
     send_token_transfer(
         &mut context,
         &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_y,
+        &wallet,
+        &authority,
+        &source_y,
         &dest_y_2,
         25,
     )
     .unwrap()
     .unwrap();
+    assert_eq!(
+        destination_limit(&context, &swig, &WILDCARD, &dest_y_2_bytes),
+        30
+    );
 
-    let wild_mint = with_role_1(&context, &swig, |role| {
-        role.get_action::<TokenDestinationLimit>([WILDCARD, dest_y_2.to_bytes()].concat().as_ref())
-            .unwrap()
-            .unwrap()
-            .amount
-    })
-    .unwrap();
-    assert_eq!(wild_mint, 30);
-
-    // 4. A destination covered by no wildcard tier stays rejected even
-    // though wildcard limits exist for this role.
-    let res = send_token_transfer(
+    // An uncovered destination stays rejected even though wildcards exist.
+    let uncovered = send_token_transfer(
         &mut context,
         &swig,
-        &swig_wallet_address,
-        &second_authority,
-        &swig_ata_y,
+        &wallet,
+        &authority,
+        &source_y,
         &dest_y_4,
         1,
     )
     .unwrap();
-    assert!(res.is_err());
+    assert!(uncovered.is_err());
 }
 
-/// Every exact-mint lifetime/window pair applies, regardless of action order.
-/// Mint wildcards stay unchanged and cannot bypass any exact-mint budget.
 #[test_log::test]
-fn every_applicable_scope_and_pair_charges_atomically_across_windows() {
+fn all_scopes_charge_atomically_across_windows() {
     for reverse in [false, true] {
         let mut context = setup_test_context().unwrap();
         let root = Keypair::new();
-        let signer = Keypair::new();
-        for key in [&root, &signer] {
-            context.svm.airdrop(&key.pubkey(), 1_000_000_000).unwrap();
-        }
-        let id = rand::random();
-        let (swig, _) = create_swig_ed25519(&mut context, &root, id).unwrap();
-        let wallet =
-            Pubkey::find_program_address(&swig_wallet_address_seeds(swig.as_ref()), &program_id())
-                .0;
+        let (swig, wallet) = new_swig(&mut context, &root);
         let mint = setup_mint(&mut context.svm, &context.default_payer).unwrap();
-        let source = setup_ata(&mut context.svm, &mint, &wallet, &context.default_payer).unwrap();
-        let destination = setup_ata(
-            &mut context.svm,
-            &mint,
-            &signer.pubkey(),
-            &context.default_payer,
-        )
-        .unwrap();
-        mint_to(
-            &mut context.svm,
-            &mint,
-            &context.default_payer,
-            &source,
-            100,
-        )
-        .unwrap();
+        let source = token_account(&mut context, &mint, &wallet, 100);
+        let recipient = Keypair::new();
+        airdrop(&mut context, &[&recipient]);
+        let destination = token_account(&mut context, &mint, &recipient.pubkey(), 0);
+
         context.svm.warp_to_slot(100);
         let scopes = [
             (mint.to_bytes(), destination.to_bytes(), 18, 5),
@@ -1224,8 +646,9 @@ fn every_applicable_scope_and_pair_charges_atomically_across_windows() {
             (WILDCARD, destination.to_bytes(), 14, 3),
             (WILDCARD, WILDCARD, 12, 2),
         ];
+        let general = [(mint.to_bytes(), 20, 6), (WILDCARD, 30, 9)];
         let mut actions = vec![ClientAction::ProgramAll(ProgramAll {})];
-        for (key, lifetime, window) in [(mint.to_bytes(), 20, 6), (WILDCARD, 30, 9)] {
+        for (key, lifetime, window) in general {
             actions.push(ClientAction::TokenLimit(TokenLimit {
                 token_mint: key,
                 current_amount: lifetime,
@@ -1258,17 +681,8 @@ fn every_applicable_scope_and_pair_charges_atomically_across_windows() {
         if reverse {
             actions.reverse();
         }
-        add_authority_with_ed25519_root(
-            &mut context,
-            &swig,
-            &root,
-            AuthorityConfig {
-                authority_type: AuthorityType::Ed25519,
-                authority: signer.pubkey().as_ref(),
-            },
-            actions,
-        )
-        .unwrap();
+        let authority = add_role(&mut context, &swig, &root, actions);
+
         for window in 0..4 {
             context.svm.warp_to_slot(100 + window * 11);
             context.svm.expire_blockhash();
@@ -1276,58 +690,59 @@ fn every_applicable_scope_and_pair_charges_atomically_across_windows() {
                 &mut context,
                 &swig,
                 &wallet,
-                &signer,
+                &authority,
                 &source,
                 &destination,
                 4,
             )
             .unwrap()
             .unwrap();
+
             with_role_1(&context, &swig, |role| {
-                for (key, dest, lifetime, recurring) in scopes {
-                    let spent = if key == WILDCARD { 0 } else { 4 };
-                    let key = [key, dest].concat();
+                for (mint, dest, lifetime, recurring) in scopes {
+                    let spent = if mint == WILDCARD { 0 } else { 4 };
                     assert_eq!(
-                        role.get_action::<TokenDestinationLimit>(&key)
+                        role.get_action::<TokenDestinationLimit>(&[mint, dest].concat())
                             .unwrap()
                             .unwrap()
                             .amount,
                         lifetime - spent * (window + 1)
                     );
                     assert_eq!(
-                        role.get_action::<TokenRecurringDestinationLimit>(&key)
+                        role.get_action::<TokenRecurringDestinationLimit>(&[mint, dest].concat())
                             .unwrap()
                             .unwrap()
                             .current_amount,
                         recurring - spent
                     );
                 }
-                for (key, lifetime, recurring) in [(mint.to_bytes(), 20, 6), (WILDCARD, 30, 9)] {
-                    let spent = if key == WILDCARD { 0 } else { 4 };
+                for (mint, lifetime, recurring) in general {
+                    let spent = if mint == WILDCARD { 0 } else { 4 };
                     assert_eq!(
-                        role.get_action::<TokenLimit>(&key)
+                        role.get_action::<TokenLimit>(&mint)
                             .unwrap()
                             .unwrap()
                             .current_amount,
                         lifetime - spent * (window + 1)
                     );
                     assert_eq!(
-                        role.get_action::<TokenRecurringLimit>(&key)
+                        role.get_action::<TokenRecurringLimit>(&mint)
                             .unwrap()
                             .unwrap()
                             .current,
                         recurring - spent
                     );
                 }
-            })
-            .unwrap();
+            });
+
+            // A debit that exceeds any applicable ledger changes nothing.
             let before = context.svm.get_account(&swig).unwrap().data;
             let balance = token_balance(&context, &source);
             let error = send_token_transfer(
                 &mut context,
                 &swig,
                 &wallet,
-                &signer,
+                &authority,
                 &source,
                 &destination,
                 1,
@@ -1344,14 +759,15 @@ fn every_applicable_scope_and_pair_charges_atomically_across_windows() {
             assert_eq!(context.svm.get_account(&swig).unwrap().data, before);
             assert_eq!(token_balance(&context, &source), balance);
         }
-        // A fresh window cannot replenish the exact-mint any-destination lifetime.
+
+        // A fresh window cannot refill an exhausted exact-mint lifetime.
         context.svm.warp_to_slot(200);
         context.svm.expire_blockhash();
         assert!(send_token_transfer(
             &mut context,
             &swig,
             &wallet,
-            &signer,
+            &authority,
             &source,
             &destination,
             1

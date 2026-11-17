@@ -162,10 +162,10 @@ pub(crate) fn check_lockable_mint(
 /// A role's active locks must always fit within this amount, so it cannot hold
 /// a reservation it could never spend.
 ///
-/// SignV2 charges both ledgers of every applicable exact-mint scope. Wildcard
-/// mints authorize unlimited spend. Capacity follows those same bounds.
-/// Recurring limits count what is left in
-/// the current window, or the full allowance once SignV2 would reset it.
+/// SignV2 charges every applicable exact-mint token ledger; wildcard mints are
+/// unlimited. Native SOL capacity is the smaller of the role's general and
+/// destination bounds. Recurring limits count what is left in the current
+/// window, or the full allowance once SignV2 would reset it.
 pub(crate) fn remaining_spend_capacity(
     actions: &[u8],
     mint: &[u8; 32],
@@ -407,8 +407,8 @@ enum LimitKind {
     },
 }
 
-/// Identifies a native SOL destination. Token scope capacity is handled by
-/// `TokenCapacity`, which also accounts for overlapping destination scopes.
+/// Identifies a native SOL destination. Token capacity is computed separately
+/// by [`crate::token_limit_capacity::TokenCapacity`].
 #[derive(PartialEq)]
 enum DestinationKey {
     Sol([u8; 32]),

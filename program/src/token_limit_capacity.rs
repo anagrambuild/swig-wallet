@@ -1,5 +1,8 @@
-//! Token capacity mirrors SignV2's restrictive exact/wildcard charging.
-//! Wildcard mints authorize unlimited spend; exact-mint budgets back locks.
+//! Token capacity for authorization locks.
+//!
+//! Mirrors SignV2: exact-mint one-shot and recurring budgets bound the mint and
+//! destination budgets bound the destinations they cover. A wildcard mint is
+//! unlimited, so it never reduces capacity.
 
 extern crate alloc;
 use alloc::{vec, vec::Vec};
@@ -136,7 +139,7 @@ impl TokenCapacity {
             .unwrap_or(u64::MAX)
     }
 
-    fn open_destinations(&self, mint: &[u8; 32]) -> bool {
+    fn allows_unlisted_destinations(&self, mint: &[u8; 32]) -> bool {
         let mut restricted = false;
         for b in self.budgets.iter().filter(|b| covers_field(&b.mint, mint)) {
             if b.destination == Some(WILDCARD) {
@@ -147,48 +150,42 @@ impl TokenCapacity {
         !restricted
     }
 
-    fn edge_bound(&self, mint: &[u8; 32], destination: Option<[u8; 32]>) -> u64 {
-        let bound = destination.and_then(|d| {
-            self.budgets
-                .iter()
-                .filter(|b| covers_field(&b.mint, mint) && b.destination == Some(d))
-                .map(Budget::capacity)
-                .min()
-        });
-        bound.unwrap_or_else(|| {
-            if self.open_destinations(mint) {
-                u64::MAX
-            } else {
-                0
-            }
-        })
+    fn destination_bound(&self, mint: &[u8; 32], destination: [u8; 32]) -> u64 {
+        self.budgets
+            .iter()
+            .filter(|b| covers_field(&b.mint, mint) && b.destination == Some(destination))
+            .map(Budget::capacity)
+            .min()
+            .unwrap_or(0)
     }
 
     pub(crate) fn remaining(&self, mint: &[u8; 32]) -> u64 {
         if !self.budgets.iter().any(|b| covers_field(&b.mint, mint)) {
             return 0;
         }
-        let destination = if self.open_destinations(mint) {
-            u64::MAX
-        } else {
-            self.budgets
-                .iter()
-                .enumerate()
-                .filter_map(|(index, b)| {
-                    let d = b.destination?;
-                    if d == WILDCARD
-                        || !covers_field(&b.mint, mint)
-                        || self.budgets[..index].iter().any(|earlier| {
-                            earlier.destination == Some(d) && covers_field(&earlier.mint, mint)
-                        })
-                    {
-                        return None;
-                    }
-                    Some(self.edge_bound(mint, Some(d)))
-                })
-                .fold(0u64, u64::saturating_add)
-        };
-        self.aggregate_bound(mint).min(destination)
+        let aggregate = self.aggregate_bound(mint);
+        if self.allows_unlisted_destinations(mint) {
+            return aggregate;
+        }
+
+        // Each named destination can only spend its own pair budget. Exact and
+        // wildcard budgets for the same destination share that bound.
+        let mut destinations: Vec<([u8; 32], u64)> = Vec::new();
+        for budget in self.budgets.iter().filter(|b| covers_field(&b.mint, mint)) {
+            let Some(destination) = budget.destination else {
+                continue;
+            };
+            if destination == WILDCARD
+                || destinations.iter().any(|(known, _)| *known == destination)
+            {
+                continue;
+            }
+            destinations.push((destination, self.destination_bound(mint, destination)));
+        }
+        let named = destinations
+            .iter()
+            .fold(0u64, |total, (_, capacity)| total.saturating_add(*capacity));
+        aggregate.min(named)
     }
 }
 

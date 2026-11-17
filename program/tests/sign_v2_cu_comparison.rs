@@ -47,8 +47,8 @@ fn compare_sign_v2_role_compute_units() {
     // release build at e786993, CI run 42046809735. No additional margin is added.
     // All retains its existing authorization-lock ceiling.
     // Wildcard scopes compose with exact scopes, so the token destination
-    // walker must visit every applicable key rather than stop at the first
-    // exact hit; that measured +29 CU in the local SBPF v3 build.
+    // walker visits every applicable key instead of stopping at the first exact
+    // hit. That adds ~25 CU in the pinned build (+23 locally).
     for (path, actual, baseline) in [
         ("All", all, 5_080),
         ("SOL limit", sol_limit, 6_371),

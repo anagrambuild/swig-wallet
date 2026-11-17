@@ -1300,11 +1300,11 @@ fn require_destination_debit(
     }
 }
 
-/// Applies every matching exact and wildcard scope in one actions scan.
-/// Wildcard mints authorize unlimited spend without changing their ledgers;
-/// all matching exact-mint one-shot and recurring ledgers are charged. As with
-/// exact lookups, only the first action of each type and key is charged for
-/// legacy roles containing duplicate actions.
+/// Charges every applicable token limit for one debit.
+///
+/// Exact and wildcard scopes both charge. Wildcard-mint actions are unlimited,
+/// so their ledgers are left untouched. For legacy action sets with duplicate
+/// scopes, only the first action of each ledger type is charged.
 #[inline(always)]
 pub(super) fn charge_token_limits(
     actions: &mut [u8],
@@ -1315,6 +1315,7 @@ pub(super) fn charge_token_limits(
 ) -> Result<bool, ProgramError> {
     let mut cursor = 0;
     let mut seen = 0u16;
+    let destination_scoped = destination.is_some();
     while cursor < actions.len() {
         let header_end = cursor + Action::LEN;
         let header = actions
@@ -1326,7 +1327,7 @@ pub(super) fn charge_token_limits(
         if action.boundary() as usize != end || end > actions.len() {
             return Err(ProgramError::InvalidAccountData);
         }
-        let recurring = match (destination.is_some(), permission) {
+        let recurring = match (destination_scoped, permission) {
             (false, Permission::TokenLimit) | (true, Permission::TokenDestinationLimit) => false,
             (false, Permission::TokenRecurringLimit)
             | (true, Permission::TokenRecurringDestinationLimit) => true,
@@ -1343,38 +1344,41 @@ pub(super) fn charge_token_limits(
             cursor = end;
             continue;
         }
-        let (matches, scope) = if let Some(destination) = destination {
+        let scope = if let Some(destination) = destination {
             let action_dest = data.get(32..64).ok_or(ProgramError::InvalidAccountData)?;
             let dest_exact = action_dest == destination;
             let dest_wild = !dest_exact && is_wildcard(action_dest);
-            (
-                dest_exact || dest_wild,
-                (mint_wild as u16) * 2 + dest_wild as u16,
-            )
+            if !dest_exact && !dest_wild {
+                cursor = end;
+                continue;
+            }
+            (mint_wild as u16) * 2 + dest_wild as u16
         } else {
-            (true, mint_wild as u16)
+            mint_wild as u16
         };
         let bit = 1u16 << (scope * 2 + recurring as u16);
-        if matches && seen & bit == 0 {
-            let data = &mut actions[header_end..end];
-            match permission {
-                Permission::TokenLimit => {
-                    unsafe { TokenLimit::load_mut_unchecked(data)? }.run(amount)?
-                },
-                Permission::TokenRecurringLimit => {
-                    unsafe { TokenRecurringLimit::load_mut_unchecked(data)? }.run(amount, slot)?
-                },
-                Permission::TokenDestinationLimit => {
-                    unsafe { TokenDestinationLimit::load_mut_unchecked(data)? }.run(amount)?
-                },
-                Permission::TokenRecurringDestinationLimit => {
-                    unsafe { TokenRecurringDestinationLimit::load_mut_unchecked(data)? }
-                        .run(amount, slot)?
-                },
-                _ => unreachable!(),
-            }
-            seen |= bit;
+        if seen & bit != 0 {
+            cursor = end;
+            continue;
         }
+        let data = &mut actions[header_end..end];
+        match permission {
+            Permission::TokenLimit => {
+                unsafe { TokenLimit::load_mut_unchecked(data)? }.run(amount)?
+            },
+            Permission::TokenRecurringLimit => {
+                unsafe { TokenRecurringLimit::load_mut_unchecked(data)? }.run(amount, slot)?
+            },
+            Permission::TokenDestinationLimit => {
+                unsafe { TokenDestinationLimit::load_mut_unchecked(data)? }.run(amount)?
+            },
+            Permission::TokenRecurringDestinationLimit => {
+                unsafe { TokenRecurringDestinationLimit::load_mut_unchecked(data)? }
+                    .run(amount, slot)?
+            },
+            _ => unreachable!(),
+        }
+        seen |= bit;
         cursor = end;
     }
     Ok(seen != 0)
