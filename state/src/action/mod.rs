@@ -30,6 +30,7 @@ pub mod token_destination_limit;
 pub mod token_limit;
 pub mod token_recurring_destination_limit;
 pub mod token_recurring_limit;
+pub mod wildcard;
 use all::All;
 use all_but_manage_authority::AllButManageAuthority;
 use close_swig_authority::CloseSwigAuthority;
