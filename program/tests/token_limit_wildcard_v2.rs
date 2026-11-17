@@ -3,8 +3,8 @@
 //!
 //! Wildcard keys (all-0xFF) in the mint and/or destination fields of token
 //! limit actions let a single action cover any mint and/or any destination.
-//! Every applicable exact and wildcard scope is charged, including both
-//! one-shot and recurring ledgers. Rejected spends roll back all ledgers.
+//! Wildcard mints grant unlimited spend; every applicable exact-mint one-shot
+//! and recurring ledger is charged. Rejected spends roll back all ledgers.
 
 mod common;
 use common::*;
@@ -108,8 +108,7 @@ fn token_balance(context: &SwigTestContext, ata: &Pubkey) -> u64 {
     )
 }
 
-/// A wildcard one-shot limit covers every mint; each spend drafts the
-/// shared wildcard budget.
+/// A wildcard mint authorizes unlimited spend without changing its amount.
 #[test_log::test]
 fn test_wildcard_general_limit_covers_any_mint() {
     let mut context = setup_test_context().unwrap();
@@ -233,7 +232,7 @@ fn test_wildcard_general_limit_covers_any_mint() {
     .unwrap();
     assert_eq!(remaining, (2, Some(100)));
 
-    // First spend (mint A) succeeds and drafts the shared budget.
+    // Both mints spend without decrementing the wildcard's stored amount.
     send_token_transfer(
         &mut context,
         &swig,
@@ -254,9 +253,9 @@ fn test_wildcard_general_limit_covers_any_mint() {
             .current_amount
     })
     .unwrap();
-    assert_eq!(remaining, 70);
+    assert_eq!(remaining, 100);
 
-    // A second spend of a different mint hits the same bucket.
+    // A different mint is also unlimited.
     send_token_transfer(
         &mut context,
         &swig,
@@ -277,9 +276,9 @@ fn test_wildcard_general_limit_covers_any_mint() {
             .current_amount
     })
     .unwrap();
-    assert_eq!(remaining, 50);
+    assert_eq!(remaining, 100);
 
-    // Overspending the exhausted bucket fails for any mint.
+    // The stored amount is not a cap, even for a single spend.
     let res = send_token_transfer(
         &mut context,
         &swig,
@@ -287,12 +286,12 @@ fn test_wildcard_general_limit_covers_any_mint() {
         &second_authority,
         &swig_ata_a,
         &recipient_ata_a,
-        51,
+        101,
     )
     .unwrap();
-    assert!(res.is_err());
+    res.unwrap();
 
-    // State remains intact after the failure.
+    // The ignored ledger stays unchanged.
     let remaining = with_role_1(&context, &swig, |role| {
         role.get_action::<TokenLimit>(&WILDCARD)
             .unwrap()
@@ -300,9 +299,9 @@ fn test_wildcard_general_limit_covers_any_mint() {
             .current_amount
     })
     .unwrap();
-    assert_eq!(remaining, 50);
+    assert_eq!(remaining, 100);
 
-    // Spending exactly the remaining allowance succeeds.
+    // Further spends remain allowed.
     send_token_transfer(
         &mut context,
         &swig,
@@ -322,10 +321,10 @@ fn test_wildcard_general_limit_covers_any_mint() {
             .current_amount
     })
     .unwrap();
-    assert_eq!(remaining, 0);
+    assert_eq!(remaining, 100);
 }
 
-/// Exact and wildcard mint limits both charge; neither bypasses the other.
+/// Unlimited wildcard mints never bypass stacked exact-mint limits.
 #[test_log::test]
 fn test_exact_mint_limit_stacks_with_wildcard() {
     let mut context = setup_test_context().unwrap();
@@ -402,8 +401,7 @@ fn test_exact_mint_limit_stacks_with_wildcard() {
         .airdrop(&second_authority.pubkey(), 1_000_000_000)
         .unwrap();
 
-    // Wildcard of 100 for any mint; the risky mint A gets a tighter
-    // dedicated cap of 10.
+    // Any mint is unlimited; mint A gets a dedicated cap of 10.
     let _txn = add_authority_with_ed25519_root(
         &mut context,
         &swig,
@@ -416,7 +414,7 @@ fn test_exact_mint_limit_stacks_with_wildcard() {
             ClientAction::ProgramAll(ProgramAll {}),
             ClientAction::TokenLimit(TokenLimit {
                 token_mint: WILDCARD,
-                current_amount: 100,
+                current_amount: 0,
             }),
             ClientAction::TokenLimit(TokenLimit {
                 token_mint: mint_a.to_bytes(),
@@ -431,7 +429,7 @@ fn test_exact_mint_limit_stacks_with_wildcard() {
         .airdrop(&swig_wallet_address, 2_000_000_000)
         .unwrap();
 
-    // Mint A spends charge both the exact and the wildcard limits.
+    // Mint A spends charge only its exact-mint ledger.
     send_token_transfer(
         &mut context,
         &swig,
@@ -459,7 +457,7 @@ fn test_exact_mint_limit_stacks_with_wildcard() {
             .current_amount
     })
     .unwrap();
-    assert_eq!(wildcard, 93);
+    assert_eq!(wildcard, 0);
 
     // The exact cap is enforced.
     let res = send_token_transfer(
@@ -474,7 +472,7 @@ fn test_exact_mint_limit_stacks_with_wildcard() {
     .unwrap();
     assert!(res.is_err());
 
-    // Mint B has no exact limit, so only the wildcard budget applies.
+    // Mint B has no exact limit, so it is unlimited.
     send_token_transfer(
         &mut context,
         &swig,
@@ -494,7 +492,7 @@ fn test_exact_mint_limit_stacks_with_wildcard() {
             .current_amount
     })
     .unwrap();
-    assert_eq!(wildcard, 63);
+    assert_eq!(wildcard, 0);
     let exact = with_role_1(&context, &swig, |role| {
         role.get_action::<TokenLimit>(mint_a.to_bytes().as_ref())
             .unwrap()
@@ -505,10 +503,9 @@ fn test_exact_mint_limit_stacks_with_wildcard() {
     assert_eq!(exact, 3);
 }
 
-/// A wildcard-mint recurring limit charges every mint and resets once the
-/// window expires.
+/// Wildcard recurring ledgers are neither charged nor reset across windows.
 #[test_log::test]
-fn test_wildcard_recurring_limit_resets_per_window() {
+fn test_wildcard_recurring_limit_is_unlimited_across_windows() {
     let mut context = setup_test_context().unwrap();
     let swig_authority = Keypair::new();
     let recipient = Keypair::new();
@@ -613,7 +610,7 @@ fn test_wildcard_recurring_limit_resets_per_window() {
         .airdrop(&swig_wallet_address, 2_000_000_000)
         .unwrap();
 
-    // Spend across both mints within one window drains the shared bucket.
+    // Spend across both mints without changing the recurring ledger.
     send_token_transfer(
         &mut context,
         &swig,
@@ -645,9 +642,9 @@ fn test_wildcard_recurring_limit_resets_per_window() {
         (a.current, a.limit, a.window, a.last_reset)
     })
     .unwrap();
-    assert_eq!(recurring.0, 0);
+    assert_eq!(recurring, (recurring_amount, recurring_amount, window, 0));
 
-    // Within the window further spends fail.
+    // Even a spend larger than the stored window allowance succeeds.
     let res = send_token_transfer(
         &mut context,
         &swig,
@@ -655,12 +652,12 @@ fn test_wildcard_recurring_limit_resets_per_window() {
         &second_authority,
         &swig_ata_a,
         &recipient_ata_a,
-        1,
+        6,
     )
     .unwrap();
-    assert!(res.is_err());
+    res.unwrap();
 
-    // After the window expires the limit resets and mints flow again.
+    // Crossing a window does not reset or mutate a wildcard ledger.
     context.svm.warp_to_slot(start_slot + window + 1);
 
     send_token_transfer(
@@ -675,7 +672,7 @@ fn test_wildcard_recurring_limit_resets_per_window() {
     .unwrap()
     .unwrap();
 
-    assert_eq!(token_balance(&context, &recipient_ata_a), 7);
+    assert_eq!(token_balance(&context, &recipient_ata_a), 13);
     let recurring = with_role_1(&context, &swig, |role| {
         let a = role
             .get_action::<TokenRecurringLimit>(&WILDCARD)
@@ -684,7 +681,7 @@ fn test_wildcard_recurring_limit_resets_per_window() {
         (a.current, a.limit, a.window, a.last_reset)
     })
     .unwrap();
-    assert_eq!(recurring.0, 0);
+    assert_eq!(recurring, (recurring_amount, recurring_amount, window, 0));
 }
 
 /// A token destination limit with a wildcard destination covers transfers
@@ -914,7 +911,7 @@ fn test_fully_wildcard_destination_limit() {
         .airdrop(&swig_wallet_address, 2_000_000_000)
         .unwrap();
 
-    // Any mint to any destination drafts the shared bucket.
+    // Any mint to any destination is unlimited.
     send_token_transfer(
         &mut context,
         &swig,
@@ -945,9 +942,9 @@ fn test_fully_wildcard_destination_limit() {
             .amount
     })
     .unwrap();
-    assert_eq!(limit_action, 10);
+    assert_eq!(limit_action, 60);
 
-    // The bucket is mint-agnostic and shared.
+    // The stored amount does not cap spending.
     let res = send_token_transfer(
         &mut context,
         &swig,
@@ -955,10 +952,10 @@ fn test_fully_wildcard_destination_limit() {
         &second_authority,
         &swig_ata_b,
         &recipient_ata_b,
-        11,
+        61,
     )
     .unwrap();
-    assert!(res.is_err());
+    res.unwrap();
 }
 
 /// Exact pairs stack with (mint, wildcard) and (wildcard, destination);
@@ -1061,7 +1058,7 @@ fn test_destination_wildcard_specificity_and_coverage() {
     // Tiers:
     //   (mint_x, dest_x_1): 20   exact pair
     //   (mint_x, WILD):     100  any destination for mint_x
-    //   (WILD, dest_y_2):   30   any mint into dest_y_2
+    //   (WILD, dest_y_2):   unlimited any mint into dest_y_2
     let _txn = add_authority_with_ed25519_root(
         &mut context,
         &swig,
@@ -1150,7 +1147,7 @@ fn test_destination_wildcard_specificity_and_coverage() {
     .unwrap();
     assert_eq!(mint_wild, 45);
 
-    // 3. mint_y into dest_y_2 drafts (WILD, dest_y_2).
+    // 3. mint_y into dest_y_2 is unlimited within that destination scope.
     send_token_transfer(
         &mut context,
         &swig,
@@ -1170,7 +1167,7 @@ fn test_destination_wildcard_specificity_and_coverage() {
             .amount
     })
     .unwrap();
-    assert_eq!(wild_mint, 5);
+    assert_eq!(wild_mint, 30);
 
     // 4. A destination covered by no wildcard tier stays rejected even
     // though wildcard limits exist for this role.
@@ -1187,8 +1184,8 @@ fn test_destination_wildcard_specificity_and_coverage() {
     assert!(res.is_err());
 }
 
-/// All four destination scopes and both general scopes hold independent
-/// lifetime/window pairs. Narrower scopes never bypass the shared budgets.
+/// Every exact-mint lifetime/window pair applies, regardless of action order.
+/// Mint wildcards stay unchanged and cannot bypass any exact-mint budget.
 #[test_log::test]
 fn every_applicable_scope_and_pair_charges_atomically_across_windows() {
     for reverse in [false, true] {
@@ -1272,7 +1269,7 @@ fn every_applicable_scope_and_pair_charges_atomically_across_windows() {
             actions,
         )
         .unwrap();
-        for window in 0..6 {
+        for window in 0..4 {
             context.svm.warp_to_slot(100 + window * 11);
             context.svm.expire_blockhash();
             send_token_transfer(
@@ -1282,42 +1279,44 @@ fn every_applicable_scope_and_pair_charges_atomically_across_windows() {
                 &signer,
                 &source,
                 &destination,
-                2,
+                4,
             )
             .unwrap()
             .unwrap();
             with_role_1(&context, &swig, |role| {
                 for (key, dest, lifetime, recurring) in scopes {
+                    let spent = if key == WILDCARD { 0 } else { 4 };
                     let key = [key, dest].concat();
                     assert_eq!(
                         role.get_action::<TokenDestinationLimit>(&key)
                             .unwrap()
                             .unwrap()
                             .amount,
-                        lifetime - 2 * (window + 1)
+                        lifetime - spent * (window + 1)
                     );
                     assert_eq!(
                         role.get_action::<TokenRecurringDestinationLimit>(&key)
                             .unwrap()
                             .unwrap()
                             .current_amount,
-                        recurring - 2
+                        recurring - spent
                     );
                 }
                 for (key, lifetime, recurring) in [(mint.to_bytes(), 20, 6), (WILDCARD, 30, 9)] {
+                    let spent = if key == WILDCARD { 0 } else { 4 };
                     assert_eq!(
                         role.get_action::<TokenLimit>(&key)
                             .unwrap()
                             .unwrap()
                             .current_amount,
-                        lifetime - 2 * (window + 1)
+                        lifetime - spent * (window + 1)
                     );
                     assert_eq!(
                         role.get_action::<TokenRecurringLimit>(&key)
                             .unwrap()
                             .unwrap()
                             .current,
-                        recurring - 2
+                        recurring - spent
                     );
                 }
             })
@@ -1345,7 +1344,7 @@ fn every_applicable_scope_and_pair_charges_atomically_across_windows() {
             assert_eq!(context.svm.get_account(&swig).unwrap().data, before);
             assert_eq!(token_balance(&context, &source), balance);
         }
-        // A fresh recurring window cannot replenish the exhausted wildcard lifetime.
+        // A fresh window cannot replenish the exact-mint any-destination lifetime.
         context.svm.warp_to_slot(200);
         context.svm.expire_blockhash();
         assert!(send_token_transfer(
@@ -1359,6 +1358,6 @@ fn every_applicable_scope_and_pair_charges_atomically_across_windows() {
         )
         .unwrap()
         .is_err());
-        assert_eq!(token_balance(&context, &destination), 12);
+        assert_eq!(token_balance(&context, &destination), 16);
     }
 }

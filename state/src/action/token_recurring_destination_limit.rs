@@ -52,6 +52,9 @@ impl TokenRecurringDestinationLimit {
     /// * `Ok(())` - If the operation is within limits
     /// * `Err(ProgramError)` - If the operation would exceed the limit
     pub fn run(&mut self, token_diff: u64, current_slot: u64) -> Result<(), ProgramError> {
+        if super::wildcard::is_wildcard(&self.token_mint) {
+            return Ok(());
+        }
         // Reset the limit if the time window has expired and the operation would fit in
         // a fresh window
         if current_slot - self.last_reset > self.window && token_diff <= self.recurring_amount {

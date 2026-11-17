@@ -39,6 +39,9 @@ impl TokenDestinationLimit {
     /// * `Ok(())` - If the operation is within limits
     /// * `Err(ProgramError)` - If the operation would exceed the limit
     pub fn run(&mut self, token_diff: u64) -> Result<(), ProgramError> {
+        if super::wildcard::is_wildcard(&self.token_mint) {
+            return Ok(());
+        }
         if token_diff > self.amount {
             return Err(
                 SwigAuthenticateError::PermissionDeniedTokenDestinationLimitExceeded.into(),

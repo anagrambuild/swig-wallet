@@ -34,6 +34,9 @@ impl TokenLimit {
     /// * `Ok(())` - If the operation is within limits
     /// * `Err(ProgramError)` - If the operation would exceed the limit
     pub fn run(&mut self, amount: u64) -> Result<(), ProgramError> {
+        if super::wildcard::is_wildcard(&self.token_mint) {
+            return Ok(());
+        }
         if amount > self.current_amount {
             return Err(SwigAuthenticateError::PermissionDeniedInsufficientBalance.into());
         }
