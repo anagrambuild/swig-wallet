@@ -819,6 +819,7 @@ pub fn sign_v2(
                     slot,
                     account_has_destination_limit(&destination_limits, index),
                 )?;
+
                 continue;
             },
             AccountClassification::SwigStakeAccount { spent, .. } => {

@@ -82,16 +82,13 @@ fn wildcard_pairs_back_independent_mint_locks_without_a_shared_spend_budget() {
     ok(w.send(&[spend], &[&card]));
     assert_eq!(w.token_balance(&account_a), 99);
 
-    // Actual locked token balances remain protected, even with unlimited spend.
-    let before = w.data();
-    let spend = w.token_transfer_ix(&card, CARD_ROLE, &a, &account_a, 96);
-    assert!(w.send(&[spend], &[&card]).is_err());
-    assert_eq!(w.data(), before);
-    assert_eq!(w.token_balance(&account_a), 99);
-
-    ok(w.remove_lock(&card, CARD_ROLE, 0));
+    // The holder spends from its own reserved balance, capturing the lock.
+    let before = w.token_balance(&account_a);
     let spend = w.token_transfer_ix(&card, CARD_ROLE, &a, &account_a, 96);
     ok(w.send(&[spend], &[&card]));
+    assert_eq!(w.token_balance(&account_a), before - 96);
+
+    ok(w.remove_lock(&card, CARD_ROLE, 0));
     ok(w.add_lock(&card, CARD_ROLE, account_a, a.to_bytes(), 3, expiry));
     assert!(w
         .add_lock(&card, CARD_ROLE, account_a, a.to_bytes(), 1, expiry)

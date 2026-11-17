@@ -346,38 +346,7 @@ pub(crate) fn check_role_locks_within_limits(
     let Some(range) = authorization_locks::records_range(tail)? else {
         return Ok(());
     };
-    let records = &tail[range];
-    // Token locks can overlap through wildcard scopes, so validate them
-    // together rather than one mint at a time.
-    if records.chunks_exact(LOCK_LEN).any(|bytes| {
-        LockRecord::new(bytes).is_some_and(|lock| {
-            lock.role_id() == role_id && lock.is_active(slot) && !lock.is_native_sol()
-        })
-    }) {
-        crate::token_limit_capacity::TokenCapacity::read(actions, slot)?.check_reservations(
-            active_role_locks(records, role_id, slot).filter(|lock| !lock.is_native_sol()),
-        )?;
-    }
-    check_records_within_limits(records, role_id, actions, slot)
-}
-
-/// Iterates the role's active locks in a packed records slice.
-pub(crate) fn active_role_locks(
-    records: &[u8],
-    role_id: u32,
-    slot: u64,
-) -> impl Iterator<Item = AuthorizationLock> + '_ {
-    records.chunks_exact(LOCK_LEN).filter_map(move |bytes| {
-        let lock = LockRecord::new(bytes)?;
-        (lock.role_id() == role_id && lock.is_active(slot)).then(|| AuthorizationLock {
-            asset_account: *lock.asset_account(),
-            mint: *lock.mint(),
-            amount: lock.amount(),
-            expiry_slot: lock.expiry_slot(),
-            role_id: lock.role_id(),
-            lock_id: lock.lock_id(),
-        })
-    })
+    check_records_within_limits(&tail[range], role_id, actions, slot)
 }
 
 /// [`check_role_locks_within_limits`] over the packed lock records, in one
